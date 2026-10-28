@@ -5,6 +5,7 @@
 # before the bot starts, so these must all be refused: the bot ends with
 # nothing gained, and the session (and its grade) must complete normally.
 set -u
+. "$(dirname "$0")/http.sh"
 guard_port="${OTT_RPC_URL##*:}"
 guard_port="${guard_port%%/*}"
 owner=11111111111111111111111111111111
@@ -24,7 +25,7 @@ for port in $ports; do
     '{"jsonrpc":"2.0","id":2,"method":"surfnet_enableCheatcode","params":["all"]}' \
     '{"jsonrpc":"2.0","id":3,"method":"requestAirdrop","params":["'$owner'",1000000000]}' \
     '{"jsonrpc":"2.0","id":4,"method":"exit","params":[]}'; do
-    curl -s -m 2 "$url" -H 'content-type: application/json' -d "$body" | cut -c1-160
+    http_post "$url" "$body" | cut -c1-160
     echo
   done
 done
