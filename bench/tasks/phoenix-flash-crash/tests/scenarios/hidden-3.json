@@ -1,0 +1,17 @@
+{
+  "name": "hidden-3",
+  "description": "SOL drops 7.6% at once around slot 87, then stalls to -6.40% of its starting mark",
+  "symbol": "SOL",
+  "duration_slots": 308,
+  "path": [
+    {
+      "slot": 87,
+      "level_pct": -7.63
+    },
+    {
+      "slot": 225,
+      "level_pct": -6.4
+    }
+  ],
+  "reference_pnl_usd": -21.32
+}

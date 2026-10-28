@@ -4,6 +4,7 @@
 .env
 .surfpool
 jobs
-strategy
-tasks
-checks
+bench/tasks
+bench/checks
+skills
+docs

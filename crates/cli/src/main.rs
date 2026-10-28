@@ -73,14 +73,16 @@ impl Sessions {
 #[derive(Subcommand)]
 enum ScenarioCommand {
     /// Draw flash-crash scenarios from the SOL family, one file per scenario.
+    /// Sets are stratified: each aftermath (rebound, stall, slide) appears in
+    /// proportion to its odds.
     Generate {
         #[arg(long)]
         out: PathBuf,
-        /// Names are `<prefix>-<n>`, and seeds derive from them.
+        /// Names are `<prefix>-<n>`.
         #[arg(long)]
         prefix: String,
         #[arg(long, default_value_t = 3)]
-        count: u64,
+        count: usize,
         /// Mixed into each scenario's seed. Keep hidden sets' seeds private.
         #[arg(long)]
         seed: u64,
@@ -175,10 +177,8 @@ async fn main() -> Result<()> {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
             let family = CrashFamily::sol();
             let mut written = Vec::new();
-            for n in 1..=count {
-                let name = format!("{prefix}-{n}");
-                let scenario = family.sample(&name, seed.wrapping_mul(1_000_003).wrapping_add(n));
-                let path = out.join(format!("{name}.json"));
+            for scenario in family.sample_set(&prefix, count, seed) {
+                let path = out.join(format!("{}.json", scenario.name));
                 scenario.save(&path)?;
                 written.push(path);
             }

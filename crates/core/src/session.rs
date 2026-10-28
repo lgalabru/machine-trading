@@ -15,6 +15,7 @@ use std::{
 };
 
 use ott_botkit::{BotEnv, QUOTE_LOTS_PER_USD};
+use surfpool_sdk::CheatcodeFilter;
 use serde::Serialize;
 use serde_json::json;
 use solana_keypair::Keypair;
@@ -94,6 +95,18 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         symbol: scenario.symbol.clone(),
         end_slot: start_slot + scenario.duration_slots,
     };
+    // The scenario is the grader's last cheatcode. Lock them all before the
+    // bot starts: a bot that finds the surfnet's own port, past the guard,
+    // gets a plain validator RPC, with no cheatcodes, airdrops, or way to
+    // stop the surfnet.
+    let perp_asset_map = phoenix.perp_asset_map()?;
+    chain::register_scenario(
+        &rpc,
+        &scenario.name,
+        scenario.overrides(perp_asset_map, start_mark_ticks),
+    )?;
+    surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
+
     let mut child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log)?;
     info!(
         scenario = scenario.name,
@@ -101,13 +114,6 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         end_slot = env.end_slot,
         "bot started"
     );
-
-    let perp_asset_map = phoenix.perp_asset_map()?;
-    chain::register_scenario(
-        &rpc,
-        &scenario.name,
-        scenario.overrides(perp_asset_map, start_mark_ticks),
-    )?;
 
     let mut bot_exit = None;
     loop {

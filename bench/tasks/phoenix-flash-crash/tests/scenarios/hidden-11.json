@@ -1,0 +1,21 @@
+{
+  "name": "hidden-11",
+  "description": "SOL drops 6.0% in two legs around slot 63, then slides further to -9.24% of its starting mark",
+  "symbol": "SOL",
+  "duration_slots": 333,
+  "path": [
+    {
+      "slot": 63,
+      "level_pct": -3.69
+    },
+    {
+      "slot": 117,
+      "level_pct": -6.03
+    },
+    {
+      "slot": 250,
+      "level_pct": -9.24
+    }
+  ],
+  "reference_pnl_usd": -65.6
+}

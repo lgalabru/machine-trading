@@ -121,6 +121,17 @@ fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
     steps * SLOTS_BETWEEN_STEPS
 }
 
+/// What the market does once the crash has held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aftermath {
+    /// It rebounds, recovering part or all of the drop.
+    Rebound,
+    /// It barely recovers: buying the dip doesn't pay.
+    Stall,
+    /// It keeps falling: buying the dip loses.
+    Slide,
+}
+
 /// Parameters for a family of flash-crash scenarios.
 #[derive(Debug, Clone)]
 pub struct CrashFamily {
@@ -129,11 +140,18 @@ pub struct CrashFamily {
     pub depth_pct: (f64, f64),
     /// Range of the slot the crash starts at.
     pub crash_slot: (u64, u64),
-    /// Range of how many slots the market stays down before rebounding.
+    /// Range of how many slots the market stays down before it moves again.
     pub hold_slots: (u64, u64),
-    /// Range of how much of the drop the rebound recovers, 0 to 1.
-    pub recovery: (f64, f64),
-    /// Slots the session continues after the rebound.
+    /// Odds of a rebound and of a stall; a slide takes the rest.
+    pub rebound_odds: f64,
+    pub stall_odds: f64,
+    /// Range of how much of the drop a rebound recovers, 0 to 1.
+    pub rebound_recovery: (f64, f64),
+    /// Range of how much of the drop a stall recovers, 0 to 1.
+    pub stall_recovery: (f64, f64),
+    /// Range of how much further a slide falls, in percent of the starting mark.
+    pub slide_pct: (f64, f64),
+    /// Slots the session continues after the last move.
     pub tail_slots: u64,
 }
 
@@ -144,7 +162,11 @@ impl CrashFamily {
             depth_pct: (5.0, 12.0),
             crash_slot: (60, 120),
             hold_slots: (60, 160),
-            recovery: (0.5, 1.0),
+            rebound_odds: 0.65,
+            stall_odds: 0.2,
+            rebound_recovery: (0.5, 1.0),
+            stall_recovery: (0.0, 0.2),
+            slide_pct: (2.0, 5.0),
             tail_slots: 80,
         }
     }
@@ -157,8 +179,8 @@ impl CrashFamily {
         let depth = rng.range_f64(self.depth_pct);
         let crash_slot = rng.range_u64(self.crash_slot);
         let two_legs = rng.next_f64() < 1.0 / 3.0;
-        let recovery = rng.range_f64(self.recovery);
         let hold = rng.range_u64(self.hold_slots);
+        let aftermath = self.pick_aftermath(rng.next_f64());
 
         let round = |x: f64| (x * 100.0).round() / 100.0;
         let bottom = round(-depth);
@@ -184,24 +206,96 @@ impl CrashFamily {
             slot += move_slots(0.0, bottom) + 1;
         }
         slot += hold;
-        let rebound = round(bottom * (1.0 - recovery));
-        path.push(Waypoint {
-            slot,
-            level_pct: rebound,
-        });
-        slot += move_slots(bottom, rebound) + 1;
+        let end = match aftermath {
+            Aftermath::Rebound => round(bottom * (1.0 - rng.range_f64(self.rebound_recovery))),
+            Aftermath::Stall => round(bottom * (1.0 - rng.range_f64(self.stall_recovery))),
+            Aftermath::Slide => round(bottom - rng.range_f64(self.slide_pct)),
+        };
+        if end != bottom {
+            path.push(Waypoint {
+                slot,
+                level_pct: end,
+            });
+            slot += move_slots(bottom, end) + 1;
+        }
 
         let legs = if two_legs { "in two legs" } else { "at once" };
+        let then = match aftermath {
+            Aftermath::Rebound => "rebounds",
+            Aftermath::Stall => "stalls",
+            Aftermath::Slide => "slides further",
+        };
         Scenario {
             name: name.to_string(),
             description: format!(
-                "{} drops {depth:.1}% {legs} around slot {crash_slot}, then rebounds to {rebound:+.2}% of its starting mark",
+                "{} drops {depth:.1}% {legs} around slot {crash_slot}, then {then} to {end:+.2}% of its starting mark",
                 self.symbol
             ),
             symbol: self.symbol.clone(),
             duration_slots: slot + self.tail_slots,
             path,
             reference_pnl_usd: None,
+        }
+    }
+
+    /// `count` scenarios named `<prefix>-<n>`, stratified: each aftermath
+    /// appears in proportion to its odds (largest remainder), so a small set
+    /// isn't skewed by luck of the draw. Seeds derive from `seed`; scenarios
+    /// keep their draw order.
+    pub fn sample_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<Scenario> {
+        let odds = [
+            (Aftermath::Rebound, self.rebound_odds),
+            (Aftermath::Stall, self.stall_odds),
+            (Aftermath::Slide, 1.0 - self.rebound_odds - self.stall_odds),
+        ];
+        let mut quotas: Vec<(Aftermath, usize, f64)> = odds
+            .iter()
+            .map(|&(a, p)| {
+                let exact = p * count as f64;
+                (a, exact.floor() as usize, exact - exact.floor())
+            })
+            .collect();
+        let short = count - quotas.iter().map(|q| q.1).sum::<usize>();
+        let mut by_remainder: Vec<usize> = (0..quotas.len()).collect();
+        by_remainder.sort_by(|&a, &b| quotas[b].2.total_cmp(&quotas[a].2));
+        for &i in by_remainder.iter().take(short) {
+            quotas[i].1 += 1;
+        }
+
+        let mut scenarios = Vec::with_capacity(count);
+        let mut draw = 0u64;
+        while scenarios.len() < count {
+            draw += 1;
+            let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
+            let aftermath = self.aftermath(draw_seed);
+            let quota = quotas.iter_mut().find(|q| q.0 == aftermath).expect("every aftermath");
+            if quota.1 == 0 {
+                continue;
+            }
+            quota.1 -= 1;
+            let name = format!("{prefix}-{}", scenarios.len() + 1);
+            scenarios.push(self.sample(&name, draw_seed));
+        }
+        scenarios
+    }
+
+    /// The aftermath a seed draws, without building the scenario: the fifth
+    /// draw of [`Self::sample`].
+    pub fn aftermath(&self, seed: u64) -> Aftermath {
+        let mut rng = SplitMix64(seed);
+        for _ in 0..4 {
+            rng.next_u64();
+        }
+        self.pick_aftermath(rng.next_f64())
+    }
+
+    fn pick_aftermath(&self, draw: f64) -> Aftermath {
+        if draw < self.rebound_odds {
+            Aftermath::Rebound
+        } else if draw < self.rebound_odds + self.stall_odds {
+            Aftermath::Stall
+        } else {
+            Aftermath::Slide
         }
     }
 }
@@ -235,6 +329,41 @@ impl SplitMix64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sets_are_stratified_by_aftermath() {
+        let family = CrashFamily::sol();
+        for (count, expected) in [(12, [8, 2, 2]), (6, [4, 1, 1])] {
+            let set = family.sample_set("h", count, 77);
+            assert_eq!(set.len(), count);
+            let n = |word: &str| set.iter().filter(|s| s.description.contains(word)).count();
+            assert_eq!([n("rebounds"), n("stalls"), n("slides")], expected, "{count}");
+            assert_eq!(set, family.sample_set("h", count, 77));
+        }
+    }
+
+    #[test]
+    fn the_family_draws_every_aftermath_at_roughly_its_odds() {
+        let family = CrashFamily::sol();
+        let draws: Vec<Aftermath> = (0..2_000).map(|seed| family.aftermath(seed)).collect();
+        let share = |a| draws.iter().filter(|d| **d == a).count() as f64 / draws.len() as f64;
+        assert!((share(Aftermath::Rebound) - 0.65).abs() < 0.05);
+        assert!((share(Aftermath::Stall) - 0.2).abs() < 0.05);
+        assert!((share(Aftermath::Slide) - 0.15).abs() < 0.05);
+        for seed in 0..50 {
+            let scenario = family.sample("s", seed);
+            let end = scenario.path.last().unwrap().level_pct;
+            let bottom = scenario
+                .path
+                .iter()
+                .map(|w| w.level_pct)
+                .fold(0.0, f64::min);
+            match family.aftermath(seed) {
+                Aftermath::Slide => assert_eq!(end, bottom, "seed {seed}"),
+                _ => assert!(end >= bottom, "seed {seed}"),
+            }
+        }
+    }
 
     #[test]
     fn sampled_scenarios_are_valid_and_deterministic() {

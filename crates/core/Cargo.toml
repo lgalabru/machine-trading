@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
-base64.workspace = true
 libc.workspace = true
 ott-botkit.workspace = true
 phoenix-rise.workspace = true
@@ -20,7 +19,6 @@ solana-rpc-client-api.workspace = true
 solana-signer.workspace = true
 surfpool-sdk.workspace = true
 # For ClockCommand, which surfpool-sdk doesn't re-export.
-surfpool-types.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

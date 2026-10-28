@@ -5,9 +5,10 @@ snapshot := "phoenix-sol-2026-10-27"
 registry := "ghcr.io/solana-foundation"
 image := "open-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.1.0"
+tag := "0.2.0"
 surfpool := "../surfpool-ofm"
-task := "tasks/phoenix-flash-crash"
+tasks := "bench/tasks"
+task := tasks + "/phoenix-flash-crash"
 
 default:
     @just --list
@@ -25,6 +26,15 @@ test:
 snapshot-prepare out:
     cargo run --release -- snapshot prepare --out {{out}}
 
+# Copy the snapshot's surfnet.json, too big for git, out of the published image.
+snapshot-pull:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    id="$(docker create {{registry}}/{{image}}:{{tag}})"
+    trap 'docker rm "$id" > /dev/null' EXIT
+    docker cp "$id:/opt/ott/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
+    echo "snapshots/{{snapshot}}/surfnet.json"
+
 # Replay a snapshot offline and trade through a scripted crash.
 snapshot-verify dir=("snapshots/" + snapshot):
     cargo run --release -- snapshot verify --dir {{dir}}
@@ -33,6 +43,7 @@ snapshot-verify dir=("snapshots/" + snapshot):
 bots:
     bots/starter/build.sh
     bots/reference/build.sh
+    bots/dip-buyer/build.sh
 
 # Draw scenarios from the SOL crash family into a directory.
 scenarios out prefix count seed:
@@ -49,14 +60,14 @@ grade bot +files:
 # The shared task image, for this machine only. Tag it as the registry name so
 # task Dockerfiles that aren't pinned yet build against it.
 image:
-    docker buildx build --build-context surfpool={{surfpool}} -f docker/Dockerfile \
+    docker buildx build --build-context surfpool={{surfpool}} -f bench/image/Dockerfile \
         -t {{registry}}/{{image}}:{{tag}} --load .
 
 # Build the image for amd64 and arm64 and push it. Pin the tasks to the
 # pushed digest afterwards (`just pin-image`).
 # amd64 builds under emulation on Apple silicon: expect the first run to be slow.
 push-image jobs="3":
-    docker buildx build --build-context surfpool={{surfpool}} -f docker/Dockerfile \
+    docker buildx build --build-context surfpool={{surfpool}} -f bench/image/Dockerfile \
         --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
         -t {{registry}}/{{image}}:{{tag}} --push .
 
@@ -67,7 +78,7 @@ pin-image:
     ref="{{registry}}/{{image}}:{{tag}}"
     digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ { print $2; exit }')"
     echo "$ref@$digest"
-    sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" tasks/*/environment/Dockerfile tasks/*/tests/Dockerfile
+    sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" {{tasks}}/*/environment/Dockerfile {{tasks}}/*/tests/Dockerfile
 
 # Copy the reference bot into the task's solution.
 solution:
@@ -78,8 +89,10 @@ solution:
 check-solution:
     diff -u bots/reference/src/main.rs {{task}}/solution/src/main.rs
 
-# The checks every task change should pass: oracle ~1, noop 0, cheater 0.
+# The checks every task change should pass: oracle ~1, and nop, cheater and
+# sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
 harbor-checks: image check-solution
     harbor run -p {{task}} -a oracle -o jobs
     harbor run -p {{task}} -a nop -o jobs
-    PYTHONPATH=. harbor run -p {{task}} -a checks.cheater_agent:CheaterAgent -o jobs
+    PYTHONPATH=bench harbor run -p {{task}} -a checks.cheater_agent:CheaterAgent -o jobs
+    PYTHONPATH=bench harbor run -p {{task}} -a checks.cheater_agent:SneakyAgent -o jobs
