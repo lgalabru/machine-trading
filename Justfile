@@ -104,6 +104,13 @@ release: check-solution
     harbor sync {{tasks}}
     # Publishing a dataset asks for confirmation, even with -y.
     printf 'y\n' | harbor publish {{tasks}} --public
+    # Harbor addresses versions by revision; tag each with its declared version.
+    version_of() { awk -F'"' '/^version *=/ { print $2; exit }' "$1"; }
+    name_of() { awk -F'"' '/^name *=/ { print $2; exit }' "$1"; }
+    for task in {{tasks}}/*/; do
+      harbor version tag "$(name_of "$task/task.toml")@latest" "$(version_of "$task/task.toml")" --force
+    done
+    harbor version tag "$(name_of {{tasks}}/dataset.toml)@latest" "$(version_of {{tasks}}/dataset.toml)" --force
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
 # Benchmark agents on the published dataset, on an idle machine: other load
