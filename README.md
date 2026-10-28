@@ -216,6 +216,10 @@ oracle through Harbor weekly.
   the surfnet's own port gets nothing from it (cheatcodes, airdrops and
   `exit` are all locked), but it could still compete for CPU. A sidecar
   container that can reach only the proxy would close this.
+- Sessions can only be graded one at a time against untrusted bots: in
+  parallel, a bot could reach another session's surfnet before it is
+  locked. `--jobs` is for trusted bots (calibration) until sessions are
+  isolated from one another.
 - Scenarios move the market along a scripted path, so makers don't react to
   the bot. Each task's README lists its realism limits.
 - The hidden scenarios ship inside each public task. Treat public scores as a

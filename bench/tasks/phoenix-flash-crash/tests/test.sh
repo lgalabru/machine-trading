@@ -13,11 +13,13 @@ chmod -R a+rX /app/bot
 # behind if the grader itself fails.
 trap 'rm -f /logs/verifier/reward.json' ERR
 
-# Three sessions at once: ~1 GB each, on the verifier's 4 CPUs and 6 GB. A
-# verifier too loaded to keep their clocks on time fails the grade (late
-# slots) rather than skewing it.
+# One session at a time. Concurrent sessions share the container, so a bot
+# can reach the other sessions' surfnets while they are still being set up,
+# before their cheatcodes are locked. Parallel grading (--jobs) is for
+# trusted bots, such as calibrating the reference, until sessions are
+# isolated from one another.
 ott grade \
-  --jobs "${OTT_JOBS:-3}" \
+  --jobs 1 \
   --snapshot "$OTT_SNAPSHOT" \
   --bot /app/bot \
   --logs /logs/verifier/bot \
