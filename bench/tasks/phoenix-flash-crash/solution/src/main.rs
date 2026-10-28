@@ -40,7 +40,12 @@ async fn main() -> Result<()> {
     let env = BotEnv::from_env()?;
     let trader = Trader::connect(&env)?;
     let start_mark = trader.mark_usd().await?;
-    info!(start_mark, ?TRANCHES, ?SLIDE_STOP_PCT, "watching for the crash");
+    info!(
+        start_mark,
+        ?TRANCHES,
+        ?SLIDE_STOP_PCT,
+        "watching for the crash"
+    );
 
     let mut last_order: Option<Instant> = None;
     while trader.slot()? < env.end_slot {
@@ -91,7 +96,11 @@ async fn main() -> Result<()> {
         }
     }
     let position = trader.position().await?;
-    info!(size = position.size, entry = position.entry_usd, "done; holding to the mark");
+    info!(
+        size = position.size,
+        entry = position.entry_usd,
+        "done; holding to the mark"
+    );
     Ok(())
 }
 
