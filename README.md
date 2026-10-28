@@ -24,6 +24,7 @@ mainnet, which Surfpool restores from a pinned snapshot.
 | `bots/starter` | The bot agents start from. It trades nothing, so it scores 0. |
 | `bots/reference` | The reference strategy. Its PnL defines a score of 1, and it is the task's oracle solution. |
 | `checks/` | A cheating bot and a Harbor agent that installs it. |
+| `skills/sf-trading-task-design` | An agent skill on designing trading tasks: scenario families, scoring, anti-cheat, realism, and a pre-publish checklist. Claude Code loads it from `.claude/skills`. |
 | `snapshots/<name>` | Pinned chain state. `surfnet.json` (~170 MB) is gitignored and rebuilt with `just snapshot-prepare`. |
 | `docker/` | The one image every task builds on, for both the agent and the verifier. |
 | `tasks/` | The `solana-foundation/open-trading` Harbor dataset. |
