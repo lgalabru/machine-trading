@@ -1,0 +1,17 @@
+{
+  "name": "practice-5",
+  "description": "SOL drops 8.4% at once around slot 116, then stalls to -7.11% of its starting mark",
+  "symbol": "SOL",
+  "duration_slots": 319,
+  "path": [
+    {
+      "slot": 116,
+      "level_pct": -8.43
+    },
+    {
+      "slot": 236,
+      "level_pct": -7.11
+    }
+  ],
+  "reference_pnl_usd": -32.12
+}
