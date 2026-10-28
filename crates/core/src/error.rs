@@ -37,6 +37,10 @@ pub enum Error {
     InvalidScenario { path: PathBuf, reason: String },
     #[error("no bot at {}: a bot is a directory with a run.sh", .0.display())]
     MissingBot(PathBuf),
+    #[error(
+        "the machine was too loaded to run these sessions on time, so they can't be scored: {0}; rerun on an idle machine"
+    )]
+    Degraded(String),
     #[error("{0} is not calibrated: run `ott calibrate`, and keep the set's total reference PnL positive")]
     Uncalibrated(String),
 }

@@ -65,6 +65,11 @@ pub struct SessionReport {
     pub refused_calls: Vec<String>,
     /// How the bot process ended, if it exited on its own before the session did.
     pub bot_exit: Option<String>,
+    /// Slots that arrived late while the bot ran: the surfnet's clock fell
+    /// behind (a starved machine) and stretched those slots. A bot polls on
+    /// the wall clock, so a session with many is not comparable to one
+    /// without; [`crate::grade`] refuses to score it.
+    pub late_slots: u64,
 }
 
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
@@ -107,6 +112,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     )?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
 
+    let late_before = surfnet.coalesced_slots();
     let mut child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log)?;
     info!(
         scenario = scenario.name,
@@ -133,6 +139,10 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     stop_bot(&mut child, workdir.bot_user.is_some()).await;
+    let late_slots = surfnet.coalesced_slots() - late_before;
+    if late_slots > 0 {
+        warn!(scenario = scenario.name, late_slots, "the clock fell behind during the session");
+    }
 
     let end_value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
     let asset = hawkeye
@@ -158,6 +168,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         liquidatable: margin.is_liquidatable != 0,
         refused_calls: guard.refused(),
         bot_exit,
+        late_slots,
     };
     info!(
         scenario = report.scenario,

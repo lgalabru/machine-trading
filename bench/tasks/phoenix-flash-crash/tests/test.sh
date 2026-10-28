@@ -8,6 +8,11 @@ set -euo pipefail
 chmod -R go-rwx /tests
 chmod -R a+rX /app/bot
 
+# The bot can reach /logs (host bind mounts may ignore permissions). The
+# grader treats a reward file a bot wrote as tampering; never leave one
+# behind if the grader itself fails.
+trap 'rm -f /logs/verifier/reward.json' ERR
+
 ott grade \
   --snapshot "$OTT_SNAPSHOT" \
   --bot /app/bot \

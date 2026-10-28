@@ -33,7 +33,7 @@ Rules:
 
 - **No network, no building.** The grader runs in a separate container with no network. It receives only `/app/bot`, minus any `target/` directory, on a fresh copy of this environment's base image. `run.sh` must start a bot that is already built and that needs nothing outside `/app/bot` and the base image: the grader does not build it, and anything you install or build elsewhere in this environment is gone.
 - **Standard Solana RPC methods only.** The endpoint forwards standard methods such as `getSlot`, `getAccountInfo`, `simulateTransaction` and `sendTransaction`. Anything else, including the sandbox's `surfnet_*` cheatcodes and `requestAirdrop`, is refused, and **a single refused call scores your whole reward 0**.
-- The bot runs as an unprivileged user, from `/app/bot`, which it cannot write to. `HOME` is a writable scratch directory.
+- The bot runs as an unprivileged user, from `/app/bot`, which it cannot write to. `HOME` is a writable scratch directory. Leave the grader's files alone: a bot that writes the grader's reward file scores 0.
 - The bot is stopped (SIGTERM, then SIGKILL after 2 seconds) when the session ends. It may also exit earlier.
 
 ## Scoring

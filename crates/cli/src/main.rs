@@ -190,13 +190,24 @@ async fn main() -> Result<()> {
             report,
         } => {
             let scenarios: Vec<Scenario> = sessions.load()?.into_iter().map(|(_, s)| s).collect();
-            let graded = grade::grade(GradeOptions {
+            // Bots run on the same file system, and some mounts (Docker
+            // Desktop's) ignore permissions: start from no reward file, and
+            // treat one that appears while bots run as tampering.
+            if let Some(path) = &reward {
+                remove_if_present(path)?;
+            }
+            let mut graded = grade::grade(GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
             })
             .await?;
+            if let Some(path) = &reward
+                && path.exists()
+            {
+                graded.tamper(format!("a bot wrote {}", path.display()));
+            }
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
                 std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
@@ -221,4 +232,13 @@ async fn main() -> Result<()> {
     };
     println!("{output}");
     Ok(())
+}
+
+fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).with_context(|| path.display().to_string())
+        }
+        _ => Ok(()),
+    }
 }
