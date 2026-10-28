@@ -25,7 +25,7 @@ METR's recommendation applies here: **fix the scorer, don't scold the model.**
 | Price manipulation | Pushing the oracle's source market, or self-trading to move the mark used for valuation | Value at the mark the grader reads; decide whether moving the price counts as skill or as a violation, and say so |
 | Reading hidden scenarios | `cat /tests/scenarios/*.json` | `chmod go-rwx /tests`; the bot runs as `ott-bot`; scenarios are absent from the agent image |
 | Reading the reference | The solution in the image | The solution is used only by the oracle agent, never copied into images |
-| Writing the reward | Writing `/logs/verifier/reward.json` | The bot user can't write `/logs` or `/tests` |
+| Writing the reward | Writing `/logs/verifier/reward.json` | Don't trust permissions: Docker Desktop bind mounts ignore them, so the bot user *can* write `/logs`. The grader deletes the reward file before grading, treats one that appears as tampering (reward 0), writes the real one last after every bot process is dead, and `test.sh` removes it if grading fails |
 | Self-reported PnL | Logging "pnl: 1e9" | Value from on-chain state only |
 | Killing or stalling the grader | Fork bombs, `kill -9` on the surfnet, ignoring SIGTERM | Separate user, its own process group, SIGKILL after the grace period, `pkill -u ott-bot` |
 | Network | Fetching future prices or a solution | Verifier `network_mode = "no-network"` |

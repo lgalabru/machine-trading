@@ -37,10 +37,20 @@ pub struct GradeReport {
     pub pnl_ratio: f64,
     pub pnl_usd: f64,
     pub reference_pnl_usd: f64,
+    /// Why the grade itself was tampered with, if it was: the reward is 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tampered: Option<String>,
     pub scenarios: Vec<ScenarioResult>,
 }
 
 impl GradeReport {
+    /// Disqualify the bot for interfering with grading itself, e.g. writing
+    /// the reward file the grader is about to write.
+    pub fn tamper(&mut self, reason: String) {
+        self.reward = 0.0;
+        self.tampered = Some(reason);
+    }
+
     /// Harbor's `reward.json`: flat numeric values. `reward` is the headline;
     /// the rest are diagnostics that aggregate across trials.
     pub fn rewards(&self) -> BTreeMap<String, f64> {
@@ -62,6 +72,10 @@ impl GradeReport {
                     .iter()
                     .filter(|s| s.disqualified.is_some())
                     .count() as f64,
+            ),
+            (
+                "tampered".to_string(),
+                f64::from(u8::from(self.tampered.is_some())),
             ),
         ]);
         for result in &self.scenarios {
@@ -107,6 +121,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.log_dir,
     )
     .await?;
+    check_timing(&sessions)?;
     let report = score(sessions.into_iter().zip(references).collect());
     info!(
         reward = report.reward,
@@ -141,7 +156,29 @@ fn score(sessions: Vec<(SessionReport, f64)>) -> GradeReport {
         pnl_ratio,
         pnl_usd,
         reference_pnl_usd,
+        tampered: None,
         scenarios,
+    }
+}
+
+/// Sessions whose clock fell behind by more than this many slots (2 seconds
+/// at 250ms slots) aren't scored: the bot saw a slower market than the one
+/// it was meant to trade, and its PnL isn't comparable.
+pub const MAX_LATE_SLOTS: u64 = 8;
+
+/// Fail the grade, as an infrastructure error, rather than score sessions the
+/// machine was too loaded to run on time. Harbor retries a failed verifier;
+/// a skewed score would stand.
+fn check_timing(sessions: &[SessionReport]) -> Result<()> {
+    let late: Vec<String> = sessions
+        .iter()
+        .filter(|s| s.late_slots > MAX_LATE_SLOTS)
+        .map(|s| format!("{} ({} slots)", s.scenario, s.late_slots))
+        .collect();
+    if late.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Degraded(late.join(", ")))
     }
 }
 
@@ -170,6 +207,8 @@ pub async fn calibrate(
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir).await?;
+    // A reference recorded on a loaded machine would skew every score after it.
+    check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
         if session.refused_calls.is_empty() && !session.liquidatable {
             scenario.reference_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
@@ -224,7 +263,19 @@ mod tests {
             liquidatable: false,
             refused_calls: vec![],
             bot_exit: None,
+            late_slots: 0,
         }
+    }
+
+    #[test]
+    fn late_sessions_fail_the_grade_instead_of_scoring() {
+        let mut slow = session(10.0);
+        slow.late_slots = MAX_LATE_SLOTS + 1;
+        assert!(check_timing(&[session(1.0), slow]).is_err());
+
+        let mut tolerable = session(10.0);
+        tolerable.late_slots = MAX_LATE_SLOTS;
+        assert!(check_timing(&[tolerable]).is_ok());
     }
 
     #[test]

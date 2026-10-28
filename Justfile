@@ -6,7 +6,6 @@ registry := "ghcr.io/solana-foundation"
 image := "open-trading"
 # Bump on every image change that tasks should pick up.
 tag := "0.2.0"
-surfpool := "../surfpool-ofm"
 tasks := "bench/tasks"
 task := tasks + "/phoenix-flash-crash"
 
@@ -60,14 +59,14 @@ grade bot +files:
 # The shared task image, for this machine only. Tag it as the registry name so
 # task Dockerfiles that aren't pinned yet build against it.
 image:
-    docker buildx build --build-context surfpool={{surfpool}} -f bench/image/Dockerfile \
+    docker buildx build -f bench/image/Dockerfile \
         -t {{registry}}/{{image}}:{{tag}} --load .
 
 # Build the image for amd64 and arm64 and push it. Pin the tasks to the
 # pushed digest afterwards (`just pin-image`).
 # amd64 builds under emulation on Apple silicon: expect the first run to be slow.
 push-image jobs="3":
-    docker buildx build --build-context surfpool={{surfpool}} -f bench/image/Dockerfile \
+    docker buildx build -f bench/image/Dockerfile \
         --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
         -t {{registry}}/{{image}}:{{tag}} --push .
 

@@ -144,7 +144,7 @@ open-trading/
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
 ├── snapshots/             📸 pinned mainnet state (surfnet.json is gitignored)
 ├── skills/                🧠 agent skills: how to design great trading tasks
-└── docs/
+└── docs/                📐 architecture decision records (docs/adr) and assets
 ```
 
 The harness and models will get top-level directories next to `bench/`,
@@ -156,11 +156,9 @@ sharing `crates/`, `bots/` and `snapshots/`.
 
 - Rust 1.97.1 (pinned in `rust-toolchain`), [`just`](https://github.com/casey/just),
   Docker with buildx, and [Harbor](https://harborframework.com) (`uv tool install harbor`).
-- A Surfpool checkout at `../surfpool-ofm` with
-  [surfpool#862](https://github.com/solana-foundation/surfpool/pull/862)
-  (Phoenix templates) and [surfpool#902](https://github.com/solana-foundation/surfpool/pull/902)
-  (cheatcode locks, SDK snapshots, clock restore) merged in. This becomes a
-  regular dependency once both land.
+- Nothing else: Cargo fetches Surfpool from the branch of
+  [surfpool#902](https://github.com/solana-foundation/surfpool/pull/902)
+  (cheatcode locks, SDK snapshots, clock restore) until it ships in a release.
 - The snapshot's `surfnet.json`, which is too big for git:
   `just snapshot-pull` copies it out of the published task image. To fork a
   fresh one instead, put a mainnet RPC URL in `.env` as `OTT_FORK_RPC_URL`
@@ -216,5 +214,5 @@ harbor sync bench/tasks && harbor publish bench/tasks --public
 - Scenarios move the market along a scripted path, so makers don't react to
   the bot. Each task's README lists its realism limits.
 - The hidden scenarios ship inside each public task. Treat public scores as a
-  development signal; a held-out evaluation needs a private dataset with
-  fresh draws.
+  development signal. Rankings will come from a private, rotating held-out
+  set ([ADR 0001](docs/adr/0001-public-and-held-out-scenarios.md)).

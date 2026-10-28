@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
-# The Open Trading Terminal image: one base for every task, for both the
-# agent's environment and the verifier. Build with `just image`, which passes
-# the Surfpool checkout as the `surfpool` build context.
+# The Open Trading image: one base for every task, for both the agent's
+# environment and the verifier. Build with `just image`.
 #
 # It holds the `ott` grader, every chain snapshot under /opt/ott/snapshots,
 # a Rust toolchain, the bot SDK at /opt/ott/sdk with its dependencies
@@ -17,13 +16,13 @@ ARG TARGETPLATFORM
 # The Docker VM's memory, not its CPUs, bounds a Solana build.
 ARG CARGO_BUILD_JOBS=6
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
-COPY --from=surfpool . /src/surfpool-ofm
 WORKDIR /src/ott
 COPY Cargo.toml Cargo.lock rust-toolchain ./
 COPY crates crates
 COPY bots bots
 # One target cache per platform: a multi-platform build runs both at once.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/ott/target,id=ott-target-${TARGETPLATFORM} \
     cargo build --release --locked -p ott-cli \
     && cp target/release/ott /usr/local/bin/ott
