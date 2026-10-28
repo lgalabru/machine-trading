@@ -1,0 +1,18 @@
+# Dataset manifest for solana-foundation/open-trading
+# Add tasks using: harbor dataset add <org>/<name>
+# Publish using: harbor publish
+
+[dataset]
+name = "solana-foundation/open-trading"
+version = "0.1.0"
+description = "Trading tasks for agents on Solana: bots trade DeFi markets replayed on offline mainnet snapshots with Surfpool."
+keywords = [ "solana", "trading", "defi", "perpetuals", "surfpool",]
+[[dataset.authors]]
+name = "Ludo Galabru"
+email = "ludo.galabru@solana.org"
+
+
+[[tasks]]
+name = "solana-foundation/phoenix-flash-crash"
+digest = "sha256:6cd6a9295ab90dc0d3fbdd533dac56bd8bb4eb44a4ae4fe4ec7bb86592cb5cb9"
+

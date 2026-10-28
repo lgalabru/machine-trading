@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Grade /app/bot on the task's practice scenarios, exactly as the verifier
+# grades it on the hidden ones. Pass scenario files to run others.
+set -euo pipefail
+if [ "$#" -eq 0 ]; then
+  set -- /opt/ott/practice/*.json
+fi
+exec ott grade --snapshot "$OTT_SNAPSHOT" --bot "${OTT_BOT:-/app/bot}" --logs /tmp/ott-practice-logs "$@"

@@ -1,0 +1,21 @@
+{
+  "name": "practice-2",
+  "description": "SOL drops 9.1% in two legs around slot 81, then rebounds to -3.12% of its starting mark",
+  "symbol": "SOL",
+  "duration_slots": 338,
+  "path": [
+    {
+      "slot": 81,
+      "level_pct": -5.25
+    },
+    {
+      "slot": 127,
+      "level_pct": -9.06
+    },
+    {
+      "slot": 253,
+      "level_pct": -3.12
+    }
+  ],
+  "reference_pnl_usd": 56.91
+}

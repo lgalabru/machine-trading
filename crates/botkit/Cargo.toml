@@ -1,0 +1,22 @@
+# No workspace inheritance: this crate also ships inside the task image at
+# /opt/ott/sdk, where bots build against it outside this workspace.
+[package]
+name = "ott-botkit"
+description = "Plumbing for ott trading bots: the runtime contract, Phoenix access, and transactions."
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies]
+phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"] }
+serde_json = "1"
+solana-commitment-config = "3"
+solana-compute-budget-interface = "3"
+solana-keypair = "3"
+solana-pubkey = "4"
+solana-rpc-client = "4.3"
+solana-rpc-client-api = "4.3"
+solana-signer = "3"
+solana-transaction = { version = "4.3", features = ["wincode"] }
+thiserror = "2"
+tracing = "0.1"

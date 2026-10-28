@@ -1,0 +1,5 @@
+# The bot SDK as shipped in the task image at /opt/ott/sdk: the botkit crate
+# and the starter bot, laid out as in the ott repository.
+[workspace]
+members = ["crates/botkit", "bots/starter"]
+resolver = "3"
