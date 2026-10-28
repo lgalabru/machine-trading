@@ -1,17 +1,17 @@
 {
   "name": "practice-3",
-  "description": "SOL drops 8.0% at once around slot 119, then rebounds to -2.68% of its starting mark",
+  "description": "SOL drops 7.7% at once around slot 114, then slides further to -10.72% of its starting mark",
   "symbol": "SOL",
-  "duration_slots": 355,
+  "duration_slots": 316,
   "path": [
     {
-      "slot": 119,
-      "level_pct": -7.98
+      "slot": 114,
+      "level_pct": -7.71
     },
     {
-      "slot": 270,
-      "level_pct": -2.68
+      "slot": 233,
+      "level_pct": -10.72
     }
   ],
-  "reference_pnl_usd": 35.23
+  "reference_pnl_usd": -95.6
 }
