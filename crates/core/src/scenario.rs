@@ -27,6 +27,12 @@ pub struct Scenario {
     /// Session length, counted from when the bot starts. The account is
     /// marked to market at this slot.
     pub duration_slots: u64,
+    /// The largest position, long or short, in base units, a bot may hold.
+    /// Without a cap, PnL in dollars rewards size as much as skill: a bot
+    /// betting several times the reference's size beats it on any profitable
+    /// family. The reference trades up to the cap, so the reward compares
+    /// strategies at equal size.
+    pub max_position: f64,
     pub path: Vec<Waypoint>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `ott calibrate`.
@@ -153,6 +159,8 @@ pub struct CrashFamily {
     pub slide_pct: (f64, f64),
     /// Slots the session continues after the last move.
     pub tail_slots: u64,
+    /// The position cap, in base units, every scenario in the family carries.
+    pub max_position: f64,
 }
 
 impl CrashFamily {
@@ -168,6 +176,8 @@ impl CrashFamily {
             stall_recovery: (0.0, 0.2),
             slide_pct: (2.0, 5.0),
             tail_slots: 80,
+            // ~1x the 10,000 USDC of collateral at the snapshot's ~$101 mark.
+            max_position: 100.0,
         }
     }
 
@@ -233,6 +243,7 @@ impl CrashFamily {
             ),
             symbol: self.symbol.clone(),
             duration_slots: slot + self.tail_slots,
+            max_position: self.max_position,
             path,
             reference_pnl_usd: None,
         }
@@ -268,7 +279,10 @@ impl CrashFamily {
             draw += 1;
             let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
             let aftermath = self.aftermath(draw_seed);
-            let quota = quotas.iter_mut().find(|q| q.0 == aftermath).expect("every aftermath");
+            let quota = quotas
+                .iter_mut()
+                .find(|q| q.0 == aftermath)
+                .expect("every aftermath");
             if quota.1 == 0 {
                 continue;
             }
@@ -337,7 +351,11 @@ mod tests {
             let set = family.sample_set("h", count, 77);
             assert_eq!(set.len(), count);
             let n = |word: &str| set.iter().filter(|s| s.description.contains(word)).count();
-            assert_eq!([n("rebounds"), n("stalls"), n("slides")], expected, "{count}");
+            assert_eq!(
+                [n("rebounds"), n("stalls"), n("slides")],
+                expected,
+                "{count}"
+            );
             assert_eq!(set, family.sample_set("h", count, 77));
         }
     }
@@ -382,6 +400,7 @@ mod tests {
             description: String::new(),
             symbol: "SOL".into(),
             duration_slots: 400,
+            max_position: 100.0,
             path: vec![
                 Waypoint {
                     slot: 10,

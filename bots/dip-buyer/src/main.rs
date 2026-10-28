@@ -1,7 +1,7 @@
 //! Naive baseline: buy the dip and hold.
 //!
-//! Market-buys once SOL trades 3% below its starting mark, then holds to the
-//! end of the session, with no take-profit and no stop. It profits whenever
+//! Market-buys the full position cap once SOL trades 3% below its starting
+//! mark, then holds to the end of the session, with no take-profit and no stop. It profits whenever
 //! the market rebounds and loses whenever it doesn't: a task where this
 //! scores like the reference doesn't reward judgement.
 
@@ -13,7 +13,6 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const TRIGGER_PCT: f64 = 3.0;
-const SIZE: f64 = 20.0;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,7 +29,11 @@ async fn main() -> Result<()> {
         if mark <= trigger {
             info!(mark, start_mark, "dip; buying");
             trader
-                .place_market(Side::Bid, SIZE, (mark * 1.02 * 100.0).round() / 100.0)
+                .place_market(
+                    Side::Bid,
+                    env.max_position,
+                    (mark * 1.02 * 100.0).round() / 100.0,
+                )
                 .await?;
             break;
         }

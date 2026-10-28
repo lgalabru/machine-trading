@@ -5,7 +5,8 @@
 //! buy the forced selling at a discount, then offer the position back with a
 //! take-profit ask above the average entry. A stop-loss caps a dip that keeps
 //! going. Shortly before the session ends, pull resting orders and hold
-//! whatever is left; it is marked to market.
+//! whatever is left; it is marked to market. The ladder adds up to the
+//! position cap, so the reference trades at the size the task allows.
 
 use std::time::Duration;
 
@@ -14,8 +15,9 @@ use ott_botkit::{BotEnv, Position, Side, Trader};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-/// Bid levels, as percent below the starting mark, and their sizes in base units.
-const LADDER: [(f64, f64); 4] = [(3.0, 5.0), (5.0, 5.0), (7.0, 5.0), (9.0, 5.0)];
+/// Bid levels, as percent below the starting mark, and each one's share of
+/// the position cap.
+const LADDER: [(f64, f64); 4] = [(3.0, 0.25), (5.0, 0.25), (7.0, 0.25), (9.0, 0.25)];
 const TAKE_PROFIT_PCT: f64 = 3.0;
 const STOP_LOSS_PCT: f64 = 15.0;
 /// Stop quoting this many slots before the session ends.
@@ -32,7 +34,12 @@ async fn main() -> Result<()> {
     let start_mark = trader.mark_usd().await?;
     let levels: Vec<(f64, f64)> = LADDER
         .iter()
-        .map(|&(offset_pct, size)| (round_cents(start_mark * (1.0 - offset_pct / 100.0)), size))
+        .map(|&(offset_pct, share)| {
+            (
+                round_cents(start_mark * (1.0 - offset_pct / 100.0)),
+                share * env.max_position,
+            )
+        })
         .collect();
     info!(start_mark, ?levels, "quoting ladder");
     for &(price, size) in &levels {

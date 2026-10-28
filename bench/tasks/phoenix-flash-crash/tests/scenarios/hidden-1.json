@@ -3,6 +3,7 @@
   "description": "SOL drops 10.2% at once around slot 104, then stalls to -8.39% of its starting mark",
   "symbol": "SOL",
   "duration_slots": 317,
+  "max_position": 100.0,
   "path": [
     {
       "slot": 104,
@@ -13,5 +14,5 @@
       "level_pct": -8.39
     }
   ],
-  "reference_pnl_usd": -48.4
+  "reference_pnl_usd": -241.98
 }

@@ -56,6 +56,10 @@ struct Sessions {
     /// Bot output goes to `<logs>/<scenario>.log`.
     #[arg(long, default_value = "logs")]
     logs: PathBuf,
+    /// Sessions to run at once, each on its own surfnet (1-4). A machine
+    /// that can't keep up fails the run on late slots rather than skewing it.
+    #[arg(long, env = "OTT_JOBS", default_value_t = 1)]
+    jobs: usize,
     /// Scenario files, run in order.
     #[arg(required = true)]
     scenarios: Vec<PathBuf>,
@@ -201,6 +205,7 @@ async fn main() -> Result<()> {
                 bot_dir: &sessions.bot,
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
+                jobs: sessions.jobs,
             })
             .await?;
             if let Some(path) = &reward
@@ -225,6 +230,7 @@ async fn main() -> Result<()> {
                 &sessions.bot,
                 &mut scenarios,
                 &sessions.logs,
+                sessions.jobs,
             )
             .await?;
             serde_json::to_string_pretty(&reports)?

@@ -3,6 +3,7 @@
   "description": "SOL drops 8.2% in two legs around slot 115, then rebounds to -0.55% of its starting mark",
   "symbol": "SOL",
   "duration_slots": 324,
+  "max_position": 100.0,
   "path": [
     {
       "slot": 115,
@@ -17,5 +18,5 @@
       "level_pct": -0.55
     }
   ],
-  "reference_pnl_usd": 43.1
+  "reference_pnl_usd": 215.52
 }

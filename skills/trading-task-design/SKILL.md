@@ -38,7 +38,8 @@ Make these choices without asking unless the user says otherwise:
 | Scored set | Hidden scenarios in `tests/`, never in the agent image | Iterating on scored scenarios is overfitting |
 | Practice set | Separate scenarios from the same family in `environment/practice` plus the generator | The agent can still do honest research |
 | Score | `clamp(Σ pnl / Σ reference_pnl, 0, 1)` over the whole scored set; also report the unclamped ratio and per-scenario PnL | Losing scenarios (where even the reference loses) still count, so risk control is rewarded; per-scenario ratios break when the reference's PnL is ≤ 0 |
-| Disqualification | Reward 0 for any refused RPC call or any session ending liquidatable | Cheating and ruin must never pay |
+| Position size | Cap exposure in the contract (`OTT_MAX_POSITION`), enforce it by sampling the position, and size the reference to the cap | PnL in dollars measures size as much as skill: without a cap, any bot that bets several times the reference's size and nets a profit saturates the reward |
+| Disqualification | Reward 0 for any refused RPC call, any position over the cap, or any session ending liquidatable | Cheating, leverage and ruin must never pay |
 | Valuation | From on-chain end state at the mark, never from bot logs | Grade outcomes, not claims |
 | Checks | oracle ≈ 1, nop = 0, cheater = 0, all through Harbor | Proves solvable, non-trivial, and hack-resistant |
 
@@ -125,6 +126,7 @@ ones for RL, with a private held-out pool that rotates.
 | A reference that is the optimum | No headroom; every strong bot ties at 1.0 |
 | No passive baseline | Can't tell skill from market drift |
 | Free fills at mid | Every strategy looks profitable |
+| No position cap, or a reference far below it | The reward measures leverage: the first real agent in open-trading bet 6× the reference's size and hit 1.0 with an ordinary strategy |
 
 ## Reference files
 

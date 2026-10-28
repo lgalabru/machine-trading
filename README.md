@@ -198,12 +198,17 @@ calibration against real agents, and it ends with a pre-publish checklist.
 
 ### Release
 
+Bump `tag` in the Justfile, build the image and run the checks on it
+(`just image && just harbor-checks`), commit, then:
+
 ```sh
-# bump `tag` in the Justfile, then:
-just push-image                        # amd64 + arm64; ~40 min on Apple silicon
-just pin-image                         # pin every task to the pushed digest
-harbor sync bench/tasks && harbor publish bench/tasks --public
+just release     # push the image (amd64 + arm64, ~40 min on Apple silicon),
+                 # pin every task to its digest, lint, sync digests, publish
 ```
+
+Commit the pins and digests it writes. CI checks every push (fmt, clippy,
+tests, lint, calibrated scenarios), and builds the image and runs the
+oracle through Harbor weekly.
 
 ## Known gaps
 

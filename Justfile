@@ -79,6 +79,21 @@ pin-image:
     echo "$ref@$digest"
     sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" {{tasks}}/*/environment/Dockerfile {{tasks}}/*/tests/Dockerfile
 
+# Release: push the image, pin every task to it, check, and publish the
+# dataset. Bump `tag` first. Run `just harbor-checks` on the new image before
+# releasing it.
+release: check-solution
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git diff --quiet && git diff --cached --quiet || { echo "commit or stash your changes first"; exit 1; }
+    just push-image
+    just pin-image
+    for task in {{tasks}}/*/; do harbor lint "$task" --select ALL; done
+    harbor sync {{tasks}}
+    # Publishing a dataset asks for confirmation, even with -y.
+    yes | harbor publish {{tasks}} --public
+    echo "released {{registry}}/{{image}}:{{tag}}; commit the pins and digests"
+
 # Copy the reference bot into the task's solution.
 solution:
     mkdir -p {{task}}/solution/src

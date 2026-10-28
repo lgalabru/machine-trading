@@ -26,6 +26,7 @@ trading-specific.
 
 - [ ] Reference bot calibrated on every scored scenario (`just calibrate`); none non-positive.
 - [ ] Valuation reads on-chain state only.
+- [ ] Position size is capped in the contract and enforced by the grader, and the reference trades up to the cap. *Prevents a reward that measures leverage instead of skill.*
 - [ ] Raw PnL and per-scenario scores reported alongside the reward.
 - [ ] Hidden set large enough: 10+ for evals (see quant-pitfalls.md).
 

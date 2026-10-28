@@ -15,13 +15,13 @@ use std::{
 };
 
 use ott_botkit::{BotEnv, QUOTE_LOTS_PER_USD};
-use surfpool_sdk::CheatcodeFilter;
 use serde::Serialize;
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
+use surfpool_sdk::CheatcodeFilter;
 use tokio::process::{Child, Command};
 use tracing::{info, warn};
 
@@ -37,7 +37,10 @@ use crate::{
 /// Collateral each session's trader starts with.
 pub const DEPOSIT_USDC: f64 = 10_000.0;
 /// The unprivileged account bots run as when the grader runs as root.
-pub const BOT_USER: &str = "ott-bot";
+/// Unix users bots run as when the grader runs as root, one per session that
+/// can run at once (see [`SessionOptions::slot`]). Each session kills every
+/// process its user owns when it ends, so two sessions never share one.
+pub const BOT_USERS: [&str; 4] = ["ott-bot", "ott-bot-2", "ott-bot-3", "ott-bot-4"];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
@@ -47,6 +50,9 @@ pub struct SessionOptions<'a> {
     pub bot_dir: &'a Path,
     /// Where the bot's stdout and stderr go.
     pub bot_log: &'a Path,
+    /// Which of [`BOT_USERS`] the bot runs as. Sessions that run at the same
+    /// time must use different slots.
+    pub slot: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +76,10 @@ pub struct SessionReport {
     /// the wall clock, so a session with many is not comparable to one
     /// without; [`crate::grade`] refuses to score it.
     pub late_slots: u64,
+    /// The largest position, long or short, in base units, the bot held while
+    /// it ran, and the scenario's cap on it.
+    pub peak_position: f64,
+    pub max_position: f64,
 }
 
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
@@ -91,7 +101,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let start_value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot)?;
+    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
     let start_slot = rpc.get_slot()?;
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
@@ -99,6 +109,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         exchange_path: world.exchange_path.clone(),
         symbol: scenario.symbol.clone(),
         end_slot: start_slot + scenario.duration_slots,
+        max_position: scenario.max_position,
     };
     // The scenario is the grader's last cheatcode. Lock them all before the
     // bot starts: a bot that finds the surfnet's own port, past the guard,
@@ -122,10 +133,19 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     );
 
     let mut bot_exit = None;
+    // Sampled twice a second, the loop's cadence: a fill persists until the
+    // bot trades out of it, so a position over the cap is caught.
+    let mut peak_position: f64 = 0.0;
     loop {
         if rpc.get_slot()? >= env.end_slot {
             break;
         }
+        let held = hawkeye
+            .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
+            .await?
+            .value
+            .base_lots;
+        peak_position = peak_position.max(phoenix.lots_to_base_units(market, held).abs());
         if bot_exit.is_none()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
@@ -138,10 +158,13 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    stop_bot(&mut child, workdir.bot_user.is_some()).await;
+    stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
     let late_slots = surfnet.coalesced_slots() - late_before;
     if late_slots > 0 {
-        warn!(scenario = scenario.name, late_slots, "the clock fell behind during the session");
+        warn!(
+            scenario = scenario.name,
+            late_slots, "the clock fell behind during the session"
+        );
     }
 
     let end_value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
@@ -169,6 +192,8 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         refused_calls: guard.refused(),
         bot_exit,
         late_slots,
+        peak_position: peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs()),
+        max_position: scenario.max_position,
     };
     info!(
         scenario = report.scenario,
@@ -222,12 +247,12 @@ struct SessionDir {
 }
 
 impl SessionDir {
-    fn create(bot: &Keypair) -> Result<Self> {
+    fn create(bot: &Keypair, user: &str) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("ott-session-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).map_err(io_error(&path))?;
         let dir = Self {
             path,
-            bot_user: bot_user(),
+            bot_user: bot_user(user),
         };
         let keypair = serde_json::to_string(&bot.to_bytes().to_vec())?;
         std::fs::write(dir.keypair_path(), keypair).map_err(io_error(dir.keypair_path()))?;
@@ -250,21 +275,21 @@ impl Drop for SessionDir {
     }
 }
 
-/// When the grader runs as root (as in the task's verifier), bots run as
-/// [`BOT_USER`] so they can't read the hidden scenarios, write rewards, or
-/// signal the grader. Run unprivileged, bots run as the current user.
-fn bot_user() -> Option<(u32, u32)> {
+/// When the grader runs as root (as in the task's verifier), bots run as one
+/// of [`BOT_USERS`] so they can't read the hidden scenarios or signal the
+/// grader. Run unprivileged, bots run as the current user.
+fn bot_user(user: &str) -> Option<(u32, u32)> {
     // SAFETY: getuid has no preconditions; getpwnam is given a valid C string
     // and its result is read before any other passwd call.
     unsafe {
         if libc::getuid() != 0 {
             return None;
         }
-        let name = std::ffi::CString::new(BOT_USER).expect("no NUL in user name");
+        let name = std::ffi::CString::new(user).expect("no NUL in user name");
         let entry = libc::getpwnam(name.as_ptr());
         if entry.is_null() {
             warn!(
-                user = BOT_USER,
+                user,
                 "running as root without a bot user; the bot runs as root"
             );
             return None;
@@ -310,7 +335,7 @@ fn spawn_bot(bot_dir: &Path, env: &BotEnv, workdir: &SessionDir, log: &Path) -> 
     command.spawn().map_err(io_error(&run_sh))
 }
 
-async fn stop_bot(child: &mut Child, as_bot_user: bool) {
+async fn stop_bot(child: &mut Child, bot_user: Option<&str>) {
     if let Some(pid) = child.id() {
         let group = -(pid as i32);
         // SAFETY: signalling a process group we created; a stale group is harmless.
@@ -324,11 +349,11 @@ async fn stop_bot(child: &mut Child, as_bot_user: bool) {
         unsafe { libc::kill(group, libc::SIGKILL) };
     }
     let _ = child.wait().await;
-    if as_bot_user {
+    if let Some(user) = bot_user {
         // A bot can leave its process group with setsid; running as its own
         // user, it can't escape this.
         let _ = std::process::Command::new("pkill")
-            .args(["-KILL", "-u", BOT_USER])
+            .args(["-KILL", "-u", user])
             .status();
     }
 }

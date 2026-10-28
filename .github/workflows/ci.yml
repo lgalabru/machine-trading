@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly: catch a Surfpool or Phoenix change that breaks the task image.
+    - cron: "0 6 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fast checks that need no Rust build.
+  tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Harbor
+        run: uv tool install harbor==0.25.0
+      - name: The oracle is the reference bot
+        run: |
+          for task in bench/tasks/*/; do
+            [ -d "$task/solution/src" ] || continue
+            diff -u bots/reference/src/main.rs "$task/solution/src/main.rs"
+          done
+      - name: Lint every task
+        # Images are pinned by `just release`; between releases a task may
+        # point at an unpinned local tag.
+        run: |
+          for task in bench/tasks/*/; do
+            harbor lint "$task" --select ALL --ignore unpinned-image
+          done
+      - name: Scenarios are calibrated and capped
+        run: |
+          for f in bench/tasks/*/environment/practice/*.json bench/tasks/*/tests/scenarios/*.json; do
+            jq -e '(.reference_pnl_usd | type == "number") and (.max_position > 0)' "$f" > /dev/null \
+              || { echo "::error file=$f::missing reference_pnl_usd or max_position"; exit 1; }
+          done
+          for task in bench/tasks/*/; do
+            total=$(jq -s 'map(.reference_pnl_usd) | add' "$task"/tests/scenarios/*.json)
+            jq -en "$total > 0" > /dev/null || { echo "::error::$task: the reference loses on the hidden set ($total)"; exit 1; }
+          done
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev clang libclang-dev
+      - uses: actions/checkout@v4
+      - name: Install toolchains
+        # rust-toolchain pins stable; rustfmt.toml uses nightly-only options.
+        run: |
+          rustup show active-toolchain
+          rustup component add clippy
+          rustup toolchain install nightly --profile minimal --component rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo +nightly fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+
+  # The expensive end-to-end check: build the task image from this commit and
+  # run the oracle through Harbor. Weekly and on demand only.
+  image:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: extractions/setup-just@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Install Harbor
+        run: uv tool install harbor==0.25.0
+      - name: Pull the snapshot out of the published image
+        run: just snapshot-pull
+      - name: Build the task image
+        run: just image
+      - name: Oracle scores 1
+        run: |
+          harbor run -p bench/tasks/phoenix-flash-crash -a oracle -o jobs
+          reward=$(jq '.reward' "$(find jobs -name reward.json | head -1)")
+          echo "oracle reward: $reward"
+          jq -en "$reward > 0.99" > /dev/null
