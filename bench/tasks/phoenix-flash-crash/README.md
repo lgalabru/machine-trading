@@ -16,8 +16,9 @@ every dip and holds wins most sessions and still loses overall.
   bot that builds and never trades, six practice scenarios, the scenario
   generator, and `ott-practice`, which grades the bot exactly as the verifier
   does.
-- **Verifier:** receives only `/app/bot`. With no network, it replays twelve
-  hidden scenarios, each on a fresh surfnet. Before the bot starts, every
+- **Verifier:** a 384 MB Debian slim image with the grader and the snapshot,
+  and no toolchain. It receives only `/app/bot`. With no network, it replays
+  twelve hidden scenarios, three at a time, each on a fresh surfnet. Before the bot starts, every
   cheatcode is locked for good. The bot runs as an unprivileged user behind an
   RPC proxy that forwards standard Solana methods only.
 - **Reward:** `clamp(Σ bot PnL / Σ reference PnL, 0, 1)` over the twelve

@@ -3,8 +3,9 @@
 # grader must close. The guard must refuse the cheatcodes (disqualifying the
 # bot, so the reward is 0), and the file system and signals must hold.
 set -u
+. "$(dirname "$0")/http.sh"
 rpc() {
-  curl -s "$OTT_RPC_URL" -H 'content-type: application/json' -d "$1"
+  http_post "$OTT_RPC_URL" "$1"
   echo
 }
 owner=11111111111111111111111111111111
