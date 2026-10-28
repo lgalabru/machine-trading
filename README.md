@@ -136,7 +136,7 @@ open-trading/
 ├── bench/                 📊 the benchmark
 │   ├── tasks/             Harbor dataset: dataset.toml + one directory per task
 │   ├── checks/            cheating bots every task must score 0
-│   └── image/             the one Docker image every task builds on
+│   └── image/             the images every task builds on: dev (agents) and runtime (verifiers)
 ├── crates/                🦀 shared Rust
 │   ├── core/              ott-core: offline worlds, scenario families, RPC guard, sessions, grading
 │   ├── cli/               ott: the grader and scenario generator
@@ -198,16 +198,16 @@ calibration against real agents, and it ends with a pre-publish checklist.
 
 ### Release
 
-Bump `tag` in the Justfile, build the image and run the checks on it
+Bump `tag` in the Justfile, build the images and run the checks on them
 (`just image && just harbor-checks`), commit, then:
 
 ```sh
-just release     # push the image (amd64 + arm64, ~40 min on Apple silicon),
+just release     # push both images (amd64 + arm64, ~40 min on Apple silicon),
                  # pin every task to its digest, lint, sync digests, publish
 ```
 
 Commit the pins and digests it writes. CI checks every push (fmt, clippy,
-tests, lint, calibrated scenarios), and builds the image and runs the
+tests, lint, calibrated scenarios), and builds the images and runs the
 oracle through Harbor weekly.
 
 ## Known gaps

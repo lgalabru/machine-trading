@@ -25,11 +25,12 @@ test:
 snapshot-prepare out:
     cargo run --release -- snapshot prepare --out {{out}}
 
-# Copy the snapshot's surfnet.json, too big for git, out of the published image.
+# Copy the snapshot's surfnet.json, too big for git, out of the published
+# runtime image.
 snapshot-pull:
     #!/usr/bin/env bash
     set -euo pipefail
-    id="$(docker create {{registry}}/{{image}}:{{tag}})"
+    id="$(docker create {{registry}}/{{image}}:{{tag}}-runtime)"
     trap 'docker rm "$id" > /dev/null' EXIT
     docker cp "$id:/opt/ott/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
     echo "snapshots/{{snapshot}}/surfnet.json"
@@ -56,28 +57,39 @@ calibrate +files: bots
 grade bot +files:
     cargo run --release -- grade --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/grade {{files}}
 
-# The shared task image, for this machine only. Tag it as the registry name so
-# task Dockerfiles that aren't pinned yet build against it.
+# The task images, for this machine only: dev (agents) and runtime
+# (verifiers). Tagged as the registry names, so task Dockerfiles that aren't
+# pinned yet build against them.
 image:
-    docker buildx build -f bench/image/Dockerfile \
+    docker buildx build -f bench/image/Dockerfile --target runtime \
+        -t {{registry}}/{{image}}:{{tag}}-runtime --load .
+    docker buildx build -f bench/image/Dockerfile --target dev \
         -t {{registry}}/{{image}}:{{tag}} --load .
 
-# Build the image for amd64 and arm64 and push it. Pin the tasks to the
-# pushed digest afterwards (`just pin-image`).
+# Build both images for amd64 and arm64 and push them. Pin the tasks to the
+# pushed digests afterwards (`just pin-image`).
 # amd64 builds under emulation on Apple silicon: expect the first run to be slow.
 push-image jobs="3":
-    docker buildx build -f bench/image/Dockerfile \
+    docker buildx build -f bench/image/Dockerfile --target runtime \
+        --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
+        -t {{registry}}/{{image}}:{{tag}}-runtime --push .
+    docker buildx build -f bench/image/Dockerfile --target dev \
         --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
         -t {{registry}}/{{image}}:{{tag}} --push .
 
-# Point every task's Dockerfiles at the pushed image, by digest.
+# Point every task at the pushed images, by digest: environments at dev,
+# verifiers at runtime.
 pin-image:
     #!/usr/bin/env bash
     set -euo pipefail
-    ref="{{registry}}/{{image}}:{{tag}}"
-    digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ { print $2; exit }')"
-    echo "$ref@$digest"
-    sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" {{tasks}}/*/environment/Dockerfile {{tasks}}/*/tests/Dockerfile
+    pin() {
+      local ref="$1"; shift
+      local digest; digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ { print $2; exit }')"
+      echo "$ref@$digest"
+      sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
+    }
+    pin {{registry}}/{{image}}:{{tag}} {{tasks}}/*/environment/Dockerfile
+    pin {{registry}}/{{image}}:{{tag}}-runtime {{tasks}}/*/tests/Dockerfile
 
 # Release: push the image, pin every task to it, check, and publish the
 # dataset. Bump `tag` first. Run `just harbor-checks` on the new image before
@@ -92,7 +104,7 @@ release: check-solution
     harbor sync {{tasks}}
     # Publishing a dataset asks for confirmation, even with -y.
     yes | harbor publish {{tasks}} --public
-    echo "released {{registry}}/{{image}}:{{tag}}; commit the pins and digests"
+    echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
 # Copy the reference bot into the task's solution.
 solution:
