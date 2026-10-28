@@ -103,7 +103,7 @@ release: check-solution
     for task in {{tasks}}/*/; do harbor lint "$task" --select ALL; done
     harbor sync {{tasks}}
     # Publishing a dataset asks for confirmation, even with -y.
-    yes | harbor publish {{tasks}} --public
+    printf 'y\n' | harbor publish {{tasks}} --public
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
 # Benchmark agents on the published dataset, on an idle machine: other load
