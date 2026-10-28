@@ -1,0 +1,9 @@
+**/target
+**/bin
+.git
+.env
+.surfpool
+jobs
+strategy
+tasks
+checks

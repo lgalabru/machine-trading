@@ -1,0 +1,40 @@
+[workspace]
+members = ["crates/*", "bots/*"]
+default-members = ["crates/cli"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+ott-botkit = { path = "crates/botkit" }
+ott-core = { path = "crates/core" }
+
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+solana-commitment-config = "3"
+solana-compute-budget-interface = "3"
+solana-keypair = "3"
+solana-pubkey = "4"
+solana-rpc-client = "4.3"
+solana-rpc-client-api = "4.3"
+solana-signer = "3"
+solana-transaction = { version = "4.3", features = ["wincode"] }
+# Local integration branch: Phoenix templates from surfpool#862 plus
+# SurfnetBuilder::snapshot_file (feat/sdk-snapshot). Switch to a release once both ship.
+surfpool-sdk = { path = "../surfpool-ofm/crates/sdk" }
+surfpool-types = { path = "../surfpool-ofm/crates/types" }
+reqwest = { version = "0.12", default-features = false }
+thiserror = "2"
+libc = "0.2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

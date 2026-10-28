@@ -1,0 +1,16 @@
+/target
+node_modules/
+# Localnet keypairs: never commit, even test ones.
+keys/
+/jobs
+
+# Local secrets (fork RPC key). Never commit.
+.env
+
+# Surfnet account dumps are build artifacts (~170 MB). The manifest and
+# exchange metadata next to them are small and stay in git as provenance.
+snapshots/*/surfnet.json
+
+.surfpool/
+surfpool-mcp-schemas.json
+__pycache__/
