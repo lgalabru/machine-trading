@@ -19,8 +19,8 @@ category = "trading"
 snapshot = "phoenix-sol-2026-10-27"
 
 [verifier]
-# Twelve hidden scenarios of 55-105s of market time each, plus ~20s of setup
-# per session: ~20 minutes, with headroom.
+# Twelve hidden scenarios of 55-105s of market time each, three at a time
+# (tests/test.sh): ~8 minutes, with room to rerun them one at a time.
 timeout_sec = 2400.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
