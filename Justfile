@@ -5,7 +5,7 @@ snapshot := "phoenix-sol-2026-10-27"
 registry := "ghcr.io/solana-foundation"
 image := "open-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.2.0"
+tag := "0.3.0"
 tasks := "bench/tasks"
 task := tasks + "/phoenix-flash-crash"
 
@@ -105,6 +105,25 @@ release: check-solution
     # Publishing a dataset asks for confirmation, even with -y.
     yes | harbor publish {{tasks}} --public
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
+
+# Benchmark agents on the published dataset, on an idle machine: other load
+# slows the surfnets' clocks, and the grader fails sessions it can't run on
+# time. Reads ANTHROPIC_API_KEY from .env or ~/.open-trading.env. Results go
+# to jobs/bench/; read them with `harbor view jobs/bench`.
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a
+    [ -f .env ] && . ./.env
+    [ -f ~/.open-trading.env ] && . ~/.open-trading.env
+    set +a
+    [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set"; exit 1; }
+    version="{{version}}"
+    dataset="solana-foundation/open-trading${version:+@$version}"
+    for model in {{models}}; do
+      echo "== $model on $dataset: {{k}} trials, {{n}} at a time"
+      harbor run -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o jobs/bench
+    done
 
 # Copy the reference bot into the task's solution.
 solution:

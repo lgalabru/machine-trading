@@ -15,6 +15,11 @@ total PnL over the hidden set, normalized against a reference bot's.
 
 ## Changelog
 
+- **0.3.0.** `phoenix-flash-crash`: a stronger reference that scales into the
+  crash in two tranches and holds for the rebound, with a slide stop (the
+  0.2.0 reference left most of the rebound on the table, and agents beat it
+  5×). Verifiers grade one session at a time, on a slim 384 MB runtime
+  image.
 - **0.2.0.** `phoenix-flash-crash`: crashes now stall or keep sliding as
   well as rebound; twelve stratified hidden scenarios scored as a set
   (`Σ PnL / Σ reference PnL`); a 100 SOL position cap, with the reference
