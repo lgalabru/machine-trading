@@ -1,7 +1,4 @@
 /target
-node_modules/
-# Localnet keypairs: never commit, even test ones.
-keys/
 /jobs
 
 # Local secrets (fork RPC key). Never commit.

@@ -1,0 +1,21 @@
+{
+  "name": "hidden-9",
+  "description": "SOL drops 11.6% in two legs around slot 111, then rebounds to -0.54% of its starting mark",
+  "symbol": "SOL",
+  "duration_slots": 381,
+  "path": [
+    {
+      "slot": 111,
+      "level_pct": -5.22
+    },
+    {
+      "slot": 173,
+      "level_pct": -11.61
+    },
+    {
+      "slot": 292,
+      "level_pct": -0.54
+    }
+  ],
+  "reference_pnl_usd": 56.91
+}

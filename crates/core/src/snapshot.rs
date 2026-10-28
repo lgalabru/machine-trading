@@ -169,24 +169,17 @@ pub async fn start_offline(dir: &Path) -> Result<OfflineWorld> {
         .offline(true)
         .snapshot_file(dir.join(SURFNET_FILE))
         .block_production_mode(BlockProductionMode::Clock)
-        .slot_time_ms(1)
+        .slot_time_ms(SLOT_TIME_MS)
         .start()
         .await?;
     chain::forward_surfnet_logs(&surfnet);
     // Phoenix reads both the slot and the unix time: it compares oracle and mark
     // update slots against the clock, and its oracle update walks the time since
-    // the last update, running out of compute when that is years. A fresh surfnet
-    // starts at slot 0, and time-travelling to `fork_slot` at 250ms slots would
-    // push the clock ~3.7 years ahead. Jumping at 1ms slots keeps it within days
-    // of real time; then restore the real slot time.
-    // TODO: restore the fork's exact slot and unix time once Surfpool can set both.
+    // the last update, running out of compute when that is long. Restore both
+    // to when the snapshot was taken, shortly after the fork slot.
     surfnet
         .cheatcodes()
-        .time_travel_to_slot(manifest.fork_slot)?;
-    surfnet.send_command(surfpool_sdk::SimnetCommand::CommandClock(
-        None,
-        surfpool_types::ClockCommand::UpdateSlotInterval(SLOT_TIME_MS),
-    ))?;
+        .time_travel_to_slot_at(manifest.fork_slot, manifest.created_at_unix * 1_000)?;
     Ok(OfflineWorld {
         surfnet,
         manifest,

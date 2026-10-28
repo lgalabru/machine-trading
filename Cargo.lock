@@ -4732,6 +4732,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "ott-bot-dip-buyer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ott-botkit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ott-bot-reference"
 version = "0.1.0"
 dependencies = [
@@ -4780,7 +4791,6 @@ dependencies = [
  "ott-core",
  "serde_json",
  "tokio",
- "tracing",
  "tracing-subscriber",
 ]
 
@@ -4789,7 +4799,6 @@ name = "ott-core"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
  "libc",
  "ott-botkit",
  "phoenix-rise",
@@ -4802,7 +4811,6 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-signer",
  "surfpool-sdk",
- "surfpool-types",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -10618,7 +10626,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surfpool-core"
-version = "1.6.1"
+version = "1.7.0"
 dependencies = [
  "agave-feature-set",
  "agave-geyser-plugin-interface",
@@ -10718,7 +10726,7 @@ dependencies = [
 
 [[package]]
 name = "surfpool-db"
-version = "1.6.1"
+version = "1.7.0"
 dependencies = [
  "diesel",
  "diesel-dynamic-schema",
@@ -10728,7 +10736,7 @@ dependencies = [
 
 [[package]]
 name = "surfpool-sdk"
-version = "1.6.1"
+version = "1.7.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -10757,7 +10765,7 @@ dependencies = [
 
 [[package]]
 name = "surfpool-types"
-version = "1.6.1"
+version = "1.7.0"
 dependencies = [
  "agave-feature-set",
  "anchor-lang-idl",
@@ -10777,6 +10785,7 @@ dependencies = [
  "solana-clock 3.2.1",
  "solana-commitment-config",
  "solana-epoch-info",
+ "solana-hash 4.6.0",
  "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-rpc-client-api",
