@@ -4799,6 +4799,7 @@ name = "ott-core"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures 0.3.34",
  "libc",
  "ott-botkit",
  "phoenix-rise",

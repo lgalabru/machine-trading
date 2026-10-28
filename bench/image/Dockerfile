@@ -33,11 +33,14 @@ ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 RUN apt-get update \
     && apt-get install -y --no-install-recommends procps jq \
     && rm -rf /var/lib/apt/lists/*
-# Graders run as root and start bots as ott-bot, so bots can't read hidden
+# Graders run as root and start bots as ott-bot*, so bots can't read hidden
 # scenarios or write rewards. Agents run as agent (task.toml sets
 # agent.user), and own everything they build into: the bot, the shared
 # target dir, the crate cache.
-RUN useradd --system --create-home --shell /usr/sbin/nologin ott-bot \
+# One bot user per session the grader can run at once (ott grade --jobs).
+RUN for user in ott-bot ott-bot-2 ott-bot-3 ott-bot-4; do \
+      useradd --system --create-home --shell /usr/sbin/nologin "$user"; \
+    done \
     && useradd --create-home --shell /bin/bash agent \
     && mkdir -p /app /opt/ott/target /opt/ott/practice \
     && chown agent:agent /app /opt/ott/target

@@ -11,6 +11,7 @@
 
 use std::{collections::BTreeMap, path::Path};
 
+use futures::{StreamExt, TryStreamExt};
 use serde::Serialize;
 use tracing::info;
 
@@ -94,6 +95,8 @@ pub struct GradeOptions<'a> {
     pub scenarios: &'a [Scenario],
     /// Bot logs go here as `<scenario>.log`.
     pub log_dir: &'a Path,
+    /// How many sessions to run at once.
+    pub jobs: usize,
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
@@ -119,6 +122,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.bot_dir,
         opts.scenarios,
         opts.log_dir,
+        opts.jobs,
     )
     .await?;
     check_timing(&sessions)?;
@@ -188,6 +192,11 @@ fn disqualification(session: &SessionReport) -> Option<String> {
             "called methods bots may not use: {}",
             session.refused_calls.join(", ")
         ))
+    } else if session.peak_position > session.max_position * (1.0 + 1e-9) {
+        Some(format!(
+            "held {:.2}, over the position cap of {}",
+            session.peak_position, session.max_position
+        ))
     } else if session.liquidatable {
         Some("ended the session liquidatable".to_string())
     } else {
@@ -204,9 +213,10 @@ pub async fn calibrate(
     bot_dir: &Path,
     scenarios: &mut [(std::path::PathBuf, Scenario)],
     log_dir: &Path,
+    jobs: usize,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
-    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir).await?;
+    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir, jobs).await?;
     // A reference recorded on a loaded machine would skew every score after it.
     check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
@@ -224,28 +234,47 @@ pub async fn calibrate(
     Ok(sessions)
 }
 
+/// Run every scenario, up to `jobs` at a time, reports in scenario order.
+///
+/// Concurrent sessions each get their own surfnet, and run their bots as
+/// different users (see [`session::BOT_USERS`]). Sessions are kept in an
+/// ordered window of `jobs`, so the ones running at once always have
+/// distinct `index % jobs` slots. A machine too loaded for `jobs` shows up as
+/// late slots, which fail the grade rather than skew it.
 async fn run_sessions(
     snapshot_dir: &Path,
     bot_dir: &Path,
     scenarios: &[Scenario],
     log_dir: &Path,
+    jobs: usize,
 ) -> Result<Vec<SessionReport>> {
+    if !(1..=session::BOT_USERS.len()).contains(&jobs) {
+        return Err(Error::Jobs(jobs, session::BOT_USERS.len()));
+    }
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
-    let mut reports = Vec::new();
-    for scenario in scenarios {
-        let bot_log = log_dir.join(format!("{}.log", scenario.name));
-        reports.push(
+    futures::stream::iter(scenarios.iter().enumerate())
+        .map(|(index, scenario)| async move {
+            // Stagger the first sessions so their surfnets don't race for
+            // the same free ports.
+            if index < jobs {
+                tokio::time::sleep(STAGGER * index as u32).await;
+            }
+            let bot_log = log_dir.join(format!("{}.log", scenario.name));
             session::run(SessionOptions {
                 snapshot_dir,
                 scenario,
                 bot_dir,
                 bot_log: &bot_log,
+                slot: index % jobs,
             })
-            .await?,
-        );
-    }
-    Ok(reports)
+            .await
+        })
+        .buffered(jobs)
+        .try_collect()
+        .await
 }
+
+const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {
@@ -264,7 +293,28 @@ mod tests {
             refused_calls: vec![],
             bot_exit: None,
             late_slots: 0,
+            peak_position: 0.0,
+            max_position: 100.0,
         }
+    }
+
+    #[test]
+    fn going_over_the_position_cap_disqualifies() {
+        let mut big = session(1_000.0);
+        big.peak_position = 119.0;
+        let report = score(vec![(session(50.0), 100.0), (big, 100.0)]);
+        assert_eq!(report.reward, 0.0);
+        assert!(
+            report.scenarios[1]
+                .disqualified
+                .as_deref()
+                .unwrap()
+                .contains("cap")
+        );
+
+        let mut at_cap = session(100.0);
+        at_cap.peak_position = 100.0;
+        assert_eq!(score(vec![(at_cap, 100.0)]).reward, 1.0);
     }
 
     #[test]

@@ -21,8 +21,11 @@ every dip and holds wins most sessions and still loses overall.
   cheatcode is locked for good. The bot runs as an unprivileged user behind an
   RPC proxy that forwards standard Solana methods only.
 - **Reward:** `clamp(Σ bot PnL / Σ reference PnL, 0, 1)` over the twelve
-  scenarios. Losses count, so risk control matters. The reward is 0 if any
-  session makes a refused RPC call or ends liquidatable. `reward.json` also
+  scenarios. Losses count, so risk control matters. Positions are capped at
+  100 SOL, and the reference trades up to the cap, so the ratio compares
+  strategies at equal size rather than rewarding leverage. The reward is 0
+  if any session makes a refused RPC call, goes over the cap, or ends
+  liquidatable. `reward.json` also
   reports the unclamped `pnl_ratio`, the totals, and each scenario's PnL.
 
 ## Checks

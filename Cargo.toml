@@ -15,6 +15,7 @@ ott-core = { path = "crates/core" }
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 clap = { version = "4", features = ["derive"] }
+futures = "0.3"
 phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
