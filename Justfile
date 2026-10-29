@@ -21,6 +21,24 @@ lint:
 test:
     cargo test --workspace
 
+# Run mth from source, like `cargo run --release --`. Arguments keep their
+# quoting, and a leading `mth` is optional: `just run mth scenario play "..."`.
+[positional-arguments]
+run *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "${1:-}" = mth ] && shift
+    exec cargo run --release -- "$@"
+
+# Install a binary into ~/.cargo/bin: `just install` or `just install mth`.
+install bin="mth":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{bin}}" in
+      mth) cargo install --locked --path crates/cli ;;
+      *) echo "unknown binary {{bin}} (have: mth)"; exit 1 ;;
+    esac
+
 # Fork mainnet and write a pinned Phoenix snapshot.
 snapshot-prepare out:
     cargo run --release -- snapshot prepare --out {{out}}
