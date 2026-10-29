@@ -23,6 +23,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
+use futures::StreamExt;
 use mth_core::{
     chain,
     phoenix::Phoenix,
@@ -44,6 +45,8 @@ use crate::{
 };
 
 const PAGE: &str = include_str!("viewer.html");
+/// How many markets' marks a restore reads at once.
+const MARK_READS: usize = 8;
 
 /// A surfnet restored from a snapshot, and what a scenario on it starts from.
 pub struct World {
@@ -107,11 +110,14 @@ impl World {
             .filter(|s| *s != default)
             .map(str::to_string)
             .collect();
+        // A few at a time: each read opens a connection to the surfnet, and
+        // a hundred at once run a shell's default 256 open files out.
+        let reads: Vec<Result<Market>> = futures::stream::iter(others.iter().map(|s| mark(s)))
+            .buffered(MARK_READS)
+            .collect()
+            .await;
         let mut markets = vec![first.clone()];
-        for (symbol, read) in others
-            .iter()
-            .zip(futures::future::join_all(others.iter().map(|s| mark(s))).await)
-        {
+        for (symbol, read) in others.iter().zip(reads) {
             match read {
                 Ok(market) if market.mark_ticks > 0 => markets.push(market),
                 Ok(_) => debug!(symbol, "no mark on the snapshot"),
