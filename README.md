@@ -205,7 +205,10 @@ mth scenario play scenario.json                               # replays a saved 
 slot by slot, with every override on the timeline; press Play, or pass
 `--autoplay`. Pause stops the surfnet's clock, Reset restores the snapshot on
 a fresh surfnet and stages the scenario again, and Stop shuts the surfnet
-down and ends the command. Agents are `claude-code` and `codex`; their ACP adapters
+down and ends the command. The Workbench (`` ` ``) is a bottom panel with
+the surfnet's RPC and websocket URLs, commands to reach them, and a live
+websocket stream of slots, logs and the accounts the overrides write, each
+update tagged with the override behind it. Agents are `claude-code` and `codex`; their ACP adapters
 (`claude-agent-acp`, `codex-acp`) come from `PATH`, or through `npx`
 otherwise. `surfpool` must be a build with the Phoenix templates. Both
 commands show progress lines; `-v` shows the logs, the agent's replies and
