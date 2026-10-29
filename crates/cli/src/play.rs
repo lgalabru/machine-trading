@@ -4,9 +4,11 @@
 //! The page is served by mth itself. It shows the planned path as soon as it
 //! loads; pressing Play (or `--autoplay`) registers the scenario at the
 //! current slot, and Pause stops the surfnet's clock, which holds the
-//! scenario where it is. Samples of the market's BBO are taken every slot.
+//! scenario where it is. The page has a chart per venue and dimension (see
+//! [`charts`]); every Phoenix market the scenario moves is sampled each slot.
 
 use std::{
+    collections::BTreeMap,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -36,7 +38,8 @@ use surfpool_types::Scenario;
 use tracing::{debug, info, warn};
 
 use crate::{
-    author::{self, Market, SLOTS_PER_SECOND},
+    author::{Market, Markets, SLOTS_PER_SECOND},
+    charts::{self, Chart},
     ui,
 };
 
@@ -45,7 +48,7 @@ const PAGE: &str = include_str!("viewer.html");
 /// A surfnet restored from a snapshot, and what a scenario on it starts from.
 pub struct World {
     pub offline: OfflineWorld,
-    pub market: Market,
+    pub markets: Markets,
     payer: Pubkey,
     snapshot_name: String,
 }
@@ -72,7 +75,7 @@ impl World {
                     ui::fail(format!("Couldn't restore {snapshot_name}"));
                 }
             })?;
-        let symbol = symbol.unwrap_or(&world.manifest.symbol).to_string();
+        let default = symbol.unwrap_or(&world.manifest.symbol).to_string();
         let rpc = chain::rpc_client(&world.surfnet);
         // Hawkeye's views are simulated transactions: they need a fee payer
         // that exists.
@@ -85,32 +88,63 @@ impl World {
         )
         .await?;
         let phoenix = Phoenix::new(world.exchange.clone(), world.surfnet.rpc_url());
-        let (mark_ticks, ..) = bbo(&phoenix, payer, &symbol).await?;
-        let mark_usd = phoenix.ticks_to_usd(phoenix.market(&symbol)?, mark_ticks);
-        let market = Market {
+        let mark = async |symbol: &str| -> Result<Market> {
+            let (mark_ticks, ..) = bbo(&phoenix, payer, symbol).await?;
+            Ok(Market {
+                symbol: symbol.to_string(),
+                mark_ticks,
+                mark_usd: phoenix.ticks_to_usd(phoenix.market(symbol)?, mark_ticks),
+            })
+        };
+        let first = mark(&default).await?;
+        // Every other market's mark, read at once: a scenario may move any
+        // of them. Markets without a price on the snapshot are left out.
+        let others: Vec<String> = serde_json::to_value(&world.exchange)?["markets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m["symbol"].as_str())
+            .filter(|s| *s != default)
+            .map(str::to_string)
+            .collect();
+        let mut markets = vec![first.clone()];
+        for (symbol, read) in others
+            .iter()
+            .zip(futures::future::join_all(others.iter().map(|s| mark(s))).await)
+        {
+            match read {
+                Ok(market) if market.mark_ticks > 0 => markets.push(market),
+                Ok(_) => debug!(symbol, "no mark on the snapshot"),
+                Err(error) => debug!(symbol, "no mark on the snapshot: {error:#}"),
+            }
+        }
+        let markets = Markets {
+            default,
+            markets,
             perp_asset_map: phoenix.perp_asset_map()?.to_string(),
             surfnet_port: port_of(world.surfnet.rpc_url())?,
-            symbol,
-            mark_ticks,
-            mark_usd,
         };
         info!(
             rpc = world.surfnet.rpc_url(),
-            symbol = market.symbol,
-            mark_ticks = market.mark_ticks,
-            mark_usd,
+            symbol = first.symbol,
+            mark_ticks = first.mark_ticks,
+            mark_usd = first.mark_usd,
+            markets = markets.markets.len(),
             "surfnet ready"
         );
         if announce {
             ui::done(format!(
                 "Surfnet ready {} {}",
-                ui::bold(format!("{} ${:.2}", market.symbol, market.mark_usd)),
-                ui::dim(format!("offline · {snapshot_name}"))
+                ui::bold(format!("{} ${:.2}", first.symbol, first.mark_usd)),
+                ui::dim(format!(
+                    "{} Phoenix markets · offline · {snapshot_name}",
+                    markets.markets.len()
+                ))
             ));
         }
         Ok(Self {
             offline: world,
-            market,
+            markets,
             payer,
             snapshot_name,
         })
@@ -131,28 +165,30 @@ impl World {
         self.offline.surfnet.ws_url().to_string()
     }
 
-    /// The accounts the workbench subscribes to: the one the scenario's
-    /// overrides write, and the market they move.
-    fn watched(&self) -> Vec<Watch> {
+    /// The accounts the workbench subscribes to: the one Phoenix's market
+    /// overrides write, and each charted market and its makers' quotes.
+    fn watched(&self, symbols: &[String]) -> Vec<Watch> {
         let exchange = serde_json::to_value(&self.offline.exchange).unwrap_or_default();
-        let market = exchange["markets"]
-            .as_array()
-            .and_then(|markets| markets.iter().find(|m| m["symbol"] == self.market.symbol));
         let mut watched = vec![Watch {
             label: "PerpAssetMap".into(),
-            pubkey: self.market.perp_asset_map.clone(),
+            pubkey: self.markets.perp_asset_map.clone(),
             note: "the oracle and mark prices the overrides write".into(),
         }];
-        for (key, label, note) in [
-            ("marketPubkey", "market", "the order book"),
-            ("splinePubkey", "spline", "the market makers' quotes"),
-        ] {
-            if let Some(pubkey) = market.and_then(|m| m[key].as_str()) {
-                watched.push(Watch {
-                    label: format!("{} {label}", self.market.symbol),
-                    pubkey: pubkey.into(),
-                    note: note.into(),
-                });
+        for symbol in symbols {
+            let market = exchange["markets"]
+                .as_array()
+                .and_then(|markets| markets.iter().find(|m| m["symbol"] == symbol.as_str()));
+            for (key, label, note) in [
+                ("marketPubkey", "market", "order book"),
+                ("splinePubkey", "spline", "market makers' quotes"),
+            ] {
+                if let Some(pubkey) = market.and_then(|m| m[key].as_str()) {
+                    watched.push(Watch {
+                        label: format!("{symbol} {label}"),
+                        pubkey: pubkey.into(),
+                        note: format!("{symbol}'s {note}"),
+                    });
+                }
             }
         }
         watched
@@ -186,9 +222,15 @@ pub struct PlayOptions {
     pub autoplay: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+/// Every sampled market at one slot, by series key.
+#[derive(Debug, Clone, Serialize)]
 struct Sample {
     slot: u64,
+    quotes: BTreeMap<String, Quote>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct Quote {
     mark: f64,
     bid: Option<f64>,
     ask: Option<f64>,
@@ -198,11 +240,10 @@ struct Sample {
 struct Plan {
     name: String,
     description: String,
-    symbol: String,
     snapshot: String,
-    start_mark_usd: f64,
-    /// The market-move targets, `[relative slot, usd]`, starting at 0.
-    path: Vec<(u64, f64)>,
+    /// One per venue and dimension; the first is Phoenix's prices.
+    charts: Vec<Chart>,
+    /// Each with the `chart` it lands on (see [`charts::layout`]).
     overrides: Vec<Value>,
     end_slot: u64,
     /// Accounts the workbench streams over the surfnet's websocket.
@@ -235,7 +276,8 @@ struct AppState {
     plan: Plan,
     scenario: Scenario,
     snapshot_dir: PathBuf,
-    symbol: String,
+    /// The market a reset restores the world around.
+    default: String,
     live: Mutex<Live>,
     session: tokio::sync::Mutex<Option<Session>>,
     /// Signalled by Stop: shuts the server, and with it the surfnet, down.
@@ -322,7 +364,7 @@ impl AppState {
         }
         // On its own thread: the restore's future isn't `Send`, which a
         // request handler's must be.
-        let (dir, symbol) = (self.snapshot_dir.clone(), self.symbol.clone());
+        let (dir, symbol) = (self.snapshot_dir.clone(), self.default.clone());
         let restored = tokio::task::spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(World::start(&dir, Some(&symbol), false))
         })
@@ -359,15 +401,48 @@ impl AppState {
             world.rpc_url(),
             world.phoenix(),
             world.payer,
-            self.symbol.clone(),
+            self.prices()
+                .series
+                .iter()
+                .map(|s| s.symbol.clone())
+                .collect(),
         ));
         Session { world, sampler }
+    }
+
+    /// The chart mth samples.
+    fn prices(&self) -> &Chart {
+        &self.plan.charts[0]
+    }
+
+    /// Each sampled market's last mark and its change, for the terminal.
+    fn quotes(&self) -> String {
+        let live = self.live();
+        let last = live.samples.last();
+        self.prices()
+            .series
+            .iter()
+            .map(
+                |series| match last.and_then(|s| s.quotes.get(&series.key)) {
+                    Some(q) => format!(
+                        "{} ${:.2} {}",
+                        series.symbol,
+                        q.mark,
+                        ui::dim(format!(
+                            "{:+.2}%",
+                            (q.mark / series.start_usd - 1.0) * 100.0
+                        ))
+                    ),
+                    None => format!("{} –", series.symbol),
+                },
+            )
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 
     /// Where the scenario is, for the terminal.
     fn status(&self) -> Status {
         let live = self.live();
-        let last = live.samples.last().map(|s| s.mark);
         if live.resetting {
             return Status::Resetting;
         }
@@ -378,7 +453,6 @@ impl AppState {
         if at >= self.plan.end_slot {
             return Status::Done {
                 generation: live.generation,
-                last,
             };
         }
         let next = self
@@ -389,7 +463,6 @@ impl AppState {
         Status::Playing {
             at,
             paused: live.paused,
-            last,
             next: next.and_then(|o| o["label"].as_str()).map(str::to_string),
         }
     }
@@ -400,12 +473,10 @@ enum Status {
     Playing {
         at: u64,
         paused: bool,
-        last: Option<f64>,
         next: Option<String>,
     },
     Done {
         generation: u64,
-        last: Option<f64>,
     },
     Resetting,
 }
@@ -418,60 +489,44 @@ pub async fn play(
     opts: PlayOptions,
 ) -> Result<Value> {
     let phoenix = world.phoenix();
-    let symbol = world.market.symbol.clone();
-    let market = phoenix.market(&symbol)?;
-    let usd = |ticks: u64| phoenix.ticks_to_usd(market, ticks);
-
-    let mut path = vec![(0, world.market.mark_usd)];
-    let mut moves: Vec<_> = scenario
-        .overrides
+    let usd = |symbol: &str, ticks: u64| {
+        phoenix
+            .market(symbol)
+            .ok()
+            .map(|market| phoenix.ticks_to_usd(market, ticks))
+    };
+    let layout = charts::layout(
+        &scenario,
+        &surfpool_core::scenarios::TemplateRegistry::new(),
+        &world.markets,
+        usd,
+    );
+    let symbols: Vec<String> = layout.charts[0]
+        .series
         .iter()
-        .filter(|o| {
-            o.enabled
-                && o.template_id == "phoenix-market-move"
-                && o.values.get("symbol").and_then(Value::as_str) == Some(&symbol)
-        })
-        .filter_map(|o| Some((o.scenario_relative_slot, author::target_ticks(o)?)))
+        .map(|s| s.symbol.clone())
         .collect();
-    moves.sort_by_key(|(slot, _)| *slot);
-    path.extend(moves.into_iter().map(|(slot, ticks)| (slot, usd(ticks))));
-    let mut overrides: Vec<Value> = scenario
-        .overrides
-        .iter()
-        .filter(|o| o.enabled)
-        .map(|o| {
-            json!({
-                "slot": o.scenario_relative_slot,
-                "label": o.label.clone().unwrap_or_else(|| o.template_id.clone()),
-                "template": o.template_id,
-                "values": o.values,
-            })
-        })
-        .collect();
-    overrides.sort_by_key(|o| o["slot"].as_u64());
     let plan = Plan {
         name: scenario.name.clone(),
         description: scenario.description.clone(),
-        symbol: symbol.clone(),
         snapshot: world.snapshot_name.clone(),
-        start_mark_usd: world.market.mark_usd,
         end_slot: scenario
             .overrides
             .iter()
             .map(|o| o.scenario_relative_slot)
             .max()
             .unwrap_or(0),
-        path,
-        overrides,
+        charts: layout.charts,
+        overrides: layout.overrides,
         // The same accounts after a reset: it restores the same snapshot.
-        watch: world.watched(),
+        watch: world.watched(&symbols),
     };
 
     let state = Arc::new(AppState {
         plan,
         scenario: scenario.clone(),
         snapshot_dir,
-        symbol,
+        default: world.markets.default.clone(),
         live: Mutex::new(Live {
             rpc_url: world.rpc_url(),
             ws_url: world.ws_url(),
@@ -531,45 +586,76 @@ pub async fn play(
         "base_slot": live.base_slot,
         "last_slot": live.slot,
         "samples": live.samples.len(),
-        "start_mark_usd": state.plan.start_mark_usd,
-        "last_mark_usd": live.samples.last().map(|s| s.mark),
+        "markets": state
+            .prices()
+            .series
+            .iter()
+            .map(|series| {
+                let last = live
+                    .samples
+                    .last()
+                    .and_then(|s| s.quotes.get(&series.key))
+                    .map(|q| q.mark);
+                (
+                    series.symbol.clone(),
+                    json!({ "start_usd": series.start_usd, "last_usd": last }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>(),
     }))
 }
 
-/// Read the BBO once per slot until the task is aborted. Samples go to
-/// `generation` only: a sampler outliving its reset writes nothing.
+/// Read every charted market's BBO once per slot until the task is aborted.
+/// Samples go to `generation` only: a sampler outliving its reset writes
+/// nothing.
 async fn sample(
     state: Arc<AppState>,
     generation: u64,
     rpc_url: String,
     phoenix: Phoenix,
     payer: Pubkey,
-    symbol: String,
+    symbols: Vec<String>,
 ) {
     let rpc = mth_botkit::rpc_client(rpc_url);
-    let Ok(market) = phoenix.market(&symbol) else {
-        return;
-    };
-    let usd =
-        |ticks: u64| (ticks > 0 && ticks != u64::MAX).then(|| phoenix.ticks_to_usd(market, ticks));
     let mut last = None;
     loop {
         let result: Result<()> = async {
             let slot = rpc.get_slot()?;
             if last != Some(slot) {
-                let (mark, bid, ask) = bbo(&phoenix, payer, &symbol).await?;
+                let reads =
+                    futures::future::join_all(symbols.iter().map(|s| bbo(&phoenix, payer, s)))
+                        .await;
+                let mut quotes = BTreeMap::new();
+                let mut failed = None;
+                for (symbol, read) in symbols.iter().zip(reads) {
+                    let market = phoenix.market(symbol)?;
+                    let usd = |ticks: u64| {
+                        (ticks > 0 && ticks != u64::MAX)
+                            .then(|| phoenix.ticks_to_usd(market, ticks))
+                    };
+                    match read {
+                        Ok((mark, bid, ask)) => {
+                            quotes.insert(
+                                charts::key(symbol),
+                                Quote {
+                                    mark: phoenix.ticks_to_usd(market, mark),
+                                    bid: usd(bid),
+                                    ask: usd(ask),
+                                },
+                            );
+                        }
+                        Err(error) => failed = Some(format!("{symbol}: {error:#}")),
+                    }
+                }
                 let mut live = state.live();
                 if live.generation != generation {
                     return Ok(());
                 }
                 live.slot = slot;
-                live.error = None;
-                live.samples.push(Sample {
-                    slot,
-                    mark: phoenix.ticks_to_usd(market, mark),
-                    bid: usd(bid),
-                    ask: usd(ask),
-                });
+                live.error = failed;
+                if !quotes.is_empty() {
+                    live.samples.push(Sample { slot, quotes });
+                }
                 last = Some(slot);
             }
             Ok(())
@@ -578,7 +664,7 @@ async fn sample(
         if let Err(error) = result {
             // Reads can fail while an override rewrites the market; the page
             // shows the last error, and the next slot usually reads fine.
-            debug!("sampling the market: {error:#}");
+            debug!("sampling the markets: {error:#}");
             let mut live = state.live();
             if live.generation == generation {
                 live.error = Some(format!("{error:#}"));
@@ -590,16 +676,14 @@ async fn sample(
 
 /// Keep the terminal's status line in step with the scenario.
 async fn report(state: Arc<AppState>) {
-    let start = state.plan.start_mark_usd;
-    let symbol = state.plan.symbol.clone();
     let end = state.plan.end_slot;
-    let price = |mark: Option<f64>| match mark {
-        Some(mark) => format!(
-            "{symbol} ${mark:.2} {}",
-            ui::dim(format!("{:+.2}%", (mark / start - 1.0) * 100.0))
-        ),
-        None => format!("{symbol} –"),
-    };
+    let starts = state
+        .prices()
+        .series
+        .iter()
+        .map(|s| format!("{} ${:.2}", s.symbol, s.start_usd))
+        .collect::<Vec<_>>()
+        .join(" · ");
     // The run whose end has been reported, and the run last seen.
     let mut finished = None;
     let mut seen = 0;
@@ -613,19 +697,14 @@ async fn report(state: Arc<AppState>) {
             seen = generation;
             ui::done(format!(
                 "Reset {}",
-                ui::dim(format!("{symbol} ${start:.2} · run {}", generation + 1))
+                ui::dim(format!("{starts} · run {}", generation + 1))
             ));
             ui::start_untimed("Ready · press Play in the browser");
         }
         match status {
             Status::Resetting => ui::update("Resetting · restoring the snapshot"),
             Status::Staged => ui::update("Ready · press Play in the browser"),
-            Status::Playing {
-                at,
-                paused,
-                last,
-                next,
-            } => {
+            Status::Playing { at, paused, next } => {
                 let clock = format!(
                     "{} / {}",
                     ui::clock(at / SLOTS_PER_SECOND),
@@ -635,18 +714,14 @@ async fn report(state: Arc<AppState>) {
                     .map(|n| ui::dim(format!("· next: {n}")))
                     .unwrap_or_default();
                 let verb = if paused { "Paused" } else { "Playing" };
-                ui::update(format!("{verb} {clock} · {} {next}", price(last)));
+                ui::update(format!("{verb} {clock} · {} {next}", state.quotes()));
             }
-            Status::Done { generation, last } if finished != Some(generation) => {
+            Status::Done { generation } if finished != Some(generation) => {
                 finished = Some(generation);
-                let to = last.map_or_else(
-                    || "–".to_string(),
-                    |m| format!("${m:.2} ({:+.2}%)", (m / start - 1.0) * 100.0),
-                );
                 ui::done(format!(
                     "Played {} {}",
                     ui::bold(&state.plan.name),
-                    ui::dim(format!("{symbol} ${start:.2} → {to}"))
+                    state.quotes()
                 ));
                 ui::start_untimed("Serving the viewer · Ctrl-C to quit");
             }
@@ -750,10 +825,21 @@ mod tests {
             plan: Plan {
                 name: "crash".into(),
                 description: String::new(),
-                symbol: "SPCX".into(),
                 snapshot: "snap".into(),
-                start_mark_usd: 100.0,
-                path: vec![(0, 100.0)],
+                charts: vec![Chart {
+                    id: charts::PHOENIX_PRICE.into(),
+                    venue: "Phoenix".into(),
+                    title: "Mark price".into(),
+                    tracked: true,
+                    series: ["SPCX", "TSLA"]
+                        .map(|symbol| charts::Series {
+                            key: charts::key(symbol),
+                            symbol: symbol.into(),
+                            start_usd: 100.0,
+                            path: vec![(0, 100.0)],
+                        })
+                        .to_vec(),
+                }],
                 overrides: vec![
                     json!({ "slot": 10, "label": "first leg" }),
                     json!({ "slot": 30, "label": "second leg" }),
@@ -763,19 +849,23 @@ mod tests {
             },
             scenario,
             snapshot_dir: PathBuf::new(),
-            symbol: "SPCX".into(),
+            default: "SPCX".into(),
             live: Mutex::new(live),
             session: tokio::sync::Mutex::new(None),
             stop: tokio::sync::Notify::new(),
         }
     }
 
+    /// SPCX at `mark`; TSLA isn't read at this slot.
     fn sample(slot: u64, mark: f64) -> Sample {
-        Sample {
-            slot,
+        let quote = Quote {
             mark,
             bid: None,
             ask: None,
+        };
+        Sample {
+            slot,
+            quotes: BTreeMap::from([(charts::key("SPCX"), quote)]),
         }
     }
 
@@ -787,6 +877,7 @@ mod tests {
             ..Live::default()
         });
         assert!(matches!(staged.status(), Status::Staged));
+        assert_eq!(staged.quotes(), "SPCX – · TSLA –");
 
         let playing = state(Live {
             slot: 115,
@@ -795,17 +886,19 @@ mod tests {
             ..Live::default()
         });
         match playing.status() {
-            Status::Playing {
-                at,
-                paused,
-                last,
-                next,
-            } => {
-                assert_eq!((at, paused, last), (15, false, Some(97.5)));
+            Status::Playing { at, paused, next } => {
+                assert_eq!((at, paused), (15, false));
                 assert_eq!(next.as_deref(), Some("second leg"));
             }
             _ => panic!("expected Playing"),
         }
+        let quotes = playing.quotes();
+        assert!(
+            quotes.starts_with("SPCX $97.50")
+                && quotes.contains("-2.50%")
+                && quotes.ends_with("TSLA –"),
+            "{quotes}"
+        );
 
         let done = state(Live {
             slot: 140,
@@ -855,7 +948,8 @@ mod tests {
             "id=\"play\"",
             "id=\"reset\"",
             "id=\"stop\"",
-            "id=\"chart\"",
+            "id=\"charts\"",
+            "id=\"stats\"",
             "id=\"strip\"",
             "id=\"workbench\"",
             "id=\"wb-toggle\"",

@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 mod acp;
 mod author;
+mod charts;
 mod play;
 mod ui;
 
@@ -176,7 +177,7 @@ impl Authoring {
 
     /// Run the agent against `world`'s surfnet, off the async runtime.
     async fn author(&self, request: &str, world: &play::World) -> Result<surfpool_types::Scenario> {
-        let market = world.market.clone();
+        let markets = world.markets.clone();
         let (agent, model, request, surfpool, attempts, verbose) = (
             self.agent,
             self.model.clone(),
@@ -190,7 +191,7 @@ impl Authoring {
                 agent,
                 model: model.as_deref(),
                 request: &request,
-                market: &market,
+                markets: &markets,
                 surfpool: &surfpool,
                 attempts,
                 verbose,
@@ -356,7 +357,7 @@ async fn run() -> Result<()> {
             let world = authoring.world().await?;
             let file = PathBuf::from(&request);
             let scenario = if request.ends_with(".json") && file.is_file() {
-                let scenario = author::load_checked(&file, &world.market)?;
+                let scenario = author::load_checked(&file, &world.markets)?;
                 ui::done(format!(
                     "Loaded {} {}",
                     ui::bold(&scenario.name),

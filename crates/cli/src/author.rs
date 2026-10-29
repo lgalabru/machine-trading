@@ -90,22 +90,58 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-/// What the scenario starts from: the market it trades and its mark on the
-/// surfnet the agent can read.
+/// A Phoenix perp and its mark on the surfnet the agent reads, which is
+/// where the scenario starts from.
 #[derive(Debug, Clone)]
 pub struct Market {
     pub symbol: String,
     pub mark_ticks: u64,
     pub mark_usd: f64,
+}
+
+/// Every Phoenix market on the surfnet a scenario can move, and the one a
+/// request that names none is about.
+#[derive(Debug, Clone)]
+pub struct Markets {
+    pub default: String,
+    pub markets: Vec<Market>,
     pub perp_asset_map: String,
     pub surfnet_port: u16,
+}
+
+impl Markets {
+    pub fn get(&self, symbol: &str) -> Option<&Market> {
+        self.markets.iter().find(|m| m.symbol == symbol)
+    }
+
+    pub fn default_market(&self) -> &Market {
+        self.get(&self.default)
+            .expect("the default market is one of the markets")
+    }
+
+    /// The default market, then every other market the request names by its
+    /// symbol, as a whole word in capitals ("TSLA", not "tsla" or "ON"
+    /// inside "ONE").
+    pub fn named_in(&self, request: &str) -> Vec<&Market> {
+        let words: HashSet<&str> = request
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let mut named = vec![self.default_market()];
+        named.extend(
+            self.markets
+                .iter()
+                .filter(|m| m.symbol != self.default && words.contains(m.symbol.as_str())),
+        );
+        named
+    }
 }
 
 pub struct AuthorOptions<'a> {
     pub agent: Agent,
     pub model: Option<&'a str>,
     pub request: &'a str,
-    pub market: &'a Market,
+    pub markets: &'a Markets,
     /// The `surfpool` binary that serves the MCP (`surfpool mcp`).
     pub surfpool: &'a str,
     /// How many times the agent may hand in a scenario that fails the checks.
@@ -157,7 +193,7 @@ pub fn author(opts: AuthorOptions<'_>) -> Result<Scenario> {
     ui::done(format!("{name} connected {}", ui::dim(adapter.trim())));
 
     let registry = TemplateRegistry::new();
-    let mut prompt = instructions(opts.request, opts.market);
+    let mut prompt = instructions(opts.request, opts.markets);
     let attempts = opts.attempts.max(1);
     for attempt in 1..=attempts {
         let task = if attempt == 1 {
@@ -180,7 +216,7 @@ pub fn author(opts: AuthorOptions<'_>) -> Result<Scenario> {
         })?;
         let problems = match load(&scenario_path) {
             Ok(scenario) => {
-                let problems = check(&scenario, &registry, opts.market);
+                let problems = check(&scenario, &registry, opts.markets);
                 if problems.is_empty() {
                     info!(attempt, name = scenario.name, "scenario accepted");
                     let span = scenario
@@ -286,22 +322,36 @@ fn activity(title: &str) -> String {
     words.into()
 }
 
-fn instructions(request: &str, market: &Market) -> String {
-    let Market {
-        symbol,
-        mark_ticks,
-        mark_usd,
+fn instructions(request: &str, markets: &Markets) -> String {
+    let Markets {
+        default,
         perp_asset_map,
         surfnet_port,
-    } = market;
+        ..
+    } = markets;
+    let symbol = default;
+    let marks = markets
+        .named_in(request)
+        .iter()
+        .map(|m| {
+            format!(
+                "- {}: {} ticks (${:.2})",
+                m.symbol, m.mark_ticks, m.mark_usd
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let count = markets.markets.len();
     format!(
         r#"You are authoring a market scenario for the Machine Trading harness. A scenario is a list of Surfpool account overrides, each applied a number of slots after the scenario starts. mth will replay it on a surfnet and chart the market as it plays.
 
 The request: {request}
 
-A surfnet restored from mainnet is running at http://127.0.0.1:{surfnet_port}. Its {symbol} perp is marked at {mark_ticks} ticks (${mark_usd:.2}); the scenario starts from that mark. The surfpool MCP server is attached:
+A surfnet restored from mainnet is running at http://127.0.0.1:{surfnet_port}, with {count} Phoenix perps. The scenario starts from their marks on it:
+{marks}
+When the request names no market, it is about {symbol}. The surfpool MCP server is attached:
 - `get_override_templates`, then `get_override_template` for each template you use: follow its properties and its llmContext.
-- `list_phoenix_markets` with surfnetPort {surfnet_port}, for each market's markTicks, tickSize and baseLotDecimals.
+- `list_phoenix_markets` with surfnetPort {surfnet_port}, for each market's markTicks, tickSize and baseLotDecimals, including any market not listed above.
 Only read from the surfnet: don't call `create_scenario`, don't register the scenario, and don't send cheatcodes with `call_surfnet_rpc`. mth registers it.
 
 Write the scenario to ./{SCENARIO_FILE}, in Surfpool's Scenario format:
@@ -317,7 +367,7 @@ Write the scenario to ./{SCENARIO_FILE}, in Surfpool's Scenario format:
 Rules mth checks:
 - A slot is 250 ms. Keep the whole scenario within 1,200 slots (5 minutes) unless the request asks for longer.
 - Phoenix rejects oracle prices more than 5% from the last one: move the price with `{MARKET_MOVE}` in steps of at most {MAX_STEP_PCT}% from the previous level, at least {MIN_SLOTS_BETWEEN_STEPS} slots apart. Ramp bigger moves over several steps.
-- After the last step of each move, add `{MARKET_UNCROSS}` for the same symbol, in the same slot or later, so resting orders the move crossed get matched.
+- Each market moves on its own: check its steps against its own mark. After the last step of each market's moves, add `{MARKET_UNCROSS}` for that symbol, in the same slot or later, so resting orders the moves crossed get matched.
 - Phoenix market templates take the PerpAssetMap account {perp_asset_map}. Keep fetchBeforeUse false.
 - Every override has a short label: the viewer shows them on the timeline.
 Make the path look like a real market unless asked otherwise: uneven steps and pauses, partial rebounds, no perfectly regular ramps.
@@ -354,10 +404,10 @@ fn normalize(value: &mut Value) {
     }
 }
 
-/// [`load`] a scenario file and [`check`] it against `market`.
-pub fn load_checked(path: &Path, market: &Market) -> Result<Scenario> {
+/// [`load`] a scenario file and [`check`] it against `markets`.
+pub fn load_checked(path: &Path, markets: &Markets) -> Result<Scenario> {
     let scenario = load(path)?;
-    let problems = check(&scenario, &TemplateRegistry::new(), market);
+    let problems = check(&scenario, &TemplateRegistry::new(), markets);
     if !problems.is_empty() {
         bail!(
             "{} fails the checks:\n- {}",
@@ -370,7 +420,7 @@ pub fn load_checked(path: &Path, market: &Market) -> Result<Scenario> {
 
 /// Everything wrong with `scenario`, in words an agent can act on. Empty
 /// means it can be registered.
-pub fn check(scenario: &Scenario, registry: &TemplateRegistry, market: &Market) -> Vec<String> {
+pub fn check(scenario: &Scenario, registry: &TemplateRegistry, markets: &Markets) -> Vec<String> {
     let mut problems = Vec::new();
     if scenario.name.trim().is_empty() {
         problems.push("the scenario has no name".into());
@@ -425,19 +475,35 @@ pub fn check(scenario: &Scenario, registry: &TemplateRegistry, market: &Market) 
             ));
         }
     }
-    problems.extend(check_moves(&enabled, market));
+    let mut symbols: Vec<String> = enabled
+        .iter()
+        .filter(|o| o.template_id == MARKET_MOVE)
+        .filter_map(|o| symbol_of(o))
+        .collect();
+    symbols.sort();
+    symbols.dedup();
+    for symbol in symbols {
+        match markets.get(&symbol) {
+            Some(market) => problems.extend(check_moves(&enabled, market)),
+            None => problems.push(format!(
+                "{MARKET_MOVE} moves {symbol}, which isn't a Phoenix market on this surfnet; list_phoenix_markets has them"
+            )),
+        }
+    }
     problems
 }
 
-/// Price moves on the scenario's market: valid ticks, steps Phoenix
-/// accepts, and an uncross after the last one.
+/// The market a Phoenix market template acts on.
+pub fn symbol_of(o: &surfpool_types::OverrideInstance) -> Option<String> {
+    o.values
+        .get("symbol")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Price moves on one market: valid ticks, steps Phoenix accepts from that
+/// market's own mark, and an uncross after the last one.
 fn check_moves(overrides: &[&surfpool_types::OverrideInstance], market: &Market) -> Vec<String> {
-    let symbol_of = |o: &surfpool_types::OverrideInstance| {
-        o.values
-            .get("symbol")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    };
     let mut moves: Vec<_> = overrides
         .iter()
         .filter(|o| o.template_id == MARKET_MOVE && symbol_of(o).as_deref() == Some(&market.symbol))
@@ -524,11 +590,27 @@ mod tests {
 
     const PERP_ASSET_MAP: &str = "2nHGAaEw3D5dd4hVueaUNoygkQFmoeKqRQWnSPqSMFUC";
 
-    fn market() -> Market {
-        Market {
-            symbol: "SPCX".into(),
-            mark_ticks: 10_000,
-            mark_usd: 143.0,
+    /// SPCX, the default, and TSLA, on two different scales.
+    fn market() -> Markets {
+        Markets {
+            default: "SPCX".into(),
+            markets: vec![
+                Market {
+                    symbol: "SPCX".into(),
+                    mark_ticks: 10_000,
+                    mark_usd: 143.0,
+                },
+                Market {
+                    symbol: "TSLA".into(),
+                    mark_ticks: 40_000,
+                    mark_usd: 400.0,
+                },
+                Market {
+                    symbol: "ON".into(),
+                    mark_ticks: 5_000,
+                    mark_usd: 50.0,
+                },
+            ],
             perp_asset_map: PERP_ASSET_MAP.into(),
             surfnet_port: 8899,
         }
@@ -541,7 +623,11 @@ mod tests {
     }
 
     fn step(slot: u64, template: &str, ticks: Option<&str>) -> Value {
-        let mut values = json!({ "symbol": "SPCX" });
+        step_on("SPCX", slot, template, ticks)
+    }
+
+    fn step_on(symbol: &str, slot: u64, template: &str, ticks: Option<&str>) -> Value {
+        let mut values = json!({ "symbol": symbol });
         if let Some(ticks) = ticks {
             values["target_ticks"] = json!(ticks);
         }
@@ -576,6 +662,46 @@ mod tests {
         assert!(problems[0].contains("-10.00% step"));
         assert!(problems[1].contains("1 slot(s) after"));
         assert!(problems[2].contains("no phoenix-market-uncross"));
+    }
+
+    #[test]
+    fn each_market_is_checked_from_its_own_mark() {
+        // TSLA's steps are small against TSLA's 40,000 ticks, though huge
+        // against SPCX's 10,000; each market needs its own uncross.
+        let s = scenario(json!([
+            step(4, MARKET_MOVE, Some("9700")),
+            step_on("TSLA", 4, MARKET_MOVE, Some("41500")),
+            step_on("TSLA", 8, MARKET_MOVE, Some("43000")),
+            step(8, MARKET_UNCROSS, None),
+        ]));
+        let problems = check(&s, &TemplateRegistry::new(), &market());
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(problems[0].contains("no phoenix-market-uncross for TSLA"));
+
+        let elsewhere = scenario(json!([step_on("NOPE", 4, MARKET_MOVE, Some("1"))]));
+        let problems = check(&elsewhere, &TemplateRegistry::new(), &market());
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("NOPE, which isn't a Phoenix market")),
+            "{problems:#?}"
+        );
+    }
+
+    #[test]
+    fn requests_name_markets_by_their_symbols() {
+        let markets = market();
+        let named = |request: &str| -> Vec<String> {
+            markets
+                .named_in(request)
+                .iter()
+                .map(|m| m.symbol.clone())
+                .collect()
+        };
+        assert_eq!(named("simulate a crash"), ["SPCX"]);
+        assert_eq!(named("SPCX is crashing, TSLA is mooning"), ["SPCX", "TSLA"]);
+        // Lowercase words and symbols inside words don't count.
+        assert_eq!(named("tsla goes on and ONE more"), ["SPCX"]);
     }
 
     #[test]
@@ -656,18 +782,24 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_carries_the_market_and_the_rules() {
-        let prompt = instructions("simulate a crash", &market());
+    fn the_prompt_carries_the_markets_and_the_rules() {
+        let prompt = instructions("SPCX crashes while TSLA moons", &market());
         for expected in [
-            "simulate a crash",
+            "SPCX crashes while TSLA moons",
             "http://127.0.0.1:8899",
-            "10000 ticks ($143.00)",
+            "3 Phoenix perps",
+            "- SPCX: 10000 ticks ($143.00)",
+            "- TSLA: 40000 ticks ($400.00)",
             PERP_ASSET_MAP,
             "at most 4%",
             "./scenario.json",
         ] {
             assert!(prompt.contains(expected), "missing {expected:?}");
         }
+        assert!(
+            !prompt.contains("- ON:"),
+            "only the named markets get marks"
+        );
     }
 
     #[test]

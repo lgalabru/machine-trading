@@ -201,8 +201,12 @@ mth scenario play "simulate a crash for SPCX" -a claude-code  # authors it, then
 mth scenario play scenario.json                               # replays a saved one
 ```
 
-`play` serves a page that charts the mark, the bid–ask and the planned path
-slot by slot, with every override on the timeline; press Play, or pass
+`play` serves a page with a chart per venue and dimension, every override
+on the timeline in the color of the instrument it moves. Phoenix prices are
+sampled slot by slot: one market charts its mark, bid–ask and planned path
+in dollars; several share one chart as a change from each one's start.
+Overrides of anything else (funding, fees, another venue's rates) get a
+chart of their own, which marks when each lands; press Play, or pass
 `--autoplay`. Pause stops the surfnet's clock, Reset restores the snapshot on
 a fresh surfnet and stages the scenario again, and Stop shuts the surfnet
 down and ends the command. The Workbench (`` ` ``) is a bottom panel with
