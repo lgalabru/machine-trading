@@ -254,6 +254,9 @@ struct Plan {
     end_slot: u64,
     /// Accounts the workbench streams over the surfnet's websocket.
     watch: Vec<Watch>,
+    /// Whether `--autoplay` started the scenario, which opens the workbench
+    /// the way pressing Play does.
+    autoplay: bool,
 }
 
 /// One run of the scenario, from a fresh surfnet to wherever it got.
@@ -526,6 +529,7 @@ pub async fn play(
         overrides: layout.overrides,
         // The same accounts after a reset: it restores the same snapshot.
         watch: world.watched(&symbols),
+        autoplay: opts.autoplay,
     };
 
     let state = Arc::new(AppState {
@@ -852,6 +856,7 @@ mod tests {
                 ],
                 end_slot: 40,
                 watch: vec![],
+                autoplay: false,
             },
             scenario,
             snapshot_dir: PathBuf::new(),
