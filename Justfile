@@ -122,7 +122,13 @@ release: check-solution
     #!/usr/bin/env bash
     set -euo pipefail
     git diff --quiet && git diff --cached --quiet || { echo "commit or stash your changes first"; exit 1; }
+    # The images build from the working tree: if it moves during the build
+    # (0.5.0 shipped a half-renamed dev image that way), stop before pinning.
+    head="$(git rev-parse HEAD)"
     just push-image
+    [ "$(git rev-parse HEAD)" = "$head" ] && git diff --quiet && git diff --cached --quiet \
+      && [ -z "$(git ls-files --others --exclude-standard)" ] \
+      || { echo "the tree changed while the images built; release from a clean worktree"; exit 1; }
     just pin-image
     for task in {{tasks}}/*/; do harbor lint "$task" --select ALL; done
     harbor sync {{tasks}}
