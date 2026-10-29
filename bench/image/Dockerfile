@@ -74,6 +74,7 @@ COPY snapshots/ /opt/ott/snapshots/
 # the grader was tested with.
 COPY bench/image/sdk-workspace.toml /opt/ott/sdk/Cargo.toml
 COPY Cargo.lock /opt/ott/sdk/Cargo.lock
+COPY crates/luce /opt/ott/sdk/crates/luce
 COPY crates/botkit /opt/ott/sdk/crates/botkit
 COPY bots/starter /opt/ott/sdk/bots/starter
 ENV CARGO_HOME=/home/agent/.cargo
