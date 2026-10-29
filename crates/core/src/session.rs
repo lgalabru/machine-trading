@@ -31,7 +31,9 @@ use tracing::{info, warn};
 use crate::{
     Error, Result, chain,
     error::io_error,
+    flow::{FlowReport, Takers},
     guard::Guard,
+    making::level_at,
     phoenix::{self, Phoenix, USDC_MINT},
     scenario::Scenario,
     snapshot,
@@ -91,6 +93,13 @@ pub struct SessionReport {
     /// The deepest the account's value fell below its running peak while the
     /// bot ran, in USD.
     pub max_drawdown_usd: f64,
+    /// The price the account's position was valued at: the `mark`, or for
+    /// market making the `oracle` the scenario sets, which a bot's own
+    /// quotes can't move.
+    pub valuation: &'static str,
+    /// Market making: what the grader's takers sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<FlowReport>,
 }
 
 impl SessionReport {
@@ -120,9 +129,35 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         .await?
         .value
         .mark_price_ticks;
+    let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     let start_value_usd = account(&rpc, &phoenix, &bot.pubkey(), trader)
         .await?
         .value_usd;
+    // Market making: the takers and the widened makers, set up while
+    // cheatcodes still work.
+    let takers = match &scenario.making {
+        Some(making) => {
+            Some(Takers::prepare(&world, &phoenix, scenario, making, start_mark_ticks).await?)
+        }
+        None => None,
+    };
+    // What a market-making account's position is worth: the scenario's own
+    // oracle level at `slot`, which quoting can't push the way it can push
+    // Phoenix's mark. Otherwise the mark, as Phoenix reports it.
+    let value = async |value_usd: f64, base_lots: i64, slot: u64, base_slot: u64| -> Result<f64> {
+        if scenario.making.is_none() {
+            return Ok(value_usd);
+        }
+        let mark = hawkeye
+            .view_bbo(&scenario.symbol)
+            .await?
+            .value
+            .mark_price_ticks;
+        let oracle = start_mark_usd
+            * (1.0 + level_at(&scenario.path, slot.saturating_sub(base_slot)) / 100.0);
+        let units = phoenix.lots_to_base_units(market, base_lots);
+        Ok(value_usd + units * (oracle - phoenix.ticks_to_usd(market, mark)))
+    };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
@@ -157,6 +192,9 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
+    // Overrides count from the slot they were registered at; so does the
+    // takers' flow.
+    let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
 
     let late_before = surfnet.coalesced_slots();
@@ -178,33 +216,50 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut max_drawdown_usd: f64 = 0.0;
     // Phoenix positions (or orders) in markets other than the scenario's.
     let mut positions_outside_universe: u32 = 0;
-    loop {
-        if rpc.get_slot()? >= env.end_slot {
-            break;
-        }
-        let asset = hawkeye
-            .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
-            .await?
-            .value;
-        peak_position =
-            peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
-        let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-        positions_outside_universe =
-            positions_outside_universe.max(now.positions_outside(asset.has_position_or_orders));
-        peak_value_usd = peak_value_usd.max(now.value_usd);
-        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - now.value_usd);
-        if bot_exit.is_none()
-            && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
-        {
-            if status.success() {
-                info!(%status, "bot exited before the session ended");
-            } else {
-                warn!(%status, "bot exited before the session ended");
+    let sampling = async {
+        loop {
+            let slot = rpc.get_slot()?;
+            if slot >= env.end_slot {
+                break;
             }
-            bot_exit = Some(status.to_string());
+            let asset = hawkeye
+                .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
+                .await?
+                .value;
+            peak_position =
+                peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
+            let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+            positions_outside_universe =
+                positions_outside_universe.max(now.positions_outside(asset.has_position_or_orders));
+            let value_usd = value(now.value_usd, asset.base_lots, slot, base_slot).await?;
+            peak_value_usd = peak_value_usd.max(value_usd);
+            max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
+            if bot_exit.is_none()
+                && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
+            {
+                if status.success() {
+                    info!(%status, "bot exited before the session ended");
+                } else {
+                    warn!(%status, "bot exited before the session ended");
+                }
+                bot_exit = Some(status.to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+        Ok::<(), Error>(())
+    };
+    let flow = async {
+        match (&takers, &scenario.making) {
+            (Some(takers), Some(making)) => Some(
+                takers
+                    .run(&rpc, scenario, making, start_mark_usd, base_slot, end_slot)
+                    .await,
+            ),
+            _ => None,
+        }
+    };
+    let (sampled, flow) = futures::join!(sampling, flow);
+    sampled?;
     stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
     let late_slots = surfnet.coalesced_slots() - late_before;
     if late_slots > 0 {
@@ -215,17 +270,17 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     }
 
     let end = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-    let end_value_usd = end.value_usd;
     let asset = hawkeye
         .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
         .await?
         .value;
+    let end_value_usd = value(end.value_usd, asset.base_lots, end_slot, base_slot).await?;
     let positions_outside_universe =
         positions_outside_universe.max(end.positions_outside(asset.has_position_or_orders));
     let margin = hawkeye.view_margin(bot.pubkey(), 0, 0).await?.value;
     let report = SessionReport {
         scenario: scenario.name.clone(),
-        start_mark_usd: phoenix.ticks_to_usd(market, start_mark_ticks),
+        start_mark_usd,
         end_mark_usd: phoenix.ticks_to_usd(
             market,
             hawkeye
@@ -247,6 +302,12 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         peak_position: peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs()),
         positions_outside_universe,
         max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
+        valuation: if scenario.making.is_some() {
+            "oracle"
+        } else {
+            "mark"
+        },
+        flow,
     };
     info!(
         scenario = report.scenario,

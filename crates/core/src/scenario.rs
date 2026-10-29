@@ -16,6 +16,7 @@ use crate::{
     Error, Result,
     chain::Override,
     error::io_error,
+    making::Making,
     phoenix::{SLOTS_BETWEEN_STEPS, market_move},
 };
 
@@ -38,6 +39,10 @@ pub struct Scenario {
     /// and gets lucky; the limit makes surviving the path part of the score.
     pub mandate: Mandate,
     pub path: Vec<Waypoint>,
+    /// For a market-making scenario: the competing makers and the taker
+    /// flow the grader sends. Without it, nobody trades but the bot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub making: Option<Making>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mth calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,6 +136,11 @@ impl Scenario {
             free_from = waypoint.slot + move_slots(level, waypoint.level_pct) + 1;
             level = waypoint.level_pct;
         }
+        if let Some(making) = &self.making {
+            making
+                .validate(self.duration_slots)
+                .map_err(|reason| format!("making: {reason}"))?;
+        }
         if free_from > self.duration_slots {
             return Err(format!(
                 "the last move runs until slot {free_from}, past the session end at {}",
@@ -158,6 +168,16 @@ impl Scenario {
     /// unknown), so a score against it never saturates.
     pub fn hindsight_bound_usd(&self, start_mark_usd: f64) -> f64 {
         self.max_position() * start_mark_usd * self.total_variation_pct() / 100.0
+    }
+
+    /// What the reward divides PnL by: the spread bound for a market-making
+    /// scenario (see [`Making::spread_bound_usd`]), the hindsight bound
+    /// otherwise.
+    pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
+        match &self.making {
+            Some(making) => making.spread_bound_usd(&self.path, start_mark_usd),
+            None => self.hindsight_bound_usd(start_mark_usd),
+        }
     }
 
     /// Surfpool overrides for the whole path, with slots relative to when
@@ -389,6 +409,7 @@ impl ShockFamily {
                 self.max_drawdown_usd,
             ),
             path: path.waypoints,
+            making: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -569,10 +590,10 @@ impl<'a> PathBuilder<'a> {
 
 /// Small, dependency-free, and stable across platforms and releases, which a
 /// generator for checked-in task data needs more than statistical quality.
-struct SplitMix64(u64);
+pub(crate) struct SplitMix64(pub(crate) u64);
 
 impl SplitMix64 {
-    fn next_u64(&mut self) -> u64 {
+    pub(crate) fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -580,16 +601,23 @@ impl SplitMix64 {
         z ^ (z >> 31)
     }
 
-    fn next_f64(&mut self) -> f64 {
+    pub(crate) fn next_f64(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    fn range_f64(&mut self, (lo, hi): (f64, f64)) -> f64 {
+    pub(crate) fn range_f64(&mut self, (lo, hi): (f64, f64)) -> f64 {
         lo + (hi - lo) * self.next_f64()
     }
 
-    fn range_u64(&mut self, (lo, hi): (u64, u64)) -> u64 {
+    pub(crate) fn range_u64(&mut self, (lo, hi): (u64, u64)) -> u64 {
         lo + self.next_u64() % (hi - lo + 1)
+    }
+
+    /// A standard normal draw (Box-Muller).
+    pub(crate) fn normal(&mut self) -> f64 {
+        let u = self.next_f64().max(f64::MIN_POSITIVE);
+        let v = self.next_f64();
+        (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
     }
 }
 
@@ -776,6 +804,7 @@ mod tests {
                     level_pct: 0.0,
                 },
             ],
+            making: None,
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));

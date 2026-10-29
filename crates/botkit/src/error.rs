@@ -27,6 +27,8 @@ pub enum Error {
     Env { name: &'static str, reason: String },
     #[error("mandate {}: {reason}", path.display())]
     Mandate { path: PathBuf, reason: String },
+    #[error("account {account}: {reason}")]
+    Account { account: String, reason: String },
     #[error("invalid keypair file {}", .0.display())]
     Keypair(PathBuf),
     #[error("invalid pubkey in exchange metadata: {0}")]

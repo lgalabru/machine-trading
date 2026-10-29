@@ -205,7 +205,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         .into_iter()
         .map(|(session, scenario)| ScenarioResult {
             disqualified: disqualification(&session),
-            bound_pnl_usd: scenario.hindsight_bound_usd(session.start_mark_usd),
+            bound_pnl_usd: scenario.bound_usd(session.start_mark_usd),
             reference_pnl_usd: scenario.reference_pnl_usd,
             session,
         })
@@ -238,14 +238,30 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
 /// it was meant to trade, and its PnL isn't comparable.
 pub const MAX_LATE_SLOTS: u64 = 8;
 
+/// The share of a market-making session's taker orders that may fail before
+/// the session isn't scored.
+pub const MAX_FAILED_TAKER_SHARE: f64 = 0.1;
+
 /// Fail the grade, as an infrastructure error, rather than score sessions the
 /// machine was too loaded to run on time. Harbor retries a failed verifier;
 /// a skewed score would stand.
 fn check_timing(sessions: &[SessionReport]) -> Result<()> {
     let late: Vec<String> = sessions
         .iter()
-        .filter(|s| s.late_slots > MAX_LATE_SLOTS)
-        .map(|s| format!("{} ({} slots)", s.scenario, s.late_slots))
+        .filter_map(|s| {
+            if s.late_slots > MAX_LATE_SLOTS {
+                return Some(format!("{} ({} slots late)", s.scenario, s.late_slots));
+            }
+            // A market-making session whose takers didn't trade as listed
+            // didn't see the flow its scenario describes.
+            let flow = s.flow.as_ref()?;
+            (flow.failed as f64 > MAX_FAILED_TAKER_SHARE * flow.sent as f64).then(|| {
+                format!(
+                    "{} ({} of {} taker orders failed)",
+                    s.scenario, flow.failed, flow.sent
+                )
+            })
+        })
         .collect();
     if late.is_empty() {
         Ok(())
@@ -368,6 +384,8 @@ mod tests {
             peak_position: 0.0,
             positions_outside_universe: 0,
             max_drawdown_usd: 0.0,
+            valuation: "mark",
+            flow: None,
         }
     }
 
@@ -383,6 +401,7 @@ mod tests {
                 slot: 10,
                 level_pct: -10.0,
             }],
+            making: None,
             reference_pnl_usd,
         }
     }
@@ -478,6 +497,20 @@ mod tests {
         assert_eq!(risk.max_drawdown_usd, 450.0);
         assert_eq!(risk.profitable_share, 4.0 / 6.0);
         assert!(risk.sharpe > 0.0 && risk.sharpe < 1.0, "{}", risk.sharpe);
+    }
+
+    #[test]
+    fn sessions_whose_takers_failed_fail_the_grade() {
+        let mut thin = session(10.0);
+        thin.flow = Some(crate::flow::FlowReport {
+            orders: 100,
+            sent: 100,
+            failed: 11,
+            ..Default::default()
+        });
+        assert!(check_timing(&[session(1.0), thin.clone()]).is_err());
+        thin.flow.as_mut().unwrap().failed = 10;
+        assert!(check_timing(&[thin]).is_ok());
     }
 
     #[test]

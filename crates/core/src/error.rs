@@ -31,6 +31,8 @@ pub enum Error {
     UnknownMarket(String),
     #[error("transaction {label} failed: {reason}")]
     Transaction { label: String, reason: String },
+    #[error("spline collection {account}: {reason}")]
+    Splines { account: String, reason: String },
     #[error("timed out waiting for {0}")]
     Timeout(String),
     #[error("invalid scenario {}: {reason}", path.display())]
