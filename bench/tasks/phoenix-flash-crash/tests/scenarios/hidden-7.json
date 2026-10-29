@@ -1,18 +1,19 @@
 {
   "name": "hidden-7",
-  "description": "SOL drops 5.6% at once around slot 63, then rebounds to -0.04% of its starting mark",
+  "description": "SOL spikes 10.6% at once around slot 108, then fades to +4.17% of its starting mark",
   "symbol": "SOL",
-  "duration_slots": 277,
+  "duration_slots": 293,
   "max_position": 100.0,
+  "max_drawdown_usd": 1000.0,
   "path": [
     {
-      "slot": 63,
-      "level_pct": -5.59
+      "slot": 108,
+      "level_pct": 10.57
     },
     {
-      "slot": 192,
-      "level_pct": -0.04
+      "slot": 208,
+      "level_pct": 4.17
     }
   ],
-  "reference_pnl_usd": 279.07
+  "reference_pnl_usd": 640.3
 }

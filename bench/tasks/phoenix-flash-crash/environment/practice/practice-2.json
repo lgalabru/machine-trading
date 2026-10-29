@@ -1,22 +1,19 @@
 {
   "name": "practice-2",
-  "description": "SOL drops 7.7% in two legs around slot 97, then rebounds to -0.73% of its starting mark",
+  "description": "SOL spikes 9.7% at once around slot 85, then fades to +3.86% of its starting mark",
   "symbol": "SOL",
-  "duration_slots": 353,
+  "duration_slots": 297,
   "max_position": 100.0,
+  "max_drawdown_usd": 1000.0,
   "path": [
     {
-      "slot": 97,
-      "level_pct": -5.09
+      "slot": 85,
+      "level_pct": 9.69
     },
     {
-      "slot": 133,
-      "level_pct": -7.7
-    },
-    {
-      "slot": 268,
-      "level_pct": -0.73
+      "slot": 212,
+      "level_pct": 3.86
     }
   ],
-  "reference_pnl_usd": 218.56
+  "reference_pnl_usd": 581.15
 }

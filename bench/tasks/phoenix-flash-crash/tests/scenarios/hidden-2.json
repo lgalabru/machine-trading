@@ -1,22 +1,23 @@
 {
   "name": "hidden-2",
-  "description": "SOL drops 8.2% in two legs around slot 115, then rebounds to -0.55% of its starting mark",
+  "description": "SOL drops 10.1% in two legs around slot 68, then slides further to -14.56% of its starting mark",
   "symbol": "SOL",
-  "duration_slots": 324,
+  "duration_slots": 286,
   "max_position": 100.0,
+  "max_drawdown_usd": 1000.0,
   "path": [
     {
-      "slot": 115,
-      "level_pct": -4.82
+      "slot": 68,
+      "level_pct": -6.58
     },
     {
-      "slot": 157,
-      "level_pct": -8.17
+      "slot": 126,
+      "level_pct": -10.08
     },
     {
-      "slot": 237,
-      "level_pct": -0.55
+      "slot": 201,
+      "level_pct": -14.56
     }
   ],
-  "reference_pnl_usd": 597.66
+  "reference_pnl_usd": -638.88
 }
