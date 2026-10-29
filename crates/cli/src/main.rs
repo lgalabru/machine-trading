@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use ott_core::{
     grade::{self, GradeOptions},
     phoenix,
-    scenario::{CrashFamily, Scenario},
+    scenario::{Scenario, ShockFamily},
     snapshot,
 };
 use tracing_subscriber::EnvFilter;
@@ -76,8 +76,9 @@ impl Sessions {
 
 #[derive(Subcommand)]
 enum ScenarioCommand {
-    /// Draw flash-crash scenarios from the SOL family, one file per scenario.
-    /// Sets are stratified: each aftermath (rebound, stall, slide) appears in
+    /// Draw shock scenarios (crashes and squeezes) from the SOL family, one
+    /// file per scenario.
+    /// Sets are stratified: each direction and aftermath appears in
     /// proportion to its odds.
     Generate {
         #[arg(long)]
@@ -179,7 +180,7 @@ async fn main() -> Result<()> {
             seed,
         }) => {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
-            let family = CrashFamily::sol();
+            let family = ShockFamily::sol();
             let mut written = Vec::new();
             for scenario in family.sample_set(&prefix, count, seed) {
                 let path = out.join(format!("{}.json", scenario.name));

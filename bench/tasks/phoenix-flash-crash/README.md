@@ -6,11 +6,12 @@ market, snapshotted on 2026-10-27 and restored into a
 [Surfpool](https://github.com/solana-foundation/surfpool) surfnet at the
 snapshot's slot and time.
 
-**What it measures.** A good bot profits because it buys forced selling below
-fair value and takes profit on the rebound, while sizing and exiting so that
-the crashes that never recover don't eat those gains. Most crashes rebound
-(~65%), but some stall (~20%) and some keep sliding (~15%). A bot that buys
-every dip and holds wins most sessions and still loses overall.
+**What it measures.** SOL shocks 5–12%: half the time it crashes, half the
+time it squeezes. Most shocks revert (~65%), but some stall (~20%) and some
+keep going (~15%). A good bot reads which way the shock is going, takes the
+other side of the forced flow, and sizes and exits so that the shocks that
+don't revert can't take it past its loss limit. Betting blind at the open
+has no edge: it wins half the shocks and loses the other half.
 
 - **Agent environment:** a Rust toolchain, the `ott-botkit` SDK, a starter
   bot that builds and never trades, six practice scenarios, the scenario
@@ -21,13 +22,16 @@ every dip and holds wins most sessions and still loses overall.
   twelve hidden scenarios, three at a time, each on a fresh surfnet. Before the bot starts, every
   cheatcode is locked for good. The bot runs as an unprivileged user behind an
   RPC proxy that forwards standard Solana methods only.
-- **Reward:** `clamp(Σ bot PnL / Σ reference PnL, 0, 1)` over the twelve
-  scenarios. Losses count, so risk control matters. Positions are capped at
-  100 SOL, and the reference trades up to the cap, so the ratio compares
-  strategies at equal size rather than rewarding leverage. The reward is 0
-  if any session makes a refused RPC call, goes over the cap, or ends
-  liquidatable. `reward.json` also
-  reports the unclamped `pnl_ratio`, the totals, and each scenario's PnL.
+- **Reward:** `clamp(Σ bot PnL / Σ hindsight bound, 0, 1)` over the twelve
+  scenarios. The hindsight bound is the full position cap held the right way
+  through every move at no cost: no bot reaches it, so the score doesn't
+  saturate. The reference (fade the shock in two tranches, hold) scores
+  about 0.2 and is reported as a baseline.
+- **Risk:** positions are capped at 100 SOL, and a session may not draw
+  down more than $1,000 (10% of collateral) from its peak. Breaking either,
+  a refused RPC call, or ending liquidatable scores 0. Worst session, tail
+  loss, deepest drawdown, profitable share, and a Sharpe ratio are reported
+  alongside.
 
 ## Checks
 

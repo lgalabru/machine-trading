@@ -1,13 +1,19 @@
 //! Scores a bot over a set of scenarios.
 //!
 //! The reward is the bot's total PnL over the set as a fraction of the
-//! reference bot's total PnL on the same set, clamped to [0, 1]: doing nothing
-//! scores 0, matching the reference scores 1. Scoring the set as a whole lets
-//! scenarios where the reference loses (a crash that never recovers) count:
-//! a bot that loses less there, or makes more elsewhere, scores higher.
+//! hindsight bound: what a bot holding the full position cap the right way
+//! through every move would make at no cost (see
+//! [`Scenario::hindsight_bound_usd`]). Clamped to [0, 1]: doing nothing scores
+//! 0, and no bot reaches 1, so the score doesn't saturate as bots improve.
+//! Scoring the set as a whole lets losing scenarios count.
 //!
-//! Any session that calls a method the RPC guard refuses, or ends liquidatable,
-//! disqualifies the bot: the reward is 0.
+//! The reference bot's PnL, when scenarios carry it, is reported alongside as
+//! a baseline (`reference_ratio`), not used for the reward.
+//!
+//! Any session that calls a method the RPC guard refuses, goes over the
+//! position cap, draws down past its limit, or ends liquidatable disqualifies
+//! the bot: the reward is 0. Risk is otherwise reported, not scored: see
+//! [`Risk`].
 
 use std::{collections::BTreeMap, path::Path};
 
@@ -26,22 +32,87 @@ use crate::{
 pub struct ScenarioResult {
     /// Why this session disqualifies the bot, if it does.
     pub disqualified: Option<String>,
-    pub reference_pnl_usd: f64,
+    /// The hindsight bound for this session, at its starting mark.
+    pub bound_pnl_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_pnl_usd: Option<f64>,
     #[serde(flatten)]
     pub session: SessionReport,
 }
 
 #[derive(Debug, Serialize)]
 pub struct GradeReport {
+    /// Total PnL over the total hindsight bound, clamped to [0, 1].
     pub reward: f64,
-    /// Total PnL over total reference PnL, unclamped: above 1 beats the reference.
-    pub pnl_ratio: f64,
     pub pnl_usd: f64,
-    pub reference_pnl_usd: f64,
+    pub bound_pnl_usd: f64,
+    /// The reference's total PnL, when every scenario carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_pnl_usd: Option<f64>,
+    /// Total PnL over the reference's, unclamped: above 1 beats the reference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_ratio: Option<f64>,
     /// Why the grade itself was tampered with, if it was: the reward is 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tampered: Option<String>,
+    pub risk: Risk,
     pub scenarios: Vec<ScenarioResult>,
+}
+
+/// How the bot made its PnL, across sessions. Reported, not scored: with a
+/// dozen short sessions these are rough, and a reward that blended them in
+/// would reward whatever weights it picked. The drawdown limit is the risk
+/// rule that is enforced.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Risk {
+    /// The worst session's PnL.
+    pub worst_pnl_usd: f64,
+    /// The mean PnL of the worst sixth of sessions (at least one): a tail loss.
+    pub tail_pnl_usd: f64,
+    /// The deepest any session's account value fell below its running peak.
+    pub max_drawdown_usd: f64,
+    /// The share of sessions that made money.
+    pub profitable_share: f64,
+    /// Mean session PnL over its standard deviation (0 when it doesn't vary).
+    pub sharpe: f64,
+}
+
+impl Risk {
+    fn of(sessions: &[ScenarioResult]) -> Self {
+        let mut pnls: Vec<f64> = sessions.iter().map(|s| s.session.pnl_usd).collect();
+        if pnls.is_empty() {
+            return Self {
+                worst_pnl_usd: 0.0,
+                tail_pnl_usd: 0.0,
+                max_drawdown_usd: 0.0,
+                profitable_share: 0.0,
+                sharpe: 0.0,
+            };
+        }
+        pnls.sort_by(f64::total_cmp);
+        let n = pnls.len() as f64;
+        let tail = pnls.len().div_ceil(6);
+        let mean = pnls.iter().sum::<f64>() / n;
+        let variance = if pnls.len() > 1 {
+            pnls.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / (n - 1.0)
+        } else {
+            0.0
+        };
+        Self {
+            worst_pnl_usd: pnls[0],
+            tail_pnl_usd: pnls[..tail].iter().sum::<f64>() / tail as f64,
+            max_drawdown_usd: sessions
+                .iter()
+                .map(|s| s.session.max_drawdown_usd)
+                .fold(0.0, f64::max),
+            profitable_share: pnls.iter().filter(|p| **p > 0.0).count() as f64 / n,
+            sharpe: if variance > 0.0 {
+                mean / variance.sqrt()
+            } else {
+                0.0
+            },
+        }
+    }
 }
 
 impl GradeReport {
@@ -57,9 +128,8 @@ impl GradeReport {
     pub fn rewards(&self) -> BTreeMap<String, f64> {
         let mut rewards = BTreeMap::from([
             ("reward".to_string(), self.reward),
-            ("pnl_ratio".to_string(), self.pnl_ratio),
             ("pnl_usd".to_string(), self.pnl_usd),
-            ("reference_pnl_usd".to_string(), self.reference_pnl_usd),
+            ("bound_pnl_usd".to_string(), self.bound_pnl_usd),
             (
                 "refused_calls".to_string(),
                 self.scenarios
@@ -78,7 +148,16 @@ impl GradeReport {
                 "tampered".to_string(),
                 f64::from(u8::from(self.tampered.is_some())),
             ),
+            ("worst_pnl_usd".to_string(), self.risk.worst_pnl_usd),
+            ("tail_pnl_usd".to_string(), self.risk.tail_pnl_usd),
+            ("max_drawdown_usd".to_string(), self.risk.max_drawdown_usd),
+            ("profitable_share".to_string(), self.risk.profitable_share),
+            ("sharpe".to_string(), self.risk.sharpe),
         ]);
+        if let (Some(reference), Some(ratio)) = (self.reference_pnl_usd, self.reference_ratio) {
+            rewards.insert("reference_pnl_usd".to_string(), reference);
+            rewards.insert("reference_ratio".to_string(), ratio);
+        }
         for result in &self.scenarios {
             rewards.insert(
                 format!("pnl_{}", result.session.scenario),
@@ -100,23 +179,6 @@ pub struct GradeOptions<'a> {
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
-    // Fail before spending minutes on sessions if the set can't be scored.
-    let references = opts
-        .scenarios
-        .iter()
-        .map(|scenario| {
-            scenario
-                .reference_pnl_usd
-                .ok_or_else(|| Error::Uncalibrated(format!("scenario {}", scenario.name)))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let reference_pnl_usd: f64 = references.iter().sum();
-    if reference_pnl_usd <= 0.0 {
-        return Err(Error::Uncalibrated(format!(
-            "the set (the reference makes {reference_pnl_usd:.2} USD in total)"
-        )));
-    }
-
     let sessions = run_sessions(
         opts.snapshot_dir,
         opts.bot_dir,
@@ -126,41 +188,47 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     )
     .await?;
     check_timing(&sessions)?;
-    let report = score(sessions.into_iter().zip(references).collect());
+    let report = score(sessions.into_iter().zip(opts.scenarios).collect());
     info!(
         reward = report.reward,
         pnl_usd = report.pnl_usd,
-        reference_pnl_usd = report.reference_pnl_usd,
+        bound_pnl_usd = report.bound_pnl_usd,
+        reference_ratio = report.reference_ratio,
         "graded"
     );
     Ok(report)
 }
 
-/// Score sessions against their references' PnL. The set's reference total
-/// must be positive.
-fn score(sessions: Vec<(SessionReport, f64)>) -> GradeReport {
+/// Score sessions against their scenarios' hindsight bounds.
+fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     let scenarios: Vec<ScenarioResult> = sessions
         .into_iter()
-        .map(|(session, reference_pnl_usd)| ScenarioResult {
+        .map(|(session, scenario)| ScenarioResult {
             disqualified: disqualification(&session),
-            reference_pnl_usd,
+            bound_pnl_usd: scenario.hindsight_bound_usd(session.start_mark_usd),
+            reference_pnl_usd: scenario.reference_pnl_usd,
             session,
         })
         .collect();
     let pnl_usd: f64 = scenarios.iter().map(|s| s.session.pnl_usd).sum();
-    let reference_pnl_usd: f64 = scenarios.iter().map(|s| s.reference_pnl_usd).sum();
-    let pnl_ratio = pnl_usd / reference_pnl_usd;
-    let reward = if scenarios.iter().any(|s| s.disqualified.is_some()) {
+    let bound_pnl_usd: f64 = scenarios.iter().map(|s| s.bound_pnl_usd).sum();
+    let reference_pnl_usd: Option<f64> = scenarios.iter().map(|s| s.reference_pnl_usd).sum();
+    let reference_ratio = reference_pnl_usd
+        .filter(|reference| *reference > 0.0)
+        .map(|reference| pnl_usd / reference);
+    let reward = if scenarios.iter().any(|s| s.disqualified.is_some()) || bound_pnl_usd <= 0.0 {
         0.0
     } else {
-        pnl_ratio.clamp(0.0, 1.0)
+        (pnl_usd / bound_pnl_usd).clamp(0.0, 1.0)
     };
     GradeReport {
         reward,
-        pnl_ratio,
         pnl_usd,
+        bound_pnl_usd,
         reference_pnl_usd,
+        reference_ratio,
         tampered: None,
+        risk: Risk::of(&scenarios),
         scenarios,
     }
 }
@@ -196,6 +264,11 @@ fn disqualification(session: &SessionReport) -> Option<String> {
         Some(format!(
             "held {:.2}, over the position cap of {}",
             session.peak_position, session.max_position
+        ))
+    } else if session.max_drawdown_usd > session.drawdown_limit_usd {
+        Some(format!(
+            "drew down ${:.2} from its peak, over the ${} limit",
+            session.max_drawdown_usd, session.drawdown_limit_usd
         ))
     } else if session.liquidatable {
         Some("ended the session liquidatable".to_string())
@@ -279,6 +352,7 @@ const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scenario::Waypoint;
 
     fn session(pnl_usd: f64) -> SessionReport {
         SessionReport {
@@ -295,26 +369,103 @@ mod tests {
             late_slots: 0,
             peak_position: 0.0,
             max_position: 100.0,
+            max_drawdown_usd: 0.0,
+            drawdown_limit_usd: 1_000.0,
+        }
+    }
+
+    /// One 10% move with a 100-unit cap at a $100 mark: a $1,000 bound.
+    fn scenario(reference_pnl_usd: Option<f64>) -> Scenario {
+        Scenario {
+            name: "s".into(),
+            description: String::new(),
+            symbol: "SOL".into(),
+            duration_slots: 400,
+            max_position: 100.0,
+            max_drawdown_usd: 1_000.0,
+            path: vec![Waypoint {
+                slot: 10,
+                level_pct: -10.0,
+            }],
+            reference_pnl_usd,
         }
     }
 
     #[test]
-    fn going_over_the_position_cap_disqualifies() {
-        let mut big = session(1_000.0);
+    fn the_reward_is_pnl_over_the_hindsight_bound() {
+        let s = scenario(Some(200.0));
+        let report = score(vec![(session(300.0), &s), (session(-100.0), &s)]);
+        assert_eq!(report.bound_pnl_usd, 2_000.0);
+        assert_eq!(report.reward, 0.1);
+        assert_eq!(report.reference_ratio, Some(0.5));
+
+        assert_eq!(score(vec![(session(-50.0), &s)]).reward, 0.0);
+        assert_eq!(score(vec![(session(5_000.0), &s)]).reward, 1.0);
+        assert_eq!(
+            score(vec![(session(10.0), &scenario(None))]).reference_ratio,
+            None
+        );
+    }
+
+    #[test]
+    fn any_disqualified_session_zeroes_the_reward() {
+        let s = scenario(None);
+        let mut cheat = session(500.0);
+        cheat.refused_calls = vec!["surfnet_setTokenAccount".into()];
+        let report = score(vec![(session(100.0), &s), (cheat, &s)]);
+        assert_eq!(report.reward, 0.0);
+        assert!(report.scenarios[1].disqualified.is_some());
+
+        let mut ruined = session(100.0);
+        ruined.liquidatable = true;
+        assert_eq!(score(vec![(ruined, &s)]).reward, 0.0);
+
+        let mut big = session(900.0);
         big.peak_position = 119.0;
-        let report = score(vec![(session(50.0), 100.0), (big, 100.0)]);
+        let report = score(vec![(big, &s)]);
+        assert_eq!(report.reward, 0.0);
+        assert!(
+            report.scenarios[0]
+                .disqualified
+                .as_deref()
+                .unwrap()
+                .contains("cap")
+        );
+    }
+
+    #[test]
+    fn drawing_down_past_the_limit_disqualifies() {
+        let s = scenario(None);
+        let mut deep = session(400.0);
+        deep.max_drawdown_usd = 1_200.0;
+        let report = score(vec![(session(100.0), &s), (deep, &s)]);
         assert_eq!(report.reward, 0.0);
         assert!(
             report.scenarios[1]
                 .disqualified
                 .as_deref()
                 .unwrap()
-                .contains("cap")
+                .contains("drew down")
         );
 
-        let mut at_cap = session(100.0);
-        at_cap.peak_position = 100.0;
-        assert_eq!(score(vec![(at_cap, 100.0)]).reward, 1.0);
+        let mut at_limit = session(100.0);
+        at_limit.max_drawdown_usd = 1_000.0;
+        assert!(score(vec![(at_limit, &s)]).reward > 0.0);
+    }
+
+    #[test]
+    fn risk_is_reported_across_sessions() {
+        let s = scenario(None);
+        let pnls = [300.0, -200.0, 100.0, 50.0, -50.0, 400.0];
+        let mut sessions: Vec<(SessionReport, &Scenario)> =
+            pnls.iter().map(|p| (session(*p), &s)).collect();
+        sessions[1].0.max_drawdown_usd = 450.0;
+        let risk = score(sessions).risk;
+        assert_eq!(risk.worst_pnl_usd, -200.0);
+        assert_eq!(risk.tail_pnl_usd, -200.0);
+        assert_eq!(risk.max_drawdown_usd, 450.0);
+        assert_eq!(risk.profitable_share, 4.0 / 6.0);
+        assert!(risk.sharpe > 0.0 && risk.sharpe < 1.0, "{}", risk.sharpe);
     }
 
     #[test]
@@ -326,37 +477,5 @@ mod tests {
         let mut tolerable = session(10.0);
         tolerable.late_slots = MAX_LATE_SLOTS;
         assert!(check_timing(&[tolerable]).is_ok());
-    }
-
-    #[test]
-    fn the_reward_is_the_set_ratio_and_losses_count() {
-        // The reference makes 100 on the rebound and loses 60 on the slide: 40.
-        let careful = score(vec![(session(50.0), 100.0), (session(-10.0), -60.0)]);
-        assert_eq!(careful.pnl_ratio, 1.0);
-        assert_eq!(careful.reward, 1.0);
-
-        let reckless = score(vec![(session(100.0), 100.0), (session(-90.0), -60.0)]);
-        assert_eq!(reckless.pnl_ratio, 0.25);
-        assert_eq!(reckless.reward, 0.25);
-
-        let better = score(vec![(session(120.0), 100.0), (session(0.0), -60.0)]);
-        assert_eq!(better.pnl_ratio, 3.0);
-        assert_eq!(better.reward, 1.0);
-
-        let losing = score(vec![(session(-20.0), 100.0), (session(0.0), -60.0)]);
-        assert_eq!(losing.reward, 0.0);
-    }
-
-    #[test]
-    fn any_disqualified_session_zeroes_the_reward() {
-        let mut cheat = session(500.0);
-        cheat.refused_calls = vec!["surfnet_setTokenAccount".into()];
-        let report = score(vec![(session(100.0), 100.0), (cheat, 100.0)]);
-        assert_eq!(report.reward, 0.0);
-        assert!(report.scenarios[1].disqualified.is_some());
-
-        let mut ruined = session(100.0);
-        ruined.liquidatable = true;
-        assert_eq!(score(vec![(ruined, 50.0)]).reward, 0.0);
     }
 }
