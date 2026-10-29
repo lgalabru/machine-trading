@@ -64,9 +64,10 @@ The reward is the bot's total PnL over the hidden set as a fraction of a
 **hindsight bound**: what the full position cap held the right way through
 every move would make, at no cost. No bot reaches it, so the score keeps
 headroom as agents improve; a reference bot is reported alongside as a
-baseline. Risk is gated like a trading desk's: positions are capped, and a
-session may not draw down more than its loss limit. Breaking either, a
-refused RPC call, or ending liquidatable scores 0, and worst session, tail
+baseline. Each scenario carries a [mandate](specs/mandate.md), which gates
+risk like a trading desk's: one market, a position cap, and a loss limit the
+session may not draw down past. Breaking it, a refused RPC call, or ending
+liquidatable scores 0, and worst session, tail
 loss, drawdown, profitable share and Sharpe are reported.
 
 ### Tasks
@@ -150,6 +151,7 @@ machine-trading/
 │   └── botkit/            mth-botkit: the SDK bots build on, over luce (both ship in the task image)
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
 ├── snapshots/             📸 pinned mainnet state (surfnet.json is gitignored)
+├── specs/                 📜 the mandate: what an agent may trade, and its limits
 ├── skills/                🧠 agent skills: how to design great trading tasks
 └── docs/                📐 architecture decision records (docs/adr) and assets
 ```

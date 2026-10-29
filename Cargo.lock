@@ -4579,6 +4579,7 @@ name = "mth-botkit"
 version = "0.1.0"
 dependencies = [
  "luce",
+ "serde",
  "serde_json",
  "solana-commitment-config",
  "solana-keypair",

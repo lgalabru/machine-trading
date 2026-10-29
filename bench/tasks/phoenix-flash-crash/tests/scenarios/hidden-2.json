@@ -3,8 +3,18 @@
   "description": "SPCX spikes 13.1% in 3 legs from around slot 62, then fades to +0.35% of its starting mark",
   "symbol": "SPCX",
   "duration_slots": 530,
-  "max_position": 70.0,
-  "max_drawdown_usd": 1000.0,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
   "path": [
     {
       "slot": 5,

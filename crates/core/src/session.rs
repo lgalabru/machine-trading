@@ -14,7 +14,10 @@ use std::{
     time::Duration,
 };
 
-use mth_botkit::{BotEnv, QUOTE_LOTS_PER_USD};
+use mth_botkit::{
+    BotEnv, QUOTE_LOTS_PER_USD,
+    mandate::{InstrumentRef, Mandate, Observed, Term},
+};
 use serde::Serialize;
 use serde_json::json;
 use solana_keypair::Keypair;
@@ -76,14 +79,29 @@ pub struct SessionReport {
     /// the wall clock, so a session with many is not comparable to one
     /// without; [`crate::grade`] refuses to score it.
     pub late_slots: u64,
-    /// The largest position, long or short, in base units, the bot held while
-    /// it ran, and the scenario's cap on it.
+    /// The mandate the session ran under, with its term: what the bot was
+    /// handed, and what [`SessionReport::observed`] is audited against.
+    pub mandate: Mandate,
+    /// The scenario's market, and the largest position, long or short, in
+    /// base units, the bot held in it while it ran.
+    pub instrument: InstrumentRef,
     pub peak_position: f64,
-    pub max_position: f64,
+    /// The most positions or orders the bot held at once in other markets.
+    pub positions_outside_universe: u32,
     /// The deepest the account's value fell below its running peak while the
-    /// bot ran, in USD, and the scenario's limit on it.
+    /// bot ran, in USD.
     pub max_drawdown_usd: f64,
-    pub drawdown_limit_usd: f64,
+}
+
+impl SessionReport {
+    /// What the session measured, in the terms [`Mandate::audit`] checks.
+    pub fn observed(&self) -> Observed {
+        Observed {
+            peak_positions: vec![(self.instrument.clone(), self.peak_position)],
+            positions_outside_universe: self.positions_outside_universe,
+            max_drawdown_usd: self.max_drawdown_usd,
+        }
+    }
 }
 
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
@@ -102,19 +120,32 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         .await?
         .value
         .mark_price_ticks;
-    let start_value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+    let start_value_usd = account(&rpc, &phoenix, &bot.pubkey(), trader)
+        .await?
+        .value_usd;
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
     let start_slot = rpc.get_slot()?;
+    let end_slot = start_slot + scenario.duration_slots;
+    // The bot gets a copy to plan by; the audit uses this one, which the bot
+    // can't reach.
+    let mandate = Mandate {
+        term: Some(Term {
+            until_slot: end_slot,
+        }),
+        ..scenario.mandate.clone()
+    };
+    let instrument = scenario.instrument();
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
         exchange_path: world.exchange_path.clone(),
         symbol: scenario.symbol.clone(),
-        end_slot: start_slot + scenario.duration_slots,
-        max_position: scenario.max_position,
-        max_drawdown_usd: scenario.max_drawdown_usd,
+        end_slot,
+        max_position: scenario.max_position(),
+        max_drawdown_usd: mandate.limits.max_drawdown_usd,
+        mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
     // The scenario is the grader's last cheatcode. Lock them all before the
     // bot starts: a bot that finds the surfnet's own port, past the guard,
@@ -145,19 +176,23 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     // the deepest it has fallen below it.
     let mut peak_value_usd = start_value_usd;
     let mut max_drawdown_usd: f64 = 0.0;
+    // Phoenix positions (or orders) in markets other than the scenario's.
+    let mut positions_outside_universe: u32 = 0;
     loop {
         if rpc.get_slot()? >= env.end_slot {
             break;
         }
-        let held = hawkeye
+        let asset = hawkeye
             .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
             .await?
-            .value
-            .base_lots;
-        peak_position = peak_position.max(phoenix.lots_to_base_units(market, held).abs());
-        let value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-        peak_value_usd = peak_value_usd.max(value_usd);
-        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
+            .value;
+        peak_position =
+            peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
+        let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+        positions_outside_universe =
+            positions_outside_universe.max(now.positions_outside(asset.has_position_or_orders));
+        peak_value_usd = peak_value_usd.max(now.value_usd);
+        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - now.value_usd);
         if bot_exit.is_none()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
@@ -179,11 +214,14 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         );
     }
 
-    let end_value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+    let end = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+    let end_value_usd = end.value_usd;
     let asset = hawkeye
         .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
         .await?
         .value;
+    let positions_outside_universe =
+        positions_outside_universe.max(end.positions_outside(asset.has_position_or_orders));
     let margin = hawkeye.view_margin(bot.pubkey(), 0, 0).await?.value;
     let report = SessionReport {
         scenario: scenario.name.clone(),
@@ -204,10 +242,11 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         refused_calls: guard.refused(),
         bot_exit,
         late_slots,
+        mandate,
+        instrument,
         peak_position: peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs()),
-        max_position: scenario.max_position,
+        positions_outside_universe,
         max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
-        drawdown_limit_usd: scenario.max_drawdown_usd,
     };
     info!(
         scenario = report.scenario,
@@ -218,21 +257,42 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     Ok(report)
 }
 
-/// What the account is worth at mark: Phoenix collateral plus unrealized
-/// PnL, plus any USDC withdrawn back to the wallet.
-async fn account_value(
+/// The trader account, from one margin view.
+struct Account {
+    /// What the account is worth at mark: Phoenix collateral plus unrealized
+    /// PnL, plus any USDC withdrawn back to the wallet.
+    value_usd: f64,
+    /// Markets the trader holds a position or orders in.
+    position_count: u16,
+}
+
+impl Account {
+    /// Markets held other than the scenario's, given whether the scenario's
+    /// market is one of them.
+    fn positions_outside(&self, held_in_market: u8) -> u32 {
+        u32::from(
+            self.position_count
+                .saturating_sub(u16::from(held_in_market != 0)),
+        )
+    }
+}
+
+async fn account(
     rpc: &RpcClient,
     phoenix: &Phoenix,
     owner: &Pubkey,
     trader: Pubkey,
-) -> Result<f64> {
+) -> Result<Account> {
     let margin = phoenix
         .hawkeye(*owner)
         .view_margin_for_trader(trader)
         .await?
         .value;
     let phoenix_quote_lots = margin.collateral_quote_lots + margin.unrealized_pnl_quote_lots;
-    Ok(phoenix_quote_lots as f64 / QUOTE_LOTS_PER_USD + wallet_usdc(rpc, owner)?)
+    Ok(Account {
+        value_usd: phoenix_quote_lots as f64 / QUOTE_LOTS_PER_USD + wallet_usdc(rpc, owner)?,
+        position_count: margin.position_count,
+    })
 }
 
 fn wallet_usdc(rpc: &RpcClient, owner: &Pubkey) -> Result<f64> {
@@ -280,6 +340,15 @@ impl SessionDir {
 
     fn keypair_path(&self) -> PathBuf {
         self.path.join("keypair.json")
+    }
+
+    fn write_mandate(&self, mandate: &Mandate) -> Result<PathBuf> {
+        let path = self.path.join("mandate.json");
+        mandate.save(&path)?;
+        if let Some((uid, gid)) = self.bot_user {
+            std::os::unix::fs::chown(&path, Some(uid), Some(gid)).map_err(io_error(&path))?;
+        }
+        Ok(path)
     }
 }
 

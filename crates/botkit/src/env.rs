@@ -5,7 +5,12 @@ use luce::{
 };
 use solana_keypair::Keypair;
 
-use crate::{Error, Result, error::io_error, phoenix::load_exchange};
+use crate::{
+    Error, Result,
+    error::io_error,
+    mandate::{Mandate, Term},
+    phoenix::load_exchange,
+};
 
 /// What the grader hands a bot, through environment variables.
 #[derive(Debug, Clone)]
@@ -29,6 +34,10 @@ pub struct BotEnv {
     /// `MTH_MAX_DRAWDOWN`: the most, in USD, the account's value may fall
     /// below its peak during a session. Falling further disqualifies it.
     pub max_drawdown_usd: f64,
+    /// `MTH_MANDATE`: a JSON file with the session's [`Mandate`], the
+    /// instruments the bot may hold and its limits. The variables above
+    /// repeat its values. Optional, for graders that predate it.
+    pub mandate_path: Option<PathBuf>,
 }
 
 impl BotEnv {
@@ -39,6 +48,7 @@ impl BotEnv {
     pub const END_SLOT: &str = "MTH_END_SLOT";
     pub const MAX_POSITION: &str = "MTH_MAX_POSITION";
     pub const MAX_DRAWDOWN: &str = "MTH_MAX_DRAWDOWN";
+    pub const MANDATE: &str = "MTH_MANDATE";
 
     pub fn from_env() -> Result<Self> {
         let end_slot = var(Self::END_SLOT)?;
@@ -61,12 +71,13 @@ impl BotEnv {
                 name: Self::MAX_DRAWDOWN,
                 reason: format!("not a number: {max_drawdown}"),
             })?,
+            mandate_path: std::env::var_os(Self::MANDATE).map(PathBuf::from),
         })
     }
 
     /// The variables to set on a bot process for this environment.
-    pub fn vars(&self) -> [(&'static str, String); 7] {
-        [
+    pub fn vars(&self) -> Vec<(&'static str, String)> {
+        let mut vars = vec![
             (Self::RPC_URL, self.rpc_url.clone()),
             (Self::KEYPAIR, self.keypair_path.display().to_string()),
             (Self::EXCHANGE, self.exchange_path.display().to_string()),
@@ -74,7 +85,30 @@ impl BotEnv {
             (Self::END_SLOT, self.end_slot.to_string()),
             (Self::MAX_POSITION, self.max_position.to_string()),
             (Self::MAX_DRAWDOWN, self.max_drawdown_usd.to_string()),
-        ]
+        ];
+        if let Some(path) = &self.mandate_path {
+            vars.push((Self::MANDATE, path.display().to_string()));
+        }
+        vars
+    }
+
+    /// The session's mandate: `MTH_MANDATE` when the grader sets it,
+    /// otherwise the one the other variables describe, a single Phoenix
+    /// perpetual.
+    pub fn mandate(&self) -> Result<Mandate> {
+        if let Some(path) = &self.mandate_path {
+            return Mandate::load(path);
+        }
+        let mut mandate = Mandate::perp(
+            "phoenix",
+            &self.symbol,
+            self.max_position,
+            self.max_drawdown_usd,
+        );
+        mandate.term = Some(Term {
+            until_slot: self.end_slot,
+        });
+        Ok(mandate)
     }
 
     pub fn keypair(&self) -> Result<Keypair> {
@@ -129,6 +163,7 @@ mod tests {
             end_slot: 1,
             max_position: 50.5,
             max_drawdown_usd: 500.0,
+            mandate_path: None,
         };
         let limits = env.risk_limits().unwrap();
         assert_eq!(limits.max_position_quantity, Some(Decimal::new(505, 1)));
@@ -146,5 +181,42 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn without_a_mandate_file_the_variables_describe_one() {
+        let env = BotEnv {
+            rpc_url: "http://localhost:8899".into(),
+            keypair_path: "/dev/null".into(),
+            exchange_path: "/dev/null".into(),
+            symbol: "SPCX".into(),
+            end_slot: 480,
+            max_position: 70.0,
+            max_drawdown_usd: 1_000.0,
+            mandate_path: None,
+        };
+        let mandate = env.mandate().unwrap();
+        assert_eq!(mandate.term, Some(Term { until_slot: 480 }));
+        assert_eq!(
+            mandate.universe[0].instrument.to_string(),
+            "phoenix:perp:SPCX"
+        );
+        assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MANDATE));
+
+        let dir = std::env::temp_dir().join(format!("mth-mandate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mandate.json");
+        mandate.save(&path).unwrap();
+        let from_file = BotEnv {
+            mandate_path: Some(path.clone()),
+            ..env
+        };
+        assert_eq!(from_file.mandate().unwrap(), mandate);
+        assert!(
+            from_file
+                .vars()
+                .contains(&(BotEnv::MANDATE, path.display().to_string()))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
