@@ -1,5 +1,6 @@
-# The bot SDK as shipped in the task image at /opt/ott/sdk: the botkit crate
-# and the starter bot, laid out as in the ott repository.
+# The bot SDK as shipped in the task image at /opt/ott/sdk: the luce trading
+# library, the botkit crate built on it, and the starter bot, laid out as in
+# the ott repository.
 [workspace]
-members = ["crates/botkit", "bots/starter"]
+members = ["crates/luce", "crates/botkit", "bots/starter"]
 resolver = "3"

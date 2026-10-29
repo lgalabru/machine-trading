@@ -140,7 +140,8 @@ open-trading/
 ├── crates/                🦀 shared Rust
 │   ├── core/              ott-core: offline worlds, scenario families, RPC guard, sessions, grading
 │   ├── cli/               ott: the grader and scenario generator
-│   └── botkit/            ott-botkit: the SDK bots build on (ships in the task image)
+│   ├── luce/              luce: the trading library (exact Decimal model, Solana runtime, Phoenix)
+│   └── botkit/            ott-botkit: the SDK bots build on, over luce (both ship in the task image)
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
 ├── snapshots/             📸 pinned mainnet state (surfnet.json is gitignored)
 ├── skills/                🧠 agent skills: how to design great trading tasks
