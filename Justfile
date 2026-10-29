@@ -84,7 +84,13 @@ pin-image:
     set -euo pipefail
     pin() {
       local ref="$1"; shift
-      local digest; digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ { print $2; exit }')"
+      # The registry occasionally fails a lookup; retry before giving up.
+      local digest="" attempt
+      for attempt in 1 2 3 4 5; do
+        digest="$(docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:/ { print $2; exit }')" && [ -n "$digest" ] && break
+        sleep $((attempt * 5))
+      done
+      [ -n "$digest" ] || { echo "no digest for $ref"; exit 1; }
       echo "$ref@$digest"
       sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
     }
