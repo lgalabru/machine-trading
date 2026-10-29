@@ -21,11 +21,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install Harbor
         run: uv tool install harbor==0.25.0
-      - name: The oracle is the reference bot
+      - name: Each oracle is its task's reference bot
+        # Mirrors `references` in the Justfile.
         run: |
-          for task in bench/tasks/*/; do
-            [ -d "$task/solution/src" ] || continue
-            diff -u bots/reference/src/main.rs "$task/solution/src/main.rs"
+          for pair in phoenix-flash-crash=reference phoenix-market-making=maker; do
+            diff -u "bots/${pair#*=}/src/main.rs" "bench/tasks/${pair%%=*}/solution/src/main.rs"
           done
       - name: Lint every task
         # Images are pinned by `just release`; between releases a task may

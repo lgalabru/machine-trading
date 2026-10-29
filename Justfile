@@ -5,9 +5,10 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.6.0"
+tag := "0.7.0"
 tasks := "bench/tasks"
-task := tasks + "/phoenix-flash-crash"
+# Each task and the bot its oracle runs, as `<task>=<bot>`.
+references := "phoenix-flash-crash=reference phoenix-market-making=maker"
 
 default:
     @just --list
@@ -61,15 +62,16 @@ snapshot-verify dir=("snapshots/" + snapshot):
 bots:
     bots/starter/build.sh
     bots/reference/build.sh
+    bots/maker/build.sh
     bots/dip-buyer/build.sh
 
-# Draw scenarios from the SPCX shock family into a directory.
-scenarios out prefix count seed:
-    cargo run --release -- scenario generate --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
+# Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
+scenarios out prefix count seed family="flash-crash":
+    cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
 
-# Record the reference bot's PnL in each scenario file.
-calibrate +files: bots
-    cargo run --release -- calibrate --snapshot snapshots/{{snapshot}} --bot bots/reference --logs target/logs/calibrate {{files}}
+# Record a reference bot's PnL in each scenario file: just calibrate bots/maker FILES...
+calibrate bot +files: bots
+    cargo run --release -- calibrate --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/calibrate {{files}}
 
 # Grade a bot directory on scenario files, as the verifier does.
 grade bot +files:
@@ -165,17 +167,25 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
 
 # Copy the reference bot into the task's solution.
 solution:
-    mkdir -p {{task}}/solution/src
-    cp bots/reference/src/main.rs {{task}}/solution/src/main.rs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for pair in {{references}}; do
+      mkdir -p "{{tasks}}/${pair%%=*}/solution/src"
+      cp "bots/${pair#*=}/src/main.rs" "{{tasks}}/${pair%%=*}/solution/src/main.rs"
+    done
 
-# Fail if the task's solution drifted from bots/reference.
+# Fail if a task's solution drifted from its reference bot.
 check-solution:
-    diff -u bots/reference/src/main.rs {{task}}/solution/src/main.rs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for pair in {{references}}; do
+      diff -u "bots/${pair#*=}/src/main.rs" "{{tasks}}/${pair%%=*}/solution/src/main.rs"
+    done
 
 # The checks every task change should pass: oracle ~1, and nop, cheater and
 # sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
-harbor-checks: image check-solution
-    harbor run -p {{task}} -a oracle -o jobs
-    harbor run -p {{task}} -a nop -o jobs
-    PYTHONPATH=bench harbor run -p {{task}} -a checks.cheater_agent:CheaterAgent -o jobs
-    PYTHONPATH=bench harbor run -p {{task}} -a checks.cheater_agent:SneakyAgent -o jobs
+harbor-checks task="phoenix-flash-crash": image check-solution
+    harbor run -p {{tasks}}/{{task}} -a oracle -o jobs
+    harbor run -p {{tasks}}/{{task}} -a nop -o jobs
+    PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
+    PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs

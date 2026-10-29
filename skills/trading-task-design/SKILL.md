@@ -44,7 +44,8 @@ Make these choices without asking unless the user says otherwise:
 | Disqualification | Reward 0 for any refused RPC call, any breach of the mandate (another market, a position over the cap, a drawdown past the limit), or any session ending liquidatable | Cheating, leverage and ruin must never pay |
 | Direction | Make the first move unpredictable: mirror the family (crashes *and* squeezes, 50/50) and disclose the odds | If every scenario moves the same way first, a blind bet at the open is free money: in machine-trading, shorting the open made 2.4× the reference with no skill |
 | Path shape | The path's shape gives away nothing a trader wouldn't see: moves ramp in uneven steps at uneven intervals, legs are drawn independently, phases that look alike share one duration range, the session ends a random while after the last move, and the mark wobbles in between | Frontier models reverse-engineer the generator. On machine-trading 0.4.0, Opus and Fable reached 3.5–3.9× the reference without reading the market, from equal steps (the first step gave the move's size) and a fixed tail (the end slot dated the aftermath) |
-| Valuation | From on-chain end state at the mark, never from bot logs | Grade outcomes, not claims |
+| Valuation | From on-chain end state, never from bot logs. At the mark for directional tasks; at the scenario's oracle when the bot quotes, since Phoenix's mark blends in the book | Grade outcomes, not claims. In machine-trading's market-making spike, one lopsided quote moved the mark 0.15%, and a maker quoting around the mark chased its own bid 8 bp above the oracle |
+| Counterparties | When the thesis needs someone to trade with the bot (market making, execution), the grader runs them: takers sending ordinary transactions on a seeded schedule, from a shared pool of accounts, noise and informed overlapping in size | An offline surfnet has nobody else on it: a resting quote fills only when an override moves the price through it, which is pure adverse selection. Separate accounts for informed flow would let a bot read `getBlock` and front-run them |
 | Checks | oracle at its calibrated baseline (`reference_ratio` ≈ 1), nop = 0, cheater = 0, all through Harbor | Proves solvable, non-trivial, and hack-resistant. Against a hindsight bound the oracle scores the baseline (~0.2), not 1 |
 
 ## Operating procedure
@@ -141,6 +142,7 @@ ones for RL, with a private held-out pool that rotates.
 | Blending risk into the reward with a tuned weight | The weight becomes the thing agents optimize |
 | Equal-sized steps, fixed spacing, or a fixed tail after the last move | The first step reveals the move and the end slot dates the aftermath: a bot can trade the script instead of the market |
 | Disjoint ranges for phases that should look alike | Each boundary becomes a rule ("a pause over 60 slots means the shock is over") |
+| A reference with a mechanical bias | Calibration measures the bias, not the strategy: machine-trading's first maker placed its bid before its ask on every requote, so the bid was live longer and it drifted long on balanced flow |
 | No position cap, or a reference far below it | The reward measures leverage: the first real agent in machine-trading bet 6× the reference's size and hit 1.0 with an ordinary strategy |
 
 ## Reference files

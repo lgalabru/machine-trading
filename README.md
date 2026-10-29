@@ -86,9 +86,12 @@ dip-buying, score 0. [Task →](bench/tasks/phoenix-flash-crash)
 
 #### ⚖️ Market making: `phoenix-market-making` 🧪
 
-Quote both sides of a Phoenix perp while the oracle walks and jumps. Earn the
-spread, and skew inventory before informed flow runs you over.
-*Templates: oracle price, market move.*
+Quote both sides of the SPCX perp against Phoenix's own makers, widened to
+a spread drawn per session, while the price walks, trends or jumps.
+Grader-run takers trade against the best quotes: noise either side, and
+informed bursts ahead of each jump. A good bot earns the spread and skews
+or steps back before the informed flow runs it over. Valued at the oracle,
+not the mark its own quotes can push. [Task →](bench/tasks/phoenix-market-making)
 
 #### 💸 Funding squeeze: `phoenix-funding-squeeze` 🧪
 
