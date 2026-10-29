@@ -179,11 +179,7 @@
   .wb-resize { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; z-index: 1; }
   .wb-resize:hover, .wb-resize.drag { background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 4px, transparent 4px); }
   .wb-bar { display: flex; align-items: center; gap: 16px; height: 36px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); flex: none; }
-  .wb-tabs { display: flex; height: 100%; }
-  .wb-tabs button { height: 100%; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-2); font: 500 12px Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
-  .wb-tabs button:hover { color: var(--text); }
-  .wb-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
-  .wb-tabs .num { margin-left: 4px; color: var(--text-3); }
+  .wb-title { color: var(--text); font-weight: 600; }
   .wb-conn { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-family: var(--mono); font-size: 11px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .wb-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
   .wb-actions input { width: 180px; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: 12px var(--mono); outline: none; }
@@ -194,9 +190,14 @@
   .wb-x { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; border: 0; background: none; color: var(--text-3); cursor: pointer; border-radius: 6px; }
   .wb-x:hover { color: var(--text); background: var(--line-soft); }
   .wb-x svg { width: 14px; height: 14px; }
-  .wb-pane { flex: 1; min-height: 0; display: flex; }
-  .wb-pane[hidden] { display: none; }
-  .wb-subs { list-style: none; margin: 0; padding: 6px 0; width: 280px; flex: none; border-right: 1px solid var(--line); overflow: auto; }
+  /* Endpoints on the left, events on the right. */
+  .wb-body { flex: 1; min-height: 0; display: flex; }
+  .wb-side { width: 420px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  .wb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .wb-events { flex: 1; min-height: 0; display: flex; }
+  .wb-head { flex: none; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 14px; border-bottom: 1px solid var(--line-soft); font: 600 10px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+  .wb-head .num { font: 11px var(--mono); letter-spacing: 0; color: var(--text-4); }
+  .wb-subs { list-style: none; margin: 0; padding: 6px 0; width: 250px; flex: none; border-right: 1px solid var(--line); overflow: auto; }
   .wb-subs li { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 2px 8px; padding: 6px 12px; cursor: pointer; }
   .wb-subs li:hover { background: var(--line-soft); }
   .wb-subs li.muted .name, .wb-subs li.muted .n { color: var(--text-4); }
@@ -221,13 +222,13 @@
   .wb-log pre { margin: 0; padding: 10px 14px 12px 24px; color: var(--text-2); white-space: pre-wrap; word-break: break-all; background: #050506; border-bottom: 1px solid var(--line); }
   .wb-log tr.mark td { color: var(--text-3); text-align: center; background: var(--line-soft); }
   .wb-empty { padding: 28px; color: var(--text-3); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-  .wb-endpoints { flex: 1; overflow: auto; padding: 16px 20px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px 24px; align-content: start; }
+  .wb-endpoints { flex: 1; overflow: auto; padding: 14px 14px 20px; display: flex; flex-direction: column; gap: 18px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
   .wb-endpoints h3 { margin: 0 0 8px; font: 600 10px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
-  .wb-kv { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 6px 10px; }
+  .wb-kv { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; }
   .wb-kv .k { color: var(--text-3); }
   .wb-kv code, .wb-cmd code { font: 11.5px var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .wb-kv .note { grid-column: 2 / 4; margin-top: -4px; color: var(--text-4); font-size: 11px; }
-  .wb-cmd { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 7px 10px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  .wb-cmd { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 10px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   .wb-cmd .what { grid-column: 1 / 3; color: var(--text-3); font-size: 11px; margin-top: -4px; }
   .wb-copy { height: 22px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--text-3); font: 11px Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
   .wb-copy:hover { color: var(--text); border-color: #3f3f46; }
@@ -302,10 +303,7 @@
 <section class="workbench" id="workbench" hidden aria-label="Workbench">
   <div class="wb-resize" id="wb-resize" title="Drag to resize"></div>
   <div class="wb-bar">
-    <div class="wb-tabs" role="tablist">
-      <button role="tab" data-tab="events">Events<span class="num" id="wb-count">0</span></button>
-      <button role="tab" data-tab="endpoints">Endpoints</button>
-    </div>
+    <div class="wb-title">Workbench</div>
     <div class="wb-conn"><span class="wb-dot" id="wb-dot"></span><span id="wb-conn">Not connected</span></div>
     <div class="wb-actions">
       <input id="wb-filter" placeholder="Filter events" spellcheck="false" aria-label="Filter events">
@@ -314,14 +312,22 @@
       <button class="wb-x" id="wb-close" title="Close the workbench (`)" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
   </div>
-  <div class="wb-pane" data-pane="events">
-    <ul class="wb-subs" id="wb-subs" aria-label="Subscriptions"></ul>
-    <div class="wb-log" id="wb-log">
-      <table><thead><tr><th>Time</th><th>Slot</th><th>Scenario</th><th>Source</th><th>Event</th></tr></thead><tbody id="wb-rows"></tbody></table>
-      <div class="wb-empty" id="wb-empty">Waiting for the surfnet's websocket…</div>
-    </div>
+  <div class="wb-body">
+    <section class="wb-side" aria-label="Endpoints">
+      <div class="wb-head">Endpoints</div>
+      <div class="wb-endpoints" id="wb-endpoints"></div>
+    </section>
+    <section class="wb-main" aria-label="Events">
+      <div class="wb-head">Events <span class="num" id="wb-count">0</span></div>
+      <div class="wb-events">
+        <ul class="wb-subs" id="wb-subs" aria-label="Subscriptions"></ul>
+        <div class="wb-log" id="wb-log">
+          <table><thead><tr><th>Time</th><th>Slot</th><th>Scenario</th><th>Source</th><th>Event</th></tr></thead><tbody id="wb-rows"></tbody></table>
+          <div class="wb-empty" id="wb-empty">Waiting for the surfnet's websocket…</div>
+        </div>
+      </div>
+    </section>
   </div>
-  <div class="wb-pane" data-pane="endpoints" hidden><div class="wb-endpoints" id="wb-endpoints"></div></div>
 </section>
 
 <script>
@@ -790,6 +796,8 @@ async function toggle() {
   const btn = $('play');
   if (btn.disabled) return;
   const pausing = btn.dataset.mode === 'pause';
+  // Playing opens the workbench: the stream is what's worth watching.
+  if (!pausing) wbToggle(true);
   busy = true; render();
   try {
     const body = await post(pausing ? '/api/pause' : '/api/play');
@@ -823,7 +831,7 @@ window.addEventListener('resize', frame);
 const WB_MAX = 600;
 const WB_STORE = 'mth.workbench';
 const wb = {
-  open: false, tab: 'events', height: 300,
+  open: false, height: 300,
   ws: null, url: null, surfnet: null, retry: null, nextId: 1, requests: new Map(),
   subs: [], rows: [], paused: false, filter: '', last: new Map(), stick: true,
 };
@@ -832,17 +840,13 @@ function wbLoad() {
   try { Object.assign(wb, JSON.parse(localStorage.getItem(WB_STORE) || '{}')); } catch {}
   if (/workbench/.test(location.hash)) wb.open = true;
 }
-function wbSave() { localStorage.setItem(WB_STORE, JSON.stringify({ open: wb.open, tab: wb.tab, height: wb.height })); }
+function wbSave() { localStorage.setItem(WB_STORE, JSON.stringify({ open: wb.open, height: wb.height })); }
 
 function wbLayout() {
   const panel = $('workbench');
   panel.hidden = !wb.open;
   document.body.classList.toggle('wb-open', wb.open);
   document.documentElement.style.setProperty('--wb-h', wb.height + 'px');
-  for (const b of document.querySelectorAll('.wb-tabs button')) b.classList.toggle('on', b.dataset.tab === wb.tab);
-  for (const p of document.querySelectorAll('.wb-pane')) p.hidden = p.dataset.pane !== wb.tab;
-  $('wb-filter').style.visibility = wb.tab === 'events' ? 'visible' : 'hidden';
-  $('wb-pause').style.visibility = $('wb-clear').style.visibility = wb.tab === 'events' ? 'visible' : 'hidden';
 }
 function wbToggle(open = !wb.open) { wb.open = open; wbSave(); wbLayout(); if (open) wbScroll(); }
 
@@ -983,7 +987,7 @@ function wbRow(row) {
   const src = row.sub.key === 'slot' ? 'slot' : row.sub.key.startsWith('logs') ? 'logs' : '';
   tr.innerHTML = `<td>${wbTime(row.at)}</td><td>${row.slot ?? ''}</td><td>${row.x == null ? '' : row.x < 0 ? 'before' : clock(row.x)}</td>`
     + `<td class="src ${src}">${esc(row.sub.label)}</td>`
-    + `<td class="sum ${row.cls}">${esc(row.summary)}${row.override ? `<span class="tag">${esc(row.override.label)}</span>` : ''}</td>`;
+    + `<td class="sum ${row.cls}">${esc(row.summary)}${row.override ? `<span class="tag" style="color:${overrideColor(row.override)};background:${overrideColor(row.override)}22">${esc(row.override.label)}</span>` : ''}</td>`;
   tr.addEventListener('click', () => {
     row.open = !row.open;
     tr.classList.toggle('open', row.open);
@@ -1034,7 +1038,9 @@ function wbRenderEndpoints() {
         <span class="k">Snapshot</span><code>${esc(plan.snapshot)}</code><span></span>
         <span class="k">Base slot</span><code>${live.base_slot ?? 'not started'}</code><span></span>
       </div>
-      <h3 style="margin-top:18px">Try it</h3>
+    </div>
+    <div>
+      <h3>Try it</h3>
       ${cmd('Read the current slot over HTTP', `curl -s ${rpc} -H 'content-type: application/json' -d '${body}'`)}
       ${cmd('Point the Solana CLI at it', `solana config set --url ${rpc} --ws ${ws}`)}
       ${cmd('Open the websocket, then send {"jsonrpc":"2.0","id":1,"method":"slotSubscribe"}', `npx wscat -c ${ws}`)}
@@ -1044,7 +1050,9 @@ function wbRenderEndpoints() {
       <div class="wb-kv">
         ${plan.watch.map((w) => `<span class="k">${esc(w.label)}</span>${wbCopyable(w.pubkey)}<span class="note">${esc(w.note)}</span>`).join('')}
       </div>
-      <h3 style="margin-top:18px">Inspect one</h3>
+    </div>
+    <div>
+      <h3>Inspect one</h3>
       ${plan.watch[0] ? cmd(`Fetch ${plan.watch[0].label}`, `solana account ${plan.watch[0].pubkey} --url ${rpc}`) : ''}
       <p style="color:var(--text-4);margin:10px 0 0">The surfnet is offline: it serves the snapshot and the scenario's overrides, nothing from mainnet. Reset starts a new surfnet on new ports.</p>
     </div>`;
@@ -1072,7 +1080,6 @@ function wbInit() {
   wbLayout();
   $('wb-toggle').addEventListener('click', () => wbToggle());
   $('wb-close').addEventListener('click', () => wbToggle(false));
-  for (const b of document.querySelectorAll('.wb-tabs button')) b.addEventListener('click', () => { wb.tab = b.dataset.tab; wbSave(); wbLayout(); });
   $('wb-subs').addEventListener('click', (e) => {
     const li = e.target.closest('li'); if (!li) return;
     const sub = wb.subs[+li.dataset.i];
@@ -1123,6 +1130,8 @@ function wbInit() {
   document.title = `mth · ${plan.name}`;
   buildCharts();
   wbInit();
+  // --autoplay started the scenario before the page loaded.
+  if (plan.autoplay) wbToggle(true);
   poll();
 })();
 </script>
