@@ -126,6 +126,45 @@ impl World {
     fn rpc_url(&self) -> String {
         self.offline.surfnet.rpc_url().to_string()
     }
+
+    fn ws_url(&self) -> String {
+        self.offline.surfnet.ws_url().to_string()
+    }
+
+    /// The accounts the workbench subscribes to: the one the scenario's
+    /// overrides write, and the market they move.
+    fn watched(&self) -> Vec<Watch> {
+        let exchange = serde_json::to_value(&self.offline.exchange).unwrap_or_default();
+        let market = exchange["markets"]
+            .as_array()
+            .and_then(|markets| markets.iter().find(|m| m["symbol"] == self.market.symbol));
+        let mut watched = vec![Watch {
+            label: "PerpAssetMap".into(),
+            pubkey: self.market.perp_asset_map.clone(),
+            note: "the oracle and mark prices the overrides write".into(),
+        }];
+        for (key, label, note) in [
+            ("marketPubkey", "market", "the order book"),
+            ("splinePubkey", "spline", "the market makers' quotes"),
+        ] {
+            if let Some(pubkey) = market.and_then(|m| m[key].as_str()) {
+                watched.push(Watch {
+                    label: format!("{} {label}", self.market.symbol),
+                    pubkey: pubkey.into(),
+                    note: note.into(),
+                });
+            }
+        }
+        watched
+    }
+}
+
+/// An account the workbench subscribes to.
+#[derive(Debug, Clone, Serialize)]
+struct Watch {
+    label: String,
+    pubkey: String,
+    note: String,
 }
 
 /// `(mark, best bid, best ask)` in ticks.
@@ -166,6 +205,8 @@ struct Plan {
     path: Vec<(u64, f64)>,
     overrides: Vec<Value>,
     end_slot: u64,
+    /// Accounts the workbench streams over the surfnet's websocket.
+    watch: Vec<Watch>,
 }
 
 /// One run of the scenario, from a fresh surfnet to wherever it got.
@@ -179,6 +220,7 @@ struct Live {
     resetting: bool,
     stopped: bool,
     rpc_url: String,
+    ws_url: String,
     samples: Vec<Sample>,
     error: Option<String>,
 }
@@ -294,6 +336,7 @@ impl AppState {
                     *live = Live {
                         generation: live.generation + 1,
                         rpc_url: world.rpc_url(),
+                        ws_url: world.ws_url(),
                         ..Live::default()
                     };
                 }
@@ -420,6 +463,8 @@ pub async fn play(
             .unwrap_or(0),
         path,
         overrides,
+        // The same accounts after a reset: it restores the same snapshot.
+        watch: world.watched(),
     };
 
     let state = Arc::new(AppState {
@@ -429,6 +474,7 @@ pub async fn play(
         symbol,
         live: Mutex::new(Live {
             rpc_url: world.rpc_url(),
+            ws_url: world.ws_url(),
             ..Live::default()
         }),
         session: tokio::sync::Mutex::new(None),
@@ -627,6 +673,7 @@ async fn get_live(
         "resetting": live.resetting,
         "stopped": live.stopped,
         "rpc_url": live.rpc_url,
+        "ws_url": live.ws_url,
         "from": from.min(live.samples.len()),
         "samples": live.samples.get(from..).unwrap_or_default(),
         "error": live.error,
@@ -712,6 +759,7 @@ mod tests {
                     json!({ "slot": 30, "label": "second leg" }),
                 ],
                 end_slot: 40,
+                watch: vec![],
             },
             scenario,
             snapshot_dir: PathBuf::new(),
@@ -809,6 +857,8 @@ mod tests {
             "id=\"stop\"",
             "id=\"chart\"",
             "id=\"strip\"",
+            "id=\"workbench\"",
+            "id=\"wb-toggle\"",
         ] {
             assert!(PAGE.contains(id), "viewer.html lost {id}");
         }
