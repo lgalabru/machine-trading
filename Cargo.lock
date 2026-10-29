@@ -4801,10 +4801,9 @@ dependencies = [
 name = "ott-botkit"
 version = "0.1.0"
 dependencies = [
- "phoenix-rise",
+ "luce",
  "serde_json",
  "solana-commitment-config",
- "solana-compute-budget-interface",
  "solana-keypair",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",

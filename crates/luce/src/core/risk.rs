@@ -90,6 +90,31 @@ impl Default for RiskLimits {
     }
 }
 
+impl RiskLimits {
+    /// A fraction limit with this value is off: [`evaluate`](Self::evaluate)
+    /// skips its check.
+    pub const OFF: Decimal = Decimal::MAX;
+
+    /// Only the absolute limits, each optional; every fraction limit is
+    /// [`OFF`](Self::OFF). For rules stated in units ("hold at most 50 SOL",
+    /// "lose at most $500 from the peak") rather than as fractions.
+    pub fn absolute(
+        max_position_quantity: Option<Decimal>,
+        max_drawdown_value: Option<Decimal>,
+    ) -> Self {
+        Self {
+            max_position_pct: Self::OFF,
+            max_daily_loss_pct: Self::OFF,
+            max_drawdown_pct: Self::OFF,
+            max_total_exposure_pct: Self::OFF,
+            max_theme_exposure_pct: Self::OFF,
+            max_position_quantity,
+            max_drawdown_value,
+            ..Self::default()
+        }
+    }
+}
+
 /// Real-time exposure and drawdown tracking.
 ///
 /// Updated on every fill, position change, and mark. The live state the risk
@@ -325,7 +350,8 @@ impl RiskLimits {
     /// A value above its limit rejects; at or above `warn_fraction` of it,
     /// warns. A [reducing](TradeContext::is_reducing) trade passes every
     /// check, with a warning where the account is already over a limit.
-    /// Percentage checks need positive capital; with none, they reject.
+    /// Percentage checks need positive capital; with none, they reject. A
+    /// fraction limit set to [`RiskLimits::OFF`] is skipped.
     pub fn evaluate(&self, ctx: &TradeContext<'_>) -> RiskReport {
         let reducing = ctx.is_reducing();
         let after = ctx.position_after().abs();
@@ -351,6 +377,7 @@ impl RiskLimits {
         let fraction = |value: Decimal| (ctx.capital > Decimal::ZERO).then(|| value / ctx.capital);
         let mut pct_check =
             |name: &str, value: Decimal, limit: Decimal, what: &str| match fraction(value) {
+                _ if limit == Self::OFF => {}
                 Some(f) => checks.push(gate(name, f, limit, what)),
                 None => checks.push(RiskCheck::new(
                     name,
@@ -397,12 +424,14 @@ impl RiskLimits {
             "today's loss / capital",
         );
 
-        checks.push(gate(
-            "drawdown",
-            ctx.exposure.drawdown,
-            self.max_drawdown_pct,
-            "drawdown from peak",
-        ));
+        if self.max_drawdown_pct != Self::OFF {
+            checks.push(gate(
+                "drawdown",
+                ctx.exposure.drawdown,
+                self.max_drawdown_pct,
+                "drawdown from peak",
+            ));
+        }
         if let Some(max) = self.max_drawdown_value {
             checks.push(gate(
                 "drawdown_value",
@@ -602,6 +631,22 @@ mod tests {
         // by reducing.
         let r = limits().evaluate(&ctx(Side::Sell, dec!(14), dec!(3), &e));
         assert!(result(&r, "position_quantity").is_reject());
+    }
+
+    #[test]
+    fn absolute_limits_skip_fraction_checks() {
+        let limits = RiskLimits::absolute(Some(dec!(50)), Some(dec!(500)));
+        let e = exposure();
+        let mut c = ctx(Side::Buy, dec!(60), dec!(0), &e);
+        c.capital = dec!(0); // No capital needed when no fraction is checked.
+        let r = limits.evaluate(&c);
+        let names: Vec<&str> = r.checks.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["position_quantity", "drawdown_value"]);
+        assert!(result(&r, "position_quantity").is_reject());
+        assert!(matches!(
+            result(&r, "drawdown_value"),
+            RiskCheckResult::Pass
+        ));
     }
 
     #[test]

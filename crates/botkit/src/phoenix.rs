@@ -1,68 +1,82 @@
 //! Phoenix Eternal access that works against an offline surfnet.
 //!
-//! `phoenix-rise` builds its market metadata from the Phoenix HTTP API, which an
-//! offline sandbox can't reach. The metadata is fetched once, next to the
+//! `phoenix-rise` builds its market metadata from the Phoenix HTTP API, which
+//! an offline sandbox can't reach. The metadata is fetched once, next to the
 //! chain snapshot, and loaded from disk from then on.
+//!
+//! [`Phoenix`] wraps luce's [`PhoenixExchange`]. Its `f64` helpers are kept
+//! for existing callers and keep their historical arithmetic exactly; new
+//! code should prefer luce's exact conversions on [`PhoenixMarket`]
+//! ([`Phoenix::luce_market`]).
 
-use std::{path::Path, str::FromStr};
+use std::{path::Path, sync::Arc};
 
-use phoenix_rise::{
-    core::{PhoenixHawkeyeClient, PhoenixMetadata, PhoenixTxBuilder, TraderKey},
-    types::exchange::{ExchangeMarketConfig, ExchangeResponse},
+use luce::protocols::phoenix::{
+    PhoenixExchange, PhoenixMarket,
+    phoenix_rise::{
+        core::{PhoenixHawkeyeClient, PhoenixMetadata, PhoenixTxBuilder},
+        types::exchange::{ExchangeMarketConfig, ExchangeResponse},
+    },
 };
 use solana_pubkey::Pubkey;
 
-use crate::{Error, Result, error::io_error};
+use crate::Result;
 
 /// Phoenix accounts collateral in quote lots of 1e-6 USDC.
 pub const QUOTE_LOTS_PER_USD: f64 = 1e6;
 
 pub fn load_exchange(path: &Path) -> Result<ExchangeResponse> {
-    let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
-    Ok(serde_json::from_str(&contents)?)
+    Ok(luce::protocols::phoenix::load_exchange(path)?)
 }
 
 pub struct Phoenix {
-    metadata: PhoenixMetadata,
+    exchange: Arc<PhoenixExchange>,
     rpc_url: String,
 }
 
 impl Phoenix {
     pub fn new(exchange: ExchangeResponse, rpc_url: impl Into<String>) -> Self {
         Self {
-            metadata: PhoenixMetadata::new(exchange.into()),
+            exchange: Arc::new(PhoenixExchange::new(exchange)),
             rpc_url: rpc_url.into(),
         }
     }
 
+    /// The luce exchange this wraps.
+    pub fn exchange(&self) -> &Arc<PhoenixExchange> {
+        &self.exchange
+    }
+
     pub fn metadata(&self) -> &PhoenixMetadata {
-        &self.metadata
+        self.exchange.metadata()
     }
 
     pub fn market(&self, symbol: &str) -> Result<&ExchangeMarketConfig> {
-        self.metadata
-            .get_market(symbol)
-            .ok_or_else(|| Error::UnknownMarket(symbol.to_string()))
+        Ok(self.exchange.market_config(symbol)?)
+    }
+
+    /// The market as a luce instrument, with exact `Decimal` conversions.
+    pub fn luce_market(&self, symbol: &str) -> Result<PhoenixMarket> {
+        Ok(self.exchange.market(symbol)?)
     }
 
     pub fn perp_asset_map(&self) -> Result<Pubkey> {
-        let key = &self.metadata.keys().perp_asset_map;
-        Pubkey::from_str(key).map_err(|_| Error::InvalidExchangeKey(key.clone()))
+        Ok(self.exchange.perp_asset_map()?)
     }
 
     /// The cross-margin trader account bots trade from.
     pub fn trader_account(&self, authority: &Pubkey) -> Pubkey {
-        TraderKey::derive_pda(authority, 0, 0)
+        self.exchange.trader_account(authority)
     }
 
     pub fn tx(&self) -> PhoenixTxBuilder<'_> {
-        PhoenixTxBuilder::new(&self.metadata)
+        self.exchange.tx()
     }
 
     /// Read-only views, computed by simulating Phoenix's Hawkeye program.
     /// `fee_payer` only needs to exist; nothing is signed or charged.
     pub fn hawkeye(&self, fee_payer: Pubkey) -> PhoenixHawkeyeClient<'_> {
-        PhoenixHawkeyeClient::new(self.rpc_url.clone(), &self.metadata).with_fee_payer(fee_payer)
+        self.exchange.hawkeye(&self.rpc_url, fee_payer)
     }
 
     /// USD per base unit for a price in ticks.

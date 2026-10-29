@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
-use phoenix_rise::types::exchange::ExchangeResponse;
+use luce::{
+    Decimal, core::RiskLimits, protocols::phoenix::phoenix_rise::types::exchange::ExchangeResponse,
+};
 use solana_keypair::Keypair;
 
 use crate::{Error, Result, error::io_error, phoenix::load_exchange};
@@ -85,6 +87,25 @@ impl BotEnv {
     pub fn exchange(&self) -> Result<ExchangeResponse> {
         load_exchange(&self.exchange_path)
     }
+
+    /// The session's rules as luce [`RiskLimits`]: `OTT_MAX_POSITION` as the
+    /// largest position in base units and `OTT_MAX_DRAWDOWN` as the largest
+    /// fall from peak equity in USD. Every fraction-of-capital limit is off.
+    ///
+    /// Evaluate an order with [`RiskLimits::evaluate`] before sending it; a
+    /// rejection means the grader would disqualify the bot.
+    pub fn risk_limits(&self) -> Result<RiskLimits> {
+        let decimal = |name: &'static str, value: f64| {
+            Decimal::from_str(&format!("{value}")).map_err(|_| Error::Env {
+                name,
+                reason: format!("not a finite decimal: {value}"),
+            })
+        };
+        Ok(RiskLimits::absolute(
+            Some(decimal(Self::MAX_POSITION, self.max_position)?),
+            Some(decimal(Self::MAX_DRAWDOWN, self.max_drawdown_usd)?),
+        ))
+    }
 }
 
 fn var(name: &'static str) -> Result<String> {
@@ -92,4 +113,38 @@ fn var(name: &'static str) -> Result<String> {
         name,
         reason: e.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risk_limits_carry_the_session_rules() {
+        let env = BotEnv {
+            rpc_url: "http://localhost:8899".into(),
+            keypair_path: "/dev/null".into(),
+            exchange_path: "/dev/null".into(),
+            symbol: "SOL".into(),
+            end_slot: 1,
+            max_position: 50.5,
+            max_drawdown_usd: 500.0,
+        };
+        let limits = env.risk_limits().unwrap();
+        assert_eq!(limits.max_position_quantity, Some(Decimal::new(505, 1)));
+        assert_eq!(limits.max_drawdown_value, Some(Decimal::new(500, 0)));
+        assert_eq!(limits.max_position_pct, RiskLimits::OFF);
+
+        let bad = BotEnv {
+            max_position: f64::NAN,
+            ..env
+        };
+        assert!(matches!(
+            bad.risk_limits().unwrap_err(),
+            Error::Env {
+                name: BotEnv::MAX_POSITION,
+                ..
+            }
+        ));
+    }
 }
