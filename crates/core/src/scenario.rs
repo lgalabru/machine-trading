@@ -40,7 +40,7 @@ pub struct Scenario {
     pub max_drawdown_usd: f64,
     pub path: Vec<Waypoint>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
-    /// Written by `mt calibrate`.
+    /// Written by `mth calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
 }

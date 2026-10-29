@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use mt_core::{
+use mth_core::{
     grade::{self, GradeOptions},
     phoenix,
     scenario::{Scenario, ShockFamily},
@@ -10,10 +10,10 @@ use mt_core::{
 };
 use tracing_subscriber::EnvFilter;
 
-/// Tooling for the mt Solana trading benchmark. Results go to stdout as JSON,
+/// Tooling for the mth Solana trading benchmark. Results go to stdout as JSON,
 /// logs to stderr.
 #[derive(Parser)]
-#[command(name = "mt", version)]
+#[command(name = "mth", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -58,7 +58,7 @@ struct Sessions {
     logs: PathBuf,
     /// Sessions to run at once, each on its own surfnet (1-4). A machine
     /// that can't keep up fails the run on late slots rather than skewing it.
-    #[arg(long, env = "MT_JOBS", default_value_t = 1)]
+    #[arg(long, env = "MTH_JOBS", default_value_t = 1)]
     jobs: usize,
     /// Scenario files, run in order.
     #[arg(required = true)]
@@ -104,7 +104,7 @@ enum SnapshotCommand {
         /// Datasource to fork. May embed an API key; only its host is recorded.
         #[arg(
             long,
-            env = "MT_FORK_RPC_URL",
+            env = "MTH_FORK_RPC_URL",
             default_value = "https://api.mainnet-beta.solana.com"
         )]
         fork_rpc: String,
@@ -125,7 +125,7 @@ enum SnapshotCommand {
     VerifyFork {
         #[arg(
             long,
-            env = "MT_FORK_RPC_URL",
+            env = "MTH_FORK_RPC_URL",
             default_value = "https://api.mainnet-beta.solana.com"
         )]
         fork_rpc: String,

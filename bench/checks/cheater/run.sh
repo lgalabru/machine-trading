@@ -5,7 +5,7 @@
 set -u
 . "$(dirname "$0")/http.sh"
 rpc() {
-  http_post "$MT_RPC_URL" "$1"
+  http_post "$MTH_RPC_URL" "$1"
   echo
 }
 owner=11111111111111111111111111111111

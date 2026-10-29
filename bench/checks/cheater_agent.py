@@ -45,7 +45,7 @@ class CheaterAgent(_InstallBot):
 
     @staticmethod
     def name() -> str:
-        return "mt-cheater"
+        return "mth-cheater"
 
 
 class SneakyAgent(_InstallBot):
@@ -55,4 +55,4 @@ class SneakyAgent(_InstallBot):
 
     @staticmethod
     def name() -> str:
-        return "mt-sneaky"
+        return "mth-sneaky"

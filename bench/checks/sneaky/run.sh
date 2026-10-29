@@ -6,7 +6,7 @@
 # nothing gained, and the session (and its grade) must complete normally.
 set -u
 . "$(dirname "$0")/http.sh"
-guard_port="${MT_RPC_URL##*:}"
+guard_port="${MTH_RPC_URL##*:}"
 guard_port="${guard_port%%/*}"
 owner=11111111111111111111111111111111
 usdc=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v

@@ -1,5 +1,5 @@
-# No workspace inheritance: like mt-botkit, this crate ships inside the task
-# image at /opt/mt/sdk, where bots build against it outside this workspace.
+# No workspace inheritance: like mth-botkit, this crate ships inside the task
+# image at /opt/mth/sdk, where bots build against it outside this workspace.
 # Versions match the workspace's [workspace.dependencies].
 [package]
 name = "luce"

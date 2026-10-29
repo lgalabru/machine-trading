@@ -1,4 +1,4 @@
-# Loads MT_FORK_RPC_URL for snapshot-prepare.
+# Loads MTH_FORK_RPC_URL for snapshot-prepare.
 set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
@@ -32,7 +32,7 @@ snapshot-pull:
     set -euo pipefail
     id="$(docker create {{registry}}/{{image}}:{{tag}}-runtime)"
     trap 'docker rm "$id" > /dev/null' EXIT
-    docker cp "$id:/opt/mt/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
+    docker cp "$id:/opt/mth/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
     echo "snapshots/{{snapshot}}/surfnet.json"
 
 # Replay a snapshot offline and trade through a scripted crash.
