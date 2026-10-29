@@ -57,6 +57,26 @@ refused calls. Minimum set:
 When you add a mitigation, add the cheat that proves it works. A mitigation
 without a failing cheat test is a hope.
 
+## Structural leaks: reading the simulator
+
+The hardest exploits break no rule. The bot makes only allowed calls and
+trades within its limits, but its edge comes from how the simulator builds
+paths rather than from the market. No cheat check catches this, and the
+risk gates don't either: the bot looks like a great trader. Leaks found in
+machine-trading:
+
+| Version | Leak | What the agent did |
+| --- | --- | --- |
+| 0.3.0 | Every scenario crashed first | Shorted the cap at the open: 4.3–4.7× the reference |
+| 0.4.0 | Moves stepped in equal ≤4% increments, two slots apart | Took the first step's size as the move's, and rode the remaining steps |
+| 0.4.0 | The session ended 80 slots after the last move | Computed the aftermath's start slot from `MT_END_SLOT` |
+| 0.4.0 | Disjoint ranges for leg sizes, pauses and holds | Deduced rules like "a leg under 5% is always followed by a second" from practice files |
+
+Defenses: mirror directions, randomize step sizes, gaps and the tail, add
+noise, draw legs independently, and overlap the ranges of phases that should
+look alike (see SKILL.md, step 2). Then confirm with real agents: read the
+winning bots' source, since agents describe their edge there.
+
 ## After real-agent runs
 
 Run `harbor analyze jobs/<job>` on every batch. Its `reward_hacking`

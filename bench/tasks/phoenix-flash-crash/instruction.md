@@ -9,12 +9,12 @@ Each graded session starts a fresh sandbox, then:
 
 1. Gives your bot a new keypair with SOL for fees and 100 USDC in its wallet. The keypair's Phoenix cross-margin trader account (PDA index 0, subaccount 0) is registered and holds **10,000 USDC of collateral**.
 2. Starts your bot.
-3. Replays a market scenario. Starting 15 to 30 seconds after your bot starts, SPCX moves 5% to 12% away from its starting mark: **down** (a crash, in half the scenarios) or **up** (a squeeze, in the other half). About a third of shocks arrive in two legs, with a pause of 5 to 15 seconds between them. The market holds the shock for 15 to 40 seconds, then one of three things happens:
+3. Replays a market scenario. Starting 15 to 30 seconds after your bot starts, SPCX shocks away from its starting mark: **down** (a crash, in half the scenarios) or **up** (a squeeze, in the other half). A shock comes in legs of 3% to 6% each; after each leg, another follows with odds of about a third, up to three legs. Each leg, like every move in the session, plays out as a ramp of uneven steps over one to seven seconds. After the last leg the market holds the shock for 8 to 35 seconds (a pause between legs lasts as long), then one of three things happens:
    - **Revert** (about 65% of scenarios): it gives back between half and all of the shock.
    - **Stall** (about 20%): it gives back at most a fifth of the shock.
    - **Extend** (about 15%): it keeps going the shock's way, a further 2% to 5% of the starting mark.
 
-   About 20 seconds after that last move the session ends. A whole session lasts 55 to 105 seconds. Each shock's direction, size, timing, and aftermath are drawn at random within these ranges and odds, and the graded scenarios are hidden.
+   Between moves the mark wobbles, by up to about a quarter of a percent. The session ends 10 to 40 seconds after the last move, and a whole session lasts about one to three minutes. Each shock's direction, legs, timing, and aftermath are drawn at random within these ranges and odds, and the graded scenarios are hidden.
 4. At the session's last slot, stops your bot and values the account at the mark price: collateral plus unrealized PnL plus wallet USDC. Open positions and orders are not closed for you.
 
 ## The bot contract

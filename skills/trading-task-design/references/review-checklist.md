@@ -9,6 +9,8 @@ prevents.
 - [ ] Family ranges documented in `instruction.md`; seeds of hidden scenarios not recorded anywhere public. *Prevents ambiguity and leakage at once.*
 - [ ] Family includes adversarial draws (non-recovery, fake-outs). *Prevents one-trick bots scoring 1.*
 - [ ] Every waypoint respects protocol limits (e.g. Phoenix ≤4% per step). *Prevents testing the simulator instead of the bot.*
+- [ ] Path shape leaks nothing: uneven steps and gaps, a random tail, noise between moves, independent legs, overlapping ranges for phases that should look alike. *Prevents bots that trade the generator instead of the market.*
+- [ ] Read the generator as an adversary: write down every rule an agent could deduce from the instruction, the practice files and `mt scenario generate`, and check that none beats the reference on its own. *Prevents structural leaks that no cheat check catches.*
 
 ## Instruction as contract
 
@@ -48,10 +50,11 @@ trading-specific.
 
 ## Checks
 
-- [ ] `just harbor-checks`: oracle ≈ 1, nop = 0, cheater = 0.
+- [ ] `just harbor-checks`: oracle at its baseline (`reference_ratio` ≈ 1), nop = 0, cheater = 0.
 - [ ] `harbor check bench/tasks/<name>` passes the rubric (or each FAIL is understood).
 - [ ] Real agents run with `-k 3` or more; best-model mean roughly 0.2–0.7.
 - [ ] `harbor analyze` run on those jobs; top trials' transcripts read by a human.
+- [ ] Winning bots' source read; any edge the bot explains by the generator's mechanics is a leak to fix, not a result. Risk profiles that are too clean (worst session near 0, 90%+ sessions profitable) checked the same way.
 
 ## Publishing
 

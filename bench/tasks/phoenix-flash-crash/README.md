@@ -6,12 +6,16 @@ Solana mainnet: Phoenix's SPCX market, snapshotted on 2026-10-29 and restored in
 [Surfpool](https://github.com/solana-foundation/surfpool) surfnet at the
 snapshot's slot and time.
 
-**What it measures.** SPCX shocks 5–12%: half the time it crashes, half the
-time it squeezes. Most shocks revert (~65%), but some stall (~20%) and some
-keep going (~15%). A good bot reads which way the shock is going, takes the
-other side of the forced flow, and sizes and exits so that the shocks that
-don't revert can't take it past its loss limit. Betting blind at the open
-has no edge: it wins half the shocks and loses the other half.
+**What it measures.** SPCX shocks in one to three legs of 3–6%: half the
+time it crashes, half the time it squeezes. Most shocks revert (~65%), but
+some stall (~20%) and some keep going (~15%). A good bot reads which way the
+shock is going, takes the other side of the forced flow, and sizes and exits
+so that the shocks that don't revert can't take it past its loss limit.
+Betting blind at the open has no edge: it wins half the shocks and loses the
+other half. The path's shape gives nothing away beyond what a trader would
+see: moves ramp in uneven steps, legs are drawn independently, pauses and
+holds share one range, the session ends a random while after the last move,
+and the mark wobbles in between.
 
 - **Agent environment:** a Rust toolchain, the `mt-botkit` SDK, a starter
   bot that builds and never trades, six practice scenarios, the scenario
