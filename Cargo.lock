@@ -4287,6 +4287,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "luce"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "phoenix-rise",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "solana-account 4.7.0",
+ "solana-account-decoder-client-types",
+ "solana-commitment-config",
+ "solana-compute-budget-interface",
+ "solana-keypair",
+ "solana-program-pack 3.1.0",
+ "solana-pubkey 4.3.0",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-signer",
+ "solana-system-interface 3.3.0",
+ "solana-transaction 4.3.0",
+ "solana-transaction-status-client-types",
+ "spl-associated-token-account-interface",
+ "spl-token-interface 3.0.0",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wincode",
+]
+
+[[package]]
 name = "lz4"
 version = "1.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5849,6 +5882,16 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "rust_decimal_macros"
+version = "1.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74a5a6f027e892c7a035c6fddb50435a1fbf5a734ffc0c2a9fed4d0221440519"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
