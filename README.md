@@ -7,7 +7,7 @@
 </div>
 
 <p align="center">
-  <a href="https://hub.harborframework.com/datasets/solana-foundation/machine-trading"><img alt="Harbor dataset" src="https://img.shields.io/badge/harbor-solana--foundation%2Fopen--trading-blue"></a>
+  <a href="https://hub.harborframework.com/datasets/solana-foundation/machine-trading"><img alt="Harbor dataset" src="https://img.shields.io/badge/harbor-solana--foundation%2Fmachine--trading-blue"></a>
 </p>
 
 **Machine Trading is a workshop for frontier trading agents on Solana.** It
@@ -77,7 +77,7 @@ Phoenix comes first; other protocols follow.
 
 #### 📉 Flash crash: `phoenix-flash-crash` ✅
 
-SPCX (SpaceX) perps crash or squeeze 5–12%, 50/50. Most shocks revert, some stall,
+SPCX (SpaceX) perps crash or squeeze in one to three legs of 3–6%, 50/50. Most shocks revert, some stall,
 and some keep going. A good bot reads which way the shock is going, takes
 the other side of the forced flow, and sizes so the shocks that don't
 revert can't take it past its loss limit. Blind bets at the open, and blind
