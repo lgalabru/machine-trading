@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use phoenix_rise::{
     core::{LimitOrderTicket, MarketOrderTicket},
-    ix::hawkeye::ViewBboReturn,
+    ix::hawkeye::{ViewAssetReturn, ViewBboReturn},
     math::Side as PhoenixSide,
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -210,15 +210,21 @@ impl PhoenixTrader {
             .book_from_bbo(&bbo, Some(bbo.mark_price_last_updated_slot)))
     }
 
-    /// The account's position in the market, as Phoenix reports it: signed
-    /// size and average entry. Realized PnL is not part of the view.
-    pub async fn position(&self) -> Result<Position, PhoenixError> {
-        let asset = self
+    /// Hawkeye's margin view of the account in this market, in Phoenix units
+    /// (base lots, quote lots, ticks).
+    pub async fn margin(&self) -> Result<ViewAssetReturn, PhoenixError> {
+        Ok(self
             .exchange
             .hawkeye(&self.rpc_url, self.authority)
             .view_margin_for_asset(self.authority, 0, 0, self.market.asset_id)
             .await?
-            .value;
+            .value)
+    }
+
+    /// The account's position in the market, as Phoenix reports it: signed
+    /// size and average entry. Realized PnL is not part of the view.
+    pub async fn position(&self) -> Result<Position, PhoenixError> {
+        let asset = self.margin().await?;
         Ok(self
             .market
             .position(asset.base_lots, asset.entry_price_quote_lots_per_base_lot))
