@@ -1,0 +1,46 @@
+name: Specs
+
+# The Machine Trading Protocol site: specs/ rendered by specs/site/build.mjs.
+# This repository is private, so the site is published from the public
+# lgalabru/mtp, whose main branch GitHub Pages serves. Pushes to main here
+# publish it, through a deploy key on lgalabru/mtp (secret MTP_DEPLOY_KEY);
+# pull requests only build it.
+on:
+  push:
+    branches: [main]
+    paths: ["specs/**", ".github/workflows/specs.yml"]
+  pull_request:
+    paths: ["specs/**", ".github/workflows/specs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: specs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: specs/site/package-lock.json
+      - name: Build the site
+        working-directory: specs/site
+        run: |
+          npm ci
+          npm run build
+      - name: Publish to lgalabru/mtp
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.MTP_DEPLOY_KEY }}
+          external_repository: lgalabru/mtp
+          publish_branch: main
+          publish_dir: specs/site/_site
+          commit_message: "Publish the specs"

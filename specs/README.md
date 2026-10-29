@@ -1,8 +1,10 @@
-# Machine Trading specs
+# Machine Trading Protocol
 
 Specifications for letting agents trade on someone else's behalf, starting
 with the **mandate**: what an agent may trade, and the limits it must stay
 within.
+
+Read them at [lgalabru.github.io/mtp](https://lgalabru.github.io/mtp/).
 
 A mandate constrains what an agent does, never why. It holds no strategy,
 signals or triggers: strategies are code, and agents write code well. What a
