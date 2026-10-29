@@ -40,11 +40,13 @@ jobs:
         run: |
           sed -n '/<script>/,/<\/script>/p' crates/cli/src/viewer.html | sed '1d;$d' > "$RUNNER_TEMP/viewer.js"
           node --check "$RUNNER_TEMP/viewer.js"
-      - name: Scenarios carry their limits and a reference baseline
+      - name: Scenarios carry a reference baseline
+        # The rest of a scenario, its mandate included, is checked by
+        # crates/core/tests/files.rs.
         run: |
           for f in bench/tasks/*/environment/practice/*.json bench/tasks/*/tests/scenarios/*.json; do
-            jq -e '(.reference_pnl_usd | type == "number") and (.max_position > 0) and (.max_drawdown_usd > 0) and (.path | length > 0)' "$f" > /dev/null \
-              || { echo "::error file=$f::missing reference_pnl_usd, max_position, max_drawdown_usd or path"; exit 1; }
+            jq -e '(.reference_pnl_usd | type == "number") and (.path | length > 0)' "$f" > /dev/null \
+              || { echo "::error file=$f::missing reference_pnl_usd or path"; exit 1; }
           done
 
   rust:

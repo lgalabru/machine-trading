@@ -3,8 +3,18 @@
   "description": "SPCX drops 7.5% in 2 legs from around slot 86, then rebounds to -0.90% of its starting mark",
   "symbol": "SPCX",
   "duration_slots": 414,
-  "max_position": 70.0,
-  "max_drawdown_usd": 1000.0,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
   "path": [
     {
       "slot": 6,

@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use mth_botkit::mandate::{InstrumentRef, Kind, Mandate};
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
@@ -27,17 +28,15 @@ pub struct Scenario {
     /// Session length, counted from when the bot starts. The account is
     /// marked to market at this slot.
     pub duration_slots: u64,
-    /// The largest position, long or short, in base units, a bot may hold.
-    /// Without a cap, PnL in dollars rewards size as much as skill: a bot
-    /// betting several times the reference's size beats it on any profitable
-    /// family. The reference trades up to the cap, so the reward compares
-    /// strategies at equal size.
-    pub max_position: f64,
-    /// The most, in USD, the account's value may fall below its running peak
-    /// during the session: a prop desk's loss limit. PnL alone pays a bot
-    /// that goes deep underwater and gets lucky; the limit makes surviving
-    /// the path part of the score.
-    pub max_drawdown_usd: f64,
+    /// What the bot may trade and the limits it must stay within: the
+    /// scenario's market, with a position cap and a drawdown limit (see
+    /// `specs/mandate.md`). Without a cap, PnL in dollars rewards size as
+    /// much as skill: a bot betting several times the reference's size beats
+    /// it on any profitable family. The reference trades up to the cap, so
+    /// the reward compares strategies at equal size. The drawdown limit is a
+    /// prop desk's loss limit: PnL alone pays a bot that goes deep underwater
+    /// and gets lucky; the limit makes surviving the path part of the score.
+    pub mandate: Mandate,
     pub path: Vec<Waypoint>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mth calibrate`.
@@ -59,6 +58,9 @@ pub struct Waypoint {
 /// the market's resting liquidity stop behaving like a real market.
 const MIN_LEVEL_PCT: f64 = -40.0;
 
+/// The venue every scenario trades on.
+pub const VENUE: &str = "phoenix";
+
 impl Scenario {
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
@@ -77,9 +79,40 @@ impl Scenario {
         std::fs::write(path, contents).map_err(io_error(path))
     }
 
-    /// Waypoints must be in order, each move must finish before the next one
-    /// starts, and the last must finish before the session ends.
+    /// The market the scenario moves, as the mandate names it.
+    pub fn instrument(&self) -> InstrumentRef {
+        InstrumentRef {
+            venue: VENUE.into(),
+            kind: Kind::Perp,
+            symbol: self.symbol.clone(),
+        }
+    }
+
+    /// The mandate's position cap on the scenario's market.
+    pub fn max_position(&self) -> f64 {
+        self.mandate
+            .allowance(&self.instrument())
+            .map_or(0.0, |a| a.max_position)
+    }
+
+    /// The mandate must be valid and cover exactly the scenario's market: a
+    /// session measures only that one, so a wider universe would go
+    /// unenforced. Waypoints must be in order, each move must finish before
+    /// the next one starts, and the last must finish before the session ends.
     pub fn validate(&self) -> std::result::Result<(), String> {
+        self.mandate
+            .validate()
+            .map_err(|reason| format!("mandate: {reason}"))?;
+        if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
+        {
+            return Err(format!(
+                "mandate: the universe must be exactly {}, the scenario's market",
+                self.instrument()
+            ));
+        }
+        if self.mandate.term.is_some() {
+            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
+        }
         let mut level = 0.0;
         let mut free_from = 0;
         for (i, waypoint) in self.path.iter().enumerate() {
@@ -124,7 +157,7 @@ impl Scenario {
     /// cost. No bot reaches it (fills cost fees and slippage, and the path is
     /// unknown), so a score against it never saturates.
     pub fn hindsight_bound_usd(&self, start_mark_usd: f64) -> f64 {
-        self.max_position * start_mark_usd * self.total_variation_pct() / 100.0
+        self.max_position() * start_mark_usd * self.total_variation_pct() / 100.0
     }
 
     /// Surfpool overrides for the whole path, with slots relative to when
@@ -349,8 +382,12 @@ impl ShockFamily {
             ),
             symbol: self.symbol.clone(),
             duration_slots,
-            max_position: self.max_position,
-            max_drawdown_usd: self.max_drawdown_usd,
+            mandate: Mandate::perp(
+                VENUE,
+                &self.symbol,
+                self.max_position,
+                self.max_drawdown_usd,
+            ),
             path: path.waypoints,
             reference_pnl_usd: None,
         };
@@ -728,8 +765,7 @@ mod tests {
             description: String::new(),
             symbol: "SPCX".into(),
             duration_slots: 400,
-            max_position: 70.0,
-            max_drawdown_usd: 1_000.0,
+            mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
             path: vec![
                 Waypoint {
                     slot: 10,
@@ -743,6 +779,27 @@ mod tests {
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
+
+        let elsewhere = Scenario {
+            mandate: Mandate::perp(VENUE, "SOL", 70.0, 1_000.0),
+            path: vec![],
+            ..scenario.clone()
+        };
+        assert!(
+            elsewhere
+                .validate()
+                .unwrap_err()
+                .contains("phoenix:perp:SPCX")
+        );
+
+        let mut wide = Scenario {
+            path: vec![],
+            ..scenario
+        };
+        wide.mandate
+            .universe
+            .extend(Mandate::perp(VENUE, "SOL", 1.0, 1.0).universe);
+        assert!(wide.validate().unwrap_err().contains("exactly"));
     }
 
     #[test]

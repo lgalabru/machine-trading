@@ -1,0 +1,15 @@
+{
+  "version": "v0",
+  "term": {
+    "until_slot": 412480
+  },
+  "universe": [
+    {
+      "instrument": "phoenix:perp:SPCX",
+      "max_position": 70.0
+    }
+  ],
+  "limits": {
+    "max_drawdown_usd": 1000.0
+  }
+}

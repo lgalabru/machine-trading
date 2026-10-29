@@ -25,6 +25,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("environment variable {name}: {reason}")]
     Env { name: &'static str, reason: String },
+    #[error("mandate {}: {reason}", path.display())]
+    Mandate { path: PathBuf, reason: String },
     #[error("invalid keypair file {}", .0.display())]
     Keypair(PathBuf),
     #[error("invalid pubkey in exchange metadata: {0}")]

@@ -10,10 +10,10 @@
 //! The reference bot's PnL, when scenarios carry it, is reported alongside as
 //! a baseline (`reference_ratio`), not used for the reward.
 //!
-//! Any session that calls a method the RPC guard refuses, goes over the
-//! position cap, draws down past its limit, or ends liquidatable disqualifies
-//! the bot: the reward is 0. Risk is otherwise reported, not scored: see
-//! [`Risk`].
+//! Any session that calls a method the RPC guard refuses, breaks its
+//! mandate (trades outside its market, goes over the position cap, or draws
+//! down past its limit), or ends liquidatable disqualifies the bot: the
+//! reward is 0. Risk is otherwise reported, not scored: see [`Risk`].
 
 use std::{collections::BTreeMap, path::Path};
 
@@ -260,16 +260,8 @@ fn disqualification(session: &SessionReport) -> Option<String> {
             "called methods bots may not use: {}",
             session.refused_calls.join(", ")
         ))
-    } else if session.peak_position > session.max_position * (1.0 + 1e-9) {
-        Some(format!(
-            "held {:.2}, over the position cap of {}",
-            session.peak_position, session.max_position
-        ))
-    } else if session.max_drawdown_usd > session.drawdown_limit_usd {
-        Some(format!(
-            "drew down ${:.2} from its peak, over the ${} limit",
-            session.max_drawdown_usd, session.drawdown_limit_usd
-        ))
+    } else if let Some(breach) = session.mandate.audit(&session.observed()) {
+        Some(breach.to_string())
     } else if session.liquidatable {
         Some("ended the session liquidatable".to_string())
     } else {
@@ -353,8 +345,10 @@ const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {
+    use mth_botkit::Mandate;
+
     use super::*;
-    use crate::scenario::Waypoint;
+    use crate::scenario::{VENUE, Waypoint};
 
     fn session(pnl_usd: f64) -> SessionReport {
         SessionReport {
@@ -369,10 +363,11 @@ mod tests {
             refused_calls: vec![],
             bot_exit: None,
             late_slots: 0,
+            mandate: Mandate::perp(VENUE, "SPCX", 100.0, 1_000.0),
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
             peak_position: 0.0,
-            max_position: 100.0,
+            positions_outside_universe: 0,
             max_drawdown_usd: 0.0,
-            drawdown_limit_usd: 1_000.0,
         }
     }
 
@@ -383,8 +378,7 @@ mod tests {
             description: String::new(),
             symbol: "SPCX".into(),
             duration_slots: 400,
-            max_position: 100.0,
-            max_drawdown_usd: 1_000.0,
+            mandate: Mandate::perp(VENUE, "SPCX", 100.0, 1_000.0),
             path: vec![Waypoint {
                 slot: 10,
                 level_pct: -10.0,
@@ -453,6 +447,22 @@ mod tests {
         let mut at_limit = session(100.0);
         at_limit.max_drawdown_usd = 1_000.0;
         assert!(score(vec![(at_limit, &s)]).reward > 0.0);
+    }
+
+    #[test]
+    fn trading_outside_the_mandate_disqualifies() {
+        let s = scenario(None);
+        let mut elsewhere = session(300.0);
+        elsewhere.positions_outside_universe = 1;
+        let report = score(vec![(session(100.0), &s), (elsewhere, &s)]);
+        assert_eq!(report.reward, 0.0);
+        assert!(
+            report.scenarios[1]
+                .disqualified
+                .as_deref()
+                .unwrap()
+                .contains("outside its mandate")
+        );
     }
 
     #[test]
