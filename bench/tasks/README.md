@@ -16,6 +16,14 @@ can reach, with a per-session drawdown limit.
 
 ## Changelog
 
+- **0.6.0.** Each scenario carries a [mandate](../../specs/mandate.md):
+  the market the bot may trade, its position cap and its drawdown limit,
+  with the same values as before. Bots get a copy in `MTH_MANDATE`, next to
+  the variables they already read. New rule: a bot may hold positions or
+  orders only in SPCX. Phoenix offline accepted orders on other markets,
+  and nothing checked them. 0.6.0 also republishes the rename from `mt` to
+  `mth` consistently: 0.5.0's agent image used `mth` while its task files
+  and verifier image used `mt`.
 - **0.5.0.** The project is now Machine Trading: the dataset moves from
   `solana-foundation/open-trading` to `solana-foundation/machine-trading`,
   and the CLI, SDK and contract variables from `ott`/`OTT_*` to `mth`/`MTH_*`.

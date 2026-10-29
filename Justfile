@@ -5,7 +5,7 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.5.0"
+tag := "0.6.0"
 tasks := "bench/tasks"
 task := tasks + "/phoenix-flash-crash"
 
