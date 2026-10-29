@@ -4599,6 +4599,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "futures 0.3.34",
  "mth-botkit",
  "mth-core",
  "serde",

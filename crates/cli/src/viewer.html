@@ -120,47 +120,43 @@
   .stat .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
   .stat .v small { font-size: 12px; color: var(--text-3); font-weight: 500; margin-left: 4px; }
 
-  /* Body. */
-  .body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 420px; }
-  .body > main { padding: 28px 32px 32px; min-width: 0; }
-  /* The one separator in the body: between the chart and the timeline. */
-  .body > aside { border-left: 1px solid var(--line); }
-  .body h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  /* Body: one chart per venue and dimension, stacked, one rule between. */
+  .charts > .chart-card { padding: 28px 32px 30px; min-width: 0; }
+  .charts > .chart-card + .chart-card { border-top: 1px solid var(--line); }
+  .charts h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  .charts h2 .venue { color: var(--text-3); font-weight: 500; margin-right: 8px; }
+  .charts .scale { margin-left: 8px; color: var(--text-4); font-weight: 500; font-size: 12px; }
   .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
-  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); flex-wrap: wrap; }
+  .legend { display: flex; gap: 6px 18px; font-size: 12px; color: var(--text-2); flex-wrap: wrap; align-items: center; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend b { font: 600 12px var(--mono); color: var(--text); }
+  .legend small { font: 11px var(--mono); color: var(--text-3); }
   .sw-line { width: 16px; border-top: 2px solid var(--accent); }
   .sw-band { width: 16px; height: 10px; border-radius: 2px; background: var(--accent-soft); }
   .sw-dash { width: 16px; border-top: 2px dashed var(--text-3); }
   .sw-rule { height: 12px; border-left: 1px solid var(--line); }
+  .sw-dot { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--text-3); }
   .chart-wrap { position: relative; }
-  #chart { display: block; width: 100%; height: 400px; }
+  svg.chart { display: block; width: 100%; height: 360px; }
+  .chart-card.lane svg.chart { height: 92px; }
+  .chart-card.lane .note { margin-top: 8px; color: var(--text-4); font-size: 12px; }
   .grid line { stroke: var(--line-soft); }
   .axis text { fill: var(--text-3); font: 11px var(--mono); }
   .tooltip {
-    position: absolute; pointer-events: none; display: none; min-width: 180px; z-index: 5;
+    position: absolute; pointer-events: none; display: none; min-width: 200px; z-index: 5;
     background: #0e0e10; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
     font-size: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
   }
   .tooltip .head { color: var(--text); font-weight: 600; margin-bottom: 6px; }
   .tooltip .row { display: flex; justify-content: space-between; gap: 16px; color: var(--text-3); }
   .tooltip .row b { color: var(--text); font: 600 12px var(--mono); }
+  .tooltip .row i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .tooltip .event { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--text-2); }
-  .error { color: var(--critical); font-size: 12px; min-height: 1em; margin-top: 8px; }
-
-  aside .card { position: sticky; top: 0; }
-  aside .card-head { padding: 28px 24px 4px; }
-  .count { color: var(--text-3); font-size: 12px; }
-  .events { position: relative; list-style: none; margin: 0; padding: 6px 0 10px; max-height: 560px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-  .events li { display: grid; grid-template-columns: 14px 1fr auto; gap: 4px 12px; padding: 10px 24px; border-left: 2px solid transparent; }
-  .events li .st { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; border: 2px solid var(--text-4); }
-  .events li.applied .st { border-color: var(--accent); background: var(--accent); }
-  .events li.applied .label { color: var(--text-2); }
-  .events li.next { background: rgba(162, 239, 91, 0.06); border-left-color: var(--accent); }
-  .events li.next .st { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-  .events .label { color: var(--text); font-size: 14px; }
-  .events .t { color: var(--text-3); font-size: 12px; }
-  .events .meta { grid-column: 2 / 4; color: var(--text-4); font: 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tooltip .event + .event { border-top: 0; margin-top: 2px; padding-top: 0; }
+  .error { color: var(--critical); font-size: 12px; min-height: 1em; padding: 0 32px 12px; }
+  .stat .sym { display: inline-flex; align-items: center; gap: 6px; }
+  .stat .sym i { width: 8px; height: 8px; border-radius: 50%; }
+  .stat .sub { margin-top: 2px; font: 11px var(--mono); color: var(--text-3); }
 
   footer { display: flex; justify-content: space-between; gap: 16px; padding: 18px 32px; border-top: 1px solid var(--line); color: var(--text-4); font-size: 12px; }
   footer code { font-family: var(--mono); color: var(--text-3); }
@@ -170,7 +166,7 @@
   body.wb-open .page { margin-bottom: var(--wb-h, 300px); }
   .wb-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text-2); font: 12px Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
   .wb-toggle:hover { border-color: #3f3f46; color: var(--text); }
-  .wb-toggle kbd { font: 10px var(--mono); color: var(--text-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .wb-toggle kbd { font: 600 13px/14px var(--mono); color: var(--text-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
   .wb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-4); }
   .wb-dot.live { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
   .wb-dot.wait { background: #eab308; }
@@ -239,9 +235,6 @@
   .wb-copy.ok { color: var(--accent); border-color: rgba(162, 239, 91, 0.4); }
 
   @media (max-width: 980px) {
-    .body { grid-template-columns: 1fr; }
-    aside .card { position: static; }
-    .body > aside { border-left: 0; border-top: 1px solid var(--line); }
     .timeline { bottom: 84px; }
   }
 </style>
@@ -292,40 +285,12 @@
     <h1 id="name">Loading…</h1>
     <div class="handle" id="handle"></div>
     <p class="description" id="description"></p>
-    <div class="stats">
-      <div class="stat"><div class="k">Start mark</div><div class="v num" id="s-start">–</div></div>
-      <div class="stat"><div class="k">Mark</div><div class="v num" id="s-mark">–</div></div>
-      <div class="stat"><div class="k">Since start</div><div class="v num" id="s-change">–</div></div>
-      <div class="stat"><div class="k">Bid / ask</div><div class="v num" id="s-bbo">–</div></div>
-      <div class="stat"><div class="k">Low · high</div><div class="v num" id="s-range">–</div></div>
-    </div>
+    <div class="stats" id="stats"></div>
   </section>
   <div class="rule"></div>
 
-  <section class="body">
-    <main>
-      <div class="card-head">
-        <h2 id="chart-title">Mark price</h2>
-        <div class="legend">
-          <span><i class="sw-line"></i>Mark</span>
-          <span><i class="sw-band"></i>Bid–ask</span>
-          <span><i class="sw-dash"></i>Planned</span>
-          <span><i class="sw-rule"></i>Override</span>
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <svg id="chart" role="img" aria-label="Mark price over the scenario"></svg>
-        <div class="tooltip" id="tooltip"></div>
-      </div>
-      <div class="error" id="error"></div>
-    </main>
-    <aside>
-      <div class="card">
-        <div class="card-head"><h2>Timeline</h2><span class="count num" id="count"></span></div>
-        <ul class="events" id="events"></ul>
-      </div>
-    </aside>
-  </section>
+  <section class="charts" id="charts"></section>
+  <div class="error" id="error"></div>
 
   <footer>
     <span>Served by <code>mth scenario play</code> · Ctrl-C in the terminal stops it</span>
@@ -372,16 +337,23 @@ const ICONS = {
 };
 
 let plan = null;
-let groups = [];        // overrides grouped by slot
+let prices = null;      // the sampled chart: Phoenix prices, one series per market
+let groups = [];        // overrides grouped by slot, for the banner
 let samples = [];
 let live = { slot: 0, base_slot: null, paused: false };
 let busy = false;
 let gen = null;       // the run the samples belong to
 let stopped = false;
-let hoverX = null;
+let hover = null;     // { chart, px }
 let hoverDot = null;
-let lastNext = null;
 let stripX = null;   // the strip's slot-to-pixel scale, for hovering dots
+
+// Series colors, in the order a chart lists its instruments. The first is
+// the accent; the rest stay apart from it and from each other on black.
+const PALETTE = ['#a2ef5b', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#2dd4bf', '#fb923c'];
+// Overrides on charts mth doesn't sample: a neutral marker.
+const NEUTRAL = '#a1a1aa';
+const color = {};     // series key -> color
 
 const $ = (id) => document.getElementById(id);
 const usd = (v) => v == null ? '–' : '$' + v.toFixed(2);
@@ -394,24 +366,43 @@ const el = (tag, attrs, parent) => {
   if (parent) parent.appendChild(node);
   return node;
 };
+const overrideColor = (o) => (o.series && color[o.series]) || NEUTRAL;
 
 // Scenario time: slots since its base slot once registered. While staged,
 // "now" is slot 0 and history runs to the left of it.
 const started = () => live.base_slot != null;
 const now = () => started() ? live.slot - live.base_slot : 0;
 const anchor = () => started() ? live.base_slot : live.slot;
-// The window is the scenario itself, fixed: it never rescales as time
-// passes. Samples outside it (long before Play, long after the end) are
-// dropped rather than squeezing the rest.
-const points = () => samples.map((s) => ({ ...s, x: s.slot - anchor() })).filter((p) => p.x >= -PRE && p.x <= plan.end_slot + TAIL);
 const done = () => started() && now() >= plan.end_slot;
+// The window is the scenario itself, fixed: it never rescales as time
+// passes. Samples outside it are dropped rather than squeezing the rest.
 const domain = () => [-PRE, plan.end_slot + TAIL];
+const inWindow = (x) => x >= -PRE && x <= plan.end_slot + TAIL;
 
-function planAt(x) {
-  let level = plan.path[0][1];
-  for (const [slot, v] of plan.path) if (slot <= x) level = v;
+// Several instruments share an axis only as a change from their own start:
+// $143 and $400 can't share a dollar scale. One instrument keeps dollars.
+const relative = () => prices.series.length > 1;
+const scaled = (series, v) => v == null ? null : relative() ? (v / series.start_usd - 1) * 100 : v;
+const axisLabel = (v) => relative() ? (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1) + '%' : '$' + v.toFixed(2);
+
+/** A series' samples in the window: `{ x, mark, bid, ask }` in USD. */
+function points(series) {
+  const out = [];
+  for (const s of samples) {
+    const q = s.quotes[series.key];
+    const x = s.slot - anchor();
+    if (q && inWindow(x)) out.push({ x, ...q });
+  }
+  return out;
+}
+
+function planAt(series, x) {
+  let level = series.path[0][1];
+  for (const [slot, v] of series.path) if (slot <= x) level = v;
   return level;
 }
+
+const lastQuote = (series) => { for (let i = samples.length - 1; i >= 0; i--) { const q = samples[i].quotes[series.key]; if (q) return q; } return null; };
 
 function niceTicks(lo, hi, count) {
   const step0 = (hi - lo || 1) / count;
@@ -430,18 +421,28 @@ function timeTicks(lo, hi, count) {
   return out;
 }
 
-function yRange(pts) {
-  const ys = [...plan.path.map((p) => p[1]), ...pts.flatMap((p) => [p.mark, p.bid, p.ask].filter((v) => v != null))];
+/** The price chart's y range, in its own scale, over every series. */
+function yRange() {
+  const ys = [];
+  for (const series of prices.series) {
+    for (const [, v] of series.path) ys.push(scaled(series, v));
+    for (const p of points(series)) {
+      ys.push(scaled(series, p.mark));
+      if (!relative()) for (const v of [p.bid, p.ask]) if (v != null) ys.push(v);
+    }
+  }
   let lo = Math.min(...ys), hi = Math.max(...ys);
-  const pad = (hi - lo) * 0.08 || hi * 0.01;
+  if (relative()) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  const pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.01 || 1;
   return [lo - pad, hi + pad];
 }
 
-function plannedPath(x, y, xMax) {
+function plannedPath(series, x, y, xMax) {
   let d = '', prev = null;
-  for (const [slot, v] of plan.path) {
-    d += prev == null ? `M${x(slot)},${y(v)}` : `L${x(slot)},${y(prev)}L${x(slot)},${y(v)}`;
-    prev = v;
+  for (const [slot, v] of series.path) {
+    const sv = scaled(series, v);
+    d += prev == null ? `M${x(slot)},${y(sv)}` : `L${x(slot)},${y(prev)}L${x(slot)},${y(sv)}`;
+    prev = sv;
   }
   return d + `L${x(xMax)},${y(prev)}`;
 }
@@ -451,56 +452,57 @@ function drawStrip() {
   const svg = $('strip');
   const W = svg.clientWidth, H = svg.clientHeight;
   svg.replaceChildren();
-  const pts = points();
   const [xMin, xMax] = domain();
-  const [yMin, yMax] = yRange(pts);
+  // The banner has no axis: every series as a change from its start, so
+  // their shapes compare.
+  const norm = (series, v) => (v / series.start_usd - 1) * 100;
+  const ys = prices.series.flatMap((series) => [...series.path.map(([, v]) => norm(series, v)), ...points(series).map((p) => norm(series, p.mark))]);
+  let yMin = Math.min(0, ...ys), yMax = Math.max(0, ...ys);
+  const pad = (yMax - yMin) * 0.08 || 1;
+  yMin -= pad; yMax += pad;
   const trackY = H - 30, top = 6, bottom = trackY - 14;
   const x = (v) => (v - xMin) / (xMax - xMin) * W;
   const y = (v) => top + (1 - (v - yMin) / (yMax - yMin)) * (bottom - top);
   const t = now();
 
   const defs = el('defs', {}, svg);
-  const grad = el('linearGradient', { id: 'fade', x1: 0, x2: 0, y1: 0, y2: 1 }, defs);
-  el('stop', { offset: '0%', 'stop-color': '#a2ef5b', 'stop-opacity': 0.22 }, grad);
-  el('stop', { offset: '100%', 'stop-color': '#a2ef5b', 'stop-opacity': 0 }, grad);
-
-  el('path', { d: plannedPath(x, y, xMax), fill: 'none', stroke: '#3f3f46', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' }, svg);
-  if (pts.length > 1) {
-    const line = pts.map((p, i) => (i ? 'L' : 'M') + x(p.x).toFixed(1) + ',' + y(p.mark).toFixed(1)).join('');
-    // Fill under the played part only: history before the start is context.
-    const played = pts.filter((p) => p.x >= 0);
-    if (started() && played.length > 1) {
-      const area = played.map((p, i) => (i ? 'L' : 'M') + x(p.x).toFixed(1) + ',' + y(p.mark).toFixed(1)).join('');
-      el('path', { d: `${area}L${x(played[played.length - 1].x)},${bottom}L${x(played[0].x)},${bottom}Z`, fill: 'url(#fade)' }, svg);
+  for (const series of prices.series) {
+    const id = 'fade-' + series.symbol.replace(/\W/g, '');
+    const grad = el('linearGradient', { id, x1: 0, x2: 0, y1: 0, y2: 1 }, defs);
+    el('stop', { offset: '0%', 'stop-color': color[series.key], 'stop-opacity': prices.series.length > 1 ? 0.12 : 0.22 }, grad);
+    el('stop', { offset: '100%', 'stop-color': color[series.key], 'stop-opacity': 0 }, grad);
+    let d = '', prev = null;
+    for (const [slot, v] of series.path) { const sv = norm(series, v); d += prev == null ? `M${x(slot)},${y(sv)}` : `L${x(slot)},${y(prev)}L${x(slot)},${y(sv)}`; prev = sv; }
+    el('path', { d: d + `L${x(xMax)},${y(prev)}`, fill: 'none', stroke: color[series.key], 'stroke-opacity': 0.35, 'stroke-width': 1.5, 'stroke-dasharray': '4 4' }, svg);
+    const pts = points(series);
+    if (pts.length > 1) {
+      const played = pts.filter((p) => p.x >= 0);
+      if (started() && played.length > 1) {
+        const area = played.map((p, i) => (i ? 'L' : 'M') + x(p.x).toFixed(1) + ',' + y(norm(series, p.mark)).toFixed(1)).join('');
+        el('path', { d: `${area}L${x(played[played.length - 1].x)},${bottom}L${x(played[0].x)},${bottom}Z`, fill: `url(#${id})` }, svg);
+      }
+      el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + x(p.x).toFixed(1) + ',' + y(norm(series, p.mark)).toFixed(1)).join(''), fill: 'none', stroke: color[series.key], 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
     }
-    el('path', { d: line, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
   }
 
   // Track, filled up to now.
   el('line', { x1: 0, x2: W, y1: trackY, y2: trackY, stroke: 'var(--line)', 'stroke-width': 2, 'stroke-linecap': 'round' }, svg);
   if (started()) el('line', { x1: x(0), x2: x(Math.min(t, xMax)), y1: trackY, y2: trackY, stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linecap': 'round' }, svg);
   el('line', { x1: x(0), x2: x(0), y1: trackY - 6, y2: trackY + 6, stroke: 'var(--text-4)', 'stroke-width': 1 }, svg);
+  for (const v of timeTicks(xMin, xMax, 8)) el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = clock(v);
 
-  for (const v of timeTicks(xMin, xMax, 8)) {
-    const tx = el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg);
-    tx.textContent = clock(v);
-  }
-
+  // One dot per slot with overrides, in the color of what they move.
   const next = started() ? groups.find((g) => g.slot > t) : groups[0];
   for (const g of groups) {
     const cx = x(g.slot);
     const applied = started() && g.slot <= t;
+    const c = g.color;
     const node = el('g', { class: 'dot' }, svg);
-    if (g === next && started() && !live.paused) el('circle', { cx, cy: trackY, r: 6, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.5, class: 'pulse' }, node);
-    el('circle', {
-      cx, cy: trackY, r: g === next ? 5.5 : 4.5,
-      fill: applied ? 'var(--accent)' : 'var(--bg)',
-      stroke: applied || g === next ? 'var(--accent)' : '#52525b', 'stroke-width': 2,
-    }, node);
+    if (g === next && started() && !live.paused) el('circle', { cx, cy: trackY, r: 6, fill: 'none', stroke: c, 'stroke-width': 1.5, class: 'pulse' }, node);
+    el('circle', { cx, cy: trackY, r: g === next ? 5.5 : 4.5, fill: applied ? c : 'var(--bg)', stroke: applied || g === next ? c : '#52525b', 'stroke-width': 2 }, node);
   }
   stripX = x;
 
-  // Playhead.
   if (started()) {
     const px = x(Math.min(t, xMax));
     el('line', { x1: px, x2: px, y1: top, y2: trackY, stroke: 'var(--accent)', 'stroke-opacity': 0.5, 'stroke-width': 1 }, svg);
@@ -510,70 +512,162 @@ function drawStrip() {
 
   if (hoverDot) {
     const cx = x(hoverDot.slot);
-    const lines = hoverDot.items.map((o) => o.label);
-    const w = Math.min(320, Math.max(140, ...lines.map((l) => l.length * 6.6 + 24)));
+    const lines = hoverDot.items;
+    const w = Math.min(360, Math.max(160, ...lines.map((o) => o.label.length * 6.6 + 40)));
     const bx = Math.min(Math.max(cx - w / 2, 0), W - w);
     const h = 26 + lines.length * 17;
     const by = trackY - 16 - h;
     const g = el('g', {}, svg);
     el('rect', { x: bx, y: by, width: w, height: h, rx: 8, fill: '#0e0e10', stroke: 'var(--line)' }, g);
     el('text', { x: bx + 12, y: by + 18, fill: 'var(--text-3)', 'font-size': 11, 'font-family': 'var(--mono)' }, g).textContent = `slot ${hoverDot.slot} · ${clock(hoverDot.slot)}`;
-    lines.forEach((l, i) => { el('text', { x: bx + 12, y: by + 36 + i * 17, fill: 'var(--text)', 'font-size': 12 }, g).textContent = l; });
+    lines.forEach((o, i) => {
+      el('circle', { cx: bx + 16, cy: by + 32 + i * 17, r: 3.5, fill: overrideColor(o) }, g);
+      el('text', { x: bx + 26, y: by + 36 + i * 17, fill: 'var(--text)', 'font-size': 12 }, g).textContent = o.label;
+    });
   }
 }
 
-/* ---------- Main chart ---------- */
-function drawChart() {
-  const svg = $('chart');
+/* ---------- Body charts ---------- */
+function buildCharts() {
+  $('charts').innerHTML = plan.charts.map((c) => `
+    <div class="chart-card${c.tracked ? '' : ' lane'}" data-chart="${esc(c.id)}">
+      <div class="card-head">
+        <h2><span class="venue">${esc(c.venue)}</span>${esc(c.title)}${c.tracked && c.series.length > 1 ? '<span class="scale">% from each start</span>' : ''}</h2>
+        <div class="legend"></div>
+      </div>
+      <div class="chart-wrap"><svg class="chart" role="img" aria-label="${esc(c.venue + ' ' + c.title)}"></svg><div class="tooltip"></div></div>
+      ${c.tracked ? '' : `<div class="note">mth doesn't sample ${esc(c.title.toLowerCase())} yet: the markers show when each override lands.</div>`}
+    </div>`).join('');
+  for (const card of document.querySelectorAll('.chart-card')) {
+    const svg = card.querySelector('svg');
+    svg.addEventListener('pointermove', (e) => { hover = { chart: card.dataset.chart, px: e.clientX - svg.getBoundingClientRect().left }; drawCharts(); });
+    svg.addEventListener('pointerleave', () => { hover = null; drawCharts(); });
+  }
+}
+
+function drawCharts() {
+  for (const card of document.querySelectorAll('.chart-card')) {
+    const chart = plan.charts.find((c) => c.id === card.dataset.chart);
+    if (chart.tracked) drawPrices(card, chart); else drawLane(card, chart);
+  }
+}
+
+function legend(card, chart) {
+  const items = chart.series.map((series) => {
+    const q = lastQuote(series);
+    const value = q ? `<b>${usd(q.mark)}</b> <small>${pct((q.mark / series.start_usd - 1) * 100)}</small>` : `<small>${usd(series.start_usd)}</small>`;
+    return `<span><i class="sw-line" style="border-color:${color[series.key]}"></i>${esc(series.symbol)} ${value}</span>`;
+  });
+  if (!relative()) items.push('<span><i class="sw-band"></i>Bid–ask</span>');
+  items.push('<span><i class="sw-dash"></i>Planned</span><span><i class="sw-rule"></i>Override</span>');
+  const html = items.join('');
+  const node = card.querySelector('.legend');
+  if (node.innerHTML !== html) node.innerHTML = html;
+}
+
+function drawPrices(card, chart) {
+  legend(card, chart);
+  const svg = card.querySelector('svg');
   const W = svg.clientWidth, H = svg.clientHeight;
   const M = { top: 10, right: 64, bottom: 26, left: 4 };
   svg.replaceChildren();
-  const pts = points();
   const [xMin, xMax] = domain();
-  const [yMin, yMax] = yRange(pts);
+  const [yMin, yMax] = yRange();
   const x = (v) => M.left + (v - xMin) / (xMax - xMin) * (W - M.left - M.right);
   const y = (v) => M.top + (1 - (v - yMin) / (yMax - yMin)) * (H - M.top - M.bottom);
+  const clip = 'plot-' + chart.id.replace(/\W/g, '');
 
-  el('clipPath', { id: 'plot' }, el('defs', {}, svg)).appendChild(el('rect', { x: M.left, y: 0, width: W - M.left - M.right, height: H - M.bottom }));
+  el('clipPath', { id: clip }, el('defs', {}, svg)).appendChild(el('rect', { x: M.left, y: 0, width: W - M.left - M.right, height: H - M.bottom }));
   const grid = el('g', { class: 'grid' }, svg), axis = el('g', { class: 'axis' }, svg);
   for (const v of niceTicks(yMin, yMax, 5)) {
     el('line', { x1: M.left, x2: W - M.right, y1: y(v), y2: y(v) }, grid);
-    el('text', { x: W - M.right + 10, y: y(v) + 4 }, axis).textContent = '$' + v.toFixed(2);
+    el('text', { x: W - M.right + 10, y: y(v) + 4 }, axis).textContent = axisLabel(v);
   }
-  for (const v of timeTicks(xMin, xMax, 8)) {
-    el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle' }, axis).textContent = clock(v);
-  }
-  const plot = el('g', { 'clip-path': 'url(#plot)' }, svg);
-  for (const g of groups) el('line', { x1: x(g.slot), x2: x(g.slot), y1: M.top, y2: H - M.bottom, stroke: 'var(--line)', 'stroke-width': 1 }, plot);
+  if (relative()) el('line', { x1: M.left, x2: W - M.right, y1: y(0), y2: y(0), stroke: 'var(--text-4)', 'stroke-width': 1 }, svg);
+  for (const v of timeTicks(xMin, xMax, 8)) el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle' }, axis).textContent = clock(v);
+  const plot = el('g', { 'clip-path': `url(#${clip})` }, svg);
+  for (const o of plan.overrides) if (o.chart === chart.id) el('line', { x1: x(o.slot), x2: x(o.slot), y1: M.top, y2: H - M.bottom, stroke: overrideColor(o), 'stroke-opacity': 0.22, 'stroke-width': 1 }, plot);
 
-  const band = pts.filter((p) => p.bid != null && p.ask != null);
-  if (band.length > 1) {
-    const d = band.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(p.ask)).join('')
-      + band.slice().reverse().map((p) => 'L' + x(p.x) + ',' + y(p.bid)).join('') + 'Z';
-    el('path', { d, fill: 'var(--accent-soft)' }, plot);
-  }
-  el('path', { d: plannedPath(x, y, xMax), fill: 'none', stroke: 'var(--text-3)', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, plot);
-  if (pts.length > 1) {
-    el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(p.mark)).join(''), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round' }, plot);
-    const last = pts[pts.length - 1];
-    el('circle', { cx: x(last.x), cy: y(last.mark), r: 4.5, fill: 'var(--accent)', stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+  for (const series of chart.series) {
+    const c = color[series.key];
+    const pts = points(series);
+    if (!relative()) {
+      const band = pts.filter((p) => p.bid != null && p.ask != null);
+      if (band.length > 1) {
+        const d = band.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(p.ask)).join('') + band.slice().reverse().map((p) => 'L' + x(p.x) + ',' + y(p.bid)).join('') + 'Z';
+        el('path', { d, fill: 'var(--accent-soft)' }, plot);
+      }
+    }
+    el('path', { d: plannedPath(series, x, y, xMax), fill: 'none', stroke: relative() ? c : 'var(--text-3)', 'stroke-opacity': relative() ? 0.45 : 1, 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, plot);
+    if (pts.length > 1) {
+      el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(scaled(series, p.mark))).join(''), fill: 'none', stroke: c, 'stroke-width': 2, 'stroke-linejoin': 'round' }, plot);
+      const last = pts[pts.length - 1];
+      el('circle', { cx: x(last.x), cy: y(scaled(series, last.mark)), r: 4.5, fill: c, stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+    }
   }
 
-  const tip = $('tooltip');
-  if (hoverX == null) { tip.style.display = 'none'; return; }
-  const xv = Math.round(xMin + (hoverX - M.left) / (W - M.left - M.right) * (xMax - xMin));
+  const tip = card.querySelector('.tooltip');
+  if (!hover || hover.chart !== chart.id) { tip.style.display = 'none'; return; }
+  const xv = Math.round(xMin + (hover.px - M.left) / (W - M.left - M.right) * (xMax - xMin));
   el('line', { x1: x(xv), x2: x(xv), y1: M.top, y2: H - M.bottom, stroke: 'var(--text-3)', 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
-  const near = pts.reduce((b, p) => (b == null || Math.abs(p.x - xv) < Math.abs(b.x - xv) ? p : b), null);
-  const sample = near && Math.abs(near.x - xv) <= 2 ? near : null;
-  if (sample) el('circle', { cx: x(sample.x), cy: y(sample.mark), r: 4.5, fill: 'var(--accent)', stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
-  const events = plan.overrides.filter((o) => Math.abs(o.slot - xv) <= 1);
-  tip.innerHTML = `<div class="head">${xv < 0 ? 'Before start' : clock(xv)} <span style="color:var(--text-3);font-weight:500">· slot ${xv}</span></div>`
-    + (sample ? `<div class="row">Mark <b>${usd(sample.mark)}</b></div><div class="row">Bid / ask <b>${usd(sample.bid)} / ${usd(sample.ask)}</b></div>` : '')
-    + (xv >= 0 ? `<div class="row">Planned <b>${usd(planAt(xv))}</b></div>` : '')
-    + events.map((o) => `<div class="event">${esc(o.label)}</div>`).join('');
+  let rows = '';
+  for (const series of chart.series) {
+    const pts = points(series);
+    const near = pts.reduce((b, p) => (b == null || Math.abs(p.x - xv) < Math.abs(b.x - xv) ? p : b), null);
+    const sample = near && Math.abs(near.x - xv) <= 2 ? near : null;
+    const c = color[series.key];
+    if (sample) el('circle', { cx: x(sample.x), cy: y(scaled(series, sample.mark)), r: 4.5, fill: c, stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+    const change = (v) => pct((v / series.start_usd - 1) * 100);
+    rows += sample
+      ? `<div class="row"><span><i style="background:${c}"></i>${esc(series.symbol)}</span><b>${usd(sample.mark)} <small style="color:var(--text-3);font-weight:500">${change(sample.mark)}</small></b></div>`
+        + (relative() ? '' : `<div class="row">Bid / ask <b>${usd(sample.bid)} / ${usd(sample.ask)}</b></div>`)
+      : '';
+    if (xv >= 0) rows += `<div class="row"><span>${relative() ? esc(series.symbol) + ' planned' : 'Planned'}</span><b>${usd(planAt(series, xv))}</b></div>`;
+  }
+  const events = plan.overrides.filter((o) => o.chart === chart.id && Math.abs(o.slot - xv) <= 1);
+  tip.innerHTML = `<div class="head">${xv < 0 ? 'Before start' : clock(xv)} <span style="color:var(--text-3);font-weight:500">· slot ${xv}</span></div>${rows}`
+    + events.map((o) => `<div class="event"><span style="color:${overrideColor(o)}">●</span> ${esc(o.label)}</div>`).join('');
   tip.style.display = 'block';
   tip.style.left = Math.min(Math.max(x(xv) + 14, 0), W - tip.offsetWidth) + 'px';
   tip.style.top = '8px';
+}
+
+/** A chart mth doesn't sample: when each of its overrides lands. */
+function drawLane(card, chart) {
+  const own = plan.overrides.filter((o) => o.chart === chart.id);
+  const legendHtml = `<span><i class="sw-dot" style="border-color:${NEUTRAL};background:${NEUTRAL}"></i>${own.length} override${own.length === 1 ? '' : 's'}</span>`;
+  const node = card.querySelector('.legend');
+  if (node.innerHTML !== legendHtml) node.innerHTML = legendHtml;
+  const svg = card.querySelector('svg');
+  const W = svg.clientWidth, H = svg.clientHeight;
+  const M = { top: 8, right: 64, bottom: 26, left: 4 };
+  svg.replaceChildren();
+  const [xMin, xMax] = domain();
+  const x = (v) => M.left + (v - xMin) / (xMax - xMin) * (W - M.left - M.right);
+  const mid = M.top + (H - M.top - M.bottom) / 2;
+  const axis = el('g', { class: 'axis' }, svg);
+  for (const v of timeTicks(xMin, xMax, 8)) el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle' }, axis).textContent = clock(v);
+  el('line', { x1: M.left, x2: W - M.right, y1: mid, y2: mid, stroke: 'var(--line)', 'stroke-width': 1 }, svg);
+  const t = now();
+  if (started()) el('line', { x1: x(Math.min(t, xMax)), x2: x(Math.min(t, xMax)), y1: M.top, y2: H - M.bottom, stroke: 'var(--accent)', 'stroke-opacity': 0.5, 'stroke-width': 1 }, svg);
+  for (const o of own) {
+    const applied = started() && o.slot <= t;
+    el('line', { x1: x(o.slot), x2: x(o.slot), y1: M.top, y2: H - M.bottom, stroke: NEUTRAL, 'stroke-opacity': 0.25 }, svg);
+    el('circle', { cx: x(o.slot), cy: mid, r: 5, fill: applied ? NEUTRAL : 'var(--bg)', stroke: NEUTRAL, 'stroke-width': 2 }, svg);
+  }
+  const tip = card.querySelector('.tooltip');
+  if (!hover || hover.chart !== chart.id) { tip.style.display = 'none'; return; }
+  const xv = Math.round(xMin + (hover.px - M.left) / (W - M.left - M.right) * (xMax - xMin));
+  const near = own.filter((o) => Math.abs(x(o.slot) - hover.px) <= 10);
+  if (!near.length) { tip.style.display = 'none'; return; }
+  tip.innerHTML = `<div class="head">${clock(near[0].slot)} <span style="color:var(--text-3);font-weight:500">· slot ${near[0].slot}</span></div>`
+    + near.map((o) => {
+      const values = Object.entries(o.values).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' ');
+      return `<div class="event">${esc(o.label)}<div style="color:var(--text-4);font:11px var(--mono);margin-top:2px">${esc(o.template)}${values ? ' · ' + esc(values) : ''}</div></div>`;
+    }).join('');
+  tip.style.display = 'block';
+  tip.style.left = Math.min(Math.max(x(xv) + 14, 0), W - tip.offsetWidth) + 'px';
+  tip.style.top = '4px';
 }
 
 /* ---------- Text ---------- */
@@ -581,11 +675,9 @@ function render() {
   const t = now();
   const total = plan.end_slot;
   const progress = started() ? Math.min(1, t / Math.max(total, 1)) : 0;
-  const last = samples[samples.length - 1];
 
   // Progress pill.
-  const pill = $('pill');
-  pill.classList.toggle('paused', live.paused);
+  $('pill').classList.toggle('paused', live.paused);
   const on = Math.round(progress * BARS);
   [...$('bars').children].forEach((b, i) => b.classList.toggle('on', i < on));
   $('pill-slot').textContent = started() ? `${Math.min(t, total)} / ${total}` : `0 / ${total}`;
@@ -605,7 +697,7 @@ function render() {
     : done()
     ? `<div class="k">Done</div><div class="label">${plan.overrides.length} overrides applied</div>`
     : next
-      ? `<div class="k">Next</div><div class="label">${esc(next.label)}</div><div class="eta num">${started() ? 'in ' + ((next.slot - t) * SLOT_SECONDS).toFixed(1) + 's' : 'at ' + clock(next.slot)}</div>`
+      ? `<div class="k">Next</div><div class="label"><span style="color:${overrideColor(next)}">●</span> ${esc(next.label)}</div><div class="eta num">${started() ? 'in ' + ((next.slot - t) * SLOT_SECONDS).toFixed(1) + 's' : 'at ' + clock(next.slot)}</div>`
       : '';
 
   // Button.
@@ -619,35 +711,19 @@ function render() {
   $('stop').disabled = stopped;
   btn.setAttribute('aria-label', mode === 'pause' ? 'Pause' : mode === 'done' ? 'Played' : 'Play');
 
-  // Stats.
-  $('s-start').textContent = usd(plan.start_mark_usd);
-  $('s-mark').textContent = usd(last?.mark);
-  $('s-change').textContent = last ? pct((last.mark / plan.start_mark_usd - 1) * 100) : '–';
-  $('s-bbo').innerHTML = last ? `${usd(last.bid)}<small>/ ${usd(last.ask)}</small>` : '–';
-  const played = started() ? samples.filter((s) => s.slot >= live.base_slot).map((s) => s.mark) : [];
-  $('s-range').textContent = played.length ? `${usd(Math.min(...played))} · ${usd(Math.max(...played))}` : '–';
-
-  // Event list.
-  const nextIdx = next ? plan.overrides.indexOf(next) : -1;
-  $('count').textContent = `${started() ? plan.overrides.filter((o) => o.slot <= t).length : 0} / ${plan.overrides.length}`;
-  [...$('events').children].forEach((li, i) => {
-    const applied = started() && plan.overrides[i].slot <= t;
-    li.classList.toggle('applied', applied);
-    li.classList.toggle('next', !applied && i === nextIdx);
-  });
-  if (nextIdx !== lastNext && nextIdx >= 0 && started()) {
-    const list = $('events');
-    const item = list.children[nextIdx];
-    if (item) {
-      // Glide to the next event; jump when it's far off, as on first load.
-      const top = Math.max(0, item.offsetTop - list.clientHeight / 3);
-      list.scrollTo({ top, behavior: Math.abs(top - list.scrollTop) > list.clientHeight ? 'auto' : 'smooth' });
-    }
-  }
-  lastNext = nextIdx;
+  // Stats: one card per sampled instrument, then the overrides.
+  const applied = started() ? plan.overrides.filter((o) => o.slot <= t).length : 0;
+  const html = prices.series.map((series) => {
+    const q = lastQuote(series);
+    const played = started() ? points(series).filter((p) => p.x >= 0).map((p) => p.mark) : [];
+    return `<div class="stat"><div class="k"><span class="sym"><i style="background:${color[series.key]}"></i>${esc(series.symbol)} · ${esc(prices.venue)} perp</span></div>
+      <div class="v num">${usd(q?.mark)}<small>${q ? pct((q.mark / series.start_usd - 1) * 100) : 'from ' + usd(series.start_usd)}</small></div>
+      <div class="sub">${q ? `${usd(q.bid)} / ${usd(q.ask)}` : '–'}${played.length ? ` · ${usd(Math.min(...played))}–${usd(Math.max(...played))}` : ''}</div></div>`;
+  }).join('') + `<div class="stat"><div class="k">Overrides</div><div class="v num">${applied}<small>/ ${plan.overrides.length}</small></div><div class="sub">${plan.charts.length} chart${plan.charts.length === 1 ? '' : 's'}</div></div>`;
+  if ($('stats').innerHTML !== html) $('stats').innerHTML = html;
 }
 
-function frame() { render(); drawStrip(); drawChart(); }
+function frame() { render(); drawStrip(); drawCharts(); }
 
 async function poll() {
   if (stopped) return;
@@ -655,7 +731,7 @@ async function poll() {
     const r = await (await fetch('/api/live/' + samples.length)).json();
     if (gen !== null && r.generation !== gen) {
       // A reset: the old run's samples are gone; fetch the new one's.
-      gen = r.generation; samples = []; lastNext = null; $('events').scrollTop = 0;
+      gen = r.generation; samples = [];
       live = r; setTimeout(poll, 0); return;
     }
     gen = r.generation;
@@ -718,9 +794,6 @@ strip.addEventListener('pointermove', (e) => {
   if (hit !== hoverDot) { hoverDot = hit; drawStrip(); }
 });
 strip.addEventListener('pointerleave', () => { hoverDot = null; drawStrip(); });
-const chart = $('chart');
-chart.addEventListener('pointermove', (e) => { hoverX = e.clientX - chart.getBoundingClientRect().left; drawChart(); });
-chart.addEventListener('pointerleave', () => { hoverX = null; drawChart(); });
 window.addEventListener('resize', frame);
 
 /* ---------- Workbench ----------
@@ -754,17 +827,18 @@ function wbLayout() {
 function wbToggle(open = !wb.open) { wb.open = open; wbSave(); wbLayout(); if (open) wbScroll(); }
 
 function wbDefs() {
-  const market = plan.watch.find((w) => / market$/.test(w.label));
+  const markets = plan.watch.filter((w) => / market$/.test(w.label));
+  const logs = (markets.length ? markets : [null]).map((market) => ({
+    key: 'logs:' + (market ? market.pubkey : 'all'), label: market ? `Logs · ${market.label}` : 'Logs', what: `logsSubscribe ${market ? market.pubkey : 'all'}`,
+    method: 'logsSubscribe', params: [market ? { mentions: [market.pubkey] } : 'all', { commitment: 'confirmed' }],
+  }));
   return [
     { key: 'slot', label: 'Slots', what: 'slotSubscribe', method: 'slotSubscribe', params: [], muted: true },
     ...plan.watch.map((w) => ({
       key: w.pubkey, label: w.label, what: `accountSubscribe ${w.pubkey}`, note: w.note, account: w.pubkey,
       method: 'accountSubscribe', params: [w.pubkey, { encoding: 'base64', commitment: 'confirmed' }],
     })),
-    {
-      key: 'logs', label: market ? `Logs · ${market.label}` : 'Logs', what: `logsSubscribe ${market ? market.pubkey : 'all'}`,
-      method: 'logsSubscribe', params: [market ? { mentions: [market.pubkey] } : 'all', { commitment: 'confirmed' }],
-    },
+    ...logs,
   ].map((d) => ({ ...d, id: null, count: 0, state: 'idle' }));
 }
 
@@ -886,7 +960,7 @@ function wbRow(row) {
   const tr = document.createElement('tr');
   if (row.marker) { tr.className = 'mark'; tr.innerHTML = `<td colspan="5">${esc(row.marker)} · ${wbTime(row.at)}</td>`; return tr; }
   tr.className = 'ev';
-  const src = row.sub.key === 'slot' ? 'slot' : row.sub.key === 'logs' ? 'logs' : '';
+  const src = row.sub.key === 'slot' ? 'slot' : row.sub.key.startsWith('logs') ? 'logs' : '';
   tr.innerHTML = `<td>${wbTime(row.at)}</td><td>${row.slot ?? ''}</td><td>${row.x == null ? '' : row.x < 0 ? 'before' : clock(row.x)}</td>`
     + `<td class="src ${src}">${esc(row.sub.label)}</td>`
     + `<td class="sum ${row.cls}">${esc(row.summary)}${row.override ? `<span class="tag">${esc(row.override.label)}</span>` : ''}</td>`;
@@ -1007,23 +1081,25 @@ function wbInit() {
 
 (async () => {
   plan = await (await fetch('/api/plan')).json();
+  prices = plan.charts.find((c) => c.tracked);
+  prices.series.forEach((series, i) => { color[series.key] = PALETTE[i % PALETTE.length]; });
   const bySlot = new Map();
   for (const o of plan.overrides) {
     if (!bySlot.has(o.slot)) bySlot.set(o.slot, { slot: o.slot, items: [] });
     bySlot.get(o.slot).items.push(o);
   }
-  groups = [...bySlot.values()];
+  // A slot's dot takes the color of what its overrides move; mixed, neutral.
+  groups = [...bySlot.values()].map((g) => {
+    const colors = new Set(g.items.map(overrideColor));
+    return { ...g, color: colors.size === 1 ? [...colors][0] : NEUTRAL };
+  });
   $('bars').innerHTML = '<i></i>'.repeat(BARS);
-  $('events').innerHTML = plan.overrides.map((o) => {
-    const values = Object.entries(o.values).filter(([k]) => k !== 'symbol').map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' ');
-    return `<li><span class="st"></span><span class="label">${esc(o.label)}</span><span class="t num">${clock(o.slot)}</span>
-      <span class="meta">${esc(o.template)}${values ? ' · ' + esc(values) : ''}</span></li>`;
-  }).join('');
   $('name').textContent = plan.name;
-  $('handle').textContent = `@${plan.symbol} · Phoenix perp · ${plan.snapshot}`;
+  const venues = [...new Set(plan.charts.map((c) => c.venue))];
+  $('handle').textContent = `${prices.series.map((s) => s.symbol).join(', ')} · ${venues.join(', ')} · ${plan.snapshot}`;
   $('description').textContent = plan.description;
-  $('chart-title').textContent = `${plan.symbol} mark price`;
   document.title = `mth · ${plan.name}`;
+  buildCharts();
   wbInit();
   poll();
 })();
