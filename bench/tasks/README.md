@@ -7,14 +7,23 @@ snapshot restored with [Surfpool](https://github.com/solana-foundation/surfpool)
 The verifier runs with no network and receives only the bot. Every cheatcode
 is locked before the bot starts, and the bot reaches the chain through a
 proxy that forwards standard Solana RPC methods only. Rewards are the bot's
-total PnL over the hidden set, normalized against a reference bot's.
+total PnL over the hidden set, as a fraction of a hindsight bound no bot
+can reach, with a per-session drawdown limit.
 
 | Task | Market | Scenario |
 | --- | --- | --- |
-| `phoenix-flash-crash` | Phoenix SOL perpetuals | Flash crashes of 5–12%: most rebound, some stall, some keep sliding |
+| `phoenix-flash-crash` | Phoenix SOL perpetuals | Crashes and squeezes of 5–12%: most revert, some stall, some keep going |
 
 ## Changelog
 
+- **0.4.0.** `phoenix-flash-crash`: shocks go both ways, crashes and
+  squeezes 50/50 (when every scenario crashed, shorting the open made 2.4×
+  the reference with no skill). The reward is PnL over a hindsight bound
+  (the position cap held the right way through every move, at no cost), so
+  it doesn't saturate; the reference is a baseline at ~0.2. A session may
+  not draw down more than $1,000 from its peak, and risk diagnostics
+  (worst session, tail loss, drawdown, profitable share, Sharpe) are
+  reported. Bots build on `luce`, re-exported by `ott-botkit`.
 - **0.3.0.** `phoenix-flash-crash`: a stronger reference that scales into the
   crash in two tranches and holds for the rebound, with a slide stop (the
   0.2.0 reference left most of the rebound on the table, and agents beat it

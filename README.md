@@ -24,7 +24,7 @@ model can only be trained against rewards that can be verified.
 | Area | What it is | Status |
 | --- | --- | --- |
 | 📊 **Bench** | Harbor tasks where an agent writes a bot that's graded on hidden market scenarios. Each task is both an eval and an RL environment. | Shipping: [`bench/`](bench/) |
-| 🛠️ **Harness** | An agent harness for trading on Solana: tools for market data, order entry and risk checks over [`ott-botkit`](crates/botkit), plus guardrails, running against the same sandboxes. | Next |
+| 🛠️ **Harness** | An agent harness for trading on Solana: tools for market data, order entry and risk checks over [`luce`](crates/luce), plus guardrails, running against the same sandboxes. | Next |
 | 🧠 **Models** | Trading models trained on the bench: RL against task rewards, SFT on agent trajectories, evaluated on held-out scenarios. | Later |
 
 Every area builds on the same core: the `ott` grader and simulator
@@ -60,9 +60,14 @@ receives only that bot, with no network, and for each hidden scenario:
    standard Solana methods only.
 4. At the last slot, stops the bot and values its account on-chain.
 
-The reward is the bot's total PnL over the hidden set divided by a reference
-bot's, clamped to [0, 1]. Any refused RPC call, or a session that ends
-liquidatable, scores 0.
+The reward is the bot's total PnL over the hidden set as a fraction of a
+**hindsight bound**: what the full position cap held the right way through
+every move would make, at no cost. No bot reaches it, so the score keeps
+headroom as agents improve; a reference bot is reported alongside as a
+baseline. Risk is gated like a trading desk's: positions are capped, and a
+session may not draw down more than its loss limit. Breaking either, a
+refused RPC call, or ending liquidatable scores 0, and worst session, tail
+loss, drawdown, profitable share and Sharpe are reported.
 
 ### Tasks
 
@@ -72,10 +77,11 @@ Phoenix comes first; other protocols follow.
 
 #### 📉 Flash crash: `phoenix-flash-crash` ✅
 
-SOL perps crash 5–12%. Most crashes rebound, some stall, and some keep
-sliding. A good bot buys the forced selling and takes profit on the rebound
-without letting the crashes that never recover eat its gains. Blind
-dip-buying loses money overall. [Task →](bench/tasks/phoenix-flash-crash)
+SOL perps crash or squeeze 5–12%, 50/50. Most shocks revert, some stall,
+and some keep going. A good bot reads which way the shock is going, takes
+the other side of the forced flow, and sizes so the shocks that don't
+revert can't take it past its loss limit. Blind bets at the open, and blind
+dip-buying, score 0. [Task →](bench/tasks/phoenix-flash-crash)
 
 #### ⚖️ Market making: `phoenix-market-making` 🧪
 

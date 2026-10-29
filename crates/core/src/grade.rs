@@ -293,7 +293,9 @@ pub async fn calibrate(
     // A reference recorded on a loaded machine would skew every score after it.
     check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
-        if session.refused_calls.is_empty() && !session.liquidatable {
+        // The same rules as grading: a reference the grader would
+        // disqualify can't be a baseline.
+        if disqualification(session).is_none() {
             scenario.reference_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
             scenario.save(path)?;
         } else {
