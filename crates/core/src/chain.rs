@@ -13,9 +13,9 @@ use crate::{Error, Result};
 
 const LAST_RESTART_SLOT_SYSVAR: &str = "SysvarLastRestartS1ot1111111111111111111111";
 
-/// A client for `surfnet` that confirms at `confirmed` (see [`mt_botkit::rpc_client`]).
+/// A client for `surfnet` that confirms at `confirmed` (see [`mth_botkit::rpc_client`]).
 pub fn rpc_client(surfnet: &Surfnet) -> RpcClient {
-    mt_botkit::rpc_client(surfnet.rpc_url())
+    mth_botkit::rpc_client(surfnet.rpc_url())
 }
 
 pub fn call(rpc: &RpcClient, method: &'static str, params: Value) -> Result<Value> {
@@ -51,7 +51,7 @@ pub fn register_scenario(rpc: &RpcClient, name: &str, overrides: Vec<Override>) 
         "id": uuid::Uuid::new_v4().to_string(),
         "name": name,
         "description": name,
-        "tags": ["mt"],
+        "tags": ["mth"],
         "overrides": overrides,
     });
     call(rpc, "surfnet_registerScenario", json!([scenario]))?;

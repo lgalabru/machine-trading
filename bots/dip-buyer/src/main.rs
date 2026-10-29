@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use mt_botkit::{BotEnv, Side, Trader};
+use mth_botkit::{BotEnv, Side, Trader};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 

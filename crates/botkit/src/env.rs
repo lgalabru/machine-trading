@@ -10,35 +10,35 @@ use crate::{Error, Result, error::io_error, phoenix::load_exchange};
 /// What the grader hands a bot, through environment variables.
 #[derive(Debug, Clone)]
 pub struct BotEnv {
-    /// `MT_RPC_URL`: HTTP JSON-RPC endpoint. Standard Solana methods only.
+    /// `MTH_RPC_URL`: HTTP JSON-RPC endpoint. Standard Solana methods only.
     pub rpc_url: String,
-    /// `MT_KEYPAIR`: Solana CLI keypair file (JSON array of 64 bytes). Holds
+    /// `MTH_KEYPAIR`: Solana CLI keypair file (JSON array of 64 bytes). Holds
     /// SOL for fees; its Phoenix trader account (PDA index 0, subaccount 0)
     /// is registered and holds the trading collateral.
     pub keypair_path: PathBuf,
-    /// `MT_EXCHANGE`: Phoenix `/exchange` metadata matching the chain state.
+    /// `MTH_EXCHANGE`: Phoenix `/exchange` metadata matching the chain state.
     pub exchange_path: PathBuf,
-    /// `MT_SYMBOL`: the market to trade, e.g. `SPCX`.
+    /// `MTH_SYMBOL`: the market to trade, e.g. `SPCX`.
     pub symbol: String,
-    /// `MT_END_SLOT`: the slot at which the session ends and the account is
+    /// `MTH_END_SLOT`: the slot at which the session ends and the account is
     /// marked to market. The bot is stopped shortly after.
     pub end_slot: u64,
-    /// `MT_MAX_POSITION`: the largest position, long or short, in base units
+    /// `MTH_MAX_POSITION`: the largest position, long or short, in base units
     /// (e.g. SPCX shares), the bot may ever hold. Holding more disqualifies it.
     pub max_position: f64,
-    /// `MT_MAX_DRAWDOWN`: the most, in USD, the account's value may fall
+    /// `MTH_MAX_DRAWDOWN`: the most, in USD, the account's value may fall
     /// below its peak during a session. Falling further disqualifies it.
     pub max_drawdown_usd: f64,
 }
 
 impl BotEnv {
-    pub const RPC_URL: &str = "MT_RPC_URL";
-    pub const KEYPAIR: &str = "MT_KEYPAIR";
-    pub const EXCHANGE: &str = "MT_EXCHANGE";
-    pub const SYMBOL: &str = "MT_SYMBOL";
-    pub const END_SLOT: &str = "MT_END_SLOT";
-    pub const MAX_POSITION: &str = "MT_MAX_POSITION";
-    pub const MAX_DRAWDOWN: &str = "MT_MAX_DRAWDOWN";
+    pub const RPC_URL: &str = "MTH_RPC_URL";
+    pub const KEYPAIR: &str = "MTH_KEYPAIR";
+    pub const EXCHANGE: &str = "MTH_EXCHANGE";
+    pub const SYMBOL: &str = "MTH_SYMBOL";
+    pub const END_SLOT: &str = "MTH_END_SLOT";
+    pub const MAX_POSITION: &str = "MTH_MAX_POSITION";
+    pub const MAX_DRAWDOWN: &str = "MTH_MAX_DRAWDOWN";
 
     pub fn from_env() -> Result<Self> {
         let end_slot = var(Self::END_SLOT)?;
@@ -88,8 +88,8 @@ impl BotEnv {
         load_exchange(&self.exchange_path)
     }
 
-    /// The session's rules as luce [`RiskLimits`]: `MT_MAX_POSITION` as the
-    /// largest position in base units and `MT_MAX_DRAWDOWN` as the largest
+    /// The session's rules as luce [`RiskLimits`]: `MTH_MAX_POSITION` as the
+    /// largest position in base units and `MTH_MAX_DRAWDOWN` as the largest
     /// fall from peak equity in USD. Every fraction-of-capital limit is off.
     ///
     /// Evaluate an order with [`RiskLimits::evaluate`] before sending it; a

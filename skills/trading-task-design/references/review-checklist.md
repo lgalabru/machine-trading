@@ -10,7 +10,7 @@ prevents.
 - [ ] Family includes adversarial draws (non-recovery, fake-outs). *Prevents one-trick bots scoring 1.*
 - [ ] Every waypoint respects protocol limits (e.g. Phoenix ≤4% per step). *Prevents testing the simulator instead of the bot.*
 - [ ] Path shape leaks nothing: uneven steps and gaps, a random tail, noise between moves, independent legs, overlapping ranges for phases that should look alike. *Prevents bots that trade the generator instead of the market.*
-- [ ] Read the generator as an adversary: write down every rule an agent could deduce from the instruction, the practice files and `mt scenario generate`, and check that none beats the reference on its own. *Prevents structural leaks that no cheat check catches.*
+- [ ] Read the generator as an adversary: write down every rule an agent could deduce from the instruction, the practice files and `mth scenario generate`, and check that none beats the reference on its own. *Prevents structural leaks that no cheat check catches.*
 
 ## Instruction as contract
 

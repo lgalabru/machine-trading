@@ -27,7 +27,7 @@ model can only be trained against rewards that can be verified.
 | 🛠️ **Harness** | An agent harness for trading on Solana: tools for market data, order entry and risk checks over [`luce`](crates/luce), plus guardrails, running against the same sandboxes. | Next |
 | 🧠 **Models** | Trading models trained on the bench: RL against task rewards, SFT on agent trajectories, evaluated on held-out scenarios. | Later |
 
-Every area builds on the same core: the `mt` grader and simulator
+Every area builds on the same core: the `mth` grader and simulator
 ([`crates/`](crates/)), reference bots ([`bots/`](bots/)), pinned mainnet
 state ([`snapshots/`](snapshots/)), and the agent skills
 ([`skills/`](skills/)) that encode how to build all of the above.
@@ -144,10 +144,10 @@ machine-trading/
 │   ├── checks/            cheating bots every task must score 0
 │   └── image/             the images every task builds on: dev (agents) and runtime (verifiers)
 ├── crates/                🦀 shared Rust
-│   ├── core/              mt-core: offline worlds, scenario families, RPC guard, sessions, grading
-│   ├── cli/               mt: the grader and scenario generator
+│   ├── core/              mth-core: offline worlds, scenario families, RPC guard, sessions, grading
+│   ├── cli/               mth: the grader and scenario generator
 │   ├── luce/              luce: the trading library (exact Decimal model, Solana runtime, Phoenix)
-│   └── botkit/            mt-botkit: the SDK bots build on, over luce (both ship in the task image)
+│   └── botkit/            mth-botkit: the SDK bots build on, over luce (both ship in the task image)
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
 ├── snapshots/             📸 pinned mainnet state (surfnet.json is gitignored)
 ├── skills/                🧠 agent skills: how to design great trading tasks
@@ -168,7 +168,7 @@ sharing `crates/`, `bots/` and `snapshots/`.
   (cheatcode locks, SDK snapshots, clock restore) until it ships in a release.
 - The snapshot's `surfnet.json`, which is too big for git:
   `just snapshot-pull` copies it out of the published task image. To fork a
-  fresh one instead, put a mainnet RPC URL in `.env` as `MT_FORK_RPC_URL`
+  fresh one instead, put a mainnet RPC URL in `.env` as `MTH_FORK_RPC_URL`
   and run `just snapshot-prepare`.
 
 ### Everyday loop
@@ -179,7 +179,7 @@ just grade bots/reference bench/tasks/phoenix-flash-crash/environment/practice/*
 just test lint                                     # unit tests and clippy
 ```
 
-`mt grade` runs exactly what the verifier runs. Bot logs land in
+`mth grade` runs exactly what the verifier runs. Bot logs land in
 `target/logs/`. Don't run heavy builds while grading: slots advance on the
 wall clock, and a starved machine gives bots fewer looks per slot.
 

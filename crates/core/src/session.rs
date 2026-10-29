@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use mt_botkit::{BotEnv, QUOTE_LOTS_PER_USD};
+use mth_botkit::{BotEnv, QUOTE_LOTS_PER_USD};
 use serde::Serialize;
 use serde_json::json;
 use solana_keypair::Keypair;
@@ -40,7 +40,7 @@ pub const DEPOSIT_USDC: f64 = 10_000.0;
 /// Unix users bots run as when the grader runs as root, one per session that
 /// can run at once (see [`SessionOptions::slot`]). Each session kills every
 /// process its user owns when it ends, so two sessions never share one.
-pub const BOT_USERS: [&str; 4] = ["mt-bot", "mt-bot-2", "mt-bot-3", "mt-bot-4"];
+pub const BOT_USERS: [&str; 4] = ["mth-bot", "mth-bot-2", "mth-bot-3", "mth-bot-4"];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
@@ -262,7 +262,7 @@ struct SessionDir {
 
 impl SessionDir {
     fn create(bot: &Keypair, user: &str) -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("mt-session-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("mth-session-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).map_err(io_error(&path))?;
         let dir = Self {
             path,
@@ -335,7 +335,7 @@ fn spawn_bot(bot_dir: &Path, env: &BotEnv, workdir: &SessionDir, log: &Path) -> 
         .env("HOME", &workdir.path)
         .env(
             "RUST_LOG",
-            std::env::var("MT_BOT_LOG").unwrap_or_else(|_| "info".into()),
+            std::env::var("MTH_BOT_LOG").unwrap_or_else(|_| "info".into()),
         )
         .stdin(Stdio::null())
         .stdout(stdout)

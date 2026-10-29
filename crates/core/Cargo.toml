@@ -1,5 +1,5 @@
 [package]
-name = "mt-core"
+name = "mth-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 axum.workspace = true
 libc.workspace = true
-mt-botkit.workspace = true
+mth-botkit.workspace = true
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true

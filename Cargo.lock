@@ -4529,40 +4529,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "mt-bot-dip-buyer"
+name = "mth-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mt-botkit",
+ "mth-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mt-bot-reference"
+name = "mth-bot-reference"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mt-botkit",
+ "mth-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mt-bot-starter"
+name = "mth-bot-starter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mt-botkit",
+ "mth-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mt-botkit"
+name = "mth-botkit"
 version = "0.1.0"
 dependencies = [
  "luce",
@@ -4579,25 +4579,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "mt-cli"
+name = "mth-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "mt-core",
+ "mth-core",
  "serde_json",
  "tokio",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mt-core"
+name = "mth-core"
 version = "0.1.0"
 dependencies = [
  "axum",
  "futures 0.3.34",
  "libc",
- "mt-botkit",
+ "mth-botkit",
  "phoenix-rise",
  "reqwest",
  "serde",

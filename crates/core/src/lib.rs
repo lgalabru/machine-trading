@@ -1,4 +1,4 @@
-//! Shared logic for the mt Solana trading benchmark.
+//! Shared logic for the mth Solana trading benchmark.
 
 pub mod chain;
 mod error;

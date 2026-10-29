@@ -17,9 +17,9 @@ see: moves ramp in uneven steps, legs are drawn independently, pauses and
 holds share one range, the session ends a random while after the last move,
 and the mark wobbles in between.
 
-- **Agent environment:** a Rust toolchain, the `mt-botkit` SDK, a starter
+- **Agent environment:** a Rust toolchain, the `mth-botkit` SDK, a starter
   bot that builds and never trades, six practice scenarios, the scenario
-  generator, and `mt-practice`, which grades the bot exactly as the verifier
+  generator, and `mth-practice`, which grades the bot exactly as the verifier
   does.
 - **Verifier:** a 384 MB Debian slim image with the grader and the snapshot,
   and no toolchain. It receives only `/app/bot`. With no network, it replays

@@ -79,7 +79,7 @@ leaderboards (Kaggle, Numerai):
 - Published rankings become meaningful, at the cost of a second dataset to
   calibrate and publish per release, and a way to run submissions privately.
 - A held-out scenario costs the same to make as a public one:
-  `mt scenario generate` with a private seed, then `mt calibrate`. The
+  `mth scenario generate` with a private seed, then `mth calibrate`. The
   extra work is process, not code.
 - The canary GUID stays in every instruction, so contaminated training data
   can be detected.
