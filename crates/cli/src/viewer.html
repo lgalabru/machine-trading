@@ -386,6 +386,12 @@ const axisLabel = (v) => relative() ? (v > 0 ? '+' : v < 0 ? '−' : '') + Math.
 
 /** A series' samples in the window: `{ x, mark, bid, ask }` in USD. */
 function points(series) {
+  // Staged, nothing has happened yet: the pre-roll is the current quote,
+  // flat, instead of a history that grows leftward from "now".
+  if (!started()) {
+    const q = lastQuote(series);
+    return q ? [{ x: -PRE, ...q }, { x: 0, ...q }] : [];
+  }
   const out = [];
   for (const s of samples) {
     const q = s.quotes[series.key];
