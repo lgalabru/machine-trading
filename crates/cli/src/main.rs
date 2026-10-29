@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{io::IsTerminal, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -9,6 +9,18 @@ use mth_core::{
     snapshot,
 };
 use tracing_subscriber::EnvFilter;
+
+mod acp;
+mod author;
+mod play;
+mod ui;
+
+/// The snapshot `scenario new` and `play` start from: the checkout's, by
+/// absolute path, so an installed `mth` finds it from any directory.
+const DEFAULT_SNAPSHOT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../snapshots/phoenix-spcx-2026-10-29"
+);
 
 /// Tooling for the mth Solana trading benchmark. Results go to stdout as JSON,
 /// logs to stderr.
@@ -92,6 +104,100 @@ enum ScenarioCommand {
         #[arg(long)]
         seed: u64,
     },
+    /// Have a coding agent author a Surfpool scenario from a request, e.g.
+    /// "simulate a crash for SPCX", and save it.
+    New {
+        /// What should happen, in plain language.
+        request: String,
+        #[command(flatten)]
+        authoring: Authoring,
+        /// Where to save the scenario.
+        #[arg(long, short, default_value = "scenario.json")]
+        out: PathBuf,
+        /// Replace `--out` if it exists.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Author a scenario like `new` (or load one: pass a .json file), then
+    /// play it on a surfnet and chart it live in a web UI.
+    Play {
+        /// A request for the agent, or a scenario file to replay.
+        request: String,
+        #[command(flatten)]
+        authoring: Authoring,
+        /// Also save the authored scenario here.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Replace `--out` if it exists.
+        #[arg(long)]
+        force: bool,
+        /// Viewer port; 0 picks a free one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Register the scenario right away instead of waiting for Play.
+        #[arg(long)]
+        autoplay: bool,
+        /// Don't open a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
+}
+
+#[derive(clap::Args)]
+struct Authoring {
+    /// The coding agent that authors the scenario, over ACP.
+    #[arg(long, short, value_enum, default_value = "claude-code")]
+    agent: author::Agent,
+    /// The agent's model, e.g. `anthropic/claude-sonnet-5-5`.
+    #[arg(long, short)]
+    model: Option<String>,
+    /// Snapshot the surfnet starts from; the agent reads prices from it.
+    #[arg(long, env = "MTH_SNAPSHOT", default_value = DEFAULT_SNAPSHOT)]
+    snapshot: PathBuf,
+    /// Market the scenario trades; defaults to the snapshot's.
+    #[arg(long)]
+    symbol: Option<String>,
+    /// The `surfpool` binary the agent runs as its MCP server.
+    #[arg(long, env = "MTH_SURFPOOL", default_value = "surfpool")]
+    surfpool: String,
+    /// Scenarios the agent may hand in before mth gives up.
+    #[arg(long, default_value_t = 3)]
+    attempts: usize,
+    /// Show every log, the agent's replies and its adapter's output, instead
+    /// of the progress lines. `RUST_LOG` also turns logs on.
+    #[arg(long, short)]
+    verbose: bool,
+}
+
+impl Authoring {
+    async fn world(&self) -> Result<play::World> {
+        play::World::start(&self.snapshot, self.symbol.as_deref(), true).await
+    }
+
+    /// Run the agent against `world`'s surfnet, off the async runtime.
+    async fn author(&self, request: &str, world: &play::World) -> Result<surfpool_types::Scenario> {
+        let market = world.market.clone();
+        let (agent, model, request, surfpool, attempts, verbose) = (
+            self.agent,
+            self.model.clone(),
+            request.to_string(),
+            self.surfpool.clone(),
+            self.attempts,
+            self.verbose,
+        );
+        tokio::task::spawn_blocking(move || {
+            author::author(author::AuthorOptions {
+                agent,
+                model: model.as_deref(),
+                request: &request,
+                market: &market,
+                surfpool: &surfpool,
+                attempts,
+                verbose,
+            })
+        })
+        .await?
+    }
 }
 
 #[derive(Subcommand)]
@@ -140,12 +246,35 @@ enum SnapshotCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with_writer(std::io::stderr)
-        .init();
+    let result = run().await;
+    if result.is_err() {
+        // Don't leave a spinner line under the error.
+        ui::clear();
+    }
+    result
+}
 
-    let output = match Cli::parse().command {
+async fn run() -> Result<()> {
+    let cli = Cli::parse();
+    // `scenario new` and `play` show progress lines instead of logs, unless
+    // asked for logs.
+    let interactive = match &cli.command {
+        Command::Scenario(
+            ScenarioCommand::New { authoring, .. } | ScenarioCommand::Play { authoring, .. },
+        ) => !authoring.verbose,
+        _ => false,
+    };
+    let default_filter = if interactive { "warn" } else { "info" };
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.into()),
+        )
+        .with_writer(ui::LogWriter)
+        .init();
+    // A terminal reads the progress lines; JSON is for scripts.
+    let quiet_stdout = interactive && std::io::stdout().is_terminal();
+
+    let output = match cli.command {
         Command::Snapshot(SnapshotCommand::Prepare {
             out,
             fork_rpc,
@@ -188,6 +317,71 @@ async fn main() -> Result<()> {
                 written.push(path);
             }
             serde_json::to_string_pretty(&written)?
+        }
+        Command::Scenario(ScenarioCommand::New {
+            request,
+            authoring,
+            out,
+            force,
+        }) => {
+            if out.exists() && !force {
+                anyhow::bail!("{} exists; pass --force to replace it", out.display());
+            }
+            let world = authoring.world().await?;
+            let scenario = authoring.author(&request, &world).await?;
+            author::save(&scenario, &out, force)?;
+            ui::done(format!("Saved {}", ui::accent(out.display().to_string())));
+            serde_json::to_string_pretty(&serde_json::json!({
+                "path": out,
+                "name": scenario.name,
+                "description": scenario.description,
+                "overrides": scenario.overrides.len(),
+            }))?
+        }
+        Command::Scenario(ScenarioCommand::Play {
+            request,
+            authoring,
+            out,
+            force,
+            port,
+            autoplay,
+            no_open,
+        }) => {
+            if let Some(out) = &out
+                && out.exists()
+                && !force
+            {
+                anyhow::bail!("{} exists; pass --force to replace it", out.display());
+            }
+            let world = authoring.world().await?;
+            let file = PathBuf::from(&request);
+            let scenario = if request.ends_with(".json") && file.is_file() {
+                let scenario = author::load_checked(&file, &world.market)?;
+                ui::done(format!(
+                    "Loaded {} {}",
+                    ui::bold(&scenario.name),
+                    ui::dim(format!("{} overrides", scenario.overrides.len()))
+                ));
+                scenario
+            } else {
+                authoring.author(&request, &world).await?
+            };
+            if let Some(out) = &out {
+                author::save(&scenario, out, force)?;
+                ui::done(format!("Saved {}", ui::accent(out.display().to_string())));
+            }
+            let summary = play::play(
+                world,
+                scenario,
+                authoring.snapshot.clone(),
+                play::PlayOptions {
+                    port,
+                    open: !no_open,
+                    autoplay,
+                },
+            )
+            .await?;
+            serde_json::to_string_pretty(&summary)?
         }
         Command::Grade {
             sessions,
@@ -237,7 +431,9 @@ async fn main() -> Result<()> {
             serde_json::to_string_pretty(&reports)?
         }
     };
-    println!("{output}");
+    if !quiet_stdout {
+        println!("{output}");
+    }
     Ok(())
 }
 

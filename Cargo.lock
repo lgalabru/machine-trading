@@ -2124,8 +2124,10 @@ dependencies = [
  "chrono",
  "diesel_derives",
  "downcast-rs",
+ "libsqlite3-sys",
  "r2d2",
  "serde_json",
+ "sqlite-wasm-rs",
  "time",
  "uuid",
 ]
@@ -4134,6 +4136,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsqlite3-sys"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "light-poseidon"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4583,11 +4596,23 @@ name = "mth-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
+ "mth-botkit",
  "mth-core",
+ "serde",
  "serde_json",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-rpc-client",
+ "solana-signer",
+ "surfpool-core",
+ "surfpool-types",
+ "thiserror 2.0.21",
  "tokio",
+ "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -5864,6 +5889,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd124222d17ad93a644ed9d011a40f4fb64aa54275c08cc216524a9ea82fb09f"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "rsqlite-vfs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "353b74f9810d5b085b6c42c9d86a5f0fdb795553235cdd48753b32e3809d18a7"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -10588,6 +10622,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlite-wasm-rs"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36bd8e29bf08189a005b2df1df99823aa0861cabe9044e5f31ed54ca292ee618"
+dependencies = [
+ "cc",
+ "rsqlite-vfs",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10776,6 +10820,7 @@ dependencies = [
  "diesel",
  "diesel-dynamic-schema",
  "diesel_derives",
+ "libsqlite3-sys",
  "txtx-addon-kit",
 ]
 
