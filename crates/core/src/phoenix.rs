@@ -1,9 +1,9 @@
 //! Grader-side Phoenix setup: metadata snapshots, trader onboarding, and
-//! scenario overrides that move the market. Bots use [`ott_botkit::Phoenix`].
+//! scenario overrides that move the market. Bots use [`mt_botkit::Phoenix`].
 
 use std::time::Duration;
 
-pub use ott_botkit::{Phoenix, load_exchange};
+pub use mt_botkit::{Phoenix, load_exchange};
 use phoenix_rise::{api::PhoenixHttpClient, types::exchange::ExchangeResponse};
 use serde_json::json;
 use solana_keypair::Keypair;
@@ -61,7 +61,7 @@ pub async fn onboard_trader(
     cheats.fund_token(&owner, &USDC_MINT, usdc_units, None)?;
 
     let register = phoenix.tx().build_register_trader(owner, 0, 0)?;
-    ott_botkit::send(&rpc, authority, register, "register trader")?;
+    mt_botkit::send(&rpc, authority, register, "register trader")?;
 
     let capabilities: serde_json::Map<_, _> = TRADER_CAPABILITIES
         .iter()
@@ -84,7 +84,7 @@ pub async fn onboard_trader(
     let deposit = phoenix
         .tx()
         .build_deposit_funds(owner, trader, deposit_usdc)?;
-    ott_botkit::send(&rpc, authority, deposit, "deposit collateral")?;
+    mt_botkit::send(&rpc, authority, deposit, "deposit collateral")?;
     info!(%owner, %trader, deposit_usdc, "trader onboarded");
     Ok(trader)
 }

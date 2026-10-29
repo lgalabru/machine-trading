@@ -3,6 +3,6 @@
 # grades it on the hidden ones. Pass scenario files to run others.
 set -euo pipefail
 if [ "$#" -eq 0 ]; then
-  set -- /opt/ott/practice/*.json
+  set -- /opt/mt/practice/*.json
 fi
-exec ott grade --snapshot "$OTT_SNAPSHOT" --bot "${OTT_BOT:-/app/bot}" --logs /tmp/ott-practice-logs "$@"
+exec mt grade --snapshot "$MT_SNAPSHOT" --bot "${MT_BOT:-/app/bot}" --logs /tmp/mt-practice-logs "$@"

@@ -1,11 +1,11 @@
 ---
 name: trading-task-design
-description: Designs, reviews, and hardens trading tasks for agent evals and RL environments — tasks where an agent writes a trading bot that is graded on replayed or simulated markets (Harbor tasks on Surfpool snapshots in open-trading, or any backtest/sandbox benchmark). Covers scenario families, hidden vs practice sets, PnL scoring and normalization, anti-cheat (RPC guards, sandboxing, cheatcodes), contamination, market realism (fees, slippage, liquidity, MEV, oracles, liquidations), statistical power, and the oracle/nop/cheater check suite. Use when user asks to "design a trading task", "add a new task to open-trading", "write a scenario family", "review this task", "is this task cheatable", "how should we score this bot", "make this a good RL environment", "calibrate difficulty", or compares trading benchmarks (StockBench, Alpha Arena, LiveTradeBench, FinRL, Solana Bench).
+description: Designs, reviews, and hardens trading tasks for agent evals and RL environments — tasks where an agent writes a trading bot that is graded on replayed or simulated markets (Harbor tasks on Surfpool snapshots in machine-trading, or any backtest/sandbox benchmark). Covers scenario families, hidden vs practice sets, PnL scoring and normalization, anti-cheat (RPC guards, sandboxing, cheatcodes), contamination, market realism (fees, slippage, liquidity, MEV, oracles, liquidations), statistical power, and the oracle/nop/cheater check suite. Use when user asks to "design a trading task", "add a new task to machine-trading", "write a scenario family", "review this task", "is this task cheatable", "how should we score this bot", "make this a good RL environment", "calibrate difficulty", or compares trading benchmarks (StockBench, Alpha Arena, LiveTradeBench, FinRL, Solana Bench).
 license: MIT
 metadata:
   author: Solana Foundation
   version: 0.1.0
-  repo: lgalabru/open-trading
+  repo: lgalabru/machine-trading
 ---
 
 # Designing great trading tasks
@@ -37,11 +37,11 @@ Make these choices without asking unless the user says otherwise:
 | Market paths | Procedurally generated from a **family** with seeded parameters | Unlimited fresh scenarios; no memorized history |
 | Scored set | Hidden scenarios in `tests/`, never in the agent image | Iterating on scored scenarios is overfitting |
 | Practice set | Separate scenarios from the same family in `environment/practice` plus the generator | The agent can still do honest research |
-| Score | `clamp(Σ pnl / Σ hindsight bound, 0, 1)` over the whole scored set, where a scenario's bound is the cap held the right way through every move at no cost (cap × start mark × the path's total variation). Report the reference's ratio as a baseline, and per-scenario PnL | Normalizing by a reference saturates as soon as agents beat it, which they did twice in open-trading: once by sizing up, once by trading better. A bound no bot can reach keeps headroom forever, and losses still count |
-| Position size | Cap exposure in the contract (`OTT_MAX_POSITION`), enforce it by sampling the position, and size the reference to the cap | PnL in dollars measures size as much as skill: without a cap, any bot that bets several times the reference's size and nets a profit saturates the reward |
-| Risk | Gate it like a prop desk: a per-session drawdown limit (`OTT_MAX_DRAWDOWN`, ~10% of collateral) sampled twice a second, set so the reference stays inside it. Report worst session, tail loss, deepest drawdown, profitable share and Sharpe; don't blend them into the reward | PnL alone pays a bot that goes deep underwater and gets lucky. A gate is clear and hard to game; a weighted penalty rewards whatever weight you picked |
+| Score | `clamp(Σ pnl / Σ hindsight bound, 0, 1)` over the whole scored set, where a scenario's bound is the cap held the right way through every move at no cost (cap × start mark × the path's total variation). Report the reference's ratio as a baseline, and per-scenario PnL | Normalizing by a reference saturates as soon as agents beat it, which they did twice in machine-trading: once by sizing up, once by trading better. A bound no bot can reach keeps headroom forever, and losses still count |
+| Position size | Cap exposure in the contract (`MT_MAX_POSITION`), enforce it by sampling the position, and size the reference to the cap | PnL in dollars measures size as much as skill: without a cap, any bot that bets several times the reference's size and nets a profit saturates the reward |
+| Risk | Gate it like a prop desk: a per-session drawdown limit (`MT_MAX_DRAWDOWN`, ~10% of collateral) sampled twice a second, set so the reference stays inside it. Report worst session, tail loss, deepest drawdown, profitable share and Sharpe; don't blend them into the reward | PnL alone pays a bot that goes deep underwater and gets lucky. A gate is clear and hard to game; a weighted penalty rewards whatever weight you picked |
 | Disqualification | Reward 0 for any refused RPC call, any position over the cap, any drawdown past the limit, or any session ending liquidatable | Cheating, leverage and ruin must never pay |
-| Direction | Make the first move unpredictable: mirror the family (crashes *and* squeezes, 50/50) and disclose the odds | If every scenario moves the same way first, a blind bet at the open is free money: in open-trading, shorting the open made 2.4× the reference with no skill |
+| Direction | Make the first move unpredictable: mirror the family (crashes *and* squeezes, 50/50) and disclose the odds | If every scenario moves the same way first, a blind bet at the open is free money: in machine-trading, shorting the open made 2.4× the reference with no skill |
 | Valuation | From on-chain end state at the mark, never from bot logs | Grade outcomes, not claims |
 | Checks | oracle ≈ 1, nop = 0, cheater = 0, all through Harbor | Proves solvable, non-trivial, and hack-resistant |
 
@@ -131,7 +131,7 @@ ones for RL, with a private held-out pool that rotates.
 | A family whose first move is always the same way | A blind bet at the open wins every session |
 | Normalizing by a reference agents can beat | The reward saturates at 1 and stops ranking anyone |
 | Blending risk into the reward with a tuned weight | The weight becomes the thing agents optimize |
-| No position cap, or a reference far below it | The reward measures leverage: the first real agent in open-trading bet 6× the reference's size and hit 1.0 with an ordinary strategy |
+| No position cap, or a reference far below it | The reward measures leverage: the first real agent in machine-trading bet 6× the reference's size and hit 1.0 with an ordinary strategy |
 
 ## Reference files
 

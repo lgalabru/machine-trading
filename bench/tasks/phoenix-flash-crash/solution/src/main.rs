@@ -15,7 +15,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use ott_botkit::{BotEnv, Side, Trader};
+use mt_botkit::{BotEnv, Side, Trader};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 

@@ -4529,6 +4529,92 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-bot-dip-buyer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mt-botkit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mt-bot-reference"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mt-botkit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mt-bot-starter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mt-botkit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mt-botkit"
+version = "0.1.0"
+dependencies = [
+ "luce",
+ "serde_json",
+ "solana-commitment-config",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-signer",
+ "solana-transaction 4.3.0",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "mt-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mt-core",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mt-core"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures 0.3.34",
+ "libc",
+ "mt-botkit",
+ "phoenix-rise",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-signer",
+ "surfpool-sdk",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "net2"
 version = "0.2.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4763,92 +4849,6 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
-
-[[package]]
-name = "ott-bot-dip-buyer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ott-botkit",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ott-bot-reference"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ott-botkit",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ott-bot-starter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ott-botkit",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ott-botkit"
-version = "0.1.0"
-dependencies = [
- "luce",
- "serde_json",
- "solana-commitment-config",
- "solana-keypair",
- "solana-pubkey 4.3.0",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-signer",
- "solana-transaction 4.3.0",
- "thiserror 2.0.21",
- "tracing",
-]
-
-[[package]]
-name = "ott-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ott-core",
- "serde_json",
- "tokio",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ott-core"
-version = "0.1.0"
-dependencies = [
- "axum",
- "futures 0.3.34",
- "libc",
- "ott-botkit",
- "phoenix-rise",
- "reqwest",
- "serde",
- "serde_json",
- "solana-keypair",
- "solana-pubkey 4.3.0",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-signer",
- "surfpool-sdk",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "uuid",
-]
 
 [[package]]
 name = "pairing"

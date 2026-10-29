@@ -1,6 +1,6 @@
 # Existing trading and finance agent benchmarks
 
-What exists, what each one teaches, and the gap open-trading fills. Claims
+What exists, what each one teaches, and the gap machine-trading fills. Claims
 marked *(secondary)* come from press or summaries, not the primary source.
 Researched October 2026.
 
@@ -12,7 +12,7 @@ Researched October 2026.
 - Reactive and simulated markets
 - Competitions with forward scoring
 - Crypto and on-chain agent benchmarks
-- Lessons for open-trading
+- Lessons for machine-trading
 
 ## Backtest benchmarks (LLM era)
 
@@ -78,9 +78,9 @@ For agent tasks, the equivalent is hidden, freshly generated scenarios.
 
 **Gap:** we found no Solana-native benchmark that scores trading PnL on
 real program logic with hidden, generated market paths. That is
-open-trading's niche.
+machine-trading's niche.
 
-## Lessons for open-trading
+## Lessons for machine-trading
 
 1. Keep scoring offline on generated paths: reproducible, uncontaminated, unlimited.
 2. Report baselines next to scores (nop, buy-and-hold, reference). Beating nothing is common.

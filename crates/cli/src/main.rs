@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ott_core::{
+use mt_core::{
     grade::{self, GradeOptions},
     phoenix,
     scenario::{Scenario, ShockFamily},
@@ -10,10 +10,10 @@ use ott_core::{
 };
 use tracing_subscriber::EnvFilter;
 
-/// Tooling for the ott Solana trading benchmark. Results go to stdout as JSON,
+/// Tooling for the mt Solana trading benchmark. Results go to stdout as JSON,
 /// logs to stderr.
 #[derive(Parser)]
-#[command(name = "ott", version)]
+#[command(name = "mt", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -58,7 +58,7 @@ struct Sessions {
     logs: PathBuf,
     /// Sessions to run at once, each on its own surfnet (1-4). A machine
     /// that can't keep up fails the run on late slots rather than skewing it.
-    #[arg(long, env = "OTT_JOBS", default_value_t = 1)]
+    #[arg(long, env = "MT_JOBS", default_value_t = 1)]
     jobs: usize,
     /// Scenario files, run in order.
     #[arg(required = true)]
@@ -76,7 +76,7 @@ impl Sessions {
 
 #[derive(Subcommand)]
 enum ScenarioCommand {
-    /// Draw shock scenarios (crashes and squeezes) from the SOL family, one
+    /// Draw shock scenarios (crashes and squeezes) from the SPCX family, one
     /// file per scenario.
     /// Sets are stratified: each direction and aftermath appears in
     /// proportion to its odds.
@@ -98,19 +98,19 @@ enum ScenarioCommand {
 enum SnapshotCommand {
     /// Fork mainnet, warm up the Phoenix accounts a task touches, and export them.
     Prepare {
-        /// Output directory, e.g. snapshots/phoenix-sol-2026-10-27.
+        /// Output directory, e.g. snapshots/phoenix-spcx-2026-10-29.
         #[arg(long)]
         out: PathBuf,
         /// Datasource to fork. May embed an API key; only its host is recorded.
         #[arg(
             long,
-            env = "OTT_FORK_RPC_URL",
+            env = "MT_FORK_RPC_URL",
             default_value = "https://api.mainnet-beta.solana.com"
         )]
         fork_rpc: String,
         #[arg(long, default_value = phoenix::DEFAULT_API_URL)]
         phoenix_api: String,
-        #[arg(long, default_value = "SOL")]
+        #[arg(long, default_value = "SPCX")]
         symbol: String,
     },
     /// Restart offline from a snapshot and trade through a scripted crash.
@@ -125,13 +125,13 @@ enum SnapshotCommand {
     VerifyFork {
         #[arg(
             long,
-            env = "OTT_FORK_RPC_URL",
+            env = "MT_FORK_RPC_URL",
             default_value = "https://api.mainnet-beta.solana.com"
         )]
         fork_rpc: String,
         #[arg(long, default_value = phoenix::DEFAULT_API_URL)]
         phoenix_api: String,
-        #[arg(long, default_value = "SOL")]
+        #[arg(long, default_value = "SPCX")]
         symbol: String,
         #[arg(long, default_value_t = 8.0)]
         crash_pct: f64,
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
             seed,
         }) => {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
-            let family = ShockFamily::sol();
+            let family = ShockFamily::spcx();
             let mut written = Vec::new();
             for scenario in family.sample_set(&prefix, count, seed) {
                 let path = out.join(format!("{}.json", scenario.name));

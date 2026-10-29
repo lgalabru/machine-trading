@@ -1,4 +1,4 @@
-//! Plumbing for ott trading bots, on the [`luce`] trading library.
+//! Plumbing for mt trading bots, on the [`luce`] trading library.
 //!
 //! A bot is started by the grader with its environment described by
 //! [`BotEnv`]: an RPC endpoint, a funded keypair whose Phoenix trader account

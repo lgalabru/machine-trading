@@ -4,8 +4,8 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/phoenix-flash-crash"
-version = "0.4.0"
-description = "Write a bot that trades Phoenix SOL perps through flash crashes and squeezes, some of which never revert, on an offline copy of Solana mainnet."
+version = "0.5.0"
+description = "Write a bot that trades Phoenix SPCX (SpaceX) perps through flash crashes and squeezes, some of which never revert, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 
 [[task.authors]]
@@ -15,8 +15,8 @@ email = "ludo.galabru@solana.org"
 [metadata]
 difficulty = "hard"
 category = "trading"
-# Chain state the task trades on (OTT_SNAPSHOT); see snapshots/<name>/manifest.json.
-snapshot = "phoenix-sol-2026-10-27"
+# Chain state the task trades on (MT_SNAPSHOT); see snapshots/<name>/manifest.json.
+snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
 # Twelve hidden scenarios of 55-105s of market time each, one at a time,

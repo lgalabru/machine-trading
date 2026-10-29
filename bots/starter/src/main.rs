@@ -1,13 +1,13 @@
 //! A bot that connects, watches the market, and never trades.
 //!
 //! Start from here: the plumbing works, the strategy is yours. See
-//! `ott_botkit::Trader` for placing and cancelling orders and reading your
+//! `mt_botkit::Trader` for placing and cancelling orders and reading your
 //! position.
 
 use std::time::Duration;
 
 use anyhow::Result;
-use ott_botkit::{BotEnv, Trader};
+use mt_botkit::{BotEnv, Trader};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 

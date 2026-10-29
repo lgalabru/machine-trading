@@ -1,10 +1,10 @@
-# Dataset manifest for solana-foundation/open-trading
+# Dataset manifest for solana-foundation/machine-trading
 # Add tasks using: harbor dataset add <org>/<name>
 # Publish using: harbor publish
 
 [dataset]
-name = "solana-foundation/open-trading"
-version = "0.4.0"
+name = "solana-foundation/machine-trading"
+version = "0.5.0"
 description = "Trading tasks for agents on Solana: bots trade DeFi markets replayed on offline mainnet snapshots with Surfpool."
 keywords = [ "solana", "trading", "defi", "perpetuals", "surfpool",]
 [[dataset.authors]]

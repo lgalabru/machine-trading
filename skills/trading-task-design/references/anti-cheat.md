@@ -11,7 +11,7 @@ METR's recommendation applies here: **fix the scorer, don't scold the model.**
 ## Contents
 
 - Cheat surface table
-- The three-layer defense used in open-trading
+- The three-layer defense used in machine-trading
 - Building the cheater check
 - Known open gaps
 
@@ -23,18 +23,18 @@ METR's recommendation applies here: **fix the scorer, don't scold the model.**
 | Faucets | `requestAirdrop` | Not on the allowlist |
 | Time travel | Clock or slot warps to jump past the crash, or to reach the rebound early | Time cheatcodes refused; the grader drives time |
 | Price manipulation | Pushing the oracle's source market, or self-trading to move the mark used for valuation | Value at the mark the grader reads; decide whether moving the price counts as skill or as a violation, and say so |
-| Reading hidden scenarios | `cat /tests/scenarios/*.json` | `chmod go-rwx /tests`; the bot runs as `ott-bot`; scenarios are absent from the agent image |
+| Reading hidden scenarios | `cat /tests/scenarios/*.json` | `chmod go-rwx /tests`; the bot runs as `mt-bot`; scenarios are absent from the agent image |
 | Reading the reference | The solution in the image | The solution is used only by the oracle agent, never copied into images |
 | Writing the reward | Writing `/logs/verifier/reward.json` | Don't trust permissions: Docker Desktop bind mounts ignore them, so the bot user *can* write `/logs`. The grader deletes the reward file before grading, treats one that appears as tampering (reward 0), writes the real one last after every bot process is dead, and `test.sh` removes it if grading fails |
 | Self-reported PnL | Logging "pnl: 1e9" | Value from on-chain state only |
-| Killing or stalling the grader | Fork bombs, `kill -9` on the surfnet, ignoring SIGTERM | Separate user, its own process group, SIGKILL after the grace period, `pkill -u ott-bot` |
+| Killing or stalling the grader | Fork bombs, `kill -9` on the surfnet, ignoring SIGTERM | Separate user, its own process group, SIGKILL after the grace period, `pkill -u mt-bot` |
 | Network | Fetching future prices or a solution | Verifier `network_mode = "no-network"` |
 | Bypassing the guard | Port-scanning localhost to find surfnet's raw RPC | **Open gap**: run the bot in a sidecar that can reach only the guard |
 | Environment leakage | Reading the grader's env vars | Bot env cleared to the contract variables only |
 | Artifact smuggling | Leftover files from the agent image merging into the verifier | `rm -rf /app/bot` before Harbor copies the artifact in |
 | Exploiting protocol bugs | A Mango-style thin-market pump; liquidation edge cases | Decide the policy up front; if it's a violation, detect it (e.g. the bot's share of volume, oracle deviation) |
 
-## The three layers in open-trading
+## The three layers in machine-trading
 
 1. **Interface:** the bot talks to an RPC guard that forwards a fixed allowlist of standard Solana methods. Anything else, even inside a batch, is refused and recorded.
 2. **Process:** the bot runs as an unprivileged user, in its own process group, with a scrubbed environment. It can't read `/tests` or write `/logs`.
