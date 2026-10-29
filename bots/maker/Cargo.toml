@@ -1,0 +1,24 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mth/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mth-bot-maker"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mth-maker"
+path = "src/main.rs"
+
+[features]
+# The passive baseline: symmetric quotes, no inventory skew, no response to
+# toxic flow. Not shipped; it shows adverse selection costs something.
+passive = []
+
+[dependencies]
+anyhow = "1"
+mth-botkit = { path = "../../crates/botkit" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

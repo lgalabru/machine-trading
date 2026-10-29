@@ -1,0 +1,1282 @@
+{
+  "name": "practice-3",
+  "description": "SPCX trends down; makers quote ±23.26 bp; 152 taker orders",
+  "symbol": "SPCX",
+  "duration_slots": 525,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 20.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 250.0
+    }
+  },
+  "path": [
+    {
+      "slot": 3,
+      "level_pct": -0.03
+    },
+    {
+      "slot": 8,
+      "level_pct": 0.053
+    },
+    {
+      "slot": 15,
+      "level_pct": 0.038
+    },
+    {
+      "slot": 19,
+      "level_pct": 0.086
+    },
+    {
+      "slot": 23,
+      "level_pct": 0.213
+    },
+    {
+      "slot": 32,
+      "level_pct": 0.219
+    },
+    {
+      "slot": 38,
+      "level_pct": 0.32
+    },
+    {
+      "slot": 41,
+      "level_pct": 0.365
+    },
+    {
+      "slot": 49,
+      "level_pct": 0.444
+    },
+    {
+      "slot": 54,
+      "level_pct": 0.415
+    },
+    {
+      "slot": 62,
+      "level_pct": 0.527
+    },
+    {
+      "slot": 70,
+      "level_pct": 0.526
+    },
+    {
+      "slot": 79,
+      "level_pct": 0.566
+    },
+    {
+      "slot": 88,
+      "level_pct": 0.595
+    },
+    {
+      "slot": 93,
+      "level_pct": 0.702
+    },
+    {
+      "slot": 100,
+      "level_pct": 0.669
+    },
+    {
+      "slot": 108,
+      "level_pct": 0.576
+    },
+    {
+      "slot": 115,
+      "level_pct": 0.652
+    },
+    {
+      "slot": 119,
+      "level_pct": 0.605
+    },
+    {
+      "slot": 126,
+      "level_pct": 0.591
+    },
+    {
+      "slot": 131,
+      "level_pct": 0.624
+    },
+    {
+      "slot": 134,
+      "level_pct": 0.523
+    },
+    {
+      "slot": 139,
+      "level_pct": 0.497
+    },
+    {
+      "slot": 143,
+      "level_pct": 0.534
+    },
+    {
+      "slot": 152,
+      "level_pct": 0.651
+    },
+    {
+      "slot": 159,
+      "level_pct": 0.763
+    },
+    {
+      "slot": 164,
+      "level_pct": 0.658
+    },
+    {
+      "slot": 167,
+      "level_pct": 0.671
+    },
+    {
+      "slot": 175,
+      "level_pct": 0.757
+    },
+    {
+      "slot": 178,
+      "level_pct": 0.666
+    },
+    {
+      "slot": 182,
+      "level_pct": 0.482
+    },
+    {
+      "slot": 187,
+      "level_pct": 0.524
+    },
+    {
+      "slot": 193,
+      "level_pct": 0.509
+    },
+    {
+      "slot": 198,
+      "level_pct": 0.421
+    },
+    {
+      "slot": 207,
+      "level_pct": 0.513
+    },
+    {
+      "slot": 210,
+      "level_pct": 0.513
+    },
+    {
+      "slot": 216,
+      "level_pct": 0.515
+    },
+    {
+      "slot": 220,
+      "level_pct": 0.595
+    },
+    {
+      "slot": 228,
+      "level_pct": 0.748
+    },
+    {
+      "slot": 233,
+      "level_pct": 0.795
+    },
+    {
+      "slot": 236,
+      "level_pct": 0.835
+    },
+    {
+      "slot": 243,
+      "level_pct": 0.89
+    },
+    {
+      "slot": 249,
+      "level_pct": 0.853
+    },
+    {
+      "slot": 255,
+      "level_pct": 0.905
+    },
+    {
+      "slot": 261,
+      "level_pct": 1.009
+    },
+    {
+      "slot": 269,
+      "level_pct": 1.015
+    },
+    {
+      "slot": 273,
+      "level_pct": 1.046
+    },
+    {
+      "slot": 277,
+      "level_pct": 1.078
+    },
+    {
+      "slot": 280,
+      "level_pct": 1.017
+    },
+    {
+      "slot": 287,
+      "level_pct": 0.982
+    },
+    {
+      "slot": 296,
+      "level_pct": 0.99
+    },
+    {
+      "slot": 303,
+      "level_pct": 1.163
+    },
+    {
+      "slot": 310,
+      "level_pct": 1.174
+    },
+    {
+      "slot": 318,
+      "level_pct": 1.223
+    },
+    {
+      "slot": 323,
+      "level_pct": 1.232
+    },
+    {
+      "slot": 329,
+      "level_pct": 1.205
+    },
+    {
+      "slot": 332,
+      "level_pct": 1.176
+    },
+    {
+      "slot": 337,
+      "level_pct": 1.14
+    },
+    {
+      "slot": 341,
+      "level_pct": 1.107
+    },
+    {
+      "slot": 346,
+      "level_pct": 1.13
+    },
+    {
+      "slot": 353,
+      "level_pct": 1.254
+    },
+    {
+      "slot": 357,
+      "level_pct": 1.354
+    },
+    {
+      "slot": 366,
+      "level_pct": 1.306
+    },
+    {
+      "slot": 370,
+      "level_pct": 1.389
+    },
+    {
+      "slot": 378,
+      "level_pct": 1.363
+    },
+    {
+      "slot": 385,
+      "level_pct": 1.314
+    },
+    {
+      "slot": 391,
+      "level_pct": 1.405
+    },
+    {
+      "slot": 394,
+      "level_pct": 1.39
+    },
+    {
+      "slot": 403,
+      "level_pct": 1.345
+    },
+    {
+      "slot": 412,
+      "level_pct": 1.385
+    },
+    {
+      "slot": 419,
+      "level_pct": 1.295
+    },
+    {
+      "slot": 426,
+      "level_pct": 1.321
+    },
+    {
+      "slot": 434,
+      "level_pct": 1.315
+    },
+    {
+      "slot": 441,
+      "level_pct": 1.261
+    },
+    {
+      "slot": 450,
+      "level_pct": 1.258
+    },
+    {
+      "slot": 458,
+      "level_pct": 1.114
+    },
+    {
+      "slot": 465,
+      "level_pct": 1.087
+    },
+    {
+      "slot": 472,
+      "level_pct": 1.122
+    },
+    {
+      "slot": 481,
+      "level_pct": 1.045
+    },
+    {
+      "slot": 486,
+      "level_pct": 1.089
+    },
+    {
+      "slot": 491,
+      "level_pct": 1.108
+    },
+    {
+      "slot": 497,
+      "level_pct": 1.111
+    },
+    {
+      "slot": 504,
+      "level_pct": 1.16
+    },
+    {
+      "slot": 507,
+      "level_pct": 1.038
+    },
+    {
+      "slot": 510,
+      "level_pct": 0.989
+    },
+    {
+      "slot": 517,
+      "level_pct": 1.04
+    }
+  ],
+  "making": {
+    "competitor_bps": 23.26,
+    "takers": [
+      {
+        "slot": 6,
+        "side": "buy",
+        "size": 0.244,
+        "account": 6
+      },
+      {
+        "slot": 7,
+        "side": "buy",
+        "size": 0.195,
+        "account": 3
+      },
+      {
+        "slot": 13,
+        "side": "sell",
+        "size": 0.624,
+        "account": 5
+      },
+      {
+        "slot": 15,
+        "side": "buy",
+        "size": 0.442,
+        "account": 4
+      },
+      {
+        "slot": 24,
+        "side": "buy",
+        "size": 1.678,
+        "account": 0
+      },
+      {
+        "slot": 26,
+        "side": "sell",
+        "size": 1.05,
+        "account": 2
+      },
+      {
+        "slot": 32,
+        "side": "sell",
+        "size": 2.636,
+        "account": 1
+      },
+      {
+        "slot": 37,
+        "side": "buy",
+        "size": 0.544,
+        "account": 5
+      },
+      {
+        "slot": 40,
+        "side": "sell",
+        "size": 1.478,
+        "account": 0
+      },
+      {
+        "slot": 44,
+        "side": "sell",
+        "size": 0.339,
+        "account": 5
+      },
+      {
+        "slot": 50,
+        "side": "sell",
+        "size": 0.39,
+        "account": 3
+      },
+      {
+        "slot": 53,
+        "side": "sell",
+        "size": 0.635,
+        "account": 6
+      },
+      {
+        "slot": 65,
+        "side": "buy",
+        "size": 0.248,
+        "account": 1
+      },
+      {
+        "slot": 70,
+        "side": "sell",
+        "size": 0.595,
+        "account": 4
+      },
+      {
+        "slot": 71,
+        "side": "buy",
+        "size": 1.317,
+        "account": 1
+      },
+      {
+        "slot": 74,
+        "side": "sell",
+        "size": 1.305,
+        "account": 2
+      },
+      {
+        "slot": 75,
+        "side": "sell",
+        "size": 0.703,
+        "account": 6
+      },
+      {
+        "slot": 77,
+        "side": "sell",
+        "size": 0.699,
+        "account": 1
+      },
+      {
+        "slot": 79,
+        "side": "buy",
+        "size": 0.552,
+        "account": 0
+      },
+      {
+        "slot": 81,
+        "side": "sell",
+        "size": 1.782,
+        "account": 3
+      },
+      {
+        "slot": 82,
+        "side": "sell",
+        "size": 1.541,
+        "account": 7
+      },
+      {
+        "slot": 84,
+        "side": "sell",
+        "size": 1.269,
+        "account": 5
+      },
+      {
+        "slot": 86,
+        "side": "sell",
+        "size": 0.71,
+        "account": 5
+      },
+      {
+        "slot": 87,
+        "side": "sell",
+        "size": 0.872,
+        "account": 1
+      },
+      {
+        "slot": 88,
+        "side": "buy",
+        "size": 2.031,
+        "account": 7
+      },
+      {
+        "slot": 88,
+        "side": "sell",
+        "size": 0.815,
+        "account": 4
+      },
+      {
+        "slot": 89,
+        "side": "sell",
+        "size": 0.453,
+        "account": 7
+      },
+      {
+        "slot": 91,
+        "side": "buy",
+        "size": 0.315,
+        "account": 4
+      },
+      {
+        "slot": 92,
+        "side": "buy",
+        "size": 0.276,
+        "account": 1
+      },
+      {
+        "slot": 94,
+        "side": "buy",
+        "size": 0.549,
+        "account": 0
+      },
+      {
+        "slot": 96,
+        "side": "sell",
+        "size": 0.154,
+        "account": 5
+      },
+      {
+        "slot": 98,
+        "side": "buy",
+        "size": 0.207,
+        "account": 2
+      },
+      {
+        "slot": 99,
+        "side": "sell",
+        "size": 0.216,
+        "account": 5
+      },
+      {
+        "slot": 100,
+        "side": "sell",
+        "size": 0.412,
+        "account": 6
+      },
+      {
+        "slot": 107,
+        "side": "sell",
+        "size": 1.489,
+        "account": 7
+      },
+      {
+        "slot": 108,
+        "side": "sell",
+        "size": 0.885,
+        "account": 1
+      },
+      {
+        "slot": 110,
+        "side": "buy",
+        "size": 0.611,
+        "account": 0
+      },
+      {
+        "slot": 112,
+        "side": "buy",
+        "size": 0.301,
+        "account": 0
+      },
+      {
+        "slot": 117,
+        "side": "sell",
+        "size": 0.502,
+        "account": 1
+      },
+      {
+        "slot": 127,
+        "side": "buy",
+        "size": 1.361,
+        "account": 3
+      },
+      {
+        "slot": 131,
+        "side": "buy",
+        "size": 0.96,
+        "account": 7
+      },
+      {
+        "slot": 137,
+        "side": "buy",
+        "size": 0.207,
+        "account": 3
+      },
+      {
+        "slot": 141,
+        "side": "sell",
+        "size": 0.405,
+        "account": 2
+      },
+      {
+        "slot": 143,
+        "side": "buy",
+        "size": 0.55,
+        "account": 4
+      },
+      {
+        "slot": 150,
+        "side": "sell",
+        "size": 0.732,
+        "account": 4
+      },
+      {
+        "slot": 154,
+        "side": "buy",
+        "size": 1.762,
+        "account": 3
+      },
+      {
+        "slot": 158,
+        "side": "buy",
+        "size": 0.306,
+        "account": 6
+      },
+      {
+        "slot": 159,
+        "side": "sell",
+        "size": 1.262,
+        "account": 4
+      },
+      {
+        "slot": 160,
+        "side": "buy",
+        "size": 1.558,
+        "account": 0
+      },
+      {
+        "slot": 162,
+        "side": "sell",
+        "size": 0.748,
+        "account": 4
+      },
+      {
+        "slot": 165,
+        "side": "sell",
+        "size": 0.728,
+        "account": 2
+      },
+      {
+        "slot": 167,
+        "side": "buy",
+        "size": 0.344,
+        "account": 7
+      },
+      {
+        "slot": 169,
+        "side": "buy",
+        "size": 0.67,
+        "account": 7
+      },
+      {
+        "slot": 170,
+        "side": "sell",
+        "size": 0.35,
+        "account": 0
+      },
+      {
+        "slot": 172,
+        "side": "sell",
+        "size": 0.771,
+        "account": 0
+      },
+      {
+        "slot": 175,
+        "side": "sell",
+        "size": 0.304,
+        "account": 2
+      },
+      {
+        "slot": 178,
+        "side": "sell",
+        "size": 0.246,
+        "account": 2
+      },
+      {
+        "slot": 182,
+        "side": "sell",
+        "size": 1.954,
+        "account": 6
+      },
+      {
+        "slot": 183,
+        "side": "buy",
+        "size": 1.326,
+        "account": 0
+      },
+      {
+        "slot": 185,
+        "side": "sell",
+        "size": 0.665,
+        "account": 2
+      },
+      {
+        "slot": 189,
+        "side": "sell",
+        "size": 0.813,
+        "account": 5
+      },
+      {
+        "slot": 190,
+        "side": "sell",
+        "size": 0.824,
+        "account": 1
+      },
+      {
+        "slot": 194,
+        "side": "sell",
+        "size": 0.834,
+        "account": 1
+      },
+      {
+        "slot": 195,
+        "side": "sell",
+        "size": 0.201,
+        "account": 6
+      },
+      {
+        "slot": 198,
+        "side": "buy",
+        "size": 0.1,
+        "account": 5
+      },
+      {
+        "slot": 200,
+        "side": "buy",
+        "size": 0.899,
+        "account": 0
+      },
+      {
+        "slot": 201,
+        "side": "sell",
+        "size": 0.434,
+        "account": 4
+      },
+      {
+        "slot": 203,
+        "side": "buy",
+        "size": 1.079,
+        "account": 6
+      },
+      {
+        "slot": 209,
+        "side": "buy",
+        "size": 0.352,
+        "account": 5
+      },
+      {
+        "slot": 210,
+        "side": "buy",
+        "size": 0.235,
+        "account": 5
+      },
+      {
+        "slot": 214,
+        "side": "sell",
+        "size": 0.6,
+        "account": 2
+      },
+      {
+        "slot": 216,
+        "side": "sell",
+        "size": 0.163,
+        "account": 5
+      },
+      {
+        "slot": 218,
+        "side": "sell",
+        "size": 0.294,
+        "account": 6
+      },
+      {
+        "slot": 221,
+        "side": "buy",
+        "size": 0.816,
+        "account": 3
+      },
+      {
+        "slot": 222,
+        "side": "sell",
+        "size": 0.85,
+        "account": 6
+      },
+      {
+        "slot": 223,
+        "side": "buy",
+        "size": 0.99,
+        "account": 4
+      },
+      {
+        "slot": 227,
+        "side": "sell",
+        "size": 1.1,
+        "account": 0
+      },
+      {
+        "slot": 230,
+        "side": "sell",
+        "size": 0.375,
+        "account": 3
+      },
+      {
+        "slot": 233,
+        "side": "buy",
+        "size": 0.298,
+        "account": 5
+      },
+      {
+        "slot": 237,
+        "side": "sell",
+        "size": 0.887,
+        "account": 6
+      },
+      {
+        "slot": 238,
+        "side": "sell",
+        "size": 0.333,
+        "account": 2
+      },
+      {
+        "slot": 242,
+        "side": "sell",
+        "size": 1.276,
+        "account": 4
+      },
+      {
+        "slot": 244,
+        "side": "buy",
+        "size": 0.162,
+        "account": 0
+      },
+      {
+        "slot": 261,
+        "side": "buy",
+        "size": 1.246,
+        "account": 6
+      },
+      {
+        "slot": 270,
+        "side": "sell",
+        "size": 1.126,
+        "account": 2
+      },
+      {
+        "slot": 276,
+        "side": "sell",
+        "size": 0.601,
+        "account": 7
+      },
+      {
+        "slot": 277,
+        "side": "sell",
+        "size": 0.563,
+        "account": 5
+      },
+      {
+        "slot": 279,
+        "side": "sell",
+        "size": 1.132,
+        "account": 2
+      },
+      {
+        "slot": 286,
+        "side": "sell",
+        "size": 0.605,
+        "account": 1
+      },
+      {
+        "slot": 287,
+        "side": "sell",
+        "size": 0.132,
+        "account": 6
+      },
+      {
+        "slot": 293,
+        "side": "sell",
+        "size": 0.868,
+        "account": 2
+      },
+      {
+        "slot": 295,
+        "side": "sell",
+        "size": 1.112,
+        "account": 7
+      },
+      {
+        "slot": 304,
+        "side": "sell",
+        "size": 0.483,
+        "account": 2
+      },
+      {
+        "slot": 308,
+        "side": "buy",
+        "size": 0.431,
+        "account": 4
+      },
+      {
+        "slot": 311,
+        "side": "sell",
+        "size": 1.15,
+        "account": 0
+      },
+      {
+        "slot": 313,
+        "side": "buy",
+        "size": 0.674,
+        "account": 0
+      },
+      {
+        "slot": 314,
+        "side": "sell",
+        "size": 0.45,
+        "account": 5
+      },
+      {
+        "slot": 317,
+        "side": "buy",
+        "size": 0.584,
+        "account": 0
+      },
+      {
+        "slot": 320,
+        "side": "sell",
+        "size": 0.951,
+        "account": 7
+      },
+      {
+        "slot": 329,
+        "side": "buy",
+        "size": 1.759,
+        "account": 2
+      },
+      {
+        "slot": 332,
+        "side": "sell",
+        "size": 0.209,
+        "account": 1
+      },
+      {
+        "slot": 334,
+        "side": "sell",
+        "size": 0.738,
+        "account": 5
+      },
+      {
+        "slot": 336,
+        "side": "sell",
+        "size": 3.441,
+        "account": 7
+      },
+      {
+        "slot": 344,
+        "side": "sell",
+        "size": 0.782,
+        "account": 3
+      },
+      {
+        "slot": 350,
+        "side": "sell",
+        "size": 0.545,
+        "account": 2
+      },
+      {
+        "slot": 354,
+        "side": "sell",
+        "size": 0.996,
+        "account": 5
+      },
+      {
+        "slot": 355,
+        "side": "buy",
+        "size": 0.41,
+        "account": 6
+      },
+      {
+        "slot": 359,
+        "side": "buy",
+        "size": 0.41,
+        "account": 1
+      },
+      {
+        "slot": 361,
+        "side": "sell",
+        "size": 0.642,
+        "account": 6
+      },
+      {
+        "slot": 366,
+        "side": "buy",
+        "size": 0.299,
+        "account": 4
+      },
+      {
+        "slot": 367,
+        "side": "sell",
+        "size": 0.816,
+        "account": 5
+      },
+      {
+        "slot": 379,
+        "side": "buy",
+        "size": 0.109,
+        "account": 7
+      },
+      {
+        "slot": 390,
+        "side": "buy",
+        "size": 0.479,
+        "account": 6
+      },
+      {
+        "slot": 402,
+        "side": "sell",
+        "size": 2.233,
+        "account": 2
+      },
+      {
+        "slot": 405,
+        "side": "buy",
+        "size": 0.987,
+        "account": 5
+      },
+      {
+        "slot": 406,
+        "side": "sell",
+        "size": 0.371,
+        "account": 7
+      },
+      {
+        "slot": 414,
+        "side": "sell",
+        "size": 0.633,
+        "account": 5
+      },
+      {
+        "slot": 417,
+        "side": "sell",
+        "size": 0.484,
+        "account": 4
+      },
+      {
+        "slot": 421,
+        "side": "sell",
+        "size": 0.423,
+        "account": 1
+      },
+      {
+        "slot": 425,
+        "side": "buy",
+        "size": 0.802,
+        "account": 3
+      },
+      {
+        "slot": 427,
+        "side": "sell",
+        "size": 1.244,
+        "account": 4
+      },
+      {
+        "slot": 429,
+        "side": "buy",
+        "size": 0.469,
+        "account": 4
+      },
+      {
+        "slot": 435,
+        "side": "sell",
+        "size": 0.947,
+        "account": 4
+      },
+      {
+        "slot": 437,
+        "side": "buy",
+        "size": 0.936,
+        "account": 2
+      },
+      {
+        "slot": 439,
+        "side": "buy",
+        "size": 0.432,
+        "account": 4
+      },
+      {
+        "slot": 441,
+        "side": "sell",
+        "size": 0.667,
+        "account": 5
+      },
+      {
+        "slot": 443,
+        "side": "sell",
+        "size": 0.35,
+        "account": 2
+      },
+      {
+        "slot": 445,
+        "side": "buy",
+        "size": 1.158,
+        "account": 5
+      },
+      {
+        "slot": 446,
+        "side": "sell",
+        "size": 0.724,
+        "account": 7
+      },
+      {
+        "slot": 448,
+        "side": "buy",
+        "size": 0.585,
+        "account": 4
+      },
+      {
+        "slot": 452,
+        "side": "sell",
+        "size": 0.1,
+        "account": 0
+      },
+      {
+        "slot": 453,
+        "side": "sell",
+        "size": 1.354,
+        "account": 1
+      },
+      {
+        "slot": 454,
+        "side": "buy",
+        "size": 1.251,
+        "account": 1
+      },
+      {
+        "slot": 456,
+        "side": "buy",
+        "size": 0.276,
+        "account": 2
+      },
+      {
+        "slot": 461,
+        "side": "sell",
+        "size": 0.627,
+        "account": 5
+      },
+      {
+        "slot": 464,
+        "side": "sell",
+        "size": 1.096,
+        "account": 6
+      },
+      {
+        "slot": 465,
+        "side": "sell",
+        "size": 1.145,
+        "account": 3
+      },
+      {
+        "slot": 469,
+        "side": "buy",
+        "size": 0.616,
+        "account": 4
+      },
+      {
+        "slot": 472,
+        "side": "buy",
+        "size": 1.325,
+        "account": 5
+      },
+      {
+        "slot": 473,
+        "side": "sell",
+        "size": 1.001,
+        "account": 0
+      },
+      {
+        "slot": 474,
+        "side": "buy",
+        "size": 0.812,
+        "account": 7
+      },
+      {
+        "slot": 483,
+        "side": "buy",
+        "size": 0.719,
+        "account": 6
+      },
+      {
+        "slot": 485,
+        "side": "sell",
+        "size": 0.357,
+        "account": 6
+      },
+      {
+        "slot": 489,
+        "side": "sell",
+        "size": 0.345,
+        "account": 0
+      },
+      {
+        "slot": 492,
+        "side": "sell",
+        "size": 0.608,
+        "account": 4
+      },
+      {
+        "slot": 494,
+        "side": "buy",
+        "size": 0.18,
+        "account": 5
+      },
+      {
+        "slot": 499,
+        "side": "buy",
+        "size": 1.021,
+        "account": 1
+      },
+      {
+        "slot": 500,
+        "side": "sell",
+        "size": 0.887,
+        "account": 7
+      },
+      {
+        "slot": 502,
+        "side": "sell",
+        "size": 1.313,
+        "account": 1
+      },
+      {
+        "slot": 516,
+        "side": "sell",
+        "size": 0.683,
+        "account": 1
+      },
+      {
+        "slot": 518,
+        "side": "buy",
+        "size": 1.468,
+        "account": 1
+      },
+      {
+        "slot": 519,
+        "side": "sell",
+        "size": 0.173,
+        "account": 2
+      }
+    ]
+  },
+  "reference_pnl_usd": 4.31
+}

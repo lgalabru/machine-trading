@@ -13,9 +13,18 @@ can reach, with a per-session drawdown limit.
 | Task | Market | Scenario |
 | --- | --- | --- |
 | `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes in legs of 3–6%: most revert, some stall, some keep going |
+| `phoenix-market-making` | Phoenix SPCX (SpaceX) perpetuals | Make markets against widened mainnet makers and grader-run takers, some informed, while the price walks, trends or jumps |
 
 ## Changelog
 
+- **0.7.0.** New task, `phoenix-market-making`: quote SPCX against Phoenix's
+  own makers, widened to a half-spread drawn per session (8–30 bp), while
+  the price walks, trends or jumps 0.6–2.5%. The grader sends taker flow
+  from a shared pool of accounts: noise, informed bursts ahead of each jump,
+  and fake-outs. Accounts are valued at the scenario's oracle, not
+  Phoenix's mark, which a maker's own quotes pull. The reward is PnL over a
+  spread bound: every taker order filled at the competitor's half-spread.
+  The SDK adds `Trader::oracle_usd`.
 - **0.6.0.** Each scenario carries a [mandate](../../specs/mandate.md):
   the market the bot may trade, its position cap and its drawdown limit,
   with the same values as before. Bots get a copy in `MTH_MANDATE`, next to
