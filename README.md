@@ -145,7 +145,7 @@ machine-trading/
 │   └── image/             the images every task builds on: dev (agents) and runtime (verifiers)
 ├── crates/                🦀 shared Rust
 │   ├── core/              mth-core: offline worlds, scenario families, RPC guard, sessions, grading
-│   ├── cli/               mth: the grader and scenario generator
+│   ├── cli/               mth: the grader, scenario generator, and agent-authored scenarios
 │   ├── luce/              luce: the trading library (exact Decimal model, Solana runtime, Phoenix)
 │   └── botkit/            mth-botkit: the SDK bots build on, over luce (both ship in the task image)
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
@@ -182,6 +182,32 @@ just test lint                                     # unit tests and clippy
 `mth grade` runs exactly what the verifier runs. Bot logs land in
 `target/logs/`. Don't run heavy builds while grading: slots advance on the
 wall clock, and a starved machine gives bots fewer looks per slot.
+
+### Author and play scenarios
+
+`mth scenario new` has a coding agent write a
+[Surfpool scenario](https://github.com/solana-foundation/surfpool/tree/main/crates/core/src/scenarios)
+from a request. The agent runs over [ACP](https://agentclientprotocol.com)
+with the Surfpool MCP server attached, pointed at a surfnet restored from the
+snapshot, so it reads the same prices the scenario starts from. mth checks
+what it writes (known templates and properties, Phoenix steps within 4%,
+an uncross after each move) and sends problems back until it passes.
+
+```sh
+mth scenario new "simulate a crash for SPCX" -a claude-code   # writes scenario.json
+mth scenario play "simulate a crash for SPCX" -a claude-code  # authors it, then plays it
+mth scenario play scenario.json                               # replays a saved one
+```
+
+`play` serves a page that charts the mark, the bid–ask and the planned path
+slot by slot, with every override on the timeline; press Play, or pass
+`--autoplay`. Pause stops the surfnet's clock, Reset restores the snapshot on
+a fresh surfnet and stages the scenario again, and Stop shuts the surfnet
+down and ends the command. Agents are `claude-code` and `codex`; their ACP adapters
+(`claude-agent-acp`, `codex-acp`) come from `PATH`, or through `npx`
+otherwise. `surfpool` must be a build with the Phoenix templates. Both
+commands show progress lines; `-v` shows the logs, the agent's replies and
+its adapter's output instead.
 
 ### Change a task
 

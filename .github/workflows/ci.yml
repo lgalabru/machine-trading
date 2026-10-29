@@ -34,6 +34,12 @@ jobs:
           for task in bench/tasks/*/; do
             harbor lint "$task" --select ALL --ignore unpinned-image
           done
+      - name: The play viewer's script parses
+        # viewer.html is embedded in mth; a syntax error would only show as a
+        # blank page.
+        run: |
+          sed -n '/<script>/,/<\/script>/p' crates/cli/src/viewer.html | sed '1d;$d' > "$RUNNER_TEMP/viewer.js"
+          node --check "$RUNNER_TEMP/viewer.js"
       - name: Scenarios carry their limits and a reference baseline
         run: |
           for f in bench/tasks/*/environment/practice/*.json bench/tasks/*/tests/scenarios/*.json; do

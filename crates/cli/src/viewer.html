@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mth · scenario</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #000;
+    --panel: #09090b;
+    --line: #27272a;
+    --line-soft: #18181b;
+    --track: #2f2f32;
+    --text: #fafafa;
+    --text-2: #a1a1aa;
+    --text-3: #71717a;
+    --text-4: #52525b;
+    --accent: #a2ef5b;
+    --accent-soft: rgba(162, 239, 91, 0.14);
+    --accent-glow: rgba(162, 239, 91, 0.35);
+    --critical: #ef4444;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 15px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11"; -webkit-font-smoothing: antialiased; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .page { max-width: 1265px; min-height: 100vh; margin: 0 auto; border-inline: 1px solid var(--line); display: flex; flex-direction: column; }
+  .rule { border-bottom: 1px solid var(--line); }
+
+  /* Banner: the timeline. */
+  .banner {
+    position: relative; height: 360px;
+    background:
+      radial-gradient(ellipse 70% 90% at 78% -10%, rgba(162, 239, 91, 0.11), transparent 62%),
+      radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.055) 1px, transparent 0) 0 0 / 22px 22px,
+      var(--bg);
+  }
+  .topbar { position: absolute; inset: 24px 32px auto 32px; display: flex; justify-content: space-between; align-items: center; gap: 16px; z-index: 2; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand .mark { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); box-shadow: 0 0 16px var(--accent-glow); }
+  .brand .sub { color: var(--text-3); font-weight: 500; }
+
+  .pill { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-radius: 999px; background: #0e0e10; border: 1px solid rgba(63, 63, 70, 0.45); }
+  .bars { display: flex; gap: 2px; }
+  .bars i { width: 4px; height: 14px; border-radius: 2px; background: var(--track); transition: background 0.2s; }
+  .bars i.on { background: var(--accent); }
+  .pill.paused .bars i.on { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { background: var(--track); } }
+  .pill .k { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+  .pill .v { font-size: 12px; font-weight: 600; color: var(--text); }
+  .pill .sep { width: 1px; height: 12px; background: rgba(63, 63, 70, 0.6); }
+  .ring { width: 16px; height: 16px; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 2; }
+
+  .timeline { position: absolute; left: 32px; right: 32px; bottom: 64px; z-index: 1; }
+  .readout { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 10px; }
+  .clock { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; color: var(--accent); line-height: 1; }
+  .clock small { font-size: 15px; color: var(--text-3); font-weight: 500; margin-left: 6px; }
+  .state-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+  .upnext { text-align: right; min-width: 0; }
+  .upnext .k { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); }
+  .upnext .label { color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
+  .upnext .eta { color: var(--text-3); }
+  #strip { display: block; width: 100%; height: 150px; overflow: visible; }
+  .pulse { animation: pulse 1.6s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes pulse { 0% { opacity: 0.9; transform: scale(1); } 100% { opacity: 0; transform: scale(2.6); } }
+  .tick { fill: var(--text-4); font: 11px var(--mono); }
+
+  /* Controls: the primary button matches the 402 faucet's send button. */
+  .left { display: flex; align-items: flex-end; gap: 20px; }
+  /* On the line between the header and the body, at the far right. */
+  .controls { position: absolute; right: 32px; bottom: 0; transform: translateY(50%); z-index: 3; display: flex; align-items: center; gap: 10px; }
+  .play {
+    position: relative; width: 64px; height: 64px; padding: 0; border-radius: 999px; cursor: pointer;
+    display: grid; place-items: center; color: #050a02; border: 0;
+    background: linear-gradient(180deg, #c2f78f 0%, #a2ef5b 52%, #8ddd45 100%);
+    /* A ring of page black cuts the divider around the button. */
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.55),
+      inset 0 -3px 8px rgba(40, 80, 0, 0.25),
+      0 0 0 6px var(--bg),
+      0 0 0 7px rgba(162, 239, 91, 0.18);
+    transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, filter 0.2s ease;
+  }
+  .play:hover:not(:disabled) {
+    transform: scale(1.05);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.6),
+      inset 0 -3px 8px rgba(40, 80, 0, 0.25),
+      0 0 0 6px var(--bg),
+      0 0 0 7px rgba(162, 239, 91, 0.35),
+      0 0 32px rgba(162, 239, 91, 0.35);
+  }
+  .play:active:not(:disabled) { transform: scale(0.96); }
+  .play:disabled { cursor: not-allowed; background: #3f3f46; color: #e4e4e7; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 0 6px var(--bg), 0 0 0 7px var(--line); }
+  .play:focus-visible, .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 9px; }
+  .play svg { width: 26px; height: 26px; display: block; animation: pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes pop { from { transform: scale(0.6); opacity: 0; } }
+  .ctl {
+    width: 40px; height: 40px; border-radius: 999px; cursor: pointer; display: grid; place-items: center;
+    background: var(--bg); border: 1px solid #3f3f46; color: #d4d4d8; transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .ctl svg { width: 18px; height: 18px; }
+  .ctl:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .ctl.danger:hover:not(:disabled) { border-color: var(--critical); color: var(--critical); }
+  .ctl:disabled { cursor: not-allowed; opacity: 0.4; }
+  .ctl.spinning svg { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(-360deg); } }
+
+  /* Profile. */
+  .profile { padding: 28px 32px; }
+  h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.015em; }
+  .handle { margin-top: 2px; color: var(--text-3); }
+  .description { margin: 12px 0 0; max-width: 78ch; color: var(--text-2); line-height: 1.5; }
+  .stats { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+  .stat { padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); min-width: 132px; }
+  .stat .k { font-size: 11px; color: var(--text-3); }
+  .stat .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .stat .v small { font-size: 12px; color: var(--text-3); font-weight: 500; margin-left: 4px; }
+
+  /* Body. */
+  .body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 420px; }
+  .body > main { padding: 28px 32px 32px; min-width: 0; }
+  /* The one separator in the body: between the chart and the timeline. */
+  .body > aside { border-left: 1px solid var(--line); }
+  .body h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw-line { width: 16px; border-top: 2px solid var(--accent); }
+  .sw-band { width: 16px; height: 10px; border-radius: 2px; background: var(--accent-soft); }
+  .sw-dash { width: 16px; border-top: 2px dashed var(--text-3); }
+  .sw-rule { height: 12px; border-left: 1px solid var(--line); }
+  .chart-wrap { position: relative; }
+  #chart { display: block; width: 100%; height: 400px; }
+  .grid line { stroke: var(--line-soft); }
+  .axis text { fill: var(--text-3); font: 11px var(--mono); }
+  .tooltip {
+    position: absolute; pointer-events: none; display: none; min-width: 180px; z-index: 5;
+    background: #0e0e10; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+    font-size: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  }
+  .tooltip .head { color: var(--text); font-weight: 600; margin-bottom: 6px; }
+  .tooltip .row { display: flex; justify-content: space-between; gap: 16px; color: var(--text-3); }
+  .tooltip .row b { color: var(--text); font: 600 12px var(--mono); }
+  .tooltip .event { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--text-2); }
+  .error { color: var(--critical); font-size: 12px; min-height: 1em; margin-top: 8px; }
+
+  aside .card { position: sticky; top: 0; }
+  aside .card-head { padding: 28px 24px 4px; }
+  .count { color: var(--text-3); font-size: 12px; }
+  .events { position: relative; list-style: none; margin: 0; padding: 6px 0 10px; max-height: 560px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  .events li { display: grid; grid-template-columns: 14px 1fr auto; gap: 4px 12px; padding: 10px 24px; border-left: 2px solid transparent; }
+  .events li .st { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; border: 2px solid var(--text-4); }
+  .events li.applied .st { border-color: var(--accent); background: var(--accent); }
+  .events li.applied .label { color: var(--text-2); }
+  .events li.next { background: rgba(162, 239, 91, 0.06); border-left-color: var(--accent); }
+  .events li.next .st { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .events .label { color: var(--text); font-size: 14px; }
+  .events .t { color: var(--text-3); font-size: 12px; }
+  .events .meta { grid-column: 2 / 4; color: var(--text-4); font: 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  footer { display: flex; justify-content: space-between; gap: 16px; padding: 18px 32px; border-top: 1px solid var(--line); color: var(--text-4); font-size: 12px; }
+  footer code { font-family: var(--mono); color: var(--text-3); }
+
+  @media (max-width: 980px) {
+    .body { grid-template-columns: 1fr; }
+    aside .card { position: static; }
+    .body > aside { border-left: 0; border-top: 1px solid var(--line); }
+    .timeline { bottom: 84px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="banner">
+    <div class="topbar">
+      <div class="brand"><span class="mark"></span>mth <span class="sub">scenario</span></div>
+      <div class="pill" id="pill">
+        <div class="bars" id="bars"></div>
+        <span class="k">Slot</span><span class="v num" id="pill-slot">–</span>
+        <span class="sep"></span>
+        <span class="k">Progress</span><span class="v num" id="pill-pct">0%</span>
+        <svg class="ring" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6" stroke="var(--track)"></circle>
+          <circle id="ring" cx="8" cy="8" r="6" stroke="var(--accent)" stroke-linecap="round" stroke-dasharray="37.7" stroke-dashoffset="37.7"></circle>
+        </svg>
+      </div>
+    </div>
+
+    <div class="timeline">
+      <div class="readout">
+        <div class="left">
+          <div>
+            <div class="state-tag" id="state-tag">Staged</div>
+            <div class="clock num" id="clock">0:00<small id="clock-total">/ 0:00</small></div>
+          </div>
+        </div>
+        <div class="upnext" id="next"></div>
+      </div>
+      <svg id="strip" aria-label="Scenario timeline"></svg>
+    </div>
+
+    <div class="controls">
+      <button class="ctl" id="reset" title="Reset: restore the snapshot and stage the scenario again" aria-label="Reset">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+      </button>
+      <button class="ctl danger" id="stop" title="Stop the surfnet and quit mth" aria-label="Stop">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </button>
+      <button class="play" id="play" aria-label="Play"></button>
+    </div>
+  </header>
+  <div class="rule"></div>
+
+  <section class="profile">
+    <h1 id="name">Loading…</h1>
+    <div class="handle" id="handle"></div>
+    <p class="description" id="description"></p>
+    <div class="stats">
+      <div class="stat"><div class="k">Start mark</div><div class="v num" id="s-start">–</div></div>
+      <div class="stat"><div class="k">Mark</div><div class="v num" id="s-mark">–</div></div>
+      <div class="stat"><div class="k">Since start</div><div class="v num" id="s-change">–</div></div>
+      <div class="stat"><div class="k">Bid / ask</div><div class="v num" id="s-bbo">–</div></div>
+      <div class="stat"><div class="k">Low · high</div><div class="v num" id="s-range">–</div></div>
+    </div>
+  </section>
+  <div class="rule"></div>
+
+  <section class="body">
+    <main>
+      <div class="card-head">
+        <h2 id="chart-title">Mark price</h2>
+        <div class="legend">
+          <span><i class="sw-line"></i>Mark</span>
+          <span><i class="sw-band"></i>Bid–ask</span>
+          <span><i class="sw-dash"></i>Planned</span>
+          <span><i class="sw-rule"></i>Override</span>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <svg id="chart" role="img" aria-label="Mark price over the scenario"></svg>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
+      <div class="error" id="error"></div>
+    </main>
+    <aside>
+      <div class="card">
+        <div class="card-head"><h2>Timeline</h2><span class="count num" id="count"></span></div>
+        <ul class="events" id="events"></ul>
+      </div>
+    </aside>
+  </section>
+
+  <footer>
+    <span>Served by <code>mth scenario play</code> · Ctrl-C in the terminal stops it</span>
+    <span>surfnet <code id="rpc"></code></span>
+  </footer>
+</div>
+
+<script>
+const SLOT_SECONDS = 0.25;
+const PRE = 16;      // slots shown before the scenario's start
+const TAIL = 24;     // slots shown past its last override
+const BARS = 30;
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 6.5v11a1.2 1.2 0 0 0 1.84 1.01l8.6-5.5a1.2 1.2 0 0 0 0-2.02l-8.6-5.5A1.2 1.2 0 0 0 9 6.5z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5.5" width="4" height="13" rx="1.3"/><rect x="13.5" y="5.5" width="4" height="13" rx="1.3"/></svg>',
+  done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+};
+
+let plan = null;
+let groups = [];        // overrides grouped by slot
+let samples = [];
+let live = { slot: 0, base_slot: null, paused: false };
+let busy = false;
+let gen = null;       // the run the samples belong to
+let stopped = false;
+let hoverX = null;
+let hoverDot = null;
+let lastNext = null;
+let stripX = null;   // the strip's slot-to-pixel scale, for hovering dots
+
+const $ = (id) => document.getElementById(id);
+const usd = (v) => v == null ? '–' : '$' + v.toFixed(2);
+const pct = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%';
+const clock = (slots) => { const s = Math.max(0, Math.round(slots * SLOT_SECONDS)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const el = (tag, attrs, parent) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+};
+
+// Scenario time: slots since its base slot once registered. While staged,
+// "now" is slot 0 and history runs to the left of it.
+const started = () => live.base_slot != null;
+const now = () => started() ? live.slot - live.base_slot : 0;
+const anchor = () => started() ? live.base_slot : live.slot;
+// The window is the scenario itself, fixed: it never rescales as time
+// passes. Samples outside it (long before Play, long after the end) are
+// dropped rather than squeezing the rest.
+const points = () => samples.map((s) => ({ ...s, x: s.slot - anchor() })).filter((p) => p.x >= -PRE && p.x <= plan.end_slot + TAIL);
+const done = () => started() && now() >= plan.end_slot;
+const domain = () => [-PRE, plan.end_slot + TAIL];
+
+function planAt(x) {
+  let level = plan.path[0][1];
+  for (const [slot, v] of plan.path) if (slot <= x) level = v;
+  return level;
+}
+
+function niceTicks(lo, hi, count) {
+  const step0 = (hi - lo || 1) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= step0);
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
+  return out;
+}
+
+function timeTicks(lo, hi, count) {
+  const seconds = [5, 10, 15, 30, 60, 120, 300].find((s) => (hi - lo) * SLOT_SECONDS / s <= count) ?? 600;
+  const step = seconds / SLOT_SECONDS;
+  const out = [];
+  for (let v = 0; v <= hi; v += step) if (v >= lo) out.push(v);
+  return out;
+}
+
+function yRange(pts) {
+  const ys = [...plan.path.map((p) => p[1]), ...pts.flatMap((p) => [p.mark, p.bid, p.ask].filter((v) => v != null))];
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const pad = (hi - lo) * 0.08 || hi * 0.01;
+  return [lo - pad, hi + pad];
+}
+
+function plannedPath(x, y, xMax) {
+  let d = '', prev = null;
+  for (const [slot, v] of plan.path) {
+    d += prev == null ? `M${x(slot)},${y(v)}` : `L${x(slot)},${y(prev)}L${x(slot)},${y(v)}`;
+    prev = v;
+  }
+  return d + `L${x(xMax)},${y(prev)}`;
+}
+
+/* ---------- Banner timeline ---------- */
+function drawStrip() {
+  const svg = $('strip');
+  const W = svg.clientWidth, H = svg.clientHeight;
+  svg.replaceChildren();
+  const pts = points();
+  const [xMin, xMax] = domain();
+  const [yMin, yMax] = yRange(pts);
+  const trackY = H - 30, top = 6, bottom = trackY - 14;
+  const x = (v) => (v - xMin) / (xMax - xMin) * W;
+  const y = (v) => top + (1 - (v - yMin) / (yMax - yMin)) * (bottom - top);
+  const t = now();
+
+  const defs = el('defs', {}, svg);
+  const grad = el('linearGradient', { id: 'fade', x1: 0, x2: 0, y1: 0, y2: 1 }, defs);
+  el('stop', { offset: '0%', 'stop-color': '#a2ef5b', 'stop-opacity': 0.22 }, grad);
+  el('stop', { offset: '100%', 'stop-color': '#a2ef5b', 'stop-opacity': 0 }, grad);
+
+  el('path', { d: plannedPath(x, y, xMax), fill: 'none', stroke: '#3f3f46', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' }, svg);
+  if (pts.length > 1) {
+    const line = pts.map((p, i) => (i ? 'L' : 'M') + x(p.x).toFixed(1) + ',' + y(p.mark).toFixed(1)).join('');
+    // Fill under the played part only: history before the start is context.
+    const played = pts.filter((p) => p.x >= 0);
+    if (started() && played.length > 1) {
+      const area = played.map((p, i) => (i ? 'L' : 'M') + x(p.x).toFixed(1) + ',' + y(p.mark).toFixed(1)).join('');
+      el('path', { d: `${area}L${x(played[played.length - 1].x)},${bottom}L${x(played[0].x)},${bottom}Z`, fill: 'url(#fade)' }, svg);
+    }
+    el('path', { d: line, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+  }
+
+  // Track, filled up to now.
+  el('line', { x1: 0, x2: W, y1: trackY, y2: trackY, stroke: 'var(--line)', 'stroke-width': 2, 'stroke-linecap': 'round' }, svg);
+  if (started()) el('line', { x1: x(0), x2: x(Math.min(t, xMax)), y1: trackY, y2: trackY, stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linecap': 'round' }, svg);
+  el('line', { x1: x(0), x2: x(0), y1: trackY - 6, y2: trackY + 6, stroke: 'var(--text-4)', 'stroke-width': 1 }, svg);
+
+  for (const v of timeTicks(xMin, xMax, 8)) {
+    const tx = el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg);
+    tx.textContent = clock(v);
+  }
+
+  const next = started() ? groups.find((g) => g.slot > t) : groups[0];
+  for (const g of groups) {
+    const cx = x(g.slot);
+    const applied = started() && g.slot <= t;
+    const node = el('g', { class: 'dot' }, svg);
+    if (g === next && started() && !live.paused) el('circle', { cx, cy: trackY, r: 6, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.5, class: 'pulse' }, node);
+    el('circle', {
+      cx, cy: trackY, r: g === next ? 5.5 : 4.5,
+      fill: applied ? 'var(--accent)' : 'var(--bg)',
+      stroke: applied || g === next ? 'var(--accent)' : '#52525b', 'stroke-width': 2,
+    }, node);
+  }
+  stripX = x;
+
+  // Playhead.
+  if (started()) {
+    const px = x(Math.min(t, xMax));
+    el('line', { x1: px, x2: px, y1: top, y2: trackY, stroke: 'var(--accent)', 'stroke-opacity': 0.5, 'stroke-width': 1 }, svg);
+    el('circle', { cx: px, cy: trackY, r: 7, fill: 'var(--accent)', opacity: 0.25 }, svg);
+    el('circle', { cx: px, cy: trackY, r: 3.5, fill: 'var(--accent)' }, svg);
+  }
+
+  if (hoverDot) {
+    const cx = x(hoverDot.slot);
+    const lines = hoverDot.items.map((o) => o.label);
+    const w = Math.min(320, Math.max(140, ...lines.map((l) => l.length * 6.6 + 24)));
+    const bx = Math.min(Math.max(cx - w / 2, 0), W - w);
+    const h = 26 + lines.length * 17;
+    const by = trackY - 16 - h;
+    const g = el('g', {}, svg);
+    el('rect', { x: bx, y: by, width: w, height: h, rx: 8, fill: '#0e0e10', stroke: 'var(--line)' }, g);
+    el('text', { x: bx + 12, y: by + 18, fill: 'var(--text-3)', 'font-size': 11, 'font-family': 'var(--mono)' }, g).textContent = `slot ${hoverDot.slot} · ${clock(hoverDot.slot)}`;
+    lines.forEach((l, i) => { el('text', { x: bx + 12, y: by + 36 + i * 17, fill: 'var(--text)', 'font-size': 12 }, g).textContent = l; });
+  }
+}
+
+/* ---------- Main chart ---------- */
+function drawChart() {
+  const svg = $('chart');
+  const W = svg.clientWidth, H = svg.clientHeight;
+  const M = { top: 10, right: 64, bottom: 26, left: 4 };
+  svg.replaceChildren();
+  const pts = points();
+  const [xMin, xMax] = domain();
+  const [yMin, yMax] = yRange(pts);
+  const x = (v) => M.left + (v - xMin) / (xMax - xMin) * (W - M.left - M.right);
+  const y = (v) => M.top + (1 - (v - yMin) / (yMax - yMin)) * (H - M.top - M.bottom);
+
+  el('clipPath', { id: 'plot' }, el('defs', {}, svg)).appendChild(el('rect', { x: M.left, y: 0, width: W - M.left - M.right, height: H - M.bottom }));
+  const grid = el('g', { class: 'grid' }, svg), axis = el('g', { class: 'axis' }, svg);
+  for (const v of niceTicks(yMin, yMax, 5)) {
+    el('line', { x1: M.left, x2: W - M.right, y1: y(v), y2: y(v) }, grid);
+    el('text', { x: W - M.right + 10, y: y(v) + 4 }, axis).textContent = '$' + v.toFixed(2);
+  }
+  for (const v of timeTicks(xMin, xMax, 8)) {
+    el('text', { x: x(v), y: H - 6, 'text-anchor': 'middle' }, axis).textContent = clock(v);
+  }
+  const plot = el('g', { 'clip-path': 'url(#plot)' }, svg);
+  for (const g of groups) el('line', { x1: x(g.slot), x2: x(g.slot), y1: M.top, y2: H - M.bottom, stroke: 'var(--line)', 'stroke-width': 1 }, plot);
+
+  const band = pts.filter((p) => p.bid != null && p.ask != null);
+  if (band.length > 1) {
+    const d = band.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(p.ask)).join('')
+      + band.slice().reverse().map((p) => 'L' + x(p.x) + ',' + y(p.bid)).join('') + 'Z';
+    el('path', { d, fill: 'var(--accent-soft)' }, plot);
+  }
+  el('path', { d: plannedPath(x, y, xMax), fill: 'none', stroke: 'var(--text-3)', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, plot);
+  if (pts.length > 1) {
+    el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(p.mark)).join(''), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round' }, plot);
+    const last = pts[pts.length - 1];
+    el('circle', { cx: x(last.x), cy: y(last.mark), r: 4.5, fill: 'var(--accent)', stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+  }
+
+  const tip = $('tooltip');
+  if (hoverX == null) { tip.style.display = 'none'; return; }
+  const xv = Math.round(xMin + (hoverX - M.left) / (W - M.left - M.right) * (xMax - xMin));
+  el('line', { x1: x(xv), x2: x(xv), y1: M.top, y2: H - M.bottom, stroke: 'var(--text-3)', 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
+  const near = pts.reduce((b, p) => (b == null || Math.abs(p.x - xv) < Math.abs(b.x - xv) ? p : b), null);
+  const sample = near && Math.abs(near.x - xv) <= 2 ? near : null;
+  if (sample) el('circle', { cx: x(sample.x), cy: y(sample.mark), r: 4.5, fill: 'var(--accent)', stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+  const events = plan.overrides.filter((o) => Math.abs(o.slot - xv) <= 1);
+  tip.innerHTML = `<div class="head">${xv < 0 ? 'Before start' : clock(xv)} <span style="color:var(--text-3);font-weight:500">· slot ${xv}</span></div>`
+    + (sample ? `<div class="row">Mark <b>${usd(sample.mark)}</b></div><div class="row">Bid / ask <b>${usd(sample.bid)} / ${usd(sample.ask)}</b></div>` : '')
+    + (xv >= 0 ? `<div class="row">Planned <b>${usd(planAt(xv))}</b></div>` : '')
+    + events.map((o) => `<div class="event">${esc(o.label)}</div>`).join('');
+  tip.style.display = 'block';
+  tip.style.left = Math.min(Math.max(x(xv) + 14, 0), W - tip.offsetWidth) + 'px';
+  tip.style.top = '8px';
+}
+
+/* ---------- Text ---------- */
+function render() {
+  const t = now();
+  const total = plan.end_slot;
+  const progress = started() ? Math.min(1, t / Math.max(total, 1)) : 0;
+  const last = samples[samples.length - 1];
+
+  // Progress pill.
+  const pill = $('pill');
+  pill.classList.toggle('paused', live.paused);
+  const on = Math.round(progress * BARS);
+  [...$('bars').children].forEach((b, i) => b.classList.toggle('on', i < on));
+  $('pill-slot').textContent = started() ? `${Math.min(t, total)} / ${total}` : `0 / ${total}`;
+  $('pill-pct').textContent = Math.round(progress * 100) + '%';
+  $('ring').setAttribute('stroke-dashoffset', (37.7 * (1 - progress)).toFixed(2));
+
+  // Readout.
+  const state = stopped ? 'Stopped' : live.resetting ? 'Resetting' : !started() ? 'Staged' : done() ? 'Played' : live.paused ? 'Paused' : 'Playing';
+  $('state-tag').textContent = state;
+  $('clock').firstChild.textContent = clock(Math.min(t, total));
+  $('clock-total').textContent = '/ ' + clock(total);
+  const next = started() ? plan.overrides.find((o) => o.slot > t) : plan.overrides[0];
+  $('next').innerHTML = stopped
+    ? `<div class="k">Stopped</div><div class="label">The surfnet is down</div><div class="eta">run mth scenario play to start again</div>`
+    : live.resetting
+    ? `<div class="k">Resetting</div><div class="label">Restoring ${esc(plan.snapshot)}</div>`
+    : done()
+    ? `<div class="k">Done</div><div class="label">${plan.overrides.length} overrides applied</div>`
+    : next
+      ? `<div class="k">Next</div><div class="label">${esc(next.label)}</div><div class="eta num">${started() ? 'in ' + ((next.slot - t) * SLOT_SECONDS).toFixed(1) + 's' : 'at ' + clock(next.slot)}</div>`
+      : '';
+
+  // Button.
+  const btn = $('play');
+  const mode = done() ? 'done' : started() && !live.paused ? 'pause' : 'play';
+  if (btn.dataset.mode !== mode) { btn.innerHTML = ICONS[mode]; btn.dataset.mode = mode; }
+  const idle = stopped || live.resetting || busy;
+  btn.disabled = mode === 'done' || idle;
+  $('reset').disabled = idle;
+  $('reset').classList.toggle('spinning', !!live.resetting);
+  $('stop').disabled = stopped;
+  btn.setAttribute('aria-label', mode === 'pause' ? 'Pause' : mode === 'done' ? 'Played' : 'Play');
+
+  // Stats.
+  $('s-start').textContent = usd(plan.start_mark_usd);
+  $('s-mark').textContent = usd(last?.mark);
+  $('s-change').textContent = last ? pct((last.mark / plan.start_mark_usd - 1) * 100) : '–';
+  $('s-bbo').innerHTML = last ? `${usd(last.bid)}<small>/ ${usd(last.ask)}</small>` : '–';
+  const played = started() ? samples.filter((s) => s.slot >= live.base_slot).map((s) => s.mark) : [];
+  $('s-range').textContent = played.length ? `${usd(Math.min(...played))} · ${usd(Math.max(...played))}` : '–';
+
+  // Event list.
+  const nextIdx = next ? plan.overrides.indexOf(next) : -1;
+  $('count').textContent = `${started() ? plan.overrides.filter((o) => o.slot <= t).length : 0} / ${plan.overrides.length}`;
+  [...$('events').children].forEach((li, i) => {
+    const applied = started() && plan.overrides[i].slot <= t;
+    li.classList.toggle('applied', applied);
+    li.classList.toggle('next', !applied && i === nextIdx);
+  });
+  if (nextIdx !== lastNext && nextIdx >= 0 && started()) {
+    const list = $('events');
+    const item = list.children[nextIdx];
+    if (item) {
+      // Glide to the next event; jump when it's far off, as on first load.
+      const top = Math.max(0, item.offsetTop - list.clientHeight / 3);
+      list.scrollTo({ top, behavior: Math.abs(top - list.scrollTop) > list.clientHeight ? 'auto' : 'smooth' });
+    }
+  }
+  lastNext = nextIdx;
+}
+
+function frame() { render(); drawStrip(); drawChart(); }
+
+async function poll() {
+  if (stopped) return;
+  try {
+    const r = await (await fetch('/api/live/' + samples.length)).json();
+    if (gen !== null && r.generation !== gen) {
+      // A reset: the old run's samples are gone; fetch the new one's.
+      gen = r.generation; samples = []; lastNext = null; $('events').scrollTop = 0;
+      live = r; setTimeout(poll, 0); return;
+    }
+    gen = r.generation;
+    samples = samples.slice(0, r.from).concat(r.samples);
+    live = r;
+    stopped = !!r.stopped;
+    $('rpc').textContent = r.rpc_url;
+    $('error').textContent = r.error ? 'Reading the market: ' + r.error : '';
+    frame();
+  } catch (e) {
+    $('error').textContent = 'mth is not reachable: ' + e.message;
+  }
+  if (!stopped) setTimeout(poll, 250);
+}
+
+async function post(path) {
+  const r = await fetch(path, { method: 'POST' });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) $('error').textContent = body.error || r.statusText;
+  return r.ok ? body : null;
+}
+
+async function reset() {
+  if ($('reset').disabled) return;
+  live.resetting = true; render();
+  await post('/api/reset');
+}
+
+async function stop() {
+  if ($('stop').disabled || !confirm('Stop the surfnet? This ends mth scenario play.')) return;
+  if (await post('/api/stop')) { stopped = true; frame(); }
+}
+
+async function toggle() {
+  const btn = $('play');
+  if (btn.disabled) return;
+  const pausing = btn.dataset.mode === 'pause';
+  busy = true; render();
+  try {
+    const body = await post(pausing ? '/api/pause' : '/api/play');
+    // Reflect the change before the next poll lands.
+    if (body && pausing) live.paused = true;
+    if (body && !pausing) { live.paused = false; if (body.base_slot != null) live.base_slot = body.base_slot; }
+  } finally {
+    busy = false; frame();
+  }
+}
+
+$('play').addEventListener('click', toggle);
+$('reset').addEventListener('click', reset);
+$('stop').addEventListener('click', stop);
+document.addEventListener('keydown', (e) => { if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); toggle(); } });
+const strip = $('strip');
+strip.addEventListener('pointermove', (e) => {
+  if (!stripX) return;
+  const px = e.clientX - strip.getBoundingClientRect().left;
+  const near = groups.reduce((b, g) => (b == null || Math.abs(stripX(g.slot) - px) < Math.abs(stripX(b.slot) - px) ? g : b), null);
+  const hit = near && Math.abs(stripX(near.slot) - px) <= 10 ? near : null;
+  if (hit !== hoverDot) { hoverDot = hit; drawStrip(); }
+});
+strip.addEventListener('pointerleave', () => { hoverDot = null; drawStrip(); });
+const chart = $('chart');
+chart.addEventListener('pointermove', (e) => { hoverX = e.clientX - chart.getBoundingClientRect().left; drawChart(); });
+chart.addEventListener('pointerleave', () => { hoverX = null; drawChart(); });
+window.addEventListener('resize', frame);
+
+(async () => {
+  plan = await (await fetch('/api/plan')).json();
+  const bySlot = new Map();
+  for (const o of plan.overrides) {
+    if (!bySlot.has(o.slot)) bySlot.set(o.slot, { slot: o.slot, items: [] });
+    bySlot.get(o.slot).items.push(o);
+  }
+  groups = [...bySlot.values()];
+  $('bars').innerHTML = '<i></i>'.repeat(BARS);
+  $('events').innerHTML = plan.overrides.map((o) => {
+    const values = Object.entries(o.values).filter(([k]) => k !== 'symbol').map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' ');
+    return `<li><span class="st"></span><span class="label">${esc(o.label)}</span><span class="t num">${clock(o.slot)}</span>
+      <span class="meta">${esc(o.template)}${values ? ' · ' + esc(values) : ''}</span></li>`;
+  }).join('');
+  $('name').textContent = plan.name;
+  $('handle').textContent = `@${plan.symbol} · Phoenix perp · ${plan.snapshot}`;
+  $('description').textContent = plan.description;
+  $('chart-title').textContent = `${plan.symbol} mark price`;
+  document.title = `mth · ${plan.name}`;
+  poll();
+})();
+</script>
+</body>
+</html>
