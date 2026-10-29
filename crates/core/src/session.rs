@@ -80,6 +80,10 @@ pub struct SessionReport {
     /// it ran, and the scenario's cap on it.
     pub peak_position: f64,
     pub max_position: f64,
+    /// The deepest the account's value fell below its running peak while the
+    /// bot ran, in USD, and the scenario's limit on it.
+    pub max_drawdown_usd: f64,
+    pub drawdown_limit_usd: f64,
 }
 
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
@@ -110,6 +114,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         symbol: scenario.symbol.clone(),
         end_slot: start_slot + scenario.duration_slots,
         max_position: scenario.max_position,
+        max_drawdown_usd: scenario.max_drawdown_usd,
     };
     // The scenario is the grader's last cheatcode. Lock them all before the
     // bot starts: a bot that finds the surfnet's own port, past the guard,
@@ -136,6 +141,10 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     // Sampled twice a second, the loop's cadence: a fill persists until the
     // bot trades out of it, so a position over the cap is caught.
     let mut peak_position: f64 = 0.0;
+    // The account's value, sampled at the same cadence: its running peak, and
+    // the deepest it has fallen below it.
+    let mut peak_value_usd = start_value_usd;
+    let mut max_drawdown_usd: f64 = 0.0;
     loop {
         if rpc.get_slot()? >= env.end_slot {
             break;
@@ -146,6 +155,9 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             .value
             .base_lots;
         peak_position = peak_position.max(phoenix.lots_to_base_units(market, held).abs());
+        let value_usd = account_value(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+        peak_value_usd = peak_value_usd.max(value_usd);
+        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
         if bot_exit.is_none()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
@@ -194,6 +206,8 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         late_slots,
         peak_position: peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs()),
         max_position: scenario.max_position,
+        max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
+        drawdown_limit_usd: scenario.max_drawdown_usd,
     };
     info!(
         scenario = report.scenario,

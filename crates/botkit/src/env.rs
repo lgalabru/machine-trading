@@ -24,6 +24,9 @@ pub struct BotEnv {
     /// `OTT_MAX_POSITION`: the largest position, long or short, in base units
     /// (e.g. SOL), the bot may ever hold. Holding more disqualifies it.
     pub max_position: f64,
+    /// `OTT_MAX_DRAWDOWN`: the most, in USD, the account's value may fall
+    /// below its peak during a session. Falling further disqualifies it.
+    pub max_drawdown_usd: f64,
 }
 
 impl BotEnv {
@@ -33,10 +36,12 @@ impl BotEnv {
     pub const SYMBOL: &str = "OTT_SYMBOL";
     pub const END_SLOT: &str = "OTT_END_SLOT";
     pub const MAX_POSITION: &str = "OTT_MAX_POSITION";
+    pub const MAX_DRAWDOWN: &str = "OTT_MAX_DRAWDOWN";
 
     pub fn from_env() -> Result<Self> {
         let end_slot = var(Self::END_SLOT)?;
         let max_position = var(Self::MAX_POSITION)?;
+        let max_drawdown = var(Self::MAX_DRAWDOWN)?;
         Ok(Self {
             rpc_url: var(Self::RPC_URL)?,
             keypair_path: var(Self::KEYPAIR)?.into(),
@@ -50,11 +55,15 @@ impl BotEnv {
                 name: Self::MAX_POSITION,
                 reason: format!("not a number: {max_position}"),
             })?,
+            max_drawdown_usd: max_drawdown.parse().map_err(|_| Error::Env {
+                name: Self::MAX_DRAWDOWN,
+                reason: format!("not a number: {max_drawdown}"),
+            })?,
         })
     }
 
     /// The variables to set on a bot process for this environment.
-    pub fn vars(&self) -> [(&'static str, String); 6] {
+    pub fn vars(&self) -> [(&'static str, String); 7] {
         [
             (Self::RPC_URL, self.rpc_url.clone()),
             (Self::KEYPAIR, self.keypair_path.display().to_string()),
@@ -62,6 +71,7 @@ impl BotEnv {
             (Self::SYMBOL, self.symbol.clone()),
             (Self::END_SLOT, self.end_slot.to_string()),
             (Self::MAX_POSITION, self.max_position.to_string()),
+            (Self::MAX_DRAWDOWN, self.max_drawdown_usd.to_string()),
         ]
     }
 
