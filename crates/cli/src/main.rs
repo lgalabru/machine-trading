@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use mth_core::{
     grade::{self, GradeOptions},
+    making::MakingFamily,
     phoenix,
     scenario::{Scenario, ShockFamily},
     snapshot,
@@ -30,6 +31,16 @@ const DEFAULT_SNAPSHOT: &str = concat!(
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+/// The scenario families, one per task.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum Family {
+    /// phoenix-flash-crash: shocks that crash or squeeze, then revert or not.
+    FlashCrash,
+    /// phoenix-market-making: a walking, trending, jumping market, competing
+    /// makers, and taker flow, some of it informed.
+    MarketMaking,
 }
 
 #[derive(Subcommand)]
@@ -104,6 +115,9 @@ enum ScenarioCommand {
         /// Mixed into each scenario's seed. Keep hidden sets' seeds private.
         #[arg(long)]
         seed: u64,
+        /// Which task's family to draw from.
+        #[arg(long, value_enum, default_value_t = Family::FlashCrash)]
+        family: Family,
     },
     /// Have a coding agent author a Surfpool scenario from a request, e.g.
     /// "simulate a crash for SPCX", and save it.
@@ -308,11 +322,15 @@ async fn run() -> Result<()> {
             prefix,
             count,
             seed,
+            family,
         }) => {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
-            let family = ShockFamily::spcx();
+            let scenarios = match family {
+                Family::FlashCrash => ShockFamily::spcx().sample_set(&prefix, count, seed),
+                Family::MarketMaking => MakingFamily::spcx().sample_set(&prefix, count, seed),
+            };
             let mut written = Vec::new();
-            for scenario in family.sample_set(&prefix, count, seed) {
+            for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
                 scenario.save(&path)?;
                 written.push(path);

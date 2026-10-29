@@ -4553,6 +4553,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mth-bot-maker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mth-botkit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mth-bot-reference"
 version = "0.1.0"
 dependencies = [

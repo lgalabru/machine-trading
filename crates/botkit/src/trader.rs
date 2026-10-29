@@ -93,6 +93,54 @@ impl Trader {
         Ok(self.phoenix.ticks_to_usd(market, bbo.mark_price_ticks))
     }
 
+    /// The market's oracle price, in USD: the median of the latest prices
+    /// its oracles reported to Phoenix. Phoenix's mark blends the oracles
+    /// with the order book, so quotes, including the bot's own, can push
+    /// the mark when the book is thin. They can't push this.
+    pub async fn oracle_usd(&self) -> Result<f64> {
+        use luce::protocols::phoenix::phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
+        let address = self.phoenix.perp_asset_map()?;
+        let account = self.rpc.get_account(&address)?;
+        let invalid = |reason: String| Error::Account {
+            account: address.to_string(),
+            reason,
+        };
+        let map = PerpAssetMap::try_from_account_bytes(&account.data)
+            .map_err(|e| invalid(e.to_string()))?;
+        let entry = map
+            .find_by_symbol(&self.env.symbol)
+            .map_err(|e| invalid(e.to_string()))?
+            .ok_or_else(|| Error::UnknownMarket(self.env.symbol.clone()))?;
+        let price = &entry.metadata.oracle_price().mark_price;
+        let reported = |ticks: u64| ticks > 0 && ticks != u64::MAX;
+        let mut ticks: Vec<u64> = price
+            .spot_price_component
+            .last_exchange_spot_price
+            .iter()
+            .map(|p| p.ticks.as_inner())
+            .filter(|&t| reported(t))
+            .collect();
+        if ticks.is_empty() {
+            ticks = price
+                .perp_price_component
+                .last_exchange_perp_price
+                .iter()
+                .map(|p| p.ticks.as_inner())
+                .filter(|&t| reported(t))
+                .collect();
+        }
+        if ticks.is_empty() {
+            return Err(invalid(format!(
+                "no oracle reports for {}",
+                self.env.symbol
+            )));
+        }
+        ticks.sort_unstable();
+        let median = ticks[ticks.len() / 2];
+        let market = self.phoenix.market(&self.env.symbol)?;
+        Ok(self.phoenix.ticks_to_usd(market, median))
+    }
+
     pub async fn position(&self) -> Result<Position> {
         let market = self.phoenix.market(&self.env.symbol)?;
         let asset = self.luce.margin().await?;

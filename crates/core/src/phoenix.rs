@@ -4,7 +4,11 @@
 use std::time::Duration;
 
 pub use mth_botkit::{Phoenix, load_exchange};
-use phoenix_rise::{api::PhoenixHttpClient, types::exchange::ExchangeResponse};
+use phoenix_rise::{
+    accounts::spline_collection::{SPLINE_REGION_CAPACITY, SplineCollection},
+    api::PhoenixHttpClient,
+    types::exchange::ExchangeResponse,
+};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -13,7 +17,7 @@ use surfpool_sdk::Surfnet;
 use tracing::info;
 
 use crate::{
-    Result,
+    Error, Result,
     chain::{self, Override},
 };
 
@@ -128,4 +132,90 @@ pub fn market_move(
         label: "uncross".into(),
     });
     (overrides, slot)
+}
+
+/// Byte layout of a spline collection: a header, then fixed-size splines,
+/// each with its bid and ask tick regions (see phoenix-rise's
+/// `spline_collection`). A region starts with its start and end offsets from
+/// the spline's mid, in ticks.
+const SPLINES_HEADER: usize = 112;
+const SPLINE_LEN: usize = 1336;
+const REGION_LEN: usize = 48;
+const BID_REGIONS_AT: usize = 120;
+const ASK_REGIONS_AT: usize = 600;
+
+/// Push every maker on `symbol` out to quote no closer than
+/// `half_spread_ticks` from its mid, keeping the shape of its liquidity: each
+/// tick region moves out by the same amount. Makers re-centre on every
+/// market move and keep the offsets, so the spread holds all session.
+/// Setup only: it writes the account with a cheatcode. Returns the ticks
+/// added.
+pub fn widen_makers(
+    surfnet: &Surfnet,
+    phoenix: &Phoenix,
+    symbol: &str,
+    half_spread_ticks: u64,
+) -> Result<u64> {
+    let address: Pubkey = phoenix
+        .market(symbol)?
+        .spline_pubkey
+        .parse()
+        .map_err(|_| Error::InvalidExchangeKey(symbol.to_string()))?;
+    let rpc = chain::rpc_client(surfnet);
+    let account = rpc.get_account(&address)?;
+    let invalid = |reason: String| Error::Splines {
+        account: address.to_string(),
+        reason,
+    };
+    let inner = innermost_offset(&account.data).map_err(invalid)?;
+    let add = half_spread_ticks.saturating_sub(inner);
+    let count = SplineCollection::try_from_account_bytes(&account.data)
+        .map_err(|e| invalid(e.to_string()))?
+        .splines()
+        .count();
+    let mut data = account.data.clone();
+    for spline in 0..count {
+        for regions in [BID_REGIONS_AT, ASK_REGIONS_AT] {
+            for region in 0..SPLINE_REGION_CAPACITY {
+                let at = SPLINES_HEADER + spline * SPLINE_LEN + regions + region * REGION_LEN;
+                for offset in [at, at + 8] {
+                    let bytes: [u8; 8] = data[offset..offset + 8].try_into().expect("8 bytes");
+                    let ticks = u64::from_le_bytes(bytes).saturating_add(add);
+                    data[offset..offset + 8].copy_from_slice(&ticks.to_le_bytes());
+                }
+            }
+        }
+    }
+    // The layout is read back through phoenix-rise, so a layout change fails
+    // here rather than quietly writing the wrong bytes.
+    let widened = innermost_offset(&data).map_err(invalid)?;
+    if widened != inner + add {
+        return Err(invalid(format!(
+            "widening by {add} ticks moved the innermost quote from {inner} to {widened}"
+        )));
+    }
+    surfnet
+        .cheatcodes()
+        .set_account(&address, account.lamports, &data, &account.owner)?;
+    info!(symbol, inner, add, "makers widened");
+    Ok(add)
+}
+
+/// The closest any enabled maker quotes to its mid, in ticks.
+fn innermost_offset(data: &[u8]) -> std::result::Result<u64, String> {
+    let collection = SplineCollection::try_from_account_bytes(data).map_err(|e| e.to_string())?;
+    collection
+        .splines()
+        .filter_map(|spline| spline.ok())
+        .filter(|spline| spline.is_enabled())
+        .flat_map(|spline| {
+            spline
+                .active_bid_regions()
+                .iter()
+                .chain(spline.active_ask_regions())
+                .map(|region| region.start_offset().as_inner())
+                .collect::<Vec<_>>()
+        })
+        .min()
+        .ok_or_else(|| "no enabled maker quotes".to_string())
 }
