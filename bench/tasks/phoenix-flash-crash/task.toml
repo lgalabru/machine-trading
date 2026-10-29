@@ -19,9 +19,10 @@ category = "trading"
 snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
-# Twelve hidden scenarios of 55-105s of market time each, one at a time,
-# plus a few seconds of setup per session: ~20 minutes, with headroom.
-timeout_sec = 2400.0
+# Twelve hidden scenarios of 1-3 minutes of market time each (~95s on
+# average), one at a time, plus a few seconds of setup per session: ~20
+# minutes, ~35 at worst.
+timeout_sec = 3600.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
 # a bot must not reach one.

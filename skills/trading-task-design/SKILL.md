@@ -4,7 +4,7 @@ description: Designs, reviews, and hardens trading tasks for agent evals and RL 
 license: MIT
 metadata:
   author: Solana Foundation
-  version: 0.1.0
+  version: 0.2.0
   repo: lgalabru/machine-trading
 ---
 
@@ -42,8 +42,9 @@ Make these choices without asking unless the user says otherwise:
 | Risk | Gate it like a prop desk: a per-session drawdown limit (`MT_MAX_DRAWDOWN`, ~10% of collateral) sampled twice a second, set so the reference stays inside it. Report worst session, tail loss, deepest drawdown, profitable share and Sharpe; don't blend them into the reward | PnL alone pays a bot that goes deep underwater and gets lucky. A gate is clear and hard to game; a weighted penalty rewards whatever weight you picked |
 | Disqualification | Reward 0 for any refused RPC call, any position over the cap, any drawdown past the limit, or any session ending liquidatable | Cheating, leverage and ruin must never pay |
 | Direction | Make the first move unpredictable: mirror the family (crashes *and* squeezes, 50/50) and disclose the odds | If every scenario moves the same way first, a blind bet at the open is free money: in machine-trading, shorting the open made 2.4× the reference with no skill |
+| Path shape | The path's shape gives away nothing a trader wouldn't see: moves ramp in uneven steps at uneven intervals, legs are drawn independently, phases that look alike share one duration range, the session ends a random while after the last move, and the mark wobbles in between | Frontier models reverse-engineer the generator. On machine-trading 0.4.0, Opus and Fable reached 3.5–3.9× the reference without reading the market, from equal steps (the first step gave the move's size) and a fixed tail (the end slot dated the aftermath) |
 | Valuation | From on-chain end state at the mark, never from bot logs | Grade outcomes, not claims |
-| Checks | oracle ≈ 1, nop = 0, cheater = 0, all through Harbor | Proves solvable, non-trivial, and hack-resistant |
+| Checks | oracle at its calibrated baseline (`reference_ratio` ≈ 1), nop = 0, cheater = 0, all through Harbor | Proves solvable, non-trivial, and hack-resistant. Against a hindsight bound the oracle scores the baseline (~0.2), not 1 |
 
 ## Operating procedure
 
@@ -58,7 +59,7 @@ the family, the reference bot, and what the instruction may disclose.
 ### 2. Design the scenario family
 
 A family is a generator: `(seed) → scenario`. Parameterize what varies and
-pin what doesn't. In this repo, see `CrashFamily` in `crates/core/src/scenario.rs`.
+pin what doesn't. In this repo, see `ShockFamily` in `crates/core/src/scenario.rs`.
 
 - **Vary the dimensions that test the thesis:** timing, depth, number of legs, recovery fraction, duration.
 - **Include adversarial draws:**
@@ -67,12 +68,16 @@ pin what doesn't. In this repo, see `CrashFamily` in `crates/core/src/scenario.r
   - a no-event scenario, if waiting patiently matters to the thesis
 - **Respect protocol physics.** For example, Phoenix's oracle band is 5%, so moves must step at ≤4%. A path the protocol would reject tests your simulator, not the bot.
 - **Make the regime knowable but the draw unknown.** Tell the agent the family ranges in `instruction.md` and keep the seeds secret. Ambiguity about the rules is a task bug; uncertainty about the outcome is the game.
+- **Disclose distributions, not structure.** Agents read every range, in the instruction and in the practice files, as a rule to exploit. Disjoint ranges become decision rules: when a two-leg shock's first leg was 40–70% of its depth and a one-leg shock was at least 5%, Fable deduced "a leg under 5% means another is coming". Draw each part independently (memoryless legs, fixed continuation odds), and let ranges overlap wherever telling two phases apart should take skill.
+- **Hide the generator's mechanics.** Anything the compiler of a path does deterministically is a signal: equal step sizes, fixed step spacing, a fixed tail after the last move, perfectly flat quiet periods. Randomize the step sizes and gaps, the tail, and add small noise. Keep the noise small: the hindsight bound counts it in the total variation.
+- **Ask what a generator-aware bot would make.** Before publishing, read the generator as an adversary would (or have an agent do it, with the source): if knowing the generator alone, without reading the market, beats the reference by a wide margin, the family leaks.
 
 ### 3. Write the reference bot, then calibrate
 
 - The reference sets the 1.0 line. Make it a reasonable, simple strategy, not an optimum: a ceiling the agent can only match leaves no headroom. Calibrate it on every scored scenario with `just calibrate`.
 - Record the reference's PnL on every scenario, losses included: with set-level scoring only the set's total must be positive. Check that the reference profits over the family as a whole (calibrate a large sample), not just on average draws.
 - Keep the oracle (`solution/`) identical to `bots/reference` (`just check-solution`).
+- **Size the cap in notional, not units.** When a task moves to another market, re-derive the cap from collateral and the new price (100 SOL at $101 and 70 SPCX at $143 are both ~1× collateral), take a new snapshot, and let calibration confirm the book is deep enough to fill the reference at the cap.
 
 ### 4. Write the instruction as a contract
 
@@ -102,11 +107,13 @@ react to the bot").
 
 ### 7. Verify, then calibrate against real agents
 
-1. `just harbor-checks`: oracle ≈ 1, nop = 0, cheater = 0.
+1. `just harbor-checks`: oracle at its baseline (`reference_ratio` ≈ 1), nop = 0, cheater = 0.
 2. `harbor lint --select ALL` and `harbor check bench/tasks/<name>` (an LLM rubric review).
 3. Run real agents k times each (`harbor run -p bench/tasks/<name> -a claude-code -m <model> -k 5`, for example).
 4. Run `harbor analyze jobs/<job>` to flag reward hacking and underspecified instructions.
-5. **Target spread:** the best model mean should land roughly between 0.2 and 0.7, with visible variance across models. If everything sits at 0 or 1, the task teaches nothing. When every agent fails, suspect the task first.
+5. **Read the winning bots.** Agents explain their edge in the bot's doc comments: on machine-trading, every exploit so far was stated outright there ("Short from the start: the crash is certain", "every move is split into equal steps"). Treat a jump between model tiers as an exploit until the source says otherwise.
+6. **Treat a too-clean risk profile as a leak.** Real edges have losing sessions. A worst session near zero, 90%+ of sessions profitable, or a Sharpe several times the reference's says the bot knows the script.
+7. **Target spread:** the best model mean should land roughly between 0.2 and 0.7, with visible variance across models. If everything sits at 0 or 1, the task teaches nothing. When every agent fails, suspect the task first.
 
 ### 8. Size the scored set for statistical power
 
@@ -131,6 +138,8 @@ ones for RL, with a private held-out pool that rotates.
 | A family whose first move is always the same way | A blind bet at the open wins every session |
 | Normalizing by a reference agents can beat | The reward saturates at 1 and stops ranking anyone |
 | Blending risk into the reward with a tuned weight | The weight becomes the thing agents optimize |
+| Equal-sized steps, fixed spacing, or a fixed tail after the last move | The first step reveals the move and the end slot dates the aftermath: a bot can trade the script instead of the market |
+| Disjoint ranges for phases that should look alike | Each boundary becomes a rule ("a pause over 60 slots means the shock is over") |
 | No position cap, or a reference far below it | The reward measures leverage: the first real agent in machine-trading bet 6× the reference's size and hit 1.0 with an ordinary strategy |
 
 ## Reference files

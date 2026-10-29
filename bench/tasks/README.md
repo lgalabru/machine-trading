@@ -12,7 +12,7 @@ can reach, with a per-session drawdown limit.
 
 | Task | Market | Scenario |
 | --- | --- | --- |
-| `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes of 5–12%: most revert, some stall, some keep going |
+| `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes in legs of 3–6%: most revert, some stall, some keep going |
 
 ## Changelog
 
@@ -21,7 +21,12 @@ can reach, with a per-session drawdown limit.
   and the CLI, SDK and contract variables from `ott`/`OTT_*` to `mt`/`MT_*`.
   `phoenix-flash-crash` trades SPCX, Phoenix's SpaceX perpetual, instead of
   SOL, on a snapshot from 2026-10-29, with a 70 SPCX position cap (about 1×
-  collateral, as before).
+  collateral, as before). The family's paths no longer give the script
+  away: moves ramp in uneven steps at uneven intervals, legs (3–6% each,
+  up to three) are drawn independently, pauses and holds share one range,
+  the session ends a random 10–40 s after the last move, and the mark
+  wobbles between moves. Opus and Fable had reached 3.5–3.9× the reference
+  on 0.4.0 by reading equal steps and a fixed tail.
 - **0.4.0.** `phoenix-flash-crash`: shocks go both ways, crashes and
   squeezes 50/50 (when every scenario crashed, shorting the open made 2.4×
   the reference with no skill). The reward is PnL over a hindsight bound

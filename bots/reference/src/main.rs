@@ -1,12 +1,13 @@
 //! Reference: fade the shock in tranches, hold for the reversion.
 //!
-//! The family's shocks are crashes or squeezes of 5-12%, and usually revert.
-//! The first 4% move tells the reference which one this is. It then takes
+//! The family's shocks are crashes or squeezes in one to three legs of 3-6%,
+//! and usually revert. The first 4% move tells the reference which one this
+//! is. It then takes
 //! the other side of the forced flow: long into a crash, short into a
 //! squeeze, in tranches as the shock deepens, each a share of the position
 //! cap. It holds to the end of the session to keep the whole reversion. A
-//! shock that keeps going past anything the family's shocks reach is
-//! extending: the reference cuts the position there and stops trading.
+//! shock that keeps going past 13.5% is more likely extending than
+//! reverting: the reference cuts the position there and stops trading.
 //!
 //! Its PnL is a published baseline, not the reward's scale (that's the
 //! hindsight bound). It reads the regime reasonably but not well: it doesn't
@@ -23,8 +24,8 @@ use tracing_subscriber::EnvFilter;
 /// is taken, and its share of the position cap. The first tranche's size also
 /// decides which way the shock goes.
 const TRANCHES: [(f64, f64); 2] = [(4.0, 0.5), (8.0, 0.5)];
-/// Size of the shock, past the family's largest, at which the position is
-/// cut: the shock is extending.
+/// Size of the shock at which the position is cut: deeper than most of the
+/// family's shocks go before they turn.
 const EXTEND_STOP_PCT: Option<f64> = Some(13.5);
 /// Largest market order, in base units. One order that crosses much of the
 /// book matches too many resting orders to fit a transaction's compute
