@@ -116,7 +116,8 @@ release: check-solution
 # Benchmark agents on the published dataset, on an idle machine: other load
 # slows the surfnets' clocks, and the grader fails sessions it can't run on
 # time. Reads ANTHROPIC_API_KEY from .env or ~/.open-trading.env. Results go
-# to jobs/bench/; read them with `harbor view jobs/bench`.
+# to jobs/bench/; read them with `harbor view jobs/bench`. Arguments are
+# positional: just bench "claude-sonnet-5-5 claude-opus-5-5" 3 3 0.3.0
 bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" version="":
     #!/usr/bin/env bash
     set -euo pipefail
