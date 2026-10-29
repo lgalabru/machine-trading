@@ -1,11 +1,11 @@
-# Loads OTT_FORK_RPC_URL for snapshot-prepare.
+# Loads MT_FORK_RPC_URL for snapshot-prepare.
 set dotenv-load := true
 
-snapshot := "phoenix-sol-2026-10-27"
+snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
-image := "open-trading"
+image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.4.0"
+tag := "0.5.0"
 tasks := "bench/tasks"
 task := tasks + "/phoenix-flash-crash"
 
@@ -32,7 +32,7 @@ snapshot-pull:
     set -euo pipefail
     id="$(docker create {{registry}}/{{image}}:{{tag}}-runtime)"
     trap 'docker rm "$id" > /dev/null' EXIT
-    docker cp "$id:/opt/ott/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
+    docker cp "$id:/opt/mt/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
     echo "snapshots/{{snapshot}}/surfnet.json"
 
 # Replay a snapshot offline and trade through a scripted crash.
@@ -45,7 +45,7 @@ bots:
     bots/reference/build.sh
     bots/dip-buyer/build.sh
 
-# Draw scenarios from the SOL crash family into a directory.
+# Draw scenarios from the SPCX shock family into a directory.
 scenarios out prefix count seed:
     cargo run --release -- scenario generate --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
 
@@ -121,7 +121,7 @@ release: check-solution
 
 # Benchmark agents on the published dataset, on an idle machine: other load
 # slows the surfnets' clocks, and the grader fails sessions it can't run on
-# time. Reads ANTHROPIC_API_KEY from .env or ~/.open-trading.env. Results go
+# time. Reads ANTHROPIC_API_KEY from .env or ~/.machine-trading.env. Results go
 # to jobs/bench/; read them with `harbor view jobs/bench`. Arguments are
 # positional: just bench "claude-sonnet-5-5 claude-opus-5-5" 3 3 0.3.0
 bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" version="":
@@ -129,11 +129,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
     set -euo pipefail
     set -a
     [ -f .env ] && . ./.env
-    [ -f ~/.open-trading.env ] && . ~/.open-trading.env
+    [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
     [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set"; exit 1; }
     version="{{version}}"
-    dataset="solana-foundation/open-trading${version:+@$version}"
+    dataset="solana-foundation/machine-trading${version:+@$version}"
     for model in {{models}}; do
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time"
       harbor run -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o jobs/bench

@@ -5,7 +5,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Botkit(#[from] ott_botkit::Error),
+    Botkit(#[from] mt_botkit::Error),
     #[error("surfnet: {0}")]
     Surfnet(#[from] surfpool_sdk::SurfnetError),
     #[error("rpc: {0}")]
@@ -44,7 +44,7 @@ pub enum Error {
     )]
     Degraded(String),
     #[error(
-        "{0} is not calibrated: run `ott calibrate`, and keep the set's total reference PnL positive"
+        "{0} is not calibrated: run `mt calibrate`, and keep the set's total reference PnL positive"
     )]
     Uncalibrated(String),
 }

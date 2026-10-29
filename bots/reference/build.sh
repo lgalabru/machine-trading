@@ -3,7 +3,7 @@
 # grading: the grader runs bin/bot as-is, without building anything.
 set -euo pipefail
 cd "$(dirname "$0")"
-exe="$(cargo build --release --bin ott-reference --message-format=json-render-diagnostics \
+exe="$(cargo build --release --bin mt-reference --message-format=json-render-diagnostics \
   | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
 mkdir -p bin
 cp "$exe" bin/bot

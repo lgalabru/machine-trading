@@ -1,4 +1,4 @@
-# solana-foundation/open-trading
+# solana-foundation/machine-trading
 
 Trading tasks for agents on Solana. In each task the agent writes a bot,
 and the bot is graded on market scenarios replayed on an offline mainnet
@@ -12,10 +12,16 @@ can reach, with a per-session drawdown limit.
 
 | Task | Market | Scenario |
 | --- | --- | --- |
-| `phoenix-flash-crash` | Phoenix SOL perpetuals | Crashes and squeezes of 5–12%: most revert, some stall, some keep going |
+| `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes of 5–12%: most revert, some stall, some keep going |
 
 ## Changelog
 
+- **0.5.0.** The project is now Machine Trading: the dataset moves from
+  `solana-foundation/open-trading` to `solana-foundation/machine-trading`,
+  and the CLI, SDK and contract variables from `ott`/`OTT_*` to `mt`/`MT_*`.
+  `phoenix-flash-crash` trades SPCX, Phoenix's SpaceX perpetual, instead of
+  SOL, on a snapshot from 2026-10-29, with a 70 SPCX position cap (about 1×
+  collateral, as before).
 - **0.4.0.** `phoenix-flash-crash`: shocks go both ways, crashes and
   squeezes 50/50 (when every scenario crashed, shorting the open made 2.4×
   the reference with no skill). The reward is PnL over a hindsight bound
@@ -23,7 +29,7 @@ can reach, with a per-session drawdown limit.
   it doesn't saturate; the reference is a baseline at ~0.2. A session may
   not draw down more than $1,000 from its peak, and risk diagnostics
   (worst session, tail loss, drawdown, profitable share, Sharpe) are
-  reported. Bots build on `luce`, re-exported by `ott-botkit`.
+  reported. Bots build on `luce`, re-exported by `mt-botkit`.
 - **0.3.0.** `phoenix-flash-crash`: a stronger reference that scales into the
   crash in two tranches and holds for the rebound, with a slide stop (the
   0.2.0 reference left most of the rebound on the table, and agents beat it

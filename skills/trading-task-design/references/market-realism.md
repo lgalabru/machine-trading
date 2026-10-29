@@ -45,7 +45,7 @@ and [ABIDES](https://arxiv.org/abs/2110.14771)). Otherwise label the task
   - Perps value positions at an oracle or mark price. Know its band and update rules; for example, Phoenix rejects moves beyond 5% per update, so scenario steps must be ≤4%.
   - Thin markets that feed oracles can be pushed. The [Mango Markets incident](https://www.certik.com/blog/mango-market) (~$116M, Oct 2022) is the canonical example. Decide whether moving the oracle is in bounds.
 - **Funding.** Perp funding accrues over time (Hyperliquid pays hourly at 1/8 of the 8h rate, [docs](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding)). Short scenarios can ignore it. Carry or basis tasks must simulate it across slots.
-- **Liquidations.** If the bot can use leverage, replay the protocol's real liquidation path. In open-trading, ending the session liquidatable scores 0 because otherwise ruin can't be valued, but mid-session liquidations should happen on-chain as they would on mainnet.
+- **Liquidations.** If the bot can use leverage, replay the protocol's real liquidation path. In machine-trading, ending the session liquidatable scores 0 because otherwise ruin can't be valued, but mid-session liquidations should happen on-chain as they would on mainnet.
 - **Clock.** Programs read `Clock` (slot and unix time). Snapshot restore must keep both plausible, or time-dependent logic (oracle staleness, funding) misbehaves. See the clock gap in the repo README.
 
 ## Declaring the limits

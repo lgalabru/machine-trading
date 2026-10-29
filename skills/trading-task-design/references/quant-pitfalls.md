@@ -73,4 +73,4 @@ faster than any researcher.
 - **Generate procedurally.** Procgen agents needed hundreds to thousands of levels to generalize ([Cobbe et al.](https://arxiv.org/abs/1912.01588)). A family with seeded draws is the trading equivalent.
 - **Hold out, and rotate.** Train on one seed range and evaluate on another. Public static sets decay: OpenAI retired SWE-bench Verified over contamination and flawed tests ([OpenAI, 2026](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)).
 - **Use a curriculum.** Order difficulty with single-leg crashes before two-leg ones, then non-recovering crashes, then reactive counterparties. Go from liquid markets to thin ones, and from spot to perps.
-- **Determinism.** Same bot plus same scenario must give the same PnL. Verify by re-running the oracle; open-trading's sessions are bit-for-bit reproducible.
+- **Determinism.** Same bot plus same scenario must give the same PnL. Verify by re-running the oracle; machine-trading's sessions are bit-for-bit reproducible.

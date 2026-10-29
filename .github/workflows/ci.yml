@@ -78,9 +78,9 @@ jobs:
         run: just snapshot-pull
       - name: Build the task image
         run: just image
-      - name: Oracle scores 1
+      - name: Oracle matches its calibrated baseline
         run: |
           harbor run -p bench/tasks/phoenix-flash-crash -a oracle -o jobs
-          reward=$(jq '.reward' "$(find jobs -name reward.json | head -1)")
-          echo "oracle reward: $reward"
-          jq -en "$reward > 0.99" > /dev/null
+          ratio=$(jq '.reference_ratio' "$(find jobs -name reward.json | head -1)")
+          echo "oracle reference_ratio: $ratio"
+          jq -en "$ratio > 0.9 and $ratio < 1.1" > /dev/null

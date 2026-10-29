@@ -1,6 +1,6 @@
 //! Naive baseline: buy the dip and hold.
 //!
-//! Market-buys the full position cap once SOL trades 3% below its starting
+//! Market-buys the full position cap once the market trades 3% below its starting
 //! mark, then holds to the end of the session, with no take-profit and no stop. It profits whenever
 //! the market rebounds and loses whenever it doesn't: a task where this
 //! scores like the reference doesn't reward judgement.
@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use ott_botkit::{BotEnv, Side, Trader};
+use mt_botkit::{BotEnv, Side, Trader};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 

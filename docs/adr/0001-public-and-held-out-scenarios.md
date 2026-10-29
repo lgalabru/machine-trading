@@ -43,7 +43,7 @@ leaderboards (Kaggle, Numerai):
 | **Public hidden** (`tests/scenarios`) | Everyone who downloads the task | Development: iterate, debug, compare locally, train against |
 | **Private held-out** (a private Harbor dataset) | Maintainers only | Official rankings and published results |
 
-- The **public dataset** (`solana-foundation/open-trading`) stays as it is.
+- The **public dataset** (`solana-foundation/machine-trading`) stays as it is.
   Its README says scores on it are a development signal, not a held-out
   evaluation.
 - The **private dataset** has the same task, environment, grader and
@@ -79,7 +79,7 @@ leaderboards (Kaggle, Numerai):
 - Published rankings become meaningful, at the cost of a second dataset to
   calibrate and publish per release, and a way to run submissions privately.
 - A held-out scenario costs the same to make as a public one:
-  `ott scenario generate` with a private seed, then `ott calibrate`. The
+  `mt scenario generate` with a private seed, then `mt calibrate`. The
   extra work is process, not code.
 - The canary GUID stays in every instruction, so contaminated training data
   can be detected.

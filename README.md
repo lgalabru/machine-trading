@@ -2,15 +2,15 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-github-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-github-light.png">
-    <img alt="Open Trading" width="100%" src="docs/assets/banner-github-light.png">
+    <img alt="Machine Trading" width="100%" src="docs/assets/banner-github-light.png">
   </picture>
 </div>
 
 <p align="center">
-  <a href="https://hub.harborframework.com/datasets/solana-foundation/open-trading"><img alt="Harbor dataset" src="https://img.shields.io/badge/harbor-solana--foundation%2Fopen--trading-blue"></a>
+  <a href="https://hub.harborframework.com/datasets/solana-foundation/machine-trading"><img alt="Harbor dataset" src="https://img.shields.io/badge/harbor-solana--foundation%2Fopen--trading-blue"></a>
 </p>
 
-**Open Trading is a workshop for frontier trading agents on Solana.** It
+**Machine Trading is a workshop for frontier trading agents on Solana.** It
 starts with a benchmark: agents write trading bots, and the bots are graded
 on market scenarios replayed against an offline copy of Solana mainnet. Real
 programs, real order books, and real fees run in a sandbox no bot can cheat.
@@ -27,24 +27,24 @@ model can only be trained against rewards that can be verified.
 | 🛠️ **Harness** | An agent harness for trading on Solana: tools for market data, order entry and risk checks over [`luce`](crates/luce), plus guardrails, running against the same sandboxes. | Next |
 | 🧠 **Models** | Trading models trained on the bench: RL against task rewards, SFT on agent trajectories, evaluated on held-out scenarios. | Later |
 
-Every area builds on the same core: the `ott` grader and simulator
+Every area builds on the same core: the `mt` grader and simulator
 ([`crates/`](crates/)), reference bots ([`bots/`](bots/)), pinned mainnet
 state ([`snapshots/`](snapshots/)), and the agent skills
 ([`skills/`](skills/)) that encode how to build all of the above.
 
 ## 📊 Bench
 
-The [`solana-foundation/open-trading`](https://hub.harborframework.com/datasets/solana-foundation/open-trading)
+The [`solana-foundation/machine-trading`](https://hub.harborframework.com/datasets/solana-foundation/machine-trading)
 dataset on Harbor Hub. Run it with [Harbor](https://harborframework.com):
 
 ```sh
 # The whole dataset, three attempts per task, with Claude Code
-harbor run -d solana-foundation/open-trading -a claude-code -m anthropic/claude-sonnet-5-5 -k 3
+harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/claude-sonnet-5-5 -k 3
 
 # One task
-harbor run -d solana-foundation/open-trading -i solana-foundation/phoenix-flash-crash -a claude-code -m anthropic/claude-sonnet-5-5
+harbor run -d solana-foundation/machine-trading -i solana-foundation/phoenix-flash-crash -a claude-code -m anthropic/claude-sonnet-5-5
 
-# From a checkout: the reference solution, which should score 1.0
+# From a checkout: the reference solution, the ~0.2 baseline
 harbor run -p bench/tasks/phoenix-flash-crash -a oracle
 ```
 
@@ -77,7 +77,7 @@ Phoenix comes first; other protocols follow.
 
 #### 📉 Flash crash: `phoenix-flash-crash` ✅
 
-SOL perps crash or squeeze 5–12%, 50/50. Most shocks revert, some stall,
+SPCX (SpaceX) perps crash or squeeze 5–12%, 50/50. Most shocks revert, some stall,
 and some keep going. A good bot reads which way the shock is going, takes
 the other side of the forced flow, and sizes so the shocks that don't
 revert can't take it past its loss limit. Blind bets at the open, and blind
@@ -85,7 +85,7 @@ dip-buying, score 0. [Task →](bench/tasks/phoenix-flash-crash)
 
 #### ⚖️ Market making: `phoenix-market-making` 🧪
 
-Quote both sides of SOL perps while the oracle walks and jumps. Earn the
+Quote both sides of a Phoenix perp while the oracle walks and jumps. Earn the
 spread, and skew inventory before informed flow runs you over.
 *Templates: oracle price, market move.*
 
@@ -138,16 +138,16 @@ pump, pump-amm.*
 ## 🗂️ Repository layout
 
 ```
-open-trading/
+machine-trading/
 ├── bench/                 📊 the benchmark
 │   ├── tasks/             Harbor dataset: dataset.toml + one directory per task
 │   ├── checks/            cheating bots every task must score 0
 │   └── image/             the images every task builds on: dev (agents) and runtime (verifiers)
 ├── crates/                🦀 shared Rust
-│   ├── core/              ott-core: offline worlds, scenario families, RPC guard, sessions, grading
-│   ├── cli/               ott: the grader and scenario generator
+│   ├── core/              mt-core: offline worlds, scenario families, RPC guard, sessions, grading
+│   ├── cli/               mt: the grader and scenario generator
 │   ├── luce/              luce: the trading library (exact Decimal model, Solana runtime, Phoenix)
-│   └── botkit/            ott-botkit: the SDK bots build on, over luce (both ship in the task image)
+│   └── botkit/            mt-botkit: the SDK bots build on, over luce (both ship in the task image)
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
 ├── snapshots/             📸 pinned mainnet state (surfnet.json is gitignored)
 ├── skills/                🧠 agent skills: how to design great trading tasks
@@ -168,7 +168,7 @@ sharing `crates/`, `bots/` and `snapshots/`.
   (cheatcode locks, SDK snapshots, clock restore) until it ships in a release.
 - The snapshot's `surfnet.json`, which is too big for git:
   `just snapshot-pull` copies it out of the published task image. To fork a
-  fresh one instead, put a mainnet RPC URL in `.env` as `OTT_FORK_RPC_URL`
+  fresh one instead, put a mainnet RPC URL in `.env` as `MT_FORK_RPC_URL`
   and run `just snapshot-prepare`.
 
 ### Everyday loop
@@ -179,7 +179,7 @@ just grade bots/reference bench/tasks/phoenix-flash-crash/environment/practice/*
 just test lint                                     # unit tests and clippy
 ```
 
-`ott grade` runs exactly what the verifier runs. Bot logs land in
+`mt grade` runs exactly what the verifier runs. Bot logs land in
 `target/logs/`. Don't run heavy builds while grading: slots advance on the
 wall clock, and a starved machine gives bots fewer looks per slot.
 

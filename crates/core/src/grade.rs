@@ -381,7 +381,7 @@ mod tests {
         Scenario {
             name: "s".into(),
             description: String::new(),
-            symbol: "SOL".into(),
+            symbol: "SPCX".into(),
             duration_slots: 400,
             max_position: 100.0,
             max_drawdown_usd: 1_000.0,

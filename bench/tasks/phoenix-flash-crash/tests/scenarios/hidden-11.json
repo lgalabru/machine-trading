@@ -1,19 +1,19 @@
 {
   "name": "hidden-11",
-  "description": "SOL spikes 5.7% at once around slot 63, then keeps running to +9.50% of its starting mark",
-  "symbol": "SOL",
-  "duration_slots": 301,
-  "max_position": 100.0,
+  "description": "SPCX spikes 8.0% at once around slot 120, then fades to +3.16% of its starting mark",
+  "symbol": "SPCX",
+  "duration_slots": 288,
+  "max_position": 70.0,
   "max_drawdown_usd": 1000.0,
   "path": [
     {
-      "slot": 63,
-      "level_pct": 5.66
+      "slot": 120,
+      "level_pct": 7.96
     },
     {
-      "slot": 218,
-      "level_pct": 9.5
+      "slot": 203,
+      "level_pct": 3.16
     }
   ],
-  "reference_pnl_usd": -199.87
+  "reference_pnl_usd": 173.41
 }

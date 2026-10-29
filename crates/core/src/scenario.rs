@@ -40,7 +40,7 @@ pub struct Scenario {
     pub max_drawdown_usd: f64,
     pub path: Vec<Waypoint>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
-    /// Written by `ott calibrate`.
+    /// Written by `mt calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
 }
@@ -158,9 +158,9 @@ fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
 /// for reading the market.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    /// SOL drops: forced selling.
+    /// The market drops: forced selling.
     Crash,
-    /// SOL spikes: forced buying.
+    /// The market spikes: forced buying.
     Squeeze,
 }
 
@@ -215,9 +215,9 @@ pub struct ShockFamily {
 }
 
 impl ShockFamily {
-    pub fn sol() -> Self {
+    pub fn spcx() -> Self {
         Self {
-            symbol: "SOL".into(),
+            symbol: "SPCX".into(),
             depth_pct: (5.0, 12.0),
             shock_slot: (60, 120),
             hold_slots: (60, 160),
@@ -228,8 +228,8 @@ impl ShockFamily {
             stall_recovery: (0.0, 0.2),
             extend_pct: (2.0, 5.0),
             tail_slots: 80,
-            // ~1x the 10,000 USDC of collateral at the snapshot's ~$101 mark.
-            max_position: 100.0,
+            // ~1x the 10,000 USDC of collateral at the snapshot's ~$143 mark.
+            max_position: 70.0,
             // 10% of the collateral: the reference's worst path (both
             // tranches on, then stopped out at 13.5%) stays inside it; a
             // blind full-size bet caught by a 12% shock breaks it.
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn sets_are_stratified_by_direction_and_aftermath() {
-        let family = ShockFamily::sol();
+        let family = ShockFamily::spcx();
         let set = family.sample_set("h", 12, 77);
         assert_eq!(set.len(), 12);
         let n = |a: &str, b: &str| {
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn the_family_draws_every_kind_at_roughly_its_odds() {
-        let family = ShockFamily::sol();
+        let family = ShockFamily::spcx();
         let draws: Vec<(Direction, Aftermath)> = (0..4_000).map(|seed| family.kind(seed)).collect();
         let share = |f: &dyn Fn(&(Direction, Aftermath)) -> bool| {
             draws.iter().filter(|d| f(d)).count() as f64 / draws.len() as f64
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn shocks_go_their_way_and_aftermaths_follow() {
-        let family = ShockFamily::sol();
+        let family = ShockFamily::spcx();
         for seed in 0..200 {
             let scenario = family.sample("s", seed);
             let (direction, aftermath) = family.kind(seed);
@@ -485,7 +485,7 @@ mod tests {
     /// through the shock gains on half the draws and loses on the other half.
     #[test]
     fn a_blind_bet_at_the_open_has_no_edge() {
-        let family = ShockFamily::sol();
+        let family = ShockFamily::spcx();
         let set = family.sample_set("s", 12, 5);
         let short_to_extreme: f64 = set
             .iter()
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn sampled_scenarios_are_valid_and_deterministic() {
-        let family = ShockFamily::sol();
+        let family = ShockFamily::spcx();
         for seed in 0..200 {
             let scenario = family.sample("s", seed);
             assert_eq!(scenario.validate(), Ok(()), "seed {seed}: {scenario:?}");
@@ -517,9 +517,9 @@ mod tests {
         let scenario = Scenario {
             name: "overlap".into(),
             description: String::new(),
-            symbol: "SOL".into(),
+            symbol: "SPCX".into(),
             duration_slots: 400,
-            max_position: 100.0,
+            max_position: 70.0,
             max_drawdown_usd: 1_000.0,
             path: vec![
                 Waypoint {
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn overrides_walk_to_each_level_and_uncross() {
-        let scenario = ShockFamily::sol().sample("s", 7);
+        let scenario = ShockFamily::spcx().sample("s", 7);
         let overrides = scenario.overrides(Pubkey::new_unique(), 10_000);
         let last_move = overrides
             .iter()
