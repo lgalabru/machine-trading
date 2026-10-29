@@ -14,5 +14,5 @@ email = "ludo.galabru@solana.org"
 
 [[tasks]]
 name = "solana-foundation/phoenix-flash-crash"
-digest = "sha256:28d33581e05b82642499ffd394f8acda0a6854a9d0010507fa8c17093cf9c8d7"
+digest = "sha256:47ee575adca4272248f18be0279dce8a2779e3b38d60d6be17f4d66f22aea756"
 
