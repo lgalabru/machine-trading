@@ -11,3 +11,6 @@ snapshots/*/surfnet.json
 .surfpool/
 surfpool-mcp-schemas.json
 __pycache__/
+
+# Agent worktrees.
+.claude/worktrees/
