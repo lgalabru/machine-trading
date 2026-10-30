@@ -185,6 +185,11 @@ check-solution:
 # The checks every task change should pass: oracle ~1, and nop, cheater and
 # sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
 harbor-checks task="phoenix-flash-crash": image check-solution
+    @# The checks run on the images `image` just built: a task still pinned to
+    @# a released digest would test the old grader instead.
+    @grep -q '^FROM {{registry}}/{{image}}:{{tag}}$' {{tasks}}/{{task}}/environment/Dockerfile \
+      && grep -q '^FROM {{registry}}/{{image}}:{{tag}}-runtime$' {{tasks}}/{{task}}/tests/Dockerfile \
+      || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
     harbor run -p {{tasks}}/{{task}} -a oracle -o jobs
     harbor run -p {{tasks}}/{{task}} -a nop -o jobs
     PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
