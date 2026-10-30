@@ -18,7 +18,7 @@ fills nothing.
   bp). They keep their depth curve and re-center on every price move. At
   equal prices, a resting limit order fills before them.
 - **The market** walks every few slots. A quarter of the sessions stay calm,
-  half have one to three jumps of 0.6–2.5%, either way, and a quarter trend.
+  half have one to three jumps of 0.8–3%, either way, and a quarter trend.
 - **The flow** is grader-run takers sending ordinary Phoenix market orders
   from a shared pool of eight accounts: noise either side, informed bursts
   ahead of each jump, leaning flow in a trend, and fake-out bursts with no
@@ -57,18 +57,21 @@ fills nothing.
 
 | Agent | Reward | What it shows |
 | --- | --- | --- |
-| oracle (the reference maker) | ~0.02 | The task is solvable and the reference is calibrated |
+| oracle (the reference maker) | ~0.12 | The task is solvable and the reference is calibrated |
 | nop (starter bot) | 0.0 | Doing nothing earns nothing |
 | cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend the session |
 | sneaky | 0.0 | Cheatcodes, airdrops and `exit` on the surfnet's own port are refused |
 
-The reference quotes 5 bp from the oracle, far inside a competitor that
-quotes 8–30 bp, so it keeps only a fraction of the spread the bound counts:
-it made $11.89 over the hidden set against a $593 bound. A bot that reads
-the book and quotes just inside the competitor earns several times more per
-fill; the headroom is the point. A passive baseline (the reference without
-skew, drift or backing off) lost money in development on jump and trend
-sessions, which shows the flow's adverse selection is real.
+The reference quotes one tick inside the competitor around the oracle,
+skews against inventory, leans with the drift, and backs off after
+one-sided fills. On the hidden set it made $66.36 against a $567 spread
+bound (~0.12), and every practice session made money. In development, a
+naive inside-quoter (the same quotes without skew, drift or backing off)
+scored about the same reward (0.119 against 0.132) but lost money in a
+quarter of its sessions, against none for the reference: the informed flow
+punishes a maker that ignores it, and the headroom above both (faster
+requotes, sizing, trading with the informed flow it reads on the tape) is
+where agents separate.
 
 ## Realism limits
 

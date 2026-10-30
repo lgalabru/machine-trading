@@ -178,15 +178,15 @@ impl MakingFamily {
             trend_drift_pct: (0.006, 0.018),
             trend_lean: (0.05, 0.12),
             jumps: (1, 3),
-            jump_pct: (0.6, 2.5),
+            jump_pct: (0.8, 3.0),
             jump_margin: 60,
             noise_rate: (0.2, 0.45),
             size_median: 0.6,
             size_sigma: 0.7,
             size_clamp: (0.1, 4.0),
-            informed_orders: (2, 6),
+            informed_orders: (6, 12),
             informed_lead: (4, 24),
-            informed_scale: (1.0, 1.8),
+            informed_scale: (2.0, 4.0),
             fakeout_odds: 0.3,
             // ~0.3x the 10,000 USDC of collateral at ~$143: a maker shouldn't
             // warehouse risk.
