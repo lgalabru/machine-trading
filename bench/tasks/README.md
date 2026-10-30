@@ -19,7 +19,7 @@ can reach, with a per-session drawdown limit.
 
 - **0.7.0.** New task, `phoenix-market-making`: quote SPCX against Phoenix's
   own makers, widened to a half-spread drawn per session (8–30 bp), while
-  the price walks, trends or jumps 0.6–2.5%. The grader sends taker flow
+  the price walks, trends or jumps 0.8–3%. The grader sends taker flow
   from a shared pool of accounts: noise, informed bursts ahead of each jump,
   and fake-outs. Accounts are valued at the scenario's oracle, not
   Phoenix's mark, which a maker's own quotes pull. The reward is PnL over a

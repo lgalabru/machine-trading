@@ -11,11 +11,6 @@ publish = false
 name = "mth-maker"
 path = "src/main.rs"
 
-[features]
-# The passive baseline: symmetric quotes, no inventory skew, no response to
-# toxic flow. Not shipped; it shows adverse selection costs something.
-passive = []
-
 [dependencies]
 anyhow = "1"
 mth-botkit = { path = "../../crates/botkit" }

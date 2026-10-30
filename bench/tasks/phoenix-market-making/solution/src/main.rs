@@ -1,7 +1,8 @@
-//! Reference: quote both sides inside the competing makers, skew against
+//! Reference: quote one tick inside the competing makers, skew against
 //! inventory, and back off when the flow turns toxic.
 //!
-//! The quotes sit a few basis points either side of a reservation price:
+//! The competitors' half-spread is read once, from their spline account; the
+//! quotes sit that far less one tick either side of a reservation price:
 //! the oracle, shifted against what the bot holds, so a long inventory lowers
 //! both quotes and sheds itself (Avellaneda-Stoikov's idea, with a linear
 //! skew). Holding most of the cap, it stops quoting the side that would add
@@ -26,18 +27,15 @@ use mth_botkit::{BotEnv, Side, Trader};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-/// Distance from the reservation price to each quote, in basis points.
-/// Inside the competitors' half-spread, so the bot's quotes are the best.
-const HALF_SPREAD_BPS: f64 = 5.0;
 /// How far the reservation price moves per base unit held, in basis points.
-const SKEW_BPS_PER_UNIT: f64 = if cfg!(feature = "passive") { 0.0 } else { 2.5 };
+const SKEW_BPS_PER_UNIT: f64 = 2.5;
 /// How much of the oracle's distance from its recent average the
 /// reservation price follows, how many slots that average spans, and the
-/// most it moves the quotes: a half-spread, so noise never pulls a quote
+/// most it moves the quotes, in basis points: noise shouldn't pull a quote
 /// through the oracle.
-const DRIFT_WEIGHT: f64 = if cfg!(feature = "passive") { 0.0 } else { 0.5 };
+const DRIFT_WEIGHT: f64 = 0.5;
 const DRIFT_SLOTS: f64 = 80.0;
-const DRIFT_MAX_BPS: f64 = HALF_SPREAD_BPS;
+const DRIFT_MAX_BPS: f64 = 5.0;
 /// Size of each quote, in base units.
 const QUOTE_SIZE: f64 = 1.0;
 /// The share of the position cap past which the side that would add to the
@@ -65,7 +63,9 @@ async fn main() -> Result<()> {
     let mandate = env.mandate()?;
     let cap = mandate.universe[0].max_position;
     let trader = Trader::connect(&env)?;
-    info!(cap, passive = cfg!(feature = "passive"), "quoting");
+    let half_spread_bps = competitor_half_spread_bps(&trader).await?;
+    info!(half_spread_bps, "one tick inside the competitor");
+    info!(cap, "quoting");
 
     // (slot, position) at each pass, for the toxicity window.
     let mut history: VecDeque<(u64, f64)> = VecDeque::new();
@@ -90,8 +90,7 @@ async fn main() -> Result<()> {
         {
             history.pop_front();
         }
-        if !cfg!(feature = "passive")
-            && let Some((_, then)) = history.front()
+        if let Some((_, then)) = history.front()
             && (held - then).abs() >= TOXIC_UNITS
             && toxic_until <= slot
         {
@@ -111,7 +110,7 @@ async fn main() -> Result<()> {
         let drift_bps =
             (DRIFT_WEIGHT * (mark / mean - 1.0) * 10_000.0).clamp(-DRIFT_MAX_BPS, DRIFT_MAX_BPS);
         let reservation = mark * (1.0 + (drift_bps - SKEW_BPS_PER_UNIT * held) / 10_000.0);
-        let half = HALF_SPREAD_BPS * if toxic { TOXIC_WIDEN } else { 1.0 };
+        let half = half_spread_bps * if toxic { TOXIC_WIDEN } else { 1.0 };
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
         let moved = quoted.is_none_or(|(at, b, a)| {
@@ -161,4 +160,31 @@ async fn main() -> Result<()> {
         "done; inventory valued at the oracle"
     );
     Ok(())
+}
+
+/// The competing makers' half-spread less one tick, in basis points of the
+/// oracle: the closest any enabled spline quotes to its mid.
+async fn competitor_half_spread_bps(trader: &Trader) -> Result<f64> {
+    use mth_botkit::phoenix_rise::accounts::spline_collection::SplineCollection;
+    let market = trader.phoenix.market(&trader.env.symbol)?;
+    let address: mth_botkit::Pubkey = market.spline_pubkey.parse()?;
+    let account = trader.rpc.get_account(&address)?;
+    let collection = SplineCollection::try_from_account_bytes(&account.data)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let inner = collection
+        .splines()
+        .filter_map(|s| s.ok())
+        .filter(|s| s.is_enabled())
+        .flat_map(|s| {
+            s.active_bid_regions()
+                .iter()
+                .chain(s.active_ask_regions())
+                .map(|r| r.start_offset().as_inner())
+                .collect::<Vec<_>>()
+        })
+        .min()
+        .ok_or_else(|| anyhow::anyhow!("no competing quotes"))?;
+    let tick_usd = trader.phoenix.ticks_to_usd(market, 1);
+    let oracle = trader.oracle_usd().await?;
+    Ok(((inner.saturating_sub(1)) as f64 * tick_usd / oracle * 10_000.0).max(1.0))
 }
