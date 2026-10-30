@@ -208,7 +208,7 @@ exploit-checks task="phoenix-flash-crash" jobs="3":
         --logs "$out/$name" --reward "$out/$name.json" {{tasks}}/{{task}}/tests/scenarios/*.json > /dev/null
     done
     case "{{task}}" in
-      phoenix-market-making) limits="--max-profitable 1 --max-ratio 3" ;;
+      phoenix-market-making) limits="--max-profitable 0.9" ;;
       *) limits="--max-profitable 0.75 --max-ratio 3" ;;
     esac
     python3 -I bench/checks/exploits/judge.py $limits "$out"/*.json

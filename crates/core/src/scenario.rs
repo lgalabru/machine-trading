@@ -176,10 +176,9 @@ impl Scenario {
     /// every taker order, and the moves it trades or leans into, so a bound
     /// on the spread alone is one a bot can pass.
     pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
-        let spread = self
-            .making
-            .as_ref()
-            .map_or(0.0, |making| making.spread_bound_usd(&self.path, start_mark_usd));
+        let spread = self.making.as_ref().map_or(0.0, |making| {
+            making.spread_bound_usd(&self.path, start_mark_usd)
+        });
         spread + self.hindsight_bound_usd(start_mark_usd)
     }
 
@@ -813,7 +812,10 @@ mod tests {
                 continue;
             }
             ramps += 1;
-            assert!(steps.iter().all(|d| *d <= family.max_step_pct + 1e-9), "seed {seed}");
+            assert!(
+                steps.iter().all(|d| *d <= family.max_step_pct + 1e-9),
+                "seed {seed}"
+            );
             let (lo, hi) = steps
                 .iter()
                 .fold((f64::MAX, f64::MIN), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
@@ -822,8 +824,14 @@ mod tests {
             }
         }
         let share = at_once as f64 / 400.0;
-        assert!((share - family.gap_odds).abs() < 0.07, "{share} land at once");
-        assert!(uneven * 4 > ramps * 3, "only {uneven} of {ramps} ramps are uneven");
+        assert!(
+            (share - family.gap_odds).abs() < 0.07,
+            "{share} land at once"
+        );
+        assert!(
+            uneven * 4 > ramps * 3,
+            "only {uneven} of {ramps} ramps are uneven"
+        );
     }
 
     /// Quiet stretches carry fizzles: a move away that comes all the way back.
@@ -842,14 +850,19 @@ mod tests {
                 fizzled += 1;
                 // The last move back lands on the base, before the wobble.
                 assert!(
-                    path.waypoints.iter().all(|w| w.level_pct.abs() <= family.fizzle_pct.1 + 1.0),
+                    path.waypoints
+                        .iter()
+                        .all(|w| w.level_pct.abs() <= family.fizzle_pct.1 + 1.0),
                     "seed {seed}"
                 );
                 assert!(path.waypoints.last().unwrap().level_pct.abs() < 2.0 * family.noise_pct);
             }
         }
         let share = fizzled as f64 / 200.0;
-        assert!((share - family.fizzle_odds).abs() < 0.1, "{share} of stretches fizzle");
+        assert!(
+            (share - family.fizzle_odds).abs() < 0.1,
+            "{share} of stretches fizzle"
+        );
     }
 
     /// The session's length is drawn before the path: how long a session
@@ -866,7 +879,12 @@ mod tests {
                 .collect();
             d.iter().sum::<f64>() / d.len() as f64
         };
-        assert!((mean(1) - mean(3)).abs() / mean(1) < 0.08, "{} vs {}", mean(1), mean(3));
+        assert!(
+            (mean(1) - mean(3)).abs() / mean(1) < 0.08,
+            "{} vs {}",
+            mean(1),
+            mean(3)
+        );
         let cut = draws.iter().filter(|(_, s)| s.cut).count();
         assert!(cut > 0 && cut < 120, "{cut} of 600 sessions end mid-shock");
     }

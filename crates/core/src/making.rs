@@ -10,10 +10,17 @@
 //! and noise orders come from the same accounts in overlapping sizes, so
 //! telling them apart takes reading the market, not the generator.
 //!
-//! The competitor is the snapshot's own Phoenix makers, their spline
-//! liquidity widened at setup to the scenario's half-spread. They re-centre
-//! on every move, so a bot that quotes inside them gets the flow, and a bot
-//! whose quotes are stale after a jump gets picked off.
+//! The competition is two layers. The snapshot's own Phoenix makers, their
+//! spline liquidity widened at setup to the scenario's half-spread, re-centre
+//! on every move and otherwise stand still. In front of them the grader runs
+//! a maker of its own (see [`crate::compete`]): it quotes at the same
+//! half-spread and, when a bot quotes inside it, steps inside the bot after
+//! a short delay, down to a floor. Undercutting it starts a price war, so a
+//! bot keeps the flow only as long as its quotes stay competitive, and what
+//! it can earn per order shrinks toward the floor.
+//!
+//! Takers care about price: each order carries its own limit, so a maker
+//! quoting wider than a taker will pay doesn't fill it at all.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +36,22 @@ pub const TAKER_ACCOUNTS: u8 = 8;
 pub struct Making {
     /// The competing makers' half-spread around the mark, in basis points.
     pub competitor_bps: f64,
+    /// How the grader's own maker competes.
+    pub competition: Competition,
     /// The taker orders the grader sends, in slot order.
     pub takers: Vec<TakerOrder>,
+}
+
+/// The grader's maker (see [`crate::compete`]).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Competition {
+    /// The tightest half-spread it goes to when undercut, in basis points.
+    pub floor_bps: f64,
+    /// Slots between its looks at the book: how fast it reacts.
+    pub react_slots: u64,
+    /// Its quote on each side, in base units.
+    pub size: f64,
 }
 
 /// One market order from a taker, filled against the best quotes in the
@@ -43,6 +64,9 @@ pub struct TakerOrder {
     pub side: TakerSide,
     /// In base units.
     pub size: f64,
+    /// The worst price it takes, in basis points from the market's level:
+    /// it fills only against quotes at least this close.
+    pub limit_bps: f64,
     /// Which of the [`TAKER_ACCOUNTS`] sends it.
     pub account: u8,
 }
@@ -62,6 +86,19 @@ impl Making {
                 self.competitor_bps
             ));
         }
+        let c = &self.competition;
+        if !(c.floor_bps.is_finite() && c.floor_bps > 0.0 && c.floor_bps < self.competitor_bps) {
+            return Err(format!(
+                "competition floor_bps {} must be positive and under competitor_bps {}",
+                c.floor_bps, self.competitor_bps
+            ));
+        }
+        if c.react_slots == 0 || !(c.size.is_finite() && c.size > 0.0) {
+            return Err(format!(
+                "competition needs react_slots >= 1 and a positive size, not {} and {}",
+                c.react_slots, c.size
+            ));
+        }
         let mut last = 0;
         for (i, order) in self.takers.iter().enumerate() {
             if order.slot < last {
@@ -76,6 +113,9 @@ impl Making {
             if !(order.size.is_finite() && order.size > 0.0) {
                 return Err(format!("taker order {i} has size {}", order.size));
             }
+            if !(order.limit_bps.is_finite() && order.limit_bps > 0.0) {
+                return Err(format!("taker order {i} has limit {} bp", order.limit_bps));
+            }
             if order.account >= TAKER_ACCOUNTS {
                 return Err(format!(
                     "taker order {i} uses account {}, of {TAKER_ACCOUNTS}",
@@ -87,18 +127,18 @@ impl Making {
         Ok(())
     }
 
-    /// The most a maker could earn on this scenario: every taker order filled
-    /// at the competitor's half-spread from the market's level at that slot,
-    /// with nothing lost to informed flow or to inventory. No bot reaches it
-    /// (it has to quote inside the competitor to fill at all, informed flow
-    /// costs it, and holding inventory through moves costs it), so a score
-    /// against it doesn't saturate.
+    /// The most a maker could earn on this scenario's flow: every taker
+    /// order filled from the market's level at that slot at the widest price
+    /// it can fill at, the taker's own limit or the competitor's half-spread,
+    /// whichever is closer, with nothing lost to informed flow or to
+    /// inventory. No bot reaches it (the grader's maker undercuts it, informed
+    /// flow costs it, and holding inventory through moves costs it).
     pub fn spread_bound_usd(&self, path: &[Waypoint], start_mark_usd: f64) -> f64 {
         self.takers
             .iter()
             .map(|order| {
                 let price = start_mark_usd * (1.0 + level_at(path, order.slot) / 100.0);
-                order.size * price * self.competitor_bps / 10_000.0
+                order.size * price * order.limit_bps.min(self.competitor_bps) / 10_000.0
             })
             .sum()
     }
@@ -165,6 +205,18 @@ pub struct MakingFamily {
     /// Fake-out bursts per session, in any regime: informed-looking flow
     /// with no jump after it.
     pub fakeouts: (u64, u64),
+    /// The grader's maker: its floor, in basis points, how many slots it
+    /// takes to react, and its quote size.
+    pub floor_bps: (f64, f64),
+    pub react_slots: (u64, u64),
+    pub competitor_size: (f64, f64),
+    /// Taker limits, as multiples of the competitor's half-spread. Noise
+    /// takers' are lognormal around 1, so some won't pay the competitor's
+    /// price and fill only against a tighter quote; informed takers are in a
+    /// hurry and pay up.
+    pub noise_limit_sigma: f64,
+    pub noise_limit_clamp: (f64, f64),
+    pub informed_limit: (f64, f64),
     pub max_position: f64,
     pub max_drawdown_usd: f64,
 }
@@ -193,6 +245,12 @@ impl MakingFamily {
             informed_lead: (4, 24),
             informed_scale: (1.5, 3.0),
             fakeouts: (0, 3),
+            floor_bps: (2.0, 6.0),
+            react_slots: (2, 8),
+            competitor_size: (2.0, 5.0),
+            noise_limit_sigma: 0.5,
+            noise_limit_clamp: (0.3, 4.0),
+            informed_limit: (2.0, 4.0),
             // ~0.3x the 10,000 USDC of collateral at ~$143: a maker shouldn't
             // warehouse risk.
             max_position: 20.0,
@@ -293,7 +351,10 @@ impl MakingFamily {
                 TakerSide::Sell
             };
             let size = self.size(&mut rng, 1.0);
-            takers.push(self.order(&mut rng, slot, side, size));
+            let (lo, hi) = self.noise_limit_clamp;
+            let limit =
+                competitor_bps * (self.noise_limit_sigma * rng.normal()).exp().clamp(lo, hi);
+            takers.push(self.order(&mut rng, slot, side, size, limit));
         }
         let side_of = |size: f64| {
             if size > 0.0 {
@@ -319,10 +380,16 @@ impl MakingFamily {
                 let slot = at - rng.range_u64((1, lead.max(1)));
                 let scale = rng.range_f64(self.informed_scale);
                 let size = self.size(&mut rng, scale);
-                takers.push(self.order(&mut rng, slot, side, size));
+                let limit = competitor_bps * rng.range_f64(self.informed_limit);
+                takers.push(self.order(&mut rng, slot, side, size, limit));
             }
         }
         takers.sort_by_key(|o| o.slot);
+        let competition = Competition {
+            floor_bps: round2(rng.range_f64(self.floor_bps).min(0.5 * competitor_bps)),
+            react_slots: rng.range_u64(self.react_slots),
+            size: round2(rng.range_f64(self.competitor_size)),
+        };
 
         let description = match regime {
             Regime::Calm => format!("{} walks without jumps", self.symbol),
@@ -362,6 +429,7 @@ impl MakingFamily {
             path,
             making: Some(Making {
                 competitor_bps,
+                competition,
                 takers,
             }),
             reference_pnl_usd: None,
@@ -414,11 +482,19 @@ impl MakingFamily {
         round3(size.clamp(self.size_clamp.0, self.size_clamp.1))
     }
 
-    fn order(&self, rng: &mut SplitMix64, slot: u64, side: TakerSide, size: f64) -> TakerOrder {
+    fn order(
+        &self,
+        rng: &mut SplitMix64,
+        slot: u64,
+        side: TakerSide,
+        size: f64,
+        limit_bps: f64,
+    ) -> TakerOrder {
         TakerOrder {
             slot,
             side,
             size,
+            limit_bps: round2(limit_bps),
             account: rng.range_u64((0, TAKER_ACCOUNTS as u64 - 1)) as u8,
         }
     }
@@ -450,7 +526,10 @@ mod tests {
     fn informed_flow_leads_most_jumps_not_all() {
         let family = MakingFamily::spcx();
         let (mut jumps, mut led) = (0, 0);
-        for seed in (0..2000).filter(|&s| family.regime(s) == Regime::Jumps).take(150) {
+        for seed in (0..2000)
+            .filter(|&s| family.regime(s) == Regime::Jumps)
+            .take(150)
+        {
             let s = family.sample("m", seed);
             let making = s.making.as_ref().unwrap();
             // Same-side volume in the 25 slots before `at`.
@@ -475,7 +554,11 @@ mod tests {
                     continue;
                 }
                 jumps += 1;
-                let side = if size > 0.0 { TakerSide::Buy } else { TakerSide::Sell };
+                let side = if size > 0.0 {
+                    TakerSide::Buy
+                } else {
+                    TakerSide::Sell
+                };
                 if ahead(w[1].slot, side) > 2.5 * typical {
                     led += 1;
                 }
@@ -483,7 +566,10 @@ mod tests {
         }
         let share = led as f64 / jumps as f64;
         assert!(jumps > 100, "{jumps} jumps");
-        assert!((0.4..0.8).contains(&share), "{share} of {jumps} jumps are led by a burst");
+        assert!(
+            (0.4..0.8).contains(&share),
+            "{share} of {jumps} jumps are led by a burst"
+        );
     }
 
     #[test]
@@ -531,20 +617,27 @@ mod tests {
     }
 
     #[test]
-    fn the_spread_bound_prices_every_order_at_the_competitor() {
+    fn the_spread_bound_prices_each_order_at_its_closer_limit() {
         let making = Making {
             competitor_bps: 10.0,
+            competition: Competition {
+                floor_bps: 3.0,
+                react_slots: 4,
+                size: 2.0,
+            },
             takers: vec![
                 TakerOrder {
                     slot: 0,
                     side: TakerSide::Buy,
                     size: 2.0,
+                    limit_bps: 25.0,
                     account: 0,
                 },
                 TakerOrder {
                     slot: 10,
                     side: TakerSide::Sell,
                     size: 1.0,
+                    limit_bps: 4.0,
                     account: 1,
                 },
             ],
@@ -553,8 +646,30 @@ mod tests {
             slot: 5,
             level_pct: 10.0,
         }];
-        // 2 at $100 and 1 at $110, each at 10 bp.
+        // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1
+        // at $110 at the taker's own 4 bp.
         let bound = making.spread_bound_usd(&path, 100.0);
-        assert!((bound - 0.31).abs() < 1e-9, "{bound}");
+        assert!((bound - 0.244).abs() < 1e-9, "{bound}");
+    }
+
+    /// Some noise takers won't pay the competitor's price; informed ones
+    /// always do.
+    #[test]
+    fn takers_care_about_price() {
+        let family = MakingFamily::spcx();
+        let s = family.sample("m", 3);
+        let making = s.making.as_ref().unwrap();
+        let below = making
+            .takers
+            .iter()
+            .filter(|o| o.limit_bps < making.competitor_bps)
+            .count();
+        let share = below as f64 / making.takers.len() as f64;
+        assert!(
+            (0.25..0.6).contains(&share),
+            "{share} of takers won't pay the competitor"
+        );
+        assert!(making.competition.floor_bps < making.competitor_bps);
+        assert_eq!(s.validate(), Ok(()));
     }
 }
