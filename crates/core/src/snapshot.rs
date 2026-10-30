@@ -170,6 +170,12 @@ pub async fn start_offline(dir: &Path) -> Result<OfflineWorld> {
         .snapshot_file(dir.join(SURFNET_FILE))
         .block_production_mode(BlockProductionMode::Clock)
         .slot_time_ms(SLOT_TIME_MS)
+        // Profiles re-execute every transaction instruction by instruction and
+        // keep the accounts it touched, megabytes each for Phoenix's: a
+        // market-making session's hundreds of orders and Hawkeye reads ran a
+        // grader past 8 GB. Nothing here reads profiles.
+        .instruction_profiling(false)
+        .max_profiles(1)
         .start()
         .await?;
     chain::forward_surfnet_logs(&surfnet);
@@ -214,6 +220,12 @@ pub async fn verify_fork(
         .remote_rpc_url(fork_rpc_url)
         .block_production_mode(BlockProductionMode::Clock)
         .slot_time_ms(SLOT_TIME_MS)
+        // Profiles re-execute every transaction instruction by instruction and
+        // keep the accounts it touched, megabytes each for Phoenix's: a
+        // market-making session's hundreds of orders and Hawkeye reads ran a
+        // grader past 8 GB. Nothing here reads profiles.
+        .instruction_profiling(false)
+        .max_profiles(1)
         .start()
         .await?;
     chain::forward_surfnet_logs(&surfnet);
