@@ -1,7 +1,7 @@
 # The runtime image (bench/image/Dockerfile, target runtime): the grader and
 # the snapshots, without the agent's toolchain. Harbor copies the agent's
 # /app/bot in.
-FROM ghcr.io/solana-foundation/machine-trading:0.6.0-runtime@sha256:64b6d14af8e8e26b9f1db298036d24fb7c32fa2a71af6952fc09837d9d4f3d90
+FROM ghcr.io/solana-foundation/machine-trading:0.7.0-runtime@sha256:4838c331534c64ad42ecb29855150b38624de3664a8688b8c2e96d1aff9a6345
 ENV MTH_SNAPSHOT=/opt/mth/snapshots/phoenix-spcx-2026-10-29
 COPY . /tests/
 # Bots run as mth-bot* and must not read the scenarios they're graded on.
