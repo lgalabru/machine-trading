@@ -24,7 +24,10 @@ can reach, with a per-session drawdown limit.
   and fake-outs. Accounts are valued at the scenario's oracle, not
   Phoenix's mark, which a maker's own quotes pull. The reward is PnL over a
   spread bound: every taker order filled at the competitor's half-spread.
-  The SDK adds `Trader::oracle_usd`.
+  The SDK adds `Trader::oracle_usd`. `phoenix-flash-crash` moves to 0.7.0
+  unchanged but for the grader: a position outside the mandate's universe
+  now counts only when a second read confirms it, so a bot that requotes
+  between reads is no longer disqualified by mistake.
 - **0.6.0.** Each scenario carries a [mandate](../../specs/mandate.md):
   the market the bot may trade, its position cap and its drawdown limit,
   with the same values as before. Bots get a copy in `MTH_MANDATE`, next to
