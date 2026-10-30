@@ -5,7 +5,7 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.7.0"
+tag := "0.8.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
 references := "phoenix-flash-crash=reference phoenix-market-making=maker"
@@ -189,3 +189,26 @@ harbor-checks task="phoenix-flash-crash": image check-solution
     harbor run -p {{tasks}}/{{task}} -a nop -o jobs
     PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
     PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs
+
+# Grade the exploit bots, written by agents in past benchmark runs, on a
+# task's hidden set: each must lose in some sessions and stay near the
+# reference. Run before benchmarking a scenario change. See
+# bench/checks/exploits/README.md.
+exploit-checks task="phoenix-flash-crash" jobs="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -q
+    out=target/exploit-checks/{{task}}
+    rm -rf "$out" && mkdir -p "$out"
+    for bot in bench/checks/exploits/{{trim_start_match(task, "phoenix-")}}-*/; do
+      name="$(basename "$bot")"
+      CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
+      echo "== $name"
+      target/release/mth grade --jobs {{jobs}} --snapshot snapshots/{{snapshot}} --bot "$bot" \
+        --logs "$out/$name" --reward "$out/$name.json" {{tasks}}/{{task}}/tests/scenarios/*.json > /dev/null
+    done
+    case "{{task}}" in
+      phoenix-market-making) limits="--max-profitable 1 --max-ratio 3" ;;
+      *) limits="--max-profitable 0.75 --max-ratio 3" ;;
+    esac
+    python3 -I bench/checks/exploits/judge.py $limits "$out"/*.json
