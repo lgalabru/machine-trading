@@ -41,7 +41,7 @@ and the mark wobbles in between.
 
 | Agent | Reward | What it shows |
 | --- | --- | --- |
-| oracle (the reference bot) | ~0.2 | The task is solvable and the reference is calibrated |
+| oracle (the reference bot) | ~0.04 | The task is solvable and the reference is calibrated |
 | nop (starter bot) | 0.0 | Doing nothing earns nothing |
 | cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend the session |
 | sneaky | 0.0 | Cheatcodes, airdrops and `exit` on the surfnet's own port are refused |
