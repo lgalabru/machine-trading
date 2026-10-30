@@ -229,8 +229,13 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             peak_position =
                 peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
             let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-            positions_outside_universe =
-                positions_outside_universe.max(now.positions_outside(asset.has_position_or_orders));
+            let outside = match now.positions_outside(asset.has_position_or_orders) {
+                0 => 0,
+                seen => {
+                    seen.min(outside_again(&rpc, &phoenix, &hawkeye, &bot, trader, market).await?)
+                }
+            };
+            positions_outside_universe = positions_outside_universe.max(outside);
             let value_usd = value(now.value_usd, asset.base_lots, slot, base_slot).await?;
             peak_value_usd = peak_value_usd.max(value_usd);
             max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
@@ -275,8 +280,11 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         .await?
         .value;
     let end_value_usd = value(end.value_usd, asset.base_lots, end_slot, base_slot).await?;
-    let positions_outside_universe =
-        positions_outside_universe.max(end.positions_outside(asset.has_position_or_orders));
+    let outside = match end.positions_outside(asset.has_position_or_orders) {
+        0 => 0,
+        seen => seen.min(outside_again(&rpc, &phoenix, &hawkeye, &bot, trader, market).await?),
+    };
+    let positions_outside_universe = positions_outside_universe.max(outside);
     let margin = hawkeye.view_margin(bot.pubkey(), 0, 0).await?.value;
     let report = SessionReport {
         scenario: scenario.name.clone(),
@@ -316,6 +324,27 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         "session finished"
     );
     Ok(report)
+}
+
+/// Markets held other than the scenario's, read again. The market's view and
+/// the account's are two reads: an order the bot places or cancels between
+/// them shows up in one and not the other, which looks like a position
+/// elsewhere. A position that really is elsewhere shows up on every read, so
+/// a count is only kept if a second pair of reads agrees.
+async fn outside_again(
+    rpc: &RpcClient,
+    phoenix: &Phoenix,
+    hawkeye: &phoenix_rise::core::PhoenixHawkeyeClient<'_>,
+    bot: &Keypair,
+    trader: Pubkey,
+    market: &phoenix_rise::types::exchange::ExchangeMarketConfig,
+) -> Result<u32> {
+    let asset = hawkeye
+        .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
+        .await?
+        .value;
+    let now = account(rpc, phoenix, &bot.pubkey(), trader).await?;
+    Ok(now.positions_outside(asset.has_position_or_orders))
 }
 
 /// The trader account, from one margin view.
