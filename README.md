@@ -78,7 +78,7 @@ Phoenix comes first; other protocols follow.
 
 #### 📉 Flash crash: `phoenix-flash-crash` ✅
 
-SPCX (SpaceX) perps crash or squeeze in one to three legs of 3–6%, 50/50. Most shocks revert, some stall,
+SPCX (SpaceX) perps crash or squeeze in one to three legs of 0.6–8%, 50/50, among fizzles that give their move back. Most shocks revert, some stall,
 and some keep going. A good bot reads which way the shock is going, takes
 the other side of the forced flow, and sizes so the shocks that don't
 revert can't take it past its loss limit. Blind bets at the open, and blind

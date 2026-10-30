@@ -154,13 +154,17 @@ pub struct MakingFamily {
     pub size_median: f64,
     pub size_sigma: f64,
     pub size_clamp: (f64, f64),
+    /// Odds a jump comes with informed flow ahead of it; the rest land
+    /// unannounced.
+    pub informed_odds: f64,
     /// Informed orders before a jump, how far ahead they start, and how much
     /// larger than noise they run.
     pub informed_orders: (u64, u64),
     pub informed_lead: (u64, u64),
     pub informed_scale: (f64, f64),
-    /// The chance of one fake-out burst: informed-looking flow, no jump.
-    pub fakeout_odds: f64,
+    /// Fake-out bursts per session, in any regime: informed-looking flow
+    /// with no jump after it.
+    pub fakeouts: (u64, u64),
     pub max_position: f64,
     pub max_drawdown_usd: f64,
 }
@@ -184,10 +188,11 @@ impl MakingFamily {
             size_median: 0.6,
             size_sigma: 0.7,
             size_clamp: (0.1, 4.0),
+            informed_odds: 0.6,
             informed_orders: (6, 12),
             informed_lead: (4, 24),
-            informed_scale: (2.0, 4.0),
-            fakeout_odds: 0.3,
+            informed_scale: (1.5, 3.0),
+            fakeouts: (0, 3),
             // ~0.3x the 10,000 USDC of collateral at ~$143: a maker shouldn't
             // warehouse risk.
             max_position: 20.0,
@@ -274,7 +279,7 @@ impl MakingFamily {
         }
 
         // Flow: noise every slot at the scenario's rate, informed bursts
-        // ahead of each jump, maybe one fake-out.
+        // ahead of most jumps, and fake-outs.
         let rate = rng.range_f64(self.noise_rate);
         let mut takers = Vec::new();
         for slot in 0..duration {
@@ -297,11 +302,13 @@ impl MakingFamily {
                 TakerSide::Sell
             }
         };
-        let mut bursts: Vec<(u64, TakerSide)> = jumps
-            .iter()
-            .map(|&(at, size)| (at, side_of(size)))
-            .collect();
-        if rng.next_f64() < self.fakeout_odds {
+        let mut bursts: Vec<(u64, TakerSide)> = Vec::new();
+        for &(at, size) in &jumps {
+            if rng.next_f64() < self.informed_odds {
+                bursts.push((at, side_of(size)));
+            }
+        }
+        for _ in 0..rng.range_u64(self.fakeouts) {
             let at = rng.range_u64((self.jump_margin, duration - self.jump_margin));
             let sign = if rng.next_f64() < 0.5 { -1.0 } else { 1.0 };
             bursts.push((at, side_of(sign)));
@@ -440,32 +447,43 @@ mod tests {
     }
 
     #[test]
-    fn jumps_come_with_informed_flow_ahead_of_them() {
+    fn informed_flow_leads_most_jumps_not_all() {
         let family = MakingFamily::spcx();
-        let seed = (0..500)
-            .find(|&s| family.regime(s) == Regime::Jumps)
-            .unwrap();
-        let s = family.sample("m", seed);
-        let making = s.making.as_ref().unwrap();
-        // The largest move between waypoints is a jump.
-        let (at, size) = s
-            .path
-            .windows(2)
-            .map(|w| (w[1].slot, w[1].level_pct - w[0].level_pct))
-            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
-            .unwrap();
-        assert!(size.abs() >= 0.5, "{size}");
-        let side = if size > 0.0 {
-            TakerSide::Buy
-        } else {
-            TakerSide::Sell
-        };
-        let ahead = making
-            .takers
-            .iter()
-            .filter(|o| o.slot < at && o.slot + 25 >= at && o.side == side)
-            .count();
-        assert!(ahead >= 2, "{ahead} orders ahead of the jump at {at}");
+        let (mut jumps, mut led) = (0, 0);
+        for seed in (0..2000).filter(|&s| family.regime(s) == Regime::Jumps).take(150) {
+            let s = family.sample("m", seed);
+            let making = s.making.as_ref().unwrap();
+            // Same-side volume in the 25 slots before `at`.
+            let ahead = |at: u64, side: TakerSide| -> f64 {
+                making
+                    .takers
+                    .iter()
+                    .filter(|o| o.slot < at && o.slot + 25 >= at && o.side == side)
+                    .map(|o| o.size)
+                    .sum()
+            };
+            // A typical 25-slot window's one-sided volume, for scale.
+            let mut windows: Vec<f64> = (25..s.duration_slots)
+                .step_by(25)
+                .map(|at| ahead(at, TakerSide::Buy))
+                .collect();
+            windows.sort_by(f64::total_cmp);
+            let typical = windows[windows.len() / 2].max(0.5);
+            for w in s.path.windows(2) {
+                let size = w[1].level_pct - w[0].level_pct;
+                if size.abs() < family.jump_pct.0 - 0.01 {
+                    continue;
+                }
+                jumps += 1;
+                let side = if size > 0.0 { TakerSide::Buy } else { TakerSide::Sell };
+                if ahead(w[1].slot, side) > 2.5 * typical {
+                    led += 1;
+                }
+            }
+        }
+        let share = led as f64 / jumps as f64;
+        assert!(jumps > 100, "{jumps} jumps");
+        assert!((0.4..0.8).contains(&share), "{share} of {jumps} jumps are led by a burst");
     }
 
     #[test]

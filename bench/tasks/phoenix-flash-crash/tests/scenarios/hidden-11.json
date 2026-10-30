@@ -1,8 +1,8 @@
 {
   "name": "hidden-11",
-  "description": "SPCX spikes 5.9% at once from around slot 112, then stalls to +5.43% of its starting mark",
+  "description": "SPCX drops 8.2% in 2 legs from around slot 102, then rebounds to -0.15% of its starting mark",
   "symbol": "SPCX",
-  "duration_slots": 295,
+  "duration_slots": 720,
   "mandate": {
     "version": "v0",
     "universe": [
@@ -17,149 +17,357 @@
   },
   "path": [
     {
-      "slot": 8,
-      "level_pct": 0.08
+      "slot": 10,
+      "level_pct": 0.083
     },
     {
-      "slot": 18,
-      "level_pct": 0.063
+      "slot": 22,
+      "level_pct": -0.065
     },
     {
-      "slot": 27,
-      "level_pct": 0.13
+      "slot": 29,
+      "level_pct": -0.079
     },
     {
-      "slot": 39,
-      "level_pct": -0.007
-    },
-    {
-      "slot": 43,
-      "level_pct": -0.112
-    },
-    {
-      "slot": 51,
-      "level_pct": -0.147
-    },
-    {
-      "slot": 62,
-      "level_pct": -0.092
-    },
-    {
-      "slot": 67,
-      "level_pct": -0.039
-    },
-    {
-      "slot": 75,
-      "level_pct": -0.066
-    },
-    {
-      "slot": 85,
-      "level_pct": -0.035
-    },
-    {
-      "slot": 94,
-      "level_pct": -0.077
-    },
-    {
-      "slot": 106,
+      "slot": 35,
       "level_pct": -0.121
     },
     {
+      "slot": 38,
+      "level_pct": -0.405
+    },
+    {
+      "slot": 43,
+      "level_pct": -0.825
+    },
+    {
+      "slot": 56,
+      "level_pct": -0.945
+    },
+    {
+      "slot": 60,
+      "level_pct": -0.811
+    },
+    {
+      "slot": 71,
+      "level_pct": -0.71
+    },
+    {
+      "slot": 78,
+      "level_pct": 0.0
+    },
+    {
+      "slot": 92,
+      "level_pct": 0.085
+    },
+    {
+      "slot": 102,
+      "level_pct": -1.574
+    },
+    {
+      "slot": 106,
+      "level_pct": -3.674
+    },
+    {
       "slot": 112,
-      "level_pct": 0.94
+      "level_pct": -4.668
     },
     {
-      "slot": 117,
-      "level_pct": 3.693
+      "slot": 128,
+      "level_pct": -4.687
     },
     {
-      "slot": 123,
-      "level_pct": 5.145
-    },
-    {
-      "slot": 129,
-      "level_pct": 5.878
+      "slot": 132,
+      "level_pct": -4.781
     },
     {
       "slot": 142,
-      "level_pct": 5.792
+      "level_pct": -4.731
     },
     {
-      "slot": 151,
-      "level_pct": 5.947
+      "slot": 152,
+      "level_pct": -4.607
     },
     {
-      "slot": 163,
-      "level_pct": 5.955
+      "slot": 160,
+      "level_pct": -5.492
     },
     {
-      "slot": 174,
-      "level_pct": 5.914
+      "slot": 166,
+      "level_pct": -7.111
     },
     {
-      "slot": 180,
-      "level_pct": 5.987
+      "slot": 172,
+      "level_pct": -8.198
     },
     {
-      "slot": 190,
-      "level_pct": 5.819
+      "slot": 181,
+      "level_pct": -8.142
     },
     {
-      "slot": 195,
-      "level_pct": 5.927
+      "slot": 188,
+      "level_pct": -8.286
     },
     {
-      "slot": 205,
-      "level_pct": 5.959
+      "slot": 194,
+      "level_pct": -8.215
     },
     {
-      "slot": 210,
-      "level_pct": 5.575
+      "slot": 201,
+      "level_pct": -8.252
     },
     {
-      "slot": 214,
-      "level_pct": 5.426
+      "slot": 207,
+      "level_pct": -8.175
     },
     {
-      "slot": 227,
-      "level_pct": 5.504
+      "slot": 212,
+      "level_pct": -8.163
     },
     {
-      "slot": 231,
-      "level_pct": 5.468
+      "slot": 223,
+      "level_pct": -8.123
     },
     {
-      "slot": 236,
-      "level_pct": 5.442
+      "slot": 229,
+      "level_pct": -8.094
     },
     {
-      "slot": 248,
-      "level_pct": 5.459
+      "slot": 235,
+      "level_pct": -8.129
     },
     {
-      "slot": 258,
-      "level_pct": 5.372
+      "slot": 245,
+      "level_pct": -8.191
     },
     {
-      "slot": 263,
-      "level_pct": 5.308
+      "slot": 254,
+      "level_pct": -8.276
     },
     {
-      "slot": 267,
-      "level_pct": 5.341
+      "slot": 259,
+      "level_pct": -8.339
     },
     {
-      "slot": 275,
-      "level_pct": 5.294
+      "slot": 270,
+      "level_pct": -8.24
     },
     {
-      "slot": 287,
-      "level_pct": 5.44
+      "slot": 282,
+      "level_pct": -8.157
     },
     {
-      "slot": 292,
-      "level_pct": 5.352
+      "slot": 286,
+      "level_pct": -8.204
+    },
+    {
+      "slot": 290,
+      "level_pct": -8.198
+    },
+    {
+      "slot": 302,
+      "level_pct": -8.098
+    },
+    {
+      "slot": 308,
+      "level_pct": -6.253
+    },
+    {
+      "slot": 311,
+      "level_pct": -4.634
+    },
+    {
+      "slot": 317,
+      "level_pct": -3.531
+    },
+    {
+      "slot": 322,
+      "level_pct": -1.791
+    },
+    {
+      "slot": 325,
+      "level_pct": -0.155
+    },
+    {
+      "slot": 338,
+      "level_pct": -0.269
+    },
+    {
+      "slot": 342,
+      "level_pct": -0.21
+    },
+    {
+      "slot": 350,
+      "level_pct": -0.299
+    },
+    {
+      "slot": 360,
+      "level_pct": -0.163
+    },
+    {
+      "slot": 370,
+      "level_pct": -0.106
+    },
+    {
+      "slot": 382,
+      "level_pct": -0.168
+    },
+    {
+      "slot": 387,
+      "level_pct": -0.168
+    },
+    {
+      "slot": 399,
+      "level_pct": -0.09
+    },
+    {
+      "slot": 410,
+      "level_pct": -0.08
+    },
+    {
+      "slot": 422,
+      "level_pct": -0.043
+    },
+    {
+      "slot": 426,
+      "level_pct": -0.166
+    },
+    {
+      "slot": 436,
+      "level_pct": -0.195
+    },
+    {
+      "slot": 448,
+      "level_pct": -0.098
+    },
+    {
+      "slot": 455,
+      "level_pct": -0.038
+    },
+    {
+      "slot": 462,
+      "level_pct": -0.141
+    },
+    {
+      "slot": 469,
+      "level_pct": -0.115
+    },
+    {
+      "slot": 477,
+      "level_pct": -0.115
+    },
+    {
+      "slot": 485,
+      "level_pct": -0.132
+    },
+    {
+      "slot": 491,
+      "level_pct": -0.172
+    },
+    {
+      "slot": 495,
+      "level_pct": -0.129
+    },
+    {
+      "slot": 504,
+      "level_pct": -0.03
+    },
+    {
+      "slot": 516,
+      "level_pct": -0.024
+    },
+    {
+      "slot": 525,
+      "level_pct": -0.115
+    },
+    {
+      "slot": 533,
+      "level_pct": -0.023
+    },
+    {
+      "slot": 544,
+      "level_pct": -0.2
+    },
+    {
+      "slot": 553,
+      "level_pct": -0.123
+    },
+    {
+      "slot": 560,
+      "level_pct": -0.067
+    },
+    {
+      "slot": 565,
+      "level_pct": -0.034
+    },
+    {
+      "slot": 577,
+      "level_pct": -0.072
+    },
+    {
+      "slot": 588,
+      "level_pct": -0.159
+    },
+    {
+      "slot": 597,
+      "level_pct": -0.23
+    },
+    {
+      "slot": 602,
+      "level_pct": -0.266
+    },
+    {
+      "slot": 612,
+      "level_pct": -0.283
+    },
+    {
+      "slot": 618,
+      "level_pct": -0.121
+    },
+    {
+      "slot": 628,
+      "level_pct": -0.165
+    },
+    {
+      "slot": 638,
+      "level_pct": -0.125
+    },
+    {
+      "slot": 643,
+      "level_pct": -0.072
+    },
+    {
+      "slot": 652,
+      "level_pct": -0.222
+    },
+    {
+      "slot": 660,
+      "level_pct": -0.151
+    },
+    {
+      "slot": 671,
+      "level_pct": -0.092
+    },
+    {
+      "slot": 683,
+      "level_pct": -0.021
+    },
+    {
+      "slot": 691,
+      "level_pct": -0.197
+    },
+    {
+      "slot": 703,
+      "level_pct": -0.294
+    },
+    {
+      "slot": 712,
+      "level_pct": -0.172
+    },
+    {
+      "slot": 717,
+      "level_pct": -0.072
     }
   ],
-  "reference_pnl_usd": -4.83
+  "reference_pnl_usd": 637.05
 }

@@ -4,7 +4,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/phoenix-flash-crash"
-version = "0.7.0"
+version = "0.8.0"
 description = "Write a bot that trades Phoenix SPCX (SpaceX) perps through flash crashes and squeezes, some of which never revert, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 
@@ -19,10 +19,12 @@ category = "trading"
 snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
-# Twelve hidden scenarios of 1-3 minutes of market time each (~95s on
-# average), one at a time, plus a few seconds of setup per session: ~20
-# minutes, ~35 at worst.
-timeout_sec = 3600.0
+# Thirty-six hidden scenarios of 80-180 seconds of market time each (~125s
+# on average), one at a time, plus ~20 seconds of setup per session: ~90
+# minutes, ~2 hours at worst. Twelve were too few: a good bot's edge is
+# about $50 a session against swings of about $240, so a small hidden set
+# ranked bots by the luck of its draw.
+timeout_sec = 10800.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
 # a bot must not reach one.

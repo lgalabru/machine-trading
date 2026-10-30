@@ -170,14 +170,17 @@ impl Scenario {
         self.max_position() * start_mark_usd * self.total_variation_pct() / 100.0
     }
 
-    /// What the reward divides PnL by: the spread bound for a market-making
-    /// scenario (see [`Making::spread_bound_usd`]), the hindsight bound
-    /// otherwise.
+    /// What the reward divides PnL by: the hindsight bound, plus, for a
+    /// market-making scenario, the spread bound (see
+    /// [`Making::spread_bound_usd`]). A maker can earn both: the spread on
+    /// every taker order, and the moves it trades or leans into, so a bound
+    /// on the spread alone is one a bot can pass.
     pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
-        match &self.making {
-            Some(making) => making.spread_bound_usd(&self.path, start_mark_usd),
-            None => self.hindsight_bound_usd(start_mark_usd),
-        }
+        let spread = self
+            .making
+            .as_ref()
+            .map_or(0.0, |making| making.spread_bound_usd(&self.path, start_mark_usd));
+        spread + self.hindsight_bound_usd(start_mark_usd)
     }
 
     /// Surfpool overrides for the whole path, with slots relative to when
@@ -241,21 +244,33 @@ pub enum Aftermath {
 /// or more legs, then its aftermath.
 ///
 /// The path is built so that its shape gives nothing away beyond what a
-/// trader would see in a real market. Every move is a ramp of unequal steps
-/// at uneven intervals, so the first step doesn't reveal the move's size.
-/// Each leg is drawn independently and another follows with fixed odds, so a
-/// leg's size says nothing about whether another is coming. Pauses between
-/// legs and the hold before the aftermath share one range, so waiting
-/// doesn't tell them apart. The session ends a random while after the last
-/// move, so the end slot doesn't date the aftermath. And between moves the
-/// mark wobbles, so quiet stretches aren't flat lines.
+/// trader would see in a real market, and so that what it does give away
+/// doesn't pay for certain (the exploit checks in `bench/checks/exploits`
+/// hold it to that):
+/// - Leg sizes are log-uniform over a wide range, and most legs land at
+///   once, so a move's first print says little about how far it goes and
+///   leaves little to ride. The rest ramp in unequal steps.
+/// - Quiet stretches carry fizzles: moves that start like a leg and give it
+///   all back, so not every move away is a shock.
+/// - Each leg is drawn independently and another follows with fixed odds, so
+///   a leg's size says nothing about whether another is coming; pauses and
+///   the hold before the aftermath share one range.
+/// - The session's length is drawn before the path and independently of it.
+///   The path is cut where the session ends, so the end slot dates nothing:
+///   a session may end mid-shock.
+/// - Between moves the mark wobbles, so quiet stretches aren't flat lines.
 #[derive(Debug, Clone)]
 pub struct ShockFamily {
     pub symbol: String,
+    /// Range of the session's length, in slots. Drawn before the path.
+    pub duration: (u64, u64),
     /// Range of the slot the shock starts at.
     pub shock_slot: (u64, u64),
-    /// Range of each leg's size, in percent of the starting mark.
+    /// Range of each leg's size, in percent of the starting mark. Sizes are
+    /// log-uniform over it: small legs are as common as large ones.
     pub leg_pct: (f64, f64),
+    /// Odds a leg or the aftermath lands at once, as one move; the rest ramp.
+    pub gap_odds: f64,
     /// Odds that another leg follows a leg, up to `max_legs`.
     pub extra_leg_odds: f64,
     pub max_legs: u32,
@@ -279,8 +294,11 @@ pub struct ShockFamily {
     pub max_step_pct: f64,
     /// Range of slots between a ramp's steps.
     pub step_gap: (u64, u64),
-    /// Range of slots the session continues after the last move.
-    pub tail_slots: (u64, u64),
+    /// Odds a quiet stretch carries a fizzle, its size in percent (either
+    /// way), and how many slots it holds before giving it all back.
+    pub fizzle_odds: f64,
+    pub fizzle_pct: (f64, f64),
+    pub fizzle_hold: (u64, u64),
     /// Largest change of the wobble per tick, in percent of the starting mark.
     pub noise_pct: f64,
     /// Range of slots between wobble ticks.
@@ -303,16 +321,20 @@ pub struct Shape {
     pub extreme_pct: f64,
     /// Level the aftermath ends at, in percent.
     pub end_pct: f64,
-    /// Slots from the end of the aftermath's ramp to the session's end.
+    /// Slots from the last waypoint to the session's end.
     pub tail_slots: u64,
+    /// Whether the session ended before the aftermath had landed.
+    pub cut: bool,
 }
 
 impl ShockFamily {
     pub fn spcx() -> Self {
         Self {
             symbol: "SPCX".into(),
-            shock_slot: (60, 120),
-            leg_pct: (3.0, 6.0),
+            duration: (320, 720),
+            shock_slot: (40, 200),
+            leg_pct: (0.6, 8.0),
+            gap_odds: 0.7,
             extra_leg_odds: 0.35,
             max_legs: 3,
             pause_slots: (30, 140),
@@ -321,10 +343,12 @@ impl ShockFamily {
             stall_odds: 0.2,
             revert_recovery: (0.5, 1.0),
             stall_recovery: (0.0, 0.2),
-            extend_pct: (2.0, 5.0),
+            extend_pct: (1.0, 5.0),
             max_step_pct: 3.0,
             step_gap: (3, 6),
-            tail_slots: (40, 160),
+            fizzle_odds: 0.5,
+            fizzle_pct: (0.4, 2.0),
+            fizzle_hold: (6, 40),
             noise_pct: 0.12,
             noise_gap: (4, 12),
             // ~1x the 10,000 USDC of collateral at the snapshot's ~$143 mark.
@@ -349,6 +373,9 @@ impl ShockFamily {
         let direction = self.pick_direction(rng.next_f64());
         let aftermath = self.pick_aftermath(rng.next_f64());
         let sign = direction.sign();
+        // The session's length comes before the path, so the path can't
+        // date it.
+        let duration_slots = rng.range_u64(self.duration);
         let shock_slot = rng.range_u64(self.shock_slot);
         let mut legs = 1;
         while legs < self.max_legs && rng.next_f64() < self.extra_leg_odds {
@@ -360,12 +387,12 @@ impl ShockFamily {
         let mut base = 0.0;
         let mut first_leg_pct = 0.0;
         for leg in 0..legs {
-            let size = path.rng.range_f64(self.leg_pct);
+            let size = path.rng.log_range_f64(self.leg_pct);
             if leg == 0 {
                 first_leg_pct = size;
             }
             base = round(base + sign * size);
-            path.ramp(base);
+            path.travel(base);
             let pause = path.rng.range_u64(self.pause_slots);
             path.quiet(base, path.slot + pause);
         }
@@ -375,10 +402,12 @@ impl ShockFamily {
             Aftermath::Stall => round(extreme * (1.0 - path.rng.range_f64(self.stall_recovery))),
             Aftermath::Extend => round(extreme + sign * path.rng.range_f64(self.extend_pct)),
         };
-        path.ramp(end);
-        let tail = path.rng.range_u64(self.tail_slots);
-        let duration_slots = path.slot + tail;
+        path.travel(end);
+        let aftermath_landed = path.slot;
         path.quiet(end, duration_slots);
+        let cut = aftermath_landed > duration_slots;
+        path.cut(duration_slots);
+        let tail = duration_slots - path.waypoints.last().map_or(0, |w| w.slot);
 
         let depth = extreme.abs();
         let legs_text = if legs == 1 {
@@ -396,10 +425,17 @@ impl ShockFamily {
         };
         let scenario = Scenario {
             name: name.to_string(),
-            description: format!(
-                "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}, then {then} to {end:+.2}% of its starting mark",
-                self.symbol
-            ),
+            description: if cut {
+                format!(
+                    "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}; the session ends before it {then}",
+                    self.symbol
+                )
+            } else {
+                format!(
+                    "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}, then {then} to {end:+.2}% of its starting mark",
+                    self.symbol
+                )
+            },
             symbol: self.symbol.clone(),
             duration_slots,
             mandate: Mandate::perp(
@@ -420,6 +456,7 @@ impl ShockFamily {
             extreme_pct: extreme,
             end_pct: end,
             tail_slots: tail,
+            cut,
         };
         (scenario, shape)
     }
@@ -538,6 +575,21 @@ impl<'a> PathBuilder<'a> {
         self.slot += gap;
     }
 
+    /// Go to `to`: at once with the family's gap odds, else in a ramp.
+    fn travel(&mut self, to: f64) {
+        if self.rng.next_f64() < self.family.gap_odds {
+            self.jump(to);
+        } else {
+            self.ramp(to);
+        }
+    }
+
+    /// Go to `to` in one move: Phoenix steps it as fast as it can.
+    fn jump(&mut self, to: f64) {
+        let slots = move_slots(self.level, to) + 1;
+        self.push(to, slots);
+    }
+
     /// Walk to `to` in unequal steps at uneven intervals.
     fn ramp(&mut self, to: f64) {
         let total = to - self.level;
@@ -572,7 +624,35 @@ impl<'a> PathBuilder<'a> {
     }
 
     /// Wobble around `base` until `until`, leaving room for a move there.
+    /// With the family's fizzle odds, somewhere in the stretch the market
+    /// moves away as a leg would, holds, and gives it all back.
     fn quiet(&mut self, base: f64, until: u64) {
+        let family = self.family;
+        let fizzle = if self.rng.next_f64() < family.fizzle_odds {
+            let sign = if self.rng.next_f64() < 0.5 { -1.0 } else { 1.0 };
+            let size = sign * self.rng.range_f64(family.fizzle_pct);
+            let hold = self.rng.range_u64(family.fizzle_hold);
+            // Room for the move out, the hold and the move back.
+            let needs = 2 * move_slots(0.0, family.fizzle_pct.1) + hold + 12;
+            let room = until.saturating_sub(self.slot);
+            (room > needs + 8).then(|| {
+                let at = self.slot + 4 + self.rng.range_u64((0, room - needs - 8));
+                (at, size, hold)
+            })
+        } else {
+            None
+        };
+        if let Some((at, size, hold)) = fizzle {
+            self.wobble(base, at);
+            let away = round(base + size);
+            self.travel(away);
+            self.wobble(away, self.slot + hold);
+            self.travel(base);
+        }
+        self.wobble(base, until);
+    }
+
+    fn wobble(&mut self, base: f64, until: u64) {
         let mut offset = self.level - base;
         loop {
             let gap = self.rng.range_u64(self.family.noise_gap);
@@ -585,6 +665,21 @@ impl<'a> PathBuilder<'a> {
             self.push(round(base + offset), 0);
         }
         self.slot = self.slot.max(until);
+    }
+
+    /// End the path at `duration`: drop every waypoint whose move wouldn't
+    /// finish by then.
+    fn cut(&mut self, duration: u64) {
+        let mut level = 0.0;
+        let mut keep = 0;
+        for (i, w) in self.waypoints.iter().enumerate() {
+            if w.slot + move_slots(level, w.level_pct) + 1 > duration {
+                break;
+            }
+            level = w.level_pct;
+            keep = i + 1;
+        }
+        self.waypoints.truncate(keep);
     }
 }
 
@@ -607,6 +702,11 @@ impl SplitMix64 {
 
     pub(crate) fn range_f64(&mut self, (lo, hi): (f64, f64)) -> f64 {
         lo + (hi - lo) * self.next_f64()
+    }
+
+    /// Log-uniform over `[lo, hi]`, both positive.
+    pub(crate) fn log_range_f64(&mut self, (lo, hi): (f64, f64)) -> f64 {
+        (lo.ln() + (hi.ln() - lo.ln()) * self.next_f64()).exp()
     }
 
     pub(crate) fn range_u64(&mut self, (lo, hi): (u64, u64)) -> u64 {
@@ -670,67 +770,105 @@ mod tests {
     #[test]
     fn shocks_go_their_way_and_aftermaths_follow() {
         let family = ShockFamily::spcx();
+        // A fizzle can take the mark past the shock's levels, and back.
+        let slack = family.fizzle_pct.1 + 2.0 * family.noise_pct;
         for seed in 0..200 {
             let (scenario, shape) = family.draw("s", seed);
             assert_eq!((shape.direction, shape.aftermath), family.kind(seed));
             let sign = shape.direction.sign();
             let extreme = sign * shape.extreme_pct;
             let end = sign * shape.end_pct;
-            assert!(extreme >= 3.0, "seed {seed}: {shape:?}");
+            assert!(extreme >= family.leg_pct.0 - 0.01, "seed {seed}: {shape:?}");
             match shape.aftermath {
                 Aftermath::Extend => assert!(end > extreme, "seed {seed}"),
                 _ => assert!(end <= extreme && end >= 0.0, "seed {seed}"),
             }
+            if shape.cut {
+                continue;
+            }
             let levels: Vec<f64> = scenario.path.iter().map(|w| w.level_pct * sign).collect();
             let peak = levels.iter().cloned().fold(f64::MIN, f64::max);
-            assert!((peak - extreme.max(end)).abs() < 0.3, "seed {seed}");
-            assert!((levels.last().unwrap() - end).abs() < 0.3, "seed {seed}");
+            assert!(peak < extreme.max(end) + slack, "seed {seed}");
+            assert!((levels.last().unwrap() - end).abs() < slack, "seed {seed}");
         }
     }
 
-    /// Ramps step unevenly: the first step of a move doesn't give its size.
+    /// Most moves land at once, so a move's first print leaves little to
+    /// ride; the rest ramp in unequal steps, none larger than Phoenix takes.
     #[test]
-    fn ramps_step_unevenly() {
+    fn most_moves_land_at_once() {
         let family = ShockFamily::spcx();
-        let mut uneven = 0;
-        for seed in 0..200 {
-            let (scenario, shape) = family.draw("s", seed);
-            let sign = shape.direction.sign();
-            // The first leg's ramp: consecutive waypoints moving the shock's way
-            // by more than the wobble can.
-            let mut steps = Vec::new();
-            let mut prev = 0.0;
-            for w in &scenario.path {
-                let d = sign * (w.level_pct - prev);
-                if d > 2.0 * family.noise_pct {
-                    steps.push(d);
-                } else if !steps.is_empty() {
-                    break;
-                }
-                prev = w.level_pct;
+        let (mut at_once, mut uneven, mut ramps) = (0, 0, 0);
+        for seed in 0..400 {
+            let mut path = PathBuilder::new(&family, SplitMix64(seed));
+            path.travel(5.0);
+            let steps: Vec<f64> = std::iter::once(0.0)
+                .chain(path.waypoints.iter().map(|w| w.level_pct))
+                .collect::<Vec<_>>()
+                .windows(2)
+                .map(|w| w[1] - w[0])
+                .collect();
+            if steps.len() == 1 {
+                at_once += 1;
+                continue;
             }
+            ramps += 1;
+            assert!(steps.iter().all(|d| *d <= family.max_step_pct + 1e-9), "seed {seed}");
             let (lo, hi) = steps
                 .iter()
                 .fold((f64::MAX, f64::MIN), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
-            if steps.len() > 1 && hi - lo > 0.2 {
+            if hi - lo > 0.2 {
                 uneven += 1;
             }
-            assert!(
-                steps.iter().all(|d| *d <= family.max_step_pct + 0.5),
-                "seed {seed}"
-            );
         }
-        assert!(uneven > 150, "only {uneven} of 200 first ramps are uneven");
+        let share = at_once as f64 / 400.0;
+        assert!((share - family.gap_odds).abs() < 0.07, "{share} land at once");
+        assert!(uneven * 4 > ramps * 3, "only {uneven} of {ramps} ramps are uneven");
     }
 
-    /// The end slot doesn't date the aftermath.
+    /// Quiet stretches carry fizzles: a move away that comes all the way back.
     #[test]
-    fn tails_vary() {
+    fn fizzles_come_all_the_way_back() {
         let family = ShockFamily::spcx();
-        let tails: Vec<u64> = (0..200)
-            .map(|seed| family.draw("s", seed).1.tail_slots)
-            .collect();
-        assert!(tails.iter().min().unwrap() < &60 && tails.iter().max().unwrap() > &140);
+        let mut fizzled = 0;
+        for seed in 0..200 {
+            let mut path = PathBuilder::new(&family, SplitMix64(seed));
+            path.quiet(0.0, 300);
+            let away = path
+                .waypoints
+                .iter()
+                .any(|w| w.level_pct.abs() >= family.fizzle_pct.0 - 1e-9);
+            if away {
+                fizzled += 1;
+                // The last move back lands on the base, before the wobble.
+                assert!(
+                    path.waypoints.iter().all(|w| w.level_pct.abs() <= family.fizzle_pct.1 + 1.0),
+                    "seed {seed}"
+                );
+                assert!(path.waypoints.last().unwrap().level_pct.abs() < 2.0 * family.noise_pct);
+            }
+        }
+        let share = fizzled as f64 / 200.0;
+        assert!((share - family.fizzle_odds).abs() < 0.1, "{share} of stretches fizzle");
+    }
+
+    /// The session's length is drawn before the path: how long a session
+    /// runs says nothing about its shock, and some end before the aftermath.
+    #[test]
+    fn the_end_dates_nothing() {
+        let family = ShockFamily::spcx();
+        let draws: Vec<(Scenario, Shape)> = (0..600).map(|seed| family.draw("s", seed)).collect();
+        let mean = |legs: u32| {
+            let d: Vec<f64> = draws
+                .iter()
+                .filter(|(_, s)| s.legs == legs)
+                .map(|(sc, _)| sc.duration_slots as f64)
+                .collect();
+            d.iter().sum::<f64>() / d.len() as f64
+        };
+        assert!((mean(1) - mean(3)).abs() / mean(1) < 0.08, "{} vs {}", mean(1), mean(3));
+        let cut = draws.iter().filter(|(_, s)| s.cut).count();
+        assert!(cut > 0 && cut < 120, "{cut} of 600 sessions end mid-shock");
     }
 
     /// A shock's legs are drawn independently: how far the first leg went

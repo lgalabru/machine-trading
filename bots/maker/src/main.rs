@@ -17,8 +17,9 @@
 //! quotes around the mark chases its own quotes.
 //!
 //! Its PnL is a published baseline, not the reward's scale (that's the
-//! spread bound). It reacts to its own fills only: it doesn't read the tape,
-//! doesn't tell a fake-out from a real burst, and requotes slowly.
+//! spread bound plus the hindsight bound). It reacts to its own fills only:
+//! it doesn't read the tape, doesn't tell a fake-out from a real burst, and
+//! requotes slowly.
 
 use std::collections::VecDeque;
 
