@@ -386,6 +386,7 @@ mod tests {
             max_drawdown_usd: 0.0,
             valuation: "mark",
             flow: None,
+            competitor: None,
         }
     }
 

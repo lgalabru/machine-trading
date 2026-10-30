@@ -27,9 +27,6 @@ use crate::{
 /// Each taker's collateral: far more than its flow needs, so no order fails
 /// for margin.
 const TAKER_DEPOSIT_USDC: f64 = 100_000.0;
-/// How far from the market's level a taker's order may fill. Wide enough to
-/// reach the competitor at its widest, so a taker order always fills.
-const TAKER_SLIPPAGE: f64 = 0.02;
 
 /// What the grader's takers did in a session.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -144,9 +141,12 @@ impl Takers {
             while let Some(order) = making.takers.get(next).filter(|o| o.slot <= at) {
                 next += 1;
                 let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
+                // The order's own limit: it fills only against quotes at
+                // least this close to the level, or not at all.
+                let reach = order.limit_bps / 10_000.0;
                 let (side, limit) = match order.side {
-                    TakerSide::Buy => (Side::Bid, level * (1.0 + TAKER_SLIPPAGE)),
-                    TakerSide::Sell => (Side::Ask, level * (1.0 - TAKER_SLIPPAGE)),
+                    TakerSide::Buy => (Side::Bid, level * (1.0 + reach)),
+                    TakerSide::Sell => (Side::Ask, level * (1.0 - reach)),
                 };
                 let trader = &self.traders[order.account as usize];
                 let size = order.size;

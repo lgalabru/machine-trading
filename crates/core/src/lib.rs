@@ -1,6 +1,7 @@
 //! Shared logic for the mth Solana trading benchmark.
 
 pub mod chain;
+pub mod compete;
 mod error;
 pub mod flow;
 pub mod grade;

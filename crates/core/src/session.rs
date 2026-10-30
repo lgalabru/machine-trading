@@ -30,6 +30,7 @@ use tracing::{info, warn};
 
 use crate::{
     Error, Result, chain,
+    compete::{CompeteReport, Competitor},
     error::io_error,
     flow::{FlowReport, Takers},
     guard::Guard,
@@ -100,6 +101,9 @@ pub struct SessionReport {
     /// Market making: what the grader's takers sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<FlowReport>,
+    /// Market making: what the grader's own maker did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub competitor: Option<CompeteReport>,
 }
 
 impl SessionReport {
@@ -135,11 +139,12 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         .value_usd;
     // Market making: the takers and the widened makers, set up while
     // cheatcodes still work.
-    let takers = match &scenario.making {
-        Some(making) => {
-            Some(Takers::prepare(&world, &phoenix, scenario, making, start_mark_ticks).await?)
-        }
-        None => None,
+    let (takers, competitor) = match &scenario.making {
+        Some(making) => (
+            Some(Takers::prepare(&world, &phoenix, scenario, making, start_mark_ticks).await?),
+            Some(Competitor::prepare(&world, &phoenix, scenario).await?),
+        ),
+        None => (None, None),
     };
     // What a market-making account's position is worth: the scenario's own
     // oracle level at `slot`, which quoting can't push the way it can push
@@ -263,7 +268,17 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             _ => None,
         }
     };
-    let (sampled, flow) = futures::join!(sampling, flow);
+    let competing = async {
+        match (&competitor, &scenario.making) {
+            (Some(competitor), Some(making)) => Some(
+                competitor
+                    .run(&rpc, scenario, making, start_mark_usd, base_slot, end_slot)
+                    .await,
+            ),
+            _ => None,
+        }
+    };
+    let (sampled, flow, competitor) = futures::join!(sampling, flow, competing);
     sampled?;
     stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
     let late_slots = surfnet.coalesced_slots() - late_before;
@@ -316,6 +331,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             "mark"
         },
         flow,
+        competitor,
     };
     info!(
         scenario = report.scenario,

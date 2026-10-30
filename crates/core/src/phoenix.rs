@@ -14,7 +14,7 @@ use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use surfpool_sdk::Surfnet;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     Error, Result,
@@ -82,13 +82,25 @@ pub async fn onboard_trader(
             label: "enable trader".into(),
         }],
     )?;
-    // Capabilities land a slot after registration; give it a few.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    let deposit = phoenix
-        .tx()
-        .build_deposit_funds(owner, trader, deposit_usdc)?;
-    mth_botkit::send(&rpc, authority, deposit, "deposit collateral")?;
+    // Capabilities land a slot after registration. Under load (a session
+    // onboards the bot, eight takers and a competitor at once) that slot can
+    // come late: until it does, Phoenix refuses the deposit as frozen, so
+    // retry rather than guess how long to wait.
+    let mut attempt = 0;
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let deposit = phoenix
+            .tx()
+            .build_deposit_funds(owner, trader, deposit_usdc)?;
+        match mth_botkit::send(&rpc, authority, deposit, "deposit collateral") {
+            Ok(_) => break,
+            Err(error) if attempt < 5 && error.to_string().contains("TraderFrozen") => {
+                attempt += 1;
+                warn!(%owner, attempt, "trader not enabled yet; retrying the deposit");
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     info!(%owner, %trader, deposit_usdc, "trader onboarded");
     Ok(trader)
 }
