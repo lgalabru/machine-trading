@@ -1,8 +1,10 @@
 //! Reference: fade the shock in tranches, hold for the reversion.
 //!
-//! The family's shocks are crashes or squeezes in one to three legs of 3-6%,
-//! and usually revert. The first 4% move tells the reference which one this
-//! is. It then takes
+//! The family's shocks are crashes or squeezes in one to three legs of
+//! 0.6-8%, and usually revert. The reference ignores anything under 4%:
+//! most of those are wobble, fizzles or shocks too small to pay for the
+//! round trip. The first 4% move tells it which way the shock goes. It then
+//! takes
 //! the other side of the forced flow: long into a crash, short into a
 //! squeeze, in tranches as the shock deepens, each a share of the position
 //! cap. It holds to the end of the session to keep the whole reversion. A
@@ -11,7 +13,9 @@
 //!
 //! Its PnL is a published baseline, not the reward's scale (that's the
 //! hindsight bound). It reads the regime reasonably but not well: it doesn't
-//! tell a stall from a reversion, and its stop only catches deep extensions.
+//! tell a stall from a reversion, sits out small shocks, and its stop only
+//! catches deep extensions. Re-tuned against the 0.8.0 family offline, its
+//! thresholds were already within a few dollars a session of the best.
 
 use std::time::{Duration, Instant};
 

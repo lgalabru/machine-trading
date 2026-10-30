@@ -42,10 +42,13 @@ fills nothing.
   Before the bot starts, the takers are onboarded, the makers widened, and
   every cheatcode locked for good. The bot runs as an unprivileged user
   behind an RPC proxy that forwards standard Solana methods only.
-- **Reward:** `clamp(Σ bot PnL / Σ spread bound, 0, 1)`. A scenario's spread
-  bound is every taker order filled at the competitor's half-spread with
-  nothing lost to informed flow, inventory or fees. No bot reaches it. The
-  reference is reported as a baseline.
+- **Reward:** `clamp(Σ bot PnL / Σ bound, 0, 1)`. A scenario's bound is its
+  spread bound (every taker order filled at the competitor's half-spread
+  with nothing lost to informed flow, inventory or fees) plus its hindsight
+  bound (the 20 SPCX cap held the right way through every move). A maker
+  earns from both, the spread and the moves it trades or leans into, so a
+  bound on the spread alone was one a bot could pass: 0.7.0's was. No bot
+  reaches the sum. The reference is reported as a baseline.
 - **Risk:** positions are capped at 20 SPCX (about 0.3× collateral), and a
   session may not draw down more than $250 from its peak. Breaking either,
   trading another market, a refused RPC call, or ending liquidatable scores
@@ -80,6 +83,12 @@ where agents separate.
   than inferring it.
 - **A simple competitor.** The mainnet makers re-center on each move and
   otherwise stand still: they don't manage inventory or react to fills.
+  Nor do they tighten when undercut, and the takers send market orders
+  that don't care about price, so a maker one tick inside the competitor,
+  with size on both sides, collects most of the spread on every order.
+  That is most of what the best bots make here (0.7.0's and 0.8.0's
+  exploit checks: winning every session, worst session about +$10). A
+  competitor that reacts, and price-sensitive takers, are the next step.
 - **Transaction fees aren't counted.** The account is valued in USDC; the
   SOL a bot spends on requotes isn't charged against it.
 - **No funding.** Sessions last a few minutes; perp funding isn't simulated.

@@ -12,11 +12,28 @@ can reach, with a per-session drawdown limit.
 
 | Task | Market | Scenario |
 | --- | --- | --- |
-| `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes in legs of 3–6%: most revert, some stall, some keep going |
+| `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes in legs of 0.6–8%, most landing at once, among fizzles: most revert, some stall, some keep going |
 | `phoenix-market-making` | Phoenix SPCX (SpaceX) perpetuals | Make markets against widened mainnet makers and grader-run takers, some informed, while the price walks, trends or jumps |
 
 ## Changelog
 
+- **0.8.0.** Both tasks stop paying for knowing how their scenarios are
+  made. In 0.6.0 and 0.7.0, Opus and Fable beat the reference about 6× on
+  `phoenix-flash-crash`, profitable in every session, by riding legs that
+  always ran at least 3% in several steps and by dating the aftermath from
+  the session's end; on `phoenix-market-making` they scored the maximum by
+  trading every informed burst, which always led a jump. Now:
+  `phoenix-flash-crash` legs run 0.6–8% (log-uniform), about 70% of moves
+  land at once, quiet stretches carry fizzles that give their move back, and
+  a session's length is drawn before its path, so it can end mid-shock. The
+  hidden set grows from 12 to 36 scenarios: a good bot's edge is about $50 a
+  session against swings of about $240, and twelve ranked bots by the luck
+  of the draw. `phoenix-market-making` announces about 60% of jumps, sends
+  zero to three fake-out bursts a session in any regime, and sizes informed
+  orders closer to noise; its bound adds the hindsight bound to the spread
+  bound, so no bot can pass it. New release check, `just exploit-checks`:
+  the bots that exploited past versions must lose some sessions and stay
+  near the reference (see `bench/checks/exploits`).
 - **0.7.0.** New task, `phoenix-market-making`: quote SPCX against Phoenix's
   own makers, widened to a half-spread drawn per session (8–30 bp), while
   the price walks, trends or jumps 0.8–3%. The grader sends taker flow

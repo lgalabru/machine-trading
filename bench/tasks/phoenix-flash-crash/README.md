@@ -6,7 +6,7 @@ Solana mainnet: Phoenix's SPCX market, snapshotted on 2026-10-29 and restored in
 [Surfpool](https://github.com/solana-foundation/surfpool) surfnet at the
 snapshot's slot and time.
 
-**What it measures.** SPCX shocks in one to three legs of 3–6%: half the
+**What it measures.** SPCX shocks in one to three legs of 0.6–8%, most landing at once, among fizzles that give their move back: half the
 time it crashes, half the time it squeezes. Most shocks revert (~65%), but
 some stall (~20%) and some keep going (~15%). A good bot reads which way the
 shock is going, takes the other side of the forced flow, and sizes and exits
@@ -23,10 +23,10 @@ and the mark wobbles in between.
   does.
 - **Verifier:** a 384 MB Debian slim image with the grader and the snapshot,
   and no toolchain. It receives only `/app/bot`. With no network, it replays
-  twelve hidden scenarios, one at a time, each on a fresh surfnet. Before the bot starts, every
+  thirty-six hidden scenarios, one at a time, each on a fresh surfnet. Before the bot starts, every
   cheatcode is locked for good. The bot runs as an unprivileged user behind an
   RPC proxy that forwards standard Solana methods only.
-- **Reward:** `clamp(Σ bot PnL / Σ hindsight bound, 0, 1)` over the twelve
+- **Reward:** `clamp(Σ bot PnL / Σ hindsight bound, 0, 1)` over the thirty-six
   scenarios. The hindsight bound is the full position cap held the right way
   through every move at no cost: no bot reaches it, so the score doesn't
   saturate. The reference (fade the shock in two tranches, hold) scores

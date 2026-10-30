@@ -9,12 +9,12 @@ Each graded session starts a fresh sandbox, then:
 
 1. Gives your bot a new keypair with SOL for fees and 100 USDC in its wallet. The keypair's Phoenix cross-margin trader account (PDA index 0, subaccount 0) is registered and holds **10,000 USDC of collateral**.
 2. Starts your bot.
-3. Replays a market scenario. Starting 15 to 30 seconds after your bot starts, SPCX shocks away from its starting mark: **down** (a crash, in half the scenarios) or **up** (a squeeze, in the other half). A shock comes in legs of 3% to 6% each; after each leg, another follows with odds of about a third, up to three legs. Each leg, like every move in the session, plays out as a ramp of uneven steps over one to seven seconds. After the last leg the market holds the shock for 8 to 35 seconds (a pause between legs lasts as long), then one of three things happens:
+3. Replays a market scenario. Starting 10 to 50 seconds after your bot starts, SPCX shocks away from its starting mark: **down** (a crash, in half the scenarios) or **up** (a squeeze, in the other half). A shock comes in legs of 0.6% to 8% each, small legs as common as large ones (log-uniform); after each leg, another follows with odds of about a third, up to three legs. About 70% of moves, legs and aftermaths alike, land at once, as fast as Phoenix moves its price; the rest ramp in uneven steps over one to seven seconds. After the last leg the market holds the shock for 8 to 35 seconds (a pause between legs lasts as long), then one of three things happens:
    - **Revert** (about 65% of scenarios): it gives back between half and all of the shock.
    - **Stall** (about 20%): it gives back at most a fifth of the shock.
-   - **Extend** (about 15%): it keeps going the shock's way, a further 2% to 5% of the starting mark.
+   - **Extend** (about 15%): it keeps going the shock's way, a further 1% to 5% of the starting mark.
 
-   Between moves the mark wobbles, by up to about a quarter of a percent. The session ends 10 to 40 seconds after the last move, and a whole session lasts about one to three minutes. Each shock's direction, legs, timing, and aftermath are drawn at random within these ranges and odds, and the graded scenarios are hidden.
+   Between moves the mark wobbles, by up to about a quarter of a percent, and about half of the quiet stretches (before the shock, in a pause, after the aftermath) carry a fizzle: a move of 0.4% to 2% either way that holds for 1.5 to 10 seconds, then gives it all back. A session lasts 80 to 180 seconds, drawn before and independently of its shock, so a session can end mid-shock, before its aftermath. Each shock's direction, legs, timing, and aftermath are drawn at random within these ranges and odds, and the graded scenarios are hidden.
 4. At the session's last slot, stops your bot and values the account at the mark price: collateral plus unrealized PnL plus wallet USDC. Open positions and orders are not closed for you.
 
 ## The bot contract
@@ -44,7 +44,7 @@ Rules:
 
 ## Scoring
 
-Your bot is graded on 12 hidden scenarios: six crashes and six squeezes. Your reward is your bot's total PnL over all of them, divided by the **hindsight bound** on the same scenarios, clamped to between 0 and 1:
+Your bot is graded on 36 hidden scenarios: eighteen crashes and eighteen squeezes. Your reward is your bot's total PnL over all of them, divided by the **hindsight bound** on the same scenarios, clamped to between 0 and 1:
 
 ```
 reward = clamp(sum of your PnL / sum of the hindsight bounds, 0, 1)

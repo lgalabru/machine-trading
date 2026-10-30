@@ -1,8 +1,8 @@
 {
   "name": "practice-6",
-  "description": "SPCX drops 7.5% in 2 legs from around slot 86, then rebounds to -0.90% of its starting mark",
+  "description": "SPCX drops 0.6% at once from around slot 100, then stalls to -0.60% of its starting mark",
   "symbol": "SPCX",
-  "duration_slots": 414,
+  "duration_slots": 503,
   "mandate": {
     "version": "v0",
     "universe": [
@@ -17,217 +17,253 @@
   },
   "path": [
     {
-      "slot": 6,
-      "level_pct": 0.057
+      "slot": 7,
+      "level_pct": 0.07
     },
     {
-      "slot": 10,
-      "level_pct": 0.132
+      "slot": 18,
+      "level_pct": 0.009
     },
     {
-      "slot": 14,
-      "level_pct": 0.047
+      "slot": 23,
+      "level_pct": 0.027
     },
     {
-      "slot": 26,
-      "level_pct": 0.123
+      "slot": 27,
+      "level_pct": -0.088
     },
     {
-      "slot": 37,
-      "level_pct": 0.063
+      "slot": 39,
+      "level_pct": -0.156
     },
     {
-      "slot": 41,
-      "level_pct": 0.074
+      "slot": 43,
+      "level_pct": 0.905
     },
     {
-      "slot": 48,
-      "level_pct": 0.001
+      "slot": 54,
+      "level_pct": 0.992
     },
     {
-      "slot": 55,
-      "level_pct": -0.053
+      "slot": 60,
+      "level_pct": 0.41
     },
     {
-      "slot": 59,
-      "level_pct": -0.065
-    },
-    {
-      "slot": 63,
-      "level_pct": -0.097
-    },
-    {
-      "slot": 71,
-      "level_pct": -0.126
+      "slot": 64,
+      "level_pct": 0.0
     },
     {
       "slot": 78,
-      "level_pct": -0.027
+      "level_pct": 0.085
     },
     {
-      "slot": 86,
-      "level_pct": -1.305
+      "slot": 87,
+      "level_pct": -0.021
     },
     {
-      "slot": 92,
-      "level_pct": -2.39
+      "slot": 100,
+      "level_pct": -0.61
     },
     {
-      "slot": 96,
-      "level_pct": -3.174
+      "slot": 108,
+      "level_pct": 0.385
     },
     {
-      "slot": 109,
-      "level_pct": -3.258
+      "slot": 119,
+      "level_pct": 0.3
     },
     {
-      "slot": 115,
-      "level_pct": -3.271
+      "slot": 122,
+      "level_pct": -0.61
     },
     {
-      "slot": 121,
-      "level_pct": -3.165
+      "slot": 134,
+      "level_pct": -0.535
     },
     {
-      "slot": 128,
-      "level_pct": -3.103
+      "slot": 138,
+      "level_pct": -0.564
     },
     {
-      "slot": 140,
-      "level_pct": -3.106
+      "slot": 147,
+      "level_pct": -0.504
     },
     {
-      "slot": 149,
-      "level_pct": -3.087
+      "slot": 150,
+      "level_pct": -0.541
     },
     {
-      "slot": 158,
-      "level_pct": -3.065
+      "slot": 154,
+      "level_pct": -0.6
     },
     {
-      "slot": 169,
-      "level_pct": -3.106
+      "slot": 172,
+      "level_pct": -0.64
     },
     {
-      "slot": 181,
-      "level_pct": -3.073
+      "slot": 182,
+      "level_pct": -0.547
     },
     {
-      "slot": 186,
-      "level_pct": -3.048
+      "slot": 189,
+      "level_pct": -0.647
     },
     {
-      "slot": 190,
-      "level_pct": -3.052
+      "slot": 197,
+      "level_pct": -0.646
     },
     {
-      "slot": 202,
-      "level_pct": -3.036
+      "slot": 209,
+      "level_pct": -0.612
     },
     {
-      "slot": 214,
-      "level_pct": -4.631
+      "slot": 213,
+      "level_pct": -0.616
     },
     {
-      "slot": 219,
-      "level_pct": -6.43
+      "slot": 218,
+      "level_pct": -0.681
     },
     {
-      "slot": 224,
-      "level_pct": -7.488
+      "slot": 230,
+      "level_pct": -0.664
     },
     {
-      "slot": 240,
-      "level_pct": -7.402
+      "slot": 241,
+      "level_pct": -0.676
     },
     {
-      "slot": 251,
-      "level_pct": -7.36
+      "slot": 249,
+      "level_pct": -0.555
     },
     {
-      "slot": 262,
-      "level_pct": -7.367
+      "slot": 258,
+      "level_pct": -0.498
     },
     {
-      "slot": 269,
-      "level_pct": -6.515
+      "slot": 263,
+      "level_pct": -0.481
     },
     {
-      "slot": 275,
-      "level_pct": -4.787
+      "slot": 267,
+      "level_pct": -0.544
     },
     {
-      "slot": 281,
-      "level_pct": -3.927
+      "slot": 274,
+      "level_pct": -0.469
     },
     {
       "slot": 286,
-      "level_pct": -2.164
+      "level_pct": -0.483
     },
     {
-      "slot": 292,
-      "level_pct": -0.902
+      "slot": 298,
+      "level_pct": -0.574
     },
     {
-      "slot": 299,
-      "level_pct": -0.958
+      "slot": 304,
+      "level_pct": -0.616
     },
     {
-      "slot": 307,
-      "level_pct": -1.016
-    },
-    {
-      "slot": 316,
-      "level_pct": -0.857
+      "slot": 309,
+      "level_pct": -0.521
     },
     {
       "slot": 320,
-      "level_pct": -0.86
+      "level_pct": -0.458
     },
     {
-      "slot": 328,
-      "level_pct": -0.907
+      "slot": 329,
+      "level_pct": -0.561
     },
     {
-      "slot": 334,
-      "level_pct": -0.99
+      "slot": 336,
+      "level_pct": -0.602
     },
     {
-      "slot": 343,
-      "level_pct": -0.91
+      "slot": 341,
+      "level_pct": -0.528
     },
     {
-      "slot": 351,
-      "level_pct": -0.792
+      "slot": 350,
+      "level_pct": -0.594
     },
     {
-      "slot": 358,
-      "level_pct": -0.737
+      "slot": 359,
+      "level_pct": -0.479
     },
     {
-      "slot": 367,
-      "level_pct": -0.804
+      "slot": 365,
+      "level_pct": -0.627
     },
     {
-      "slot": 377,
-      "level_pct": -0.97
+      "slot": 374,
+      "level_pct": -0.731
     },
     {
-      "slot": 383,
-      "level_pct": -0.837
+      "slot": 380,
+      "level_pct": -0.546
     },
     {
-      "slot": 393,
-      "level_pct": -0.985
+      "slot": 384,
+      "level_pct": -0.584
     },
     {
-      "slot": 400,
-      "level_pct": -0.86
+      "slot": 389,
+      "level_pct": -0.542
     },
     {
-      "slot": 411,
-      "level_pct": -0.802
+      "slot": 395,
+      "level_pct": -0.582
+    },
+    {
+      "slot": 404,
+      "level_pct": -0.571
+    },
+    {
+      "slot": 414,
+      "level_pct": -0.582
+    },
+    {
+      "slot": 420,
+      "level_pct": -0.645
+    },
+    {
+      "slot": 425,
+      "level_pct": -0.679
+    },
+    {
+      "slot": 436,
+      "level_pct": -0.629
+    },
+    {
+      "slot": 447,
+      "level_pct": -0.721
+    },
+    {
+      "slot": 455,
+      "level_pct": -0.635
+    },
+    {
+      "slot": 461,
+      "level_pct": -0.545
+    },
+    {
+      "slot": 473,
+      "level_pct": -0.61
+    },
+    {
+      "slot": 483,
+      "level_pct": -0.596
+    },
+    {
+      "slot": 487,
+      "level_pct": -0.55
+    },
+    {
+      "slot": 495,
+      "level_pct": -0.607
     }
   ],
-  "reference_pnl_usd": 235.72
+  "reference_pnl_usd": 0.0
 }
