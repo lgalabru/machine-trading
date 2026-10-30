@@ -10727,7 +10727,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surfpool-core"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#17d954e66a306606a61c4eb81bbdaaef08e62680"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#ec131dd89cb65e15a9b1c5cff32e3744f2daa1c0"
 dependencies = [
  "agave-feature-set",
  "agave-geyser-plugin-interface",
@@ -10828,7 +10828,7 @@ dependencies = [
 [[package]]
 name = "surfpool-db"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#17d954e66a306606a61c4eb81bbdaaef08e62680"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#ec131dd89cb65e15a9b1c5cff32e3744f2daa1c0"
 dependencies = [
  "diesel",
  "diesel-dynamic-schema",
@@ -10840,7 +10840,7 @@ dependencies = [
 [[package]]
 name = "surfpool-sdk"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#17d954e66a306606a61c4eb81bbdaaef08e62680"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#ec131dd89cb65e15a9b1c5cff32e3744f2daa1c0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -10870,7 +10870,7 @@ dependencies = [
 [[package]]
 name = "surfpool-types"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#17d954e66a306606a61c4eb81bbdaaef08e62680"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fcheatcode-lockout#ec131dd89cb65e15a9b1c5cff32e3744f2daa1c0"
 dependencies = [
  "agave-feature-set",
  "anchor-lang-idl",
