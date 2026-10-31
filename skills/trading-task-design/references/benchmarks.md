@@ -87,3 +87,4 @@ machine-trading's niche.
 3. Model costs through the real programs. Most backtest benchmarks skip them.
 4. Run k trials and report consistency. Single runs mislead (see quant-pitfalls.md).
 5. State the realism limits in each task README.
+6. Gate every scenario change on a skill ladder and report headroom against ceilings (see ladder-and-ceilings.md).

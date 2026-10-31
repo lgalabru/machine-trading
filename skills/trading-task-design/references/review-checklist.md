@@ -10,6 +10,7 @@ prevents.
 - [ ] Family includes adversarial draws (non-recovery, fake-outs). *Prevents one-trick bots scoring 1.*
 - [ ] Every waypoint respects protocol limits (e.g. Phoenix ≤4% per step). *Prevents testing the simulator instead of the bot.*
 - [ ] Path shape leaks nothing: uneven steps and gaps, a random tail, noise between moves, independent legs, overlapping ranges for phases that should look alike. *Prevents bots that trade the generator instead of the market.*
+- [ ] Design record written ([design-record.md](design-record.md)): each regime flips the best response, each lever has an honest way to detect it, and every mechanic is present in every session (no tells). *Prevents regimes that are noise, hidden facts, and setup-time labels.*
 - [ ] Read the generator as an adversary: write down every rule an agent could deduce from the instruction, the practice files and `mth scenario generate`, and check that none beats the reference on its own. *Prevents structural leaks that no cheat check catches.*
 
 ## Instruction as contract
@@ -30,6 +31,9 @@ trading-specific.
 - [ ] Valuation reads on-chain state only.
 - [ ] Position size is capped in the contract and enforced by the grader, and the reference trades up to the cap. *Prevents a reward that measures leverage instead of skill.*
 - [ ] Raw PnL and per-scenario scores reported alongside the reward.
+- [ ] Ladder order rule holds on every fresh hidden set, and the reference is positive in every regime ([ladder-and-ceilings.md](ladder-and-ceilings.md)). *Prevents a task that ranks by luck.*
+- [ ] Each mechanic the task claims to reward has a control pair showing it pays. *Prevents levers that only add variance.*
+- [ ] Penalty twins run for each hard rule: one bot just inside it, one just outside. *Prevents rules that zero the wrong side.*
 - [ ] Hidden set large enough: 10+ for evals (see quant-pitfalls.md).
 
 ## Isolation and anti-cheat
@@ -45,14 +49,15 @@ trading-specific.
 
 - [ ] Snapshot pinned to a slot; manifest committed (`snapshots/<name>/manifest.json`).
 - [ ] Image pinned by digest in both Dockerfiles (`just pin-image`); `harbor lint --select ALL` clean.
-- [ ] Re-running the oracle gives the same PnL.
+- [ ] Re-running the oracle gives the same PnL, or the README says why it can't (a grader-run counterparty that reacts in real time) and by how much it moves.
 - [ ] SDK and bot dependencies pinned (lockfile shipped in the image).
 
 ## Checks
 
 - [ ] `just harbor-checks`: oracle at its baseline (`reference_ratio` ≈ 1), nop = 0, cheater = 0.
 - [ ] `harbor check bench/tasks/<name>` passes the rubric (or each FAIL is understood).
-- [ ] Real agents run with `-k 3` or more; best-model mean roughly 0.2–0.7.
+- [ ] Real agents run with `-k 3` or more; best-model mean roughly 0.2–0.7, reported with bootstrap intervals (sessions and runs) and the time limit.
+- [ ] Infrastructure failures voided and re-run, not scored 0.
 - [ ] `harbor analyze` run on those jobs; top trials' transcripts read by a human.
 - [ ] Winning bots' source read; any edge the bot explains by the generator's mechanics is a leak to fix, not a result. Risk profiles that are too clean (worst session near 0, 90%+ sessions profitable) checked the same way.
 

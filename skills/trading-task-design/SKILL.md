@@ -4,7 +4,7 @@ description: Designs, reviews, and hardens trading tasks for agent evals and RL 
 license: MIT
 metadata:
   author: Solana Foundation
-  version: 0.2.0
+  version: 0.3.0
   repo: lgalabru/machine-trading
 ---
 
@@ -35,7 +35,7 @@ Make these choices without asking unless the user says otherwise:
 | Deliverable | A bot directory (`/app/bot`, `run.sh`), not trades made by the agent itself | The agent's trades would be one sample; a bot can be replayed on many hidden markets |
 | Environment | Offline Surfpool snapshot pinned to a slot, replayed deterministically | Reproducible; real program logic, real fees and liquidity |
 | Market paths | Procedurally generated from a **family** with seeded parameters | Unlimited fresh scenarios; no memorized history |
-| Scored set | Hidden scenarios in `tests/`, never in the agent image | Iterating on scored scenarios is overfitting |
+| Scored set | Hidden scenarios in `tests/`, never in the agent image. Better: drawn inside the verifier from a per-batch secret seed (32 random bytes the agent never sees; reports carry only its hash), checked absent from every job file | Iterating on scored scenarios is overfitting, and a set that ships with the task is public the day it's published |
 | Practice set | Separate scenarios from the same family in `environment/practice` plus the generator | The agent can still do honest research |
 | Score | `clamp(Σ pnl / Σ hindsight bound, 0, 1)` over the whole scored set, where a scenario's bound is the cap held the right way through every move at no cost (cap × start mark × the path's total variation). Report the reference's ratio as a baseline, and per-scenario PnL | Normalizing by a reference saturates as soon as agents beat it, which they did twice in machine-trading: once by sizing up, once by trading better. A bound no bot can reach keeps headroom forever, and losses still count |
 | Position size | Cap exposure in the contract (`MTH_MAX_POSITION`), enforce it by sampling the position, and size the reference to the cap | PnL in dollars measures size as much as skill: without a cap, any bot that bets several times the reference's size and nets a profit saturates the reward |
@@ -58,6 +58,11 @@ Write one sentence: *"A good bot profits here because it ___."* Examples:
 If you can't fill in the blank, the task measures noise. The thesis decides
 the family, the reference bot, and what the instruction may disclose.
 
+Then write the design record: the expert research, the central decision and
+the options that look defensible, which habit fails in which regime, a row
+per lever with how an honest operator detects it, and the no-tells audit.
+See [references/design-record.md](references/design-record.md).
+
 ### 2. Design the scenario family
 
 A family is a generator: `(seed) → scenario`. Parameterize what varies and
@@ -79,6 +84,7 @@ pin what doesn't. In this repo, see `ShockFamily` in `crates/core/src/scenario.r
 - The reference sets the 1.0 line. Make it a reasonable, simple strategy, not an optimum: a ceiling the agent can only match leaves no headroom. Calibrate it on every scored scenario with `just calibrate`.
 - Record the reference's PnL on every scenario, losses included: with set-level scoring only the set's total must be positive. Check that the reference profits over the family as a whole (calibrate a large sample), not just on average draws.
 - Keep the oracle (`solution/`) identical to `bots/reference` (`just check-solution`).
+- **Build the ladder with it.** Fixed rungs from harmful to ideal (nop, a blind bet, a naive strategy, earlier model bots, the reference, hindsight), an order rule written as strict inequalities, and the rule checked on every fresh hidden set. A family change that reorders the ladder fails. Add the ceilings (hindsight, a regime oracle, a Bayes filter over the generator) to know how much headroom the reference leaves. See [references/ladder-and-ceilings.md](references/ladder-and-ceilings.md).
 - **Size the cap in notional, not units.** When a task moves to another market, re-derive the cap from collateral and the new price (100 SOL at $101 and 70 SPCX at $143 are both ~1× collateral), take a new snapshot, and let calibration confirm the book is deep enough to fill the reference at the cap.
 
 ### 4. Write the instruction as a contract
@@ -115,12 +121,16 @@ react to the bot").
 4. Run `harbor analyze jobs/<job>` to flag reward hacking and underspecified instructions.
 5. **Read the winning bots.** Agents explain their edge in the bot's doc comments: on machine-trading, every exploit so far was stated outright there ("Short from the start: the crash is certain", "every move is split into equal steps"). Treat a jump between model tiers as an exploit until the source says otherwise.
 6. **Treat a too-clean risk profile as a leak.** Real edges have losing sessions. A worst session near zero, 90%+ of sessions profitable, or a Sharpe several times the reference's says the bot knows the script.
-7. **Target spread:** the best model mean should land roughly between 0.2 and 0.7, with visible variance across models. If everything sits at 0 or 1, the task teaches nothing. When every agent fails, suspect the task first.
+7. **Port the winners into the ladder** as frozen rungs (`bench/checks/exploits/`), and design the next generation so they drop while the reference holds. Ports understate the next real run: re-screen after every generation.
+8. **Target spread:** the best model mean should land roughly between 0.2 and 0.7, with visible variance across models. If everything sits at 0 or 1, the task teaches nothing. When every agent fails, suspect the task first.
 
 ### 8. Size the scored set for statistical power
 
 Three scenarios can't separate two bots. Use the bootstrap / standard-error
 guidance in [references/quant-pitfalls.md](references/quant-pitfalls.md).
+Report every model score with a 90% interval that resamples both sessions
+and runs, and with its time limit: rankings can flip between 30 minutes and
+2 hours.
 Rough rule: 10+ hidden scenarios for an eval, 100+ procedurally generated
 ones for RL, with a private held-out pool that rotates.
 
@@ -143,6 +153,9 @@ ones for RL, with a private held-out pool that rotates.
 | Equal-sized steps, fixed spacing, or a fixed tail after the last move | The first step reveals the move and the end slot dates the aftermath: a bot can trade the script instead of the market |
 | Disjoint ranges for phases that should look alike | Each boundary becomes a rule ("a pause over 60 slots means the shock is over") |
 | A reference with a mechanical bias | Calibration measures the bias, not the strategy: machine-trading's first maker placed its bid before its ask on every requote, so the bid was live longer and it drifted long on balanced flow |
+| A mechanic present only in some regimes (a wallet funded, a noise source on) | Its presence is the label: the bot reads the regime off the setup, not the market |
+| A mechanic with no control pair | Nobody knows whether it pays: a passive bot did no better than its immediate-fill twin until resting fills got an impact discount |
+| Scoring infrastructure failures as 0 | A loaded host ranks models; void and re-run instead |
 | No position cap, or a reference far below it | The reward measures leverage: the first real agent in machine-trading bet 6× the reference's size and hit 1.0 with an ordinary strategy |
 
 ## Reference files
@@ -152,3 +165,5 @@ ones for RL, with a private held-out pool that rotates.
 - [references/market-realism.md](references/market-realism.md): fees, impact, liquidity, MEV, oracles, funding, liquidations
 - [references/quant-pitfalls.md](references/quant-pitfalls.md): overfitting, contamination, statistical power, metrics, RL reward design
 - [references/review-checklist.md](references/review-checklist.md): the pre-publish checklist, including Harbor's own quality rubric
+- [references/design-record.md](references/design-record.md): what to write down before building: expert research, the central decision, variants, levers, no tells, detectability, fairness, priced failure modes, generations
+- [references/ladder-and-ceilings.md](references/ladder-and-ceilings.md): the skill ladder and its order rule, control pairs, calibration model and power test, ceilings (hindsight, regime oracle, Bayes), screens, reporting with intervals
