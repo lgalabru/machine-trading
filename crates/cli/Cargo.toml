@@ -17,6 +17,7 @@ mth-botkit.workspace = true
 mth-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 solana-keypair.workspace = true
 solana-pubkey.workspace = true
 solana-rpc-client.workspace = true
