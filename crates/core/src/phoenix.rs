@@ -94,7 +94,7 @@ pub async fn onboard_trader(
             .build_deposit_funds(owner, trader, deposit_usdc)?;
         match mth_botkit::send(&rpc, authority, deposit, "deposit collateral") {
             Ok(_) => break,
-            Err(error) if attempt < 5 && error.to_string().contains("TraderFrozen") => {
+            Err(error) if attempt < 15 && error.to_string().contains("TraderFrozen") => {
                 attempt += 1;
                 warn!(%owner, attempt, "trader not enabled yet; retrying the deposit");
             }
