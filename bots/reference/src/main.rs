@@ -17,10 +17,8 @@
 //! catches deep extensions. Re-tuned against the 0.8.0 family offline, its
 //! thresholds were already within a few dollars a session of the best.
 
-use std::time::{Duration, Instant};
-
 use anyhow::Result;
-use mth_botkit::{BotEnv, Side, Trader};
+use mth_botkit::{BotEnv, Side, Trader, Turns};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -35,16 +33,14 @@ const EXTEND_STOP_PCT: Option<f64> = Some(13.5);
 /// book matches too many resting orders to fit a transaction's compute
 /// budget, so tranches are taken in slices.
 const SLICE: f64 = 10.0;
-/// After an order, wait this long for the position to reflect it before
-/// sizing the next one.
-const SETTLE: Duration = Duration::from_millis(500);
-const POLL: Duration = Duration::from_millis(250);
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
+    // Answer the grader's hello first: the world waits for it.
+    let mut turns = Turns::connect()?;
     let env = BotEnv::from_env()?;
     let trader = Trader::connect(&env)?;
     let start_mark = trader.mark_usd().await?;
@@ -58,9 +54,9 @@ async fn main() -> Result<()> {
     // +1 fades a crash (long), -1 fades a squeeze (short); unset until the
     // first tranche's move.
     let mut fade: Option<f64> = None;
-    let mut last_order: Option<Instant> = None;
-    while trader.slot()? < env.end_slot {
-        tokio::time::sleep(POLL).await;
+    // One look and at most one order a step: an order lands before the next
+    // step, so the position read then already reflects it.
+    while turns.next()?.is_some() {
         let Ok(mark) = trader.mark_usd().await else {
             continue;
         };
@@ -73,9 +69,6 @@ async fn main() -> Result<()> {
         let Some(side) = fade else {
             continue;
         };
-        if last_order.is_some_and(|at| at.elapsed() < SETTLE) {
-            continue;
-        }
         // How far the shock has gone, and how much of the fade is on.
         let shock_pct = -side * move_pct;
         let held = side * trader.position().await?.size;
@@ -97,7 +90,6 @@ async fn main() -> Result<()> {
             if let Err(e) = trader.place_market(close, size, round_cents(limit)).await {
                 warn!(%e, "close failed; retrying");
             }
-            last_order = Some(Instant::now());
             continue;
         }
 
@@ -117,7 +109,6 @@ async fn main() -> Result<()> {
             if let Err(e) = trader.place_market(open, missing, round_cents(limit)).await {
                 warn!(%e, "order failed; retrying");
             }
-            last_order = Some(Instant::now());
         }
     }
     let position = trader.position().await?;
