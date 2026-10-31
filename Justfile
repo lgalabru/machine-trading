@@ -268,7 +268,7 @@ leak-audit:
 # hidden sets, each drawn from a secret of its own. Fails unless the order
 # rule holds on every set and the exploit bots stay within their limits.
 # Run it before benchmarking any scenario change.
-ladder task="flash-crash" sets="4" jobs="4" parallel="2":
+ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -q

@@ -5,15 +5,17 @@ draws a fresh secret (never printed), grades every rung on the hidden set it
 seeds with `mth grade --draw`, and scores each rung's skill: its total PnL
 over the reference's. Then it checks:
 
-- the order rule, on every set: `a < b` compares skills, `max(a, b)` and
+- the order rule, on every set: `a < b` compares total PnL (as graded:
+  0 for a disqualified rung), `max(a, b)` and
   `min(a, b)` combine rungs, and `hindsight` is the set's bound;
 - how often the rule would hold on a set like it: a bootstrap over the set's
   sessions, which must be at least `min_rule_odds`;
 - the exploit bots' limits (`exploits`), over all sets: they must lose some
-  sessions, stay within a multiple of the reference, and never reach the
-  bound;
-- that nothing a rung did was refused or disqualified, except where the rung
-  expects it.
+  sessions, make less than the rung named by `below` (the regime oracle:
+  knowing the generator mustn't pay more than knowing the regime), and never
+  reach the bound;
+- that nothing a rung did was refused or disqualified, except rungs marked
+  `may_breach` (the blind bets at the full cap break the drawdown limit).
 
 Usage: python3 ladder.py <task> --mth target/release/mth --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--out DIR]
@@ -47,10 +49,15 @@ def grade(mth, snapshot, family, count, jobs, rung, secret, out):
     if rung.get("tell_regime"):
         command.append("--tell-regime")
     env = dict(os.environ, MTH_EVAL_SEED=secret)
-    with open(os.path.join(out, f"{rung['name']}.log"), "w") as log:
-        done = subprocess.run(command, env=env, stdout=subprocess.DEVNULL, stderr=log)
-    if done.returncode != 0:
-        raise SystemExit(f"{rung['name']}: mth grade failed; see {out}/{rung['name']}.log")
+    # A failed grade is an infrastructure failure (a session that couldn't
+    # set up), not a score: try once more before giving up on the rung.
+    for attempt in (1, 2):
+        with open(os.path.join(out, f"{rung['name']}.log"), "w") as log:
+            done = subprocess.run(command, env=env, stdout=subprocess.DEVNULL, stderr=log)
+        if done.returncode == 0:
+            break
+    else:
+        raise SystemExit(f"{rung['name']}: mth grade failed twice; see {out}/{rung['name']}.log")
     with open(report) as f:
         return json.load(f)
 
@@ -59,17 +66,31 @@ def pnls(report):
     return [s["pnl_usd"] for s in report["scenarios"]]
 
 
-def skills(reports, sessions=None):
-    """Each rung's skill, and the hindsight bound's, on `sessions` (indices)."""
+def disqualified(report):
+    return any(s.get("disqualified") for s in report["scenarios"])
+
+
+def totals(reports, sessions=None):
+    """Each rung's total PnL on `sessions` (indices), as graded: 0 for a
+    rung the grader disqualified, and the hindsight bound's."""
     n = len(reports["reference"]["scenarios"])
     sessions = range(n) if sessions is None else sessions
-    reference = sum(pnls(reports["reference"])[i] for i in sessions)
-    out = {}
-    for name, report in reports.items():
-        out[name] = sum(pnls(report)[i] for i in sessions) / reference if reference > 0 else float("nan")
+    out = {
+        name: 0.0 if disqualified(report) else sum(pnls(report)[i] for i in sessions)
+        for name, report in reports.items()
+    }
     bound = [s["bound_pnl_usd"] for s in reports["reference"]["scenarios"]]
-    out["hindsight"] = sum(bound[i] for i in sessions) / reference if reference > 0 else float("nan")
+    out["hindsight"] = sum(bound[i] for i in sessions)
     return out
+
+
+def skills(reports):
+    """Totals over the reference's: what `skill` reports. For reading only;
+    rules compare totals, which order the same way when the reference makes
+    money and stay sound when a resample's reference doesn't."""
+    t = totals(reports)
+    ref = t["reference"]
+    return {name: v / ref if ref > 0 else float("nan") for name, v in t.items()}
 
 
 def value(term, skill):
@@ -127,12 +148,12 @@ def main():
             }
             reports = {name: future.result() for name, future in futures.items()}
         sets.append(reports)
-        print(f"set {k + 1}: " + ", ".join(
+        print(f"set {k + 1} (reference ${totals(reports)['reference']:.0f}): " + ", ".join(
             f"{name} {s:.2f}" for name, s in skills(reports).items()
         ), flush=True)
 
     failed = []
-    print("\nskill by set (reference = 1, hindsight = the bound):")
+    print("\nskill by set (reference = 1, hindsight = the bound; a disqualified rung is 0):")
     names = [r["name"] for r in config["rungs"]] + ["hindsight"]
     table = [skills(reports) for reports in sets]
     for name in names:
@@ -147,10 +168,10 @@ def main():
             n = len(reports["reference"]["scenarios"])
             rng = random.Random(0)
             hits = sum(
-                holds(rule, skills(reports, [rng.randrange(n) for _ in range(n)]))
+                holds(rule, totals(reports, [rng.randrange(n) for _ in range(n)]))
                 for _ in range(BOOTSTRAP_DRAWS)
             )
-            per_set.append((holds(rule, skill), hits / BOOTSTRAP_DRAWS))
+            per_set.append((holds(rule, totals(reports)), hits / BOOTSTRAP_DRAWS))
         every = all(h for h, _ in per_set)
         odds = sum(p for _, p in per_set) / len(per_set)
         ok = every and odds >= config["min_rule_odds"]
@@ -170,8 +191,12 @@ def main():
         reasons = []
         if profitable > limits["max_profitable"]:
             reasons.append(f"profitable in {profitable:.0%} of sessions")
-        if ratio > limits.get("max_ratio", float("inf")):
-            reasons.append(f"{ratio:.1f}x the reference")
+        # Knowing the generator shouldn't pay more than knowing the regime.
+        below = limits.get("below")
+        if below:
+            ceiling = sum(sum(pnls(r[below])) for r in sets)
+            if sum(all_pnls) >= ceiling:
+                reasons.append(f"${sum(all_pnls):.0f}, at or above {below}'s ${ceiling:.0f}")
         if reward > 0.999:
             reasons.append("reached the bound")
         print(f"  {'FAIL' if reasons else 'ok  '} {name}: {ratio:.2f}x the reference, "
@@ -182,7 +207,10 @@ def main():
 
     print("\nclean runs:")
     for reports in sets:
+        may_breach = {r["name"] for r in config["rungs"] if r.get("may_breach")}
         for name, report in reports.items():
+            if name in may_breach:
+                continue
             bad = [s["scenario"] for s in report["scenarios"]
                    if s.get("disqualified") or s["refused_calls"]]
             if bad:
