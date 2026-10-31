@@ -4,11 +4,16 @@ Trading tasks for agents on Solana. In each task the agent writes a bot,
 and the bot is graded on market scenarios replayed on an offline mainnet
 snapshot restored with [Surfpool](https://github.com/solana-foundation/surfpool).
 
-The verifier runs with no network and receives only the bot. Every cheatcode
-is locked before the bot starts, and the bot reaches the chain through a
-proxy that forwards standard Solana RPC methods only. Rewards are the bot's
-total PnL over the hidden set, as a fraction of a hindsight bound no bot
-can reach, with a per-session drawdown limit.
+The verifier runs with no network and receives only the bot. It draws the
+hidden set from the batch's secret (`MTH_EVAL_SEED`), so no task ships one,
+and grades the reference bot on it first. Every cheatcode is locked before
+the bot starts, the surfnet answers only at a secret path, and the bot
+reaches the chain through a proxy that forwards standard Solana RPC methods
+only. The world moves in steps and waits for the bot between them, so grades
+replay. Rewards are the bot's total PnL over the hidden set, as a fraction of
+a hindsight bound no bot can reach, with a per-session drawdown limit;
+`skill`, the bot's PnL over the reference's, is the headline for comparing
+bots.
 
 | Task | Market | Scenario |
 | --- | --- | --- |
@@ -16,6 +21,40 @@ can reach, with a per-session drawdown limit.
 | `phoenix-market-making` | Phoenix SPCX (SpaceX) perpetuals | Make markets against widened mainnet makers and grader-run takers, some informed, while the price walks, trends or jumps |
 
 ## Changelog
+
+- **0.9.0.** Grades replay, hidden sets stay hidden, and a ladder checks
+  that the tasks rank strategies the way a trader would.
+  - **A lockstep world.** The grader moves the world one step (two slots) at
+    a time: the step's blocks land the scenario's move, then its takers and
+    its maker act, then the bot gets the step over a turn socket
+    (`mth-turn-1`, `mth_botkit::Turns`) and the world waits for it, up to
+    5 s a turn. The same bot on the same session trades the same way every
+    time; in 0.8.0 the grader's maker raced the bot in real time, and the
+    same market-making reference made $19.6 in one run and $49 in the next.
+    Sessions also run as fast as the bot answers: a 36-session grade takes
+    minutes, not 90. A bot that never answers the hello runs the old way.
+  - **Hidden sets drawn per batch.** No task ships its hidden scenarios. The
+    verifier draws them from the batch's secret, passed by Harbor, and
+    refuses to grade without one; reports carry only the secret's SHA-256.
+    The reference runs first on the same sessions, and a reference that
+    doesn't run cleanly voids the grade. `phoenix-market-making` grades 24
+    sessions, up from 12.
+  - **A private surfnet.** The surfnet serves RPC only at a secret path, so a
+    bot that finds its port gets a 404 for everything, standard methods
+    included: the guard is its only way in, and the guard holds its sends to
+    its turn.
+  - **`skill`** joins the reward's diagnostics: the bot's PnL over the
+    reference's, 0 if disqualified.
+  - **The ladder** (`just ladder`, `bench/checks/ladder`) replaces `just
+    exploit-checks`: blind bets, a dip-buyer, momentum, naive and skewed
+    quoters, the reference, a regime oracle and the frozen exploit bots,
+    graded on fresh hidden sets, with an order rule each set must keep.
+  - **The bench** (`just bench`) draws one secret per batch, pins the Claude
+    Code harness (no web, no memory across trials), runs at a time-limit
+    multiple, and reports skill with 90% bootstrap intervals over sessions
+    and runs (`bench/report.py`). Trials with no reward are void, not 0.
+  - Each task has a design record (`DESIGN.md`), and `just leak-audit`
+    checks the agent's image holds no answer.
 
 - **0.8.0.** Both tasks stop paying for knowing how their scenarios are
   made. In 0.6.0 and 0.7.0, Opus and Fable beat the reference about 6× on
@@ -95,5 +134,7 @@ can reach, with a per-session drawdown limit.
 - **0.1.0.** `phoenix-flash-crash`: three rebounding crashes, scored per
   scenario.
 
-The hidden scenarios ship inside each task's `tests/`. On this public
-version, treat scores as a development signal, not a held-out evaluation.
+Since 0.9.0, no hidden scenario ships with a task: each batch's are drawn
+inside the verifier from a secret its runner holds. Before 0.9.0 they
+shipped in each task's `tests/`, and scores on those versions are a
+development signal, not a held-out evaluation.

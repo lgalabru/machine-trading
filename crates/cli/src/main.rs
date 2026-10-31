@@ -70,6 +70,10 @@ enum Command {
         /// Reference sessions to run at once (1-4).
         #[arg(long, default_value_t = 4)]
         anchor_jobs: usize,
+        /// Hand the bot each drawn session's regime as MTH_REGIME: for the
+        /// ladder's regime oracle (flash-crash), never for a graded bot.
+        #[arg(long, requires = "draw", hide = true)]
+        tell_regime: bool,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -422,15 +426,31 @@ async fn run() -> Result<()> {
             count,
             reference,
             anchor_jobs,
+            tell_regime,
             reward,
             report,
         } => {
+            let mut regimes: Option<Vec<String>> = None;
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
                     let (seed, hash) = eval_seed()?;
                     let scenarios = match family {
-                        Family::FlashCrash => ShockFamily::spcx().sample_set("hidden", count, seed),
+                        Family::FlashCrash => {
+                            let drawn = ShockFamily::spcx().draw_set("hidden", count, seed);
+                            if tell_regime {
+                                regimes = Some(
+                                    drawn
+                                        .iter()
+                                        .map(|(_, shape)| serde_json::to_string(shape))
+                                        .collect::<Result<_, _>>()?,
+                                );
+                            }
+                            drawn.into_iter().map(|(scenario, _)| scenario).collect()
+                        }
                         Family::MarketMaking => {
+                            if tell_regime {
+                                anyhow::bail!("--tell-regime is for flash-crash only");
+                            }
                             MakingFamily::spcx().sample_set("hidden", count, seed)
                         }
                     };
@@ -455,6 +475,7 @@ async fn run() -> Result<()> {
                 jobs: sessions.jobs,
                 reference_dir: reference.as_deref(),
                 anchor_jobs,
+                regimes: regimes.as_deref(),
             })
             .await?;
             graded.eval_seed_sha256 = eval_seed_sha256;

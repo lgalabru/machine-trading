@@ -211,7 +211,8 @@ fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
 /// squeeze, so a blind bet at the open has no edge: a family where every
 /// scenario moved the same way would pay a bot for knowing the family, not
 /// for reading the market.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Direction {
     /// The market drops: forced selling.
     Crash,
@@ -229,7 +230,8 @@ impl Direction {
 }
 
 /// What the market does once the shock has held.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Aftermath {
     /// It reverts, giving back part or all of the shock.
     Revert,
@@ -308,8 +310,9 @@ pub struct ShockFamily {
     pub max_drawdown_usd: f64,
 }
 
-/// What a draw from a [`ShockFamily`] is, beneath its path.
-#[derive(Debug, Clone, PartialEq)]
+/// What a draw from a [`ShockFamily`] is, beneath its path: the regime a
+/// session is, which the ladder's regime oracle is told and no bot is.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Shape {
     pub direction: Direction,
     pub aftermath: Aftermath,
@@ -465,6 +468,14 @@ impl ShockFamily {
     /// small set isn't skewed by luck of the draw. Seeds derive from `seed`;
     /// scenarios keep their draw order.
     pub fn sample_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<Scenario> {
+        self.draw_set(prefix, count, seed)
+            .into_iter()
+            .map(|(scenario, _)| scenario)
+            .collect()
+    }
+
+    /// [`Self::sample_set`], with each scenario's [`Shape`].
+    pub fn draw_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<(Scenario, Shape)> {
         let mut cells: Vec<((Direction, Aftermath), f64)> = Vec::new();
         for (direction, p_dir) in [
             (Direction::Crash, self.crash_odds),
@@ -505,7 +516,7 @@ impl ShockFamily {
             }
             quota.1 -= 1;
             let name = format!("{prefix}-{}", scenarios.len() + 1);
-            scenarios.push(self.sample(&name, draw_seed));
+            scenarios.push(self.draw(&name, draw_seed));
         }
         scenarios
     }

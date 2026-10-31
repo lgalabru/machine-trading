@@ -44,7 +44,7 @@ jobs:
         # The rest of a scenario, its mandate included, is checked by
         # crates/core/tests/files.rs.
         run: |
-          for f in bench/tasks/*/environment/practice/*.json bench/tasks/*/tests/scenarios/*.json; do
+          for f in bench/tasks/*/environment/practice/*.json; do
             jq -e '(.reference_pnl_usd | type == "number") and (.path | length > 0)' "$f" > /dev/null \
               || { echo "::error file=$f::missing reference_pnl_usd or path"; exit 1; }
           done
@@ -86,9 +86,13 @@ jobs:
         run: just snapshot-pull
       - name: Build the task image
         run: just image
-      - name: Oracle matches its calibrated baseline
+      - name: The oracle grades as the reference, on a fresh hidden set
+        # The verifier grades the reference on the same drawn sessions, and
+        # the world waits for each bot's turn, so the oracle (the reference
+        # itself) scores skill 1 exactly.
         run: |
+          export MTH_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
           harbor run -p bench/tasks/phoenix-flash-crash -a oracle -o jobs
-          ratio=$(jq '.reference_ratio' "$(find jobs -name reward.json | head -1)")
-          echo "oracle reference_ratio: $ratio"
-          jq -en "$ratio > 0.9 and $ratio < 1.1" > /dev/null
+          skill=$(jq '.skill' "$(find jobs -name reward.json | head -1)")
+          echo "oracle skill: $skill"
+          jq -en "$skill > 0.999 and $skill < 1.001" > /dev/null
