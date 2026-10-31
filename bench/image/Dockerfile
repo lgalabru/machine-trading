@@ -12,12 +12,17 @@
 #            built starter bot at /app/bot.
 #
 # Tasks add what is theirs: the snapshot they trade on (MTH_SNAPSHOT) and
-# their practice scenarios (/opt/mth/practice) in environment/, and hidden
-# scenarios in tests/.
+# their practice scenarios (/opt/mth/practice) in environment/. Hidden sets
+# are drawn inside the verifier, from the batch's secret.
 
 ARG RUST_IMAGE=rust:1.97.1-bookworm
 ARG RUST_SLIM_IMAGE=rust:1.97.1-slim-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
+
+# Surfpool from a local checkout, when one is patched in for changes not
+# pushed yet (`just image surfpool=DIR` passes it as this stage's context);
+# empty otherwise, and the build uses the git sources Cargo.toml names.
+FROM scratch AS surfpool
 
 FROM ${RUST_IMAGE} AS build
 ARG TARGETPLATFORM
@@ -32,7 +37,15 @@ COPY bots bots
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/mth/target,id=mth-target-${TARGETPLATFORM} \
-    cargo build --release --locked -p mth-cli -p mth-bot-reference -p mth-bot-maker \
+    --mount=type=bind,from=surfpool,target=/src/surfpool \
+    if [ -d /src/surfpool/crates ]; then \
+      mkdir -p .cargo && printf '%s\n' \
+        '[patch."https://github.com/solana-foundation/surfpool"]' \
+        'surfpool-sdk = { path = "/src/surfpool/crates/sdk" }' \
+        'surfpool-core = { path = "/src/surfpool/crates/core" }' \
+        'surfpool-types = { path = "/src/surfpool/crates/types" }' > .cargo/config.toml; \
+    fi \
+    && cargo build --release --locked -p mth-cli -p mth-bot-reference -p mth-bot-maker \
     && cp target/release/mth /usr/local/bin/mth \
     && for anchor in flash-crash:reference market-making:maker; do \
       family="${anchor%%:*}"; bot="${anchor##*:}"; \
