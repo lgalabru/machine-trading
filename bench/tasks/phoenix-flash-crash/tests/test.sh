@@ -1,7 +1,9 @@
 #!/bin/bash
-# Grade /app/bot on the hidden scenarios. The grader starts an offline
-# surfnet per scenario, runs the bot as mth-bot behind an RPC guard, and
-# writes the reward.
+# Grade /app/bot on a hidden set drawn now, from the batch's secret
+# (MTH_EVAL_SEED, passed by Harbor from the host; the task never holds it).
+# The grader runs the reference on the same sessions first, starts an
+# offline surfnet per session, runs the bot as mth-bot behind an RPC guard,
+# and writes the reward.
 set -euo pipefail
 
 # Hidden from the bot, readable by the bot's own user.
@@ -13,16 +15,24 @@ chmod -R a+rX /app/bot
 # behind if the grader itself fails.
 trap 'rm -f /logs/verifier/reward.json' ERR
 
-# One session at a time. Concurrent sessions share the container, so a bot
-# can reach the other sessions' surfnets while they are still being set up,
-# before their cheatcodes are locked. Parallel grading (--jobs) is for
-# trusted bots, such as calibrating the reference, until sessions are
-# isolated from one another.
+if [ -z "${MTH_EVAL_SEED:-}" ]; then
+  echo "test.sh: MTH_EVAL_SEED is empty: the batch didn't pass its secret, and" \
+    "hidden sets are drawn from it. Export one before harbor run." >&2
+  exit 3
+fi
+
+# The bot's sessions run one at a time. Concurrent sessions share the
+# container, so a bot could reach another session's surfnet while it was
+# being set up, before its cheatcodes locked. The reference is trusted:
+# its sessions run four at a time, before the bot's.
 mth grade \
+  --draw flash-crash \
+  --count 36 \
+  --reference /opt/mth/anchors/flash-crash \
+  --anchor-jobs 4 \
   --jobs 1 \
   --snapshot "$MTH_SNAPSHOT" \
   --bot /app/bot \
   --logs /logs/verifier/bot \
   --reward /logs/verifier/reward.json \
-  --report /logs/verifier/report.json \
-  /tests/scenarios/*.json > /dev/null
+  --report /logs/verifier/report.json > /dev/null

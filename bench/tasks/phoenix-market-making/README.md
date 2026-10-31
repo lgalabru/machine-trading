@@ -37,11 +37,20 @@ fills nothing.
   generator (`mth scenario generate --family market-making`), and
   `mth-practice`, which grades the bot exactly as the verifier does.
 - **Verifier:** the runtime image, with no toolchain and no network. It
-  receives only `/app/bot` and replays twelve hidden scenarios (three calm,
-  six with jumps, three trending), one at a time, each on a fresh surfnet.
-  Before the bot starts, the takers are onboarded, the makers widened, and
-  every cheatcode locked for good. The bot runs as an unprivileged user
-  behind an RPC proxy that forwards standard Solana methods only.
+  receives only `/app/bot`, draws twenty-four hidden sessions (six calm,
+  twelve with jumps, six trending) from the batch's secret (`MTH_EVAL_SEED`;
+  it refuses to grade without one), grades the reference maker on them, then
+  the bot, one session at a time, each on a fresh surfnet. Before the bot
+  starts, the takers are onboarded, the makers widened, and every cheatcode
+  locked for good; the surfnet serves RPC only at a secret path, so the
+  bot's only way in is an RPC proxy that forwards standard Solana methods
+  only.
+- **Turns:** the world moves in steps of two slots and waits for the bot
+  between them (`mth-turn-1`): each step's move lands, then the takers'
+  orders due and the grader's maker, then the bot's turn. The same bot on
+  the same session trades the same way every time; before 0.9.0, the
+  grader's maker raced the bot in real time, and the same reference made
+  $19.6 in one run and $49 in the next.
 - **Reward:** `clamp(Σ bot PnL / Σ bound, 0, 1)`. A scenario's bound is its
   spread bound (every taker order filled at the competitor's half-spread
   with nothing lost to informed flow, inventory or fees) plus its hindsight
@@ -60,10 +69,14 @@ fills nothing.
 
 | Agent | Reward | What it shows |
 | --- | --- | --- |
-| oracle (the reference maker) | ~0.01–0.02 | The task is solvable and the reference is calibrated |
+| oracle (the reference maker) | ~0.01 | The task is solvable and the reference is calibrated (`skill` 1 by construction) |
 | nop (starter bot) | 0.0 | Doing nothing earns nothing |
 | cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend the session |
-| sneaky | 0.0 | Cheatcodes, airdrops and `exit` on the surfnet's own port are refused |
+| sneaky | 0.0 | The surfnet's own port answers nothing without its secret path |
+
+`just ladder market-making` grades the ladder (`bench/checks/ladder`) on
+fresh hidden sets: naive and skewed quoters below the reference, the frozen
+exploit bots within their limits.
 
 The reference quotes one tick inside the competitor around the oracle,
 skews against inventory, leans with the drift, and backs off after
@@ -94,6 +107,8 @@ informed flow on the tape without being run over by it) is where agents separate
 
 ## Held-out data
 
-The hidden scenarios ship in `tests/scenarios` with the task, so treat scores
-on this public version as a development benchmark, not a held-out
-evaluation.
+No hidden scenario ships with the task: each batch's are drawn inside the
+verifier from a secret the batch's runner holds, and reports carry only the
+secret's SHA-256. The generator is public (agents get it), so the family is
+known and the draws aren't. Every trial in a batch is graded on the same
+set.

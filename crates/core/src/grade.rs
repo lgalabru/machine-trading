@@ -196,6 +196,9 @@ pub struct GradeOptions<'a> {
     /// machine with itself). Its PnL replaces whatever the scenarios carry.
     pub reference_dir: Option<&'a Path>,
     pub anchor_jobs: usize,
+    /// Each scenario's regime, as JSON, handed to the bot (not the
+    /// reference): the ladder's regime oracle only.
+    pub regimes: Option<&'a [String]>,
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
@@ -207,6 +210,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             &scenarios,
             &opts.log_dir.join("reference"),
             opts.anchor_jobs,
+            None,
         )
         .await?;
         check_timing(&anchors)?;
@@ -225,6 +229,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         &scenarios,
         opts.log_dir,
         opts.jobs,
+        opts.regimes,
     )
     .await?;
     check_timing(&sessions)?;
@@ -376,7 +381,7 @@ pub async fn calibrate(
     jobs: usize,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
-    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir, jobs).await?;
+    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir, jobs, None).await?;
     // A reference recorded on a loaded machine would skew every score after it.
     check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
@@ -409,6 +414,7 @@ async fn run_sessions(
     scenarios: &[Scenario],
     log_dir: &Path,
     jobs: usize,
+    regimes: Option<&[String]>,
 ) -> Result<Vec<SessionReport>> {
     if !(1..=session::BOT_USERS.len()).contains(&jobs) {
         return Err(Error::Jobs(jobs, session::BOT_USERS.len()));
@@ -428,6 +434,7 @@ async fn run_sessions(
                 bot_dir,
                 bot_log: &bot_log,
                 slot: index % jobs,
+                regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
             })
             .await
         })

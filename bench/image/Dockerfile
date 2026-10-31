@@ -32,8 +32,14 @@ COPY bots bots
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/mth/target,id=mth-target-${TARGETPLATFORM} \
-    cargo build --release --locked -p mth-cli \
-    && cp target/release/mth /usr/local/bin/mth
+    cargo build --release --locked -p mth-cli -p mth-bot-reference -p mth-bot-maker \
+    && cp target/release/mth /usr/local/bin/mth \
+    && for anchor in flash-crash:reference market-making:maker; do \
+      family="${anchor%%:*}"; bot="${anchor##*:}"; \
+      mkdir -p "/opt/mth/anchors/$family/bin"; \
+      cp "bots/$bot/run.sh" "/opt/mth/anchors/$family/run.sh"; \
+      cp "target/release/mth-$bot" "/opt/mth/anchors/$family/bin/bot"; \
+    done
 
 # Verifiers: the grader, the snapshots, and one unprivileged user per
 # session the grader can run at once (mth grade --jobs). Graders run as root
@@ -49,6 +55,10 @@ RUN apt-get update \
     done \
     && mkdir -p /app
 COPY --from=build /usr/local/bin/mth /usr/local/bin/mth
+# The reference bots, as the anchors hidden sets are scored against: the
+# verifier runs them on the same freshly drawn sessions as the agent's bot.
+# Verifier only: the agent's image never holds them.
+COPY --from=build /opt/mth/anchors/ /opt/mth/anchors/
 COPY snapshots/ /opt/mth/snapshots/
 WORKDIR /app
 
