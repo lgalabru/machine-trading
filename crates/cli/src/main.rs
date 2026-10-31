@@ -55,6 +55,21 @@ enum Command {
     Grade {
         #[command(flatten)]
         sessions: Sessions,
+        /// Draw the scenarios from this family instead of reading files: a
+        /// hidden set, seeded by the secret in `MTH_EVAL_SEED` and never
+        /// written anywhere. Reports carry only the secret's SHA-256.
+        #[arg(long, value_enum, conflicts_with = "scenarios")]
+        draw: Option<Family>,
+        /// How many scenarios to draw, stratified as the family's odds.
+        #[arg(long, default_value_t = 12, requires = "draw")]
+        count: usize,
+        /// Run this reference bot on the same scenarios first, and score
+        /// against its PnL rather than what the scenario files carry.
+        #[arg(long)]
+        reference: Option<PathBuf>,
+        /// Reference sessions to run at once (1-4).
+        #[arg(long, default_value_t = 4)]
+        anchor_jobs: usize,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -85,7 +100,6 @@ struct Sessions {
     #[arg(long, env = "MTH_JOBS", default_value_t = 1)]
     jobs: usize,
     /// Scenario files, run in order.
-    #[arg(required = true)]
     scenarios: Vec<PathBuf>,
 }
 
@@ -404,10 +418,29 @@ async fn run() -> Result<()> {
         }
         Command::Grade {
             sessions,
+            draw,
+            count,
+            reference,
+            anchor_jobs,
             reward,
             report,
         } => {
-            let scenarios: Vec<Scenario> = sessions.load()?.into_iter().map(|(_, s)| s).collect();
+            let (scenarios, eval_seed_sha256) = match draw {
+                Some(family) => {
+                    let (seed, hash) = eval_seed()?;
+                    let scenarios = match family {
+                        Family::FlashCrash => ShockFamily::spcx().sample_set("hidden", count, seed),
+                        Family::MarketMaking => {
+                            MakingFamily::spcx().sample_set("hidden", count, seed)
+                        }
+                    };
+                    (scenarios, Some(hash))
+                }
+                None if sessions.scenarios.is_empty() => {
+                    anyhow::bail!("give scenario files, or --draw a family")
+                }
+                None => (sessions.load()?.into_iter().map(|(_, s)| s).collect(), None),
+            };
             // Bots run on the same file system, and some mounts (Docker
             // Desktop's) ignore permissions: start from no reward file, and
             // treat one that appears while bots run as tampering.
@@ -420,8 +453,11 @@ async fn run() -> Result<()> {
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
                 jobs: sessions.jobs,
+                reference_dir: reference.as_deref(),
+                anchor_jobs,
             })
             .await?;
+            graded.eval_seed_sha256 = eval_seed_sha256;
             if let Some(path) = &reward
                 && path.exists()
             {
@@ -454,6 +490,25 @@ async fn run() -> Result<()> {
         println!("{output}");
     }
     Ok(())
+}
+
+/// The hidden set's seed, from the secret in `MTH_EVAL_SEED`, and the
+/// secret's SHA-256 (hex), which is all a report may say about it.
+fn eval_seed() -> anyhow::Result<(u64, String)> {
+    use sha2::{Digest, Sha256};
+    let secret = std::env::var("MTH_EVAL_SEED").unwrap_or_default();
+    if secret.len() < 32 {
+        anyhow::bail!(
+            "MTH_EVAL_SEED must hold the batch's secret (at least 32 characters): \
+             hidden sets are drawn from it and never shipped"
+        );
+    }
+    let digest = Sha256::digest(secret.as_bytes());
+    let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    // The seed is a different hash than the one reported, so the report
+    // doesn't hand anyone the seed itself.
+    let seed = Sha256::digest([b"mth-eval-seed:".as_slice(), secret.as_bytes()].concat());
+    Ok((u64::from_le_bytes(seed[..8].try_into()?), hash))
 }
 
 fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
