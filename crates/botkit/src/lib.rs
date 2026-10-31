@@ -17,12 +17,16 @@
 //!   [`Instrument`], [`Order`]s, [`RiskLimits`] (see
 //!   [`BotEnv::risk_limits`]), and [`ExecutionDriver`] (see
 //!   [`Trader::driver`]). [`Trader::luce`] is the luce trader underneath.
+//!
+//! The world moves in steps and waits for the bot between them: see
+//! [`turns`] and [`Turns`].
 
 mod env;
 mod error;
 pub mod mandate;
 mod phoenix;
 mod trader;
+pub mod turns;
 mod tx;
 
 pub use env::BotEnv;
@@ -50,4 +54,5 @@ pub use solana_pubkey::Pubkey;
 pub use solana_rpc_client::rpc_client::RpcClient;
 pub use solana_signer::Signer;
 pub use trader::{Position, Trader};
+pub use turns::{Step, Turns};
 pub use tx::{rpc_client, send};

@@ -2,17 +2,17 @@
 //!
 //! Before the cheatcodes lock, the grader onboards a pool of taker accounts
 //! and widens the snapshot's makers to the scenario's spread. While the bot
-//! runs, it sends each listed order at its slot as an ordinary market order,
-//! from its account, through the surfnet's own RPC: the same Phoenix
+//! runs, at each step it sends the orders due by then as ordinary market
+//! orders, from their accounts, through the grader's own RPC: the same Phoenix
 //! transaction any trader sends, filled against whatever quotes are best.
+//! They go one at a time, in the scenario's order, between the bot's turns,
+//! so the same session sends the same flow into the same book every time.
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
-use futures::{StreamExt, stream::FuturesUnordered};
 use mth_botkit::{BotEnv, Side, Trader};
 use serde::Serialize;
 use solana_keypair::Keypair;
-use solana_rpc_client::rpc_client::RpcClient;
 use tracing::{info, warn};
 
 use crate::{
@@ -56,13 +56,14 @@ impl Drop for Takers {
 
 impl Takers {
     /// Onboard the taker pool and widen the makers. Setup: cheatcodes must
-    /// still be unlocked.
+    /// still be unlocked. The takers trade through `rpc_url`.
     pub async fn prepare(
         world: &OfflineWorld,
         phoenix: &Phoenix,
         scenario: &Scenario,
         making: &Making,
         start_mark_ticks: u64,
+        rpc_url: &str,
     ) -> Result<Self> {
         let half_spread_ticks =
             (start_mark_ticks as f64 * making.competitor_bps / 10_000.0).round() as u64;
@@ -83,7 +84,7 @@ impl Takers {
             let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
             std::fs::write(&path, bytes).map_err(io_error(&path))?;
             traders.push(Trader::connect(&BotEnv {
-                rpc_url: world.surfnet.rpc_url().to_string(),
+                rpc_url: rpc_url.to_string(),
                 keypair_path: path,
                 exchange_path: world.exchange_path.clone(),
                 symbol: scenario.symbol.clone(),
@@ -106,75 +107,60 @@ impl Takers {
         })
     }
 
-    /// Send every order at its slot, counted from `base_slot`, until
-    /// `end_slot`. Orders are sent without waiting on the ones before them,
-    /// so a slow transaction doesn't hold the flow back.
-    pub async fn run(
-        &self,
-        rpc: &RpcClient,
+    /// The flow's state through a session, starting before its first order.
+    pub fn flow(&self, making: &Making) -> Flow {
+        Flow {
+            next: 0,
+            report: FlowReport {
+                orders: making.takers.len(),
+                makers_widened_ticks: self.widened_ticks,
+                ..FlowReport::default()
+            },
+        }
+    }
+}
+
+/// Where a session's flow is: the next order to send, and what was sent.
+pub struct Flow {
+    next: usize,
+    report: FlowReport,
+}
+
+impl Flow {
+    /// Send, in order, every order due by `at` slots into the session, priced
+    /// off the scenario's level there.
+    pub async fn step(
+        &mut self,
+        takers: &Takers,
         scenario: &Scenario,
         making: &Making,
         start_mark_usd: f64,
-        base_slot: u64,
-        end_slot: u64,
-    ) -> FlowReport {
-        let mut report = FlowReport {
-            orders: making.takers.len(),
-            makers_widened_ticks: self.widened_ticks,
-            ..FlowReport::default()
-        };
-        let mut next = 0;
-        let mut inflight = FuturesUnordered::new();
-        loop {
-            let slot = match rpc.get_slot() {
-                Ok(slot) => slot,
-                Err(error) => {
-                    warn!("reading the slot for the flow: {error}");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
+        at: u64,
+    ) {
+        while let Some(order) = making.takers.get(self.next).filter(|o| o.slot <= at) {
+            self.next += 1;
+            let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
+            // The order's own limit: it fills only against quotes at least
+            // this close to the level, or not at all.
+            let reach = order.limit_bps / 10_000.0;
+            let (side, limit) = match order.side {
+                TakerSide::Buy => (Side::Bid, level * (1.0 + reach)),
+                TakerSide::Sell => (Side::Ask, level * (1.0 - reach)),
             };
-            if slot >= end_slot {
-                break;
-            }
-            let at = slot.saturating_sub(base_slot);
-            while let Some(order) = making.takers.get(next).filter(|o| o.slot <= at) {
-                next += 1;
-                let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
-                // The order's own limit: it fills only against quotes at
-                // least this close to the level, or not at all.
-                let reach = order.limit_bps / 10_000.0;
-                let (side, limit) = match order.side {
-                    TakerSide::Buy => (Side::Bid, level * (1.0 + reach)),
-                    TakerSide::Sell => (Side::Ask, level * (1.0 - reach)),
-                };
-                let trader = &self.traders[order.account as usize];
-                let size = order.size;
-                report.sent += 1;
-                report.volume += size;
-                inflight.push(async move {
-                    trader
-                        .place_market(side, size, (limit * 100.0).round() / 100.0)
-                        .await
-                });
-            }
-            // Collect what has landed while waiting for the next slot.
-            let tick = tokio::time::sleep(Duration::from_millis(80));
-            tokio::pin!(tick);
-            loop {
-                tokio::select! {
-                    Some(result) = inflight.next() => {
-                        if let Err(error) = result {
-                            report.failed += 1;
-                            warn!("a taker order failed: {error}");
-                        }
-                    }
-                    () = &mut tick => break,
-                }
+            let trader = &takers.traders[order.account as usize];
+            self.report.sent += 1;
+            self.report.volume += order.size;
+            if let Err(error) = trader
+                .place_market(side, order.size, (limit * 100.0).round() / 100.0)
+                .await
+            {
+                self.report.failed += 1;
+                warn!("a taker order failed: {error}");
             }
         }
-        // Orders still in flight at the end are left to land or not: the
-        // account is valued at the last slot either way.
-        report
+    }
+
+    pub fn report(self) -> FlowReport {
+        self.report
     }
 }
