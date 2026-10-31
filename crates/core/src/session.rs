@@ -85,6 +85,9 @@ pub struct SessionOptions<'a> {
     /// Which of [`BOT_USERS`] the bot runs as. Sessions that run at the same
     /// time must use different slots.
     pub slot: usize,
+    /// The session's regime, handed to the bot as `MTH_REGIME` (JSON): only
+    /// for the ladder's regime oracle, never for a graded bot.
+    pub regime: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -263,7 +266,14 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
 
     let late_before = surfnet.coalesced_slots();
     let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
-    let mut child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs)?;
+    let mut child = spawn_bot(
+        opts.bot_dir,
+        &env,
+        &workdir,
+        opts.bot_log,
+        theirs,
+        opts.regime,
+    )?;
     ours.set_nonblocking(true)
         .map_err(io_error("turn socket"))?;
     let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
@@ -658,6 +668,7 @@ fn spawn_bot(
     workdir: &SessionDir,
     log: &Path,
     turns: StdUnixStream,
+    regime: Option<&str>,
 ) -> Result<Child> {
     let run_sh = bot_dir.join("run.sh");
     if !run_sh.is_file() {
@@ -692,6 +703,9 @@ fn spawn_bot(
         .kill_on_drop(true);
     if let Some((uid, gid)) = workdir.bot_user {
         command.uid(uid).gid(gid);
+    }
+    if let Some(regime) = regime {
+        command.env("MTH_REGIME", regime);
     }
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at

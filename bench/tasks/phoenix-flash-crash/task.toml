@@ -19,16 +19,21 @@ category = "trading"
 snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
-# Thirty-six hidden scenarios of 80-180 seconds of market time each (~125s
-# on average), one at a time, plus ~20 seconds of setup per session: ~90
-# minutes, ~2 hours at worst. Twelve were too few: a good bot's edge is
-# about $50 a session against swings of about $240, so a small hidden set
-# ranked bots by the luck of its draw.
-timeout_sec = 10800.0
+# Thirty-six hidden sessions drawn from the batch's secret, plus the
+# reference on the same sessions first (four at a time). The world moves
+# only between the bot's turns, so a session takes as long as the bot
+# thinks: a minute or two for most bots, about four at worst.
+timeout_sec = 7200.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
 # a bot must not reach one.
 network_mode = "no-network"
+
+[verifier.env]
+# The batch's secret: the hidden set is drawn from it inside the verifier.
+# Set it on the host (`just bench` draws one per batch); the verifier
+# refuses to grade without it.
+MTH_EVAL_SEED = "${MTH_EVAL_SEED:-}"
 
 [agent]
 timeout_sec = 3600.0

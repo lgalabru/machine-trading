@@ -44,27 +44,34 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 # One task
 harbor run -d solana-foundation/machine-trading -i solana-foundation/phoenix-flash-crash -a claude-code -m anthropic/claude-sonnet-5-5
 
-# From a checkout: the reference solution, the ~0.2 baseline
+# From a checkout: the reference solution, skill 1 by construction. The
+# verifier draws its hidden set from the batch's secret; it refuses to grade
+# without one.
+export MTH_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 harbor run -p bench/tasks/phoenix-flash-crash -a oracle
 ```
 
 In every task the agent writes a bot to `/app/bot`. The verifier then
-receives only that bot, with no network, and for each hidden scenario:
+receives only that bot, with no network. It draws the hidden set from the
+batch's secret (no task ships one), grades the reference bot on it, and for
+each hidden session:
 
 1. Restores a pinned mainnet snapshot into a fresh, offline
    [Surfpool](https://github.com/solana-foundation/surfpool) surfnet, at
-   the slot and time it was taken.
-2. Funds a new trader, registers the scenario, and locks every cheatcode
-   for good.
+   the slot and time it was taken, serving RPC only at a secret path.
+2. Funds a new trader, stops the clock, registers the scenario, and locks
+   every cheatcode for good.
 3. Starts the bot as an unprivileged user, behind an RPC proxy that forwards
    standard Solana methods only.
-4. At the last slot, stops the bot and values its account on-chain.
+4. Moves the world one step at a time, and gives the bot its turn between
+   steps: nothing moves while the bot thinks, so grades replay.
+5. After the last step, stops the bot and values its account on-chain.
 
 The reward is the bot's total PnL over the hidden set as a fraction of a
 **hindsight bound**: what the full position cap held the right way through
 every move would make, at no cost. No bot reaches it, so the score keeps
-headroom as agents improve; a reference bot is reported alongside as a
-baseline. Each scenario carries a [mandate](specs/mandate.md), which gates
+headroom as agents improve. `skill`, the bot's PnL over the reference's on
+the same sessions, is the headline for comparing bots. Each scenario carries a [mandate](specs/mandate.md), which gates
 risk like a trading desk's: one market, a position cap, and a loss limit the
 session may not draw down past. Breaking it, a refused RPC call, or ending
 liquidatable scores 0, and worst session, tail
@@ -225,14 +232,15 @@ its adapter's output instead.
 ### Change a task
 
 ```sh
-just scenarios DIR NAME 12 SEED        # draw a stratified scenario set
-just calibrate DIR/*.json              # record the reference bot's PnL in each
-just image && just harbor-checks       # oracle ≈ 1; nop, cheater, sneaky = 0
+just ladder <family>                   # the skill ladder on fresh hidden sets
+just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
+just leak-audit                        # the agent's image holds no answer
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
 
-After changing `bots/reference`, run `just solution` and recalibrate every
-scenario. Keep the seeds of hidden sets private: the files are the only copy.
+After changing `bots/reference`, run `just solution` and recalibrate the
+practice scenarios (`just calibrate bots/reference FILES`). Hidden sets need
+no calibration: the verifier grades the reference on them every time.
 
 ### Add a task
 
@@ -259,15 +267,16 @@ oracle through Harbor weekly.
 ## Known gaps
 
 - The bot shares the verifier container with the surfnet. A bot that finds
-  the surfnet's own port gets nothing from it (cheatcodes, airdrops and
-  `exit` are all locked), but it could still compete for CPU. A sidecar
-  container that can reach only the proxy would close this.
+  the surfnet's own port gets nothing from it (it serves only a secret path),
+  but it could still compete for CPU; in a lockstep world that slows the
+  grade, not the market. A sidecar container that can reach only the proxy
+  would close this.
 - Sessions can only be graded one at a time against untrusted bots: in
   parallel, a bot could reach another session's surfnet before it is
   locked. `--jobs` is for trusted bots (calibration) until sessions are
   isolated from one another.
 - Scenarios move the market along a scripted path, so makers don't react to
   the bot. Each task's README lists its realism limits.
-- The hidden scenarios ship inside each public task. Treat public scores as a
-  development signal. Rankings will come from a private, rotating held-out
-  set ([ADR 0001](docs/adr/0001-public-and-held-out-scenarios.md)).
+- The generator is public, so the family is known; only each batch's draws
+  are secret. A held-out family (a different generator) would test transfer
+  ([ADR 0001](docs/adr/0001-public-and-held-out-scenarios.md)).

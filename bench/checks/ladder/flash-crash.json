@@ -1,0 +1,27 @@
+{
+  "family": "flash-crash",
+  "count": 36,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    { "name": "nop", "dir": "bots/starter" },
+    { "name": "blind-long", "dir": "bench/checks/ladder/blind-long" },
+    { "name": "blind-short", "dir": "bench/checks/ladder/blind-short" },
+    { "name": "dip-buyer", "dir": "bots/dip-buyer" },
+    { "name": "momentum", "dir": "bench/checks/ladder/momentum" },
+    { "name": "reference", "dir": "bots/reference" },
+    { "name": "regime-oracle", "dir": "bench/checks/ladder/regime-oracle", "tell_regime": true },
+    { "name": "flash-crash-opus", "dir": "bench/checks/exploits/flash-crash-opus" },
+    { "name": "flash-crash-fable", "dir": "bench/checks/exploits/flash-crash-fable" }
+  ],
+  "rules": [
+    "max(blind-long, blind-short) < reference",
+    "dip-buyer < reference",
+    "momentum < reference",
+    "reference < regime-oracle < hindsight"
+  ],
+  "exploits": {
+    "bots": ["flash-crash-opus", "flash-crash-fable"],
+    "max_profitable": 0.75,
+    "max_ratio": 3
+  }
+}
