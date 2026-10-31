@@ -7,8 +7,12 @@
 //! 0, and no bot reaches 1, so the score doesn't saturate as bots improve.
 //! Scoring the set as a whole lets losing scenarios count.
 //!
-//! The reference bot's PnL, when scenarios carry it, is reported alongside as
-//! a baseline (`reference_ratio`), not used for the reward.
+//! The reference bot's PnL is reported alongside as a baseline, not used for
+//! the reward: `skill` is the bot's total PnL over the reference's, so the
+//! reference scores 1 and doing nothing 0, unclamped. On hidden sets drawn
+//! fresh for each grade, the grader runs the reference itself first, on the
+//! same sessions (see [`GradeOptions::reference_dir`]); otherwise scenarios
+//! carry the PnL [`calibrate`] recorded.
 //!
 //! Any session that calls a method the RPC guard refuses, breaks its
 //! mandate (trades outside its market, goes over the position cap, or draws
@@ -52,9 +56,17 @@ pub struct GradeReport {
     /// Total PnL over the reference's, unclamped: above 1 beats the reference.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference_ratio: Option<f64>,
+    /// The headline for comparing bots: [`Self::reference_ratio`], or 0 when
+    /// the bot is disqualified. A breach never scores better than complying.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill: Option<f64>,
     /// Why the grade itself was tampered with, if it was: the reward is 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tampered: Option<String>,
+    /// The SHA-256 of the secret a drawn hidden set came from: enough to
+    /// tell two grades on the same set, nothing more.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eval_seed_sha256: Option<String>,
     pub risk: Risk,
     pub scenarios: Vec<ScenarioResult>,
 }
@@ -158,6 +170,9 @@ impl GradeReport {
             rewards.insert("reference_pnl_usd".to_string(), reference);
             rewards.insert("reference_ratio".to_string(), ratio);
         }
+        if let Some(skill) = self.skill {
+            rewards.insert("skill".to_string(), skill);
+        }
         for result in &self.scenarios {
             rewards.insert(
                 format!("pnl_{}", result.session.scenario),
@@ -176,19 +191,44 @@ pub struct GradeOptions<'a> {
     pub log_dir: &'a Path,
     /// How many sessions to run at once.
     pub jobs: usize,
+    /// A reference bot to run on the same scenarios first, as the baseline,
+    /// with `anchor_jobs` sessions at once (it's trusted: it can share the
+    /// machine with itself). Its PnL replaces whatever the scenarios carry.
+    pub reference_dir: Option<&'a Path>,
+    pub anchor_jobs: usize,
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
+    let mut scenarios = opts.scenarios.to_vec();
+    if let Some(reference) = opts.reference_dir {
+        let anchors = run_sessions(
+            opts.snapshot_dir,
+            reference,
+            &scenarios,
+            &opts.log_dir.join("reference"),
+            opts.anchor_jobs,
+        )
+        .await?;
+        check_timing(&anchors)?;
+        check_anchors(&anchors)?;
+        for (scenario, anchor) in scenarios.iter_mut().zip(&anchors) {
+            scenario.reference_pnl_usd = Some((anchor.pnl_usd * 100.0).round() / 100.0);
+        }
+        info!(
+            reference_pnl_usd = anchors.iter().map(|a| a.pnl_usd).sum::<f64>(),
+            "reference graded"
+        );
+    }
     let sessions = run_sessions(
         opts.snapshot_dir,
         opts.bot_dir,
-        opts.scenarios,
+        &scenarios,
         opts.log_dir,
         opts.jobs,
     )
     .await?;
     check_timing(&sessions)?;
-    let report = score(sessions.into_iter().zip(opts.scenarios).collect());
+    let report = score(sessions.into_iter().zip(&scenarios).collect());
     info!(
         reward = report.reward,
         pnl_usd = report.pnl_usd,
@@ -216,18 +256,22 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     let reference_ratio = reference_pnl_usd
         .filter(|reference| *reference > 0.0)
         .map(|reference| pnl_usd / reference);
-    let reward = if scenarios.iter().any(|s| s.disqualified.is_some()) || bound_pnl_usd <= 0.0 {
+    let disqualified = scenarios.iter().any(|s| s.disqualified.is_some());
+    let reward = if disqualified || bound_pnl_usd <= 0.0 {
         0.0
     } else {
         (pnl_usd / bound_pnl_usd).clamp(0.0, 1.0)
     };
+    let skill = reference_ratio.map(|ratio| if disqualified { 0.0 } else { ratio });
     GradeReport {
         reward,
         pnl_usd,
         bound_pnl_usd,
         reference_pnl_usd,
         reference_ratio,
+        skill,
         tampered: None,
+        eval_seed_sha256: None,
         risk: Risk::of(&scenarios),
         scenarios,
     }
@@ -267,6 +311,41 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
         Ok(())
     } else {
         Err(Error::Degraded(late.join(", ")))
+    }
+}
+
+/// Void the grade, rather than score the bot against a broken baseline, if
+/// the reference didn't run cleanly: a disqualification, a crash, or turns
+/// it didn't finish.
+fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
+    let broken: Vec<String> = anchors
+        .iter()
+        .filter_map(|a| {
+            let why = if let Some(reason) = disqualification(a) {
+                reason
+            } else if a.turns.legacy {
+                "never answered the hello".to_string()
+            } else if a.turns.overran > 0 {
+                format!("overran {} turns", a.turns.overran)
+            } else if let Some(exit) = a
+                .bot_exit
+                .as_ref()
+                .filter(|e| !e.contains("exit status: 0"))
+            {
+                format!("exited: {exit}")
+            } else {
+                return None;
+            };
+            Some(format!("{}: {why}", a.scenario))
+        })
+        .collect();
+    if broken.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Degraded(format!(
+            "the reference: {}",
+            broken.join(", ")
+        )))
     }
 }
 
