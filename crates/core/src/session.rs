@@ -2,21 +2,32 @@
 //!
 //! 1. Restore the snapshot offline and put the RPC guard in front of it.
 //! 2. Onboard a fresh trader with [`DEPOSIT_USDC`] of collateral.
-//! 3. Start the bot (`run.sh` in its directory) with the [`BotEnv`] contract,
-//!    then register the scenario, so its slots count from the bot's start.
-//! 4. At the scenario's last slot, stop the bot and mark the account to market.
+//! 3. Stop the clock, register the scenario and lock the cheatcodes, then
+//!    start the bot (`run.sh` in its directory) with the [`BotEnv`] contract.
+//! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
+//!    give the bot its turn (see [`mth_botkit::turns`]): each step produces
+//!    its blocks, which land the scenario's move; then the grader's own
+//!    traders act; then the bot gets the step and the world waits for it.
+//! 5. After the last step, stop the bot and mark the account to market.
 //!
-//! Each session gets its own surfnet, so nothing a bot does carries over.
+//! Each session gets its own surfnet, so nothing a bot does carries over, and
+//! nothing moves while the bot thinks, so the same bot on the same scenario
+//! trades the same session every time.
+//!
+//! A bot that never answers the hello runs the old way: the world moves at
+//! the slot time, whatever the bot does.
 
 use std::{
+    os::{fd::AsRawFd, unix::net::UnixStream as StdUnixStream},
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use mth_botkit::{
     BotEnv, QUOTE_LOTS_PER_USD,
     mandate::{InstrumentRef, Mandate, Observed, Term},
+    turns::{self, Hello, Message, Step},
 };
 use serde::Serialize;
 use serde_json::json;
@@ -24,8 +35,12 @@ use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
-use surfpool_sdk::CheatcodeFilter;
-use tokio::process::{Child, Command};
+use surfpool_sdk::{BlockProductionMode, CheatcodeFilter, SimnetCommand};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::UnixStream,
+    process::{Child, Command},
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -35,10 +50,21 @@ use crate::{
     flow::{FlowReport, Takers},
     guard::Guard,
     making::level_at,
-    phoenix::{self, Phoenix, USDC_MINT},
+    phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS, USDC_MINT},
     scenario::Scenario,
     snapshot,
 };
+
+/// Slots each step moves the world: the scenario's own step, so every move
+/// lands on a step.
+pub const SLOTS_PER_STEP: u64 = SLOTS_BETWEEN_STEPS;
+/// How long the world waits for the bot's `ready`, and for each `done`.
+const HELLO_WALL: Duration = Duration::from_secs(10);
+const TURN_WALL: Duration = Duration::from_secs(5);
+/// What all of a bot's turns in a session may take together, per step: the
+/// slot time, so a slow bot is no slower than the world used to be. Past it,
+/// the world stops waiting.
+const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
 
 /// Collateral each session's trader starts with.
 pub const DEPOSIT_USDC: f64 = 10_000.0;
@@ -104,6 +130,23 @@ pub struct SessionReport {
     /// Market making: what the grader's own maker did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub competitor: Option<CompeteReport>,
+    /// How the bot's turns went.
+    pub turns: TurnReport,
+}
+
+/// How a session's turns went.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct TurnReport {
+    /// The bot never answered the hello: the world moved at the slot time.
+    pub legacy: bool,
+    pub steps: u64,
+    /// Turns the world stopped waiting for, past the turn's wall or the
+    /// session's budget.
+    pub overran: u64,
+    /// The bot's turns, all together, in milliseconds.
+    pub wall_ms: u64,
+    /// Sends refused because they came while the world moved.
+    pub late_sends: usize,
 }
 
 impl SessionReport {
@@ -121,8 +164,11 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let scenario = opts.scenario;
     let world = snapshot::start_offline(opts.snapshot_dir).await?;
     let surfnet = &world.surfnet;
-    let rpc = chain::rpc_client(surfnet);
-    let phoenix = Phoenix::new(world.exchange.clone(), surfnet.rpc_url());
+    // The grader's own clients, served the way a stepped world needs: a
+    // transaction is final once it executed (see [`Guard::internal`]).
+    let internal = Guard::internal(surfnet.rpc_url()).await?;
+    let rpc = mth_botkit::rpc_client(internal.url());
+    let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
     let market = phoenix.market(&scenario.symbol)?;
 
     let bot = Keypair::new();
@@ -141,8 +187,18 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     // cheatcodes still work.
     let (takers, competitor) = match &scenario.making {
         Some(making) => (
-            Some(Takers::prepare(&world, &phoenix, scenario, making, start_mark_ticks).await?),
-            Some(Competitor::prepare(&world, &phoenix, scenario).await?),
+            Some(
+                Takers::prepare(
+                    &world,
+                    &phoenix,
+                    scenario,
+                    making,
+                    start_mark_ticks,
+                    internal.url(),
+                )
+                .await?,
+            ),
+            Some(Competitor::prepare(&world, &phoenix, scenario, internal.url()).await?),
         ),
         None => (None, None),
     };
@@ -166,7 +222,24 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
-    let start_slot = rpc.get_slot()?;
+    // From here on, a slot passes only when the grader produces one.
+    surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
+        BlockProductionMode::Manual,
+    ))?;
+    // The scenario is the grader's last cheatcode. Lock them all before the
+    // bot starts: the bot's only way to the surfnet is the guard, and even
+    // the guard's upstream has no cheatcodes, airdrops, or way to stop it.
+    // Overrides count from the slot they were registered at; so does the
+    // takers' flow.
+    let perp_asset_map = phoenix.perp_asset_map()?;
+    chain::register_scenario(
+        &rpc,
+        &scenario.name,
+        scenario.overrides(perp_asset_map, start_mark_ticks),
+    )?;
+    let base_slot = rpc.get_slot()?;
+    surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
+    let start_slot = base_slot;
     let end_slot = start_slot + scenario.duration_slots;
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
@@ -187,33 +260,56 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         max_drawdown_usd: mandate.limits.max_drawdown_usd,
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
-    // The scenario is the grader's last cheatcode. Lock them all before the
-    // bot starts: a bot that finds the surfnet's own port, past the guard,
-    // gets a plain validator RPC, with no cheatcodes, airdrops, or way to
-    // stop the surfnet.
-    let perp_asset_map = phoenix.perp_asset_map()?;
-    chain::register_scenario(
-        &rpc,
-        &scenario.name,
-        scenario.overrides(perp_asset_map, start_mark_ticks),
-    )?;
-    // Overrides count from the slot they were registered at; so does the
-    // takers' flow.
-    let base_slot = rpc.get_slot()?;
-    surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
 
     let late_before = surfnet.coalesced_slots();
-    let mut child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log)?;
+    let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+    let mut child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs)?;
+    ours.set_nonblocking(true)
+        .map_err(io_error("turn socket"))?;
+    let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
+    let (reader, mut writer) = socket.into_split();
+    let mut reader = BufReader::new(reader).lines();
+    let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
     info!(
         scenario = scenario.name,
-        start_slot,
-        end_slot = env.end_slot,
-        "bot started"
+        start_slot, end_slot, steps, "bot started"
     );
 
+    let hello = Hello {
+        protocol: turns::PROTOCOL.into(),
+        steps,
+        slots_per_step: SLOTS_PER_STEP,
+        start_slot,
+        end_slot,
+        turn_wall_ms: TURN_WALL.as_millis() as u64,
+    };
+    let mut turns = TurnReport {
+        steps,
+        ..TurnReport::default()
+    };
+    let legacy = !(send(&mut writer, &Message::Hello(hello)).await
+        && matches!(
+            tokio::time::timeout(HELLO_WALL, next_message(&mut reader)).await,
+            Ok(Some(Message::Ready))
+        ));
+    if legacy {
+        info!("the bot didn't answer the hello: the world moves at the slot time");
+    }
+    turns.legacy = legacy;
+    let budget = TURN_BUDGET_PER_STEP * steps as u32;
+    let mut spent = Duration::ZERO;
+
+    let mut flow = takers
+        .as_ref()
+        .zip(scenario.making.as_ref())
+        .map(|(takers, making)| takers.flow(making));
+    let mut quoting = competitor
+        .as_ref()
+        .zip(scenario.making.as_ref())
+        .map(|(competitor, making)| competitor.quoting(making));
     let mut bot_exit = None;
-    // Sampled twice a second, the loop's cadence: a fill persists until the
-    // bot trades out of it, so a position over the cap is caught.
+    // Sampled every step: a fill persists until the bot trades out of it, so
+    // a position over the cap is caught.
     let mut peak_position: f64 = 0.0;
     // The account's value, sampled at the same cadence: its running peak, and
     // the deepest it has fallen below it.
@@ -221,73 +317,104 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut max_drawdown_usd: f64 = 0.0;
     // Phoenix positions (or orders) in markets other than the scenario's.
     let mut positions_outside_universe: u32 = 0;
-    let sampling = async {
-        loop {
-            let slot = rpc.get_slot()?;
-            if slot >= env.end_slot {
-                break;
+    let mut slot = start_slot;
+    for k in 0..steps {
+        // The world moves: its blocks (and with them the scenario's move),
+        // then the grader's traders.
+        guard.set_turn(legacy);
+        let target = (slot + SLOTS_PER_STEP).min(end_slot);
+        while slot < target {
+            surfnet.send_command(SimnetCommand::SlotForward(None))?;
+            slot = wait_for_slot(&rpc, slot + 1).await?;
+        }
+        let at = slot - base_slot;
+        if let (Some(flow), Some(takers), Some(making)) =
+            (flow.as_mut(), takers.as_ref(), scenario.making.as_ref())
+        {
+            flow.step(takers, scenario, making, start_mark_usd, at)
+                .await;
+        }
+        if let (Some(quoting), Some(competitor), Some(making)) = (
+            quoting.as_mut(),
+            competitor.as_ref(),
+            scenario.making.as_ref(),
+        ) {
+            quoting
+                .step(competitor, scenario, making, start_mark_usd, at)
+                .await;
+        }
+
+        let asset = hawkeye
+            .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
+            .await?
+            .value;
+        peak_position =
+            peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
+        let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
+        let outside = match now.positions_outside(asset.has_position_or_orders) {
+            0 => 0,
+            seen => seen.min(outside_again(&rpc, &phoenix, &hawkeye, &bot, trader, market).await?),
+        };
+        positions_outside_universe = positions_outside_universe.max(outside);
+        let value_usd = value(now.value_usd, asset.base_lots, slot, base_slot).await?;
+        peak_value_usd = peak_value_usd.max(value_usd);
+        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
+        if bot_exit.is_none()
+            && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
+        {
+            if status.success() {
+                info!(%status, "bot exited before the session ended");
+            } else {
+                warn!(%status, "bot exited before the session ended");
             }
-            let asset = hawkeye
-                .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
-                .await?
-                .value;
-            peak_position =
-                peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
-            let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-            let outside = match now.positions_outside(asset.has_position_or_orders) {
-                0 => 0,
-                seen => {
-                    seen.min(outside_again(&rpc, &phoenix, &hawkeye, &bot, trader, market).await?)
+            bot_exit = Some(status.to_string());
+        }
+        if bot_exit.is_some() {
+            continue;
+        }
+
+        // The bot's turn.
+        guard.set_turn(true);
+        if legacy {
+            tokio::time::sleep(TURN_BUDGET_PER_STEP).await;
+            continue;
+        }
+        let started = Instant::now();
+        let step = Step {
+            k,
+            slot,
+            last: k + 1 == steps,
+        };
+        let wall = TURN_WALL.min(budget.saturating_sub(spent));
+        let answered = send(&mut writer, &Message::Step(step)).await
+            && tokio::time::timeout(wall, async {
+                loop {
+                    match next_message(&mut reader).await {
+                        Some(Message::Done { k: done }) if done == k => return true,
+                        Some(_) => continue,
+                        None => return false,
+                    }
                 }
-            };
-            positions_outside_universe = positions_outside_universe.max(outside);
-            let value_usd = value(now.value_usd, asset.base_lots, slot, base_slot).await?;
-            peak_value_usd = peak_value_usd.max(value_usd);
-            max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
-            if bot_exit.is_none()
-                && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
-            {
-                if status.success() {
-                    info!(%status, "bot exited before the session ended");
-                } else {
-                    warn!(%status, "bot exited before the session ended");
-                }
-                bot_exit = Some(status.to_string());
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            })
+            .await
+            .unwrap_or(false);
+        let took = started.elapsed();
+        spent += took;
+        if !answered {
+            turns.overran += 1;
         }
-        Ok::<(), Error>(())
-    };
-    let flow = async {
-        match (&takers, &scenario.making) {
-            (Some(takers), Some(making)) => Some(
-                takers
-                    .run(&rpc, scenario, making, start_mark_usd, base_slot, end_slot)
-                    .await,
-            ),
-            _ => None,
-        }
-    };
-    let competing = async {
-        match (&competitor, &scenario.making) {
-            (Some(competitor), Some(making)) => Some(
-                competitor
-                    .run(&rpc, scenario, making, start_mark_usd, base_slot, end_slot)
-                    .await,
-            ),
-            _ => None,
-        }
-    };
-    let (sampled, flow, competitor) = futures::join!(sampling, flow, competing);
-    sampled?;
-    stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
-    let late_slots = surfnet.coalesced_slots() - late_before;
-    if late_slots > 0 {
-        warn!(
-            scenario = scenario.name,
-            late_slots, "the clock fell behind during the session"
-        );
+        turns.wall_ms += took.as_millis() as u64;
     }
+    guard.set_turn(false);
+    let _ = send(&mut writer, &Message::End).await;
+    stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    turns.late_sends = guard.late_sends();
+    let late_slots = surfnet.coalesced_slots() - late_before;
+    let flow = flow.map(|flow| flow.report());
+    let competitor = match (quoting, competitor.as_ref()) {
+        (Some(quoting), Some(competitor)) => Some(quoting.report(competitor).await),
+        _ => None,
+    };
 
     let end = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
     let asset = hawkeye
@@ -332,14 +459,51 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         },
         flow,
         competitor,
+        turns,
     };
     info!(
         scenario = report.scenario,
         pnl_usd = report.pnl_usd,
         refused = report.refused_calls.len(),
+        overran = report.turns.overran,
         "session finished"
     );
     Ok(report)
+}
+
+/// Wait until the surfnet has produced `slot`.
+async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let now = rpc.get_slot()?;
+        if now >= slot {
+            return Ok(now);
+        }
+        if Instant::now() > deadline {
+            return Err(Error::Timeout(format!("slot {slot} (at {now})")));
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+/// Send one turn message; false if the bot's end is gone.
+async fn send(writer: &mut tokio::net::unix::OwnedWriteHalf, message: &Message) -> bool {
+    let mut line = serde_json::to_string(message).expect("turn messages serialize");
+    line.push('\n');
+    writer.write_all(line.as_bytes()).await.is_ok()
+}
+
+/// The bot's next turn message; `None` once its end is gone. Lines that
+/// aren't messages are skipped.
+async fn next_message(
+    reader: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+) -> Option<Message> {
+    loop {
+        let line = reader.next_line().await.ok()??;
+        if let Ok(message) = serde_json::from_str(&line) {
+            return Some(message);
+        }
+    }
 }
 
 /// Markets held other than the scenario's, read again. The market's view and
@@ -487,7 +651,14 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
     }
 }
 
-fn spawn_bot(bot_dir: &Path, env: &BotEnv, workdir: &SessionDir, log: &Path) -> Result<Child> {
+/// Start the bot, with `turns` as its file descriptor [`turns::TURN_FD`].
+fn spawn_bot(
+    bot_dir: &Path,
+    env: &BotEnv,
+    workdir: &SessionDir,
+    log: &Path,
+    turns: StdUnixStream,
+) -> Result<Child> {
     let run_sh = bot_dir.join("run.sh");
     if !run_sh.is_file() {
         return Err(Error::MissingBot(run_sh));
@@ -508,6 +679,7 @@ fn spawn_bot(bot_dir: &Path, env: &BotEnv, workdir: &SessionDir, log: &Path) -> 
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         )
         .env("HOME", &workdir.path)
+        .env(turns::TURN_FD_VAR, turns::TURN_FD.to_string())
         .env(
             "RUST_LOG",
             std::env::var("MTH_BOT_LOG").unwrap_or_else(|_| "info".into()),
@@ -521,7 +693,21 @@ fn spawn_bot(bot_dir: &Path, env: &BotEnv, workdir: &SessionDir, log: &Path) -> 
     if let Some((uid, gid)) = workdir.bot_user {
         command.uid(uid).gid(gid);
     }
-    command.spawn().map_err(io_error(&run_sh))
+    let fd = turns.as_raw_fd();
+    // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at
+    // TURN_FD has no close-on-exec flag, so it survives into run.sh; the
+    // original (close-on-exec, as Rust opens it) doesn't.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(fd, turns::TURN_FD) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().map_err(io_error(&run_sh));
+    drop(turns);
+    child
 }
 
 async fn stop_bot(child: &mut Child, bot_user: Option<&str>) {

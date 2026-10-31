@@ -387,6 +387,7 @@ mod tests {
             valuation: "mark",
             flow: None,
             competitor: None,
+            turns: Default::default(),
         }
     }
 
