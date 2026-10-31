@@ -167,6 +167,14 @@ pub async fn start_offline(dir: &Path) -> Result<OfflineWorld> {
     let exchange = phoenix::load_exchange(&exchange_path)?;
     let surfnet = Surfnet::builder()
         .offline(true)
+        // The surfnet serves RPC only at a path the grader alone knows. A bot
+        // shares the machine and can reach the port, but with no path it
+        // gets nothing: the guard (see [`crate::guard`]) is its only way in.
+        .secret_path(format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        ))
         .snapshot_file(dir.join(SURFNET_FILE))
         .block_production_mode(BlockProductionMode::Clock)
         .slot_time_ms(SLOT_TIME_MS)
