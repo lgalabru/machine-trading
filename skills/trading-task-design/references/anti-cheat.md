@@ -77,6 +77,12 @@ noise, draw legs independently, and overlap the ranges of phases that should
 look alike (see SKILL.md, step 2). Then confirm with real agents: read the
 winning bots' source, since agents describe their edge there.
 
+**Audit the vocabulary.** List the generator's parameter and mechanic names
+(`stalker`, `shakeout`, `informed_odds`, …) as needles and grep every
+agent-visible file and the agent image for them; a hit means the instruction
+or a practice file describes the mechanics. Rename parameters away from
+common English words so the audit has no false hits.
+
 ## After real-agent runs
 
 Run `harbor analyze jobs/<job>` on every batch. Its `reward_hacking`
