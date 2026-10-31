@@ -5,10 +5,12 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.8.0"
+tag := "0.9.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
 references := "phoenix-flash-crash=reference phoenix-market-making=maker"
+# The Claude Code version `just bench` runs, pinned so results compare.
+claude_code := "2.1.312"
 
 default:
     @just --list
@@ -150,7 +152,7 @@ release: check-solution
 # time. Reads ANTHROPIC_API_KEY from .env or ~/.machine-trading.env. Results go
 # to jobs/bench/; read them with `harbor view jobs/bench`. Arguments are
 # positional: just bench "claude-sonnet-5-5 claude-opus-5-5" 3 3 0.3.0
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" version="":
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" version="" limit="1":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
@@ -160,10 +162,30 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
     [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set"; exit 1; }
     version="{{version}}"
     dataset="solana-foundation/machine-trading${version:+@$version}"
+    batch="jobs/bench/$(date +%Y%m%d-%H%M%S)-x{{limit}}"
+    mkdir -p "$batch"
+    # One secret per batch: every trial is graded on the same hidden set,
+    # drawn inside its verifier. Kept (owner-only) so a void trial can be
+    # re-run on the same set: MTH_EVAL_SEED="$(cat <batch>/.seed)" just bench ...
+    if [ -z "${MTH_EVAL_SEED:-}" ]; then
+      MTH_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+    fi
+    export MTH_EVAL_SEED
+    (umask 077 && printf '%s' "$MTH_EVAL_SEED" > "$batch/.seed")
     for model in {{models}}; do
-      echo "== $model on $dataset: {{k}} trials, {{n}} at a time"
-      harbor run -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o jobs/bench
+      echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
+      # The harness is pinned, so numbers compare across releases: the
+      # Claude Code version, no web and no memory across trials.
+      harbor run -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o "$batch" \
+        --agent-timeout-multiplier {{limit}} \
+        --ak version={{claude_code}} \
+        --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
+        --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
     done
+    if grep -rlF --exclude=.seed "$MTH_EVAL_SEED" "$batch"; then
+      echo "the batch's secret appears in the job files above"; exit 1
+    fi
+    python3 -I bench/report.py "$batch"
 
 # Copy the reference bot into the task's solution.
 solution:
@@ -185,35 +207,69 @@ check-solution:
 # The checks every task change should pass: oracle ~1, and nop, cheater and
 # sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
 harbor-checks task="phoenix-flash-crash": image check-solution
-    @# The checks run on the images `image` just built: a task still pinned to
-    @# a released digest would test the old grader instead.
-    @grep -q '^FROM {{registry}}/{{image}}:{{tag}}$' {{tasks}}/{{task}}/environment/Dockerfile \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The checks run on the images `image` just built: a task still pinned to
+    # a released digest would test the old grader instead.
+    grep -q '^FROM {{registry}}/{{image}}:{{tag}}$' {{tasks}}/{{task}}/environment/Dockerfile \
       && grep -q '^FROM {{registry}}/{{image}}:{{tag}}-runtime$' {{tasks}}/{{task}}/tests/Dockerfile \
       || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
+    # The verifier draws its hidden set from the batch's secret.
+    export MTH_EVAL_SEED="${MTH_EVAL_SEED:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
     harbor run -p {{tasks}}/{{task}} -a oracle -o jobs
     harbor run -p {{tasks}}/{{task}} -a nop -o jobs
     PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
     PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs
 
-# Grade the exploit bots, written by agents in past benchmark runs, on a
-# task's hidden set: each must lose in some sessions and stay near the
-# reference. Run before benchmarking a scenario change. See
-# bench/checks/exploits/README.md.
-exploit-checks task="phoenix-flash-crash" jobs="3":
+# Fail if the agent's image holds anything that answers its task: the
+# anchors (reference bots), their source or the tasks' solutions, the
+# checks' bots, or a scored scenario. Runs on the dev image `image` built.
+leak-audit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Lines only the answers hold: the reference bots' and the ladder's.
+    needles=(
+      "fade the shock in tranches"
+      "hold for the reversion"
+      "one tick inside the competitor"
+      "backs off after one-sided fills"
+      "mth-ladder-rungs"
+    )
+    image="{{registry}}/{{image}}:{{tag}}"
+    found=0
+    for path in /opt/mth/anchors /tests /solution /opt/mth/sdk/bots/reference /opt/mth/sdk/bots/maker; do
+      if docker run --rm --entrypoint test "$image" -e "$path"; then
+        echo "LEAK: $image holds $path"; found=1
+      fi
+    done
+    for needle in "${needles[@]}"; do
+      hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
+        --exclude-dir=target --exclude-dir=.cargo --exclude-dir=registry -e "$needle" / || true)"
+      if [ -n "$hits" ]; then
+        echo "LEAK: \"$needle\" in:"; echo "$hits" | sed 's/^/  /'; found=1
+      fi
+    done
+    [ "$found" = 0 ] && echo "no leaks in $image"
+    exit "$found"
+
+# The skill ladder (bench/checks/ladder): fixed bots, from doing nothing to
+# the regime oracle and the frozen exploit bots, graded on `sets` fresh
+# hidden sets, each drawn from a secret of its own. Fails unless the order
+# rule holds on every set and the exploit bots stay within their limits.
+# Run it before benchmarking any scenario change.
+ladder task="flash-crash" sets="4" jobs="4" parallel="2":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -q
-    out=target/exploit-checks/{{task}}
-    rm -rf "$out" && mkdir -p "$out"
-    for bot in bench/checks/exploits/{{trim_start_match(task, "phoenix-")}}-*/; do
-      name="$(basename "$bot")"
-      CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
-      echo "== $name"
-      target/release/mth grade --jobs {{jobs}} --snapshot snapshots/{{snapshot}} --bot "$bot" \
-        --logs "$out/$name" --reward "$out/$name.json" {{tasks}}/{{task}}/tests/scenarios/*.json > /dev/null
+    just bots > /dev/null
+    (cd bench/checks/ladder/rungs && CARGO_TARGET_DIR="$PWD/../../../../target/ladder-rungs" \
+      cargo build --release -q)
+    mkdir -p bench/checks/ladder/bin
+    for bin in blind momentum regime-oracle quoter; do
+      cp "target/ladder-rungs/release/$bin" bench/checks/ladder/bin/
     done
-    case "{{task}}" in
-      phoenix-market-making) limits="--max-profitable 0.9" ;;
-      *) limits="--max-profitable 0.75 --max-ratio 3" ;;
-    esac
-    python3 -I bench/checks/exploits/judge.py $limits "$out"/*.json
+    for bot in bench/checks/exploits/{{task}}-*/; do
+      CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
+    done
+    python3 -I bench/checks/ladder/ladder.py {{task}} --mth target/release/mth \
+      --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}}

@@ -1,0 +1,21 @@
+{
+  "family": "market-making",
+  "count": 24,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    { "name": "nop", "dir": "bots/starter" },
+    { "name": "naive-quoter", "dir": "bench/checks/ladder/naive-quoter" },
+    { "name": "skew-quoter", "dir": "bench/checks/ladder/skew-quoter" },
+    { "name": "reference", "dir": "bots/maker" },
+    { "name": "market-making-opus", "dir": "bench/checks/exploits/market-making-opus" },
+    { "name": "market-making-fable", "dir": "bench/checks/exploits/market-making-fable" }
+  ],
+  "rules": [
+    "naive-quoter < reference",
+    "skew-quoter < reference < hindsight"
+  ],
+  "exploits": {
+    "bots": ["market-making-opus", "market-making-fable"],
+    "max_profitable": 0.9
+  }
+}

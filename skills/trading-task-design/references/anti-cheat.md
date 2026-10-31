@@ -77,6 +77,18 @@ noise, draw legs independently, and overlap the ranges of phases that should
 look alike (see SKILL.md, step 2). Then confirm with real agents: read the
 winning bots' source, since agents describe their edge there.
 
+**Keep the surfnet private.** Locked cheatcodes stop a bot that finds the
+surfnet's port from rewriting state, but standard methods still answer
+there, and in a lockstep world a bot sending on the raw port could act while
+the world moves. Serve the surfnet's RPC only at a secret path
+(`Surfnet::builder().secret_path(..)`): every other path gets a 404, and the
+guard is the bot's only way in.
+
+**Don't ship the hidden set.** Draw it inside the verifier from a per-batch
+secret, passed in the verifier's environment, and report only its hash.
+Every trial in a batch is graded on the same set; the next batch gets a new
+one. Grep every job file for the secret after the batch.
+
 **Audit the vocabulary.** List the generator's parameter and mechanic names
 (`stalker`, `shakeout`, `informed_odds`, …) as needles and grep every
 agent-visible file and the agent image for them; a hit means the instruction
