@@ -327,23 +327,35 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut max_drawdown_usd: f64 = 0.0;
     // Phoenix positions (or orders) in markets other than the scenario's.
     let mut positions_outside_universe: u32 = 0;
+    // The takers' orders due by this many slots into the session: sent after
+    // the bot's turn, against the quotes it left (see the step's order
+    // below).
+    let mut flow_due: Option<u64> = None;
+    let send_flow = async |flow: &mut Option<crate::flow::Flow>, at: Option<u64>| {
+        if let (Some(flow), Some(takers), Some(making), Some(at)) =
+            (flow.as_mut(), takers.as_ref(), scenario.making.as_ref(), at)
+        {
+            flow.step(takers, scenario, making, start_mark_usd, at)
+                .await;
+        }
+    };
     let mut slot = start_slot;
     for k in 0..steps {
-        // The world moves: its blocks (and with them the scenario's move),
-        // then the grader's traders.
+        // A step: the last step's takers trade against the quotes the bot
+        // left; then the world's blocks land (and with them the scenario's
+        // move); the grader's maker looks and requotes; then the bot's turn.
+        // Takers trading right after a move, before any maker could requote,
+        // would pick off every quote: a sniper the task doesn't describe.
+        // Here the toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
+        send_flow(&mut flow, flow_due.take()).await;
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
         }
         let at = slot - base_slot;
-        if let (Some(flow), Some(takers), Some(making)) =
-            (flow.as_mut(), takers.as_ref(), scenario.making.as_ref())
-        {
-            flow.step(takers, scenario, making, start_mark_usd, at)
-                .await;
-        }
+        flow_due = Some(at);
         if let (Some(quoting), Some(competitor), Some(making)) = (
             quoting.as_mut(),
             competitor.as_ref(),
@@ -416,6 +428,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         turns.wall_ms += took.as_millis() as u64;
     }
     guard.set_turn(false);
+    send_flow(&mut flow, flow_due.take()).await;
     let _ = send(&mut writer, &Message::End).await;
     stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
     turns.late_sends = guard.late_sends();

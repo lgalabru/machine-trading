@@ -82,10 +82,21 @@ grade bot +files:
 # The task images, for this machine only: dev (agents) and runtime
 # (verifiers). Tagged as the registry names, so task Dockerfiles that aren't
 # pinned yet build against them.
-image:
-    docker buildx build -f bench/image/Dockerfile --target runtime \
+# `surfpool=DIR` builds against a local Surfpool checkout's committed HEAD
+# (its git archive, so no build artifacts) instead of the git sources.
+image surfpool="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    context=()
+    if [ -n "{{surfpool}}" ]; then
+      src="$PWD/target/surfpool-src"
+      rm -rf "$src" && mkdir -p "$src"
+      git -C "{{surfpool}}" archive HEAD | tar -x -C "$src"
+      context=(--build-context "surfpool=$src")
+    fi
+    docker buildx build -f bench/image/Dockerfile --target runtime ${context[@]+"${context[@]}"} \
         -t {{registry}}/{{image}}:{{tag}}-runtime --load .
-    docker buildx build -f bench/image/Dockerfile --target dev \
+    docker buildx build -f bench/image/Dockerfile --target dev ${context[@]+"${context[@]}"} \
         -t {{registry}}/{{image}}:{{tag}} --load .
 
 # Build both images for amd64 and arm64 and push them. Pin the tasks to the
@@ -206,7 +217,7 @@ check-solution:
 
 # The checks every task change should pass: oracle ~1, and nop, cheater and
 # sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
-harbor-checks task="phoenix-flash-crash": image check-solution
+harbor-checks task="phoenix-flash-crash" surfpool="": (image surfpool) check-solution
     #!/usr/bin/env bash
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to
