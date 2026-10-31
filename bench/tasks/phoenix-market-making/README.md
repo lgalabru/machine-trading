@@ -46,8 +46,11 @@ fills nothing.
   bot's only way in is an RPC proxy that forwards standard Solana methods
   only.
 - **Turns:** the world moves in steps of two slots and waits for the bot
-  between them (`mth-turn-1`): each step's move lands, then the takers'
-  orders due and the grader's maker, then the bot's turn. The same bot on
+  between them (`mth-turn-1`): the takers' orders due trade against the
+  quotes the bot left, then the step's move lands, then the grader's maker
+  requotes, then the bot's turn. (Takers right after a move, before any
+  maker could requote, would pick off every quote: a sniper the task
+  doesn't describe.) The same bot on
   the same session trades the same way every time; before 0.9.0, the
   grader's maker raced the bot in real time, and the same reference made
   $19.6 in one run and $49 in the next.
