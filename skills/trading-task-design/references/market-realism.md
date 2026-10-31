@@ -38,6 +38,13 @@ taker or a sandwicher (see [Agent Trading Arena](https://arxiv.org/abs/2502.1796
 and [ABIDES](https://arxiv.org/abs/2110.14771)). Otherwise label the task
 "static replay".
 
+Reactive agents worth having:
+
+- **A competing maker** that undercuts a better quote by a tick down to a floor and eases back out (machine-trading 0.8.0). Without it, a bot one tick inside static liquidity collects the spread unopposed.
+- **A learning predator** that tracks the bot's pace per venue, trades ahead of it at a multiple of that pace (more when the pace is steady), buys back later, and stands down when the bot stops feeding it. It punishes readable flow, which is the skill an execution task should test, and it's visible only on the tape.
+- **Makers that skew against absorbed inventory, books that refill at a finite rate, and permanent impact** from the bot's own flow.
+- **Network faults**: expired blockhashes, dropped sends, late confirmations, 429s, a priority-fee floor under congestion. At fixed points they keep evaluation runs comparable, but a bot can learn them: draw them per session for training.
+
 ## Crypto and DeFi specifics
 
 - **MEV.** On Solana, sandwiching was widespread enough that Jito shut down its public mempool ([Helius MEV report](https://www.helius.dev/blog/solana-mev-report)). A sandbox without searchers overstates naive large swaps. Either add a sandwicher, or cap the swap size the task rewards.
