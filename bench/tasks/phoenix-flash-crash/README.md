@@ -36,8 +36,8 @@ and the mark wobbles in between.
 - **Reward:** `clamp(Σ bot PnL / Σ hindsight bound, 0, 1)` over the thirty-six
   scenarios. The hindsight bound is the full position cap held the right way
   through every move at no cost: no bot reaches it, so the score doesn't
-  saturate. The reference (fade the shock in two tranches, hold) scores
-  about 0.04, and `skill`, the bot's PnL over the reference's, is reported
+  saturate. The reference (ride each move while it runs, fade it once it
+  stops) scores about 0.04, and `skill`, the bot's PnL over the reference's, is reported
   alongside: the headline for comparing bots.
 - **Risk:** positions are capped at 70 SPCX (about 1× collateral), and a session may not draw
   down more than $1,000 (10% of collateral) from its peak. Breaking either,
