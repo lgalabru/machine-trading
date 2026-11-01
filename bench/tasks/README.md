@@ -43,6 +43,17 @@ bots.
     bot that finds its port gets a 404 for everything, standard methods
     included: the guard is its only way in, and the guard holds its sends to
     its turn.
+  - **`phoenix-market-making`'s informed flow bites.** On 0.8.0's flow, a
+    naive quoter one tick inside the competitor, never stepping back, beat
+    the reference on fresh sets: the bursts cost it less than backing off
+    did. Now about 85% of jumps are announced (up from 60%), by 8–16 orders
+    (6–12) of 2–4× the noise size (1.5–3×), and jumps run 1.5–4% (0.8–3%).
+    The reference trades with a burst it reads in its fills, a few units the
+    burst's way, and pulls the quote the burst was hitting.
+  - **A stronger `phoenix-flash-crash` reference.** The old one, two fading
+    tranches, made $525–$759 on 36 fresh sessions: too little for its ratio
+    to mean anything. The new one rides each move while it runs and fades
+    it once it stops ($647–$2,777 on the same sets).
   - **`skill`** joins the reward's diagnostics: the bot's PnL over the
     reference's, 0 if disqualified.
   - **The ladder** (`just ladder`, `bench/checks/ladder`) replaces `just
