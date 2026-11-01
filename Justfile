@@ -240,8 +240,8 @@ leak-audit:
     set -euo pipefail
     # Lines only the answers hold: the reference bots' and the ladder's.
     needles=(
-      "fade the shock in tranches"
-      "hold for the reversion"
+      "ride each move while it runs"
+      "then fade it once it stops"
       "one tick inside the competitor"
       "backs off after one-sided fills"
       "mth-ladder-rungs"

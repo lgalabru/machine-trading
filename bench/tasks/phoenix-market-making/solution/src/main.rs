@@ -24,7 +24,7 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
-use mth_botkit::{BotEnv, Side, Trader};
+use mth_botkit::{BotEnv, Side, Trader, Turns};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -60,6 +60,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
+    // Answer the grader's hello first: the world waits for it.
+    let mut turns = Turns::connect()?;
     let env = BotEnv::from_env()?;
     let mandate = env.mandate()?;
     let cap = mandate.universe[0].max_position;
@@ -75,11 +77,8 @@ async fn main() -> Result<()> {
     let mut requotes = 0u64;
     // The oracle's recent average, and the slot it was last updated at.
     let mut average: Option<(u64, f64)> = None;
-    loop {
-        let slot = trader.slot()?;
-        if slot >= env.end_slot {
-            break;
-        }
+    while let Some(step) = turns.next()? {
+        let slot = step.slot;
         let (Ok(mark), Ok(position)) = (trader.oracle_usd().await, trader.position().await) else {
             continue;
         };
@@ -120,7 +119,6 @@ async fn main() -> Result<()> {
                 || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
         });
         if !moved {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
             continue;
         }
 
@@ -136,9 +134,9 @@ async fn main() -> Result<()> {
             (Side::Bid, bid, bid_size, held < INVENTORY_LIMIT * cap),
             (Side::Ask, ask, ask_size, held > -INVENTORY_LIMIT * cap),
         ];
-        // Each order lands a few hundred milliseconds after the one before:
-        // the side placed first is live longer. Alternate, or the flow
-        // fills one side more and the inventory drifts.
+        // Both quotes land within the turn, before the next step's flow;
+        // alternating which goes first costs nothing and keeps neither side
+        // systematically ahead if they ever don't.
         if requotes % 2 == 1 {
             quotes.reverse();
         }

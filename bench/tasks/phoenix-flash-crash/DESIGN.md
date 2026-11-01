@@ -139,4 +139,4 @@ oracle, with wide intervals; the 0.9.0 bench will say.
 | 0.5.0 | read equal steps and a fixed tail: 3.5–3.9× | uneven steps and gaps, independent legs, one range for pauses and holds, a random tail, wobble; SPCX |
 | 0.6.0 | rode legs that always ran ≥ 3% in steps, dated the aftermath from the end: ~6×, profitable in every session | — (mandate only) |
 | 0.8.0 | — | legs 0.6–8% log-uniform, 70% gaps, fizzles, duration drawn first; 36 hidden sessions; exploit checks |
-| 0.9.0 | — | a lockstep world; hidden sets drawn per batch from a secret; the reference graded alongside; `skill`; the ladder with a regime oracle |
+| 0.8.0 → 0.9.0 | frozen exploit bots made 3–6× the reference on fresh sets; the old reference (two fading tranches) made $525–$759 on 36 sessions, too little to rank the ladder's rungs reliably | a lockstep world; hidden sets drawn per batch from a secret; the reference graded alongside; `skill`; the ladder with a regime oracle; a new reference that rides each move and fades it once it stops ($647–$2,777 on the same sets) |
