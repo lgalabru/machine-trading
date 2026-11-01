@@ -234,16 +234,16 @@ impl MakingFamily {
             trend_drift_pct: (0.006, 0.018),
             trend_lean: (0.05, 0.12),
             jumps: (1, 3),
-            jump_pct: (0.8, 3.0),
+            jump_pct: (1.5, 4.0),
             jump_margin: 60,
             noise_rate: (0.2, 0.45),
             size_median: 0.6,
             size_sigma: 0.7,
             size_clamp: (0.1, 4.0),
-            informed_odds: 0.6,
-            informed_orders: (6, 12),
+            informed_odds: 0.85,
+            informed_orders: (8, 16),
             informed_lead: (4, 24),
-            informed_scale: (1.5, 3.0),
+            informed_scale: (2.0, 4.0),
             fakeouts: (0, 3),
             floor_bps: (2.0, 6.0),
             react_slots: (2, 8),
@@ -566,8 +566,10 @@ mod tests {
         }
         let share = led as f64 / jumps as f64;
         assert!(jumps > 100, "{jumps} jumps");
+        // About 85% are announced; a burst measured against a busy window
+        // can read as typical, so the measured share runs a little under.
         assert!(
-            (0.4..0.8).contains(&share),
+            (0.65..0.95).contains(&share),
             "{share} of {jumps} jumps are led by a burst"
         );
     }
