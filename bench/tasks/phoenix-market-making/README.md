@@ -18,7 +18,7 @@ fills nothing.
   bp). They keep their depth curve and re-center on every price move. At
   equal prices, a resting limit order fills before them.
 - **The market** walks every few slots. A quarter of the sessions stay calm,
-  half have one to three jumps of 0.8–3%, either way, and a quarter trend.
+  half have one to three jumps of 1.5–4%, either way, and a quarter trend.
 - **The flow** is grader-run takers sending ordinary Phoenix market orders
   from a shared pool of eight accounts: noise either side, informed bursts
   ahead of each jump, leaning flow in a trend, and fake-out bursts with no
