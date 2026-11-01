@@ -24,10 +24,10 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `nop` | the starter: never trades | 0 |
 | `blind-long`, `blind-short` | the full cap one way at the open, held | a coin flip, below the reference: the family mirrors crashes and squeezes |
 | `dip-buyer` | the full cap long once the mark is 3% down | below the reference: squeezes and extensions punish it |
-| `momentum` | the full cap with the move once it reaches 4% | below the reference: the reference's opposite bet |
-| `reference` | fades the shock in tranches, holds | 1 |
+| `momentum` | the full cap with the move once it reaches 4%, held | below the reference: it rides the shock and never fades it |
+| `reference` | rides each move while it runs, fades it once it stops | 1 |
 | `regime-oracle` | told the draw's shape (`mth grade --tell-regime`), not its path: takes the cap from the extreme toward where the session ends | above the reference: what reading the regime well could still earn |
-| `flash-crash-opus`, `flash-crash-fable` | the frozen 0.6.0 exploit bots | at most 3× the reference, losing a quarter of sessions or more |
+| `flash-crash-opus`, `flash-crash-fable` | the frozen 0.6.0 exploit bots | below the regime oracle, losing a quarter of sessions or more |
 | `hindsight` | the bound | top |
 
 ## Market-making
