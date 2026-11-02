@@ -273,6 +273,14 @@ impl MakingFamily {
     }
 
     pub fn sample(&self, name: &str, seed: u64) -> Scenario {
+        self.sample_labeled(name, seed).0
+    }
+
+    /// [`MakingFamily::sample`], with which of its taker orders are informed
+    /// (ahead of a jump; noise and fake-outs aren't), in the scenario's
+    /// order. The labels are for the ladder's flow oracle only: they never go
+    /// in a scenario file.
+    pub fn sample_labeled(&self, name: &str, seed: u64) -> (Scenario, Vec<bool>) {
         let mut rng = SplitMix64(seed);
         // The regime comes first, so `regime` can read it alone.
         let regime = match rng.next_f64() {
@@ -354,7 +362,7 @@ impl MakingFamily {
             let (lo, hi) = self.noise_limit_clamp;
             let limit =
                 competitor_bps * (self.noise_limit_sigma * rng.normal()).exp().clamp(lo, hi);
-            takers.push(self.order(&mut rng, slot, side, size, limit));
+            takers.push((self.order(&mut rng, slot, side, size, limit), false));
         }
         let side_of = |size: f64| {
             if size > 0.0 {
@@ -369,22 +377,28 @@ impl MakingFamily {
                 bursts.push((at, side_of(size)));
             }
         }
+        let informed_bursts = bursts.len();
         for _ in 0..rng.range_u64(self.fakeouts) {
             let at = rng.range_u64((self.jump_margin, duration - self.jump_margin));
             let sign = if rng.next_f64() < 0.5 { -1.0 } else { 1.0 };
             bursts.push((at, side_of(sign)));
         }
-        for (at, side) in bursts {
+        for (burst, (at, side)) in bursts.into_iter().enumerate() {
             let lead = rng.range_u64(self.informed_lead).min(at);
             for _ in 0..rng.range_u64(self.informed_orders) {
                 let slot = at - rng.range_u64((1, lead.max(1)));
                 let scale = rng.range_f64(self.informed_scale);
                 let size = self.size(&mut rng, scale);
                 let limit = competitor_bps * rng.range_f64(self.informed_limit);
-                takers.push(self.order(&mut rng, slot, side, size, limit));
+                takers.push((
+                    self.order(&mut rng, slot, side, size, limit),
+                    burst < informed_bursts,
+                ));
             }
         }
-        takers.sort_by_key(|o| o.slot);
+        // Stable: orders in the same slot keep the order they were drawn in.
+        takers.sort_by_key(|(o, _)| o.slot);
+        let (takers, informed): (Vec<TakerOrder>, Vec<bool>) = takers.into_iter().unzip();
         let competition = Competition {
             floor_bps: round2(rng.range_f64(self.floor_bps).min(0.5 * competitor_bps)),
             react_slots: rng.range_u64(self.react_slots),
@@ -415,7 +429,7 @@ impl MakingFamily {
             "; makers quote ±{competitor_bps} bp; {} taker orders",
             takers.len()
         );
-        Scenario {
+        let scenario = Scenario {
             name: name.to_string(),
             description,
             symbol: self.symbol.clone(),
@@ -433,12 +447,27 @@ impl MakingFamily {
                 takers,
             }),
             reference_pnl_usd: None,
-        }
+        };
+        (scenario, informed)
     }
 
     /// `count` scenarios named `<prefix>-<n>`, each regime in proportion to
     /// its odds (largest remainder). Seeds derive from `seed`.
     pub fn sample_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<Scenario> {
+        self.sample_set_labeled(prefix, count, seed)
+            .into_iter()
+            .map(|(scenario, _)| scenario)
+            .collect()
+    }
+
+    /// [`MakingFamily::sample_set`], each scenario with its informed labels
+    /// (see [`MakingFamily::sample_labeled`]).
+    pub fn sample_set_labeled(
+        &self,
+        prefix: &str,
+        count: usize,
+        seed: u64,
+    ) -> Vec<(Scenario, Vec<bool>)> {
         let odds = [
             (Regime::Calm, self.calm_odds),
             (Regime::Jumps, self.jumps_odds),
@@ -472,7 +501,7 @@ impl MakingFamily {
             }
             quota.1 -= 1;
             let name = format!("{prefix}-{}", scenarios.len() + 1);
-            scenarios.push(self.sample(&name, draw_seed));
+            scenarios.push(self.sample_labeled(&name, draw_seed));
         }
         scenarios
     }
@@ -519,6 +548,19 @@ mod tests {
             let s = family.sample("m", seed);
             assert_eq!(s.validate(), Ok(()), "seed {seed}: {s:?}");
             assert_eq!(s, family.sample("m", seed));
+        }
+    }
+
+    #[test]
+    fn labels_mark_informed_orders_only_where_there_are_jumps() {
+        let family = MakingFamily::spcx();
+        for seed in 0..200 {
+            let (s, informed) = family.sample_labeled("m", seed);
+            let takers = &s.making.as_ref().unwrap().takers;
+            assert_eq!(informed.len(), takers.len(), "seed {seed}");
+            if family.regime(seed) != Regime::Jumps {
+                assert!(!informed.contains(&true), "seed {seed}: no jumps, nothing informed");
+            }
         }
     }
 

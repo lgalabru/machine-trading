@@ -38,12 +38,15 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `naive-quoter` | one tick inside the competitor around the oracle, symmetric | below the reference |
 | `skew-quoter` | the same, leaning against its inventory | below the reference |
 | `reference` | `bots/maker`: inside the competitor, skewed, leaning with the drift, backing off one-sided flow | 1 |
-| `market-making-opus`, `market-making-fable` | the frozen 0.7.0 exploit bots | losing in a tenth of sessions or more |
+| `flow-oracle` | told which taker orders are informed (`mth grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order takes the cap its way until the jump lands | above the reference: what reading the tape perfectly is worth |
+| `market-making-opus`, `market-making-fable` | the frozen 0.7.0 exploit bots | below the flow oracle, losing in a tenth of sessions or more |
 | `hindsight` | the bound (spread plus hindsight) | top |
 
-Market-making has no regime oracle yet: a maker told the regime (calm,
-jumps, trend) gains little without the jump times, and a maker told those is
-the informed flow. The bound stands in as the ceiling.
+The flow oracle is market-making's ceiling for the exploit bots, as the
+regime oracle is flash-crash's. It isn't told a regime (calm, jumps, trend:
+little use without the jump times) or the jumps, only what a perfect reader
+of the tape would know, when it would know it. An exploit bot above it reads
+something no honest trader could: a scenario bug, not skill.
 
 ## Bots
 
