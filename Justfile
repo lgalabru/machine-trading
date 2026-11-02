@@ -276,7 +276,7 @@ ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     (cd bench/checks/ladder/rungs && CARGO_TARGET_DIR="$PWD/../../../../target/ladder-rungs" \
       cargo build --release -q)
     mkdir -p bench/checks/ladder/bin
-    for bin in blind momentum regime-oracle quoter; do
+    for bin in blind momentum regime-oracle flow-oracle quoter; do
       cp "target/ladder-rungs/release/$bin" bench/checks/ladder/bin/
     done
     for bot in bench/checks/exploits/{{task}}-*/; do

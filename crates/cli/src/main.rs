@@ -70,8 +70,9 @@ enum Command {
         /// Reference sessions to run at once (1-4).
         #[arg(long, default_value_t = 4)]
         anchor_jobs: usize,
-        /// Hand the bot each drawn session's regime as MTH_REGIME: for the
-        /// ladder's regime oracle (flash-crash), never for a graded bot.
+        /// Hand the bot each drawn session's regime as MTH_REGIME: the
+        /// shock's shape (flash-crash), or the informed taker orders
+        /// (market-making). For the ladder's oracles, never a graded bot.
         #[arg(long, requires = "draw", hide = true)]
         tell_regime: bool,
         /// Write Harbor's reward.json here.
@@ -445,13 +446,34 @@ async fn run() -> Result<()> {
                                         .collect::<Result<_, _>>()?,
                                 );
                             }
-                            drawn.into_iter().map(|(scenario, _)| scenario).collect()
+                            drawn.into_iter().map(|(scenario, _)| scenario).collect::<Vec<_>>()
                         }
                         Family::MarketMaking => {
+                            let drawn =
+                                MakingFamily::spcx().sample_set_labeled("hidden", count, seed);
                             if tell_regime {
-                                anyhow::bail!("--tell-regime is for flash-crash only");
+                                // The informed orders, by slot and side: what
+                                // a perfect reader of the tape would know.
+                                regimes = Some(
+                                    drawn
+                                        .iter()
+                                        .map(|(scenario, informed)| {
+                                            let orders: Vec<_> = scenario
+                                                .making
+                                                .iter()
+                                                .flat_map(|m| m.takers.iter())
+                                                .zip(informed)
+                                                .filter(|(_, informed)| **informed)
+                                                .map(|(o, _)| {
+                                                    serde_json::json!({"slot": o.slot, "side": o.side})
+                                                })
+                                                .collect();
+                                            serde_json::to_string(&orders)
+                                        })
+                                        .collect::<Result<_, _>>()?,
+                                );
                             }
-                            MakingFamily::spcx().sample_set("hidden", count, seed)
+                            drawn.into_iter().map(|(scenario, _)| scenario).collect::<Vec<_>>()
                         }
                     };
                     (scenarios, Some(hash))
