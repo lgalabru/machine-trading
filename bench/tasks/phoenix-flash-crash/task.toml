@@ -19,11 +19,11 @@ category = "trading"
 snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
-# Thirty-six hidden sessions drawn from the batch's secret, plus the
+# Seventy-two hidden sessions drawn from the batch's secret, plus the
 # reference on the same sessions first (four at a time). The world moves
 # only between the bot's turns, so a session takes as long as the bot
 # thinks: a minute or two for most bots, about four at worst.
-timeout_sec = 7200.0
+timeout_sec = 10800.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
 # a bot must not reach one.

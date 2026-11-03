@@ -77,8 +77,12 @@ traded the bursts for PnL the bound didn't count, and scored past it).
 
 ## Detectability
 
-Not yet measured. The ladder stands in: the reference's lead over the naive
-and skewed quoters is what reading the flow is worth.
+Not yet measured as separations in standard deviations; the ladder stands
+in. The flow oracle, told which taker orders are informed (each once it has
+traded), made 14–30× the reference on two 72-session sets: what reading the
+tape perfectly is worth. The reference's lead over the naive and skewed
+quoters is what reading its own fills is worth; it holds in 90% of
+resamples at 72 sessions, against 81% at 48.
 
 ## Fairness
 
@@ -114,4 +118,4 @@ sessions.
 | --- | --- | --- |
 | 0.7.0 | quoted a tick inside static makers; traded the informed bursts: reward 1.0, 9–11× the reference, every session won | — (new task) |
 | 0.8.0 | — | the grader's maker; per-order taker limits; ~60% of jumps announced; fake-outs; informed sizes closer to noise; bound = spread + hindsight |
-| 0.9.0 | — | a lockstep world (the grader's maker no longer races the bot: grades replay); 24 hidden sessions drawn per batch from a secret; the reference graded alongside; `skill`; the ladder |
+| 0.8.0 → 0.9.0 | on 0.8.0's flow a naive quoter beat the reference on fresh sets; the reference took its own unwinding for bursts | a lockstep world (the grader's maker no longer races the bot: grades replay); informed flow that bites; 72 hidden sessions drawn per batch from a secret; the reference graded alongside; `skill`; the ladder, with a flow oracle as the exploit bots' ceiling; a reference that counts only fills that grow its inventory |
