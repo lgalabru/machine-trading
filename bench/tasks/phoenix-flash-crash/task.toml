@@ -22,8 +22,10 @@ snapshot = "phoenix-spcx-2026-10-29"
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
 # reference on the same sessions first (four at a time). The world moves
 # only between the bot's turns, so a session takes as long as the bot
-# thinks: a minute or two for most bots, about four at worst.
-timeout_sec = 10800.0
+# thinks: a minute or two for most bots, about four at worst. A bot that
+# never answers the turn protocol runs each session in real time, one at a
+# time: about 3.2 h for 72. A disqualified bot stops at its first breach.
+timeout_sec = 14400.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
 # a bot must not reach one.
