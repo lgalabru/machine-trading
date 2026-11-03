@@ -31,6 +31,7 @@ mth grade \
   --reference /opt/mth/anchors/market-making \
   --anchor-jobs 4 \
   --jobs 1 \
+  --stop-on-disqualify \
   --snapshot "$MTH_SNAPSHOT" \
   --bot /app/bot \
   --logs /logs/verifier/bot \

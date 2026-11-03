@@ -75,6 +75,10 @@ enum Command {
         /// (market-making). For the ladder's oracles, never a graded bot.
         #[arg(long, requires = "draw", hide = true)]
         tell_regime: bool,
+        /// Stop at the bot's first disqualifying session (the grade is 0
+        /// whatever the rest do); the report covers the sessions up to it.
+        #[arg(long)]
+        stop_on_disqualify: bool,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -428,6 +432,7 @@ async fn run() -> Result<()> {
             reference,
             anchor_jobs,
             tell_regime,
+            stop_on_disqualify,
             reward,
             report,
         } => {
@@ -498,6 +503,7 @@ async fn run() -> Result<()> {
                 reference_dir: reference.as_deref(),
                 anchor_jobs,
                 regimes: regimes.as_deref(),
+                stop_on_disqualify,
             })
             .await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
