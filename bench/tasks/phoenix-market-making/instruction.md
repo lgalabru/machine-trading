@@ -71,7 +71,7 @@ Rules:
 
 ## Scoring
 
-Your bot is graded on 24 hidden scenarios, six calm, twelve with jumps and six trending, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Your reward is your bot's total PnL over all of them, divided by a **bound** on the same scenarios, clamped to between 0 and 1:
+Your bot is graded on 72 hidden scenarios, eighteen calm, thirty-six with jumps and eighteen trending, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Your reward is your bot's total PnL over all of them, divided by a **bound** on the same scenarios, clamped to between 0 and 1:
 
 ```
 reward = clamp(sum of your PnL / sum of the bounds, 0, 1)
