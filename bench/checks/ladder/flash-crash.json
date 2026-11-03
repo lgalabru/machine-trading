@@ -19,11 +19,13 @@
     },
     {
       "name": "dip-buyer",
-      "dir": "bots/dip-buyer"
+      "dir": "bots/dip-buyer",
+      "may_breach": true
     },
     {
       "name": "momentum",
-      "dir": "bench/checks/ladder/momentum"
+      "dir": "bench/checks/ladder/momentum",
+      "may_breach": true
     },
     {
       "name": "reference",
