@@ -37,8 +37,8 @@ fills nothing.
   generator (`mth scenario generate --family market-making`), and
   `mth-practice`, which grades the bot exactly as the verifier does.
 - **Verifier:** the runtime image, with no toolchain and no network. It
-  receives only `/app/bot`, draws twenty-four hidden sessions (six calm,
-  twelve with jumps, six trending) from the batch's secret (`MTH_EVAL_SEED`;
+  receives only `/app/bot`, draws seventy-two hidden sessions (eighteen
+  calm, thirty-six with jumps, eighteen trending) from the batch's secret (`MTH_EVAL_SEED`;
   it refuses to grade without one), grades the reference maker on them, then
   the bot, one session at a time, each on a fresh surfnet. Before the bot
   starts, the takers are onboarded, the makers widened, and every cheatcode
@@ -78,17 +78,17 @@ fills nothing.
 | sneaky | 0.0 | The surfnet's own port answers nothing without its secret path |
 
 `just ladder market-making` grades the ladder (`bench/checks/ladder`) on
-fresh hidden sets: naive and skewed quoters below the reference, the frozen
-exploit bots within their limits.
+fresh hidden sets: naive and skewed quoters below the reference, the
+reference below a flow oracle (told which taker orders are informed), and
+the frozen exploit bots below the flow oracle.
 
 The reference quotes one tick inside the competitor around the oracle,
 skews against inventory, leans with the drift, and backs off after
-one-sided fills. On the hidden set it made $19.62 against a $2,498 bound
-(reward ~0.01); in the 0.8.0 Harbor check it made $49.17 and won 11 of 12
-sessions. The grader's maker reacts in real time, so the same bot's PnL
-moves with timing from run to run. Against that maker, simple quoting
-roughly breaks even: the headroom (faster requotes, sizing, reading the
-informed flow on the tape without being run over by it) is where agents separate.
+one-sided fills that grow its inventory, leaning a few units the burst's
+way. On two fresh 72-session ladder sets it made $279 and $151; the naive
+quoter lost $11 and $41, and the flow oracle made 14–30× the reference:
+the headroom (reading the tape beyond its own fills, sizing the lean,
+telling bursts from noise) is where agents separate.
 
 ## Realism limits
 

@@ -27,7 +27,7 @@ fi
 # its sessions run four at a time, before the bot's.
 mth grade \
   --draw market-making \
-  --count 24 \
+  --count 72 \
   --reference /opt/mth/anchors/market-making \
   --anchor-jobs 4 \
   --jobs 1 \

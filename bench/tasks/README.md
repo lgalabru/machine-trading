@@ -31,14 +31,15 @@ bots.
     5 s a turn. The same bot on the same session trades the same way every
     time; in 0.8.0 the grader's maker raced the bot in real time, and the
     same market-making reference made $19.6 in one run and $49 in the next.
-    Sessions also run as fast as the bot answers: a 36-session grade takes
-    minutes, not 90. A bot that never answers the hello runs the old way.
+    Sessions also run as fast as the bot answers: a 72-session flash-crash
+    grade takes minutes, not hours. A bot that never answers the hello runs the old way.
   - **Hidden sets drawn per batch.** No task ships its hidden scenarios. The
     verifier draws them from the batch's secret, passed by Harbor, and
     refuses to grade without one; reports carry only the secret's SHA-256.
     The reference runs first on the same sessions, and a reference that
-    doesn't run cleanly voids the grade. `phoenix-market-making` grades 24
-    sessions, up from 12.
+    doesn't run cleanly voids the grade. Both tasks grade 72 sessions (up
+    from 36 and 12): at fewer, the ladder couldn't reliably tell the
+    references from simple bots. The verifier's limit is 3 h.
   - **A private surfnet.** The surfnet serves RPC only at a secret path, so a
     bot that finds its port gets a 404 for everything, standard methods
     included: the guard is its only way in, and the guard holds its sends to
@@ -49,7 +50,9 @@ bots.
     did. Now about 85% of jumps are announced (up from 60%), by 8–16 orders
     (6–12) of 2–4× the noise size (1.5–3×), and jumps run 1.5–4% (0.8–3%).
     The reference trades with a burst it reads in its fills, a few units the
-    burst's way, and pulls the quote the burst was hitting.
+    burst's way, and pulls the quote the burst was hitting; it no longer
+    takes its own unwinding for a burst (it did, and leaned back and forth
+    on its own).
   - **A stronger `phoenix-flash-crash` reference.** The old one, two fading
     tranches, made $525–$759 on 36 fresh sessions: too little for its ratio
     to mean anything. The new one rides each move while it runs and fades
@@ -58,8 +61,10 @@ bots.
     reference's, 0 if disqualified.
   - **The ladder** (`just ladder`, `bench/checks/ladder`) replaces `just
     exploit-checks`: blind bets, a dip-buyer, momentum, naive and skewed
-    quoters, the reference, a regime oracle and the frozen exploit bots,
-    graded on fresh hidden sets, with an order rule each set must keep.
+    quoters, the reference, a regime oracle (flash-crash), a flow oracle
+    (market-making: told which taker orders are informed) and the frozen
+    exploit bots, graded on fresh 72-session hidden sets, with an order rule
+    each set must keep; the exploit bots must stay below the oracles.
   - **The bench** (`just bench`) draws one secret per batch, pins the Claude
     Code harness (no web, no memory across trials), runs at a time-limit
     multiple, and reports skill with 90% bootstrap intervals over sessions

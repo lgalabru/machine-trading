@@ -67,7 +67,7 @@ Rules:
 
 ## Scoring
 
-Your bot is graded on 36 hidden scenarios, eighteen crashes and eighteen squeezes, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Your reward is your bot's total PnL over all of them, divided by the **hindsight bound** on the same scenarios, clamped to between 0 and 1:
+Your bot is graded on 72 hidden scenarios, thirty-six crashes and thirty-six squeezes, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Your reward is your bot's total PnL over all of them, divided by the **hindsight bound** on the same scenarios, clamped to between 0 and 1:
 
 ```
 reward = clamp(sum of your PnL / sum of the hindsight bounds, 0, 1)
