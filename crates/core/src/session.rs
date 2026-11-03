@@ -75,6 +75,12 @@ pub const DEPOSIT_USDC: f64 = 10_000.0;
 pub const BOT_USERS: [&str; 4] = ["mth-bot", "mth-bot-2", "mth-bot-3", "mth-bot-4"];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
+/// Slots from the surfnet's start to the session's: setup runs on the wall
+/// clock and takes 10 to 15 of them, more on a loaded machine. The world
+/// then steps to this one, so every session starts at the same slot however
+/// long its setup took: state that depends on the slot (Phoenix's funding,
+/// the oracle's age) replays the same.
+const SETUP_SLOTS: u64 = 60;
 
 pub struct SessionOptions<'a> {
     pub snapshot_dir: &'a Path,
@@ -171,6 +177,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     // transaction is final once it executed (see [`Guard::internal`]).
     let internal = Guard::internal(surfnet.rpc_url()).await?;
     let rpc = mth_botkit::rpc_client(internal.url());
+    let setup_from = rpc.get_slot()?;
     let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
     let market = phoenix.market(&scenario.symbol)?;
 
@@ -229,6 +236,18 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
         BlockProductionMode::Manual,
     ))?;
+    let mut slot = rpc.get_slot()?;
+    let first_slot = setup_from + SETUP_SLOTS;
+    if slot > first_slot {
+        warn!(
+            slot,
+            first_slot, "setup ran past the session's first slot: this session won't replay"
+        );
+    }
+    while slot < first_slot {
+        surfnet.send_command(SimnetCommand::SlotForward(None))?;
+        slot = wait_for_slot(&rpc, slot + 1).await?;
+    }
     // The scenario is the grader's last cheatcode. Lock them all before the
     // bot starts: the bot's only way to the surfnet is the guard, and even
     // the guard's upstream has no cheatcodes, airdrops, or way to stop it.
