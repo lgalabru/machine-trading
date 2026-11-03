@@ -56,18 +56,26 @@ def skill_of(runs, sessions):
     """Mean over runs of Σ bot PnL / Σ reference PnL, on `sessions`."""
     out = []
     for run in runs:
+        # A disqualified run is 0, and its report may stop at the session
+        # that disqualified it.
+        if run["disqualified"]:
+            out.append(0.0)
+            continue
         bot = sum(run["pnl"][i] for i in sessions)
         ref = sum(run["ref"][i] for i in sessions)
-        out.append(0.0 if run["disqualified"] else (bot / ref if ref > 0 else 0.0))
+        out.append(bot / ref if ref > 0 else 0.0)
     return sum(out) / len(out)
 
 
 def reward_of(runs, sessions):
     out = []
     for run in runs:
+        if run["disqualified"]:
+            out.append(0.0)
+            continue
         bot = sum(run["pnl"][i] for i in sessions)
         bound = sum(run["bound"][i] for i in sessions)
-        out.append(0.0 if run["disqualified"] else min(max(bot / bound, 0.0), 1.0))
+        out.append(min(max(bot / bound, 0.0), 1.0))
     return sum(out) / len(out)
 
 
@@ -98,7 +106,8 @@ def main():
     for task in sorted(runs):
         models = runs[task]
         sets = {run["set"] for m in models.values() for run in m}
-        n = len(next(iter(models.values()))[0]["pnl"])
+        # Every run grades the batch's set; a disqualified one may stop early.
+        n = max(len(run["pnl"]) for runs in models.values() for run in runs)
         print(f"\n{task}: {n} hidden sessions" + (
             "" if len(sets) == 1 else f" (WARNING: {len(sets)} different hidden sets)"))
         draws = defaultdict(list)

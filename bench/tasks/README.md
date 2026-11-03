@@ -39,7 +39,8 @@ bots.
     The reference runs first on the same sessions, and a reference that
     doesn't run cleanly voids the grade. Both tasks grade 72 sessions (up
     from 36 and 12): at fewer, the ladder couldn't reliably tell the
-    references from simple bots. The verifier's limit is 3 h.
+    references from simple bots. The verifier's limit is 4 h, and it
+    stops at a bot's first disqualifying session.
   - **A private surfnet.** The surfnet serves RPC only at a secret path, so a
     bot that finds its port gets a 404 for everything, standard methods
     included: the guard is its only way in, and the guard holds its sends to
