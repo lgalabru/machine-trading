@@ -187,7 +187,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
       # The harness is pinned, so numbers compare across releases: the
       # Claude Code version, no web and no memory across trials.
-      harbor run -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o "$batch" \
+      harbor run -y -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o "$batch" \
         --agent-timeout-multiplier {{limit}} \
         --ak version={{claude_code}} \
         --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
@@ -227,10 +227,10 @@ harbor-checks task="phoenix-flash-crash" surfpool="": (image surfpool) check-sol
       || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
     # The verifier draws its hidden set from the batch's secret.
     export MTH_EVAL_SEED="${MTH_EVAL_SEED:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
-    harbor run -p {{tasks}}/{{task}} -a oracle -o jobs
-    harbor run -p {{tasks}}/{{task}} -a nop -o jobs
-    PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
-    PYTHONPATH=bench harbor run -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs
+    harbor run -y -p {{tasks}}/{{task}} -a oracle -o jobs
+    harbor run -y -p {{tasks}}/{{task}} -a nop -o jobs
+    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
+    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs
 
 # Fail if the agent's image holds anything that answers its task: the
 # anchors (reference bots), their source or the tasks' solutions, the
