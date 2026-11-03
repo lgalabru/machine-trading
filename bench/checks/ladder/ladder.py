@@ -176,7 +176,8 @@ def main():
         odds = sum(p for _, p in per_set) / len(per_set)
         ok = every and odds >= config["min_rule_odds"]
         print(f"  {'ok  ' if ok else 'FAIL'} {rule}: holds on {sum(h for h, _ in per_set)}"
-              f"/{len(per_set)} sets, bootstrap odds per set {odds:.2f}")
+              f"/{len(per_set)} sets, bootstrap odds per set {odds:.3f} "
+              f"({', '.join(f'{p:.3f}' for _, p in per_set)})")
         if not ok:
             failed.append(rule)
 
