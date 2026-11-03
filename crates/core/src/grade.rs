@@ -21,9 +21,9 @@
 
 use std::{collections::BTreeMap, path::Path};
 
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use serde::Serialize;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     Error, Result,
@@ -199,6 +199,10 @@ pub struct GradeOptions<'a> {
     /// Each scenario's regime, as JSON, handed to the bot (not the
     /// reference): the ladder's regime oracle only.
     pub regimes: Option<&'a [String]>,
+    /// Stop at the bot's first disqualifying session: the grade is 0
+    /// whatever the rest do, and a bot that ignores turns runs each session
+    /// in real time. The report then covers the sessions up to it.
+    pub stop_on_disqualify: bool,
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
@@ -211,6 +215,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             &opts.log_dir.join("reference"),
             opts.anchor_jobs,
             None,
+            false,
         )
         .await?;
         check_timing(&anchors)?;
@@ -230,6 +235,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.log_dir,
         opts.jobs,
         opts.regimes,
+        opts.stop_on_disqualify,
     )
     .await?;
     check_timing(&sessions)?;
@@ -381,7 +387,7 @@ pub async fn calibrate(
     jobs: usize,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
-    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir, jobs, None).await?;
+    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir, jobs, None, false).await?;
     // A reference recorded on a loaded machine would skew every score after it.
     check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
@@ -415,12 +421,13 @@ async fn run_sessions(
     log_dir: &Path,
     jobs: usize,
     regimes: Option<&[String]>,
+    stop_on_disqualify: bool,
 ) -> Result<Vec<SessionReport>> {
     if !(1..=session::BOT_USERS.len()).contains(&jobs) {
         return Err(Error::Jobs(jobs, session::BOT_USERS.len()));
     }
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
-    futures::stream::iter(scenarios.iter().enumerate())
+    let sessions = futures::stream::iter(scenarios.iter().enumerate())
         .map(|(index, scenario)| async move {
             // Stagger the first sessions so their surfnets don't race for
             // the same free ports.
@@ -438,9 +445,23 @@ async fn run_sessions(
             })
             .await
         })
-        .buffered(jobs)
-        .try_collect()
-        .await
+        .buffered(jobs);
+    let mut sessions = std::pin::pin!(sessions);
+    let mut reports = Vec::with_capacity(scenarios.len());
+    while let Some(report) = sessions.next().await {
+        let report = report?;
+        let stop = stop_on_disqualify && disqualification(&report).is_some();
+        reports.push(report);
+        if stop {
+            warn!(
+                after = reports.len(),
+                of = scenarios.len(),
+                "disqualified: the grade is 0; stopping"
+            );
+            break;
+        }
+    }
+    Ok(reports)
 }
 
 const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
