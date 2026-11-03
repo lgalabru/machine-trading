@@ -23,7 +23,7 @@ and the mark wobbles in between.
   does.
 - **Verifier:** a Debian slim image with the grader, the snapshot and the
   reference bot, and no toolchain. It receives only `/app/bot`. With no
-  network, it draws thirty-six hidden sessions from the batch's secret
+  network, it draws seventy-two hidden sessions from the batch's secret
   (`MTH_EVAL_SEED`, passed by Harbor; it refuses to grade without one),
   grades the reference on them, then the bot, one session at a time, each on
   a fresh surfnet. Before the bot starts, every cheatcode is locked for good,

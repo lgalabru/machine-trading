@@ -27,7 +27,7 @@ fi
 # its sessions run four at a time, before the bot's.
 mth grade \
   --draw flash-crash \
-  --count 36 \
+  --count 72 \
   --reference /opt/mth/anchors/flash-crash \
   --anchor-jobs 4 \
   --jobs 1 \
