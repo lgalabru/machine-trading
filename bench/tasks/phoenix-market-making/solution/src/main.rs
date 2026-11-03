@@ -1,13 +1,17 @@
 //! Reference: quote one tick inside the competing makers, skew against
-//! inventory, and back off when the flow turns toxic.
+//! inventory, and trade with the flow when it turns toxic.
 //!
 //! The competitors' half-spread is read once, from their spline account; the
 //! quotes sit that far less one tick either side of a reservation price:
 //! the oracle, shifted against what the bot holds, so a long inventory lowers
 //! both quotes and sheds itself (Avellaneda-Stoikov's idea, with a linear
-//! skew). Holding most of the cap, it stops quoting the side that would add
-//! to it. Fills that pile up one way in a few slots look like informed flow
-//! ahead of a move: it widens and quotes smaller for a while. And it leans
+//! skew). Holding a quarter of the cap, it stops quoting the side that would
+//! add to it. Fills that pile up one way in a few slots look like informed
+//! flow ahead of a jump: it buys (or sells) a few units the burst's way, pulls
+//! the quote the burst was hitting for a while, and lets the skew unwind the
+//! position after. Only fills that grow the inventory count toward a burst:
+//! the skew unwinding a lean is a run of one-sided fills too, and a maker
+//! that took it for one would lean back and forth on its own. And it leans
 //! with the drift: the further the oracle runs from its recent average, the
 //! further the reservation price follows, so it sells into a falling market
 //! rather than buying all the way down.
@@ -19,7 +23,7 @@
 //! Its PnL is a published baseline, not the reward's scale (that's the
 //! spread bound plus the hindsight bound). It reacts to its own fills only:
 //! it doesn't read the tape, doesn't tell a fake-out from a real burst, and
-//! requotes slowly.
+//! leans the same few units whatever the burst's size.
 
 use std::collections::VecDeque;
 
@@ -45,10 +49,9 @@ const INVENTORY_LIMIT: f64 = 0.25;
 /// Fills of this many base units one way within the window look toxic.
 const TOXIC_UNITS: f64 = 1.5;
 const TOXIC_WINDOW_SLOTS: u64 = 8;
-/// While the flow looks toxic: how much wider and smaller the quotes are,
-/// and for how long.
-const TOXIC_WIDEN: f64 = 3.0;
-const TOXIC_SIZE: f64 = 0.5;
+/// Units to hold with a toxic burst's direction, until the skew unwinds them,
+/// and how long the side the burst was hitting stays pulled.
+const LEAN_UNITS: f64 = 5.0;
 const TOXIC_SLOTS: u64 = 24;
 /// Requote when the quotes would move by at least this many basis points,
 /// or after this many slots regardless.
@@ -70,9 +73,14 @@ async fn main() -> Result<()> {
     info!(half_spread_bps, "one tick inside the competitor");
     info!(cap, "quoting");
 
-    // (slot, position) at each pass, for the toxicity window.
-    let mut history: VecDeque<(u64, f64)> = VecDeque::new();
+    // (slot, position, position from its quotes' fills) at each pass, for
+    // the toxicity window. Its own market orders aren't flow: `own` is what
+    // they've added to the position.
+    let mut history: VecDeque<(u64, f64, f64)> = VecDeque::new();
+    let mut own = 0.0;
     let mut toxic_until = 0u64;
+    // Which way the toxic fills took the inventory: +1 long, -1 short.
+    let mut toxic_side = 0.0;
     let mut quoted: Option<(u64, f64, f64)> = None;
     let mut requotes = 0u64;
     // The oracle's recent average, and the slot it was last updated at.
@@ -83,19 +91,46 @@ async fn main() -> Result<()> {
             continue;
         };
         let held = position.size;
-        history.push_back((slot, held));
+        let filled = held - own;
+        history.push_back((slot, held, filled));
         while history
             .front()
-            .is_some_and(|(s, _)| s + TOXIC_WINDOW_SLOTS < slot)
+            .is_some_and(|(s, ..)| s + TOXIC_WINDOW_SLOTS < slot)
         {
             history.pop_front();
         }
-        if let Some((_, then)) = history.front()
-            && (held - then).abs() >= TOXIC_UNITS
+        // A run of fills one way that grows the inventory: fills that shrink
+        // it are the skew unwinding a lean, not a burst.
+        if let Some(&(_, held_then, then)) = history.front()
+            && (filled - then).abs() >= TOXIC_UNITS
+            && held.abs() > held_then.abs()
             && toxic_until <= slot
         {
             warn!(slot, held, then, "one-sided fills; backing off");
             toxic_until = slot + TOXIC_SLOTS;
+            toxic_side = (filled - then).signum();
+            // The burst is the informed flow's footprint, and a jump its way
+            // usually follows: lean with it, a few units against the side it
+            // was hitting, and let the skew unwind them after.
+            let lean = -toxic_side * LEAN_UNITS - held;
+            if lean.abs() >= 0.5 {
+                let (side, limit) = if lean > 0.0 {
+                    (Side::Bid, mark * 1.003)
+                } else {
+                    (Side::Ask, mark * 0.997)
+                };
+                let _ = trader.cancel_all();
+                if let Err(e) = trader
+                    .place_market(side, lean.abs().min(cap), (limit * 100.0).round() / 100.0)
+                    .await
+                {
+                    warn!(%e, "lean failed");
+                }
+                if let Ok(after) = trader.position().await {
+                    own += after.size - held;
+                }
+                continue;
+            }
         }
         let toxic = slot < toxic_until;
 
@@ -110,7 +145,7 @@ async fn main() -> Result<()> {
         let drift_bps =
             (DRIFT_WEIGHT * (mark / mean - 1.0) * 10_000.0).clamp(-DRIFT_MAX_BPS, DRIFT_MAX_BPS);
         let reservation = mark * (1.0 + (drift_bps - SKEW_BPS_PER_UNIT * held) / 10_000.0);
-        let half = half_spread_bps * if toxic { TOXIC_WIDEN } else { 1.0 };
+        let half = half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
         let moved = quoted.is_none_or(|(at, b, a)| {
@@ -122,7 +157,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        let size = QUOTE_SIZE * if toxic { TOXIC_SIZE } else { 1.0 };
+        let size = QUOTE_SIZE;
         if let Err(e) = trader.cancel_all() {
             warn!(%e, "cancel failed");
             continue;
@@ -131,8 +166,20 @@ async fn main() -> Result<()> {
         let bid_size = size.min(cap - held);
         let ask_size = size.min(cap + held);
         let mut quotes = [
-            (Side::Bid, bid, bid_size, held < INVENTORY_LIMIT * cap),
-            (Side::Ask, ask, ask_size, held > -INVENTORY_LIMIT * cap),
+            // While the flow looks toxic, the side it was hitting goes:
+            // short from a run of buyers, it stops offering and only bids.
+            (
+                Side::Bid,
+                bid,
+                bid_size,
+                held < INVENTORY_LIMIT * cap && !(toxic && toxic_side > 0.0),
+            ),
+            (
+                Side::Ask,
+                ask,
+                ask_size,
+                held > -INVENTORY_LIMIT * cap && !(toxic && toxic_side < 0.0),
+            ),
         ];
         // Both quotes land within the turn, before the next step's flow;
         // alternating which goes first costs nothing and keeps neither side
