@@ -71,21 +71,26 @@ pub async fn onboard_trader(
         .iter()
         .map(|name| (name.to_string(), json!("true")))
         .collect();
-    chain::register_scenario(
-        &rpc,
-        "enable trader",
-        vec![Override {
-            template_id: "phoenix-trader-capabilities",
-            account: trader,
-            values: capabilities.into(),
-            slot: 1,
-            label: "enable trader".into(),
-        }],
-    )?;
+    let enable = || {
+        chain::register_scenario(
+            &rpc,
+            "enable trader",
+            vec![Override {
+                template_id: "phoenix-trader-capabilities",
+                account: trader,
+                values: capabilities.clone().into(),
+                slot: 1,
+                label: "enable trader".into(),
+            }],
+        )
+    };
+    enable()?;
     // Capabilities land a slot after registration. Under load (a session
     // onboards the bot, eight takers and a competitor at once) that slot can
     // come late: until it does, Phoenix refuses the deposit as frozen, so
-    // retry rather than guess how long to wait.
+    // retry rather than guess how long to wait. And the scenario's base slot
+    // can lag the clock, putting the override on a slot already past, where
+    // it never lands: each retry registers it again.
     let mut attempt = 0;
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -97,6 +102,7 @@ pub async fn onboard_trader(
             Err(error) if attempt < 15 && error.to_string().contains("TraderFrozen") => {
                 attempt += 1;
                 warn!(%owner, attempt, "trader not enabled yet; retrying the deposit");
+                enable()?;
             }
             Err(error) => return Err(error.into()),
         }
