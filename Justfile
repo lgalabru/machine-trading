@@ -247,6 +247,9 @@ leak-audit:
       "mth-ladder-rungs"
     )
     image="{{registry}}/{{image}}:{{tag}}"
+    # Without the image every probe below fails, which reads as no leak.
+    docker image inspect "$image" > /dev/null 2>&1 \
+      || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
     found=0
     for path in /opt/mth/anchors /tests /solution /opt/mth/sdk/bots/reference /opt/mth/sdk/bots/maker; do
       if docker run --rm --entrypoint test "$image" -e "$path"; then
