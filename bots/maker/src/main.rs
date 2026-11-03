@@ -9,7 +9,9 @@
 //! add to it. Fills that pile up one way in a few slots look like informed
 //! flow ahead of a jump: it buys (or sells) a few units the burst's way, pulls
 //! the quote the burst was hitting for a while, and lets the skew unwind the
-//! position after. And it leans
+//! position after. Only fills that grow the inventory count toward a burst:
+//! the skew unwinding a lean is a run of one-sided fills too, and a maker
+//! that took it for one would lean back and forth on its own. And it leans
 //! with the drift: the further the oracle runs from its recent average, the
 //! further the reservation price follows, so it sells into a falling market
 //! rather than buying all the way down.
@@ -71,8 +73,11 @@ async fn main() -> Result<()> {
     info!(half_spread_bps, "one tick inside the competitor");
     info!(cap, "quoting");
 
-    // (slot, position) at each pass, for the toxicity window.
-    let mut history: VecDeque<(u64, f64)> = VecDeque::new();
+    // (slot, position, position from its quotes' fills) at each pass, for
+    // the toxicity window. Its own market orders aren't flow: `own` is what
+    // they've added to the position.
+    let mut history: VecDeque<(u64, f64, f64)> = VecDeque::new();
+    let mut own = 0.0;
     let mut toxic_until = 0u64;
     // Which way the toxic fills took the inventory: +1 long, -1 short.
     let mut toxic_side = 0.0;
@@ -86,20 +91,24 @@ async fn main() -> Result<()> {
             continue;
         };
         let held = position.size;
-        history.push_back((slot, held));
+        let filled = held - own;
+        history.push_back((slot, held, filled));
         while history
             .front()
-            .is_some_and(|(s, _)| s + TOXIC_WINDOW_SLOTS < slot)
+            .is_some_and(|(s, ..)| s + TOXIC_WINDOW_SLOTS < slot)
         {
             history.pop_front();
         }
-        if let Some((_, then)) = history.front()
-            && (held - then).abs() >= TOXIC_UNITS
+        // A run of fills one way that grows the inventory: fills that shrink
+        // it are the skew unwinding a lean, not a burst.
+        if let Some(&(_, held_then, then)) = history.front()
+            && (filled - then).abs() >= TOXIC_UNITS
+            && held.abs() > held_then.abs()
             && toxic_until <= slot
         {
             warn!(slot, held, then, "one-sided fills; backing off");
             toxic_until = slot + TOXIC_SLOTS;
-            toxic_side = (held - then).signum();
+            toxic_side = (filled - then).signum();
             // The burst is the informed flow's footprint, and a jump its way
             // usually follows: lean with it, a few units against the side it
             // was hitting, and let the skew unwind them after.
@@ -116,6 +125,9 @@ async fn main() -> Result<()> {
                     .await
                 {
                     warn!(%e, "lean failed");
+                }
+                if let Ok(after) = trader.position().await {
+                    own += after.size - held;
                 }
                 continue;
             }
