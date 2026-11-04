@@ -13,6 +13,9 @@ anyhow.workspace = true
 axum.workspace = true
 clap = { workspace = true, features = ["env"] }
 flate2 = "1"
+# glibc's allocator holds on to what a session frees: a verifier grading
+# 144 sessions grows past its memory limit.
+mimalloc = { version = "0.1", default-features = false }
 futures.workspace = true
 mtx-botkit.workspace = true
 mtx-core.workspace = true
