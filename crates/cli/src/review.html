@@ -43,6 +43,52 @@
   .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px 32px; padding: 22px 32px 24px; }
   /* The model selector: a vertical list of cards, one per model. */
   .watch { display: flex; flex-direction: column; gap: 8px; }
+  /* The grid: models › attempts × sessions. */
+  .g-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px 18px 12px; }
+  .g-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+  .g-top h2 { margin: 0 0 2px; }
+  .g-top .muted { font-size: 12.5px; max-width: 720px; }
+  .g-row { display: grid; grid-template-columns: minmax(200px, 250px) 58px 76px 50px 56px minmax(0, 1fr); align-items: center; gap: 0 12px; padding: 0 8px; border-radius: 8px; }
+  .g-row > .num { text-align: right; font-size: 12.5px; }
+  .g-head { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); padding-bottom: 6px; }
+  .g-head > span:not(.g-name):not(.strip) { text-align: right; }
+  .g-row.model { height: 40px; cursor: pointer; margin-top: 4px; }
+  .g-row.model:hover { background: rgba(255,255,255,.03); }
+  .g-row.model.picked { background: color-mix(in srgb, var(--mc) 9%, transparent); }
+  .g-row.trial { height: 30px; }
+  .g-row.trial:hover { background: rgba(255,255,255,.025); }
+  .g-row.trial.queued { opacity: .55; }
+  .g-row.ref { height: 34px; margin-top: 6px; border-top: 1px dashed var(--line); border-radius: 0; }
+  .g-name { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; text-decoration: none; font-size: 13px; }
+  .g-name .muted { font-size: 11.5px; }
+  .g-row.trial .g-name { padding-left: 26px; color: var(--text-2); }
+  .g-row.trial .g-name:hover { color: var(--text); }
+  .g-row.trial .g-name::before { content: ""; position: absolute; }
+  .g-name .caret { display: inline-block; width: 12px; color: var(--text-3); transition: transform .15s; font-size: 14px; }
+  .g-name .caret.open { transform: rotate(90deg); }
+  .g-name .sw { width: 9px; height: 9px; border-radius: 3px; background: var(--mc); flex: none; }
+  .g-name .sw.dash { background: repeating-linear-gradient(90deg, #8e8e93 0 3px, transparent 3px 5px); }
+  .g-name .light { width: 7px; height: 7px; }
+  .g-name .badge { font-size: 10px; padding: 0 6px; }
+  .strip { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px; align-items: center; }
+  .strip i { display: block; height: 16px; border-radius: 3px; background: #1c1c1e; cursor: pointer; transition: transform .08s, box-shadow .08s; }
+  .g-row.model .strip i { height: 22px; }
+  .strip i.na { background: transparent; box-shadow: inset 0 0 0 1px #1c1c1e; }
+  .strip i.hc { box-shadow: 0 0 0 1px rgba(255,255,255,.55); }
+  .strip i.sel { box-shadow: 0 0 0 1.5px #fff; }
+  .strip.axis i { height: 14px; background: none; font: 600 9px var(--mono); color: var(--text-4); text-align: center; line-height: 14px; overflow: visible; white-space: nowrap; border-radius: 3px; }
+  .strip.axis i.hc { background: #2c2c2e; box-shadow: none; color: var(--text); }
+  .strip.axis i.sel { background: #fff; color: #000; box-shadow: none; }
+  .strip-note { font-size: 11.5px; color: var(--text-3); padding-left: 2px; }
+  .strip-note.live { color: var(--warn); animation: blink 1.4s ease-in-out infinite; }
+  .strip-note.bad { color: var(--down); }
+  .g-foot { display: flex; gap: 16px; align-items: center; font-size: 11.5px; color: var(--text-2); margin-top: 12px; padding: 10px 8px 0; border-top: 1px solid var(--line-soft); }
+  .g-foot span { display: inline-flex; align-items: center; gap: 6px; }
+  .g-foot .lg { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .g-foot .lg.up { background: rgba(94,209,106,.85); } .g-foot .lg.down { background: rgba(255,95,87,.85); }
+  .g-foot .muted { margin-left: auto; }
+  .grid-empty { margin-top: 18px; padding: 22px; border: 1px dashed var(--line); border-radius: 12px; color: var(--text-3); text-align: center; font-size: 13px; }
+  .grid-empty b { color: var(--text-2); }
   .hero-title { grid-column: 1 / -1; }
   .hero-title h1 { margin: 0; }
   .hero-title .sub { max-width: 900px; font-size: 14px; color: var(--text-2); margin-top: 4px; }
@@ -595,7 +641,8 @@ function setCrumbs(state = {}) {
     const label = t ? `<span class="tbadge" style="--tc:${TILE_COLORS[i % TILE_COLORS.length]}">${esc(taskBadge(t.short))}</span>${esc(taskTitle(t.short))}` : esc(shortTask(state.task));
     out.push(sep, `<details class="crumb-menu"><summary class="crumb ${state.trial === undefined && !state.variant ? "here" : ""}">${label}<span class="caret">▾</span></summary><div class="crumb-list">${index.tasks.map((x, j) => `<a class="${x.name === state.task ? "on" : ""}" href="${taskHref(x.name)}"><span class="tbadge" style="--tc:${TILE_COLORS[j % TILE_COLORS.length]};font:700 9px var(--mono);padding:2px 5px;border-radius:4px;color:#fff;background:var(--tc)">${esc(taskBadge(x.short))}</span>${esc(taskTitle(x.short))}<span class="note">${x.counts.success} graded</span></a>`).join("")}</div></details>`);
   }
-  if (state.trial !== undefined) out.push(sep, `<a class="crumb ${state.session ? "" : "here"}" href="${home()}trial/${state.trial}">${esc(state.trialLabel || "trial " + state.trial)}</a>`);
+  if (state.model) out.push(sep, `<a class="crumb" href="${taskHref(state.task)}" data-pick="${esc(state.model)}"><span class="sw" style="width:8px;height:8px;border-radius:3px;background:${modelColor(state.model)}"></span>${esc(shortModel(state.model))}</a>`);
+  if (state.trial !== undefined) out.push(sep, `<a class="crumb ${state.session ? "" : "here"}" href="${home()}trial/${state.trial}">${esc(state.trialLabel || "trial " + state.trial)}${state.trialId ? `<span class="muted mono" style="font-size:11px">${esc(state.trialId)}</span>` : ""}</a>`);
   if (state.session) out.push(sep, `<span class="crumb here">${esc(state.session)}</span>`);
   if (state.variant) out.push(sep, `<span class="crumb here">${esc(state.variant)}</span>`);
   if (state.extra) out.push(sep, `<span class="crumb here">${esc(state.extra)}</span>`);
@@ -605,6 +652,8 @@ function setCrumbs(state = {}) {
   // One menu open at a time; a click elsewhere closes it.
   document.querySelectorAll(".crumb-menu").forEach((d) => d.addEventListener("toggle", () => { if (d.open) document.querySelectorAll(".crumb-menu").forEach((o) => { if (o !== d) o.open = false; }); }));
 }
+// The model crumb opens its task with that model picked.
+addEventListener("click", (e) => { const a = e.target.closest("[data-pick]"); if (a && crumbState.task) heroPick[crumbState.task] = [a.dataset.pick]; });
 addEventListener("click", (e) => { if (!e.target.closest(".crumb-menu")) document.querySelectorAll(".crumb-menu[open]").forEach((d) => { d.open = false; }); });
 function fail(error) { app.innerHTML = `<div class="error">${esc(error.message || error)}</div>`; }
 function section(title, sub, parent = app) { const h = document.createElement("h2"); h.innerHTML = esc(title) + (sub ? `<small>${sub}</small>` : ""); parent.appendChild(h); return h; }
@@ -654,7 +703,7 @@ async function loadIndex(fresh) {
   const url = release ? `/api/index/${encodeURIComponent(release)}` : "/api/index";
   if (fresh) cache.delete("j:" + url);
   index = await api(url);
-  modelOrder = [...new Set(index.trials.map((t) => t.model).filter(Boolean))].sort();
+  modelOrder = [...new Set([...index.trials.map((t) => t.model), ...(index.batch?.models || [])].filter(Boolean))].sort();
   renderHero();
   renderSide();
   setCrumbs(crumbState);
@@ -714,6 +763,7 @@ addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) re
 // The model picked per task; else the best mean skill.
 let heroPick = {};
 let heroSort = "skill";
+let heroScrub = null; // moves the header chart's cursor to a session
 const heroPickReset = () => { heroPick = {}; };
 const naturalCmp = (a, b) => a.localeCompare(b, "en", { numeric: true });
 // A task's curves: per model, the mean PnL of its graded trials on each
@@ -754,6 +804,7 @@ function sparkline(curve) {
 function renderHero() {
   if (!index) return;
   const task = index.tasks.find((t) => t.name === currentTask);
+  heroScrub = null;
   if (!task) { hero.innerHTML = ""; return; }
   const eq = equity(task.name);
   const key = task.name;
@@ -832,7 +883,7 @@ function renderHero() {
   quote(last);
   // One scale for every model on the task, so switching keeps the axes.
   const range = [...eq.models.flatMap((m) => m.curve || []), ...(eq.reference || [])];
-  areaChart(area, {
+  heroScrub = areaChart(area, {
     series: shown.map((m) => ({ y: m.curve, color: modelColor(m.model) })),
     ref: eq.reference, range, labels: ["start", ...eq.sessions],
     onScrub: (i) => quote(i ?? last),
@@ -905,6 +956,7 @@ function areaChart(host, { series, ref, range, labels, onScrub }) {
     show(Math.max(0, Math.min(n - 1, Math.round((x - L) / (W - L - R) * (n - 1)))));
   });
   svg.addEventListener("pointerleave", () => show(null));
+  return show;
 }
 // Releases newest first, after the batch reviewed if it isn't one.
 const releaseOrder = (rs) => [...rs.filter((r) => !r.published), ...rs.filter((r) => r.published).sort((x, y) => naturalCmp(y.label, x.label))];
@@ -987,6 +1039,172 @@ function renderOverview() {
 }
 
 // ---------- task ----------
+// A trial's attempt number: its place among its model's trials on the task.
+function attemptOf(t) {
+  const mine = index.trials.filter((x) => x.task === t.task && x.model === t.model);
+  return mine.findIndex((x) => x.id === t.id) + 1;
+}
+const attemptLabel = (t) => `attempt ${attemptOf(t)}`;
+const trialShort = (t) => String(t.trial || "").split("__").pop();
+
+let gridMode = "vs";          // cells: "vs" the reference, or raw "pnl"
+let gridOpen = null;          // models expanded (all, by default)
+
+async function renderTask(name, session, at) {
+  const task = index.tasks.find((t) => t.name === name);
+  if (!task) { fail(new Error(`no task ${name}`)); return; }
+  const trials = task.trials.map(trialById).filter(Boolean);
+  const eq = equity(task.name);
+  const sel = session && eq.sessions.includes(session) ? session : null;
+  if (session && !sel) history.replaceState(null, "", taskHref(task.name));
+  setCrumbs({ task: name, variant: sel || undefined });
+  // Re-rendering the same task (another session): keep the page.
+  if (!(app.dataset.task === name && app.querySelector("#grid"))) {
+    app.innerHTML = ""; app.dataset.task = name;
+    div("", "", app).id = "grid";
+    div("", "", app).id = "explorer";
+  }
+  renderGrid(document.getElementById("grid"), task, trials, eq, sel);
+  const explorer = document.getElementById("explorer");
+  if (!sel) {
+    explorer.innerHTML = `<div class="grid-empty"><b>Pick a session</b> to replay it for every attempt: click its column. Click a cell for one attempt's session, or an attempt for its agent, bot and logs.</div>`;
+    return;
+  }
+  await renderAcross(explorer, task, trials, sel, at);
+}
+
+// The hierarchy as one grid: a row per model, expanding to its attempts,
+// and a column per hidden session. Every trial in a batch ran the same
+// sessions, so a column is one scenario across every attempt.
+function renderGrid(host, task, trials, eq, sel) {
+  const names = eq.sessions;
+  const n = names.length;
+  const set = new Set(); // the trials on the batch's main hidden set
+  for (const t of trials) if (t.graded && t.pnls && names.length && Object.keys(t.pnls).every((k) => names.includes(k))) set.add(t.id);
+  const ref = names.map((s) => mean(trials.filter((t) => set.has(t.id)).map((t) => t.reference_pnls?.[s])));
+  // Models in the cards' order.
+  const order = { skill: (m) => m.skill ?? -Infinity, pnl: (m) => m.pnl ?? -Infinity, cost: (m) => -(m.cost ?? Infinity) }[heroSort] || ((m) => m.skill ?? -Infinity);
+  // The batch's plan: attempts not started yet show as queued.
+  const plan = index.batch;
+  const planned = [...new Set([...modelOrder, ...(plan?.models || [])])];
+  const models = planned.map((m) => {
+    const ts = trials.filter((t) => t.model === m);
+    const queued = plan?.models?.includes(m) ? Math.max(0, (plan.attempts || 0) - ts.length) : 0;
+    if (!ts.length && !queued) return null;
+    const g = ts.filter((t) => set.has(t.id));
+    return {
+      model: m, trials: ts,
+      skill: mean(g.map((t) => t.skill)), pnl: mean(g.map((t) => t.pnl_usd)),
+      cost: mean(ts.map((t) => t.cost_usd)), time: mean(ts.map((t) => span(t.agent_execution))),
+      cells: names.map((s) => mean(g.map((t) => t.pnls?.[s]))),
+      dq: ts.filter((t) => t.disqualified || t.tampered).length,
+      queued,
+    };
+  }).filter(Boolean).sort((a, b) => order(b) - order(a));
+  if (!gridOpen) gridOpen = new Set(models.map((m) => m.model));
+  const picked = new Set(heroPick[task.name] || []);
+  // Cell color: green or red by the value's sign, deeper with its size.
+  const value = (v, i) => !isNum(v) ? null : gridMode === "vs" && isNum(ref[i]) ? v - ref[i] : v;
+  const all = models.flatMap((m) => [...m.cells, ...m.trials.flatMap((t) => names.map((s) => t.pnls?.[s]))].map((v, i) => Math.abs(value(v, i % n) ?? 0))).sort((a, b) => a - b);
+  const scale = Math.max(1, all[Math.floor(all.length * 0.95)] || 1);
+  const paint = (v) => {
+    if (!isNum(v)) return "";
+    if (Math.abs(v) < 0.5) return "background:#2c2c2e";
+    const a = 0.22 + 0.78 * Math.min(1, Math.abs(v) / scale);
+    return `background:${v > 0 ? `rgba(94,209,106,${a.toFixed(2)})` : `rgba(255,95,87,${a.toFixed(2)})`}`;
+  };
+  const strip = (vals, kind, id) => `<div class="strip" style="--n:${n}">${vals.map((v, i) => {
+    const shown = kind === "ref" && gridMode === "vs" ? null : value(v, i);
+    return `<i data-c="${i}" data-k="${kind}"${id !== undefined ? ` data-t="${id}"` : ""} class="${names[i] === sel ? "sel" : ""} ${isNum(v) ? "" : "na"}" style="${kind === "ref" && gridMode === "vs" ? (isNum(v) ? "background:#3a3a3c" : "") : paint(shown)}"></i>`;
+  }).join("")}</div>`;
+  const nums = (skill, pnl, cost, time) => `<span class="num">${times(skill)}</span><span class="num ${cls(pnl)}">${susd(pnl, 0)}</span><span class="num muted">${usd(cost, 0)}</span><span class="num muted">${dur(time)}</span>`;
+  const rows = models.map((m) => {
+    const open = gridOpen.has(m.model);
+    const head = `<div class="g-row model ${picked.has(m.model) ? "picked" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}">
+      <span class="g-name"><span class="caret ${open ? "open" : ""}">›</span><span class="sw"></span><b>${esc(shortModel(m.model))}</b><span class="muted">${m.trials.length + m.queued} attempt${m.trials.length + m.queued > 1 ? "s" : ""}${m.queued ? ` · ${m.queued} queued` : ""}</span>${m.dq ? `<span class="badge bad">${m.dq} DQ</span>` : ""}</span>
+      ${nums(m.skill, m.pnl, m.cost, m.time)}${m.cells.some(isNum) ? strip(m.cells, "model") : `<div class="strip-note ${m.trials.some((t) => t.status === "pending") ? "live" : ""}">${m.trials.some((t) => t.status === "pending") ? "running…" : m.trials.length ? "nothing graded" : "queued"}</div>`}</div>`;
+    const kids = !open ? "" : m.trials.map((t) => {
+      const state = t.status === "pending" ? `<div class="strip-note live">running…</div>`
+        : !t.graded ? `<div class="strip-note bad">${esc(t.exception?.type || "no grade")}</div>`
+        : !set.has(t.id) ? `<div class="strip-note">graded on another hidden set</div>`
+        : strip(names.map((s) => t.pnls?.[s]), "trial", t.id);
+      return `<div class="g-row trial" data-trial="${t.id}" style="--mc:${modelColor(m.model)}">
+        <a class="g-name" href="${home()}trial/${t.id}">${light(t.status === "success" && t.exception ? "success" : t.status, t.status)}<span>${esc(attemptLabel(t))}</span><span class="muted mono">${esc(trialShort(t))}</span>${t.disqualified ? `<span class="badge bad">DQ</span>` : ""}${t.exception?.type === "AgentTimeoutError" ? `<span class="badge">timeout</span>` : ""}</a>
+        ${nums(t.skill, t.pnl_usd, t.cost_usd, span(t.agent_execution))}${state}</div>`;
+    }).join("") + (!open ? "" : Array.from({ length: m.queued }, (_, k) => `<div class="g-row trial queued" style="--mc:${modelColor(m.model)}"><span class="g-name">${light("queued")}<span>attempt ${m.trials.length + k + 1}</span></span><span></span><span></span><span></span><span></span><div class="strip-note">queued</div></div>`).join(""));
+    return head + kids;
+  }).join("");
+  const refRow = set.size ? `<div class="g-row ref"><span class="g-name"><span class="sw dash"></span>reference</span>${nums(1, sum(ref), null, null)}${strip(ref, "ref")}</div>` : "";
+  // Session numbers along the top: a few, and the one under the pointer.
+  const every = Math.max(1, Math.ceil(n / 12));
+  const axis = `<div class="strip axis" style="--n:${n}">${names.map((s, i) => `<i data-c="${i}" data-k="col" class="${s === sel ? "sel" : ""}">${(i + 1) % every === 0 || i === 0 ? i + 1 : ""}</i>`).join("")}</div>`;
+  host.innerHTML = `<div class="g-card">
+    <div class="g-top"><div><h2>Models, attempts and sessions</h2><div class="muted">A trial is one attempt by a model: the agent writes a bot once, and the bot is graded on every hidden session. All attempts ran the same ${n} sessions.</div></div>
+      <div class="seg sm" title="what a cell's color shows">${[["vs", "vs reference"], ["pnl", "PnL"]].map(([k, l]) => `<a href="javascript:void 0" data-mode="${k}" class="${gridMode === k ? "on" : ""}">${l}</a>`).join("")}</div></div>
+    <div class="g-grid">
+      <div class="g-row g-head"><span class="g-name">Model · attempt</span><span>Skill</span><span>PnL</span><span>Cost</span><span>Time</span>${n ? axis : `<span class="muted">no graded sessions yet</span>`}</div>
+      ${rows}${refRow}
+    </div>
+    <div class="g-foot"><span><i class="lg up"></i>${gridMode === "vs" ? "beat the reference" : "made money"}</span><span><i class="lg down"></i>${gridMode === "vs" ? "trailed it" : "lost money"}</span><span class="muted">deeper is larger · click a column for every attempt on that session</span></div>
+  </div>`;
+  // Session descriptions for the tooltips, from a trial with detail files.
+  const withDetails = trials.find((t) => t.details && set.has(t.id));
+  const stats = withDetails ? api(`/api/trial/${withDetails.id}`).then((d) => d.session_stats || {}).catch(() => ({})) : Promise.resolve({});
+  let described = {}; stats.then((s) => { described = s; });
+  const cellsOf = (i) => host.querySelectorAll(`.strip i[data-c="${i}"]`);
+  let hot = null;
+  const heat = (i) => {
+    if (hot !== null) cellsOf(hot).forEach((c) => c.classList.remove("hc"));
+    hot = i;
+    if (i !== null) cellsOf(i).forEach((c) => c.classList.add("hc"));
+    heroScrub?.(i === null ? null : i + 1);
+  };
+  host.querySelectorAll(".strip i").forEach((c) => {
+    const i = +c.dataset.c;
+    c.addEventListener("mouseenter", (ev) => {
+      heat(i);
+      const s = names[i], d = described[s];
+      const t = c.dataset.t !== undefined ? trialById(+c.dataset.t) : null;
+      const row = c.dataset.k === "model" ? models.find((m) => m.model === c.closest(".g-row").dataset.model) : null;
+      const v = t ? t.pnls?.[s] : row ? row.cells[i] : ref[i];
+      const who = t ? `${shortModel(t.model)} · ${attemptLabel(t)}` : row ? `${shortModel(row.model)} · mean` : c.dataset.k === "ref" ? "reference" : "";
+      showTip(`<b>${esc(s)}</b> <span class="muted">${i + 1} of ${n}</span>${d?.description ? `<div class="muted">${esc(d.description)}</div>` : ""}${who ? `<div>${esc(who)}: <b class="${cls(v)}">${susd(v, 0)}</b>${isNum(ref[i]) && c.dataset.k !== "ref" ? ` <span class="muted">· reference ${susd(ref[i], 0)}</span>` : ""}</div>` : ""}`, ev);
+    });
+    c.addEventListener("mousemove", (ev) => { tip.style.left = ev.clientX + 14 + "px"; tip.style.top = ev.clientY + 14 + "px"; });
+    c.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const s = names[i];
+      const t = c.dataset.t !== undefined ? trialById(+c.dataset.t) : null;
+      location.hash = t ? (t.details ? `${home()}trial/${t.id}/session/${encodeURIComponent(s)}` : `${home()}trial/${t.id}`) : `${taskHref(task.name)}/${encodeURIComponent(s)}`;
+    });
+  });
+  host.querySelector(".g-grid").addEventListener("mouseleave", () => { heat(null); hideTip(); });
+  host.querySelectorAll(".g-row.model").forEach((r) => r.addEventListener("click", (e) => {
+    const m = r.dataset.model;
+    if (e.metaKey || e.ctrlKey) {
+      const cur = heroPick[task.name] || [];
+      heroPick[task.name] = cur.includes(m) ? (cur.length > 1 ? cur.filter((x) => x !== m) : cur) : [...cur, m];
+    } else {
+      gridOpen.has(m) ? gridOpen.delete(m) : gridOpen.add(m);
+      heroPick[task.name] = [m];
+    }
+    renderHero();
+    renderGrid(host, task, trials, eq, sel);
+  }));
+  host.querySelectorAll("[data-mode]").forEach((a) => a.addEventListener("click", () => { gridMode = a.dataset.mode; renderGrid(host, task, trials, eq, sel); }));
+}
+
+// One session across every attempt that has its detail files.
+async function renderAcross(host, task, trials, name, at) {
+  const set = comparable(trials);
+  if (!set.length) {
+    host.innerHTML = `<div class="grid-empty">No attempt of this task has step-by-step session files${trials.some((t) => t.status === "pending") ? " yet (some are still running)" : ""}. Trials graded before they existed have their sessions on the trial page.</div>`;
+    return;
+  }
+  const people = who(set);
+  const view = host.querySelector(".across") || (host.innerHTML = "", div("", "across", host));
+  await renderVariant(view, task, people, name, at);
+}
 // Trials of a task that can be compared session by session: the ones graded
 // on the most common hidden set.
 function comparable(trials) {
@@ -1000,97 +1218,12 @@ function who(trials) {
   const seen = {};
   return trials.map((t) => {
     const k = (seen[t.model] = (seen[t.model] || 0) + 1);
-    return { t, model: t.model, attempt: k, color: modelColor(t.model), dash: DASHES[(k - 1) % DASHES.length], shape: SHAPES[(k - 1) % SHAPES.length], label: `${shortModel(t.model)} #${k}` };
+    return { t, model: t.model, attempt: k, color: modelColor(t.model), dash: DASHES[(k - 1) % DASHES.length], shape: SHAPES[(k - 1) % SHAPES.length], label: `${shortModel(t.model)} · ${attemptOf(t)}` };
   });
 }
 
-async function renderTask(name, variant, at) {
-  const task = index.tasks.find((t) => t.name === name);
-  if (!task) { fail(new Error(`no task ${name}`)); return; }
-  setCrumbs({ task: name });
-  const trials = task.trials.map(trialById).filter(Boolean);
-  // Re-rendering the same task (a new variant): keep the page, swap the explorer.
-  const same = app.dataset.task === name && app.querySelector("#explorer");
-  if (!same) {
-    app.innerHTML = ""; app.dataset.task = name;
-    taskLeaderboard(trials);
-    div("", "", app).id = "explorer";
-  }
-  await renderExplorer(document.getElementById("explorer"), task, trials, variant, at);
-}
 
-function taskLeaderboard(trials) {
-  const grid = div("", "grid2");
-  const left = document.createElement("div"), right = document.createElement("div");
-  grid.append(left, right);
-  const models = modelOrder.filter((m) => trials.some((t) => t.model === m));
-  const byModel = models.map((m) => {
-    const ts = trials.filter((t) => t.model === m), sk = ts.map((t) => t.skill).filter(isNum);
-    return {
-      model: m, n: ts.length, graded: ts.filter((t) => t.graded).length, running: ts.filter((t) => t.status === "pending").length,
-      skill: mean(sk), lo: sk.length ? Math.min(...sk) : null, hi: sk.length ? Math.max(...sk) : null,
-      reward: mean(ts.map((t) => t.reward)), pnl: mean(ts.map((t) => t.pnl_usd)),
-      dq: ts.filter((t) => t.disqualified || t.tampered).length, timeouts: ts.filter((t) => t.exception?.type === "AgentTimeoutError").length,
-      minutes: mean(ts.map((t) => span(t.agent_execution))), cost: mean(ts.map((t) => t.cost_usd)),
-    };
-  }).sort((a, b) => (b.skill ?? -1e9) - (a.skill ?? -1e9));
-  section("Models", "", left);
-  table(left, byModel, [
-    { key: "model", label: "Model", fmt: (r) => `<span class="swatch" style="background:${modelColor(r.model)}"></span><b>${esc(shortModel(r.model))}</b>` },
-    { key: "skill", label: "Skill", r: true, fmt: (r) => `<b>${times(r.skill)}</b> <span class="muted">${r.lo !== null && r.graded > 1 ? `${fix(r.lo)}–${fix(r.hi)}` : ""}</span>` },
-    { key: "reward", label: "Reward", r: true, fmt: (r) => fix(r.reward, 3) },
-    { key: "pnl", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl)}">${susd(r.pnl, 0)}</span>` },
-    { key: "n", label: "Graded", r: true, fmt: (r) => `${r.graded}/${r.n}${r.running ? ` <span class="muted">(${r.running} running)</span>` : ""}` },
-    { key: "dq", label: "DQ", r: true, fmt: (r) => r.dq ? `<span class="neg">${r.dq}</span>` : "0" },
-    { key: "timeouts", label: "Timeouts", r: true },
-    { key: "minutes", label: "Agent", r: true, fmt: (r) => dur(r.minutes) },
-    { key: "cost", label: "Cost", r: true, fmt: (r) => usd(r.cost, 2) },
-  ], { maxHeight: "none" });
-  section("Trials", "click one for its agent, bot and logs", right);
-  table(right, trials, [
-    { key: "status", label: "", sort: (t) => t.status, fmt: (t) => light(t.status === "success" && t.exception ? "success" : t.status, t.status) },
-    { key: "model", label: "Model", fmt: (t) => `<span class="swatch" style="background:${modelColor(t.model)}"></span>${esc(shortModel(t.model))}` },
-    { key: "trial", label: "Trial", mono: true, fmt: (t) => esc(String(t.trial || "").split("__").pop()) },
-    { key: "skill", label: "Skill", r: true, fmt: (t) => `<b>${times(t.skill)}</b>` },
-    { key: "pnl_usd", label: "PnL", r: true, fmt: (t) => `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd, 0)}</span>` },
-    { key: "agent", label: "Agent", r: true, sort: (t) => span(t.agent_execution), fmt: (t) => dur(span(t.agent_execution)) },
-    { key: "badges", label: "", sort: (t) => t.exception?.type || "", fmt: statusBadges },
-  ], { onClick: (t) => { location.hash = `${home()}trial/${t.id}`; }, maxHeight: "none" });
-}
 
-// The variants (sessions) every comparable trial ran, and one of them
-// charted across all of them.
-async function renderExplorer(host, task, trials, variant, at) {
-  const set = comparable(trials);
-  host.innerHTML = "";
-  section("Variants", set.length ? `${set.length} trial${set.length === 1 ? "" : "s"} on the same hidden set` : "", host);
-  // A session this release doesn't have: the task, without it.
-  const drop = () => { if (variant) history.replaceState(null, "", taskHref(task.name)); };
-  if (!set.length) { drop(); div(`<div class="empty">No trial of this task has step-by-step session files yet${trials.some((t) => t.status === "pending") ? " (some are still running)" : ""}. Trials graded before they existed have their sessions on the trial page.</div>`, "", host); return; }
-  const people = who(set);
-  // What each variant was drawn as, from one trial's detail files.
-  const first = await api(`/api/trial/${set[0].id}`);
-  const names = first.sessions.bot;
-  const stats = first.session_stats || {};
-  if (variant && !names.includes(variant)) drop();
-  const v = variant && names.includes(variant) ? variant : names[0];
-  setCrumbs({ task: task.name, variant: v });
-  const rows = names.map((n, i) => ({ i, name: n, kind: [stats[n]?.description, describeAnnotation(stats[n]?.annotation)].filter(Boolean).join(" · "), ref: set[0].reference_pnls?.[n], pnl: Object.fromEntries(people.map((p) => [p.t.id, p.t.pnls?.[n]])) }));
-  const wrap = div("", "", host);
-  const all = rows.flatMap((r) => Object.values(r.pnl)).filter(isNum).map(Math.abs);
-  const scale = Math.max(1, ...all);
-  const heat = (x) => isNum(x) ? `<span style="color:${x >= 0 ? "var(--accent)" : "var(--ask)"};opacity:${0.45 + 0.55 * Math.min(1, Math.abs(x) / scale)}">${susd(x, 0)}</span>` : "–";
-  table(wrap, rows, [
-    { key: "i", label: "#", r: true, fmt: (r) => r.i + 1 },
-    { key: "name", label: "Variant", mono: true },
-    { key: "kind", label: "Drawn as", fmt: (r) => `<span class="muted" title="${esc(r.kind)}">${esc(r.kind.length > 70 ? r.kind.slice(0, 70) + "…" : r.kind)}</span>` },
-    { key: "ref", label: "Reference", r: true, fmt: (r) => susd(r.ref, 0) },
-    ...people.map((p) => ({ key: "p" + p.t.id, label: p.label, r: true, sort: (r) => r.pnl[p.t.id], fmt: (r) => heat(r.pnl[p.t.id]) })),
-  ], { maxHeight: "300px", onClick: (r) => { location.hash = `${taskHref(task.name)}/${encodeURIComponent(r.name)}`; } });
-  wrap.querySelectorAll("tbody tr").forEach((tr) => { if (rows[+tr.dataset.i]?.name === v) { tr.classList.add("sel"); } });
-  const view = div("", "", host);
-  await renderVariant(view, task, people, v, at);
-}
 
 async function renderVariant(host, task, people, name, startAt) {
   host.innerHTML = `<div class="loading">Loading ${esc(name)} for ${people.length} trials…</div>`;
@@ -1108,7 +1241,7 @@ async function renderVariant(host, task, people, name, startAt) {
   const hidden = new Set(JSON.parse(sessionStorage.getItem("hidden") || "[]"));
   const visible = () => everyone.filter((r) => !hidden.has(r.label));
   host.innerHTML = "";
-  div(`<h2 style="margin-top:18px">${esc(name)} <small>${esc(describeAnnotation(base.annotation))} · ${esc(sc.description || "")}</small></h2>`, "", host);
+  div(`<h2 style="margin-top:18px">${esc(name)} · every attempt <small>${esc(describeAnnotation(base.annotation))} · ${esc(sc.description || "")}</small></h2>`, "", host);
   // Legend: who did what; click to show or hide.
   const legend = div("", "legend-bar", host);
   const drawLegend = () => {
@@ -1345,9 +1478,9 @@ function skillLines(host, { labels, marked, series }) {
 
 // ---------- trial ----------
 function trialHeader(n, t, tab) {
-  setCrumbs({ task: t.task, trial: n, trialLabel: `${shortModel(t.model)} · ${t.trial}` });
+  setCrumbs({ task: t.task, model: t.model, trial: n, trialLabel: attemptLabel(t), trialId: trialShort(t) });
   app.innerHTML = ""; delete app.dataset.task;
-  div(`<h1>${esc(shortModel(t.model))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
+  div(`<h1>${esc(shortModel(t.model))} · ${esc(attemptLabel(t))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
   const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
   div(`<div class="cards">
     ${card("Skill", times(t.skill), "PnL over the reference's; 1 matches it", true)}
@@ -1529,7 +1662,7 @@ function trialLogs(n, trial) {
 async function renderSession(n, name) {
   const trial = await api(`/api/trial/${n}`);
   const t = trial.summary;
-  setCrumbs({ task: t.task, trial: n, trialLabel: `${shortModel(t.model)} · ${t.trial}`, session: name });
+  setCrumbs({ task: t.task, model: t.model, trial: n, trialLabel: attemptLabel(t), trialId: trialShort(t), session: name });
   delete app.dataset.task;
   app.innerHTML = `<div class="loading">Loading ${esc(name)}…</div>`;
   const [bot, ref] = await Promise.all([
