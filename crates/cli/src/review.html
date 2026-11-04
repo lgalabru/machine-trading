@@ -49,7 +49,11 @@
   .peek { position: fixed; top: 52px; right: 0; bottom: 0; left: 440px; min-width: 640px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -28px 0 60px rgba(0,0,0,.65); z-index: 41; display: flex; flex-direction: column; transform: translateX(104%); transition: transform .22s cubic-bezier(.2,.8,.2,1); }
   .peek.on { transform: none; }
   @media (max-width: 1100px) { .peek { left: 150px; min-width: 0; } }
-  .peek-bar { display: flex; align-items: center; gap: 10px; padding: 14px 26px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .peek-bar { padding: 14px 26px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .peek-row { display: flex; align-items: center; gap: 10px; }
+  .peek-head .runstats { margin: 12px 0 2px; background: var(--bg); }
+  .peek-head .tabs { margin: 8px 0 -1px; border-bottom: 0; }
+  .peek-head:empty { display: none; }
   .peek-title { margin-right: auto; display: flex; align-items: baseline; gap: 10px; min-width: 0; white-space: nowrap; }
   .peek-title .sw { width: 11px; height: 11px; border-radius: 3px; align-self: center; flex: none; }
   .peek-title .pt-run { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
@@ -58,7 +62,7 @@
   .peek-title .pt-scn { font: 600 15px var(--mono); }
   .peek-x { background: none; border: 1px solid var(--line); color: var(--text-2); border-radius: 8px; width: 30px; height: 28px; cursor: pointer; font-size: 13px; }
   .peek-x:hover { color: var(--text); background: #1c1c1e; }
-  .peek-body { flex: 1; overflow: auto; padding: 18px 26px 60px; }
+  .peek-body { flex: 1; overflow: auto; padding: 16px 26px 60px; }
   /* A run's stats: stacked bars, and what the agent did. */
   .sbars { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 6px; }
   @media (max-width: 1100px) { .sbars { grid-template-columns: 1fr; } }
@@ -96,9 +100,11 @@
   .rs-v { font: 600 14px var(--mono); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rs-d { font-size: 10.5px; line-height: 1.35; color: var(--text-3); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* The scenarios: a list of cards beside the picked one's timeline. */
-  .scn { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
+  /* Flush with the panel's left edge and its header. */
+  .scn { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; margin: -16px 0 0 -26px; }
+  .scn-view { padding-top: 16px; }
   .scn-list { position: sticky; isolation: isolate; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; display: flex; flex-direction: column; border-right: 1px solid var(--line); scrollbar-width: thin; }
-  .scn-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; padding: 2px 12px 8px 4px; position: sticky; top: 0; background: var(--bg); z-index: 1; border-bottom: 1px solid #2c2c2e; }
+  .scn-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; padding: 12px 12px 8px 12px; position: sticky; top: 0; background: var(--bg); z-index: 1; border-bottom: 1px solid #2c2c2e; }
   /* Cells, not cards: a hairline between them, the picked one lit. */
   .scn-item { display: block; padding: 10px 12px 9px 12px; border-bottom: 1px solid #2c2c2e; text-decoration: none; transition: background .12s; position: relative; }
   .scn-item:hover { background: rgba(255,255,255,.03); }
@@ -414,7 +420,7 @@
 </div>
 </div>
 <div class="peek-backdrop" id="peek-backdrop"></div>
-<aside class="peek" id="peek" aria-hidden="true"><div class="peek-bar"><span class="peek-title" id="peek-title"></span><button class="peek-x" id="peek-x" aria-label="Close" title="Close (Esc)">✕</button></div><div class="peek-body" id="peek-body"></div></aside>
+<aside class="peek" id="peek" aria-hidden="true"><div class="peek-bar"><div class="peek-row"><span class="peek-title" id="peek-title"></span><button class="peek-x" id="peek-x" aria-label="Close" title="Close (Esc)">✕</button></div><div class="peek-head" id="peek-head"></div></div><div class="peek-body" id="peek-body"></div></aside>
 <div class="tip" id="tip"></div>
 <script>
 "use strict";
@@ -1883,12 +1889,14 @@ function scenarioSpark(s, lo, hi) {
 }
 
 // ---------- trial ----------
+// The run's header, in the panel's top section with its title: the run's
+// numbers, then the tabs.
 function trialHeader(n, t, tab, trial) {
   app.innerHTML = ""; delete app.dataset.task;
-  div(runStats(t, trial), "run-head");
-  if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
   const tabs = [["sessions", "Scenarios"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
-  div(tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
+  document.getElementById("peek-head").innerHTML = runStats(t, trial) +
+    `<div class="tabs">${tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join("")}</div>`;
+  if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
 }
 
 async function renderTrial(n, tab, session) {
