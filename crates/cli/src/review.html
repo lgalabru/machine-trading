@@ -32,12 +32,45 @@
   body { font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   a { color: inherit; }
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  .page { max-width: 1400px; min-height: 100vh; margin: 0 auto; border-inline: 1px solid var(--line); }
-  header.top {
-    display: flex; align-items: center; gap: 18px; padding: 18px 28px; border-bottom: 1px solid var(--line);
-    background: radial-gradient(ellipse 60% 140% at 85% -40%, rgba(162, 239, 91, 0.10), transparent 60%), var(--bg);
-    position: sticky; top: 0; z-index: 5;
+  /* The header: the bench, its version, and a summary chart. */
+  header.hero {
+    height: 400px; border-bottom: 1px solid var(--line); position: relative; overflow: hidden;
+    background:
+      radial-gradient(ellipse 60% 90% at 80% -10%, rgba(162, 239, 91, 0.12), transparent 62%),
+      radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0) 0 0 / 22px 22px,
+      var(--bg);
   }
+  .hero-inner { height: 100%; display: grid; grid-template-columns: minmax(340px, 0.8fr) 1.6fr; gap: 28px; padding: 26px 32px 22px; }
+  .hero-left { display: flex; flex-direction: column; min-width: 0; }
+  .hero h1 { font-size: 34px; letter-spacing: -0.03em; margin: 22px 0 6px; }
+  .hero .ver { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; background: #0e0e10; border: 1px solid rgba(63,63,70,.5); font: 600 12px var(--mono); color: var(--text-2); width: fit-content; }
+  .hero .ver b { color: var(--accent); }
+  .hero .meta { color: var(--text-3); font-size: 13px; margin-top: 10px; }
+  .hero .tallies { display: grid; grid-template-columns: repeat(4, auto); gap: 6px 18px; margin-top: auto; width: fit-content; }
+  .hero .tally .n { font: 600 24px var(--mono); }
+  .hero .tally .k { display: flex; align-items: center; gap: 6px; }
+  .hero-chart { min-width: 0; display: flex; flex-direction: column; }
+  .hero-chart .chart { flex: 1; margin: 0; background: rgba(9,9,11,.75); backdrop-filter: blur(2px); }
+  .light { display: inline-block; width: 9px; height: 9px; border-radius: 99px; flex: none; }
+  .light.l-success { background: var(--accent); box-shadow: 0 0 8px rgba(162,239,91,.55); }
+  .light.l-error { background: var(--critical); box-shadow: 0 0 8px rgba(239,68,68,.55); }
+  .light.l-pending { background: var(--warn); box-shadow: 0 0 8px rgba(245,158,11,.55); animation: blink 1.2s ease-in-out infinite; }
+  .light.l-queued { background: var(--text-4); }
+  @keyframes blink { 50% { opacity: .35; } }
+  .body { display: grid; grid-template-columns: 330px minmax(0, 1fr); min-height: calc(100vh - 400px); }
+  aside.side { border-right: 1px solid var(--line); padding: 16px 12px; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; }
+  aside .k { padding: 0 8px 8px; }
+  .task-item { display: flex; gap: 11px; padding: 12px 12px; border-radius: 10px; text-decoration: none; border: 1px solid transparent; margin-bottom: 4px; }
+  .task-item:hover { background: var(--panel); }
+  .task-item.on { background: var(--panel); border-color: var(--line); }
+  .task-item .light { margin-top: 5px; }
+  .task-item .tname { font-weight: 600; }
+  .task-item .tid { font: 11px var(--mono); color: var(--text-4); margin-top: 1px; overflow-wrap: anywhere; }
+  .task-item .tdesc { color: var(--text-3); font-size: 12.5px; margin-top: 5px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .task-item .tcounts { display: flex; gap: 10px; margin-top: 7px; font: 11px var(--mono); color: var(--text-3); }
+  .task-item .tcounts span { display: inline-flex; align-items: center; gap: 4px; }
+  .task-item .tcounts .light { width: 6px; height: 6px; margin: 0; box-shadow: none; animation: none; }
+  #crumbs { display: flex; gap: 8px; color: var(--text-3); font-size: 13px; flex-wrap: wrap; margin-bottom: 14px; }
   .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: -0.01em; }
   .brand .dot { width: 9px; height: 9px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 12px rgba(162,239,91,.6); }
   .brand small { color: var(--text-3); font-weight: 500; }
@@ -45,7 +78,23 @@
   #crumbs a { text-decoration: none; color: var(--text-2); }
   #crumbs a:hover { color: var(--text); }
   #crumbs .sep { color: var(--text-4); }
-  main { padding: 24px 28px 80px; }
+  main { padding: 22px 28px 80px; min-width: 0; }
+  .legend-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .who { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; cursor: pointer; user-select: none; }
+  .who.off { opacity: .35; }
+  .who .sw { width: 14px; height: 3px; border-radius: 2px; }
+  .who .pnl { font: 12px var(--mono); }
+  .scrub { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .scrub input[type=range] { flex: 1; accent-color: var(--accent); }
+  .scrub .t { font: 600 14px var(--mono); color: var(--accent); min-width: 150px; }
+  .now { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 1200px) { .now { grid-template-columns: 1fr; } }
+  .evlog { max-height: 420px; overflow: auto; font: 12px/1.6 var(--mono); }
+  .evlog .ev { display: grid; grid-template-columns: 100px 160px 1fr; gap: 10px; padding: 2px 4px; border-bottom: 1px solid var(--line-soft); }
+  .evlog .ev.cur { background: var(--accent-soft); }
+  .evlog .ev .who-l { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  td.heat { font-family: var(--mono); text-align: right; }
+  tr.sel td { background: var(--accent-soft); }
   h1 { font-size: 24px; letter-spacing: -0.02em; margin: 0 0 4px; }
   h2 { font-size: 15px; margin: 28px 0 12px; color: var(--text); letter-spacing: -0.01em; }
   h2 small, h1 small { color: var(--text-3); font-weight: 500; font-size: 13px; margin-left: 8px; }
@@ -122,12 +171,10 @@
 </style>
 </head>
 <body>
-<div class="page">
-  <header class="top">
-    <a class="brand" href="#/"><span class="dot"></span>mth <small>bench review</small></a>
-    <nav id="crumbs"></nav>
-  </header>
-  <main id="app"><div class="loading">Loading…</div></main>
+<header class="hero" id="hero"></header>
+<div class="body">
+  <aside class="side" id="side"></aside>
+  <main><nav id="crumbs"></nav><div id="app"><div class="loading">Loading…</div></div></main>
 </div>
 <div class="tip" id="tip"></div>
 <script>
@@ -207,14 +254,21 @@ function at(points, x) {
 }
 // A group of charts sharing an x axis and a crosshair.
 class Group {
-  constructor() { this.charts = []; }
-  add(chart) { this.charts.push(chart); chart.group = this; }
+  constructor() { this.charts = []; this.onMove = null; this.onClick = null; this.tips = true; }
+  add(chart) { this.charts.push(chart); chart.group = this; return chart; }
   move(x, ev) {
     for (const c of this.charts) c.cross(x);
+    if (this.onMove) this.onMove(x);
+    if (!this.tips) return;
     const parts = this.charts.map((c) => c.readout(x)).filter(Boolean);
     if (parts.length && ev) showTip(`<b>${this.label ? this.label(x) : fix(x)}</b>` + parts.join(""), ev);
   }
-  leave() { for (const c of this.charts) c.cross(null); hideTip(); }
+  leave() { for (const c of this.charts) c.cross(null); hideTip(); if (this.onLeave) this.onLeave(); }
+  pin(x) { for (const c of this.charts) if (c.pin) c.pin(x); }
+  click(x) { if (this.onClick) this.onClick(x); }
+}
+function pinLine(svg, T, H, B) {
+  return el("line", { x1: 0, x2: 0, y1: T, y2: H - B, stroke: "var(--accent)", "stroke-width": 1.3, visibility: "hidden", "pointer-events": "none" }, svg);
 }
 // A line, step, area or bar chart. opts: {height, x: [lo, hi], y?, series, hlines, vlines, marks, xfmt, yfmt, title, legend}
 function chart(container, opts) {
@@ -292,9 +346,14 @@ function chart(container, opts) {
     else el("circle", { cx: X, cy: Y, r, fill: m.fill ?? m.color, stroke: m.stroke, "stroke-width": m.stroke ? 1.2 : 0, opacity: m.opacity ?? 0.9 }, svg);
   }
   const line = el("line", { class: "cross", x1: 0, x2: 0, y1: T, y2: H - B, visibility: "hidden" }, svg);
+  const pinned = pinLine(svg, T, H, B);
   const hit = el("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" }, svg);
   const self = {
     group: null,
+    pin(x) {
+      if (x === null || x < x0 || x > x1) { pinned.setAttribute("visibility", "hidden"); return; }
+      pinned.setAttribute("x1", sx(x)); pinned.setAttribute("x2", sx(x)); pinned.setAttribute("visibility", "visible");
+    },
     cross(x) {
       if (x === null || x < x0 || x > x1) { line.setAttribute("visibility", "hidden"); return; }
       line.setAttribute("x1", sx(x)); line.setAttribute("x2", sx(x)); line.setAttribute("visibility", "visible");
@@ -318,6 +377,7 @@ function chart(container, opts) {
   hit.addEventListener("mousemove", (ev) => { const x = toX(ev); if (self.group) self.group.move(x, ev); else { self.cross(x); const r = self.readout(x); if (r) showTip(`<b>${(opts.tipLabel || opts.xfmt || fix)(x)}</b>${r}`, ev); } });
   hit.addEventListener("mouseleave", () => { if (self.group) self.group.leave(); else { self.cross(null); hideTip(); } });
   if (opts.onClick) { hit.style.cursor = "pointer"; hit.addEventListener("click", (ev) => opts.onClick(toX(ev))); }
+  else hit.addEventListener("click", (ev) => self.group && self.group.click(toX(ev)));
   return self;
 }
 // Lanes of events on a shared x axis: rows of marks.
@@ -346,9 +406,14 @@ function lanes(container, opts) {
     }
   });
   const line = el("line", { class: "cross", x1: 0, x2: 0, y1: T, y2: H - B, visibility: "hidden" }, svg);
+  const pinned = pinLine(svg, T, H, B);
   const hit = el("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" }, svg);
   const self = {
     group: null,
+    pin(x) {
+      if (x === null || x < x0 || x > x1) { pinned.setAttribute("visibility", "hidden"); return; }
+      pinned.setAttribute("x1", sx(x)); pinned.setAttribute("x2", sx(x)); pinned.setAttribute("visibility", "visible");
+    },
     cross(x) {
       if (x === null || x < x0 || x > x1) { line.setAttribute("visibility", "hidden"); return; }
       line.setAttribute("x1", sx(x)); line.setAttribute("x2", sx(x)); line.setAttribute("visibility", "visible");
@@ -361,6 +426,7 @@ function lanes(container, opts) {
   const toX = (ev) => { const box = svg.getBoundingClientRect(); const px = (ev.clientX - box.left) / box.width * W; return Math.min(x1, Math.max(x0, x0 + (px - L) / (W - L - R) * (x1 - x0))); };
   hit.addEventListener("mousemove", (ev) => { const x = toX(ev); if (self.group) self.group.move(x, ev); });
   hit.addEventListener("mouseleave", () => self.group && self.group.leave());
+  hit.addEventListener("click", (ev) => self.group && self.group.click(toX(ev)));
   return self;
 }
 
@@ -390,12 +456,14 @@ function table(container, rows, cols, opts = {}) {
 // ---------- shell ----------
 const app = document.getElementById("app");
 const crumbs = document.getElementById("crumbs");
+const hero = document.getElementById("hero");
+const side = document.getElementById("side");
 function setCrumbs(items) {
   crumbs.innerHTML = items.map(([label, href]) => href ? `<a href="${href}">${esc(label)}</a>` : `<span>${esc(label)}</span>`).join('<span class="sep">/</span>');
 }
 function fail(error) { app.innerHTML = `<div class="error">${esc(error.message || error)}</div>`; }
-function section(title, sub) { const h = document.createElement("h2"); h.innerHTML = esc(title) + (sub ? `<small>${sub}</small>` : ""); app.appendChild(h); return h; }
-function div(html = "", className) { const d = document.createElement("div"); if (className) d.className = className; d.innerHTML = html; app.appendChild(d); return d; }
+function section(title, sub, parent = app) { const h = document.createElement("h2"); h.innerHTML = esc(title) + (sub ? `<small>${sub}</small>` : ""); parent.appendChild(h); return h; }
+function div(html = "", className, parent = app) { const d = document.createElement("div"); if (className) d.className = className; d.innerHTML = html; parent.appendChild(d); return d; }
 const card = (k, v, d, big) => `<div class="card"><div class="k">${esc(k)}</div><div class="v ${big ? "big" : ""}">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
 function exceptionBadge(t) {
   if (!t.exception) return "";
@@ -404,117 +472,425 @@ function exceptionBadge(t) {
 }
 function statusBadges(t) {
   const out = [];
+  if (t.status === "pending") out.push(`<span class="badge warn">running</span>`);
   if (t.tampered) out.push(`<span class="badge bad" title="${esc(t.tampered)}">tampered</span>`);
   if (t.disqualified) out.push(`<span class="badge bad">disqualified</span>`);
-  if (!t.graded) out.push(`<span class="badge bad">no grade</span>`);
+  if (t.status === "error") out.push(`<span class="badge bad">no grade</span>`);
   out.push(exceptionBadge(t));
   return out.join(" ");
 }
+const light = (status, title) => `<span class="light l-${status}" title="${esc(title || status)}"></span>`;
+// A task's light: an error anywhere shows, then running, then waiting.
+function taskStatus(c) {
+  if (c.error) return "error";
+  if (c.pending) return "pending";
+  if (c.queued) return "queued";
+  return "success";
+}
+
+// Who's who: a color per model, the same everywhere; attempts of a model
+// share it and differ by dash and marker.
+const PALETTE = ["#a2ef5b", "#7aa2f7", "#f5b74a", "#c084fc", "#f472b6", "#22d3ee", "#fb923c", "#e879f9"];
+const REFERENCE = { color: "#e4e4e7", dash: "5 4" };
+const DASHES = [undefined, "6 3", "2 3", "8 3 2 3"];
+const SHAPES = ["circle", "square", "diamond", "circle"];
+let modelOrder = [];
+const modelColor = (m) => PALETTE[Math.max(0, modelOrder.indexOf(m)) % PALETTE.length];
 
 let index = null;
+let poller = null;
+async function loadIndex(fresh) {
+  if (fresh) cache.delete("j:/api/index");
+  index = await api("/api/index");
+  modelOrder = [...new Set(index.trials.map((t) => t.model).filter(Boolean))].sort();
+  renderHero();
+  renderSide();
+  // A bench still running: look again every 30 s.
+  const live = index.tasks.some((t) => t.counts.pending || t.counts.queued);
+  clearTimeout(poller);
+  if (live) poller = setTimeout(() => loadIndex(true).catch(() => {}), 30000);
+}
+let currentTask = null;
 async function route() {
   hideTip();
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   try {
-    index = index || await api("/api/index");
-    if (parts[0] === "trial" && parts.length >= 4 && parts[2] === "session") return await renderSession(+parts[1], parts[3]);
-    if (parts[0] === "trial") return await renderTrial(+parts[1], parts[2] || "sessions");
-    return renderIndex();
+    if (!index) await loadIndex();
+    if (parts[0] === "trial") {
+      const t = index.trials[+parts[1]];
+      currentTask = t?.task ?? currentTask; renderSide();
+      if (parts.length >= 4 && parts[2] === "session") return await renderSession(+parts[1], parts[3]);
+      return await renderTrial(+parts[1], parts[2] || "sessions");
+    }
+    const task = parts[0] === "task" ? parts[1] : index.tasks[0]?.name;
+    currentTask = task; renderSide();
+    if (!task) { app.innerHTML = `<div class="empty">No trials yet.</div>`; return; }
+    return await renderTask(task, parts[2] || null, parts[3] !== undefined ? +parts[3] : null);
   } catch (e) { fail(e); }
 }
-addEventListener("hashchange", () => { scrollTo(0, 0); route(); });
-let resizeTimer; addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(route, 200); });
+addEventListener("hashchange", () => { route(); });
+let resizeTimer, lastWidth = innerWidth;
+addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) return; lastWidth = innerWidth; clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { renderHero(); route(); }, 250); });
 
-// ---------- index ----------
-function renderIndex() {
-  setCrumbs([[index.name || "bench", null]]);
-  app.innerHTML = "";
+// ---------- header ----------
+function renderHero() {
   const trials = index.trials;
-  const tasks = [...new Set(trials.map((t) => t.task))].sort();
-  const models = [...new Set(trials.map((t) => t.model))].sort();
-  const graded = trials.filter((t) => t.graded);
-  div(`<h1>${esc(index.name || "Bench")}<small>${trials.length} trials · ${tasks.length} task${tasks.length === 1 ? "" : "s"} · ${models.length} model${models.length === 1 ? "" : "s"}</small></h1><div class="sub num">${esc(index.root)}</div>`);
-  const seeds = [...new Set(graded.map((t) => t.eval_seed_sha256).filter(Boolean))];
+  const all = index.tasks.reduce((c, t) => { for (const k in t.counts) c[k] = (c[k] || 0) + t.counts[k]; return c; }, {});
   const cost = sum(trials.map((t) => t.cost_usd));
-  div(`<div class="cards">${card("Trials", int(trials.length), `${graded.length} graded`)}${card("Hidden sets", seeds.length ? int(seeds.length) : "–", seeds.length === 1 ? `secret ${seeds[0].slice(0, 12)}…` : seeds.length > 1 ? "trials graded on different sets" : "no drawn set")}${card("Agent cost", usd(cost, 0), "all trials")}${card("Exceptions", int(trials.filter((t) => t.exception).length), Object.entries(trials.reduce((m, t) => (t.exception && (m[t.exception.type] = (m[t.exception.type] || 0) + 1), m), {})).map(([k, v]) => `${v} ${k}`).join(", ") || "none")}${card("Disqualified", int(trials.filter((t) => t.disqualified || t.tampered).length), "trials")}</div>`);
-  for (const task of tasks) {
-    const rows = trials.filter((t) => t.task === task);
-    section(shortTask(task), `${rows.length} trials`);
-    const host = div("", "grid2");
-    const left = document.createElement("div"), right = document.createElement("div");
-    host.append(left, right);
-    const byModel = models.filter((m) => rows.some((t) => t.model === m)).map((m) => {
-      const ts = rows.filter((t) => t.model === m), sk = ts.map((t) => t.skill).filter(isNum);
-      return {
-        model: m, n: ts.length, graded: ts.filter((t) => t.graded).length,
-        skill: mean(sk), lo: sk.length ? Math.min(...sk) : null, hi: sk.length ? Math.max(...sk) : null,
-        reward: mean(ts.map((t) => t.reward)), pnl: mean(ts.map((t) => t.pnl_usd)), ref: mean(ts.map((t) => t.reference_pnl_usd)),
-        dq: ts.filter((t) => t.disqualified || t.tampered).length,
-        timeouts: ts.filter((t) => t.exception?.type === "AgentTimeoutError").length,
-        errors: ts.filter((t) => t.exception && t.exception.type !== "AgentTimeoutError").length,
-        minutes: mean(ts.map((t) => span(t.agent_execution))), cost: mean(ts.map((t) => t.cost_usd)),
-      };
-    }).sort((a, b) => (b.skill ?? -1e9) - (a.skill ?? -1e9));
-    table(left, byModel, [
-      { key: "model", label: "Model", fmt: (r) => `<b>${esc(shortModel(r.model))}</b>` },
-      { key: "skill", label: "Skill", r: true, fmt: (r) => `<b>${times(r.skill)}</b> <span class="muted">${r.lo !== null && r.n > 1 ? `${fix(r.lo)}–${fix(r.hi)}` : ""}</span>` },
-      { key: "reward", label: "Reward", r: true, fmt: (r) => fix(r.reward, 3) },
-      { key: "pnl", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl)}">${susd(r.pnl, 0)}</span>` },
-      { key: "n", label: "Trials", r: true, fmt: (r) => `${r.graded}/${r.n}` },
-      { key: "dq", label: "DQ", r: true, fmt: (r) => r.dq ? `<span class="neg">${r.dq}</span>` : "0" },
-      { key: "timeouts", label: "Timeouts", r: true },
-      { key: "minutes", label: "Agent", r: true, fmt: (r) => dur(r.minutes) },
-      { key: "cost", label: "Cost", r: true, fmt: (r) => usd(r.cost, 2) },
-    ], { maxHeight: "none" });
-    // Skill per trial, by model; the reference scores 1.
-    const pts = rows.filter((t) => isNum(t.skill));
-    if (pts.length) {
-      const order = byModel.map((m) => m.model);
-      const marks = pts.map((t) => ({ x: order.indexOf(t.model), y: t.skill, color: t.disqualified || t.tampered ? "var(--ask)" : t.exception ? "var(--warn)" : "var(--accent)", r: 4.5, opacity: 0.85 }));
-      chart(right, {
-        title: "Skill by trial", height: 220, x: [-0.6, order.length - 0.4], xticks: order.map((_, i) => i), xfmt: (i) => shortModel(order[Math.round(i)] ?? ""),
-        series: [], marks, zero: true, hlines: [{ y: 1, color: "var(--ref)", label: "reference = 1" }], yfmt: (v) => fix(v, 1) + "×",
-        readout: (x) => { const i = Math.round(x); const ts = pts.filter((t) => order.indexOf(t.model) === i); return ts.length ? ts.map((t) => `<div class="row"><span>${esc(t.trial)}</span><span>${times(t.skill)}</span></div>`).join("") : ""; },
-        tipLabel: (x) => shortModel(order[Math.round(x)] ?? ""),
-        legendExtra: `<span><i style="background:var(--accent)"></i>graded</span><span><i style="background:var(--warn)"></i>agent timed out</span><span><i style="background:var(--ask)"></i>disqualified</span>`,
-      });
-    } else right.innerHTML = `<div class="empty">No graded trials yet.</div>`;
+  const agentMs = sum(trials.map((t) => span(t.agent_execution)));
+  const seeds = [...new Set(trials.map((t) => t.eval_seed_sha256).filter(Boolean))];
+  const b = index.batch;
+  const dataset = index.dataset || "machine-trading";
+  hero.innerHTML = `<div class="hero-inner"><div class="hero-left">
+      <a class="brand" href="#/"><span class="dot"></span>mth <small>bench review</small></a>
+      <h1>${esc(shortTask(dataset).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))}</h1>
+      <span class="ver">${esc(dataset)} <b>${esc(index.version || "?")}</b></span>
+      <div class="meta">${esc(index.name || "")}${b ? ` · ${b.models.length} models × ${b.attempts} attempts · ${fix(b.timeout_multiplier, 0)}× time` : ""}${seeds.length === 1 ? ` · set ${esc(seeds[0].slice(0, 10))}…` : seeds.length > 1 ? ` · ${seeds.length} hidden sets` : ""}</div>
+      <div class="meta">${int(trials.length)} trials · ${index.tasks.length} tasks · ${modelOrder.length} models · ${usd(cost, 0)} agent cost · ${dur(agentMs)} agent time</div>
+      <div class="tallies">${["success", "error", "pending", "queued"].map((k) => `<div class="tally"><div class="n">${int(all[k] || 0)}</div><div class="k">${light(k)}${k === "pending" ? "running" : k}</div></div>`).join("")}</div>
+    </div><div class="hero-chart" id="hero-chart"></div></div>`;
+  heroChart(document.getElementById("hero-chart"));
+}
+// Mean skill by model, per task, with each trial as a dot; the reference is 1.
+function heroChart(host) {
+  const groups = index.tasks.map((task) => ({
+    task, rows: modelOrder.map((m) => {
+      const ts = index.trials.filter((t) => t.task === task.name && t.model === m);
+      const sk = ts.map((t) => t.skill).filter(isNum);
+      return { model: m, n: ts.length, skill: mean(sk), skills: sk, pending: ts.filter((t) => t.status === "pending").length };
+    }).filter((r) => r.n),
+  }));
+  const slots = []; groups.forEach((g, gi) => { g.rows.forEach((r) => slots.push({ g: gi, r })); slots.push(null); });
+  slots.pop();
+  const xs = [-0.7, slots.length - 0.3];
+  const bars = [], marks = [], xticks = [];
+  slots.forEach((s, i) => {
+    if (!s) return;
+    if (isNum(s.r.skill)) bars.push([i, s.r.skill, s.r]);
+    for (const k of s.r.skills) marks.push({ x: i, y: k, color: "#fafafa", r: 2.6, opacity: 0.85 });
+  });
+  const labels = slots.map((s) => s ? shortModel(s.r.model) : "");
+  groups.forEach((g, gi) => { const idx = slots.map((s, i) => s && s.g === gi ? i : null).filter((i) => i !== null); xticks.push(...idx); });
+  const ys = [0, 1.2, ...bars.map((b) => b[1]), ...marks.map((m) => m.y)];
+  const c = chart(host, {
+    title: "Skill by model, per task (the reference scores 1)", height: 300, x: xs, xticks, xfmt: (i) => labels[Math.round(i)] || "",
+    y: [Math.min(...ys), Math.max(...ys)], zero: true, yfmt: (v) => fix(v, 1) + "×",
+    series: [{ label: "", type: "bars", color: "var(--accent)", width: 0.7, data: bars, colorOf: (p) => modelColor(p[2].model), opacity: 0.85, noTip: true, hideLegend: true }],
+    marks, hlines: [{ y: 1, color: "var(--ref)", label: "reference" }],
+    readout: (x) => { const s = slots[Math.round(x)]; return s ? `<div class="row"><span>${esc(shortTask(s.r.model ? groups[s.g].task.short : ""))}</span><span></span></div><div class="row"><span>mean skill</span><span>${times(s.r.skill)}</span></div><div class="row"><span>trials</span><span>${s.r.skills.map((k) => fix(k)).join(", ") || "–"}${s.r.pending ? ` · ${s.r.pending} running` : ""}</span></div>` : ""; },
+    tipLabel: (x) => { const s = slots[Math.round(x)]; return s ? shortModel(s.r.model) : ""; },
+    legendExtra: groups.map((g) => `<span class="muted">${esc(g.task.short)}</span>`).join('<span class="muted">·</span>'),
+  });
+  // Task names under their groups.
+  const svg = host.querySelector("svg");
+  if (svg) {
+    const W = +svg.getAttribute("viewBox").split(" ")[2], L = 64, R = 14;
+    const sx = (x) => L + (x - xs[0]) / (xs[1] - xs[0]) * (W - L - R);
+    groups.forEach((g, gi) => {
+      const idx = slots.map((s, i) => s && s.g === gi ? i : null).filter((i) => i !== null);
+      if (!idx.length) return;
+      const mid = (idx[0] + idx[idx.length - 1]) / 2;
+      const t = el("text", { x: sx(mid), y: 14, "text-anchor": "middle", fill: "var(--text-2)", "font-size": 12, "font-weight": 600 }, svg);
+      t.textContent = g.task.short;
+    });
   }
-  section("All trials");
-  const host = div();
-  table(host, trials, [
-    { key: "task", label: "Task", fmt: (t) => esc(shortTask(t.task)) },
-    { key: "model", label: "Model", fmt: (t) => `<b>${esc(shortModel(t.model))}</b>` },
-    { key: "trial", label: "Trial", mono: true },
-    { key: "skill", label: "Skill", r: true, fmt: (t) => `<b class="${t.skill >= 1 ? "pos" : ""}">${times(t.skill)}</b>` },
-    { key: "reward", label: "Reward", r: true, fmt: (t) => fix(t.reward, 3) },
-    { key: "pnl_usd", label: "PnL", r: true, fmt: (t) => `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>` },
-    { key: "reference_pnl_usd", label: "Reference", r: true, fmt: (t) => susd(t.reference_pnl_usd) },
-    { key: "sessions", label: "Sessions", r: true },
-    { key: "agent", label: "Agent time", r: true, sort: (t) => span(t.agent_execution), fmt: (t) => dur(span(t.agent_execution)) },
-    { key: "verifier", label: "Grading", r: true, sort: (t) => span(t.verifier_execution), fmt: (t) => dur(span(t.verifier_execution)) },
-    { key: "cost_usd", label: "Cost", r: true, fmt: (t) => usd(t.cost_usd) },
-    { key: "status", label: "Status", sort: (t) => (t.exception?.type || "") + (t.disqualified ? "dq" : ""), fmt: statusBadges },
-  ], { onClick: (t) => { location.hash = `#/trial/${t.id}`; } });
-  if (index.jobs.length) {
-    section("Harbor jobs");
-    const h = div();
-    table(h, index.jobs, [
-      { key: "path", label: "Job", mono: true },
-      { key: "agents", label: "Agents", fmt: (j) => esc((j.agents || []).map((a) => `${a.name}${a.model_name ? " " + shortModel(a.model_name) : ""}`).join(", ")) },
-      { key: "datasets", label: "Dataset", fmt: (j) => esc((j.datasets || []).map((d) => d.name ? `${d.name}${d.version ? "@" + d.version : ""}` : d.path || "").join(", ")) },
-      { key: "n_total_trials", label: "Trials", r: true },
-      { key: "timeout_multiplier", label: "Time ×", r: true },
-      { key: "started_at", label: "Started", mono: true, fmt: (j) => esc(String(j.started_at || "").replace("T", " ").slice(0, 16)) },
-      { key: "dur", label: "Took", r: true, sort: (j) => span(j), fmt: (j) => dur(span(j)) },
-    ], { maxHeight: "none" });
+  return c;
+}
+
+// ---------- side ----------
+function renderSide() {
+  side.innerHTML = `<div class="k">Tasks</div>` + index.tasks.map((t) => {
+    const st = taskStatus(t.counts);
+    const c = t.counts;
+    return `<a class="task-item ${t.name === currentTask ? "on" : ""}" href="#/task/${encodeURIComponent(t.name)}">${light(st)}<div style="min-width:0">
+      <div class="tname">${esc(t.short)}</div>
+      <div class="tid">${esc(t.name)}${t.version ? ` · ${esc(t.version)}` : ""}${t.ref ? ` · ${esc(String(t.ref).replace("sha256:", "").slice(0, 8))}` : ""}</div>
+      ${t.description ? `<div class="tdesc">${esc(t.description)}</div>` : ""}
+      <div class="tcounts"><span title="graded">${light("success")}${c.success}</span><span title="finished without a grade">${light("error")}${c.error}</span><span title="running">${light("pending")}${c.pending}</span><span title="not started">${light("queued")}${c.queued}</span></div>
+    </div></a>`;
+  }).join("");
+}
+
+// ---------- task ----------
+// Trials of a task that can be compared session by session: the ones graded
+// on the most common hidden set.
+function comparable(trials) {
+  const bySeed = new Map();
+  for (const t of trials) if (t.details) { const k = t.eval_seed_sha256 || "files"; bySeed.set(k, [...(bySeed.get(k) || []), t]); }
+  let best = []; for (const v of bySeed.values()) if (v.length > best.length) best = v;
+  return best;
+}
+// A label per trial: its model, and its attempt among that model's trials.
+function who(trials) {
+  const seen = {};
+  return trials.map((t) => {
+    const k = (seen[t.model] = (seen[t.model] || 0) + 1);
+    return { t, model: t.model, attempt: k, color: modelColor(t.model), dash: DASHES[(k - 1) % DASHES.length], shape: SHAPES[(k - 1) % SHAPES.length], label: `${shortModel(t.model)} #${k}` };
+  });
+}
+
+async function renderTask(name, variant, at) {
+  const task = index.tasks.find((t) => t.name === name);
+  if (!task) { fail(new Error(`no task ${name}`)); return; }
+  setCrumbs([[index.name || "bench", "#/"], [task.short, null]]);
+  const trials = task.trials.map((i) => index.trials[i]);
+  // Re-rendering the same task (a new variant): keep the page, swap the explorer.
+  const same = app.dataset.task === name && app.querySelector("#explorer");
+  if (!same) {
+    app.innerHTML = ""; app.dataset.task = name;
+    const st = taskStatus(task.counts);
+    div(`<h1>${light(st)} ${esc(task.short)} <small>${esc(task.name)}${task.version ? " · " + esc(task.version) : ""}</small></h1>${task.description ? `<div class="sub" style="max-width:900px;font-size:14px;color:var(--text-2)">${esc(task.description)}</div>` : ""}`);
+    taskLeaderboard(trials);
+    div("", "", app).id = "explorer";
   }
+  await renderExplorer(document.getElementById("explorer"), task, trials, variant, at);
+}
+
+function taskLeaderboard(trials) {
+  const grid = div("", "grid2");
+  const left = document.createElement("div"), right = document.createElement("div");
+  grid.append(left, right);
+  const models = modelOrder.filter((m) => trials.some((t) => t.model === m));
+  const byModel = models.map((m) => {
+    const ts = trials.filter((t) => t.model === m), sk = ts.map((t) => t.skill).filter(isNum);
+    return {
+      model: m, n: ts.length, graded: ts.filter((t) => t.graded).length, running: ts.filter((t) => t.status === "pending").length,
+      skill: mean(sk), lo: sk.length ? Math.min(...sk) : null, hi: sk.length ? Math.max(...sk) : null,
+      reward: mean(ts.map((t) => t.reward)), pnl: mean(ts.map((t) => t.pnl_usd)),
+      dq: ts.filter((t) => t.disqualified || t.tampered).length, timeouts: ts.filter((t) => t.exception?.type === "AgentTimeoutError").length,
+      minutes: mean(ts.map((t) => span(t.agent_execution))), cost: mean(ts.map((t) => t.cost_usd)),
+    };
+  }).sort((a, b) => (b.skill ?? -1e9) - (a.skill ?? -1e9));
+  section("Models", "", left);
+  table(left, byModel, [
+    { key: "model", label: "Model", fmt: (r) => `<span class="swatch" style="background:${modelColor(r.model)}"></span><b>${esc(shortModel(r.model))}</b>` },
+    { key: "skill", label: "Skill", r: true, fmt: (r) => `<b>${times(r.skill)}</b> <span class="muted">${r.lo !== null && r.graded > 1 ? `${fix(r.lo)}–${fix(r.hi)}` : ""}</span>` },
+    { key: "reward", label: "Reward", r: true, fmt: (r) => fix(r.reward, 3) },
+    { key: "pnl", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl)}">${susd(r.pnl, 0)}</span>` },
+    { key: "n", label: "Graded", r: true, fmt: (r) => `${r.graded}/${r.n}${r.running ? ` <span class="muted">(${r.running} running)</span>` : ""}` },
+    { key: "dq", label: "DQ", r: true, fmt: (r) => r.dq ? `<span class="neg">${r.dq}</span>` : "0" },
+    { key: "timeouts", label: "Timeouts", r: true },
+    { key: "minutes", label: "Agent", r: true, fmt: (r) => dur(r.minutes) },
+    { key: "cost", label: "Cost", r: true, fmt: (r) => usd(r.cost, 2) },
+  ], { maxHeight: "none" });
+  section("Trials", "click one for its agent, bot and logs", right);
+  table(right, trials, [
+    { key: "status", label: "", sort: (t) => t.status, fmt: (t) => light(t.status === "success" && t.exception ? "success" : t.status, t.status) },
+    { key: "model", label: "Model", fmt: (t) => `<span class="swatch" style="background:${modelColor(t.model)}"></span>${esc(shortModel(t.model))}` },
+    { key: "trial", label: "Trial", mono: true, fmt: (t) => esc(String(t.trial || "").split("__").pop()) },
+    { key: "skill", label: "Skill", r: true, fmt: (t) => `<b>${times(t.skill)}</b>` },
+    { key: "pnl_usd", label: "PnL", r: true, fmt: (t) => `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd, 0)}</span>` },
+    { key: "agent", label: "Agent", r: true, sort: (t) => span(t.agent_execution), fmt: (t) => dur(span(t.agent_execution)) },
+    { key: "badges", label: "", sort: (t) => t.exception?.type || "", fmt: statusBadges },
+  ], { onClick: (t) => { location.hash = `#/trial/${t.id}`; }, maxHeight: "none" });
+}
+
+// The variants (sessions) every comparable trial ran, and one of them
+// charted across all of them.
+async function renderExplorer(host, task, trials, variant, at) {
+  const set = comparable(trials);
+  host.innerHTML = "";
+  section("Variants", set.length ? `${set.length} trial${set.length === 1 ? "" : "s"} on the same hidden set` : "", host);
+  if (!set.length) { div(`<div class="empty">No trial of this task has step-by-step session files yet${trials.some((t) => t.status === "pending") ? " (some are still running)" : ""}. Trials graded before they existed have their sessions on the trial page.</div>`, "", host); return; }
+  const people = who(set);
+  // What each variant was drawn as, from one trial's detail files.
+  const first = await api(`/api/trial/${set[0].id}`);
+  const names = first.sessions.bot;
+  const stats = first.session_stats || {};
+  const v = variant && names.includes(variant) ? variant : names[0];
+  const rows = names.map((n, i) => ({ i, name: n, kind: [stats[n]?.description, describeAnnotation(stats[n]?.annotation)].filter(Boolean).join(" · "), ref: set[0].reference_pnls?.[n], pnl: Object.fromEntries(people.map((p) => [p.t.id, p.t.pnls?.[n]])) }));
+  const wrap = div("", "", host);
+  const all = rows.flatMap((r) => Object.values(r.pnl)).filter(isNum).map(Math.abs);
+  const scale = Math.max(1, ...all);
+  const heat = (x) => isNum(x) ? `<span style="color:${x >= 0 ? "var(--accent)" : "var(--ask)"};opacity:${0.45 + 0.55 * Math.min(1, Math.abs(x) / scale)}">${susd(x, 0)}</span>` : "–";
+  table(wrap, rows, [
+    { key: "i", label: "#", r: true, fmt: (r) => r.i + 1 },
+    { key: "name", label: "Variant", mono: true },
+    { key: "kind", label: "Drawn as", fmt: (r) => `<span class="muted" title="${esc(r.kind)}">${esc(r.kind.length > 70 ? r.kind.slice(0, 70) + "…" : r.kind)}</span>` },
+    { key: "ref", label: "Reference", r: true, fmt: (r) => susd(r.ref, 0) },
+    ...people.map((p) => ({ key: "p" + p.t.id, label: p.label, r: true, sort: (r) => r.pnl[p.t.id], fmt: (r) => heat(r.pnl[p.t.id]) })),
+  ], { maxHeight: "300px", onClick: (r) => { location.hash = `#/task/${encodeURIComponent(task.name)}/${encodeURIComponent(r.name)}`; } });
+  wrap.querySelectorAll("tbody tr").forEach((tr) => { if (rows[+tr.dataset.i]?.name === v) { tr.classList.add("sel"); } });
+  const view = div("", "", host);
+  await renderVariant(view, task, people, v, at);
+}
+
+async function renderVariant(host, task, people, name, startAt) {
+  host.innerHTML = `<div class="loading">Loading ${esc(name)} for ${people.length} trials…</div>`;
+  const details = await Promise.all(people.map((p) => api(`/api/session/${p.t.id}/bot/${encodeURIComponent(name)}`).catch(() => null)));
+  const ref = await api(`/api/session/${people[0].t.id}/reference/${encodeURIComponent(name)}`).catch(() => null);
+  const runs = people.map((p, i) => ({ ...p, d: details[i] })).filter((r) => r.d);
+  if (!runs.length) { host.innerHTML = `<div class="empty">No detail file for ${esc(name)}.</div>`; return; }
+  const base = ref || runs[0].d, sc = base.scenario, tl = base.timeline;
+  const making = !!sc.making;
+  const steps = tl.steps || [];
+  const xEnd = Math.max(tl.end_slot - tl.start_slot, steps.length ? steps[steps.length - 1].at : 1);
+  const X = [0, xEnd];
+  const informed = Array.isArray(base.annotation?.informed) ? base.annotation.informed : [];
+  const everyone = [...(ref ? [{ label: "reference", color: REFERENCE.color, dash: REFERENCE.dash, shape: "circle", d: ref, reference: true, t: { id: people[0].t.id } }] : []), ...runs];
+  const hidden = new Set(JSON.parse(sessionStorage.getItem("hidden") || "[]"));
+  const visible = () => everyone.filter((r) => !hidden.has(r.label));
+  host.innerHTML = "";
+  div(`<h2 style="margin-top:18px">${esc(name)} <small>${esc(describeAnnotation(base.annotation))} · ${esc(sc.description || "")}</small></h2>`, "", host);
+  // Legend: who did what; click to show or hide.
+  const legend = div("", "legend-bar", host);
+  const drawLegend = () => {
+    legend.innerHTML = everyone.map((r) => `<span class="who ${hidden.has(r.label) ? "off" : ""}" data-l="${esc(r.label)}"><span class="sw" style="background:${r.color};${r.dash ? `background:repeating-linear-gradient(90deg,${r.color} 0 5px,transparent 5px 8px)` : ""}"></span>${esc(r.label)} <span class="pnl ${cls(r.d.report.pnl_usd)}">${susd(r.d.report.pnl_usd)}</span>${r.d.disqualified ? ` <span class="badge bad" title="${esc(r.d.disqualified)}">DQ</span>` : ""}</span>`).join("") +
+      `<span class="who" style="cursor:default"><span style="color:var(--bid)">▲</span><span style="color:var(--ask)">▼</span> market orders · <span style="color:var(--bid)">–</span><span style="color:var(--ask)">–</span> limit orders</span>`;
+    legend.querySelectorAll("[data-l]").forEach((e) => e.addEventListener("click", () => { const l = e.dataset.l; hidden.has(l) ? hidden.delete(l) : hidden.add(l); sessionStorage.setItem("hidden", JSON.stringify([...hidden])); drawLegend(); drawCharts(); }));
+  };
+  const chartsHost = div("", "", host);
+  const scrub = div("", "scrub", host);
+  const now = div("", "now", host);
+  let cursor = 0, pinned = false, group = null;
+  // Sends of one turn, alike ones counted together.
+  const groupTxs = (txs) => {
+    const out = [];
+    for (const x of txs) {
+      const text = describeTx(x), ok = x.ok || x.duplicate;
+      let g = out.find((o) => o.text === text && o.ok === ok);
+      if (!g) out.push((g = { text, ok, n: 0, dups: 0 }));
+      if (x.duplicate) g.dups += 1; else g.n += 1;
+    }
+    return out;
+  };
+  const describeTx = (tx) => (tx.instructions || []).filter((i) => i.program !== "compute_budget").map((i) => i.order ? `${i.order.kind === "ImmediateOrCancel" ? "market" : i.order.kind === "PostOnly" ? "post-only" : "limit"} ${i.order.side} ${fix(i.order.size, 3)}${isNum(i.order.price_usd) ? " @ $" + fix(i.order.price_usd) : ""}` : (i.name || i.program.slice(0, 8))).join(", ") || "transaction";
+  const drawCharts = () => {
+    chartsHost.innerHTML = "";
+    group = new Group(); group.label = (x) => `${clock(x)} · slot +${Math.round(x)}`; group.tips = false;
+    const vis = visible();
+    // Orders on the price chart, in each trial's color.
+    const marks = [];
+    // A market order fills near the market, not at its limit (its worst
+    // price): it's drawn at the mark.
+    const markAt = (x) => at(steps.map((q) => [q.at, q.mark_usd]), x)?.[1];
+    for (const r of vis) for (const tx of r.d.timeline.transactions || []) {
+      if (!isNum(tx.at) || tx.duplicate) continue;
+      for (const ix of tx.instructions || []) {
+        const o = ix.order; if (!o || !isNum(o.price_usd)) continue;
+        const bid = o.side === "bid";
+        marks.push(o.kind === "ImmediateOrCancel"
+          ? { x: tx.at, y: markAt(tx.at) ?? o.price_usd, shape: bid ? "up" : "down", color: r.color, r: 4, opacity: tx.ok ? 0.95 : 0.3 }
+          : { x: tx.at, y: o.price_usd, shape: "tick", color: r.color, r: 3, opacity: tx.ok ? 0.65 : 0.2 });
+      }
+    }
+    const P = (k) => steps.map((q) => [q.at, q[k]]);
+    group.add(chart(chartsHost, {
+      title: "Scenario: price and the orders each trial sent", height: 300, x: X, xfmt: clock, yfmt: (v) => "$" + fix(v),
+      vlines: (sc.path || []).filter((w) => w.slot <= xEnd).map((w) => ({ x: w.slot, color: "rgba(250,250,250,.06)", dash: "1 0" })),
+      marks: marks.length > 6000 ? marks.filter((_, i) => i % Math.ceil(marks.length / 6000) === 0) : marks,
+      series: [
+        { label: "best bid / ask", type: "band", color: "var(--text-2)", opacity: 0.09, data: steps.filter((q) => isNum(q.best_bid_usd) && isNum(q.best_ask_usd)).map((q) => [q.at, q.best_bid_usd, q.best_ask_usd]) },
+        { label: "planned level", color: "var(--text-3)", dash: "4 3", width: 1.2, step: true, data: P("level_usd") },
+        { label: "index", color: "var(--index)", width: 1.2, step: true, data: P("index_usd") },
+        { label: "mark", color: "var(--text)", width: 1.6, step: true, data: P("mark_usd") },
+      ],
+    }));
+    const overrideRows = [{ label: "overrides", events: (() => { let last = 0; return (sc.path || []).filter((w) => w.slot <= xEnd).map((w) => { const e = { x: w.slot, color: "var(--text-2)", shape: "bar", title: `level ${w.level_pct > 0 ? "+" : ""}${fix(w.level_pct)}%` }; last = w.level_pct; return e; }); })() }];
+    if (making) {
+      const tk = tl.taker_orders || [];
+      for (const side of ["buy", "sell"]) overrideRows.push({ label: `taker ${side}`, events: tk.map((o, i) => ({ o, i })).filter(({ o }) => o.side === side).map(({ o, i }) => ({ x: o.at, color: side === "buy" ? "var(--bid)" : "var(--ask)", r: informed[i] ? 3.4 : 2.1, fill: informed[i] ? "transparent" : undefined, stroke: informed[i] ? (side === "buy" ? "var(--bid)" : "var(--ask)") : undefined, opacity: informed[i] ? 1 : 0.5 })) });
+    }
+    group.add(lanes(chartsHost, { title: "Scenario events" + (making ? " (○ informed)" : ""), x: X, xfmt: clock, rows: overrideRows }));
+    const cap = base.report.mandate?.universe?.[0]?.max_position;
+    group.add(chart(chartsHost, {
+      title: "Position", height: 170, x: X, xfmt: clock, zero: true, yfmt: (v) => fix(v, 1),
+      hlines: isNum(cap) ? [{ y: cap, color: "var(--ask)", label: `cap ${fix(cap, 0)}`, fit: false }, { y: -cap, color: "var(--ask)", fit: false }] : [],
+      series: vis.map((r) => ({ label: r.label, color: r.color, dash: r.dash, width: r.reference ? 1.3 : 1.8, step: true, data: r.d.timeline.steps.map((q) => [q.at, q.position]) })),
+    }));
+    group.add(chart(chartsHost, {
+      title: "PnL", height: 190, x: X, xfmt: clock, zero: true, yfmt: (v) => usd(v, 0),
+      series: vis.map((r) => ({ label: r.label, color: r.color, dash: r.dash, width: r.reference ? 1.3 : 2, step: true, data: r.d.timeline.steps.map((q) => [q.at, q.pnl_usd]) })),
+    }));
+    group.add(lanes(chartsHost, {
+      title: "Transactions by trial", x: X, xfmt: clock, left: 110,
+      rows: vis.map((r) => ({ label: r.label.slice(0, 15), events: (r.d.timeline.transactions || []).filter((x) => isNum(x.at) || isNum(x.step)).map((x) => ({ x: isNum(x.at) ? x.at : (r.d.timeline.steps[x.step]?.at ?? 0), color: x.duplicate ? "var(--warn)" : x.ok ? r.color : "var(--ask)", shape: x.ok ? undefined : "x", r: 2.3, opacity: 0.75 })) })),
+    }));
+    group.onMove = (x) => { if (!pinned) setCursor(x, false); };
+    group.onClick = (x) => { pinned = true; setCursor(x, true); };
+    group.pin(cursor);
+  };
+  // The cursor: a slider over the session, steps with the arrow keys.
+  const stepAt = (x) => { let best = 0; for (let i = 0; i < steps.length; i++) if (steps[i].at <= x) best = i; return best; };
+  scrub.innerHTML = `<button class="btn" data-d="-1" title="Previous step (←)">◀</button><button class="btn" data-d="1" title="Next step (→)">▶</button><span class="t"></span><input type="range" min="0" max="${steps.length - 1}" value="0"><button class="btn" data-pin title="Pin the cursor (click a chart to pin it there)">pin</button><span class="muted" style="font-size:12px">hover a chart to scrub · click to pin · ← → step</span>`;
+  const slider = scrub.querySelector("input");
+  const pinBtn = scrub.querySelector("[data-pin]");
+  function setCursor(x, fromUser) {
+    const i = stepAt(x);
+    cursor = steps[i]?.at ?? 0;
+    slider.value = i;
+    pinBtn.classList.toggle("on", pinned);
+    scrub.querySelector(".t").textContent = `${clock(cursor)} · slot +${cursor} · step ${i}`;
+    if (group) group.pin(cursor);
+    drawNow(i);
+    // A pinned cursor goes in the address, so the moment can be shared.
+    if (pinned && fromUser) history.replaceState(null, "", `#/task/${encodeURIComponent(task.name)}/${encodeURIComponent(name)}/${cursor}`);
+  }
+  slider.addEventListener("input", () => { pinned = true; setCursor(steps[+slider.value]?.at ?? 0, true); });
+  scrub.querySelectorAll("[data-d]").forEach((b) => b.addEventListener("click", () => { pinned = true; const i = Math.min(steps.length - 1, Math.max(0, stepAt(cursor) + +b.dataset.d)); setCursor(steps[i].at, true); }));
+  pinBtn.addEventListener("click", () => { pinned = !pinned; setCursor(cursor, true); });
+  const onKey = (e) => {
+    if (!document.body.contains(scrub)) { removeEventListener("keydown", onKey); return; }
+    if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault(); pinned = true;
+    const i = Math.min(steps.length - 1, Math.max(0, stepAt(cursor) + (e.key === "ArrowRight" ? 1 : -1)));
+    setCursor(steps[i].at, true);
+  };
+  addEventListener("keydown", onKey);
+
+  // Beneath the charts: the world and each trial at the cursor, and every
+  // event around it.
+  const WINDOW = 40; // slots either side: 10 s
+  function drawNow(i) {
+    const s = steps[i] || {}, t = s.at ?? 0, prev = steps[i - 1];
+    const path = sc.path || [];
+    const lastW = [...path].reverse().find((w) => w.slot <= t), nextW = path.find((w) => w.slot > t);
+    const vis = visible();
+    const per = vis.map((r) => {
+      const rs = r.d.timeline.steps, k = Math.min(rs.length - 1, i), q = rs[k] || {}, p = rs[k - 1];
+      const here = (r.d.timeline.transactions || []).filter((x) => (isNum(x.step) ? x.step === k : x.at === t));
+      return { r, q, d: p ? q.position - p.position : 0, here };
+    });
+    const world = `<div class="panel"><div class="k" style="margin-bottom:8px">The world at ${clock(t)}</div><dl class="kv">
+      <dt>Mark</dt><dd>${usd(s.mark_usd)} <span class="muted">${prev ? susd(s.mark_usd - prev.mark_usd) : ""}</span></dd>
+      <dt>Index</dt><dd>${usd(s.index_usd)}</dd>
+      <dt>Planned level</dt><dd>${usd(s.level_usd)} <span class="muted">${isNum(s.level_usd) && isNum(tl.start_mark_usd) ? pct(s.level_usd / tl.start_mark_usd - 1, 2) : ""}</span></dd>
+      <dt>Best bid / ask</dt><dd>${usd(s.best_bid_usd)} / ${usd(s.best_ask_usd)} <span class="muted">${isNum(s.best_bid_usd) && isNum(s.best_ask_usd) ? fix((s.best_ask_usd - s.best_bid_usd) / s.mark_usd * 1e4, 1) + " bp" : ""}</span></dd>
+      <dt>Last override</dt><dd>${lastW ? `${clock(lastW.slot)}: level ${lastW.level_pct > 0 ? "+" : ""}${fix(lastW.level_pct)}%` : "none yet"}</dd>
+      <dt>Next override</dt><dd>${nextW ? `in ${clock(nextW.slot - t)}: level ${nextW.level_pct > 0 ? "+" : ""}${fix(nextW.level_pct)}%` : "none"}</dd>
+      ${making ? `<dt>Takers this step</dt><dd>${(tl.taker_orders || []).map((o, j) => ({ o, j })).filter(({ o }) => o.at > (prev?.at ?? -1) && o.at <= t).map(({ o, j }) => `${o.side} ${fix(o.size, 2)}${informed[j] ? " (informed)" : ""}`).join(", ") || "none"}</dd>` : ""}
+    </dl></div>`;
+    const who = `<div class="panel"><div class="k" style="margin-bottom:8px">Each trial at ${clock(t)}</div><table class="cmp"><thead><tr><th>Trial</th><th class="r">Position</th><th class="r">Δ</th><th class="r">PnL</th><th>Sent this turn</th></tr></thead><tbody>${per.map(({ r, q, d, here }) => `<tr><td><span class="swatch" style="background:${r.color}"></span>${esc(r.label)}</td><td class="r num">${fix(q.position, 3)}</td><td class="r num ${cls(d)}">${Math.abs(d) > 1e-9 ? (d > 0 ? "+" : "") + fix(d, 3) : ""}</td><td class="r num ${cls(q.pnl_usd)}">${susd(q.pnl_usd)}</td><td style="white-space:normal;font-size:12px">${here.length ? groupTxs(here).map((g) => `<div class="${g.ok ? "" : "neg"}">${g.ok ? "" : "✗ "}${esc(g.text)}${g.n > 1 ? ` <span class="muted">×${g.n}</span>` : ""}${g.dups ? ` <span style="color:var(--warn)" title="the same transaction again: the chain ran it once">${g.dups} duplicate${g.dups > 1 ? "s" : ""}, didn't run</span>` : ""}</div>`).join("") : `<span class="muted">${q.answered === false ? "overran its turn" : "nothing"}</span>`}</td></tr>`).join("")}</tbody></table></div>`;
+    // Every event within the window, in time order.
+    const events = [];
+    for (const w of path) if (Math.abs(w.slot - t) <= WINDOW) events.push({ at: w.slot, who: "scenario", color: "var(--text-2)", text: `override: level ${w.level_pct > 0 ? "+" : ""}${fix(w.level_pct)}%` });
+    if (making) (tl.taker_orders || []).forEach((o, j) => { if (Math.abs(o.at - t) <= WINDOW) events.push({ at: o.at, who: "taker", color: o.side === "buy" ? "var(--bid)" : "var(--ask)", text: `${o.side} ${fix(o.size, 3)} (limit $${fix(o.limit_usd)})${informed[j] ? " · informed" : ""}` }); });
+    for (const r of vis) {
+      for (const x of r.d.timeline.transactions || []) {
+        const at = isNum(x.at) ? x.at : r.d.timeline.steps[x.step]?.at;
+        if (isNum(at) && Math.abs(at - t) <= WINDOW) events.push({ at, who: r.label, color: r.color, text: `${x.duplicate ? "duplicate (didn't run): " : x.ok ? "" : "FAILED: "}${describeTx(x)}${!x.ok && !x.duplicate && x.error ? " — " + String(x.error).slice(0, 80) : ""}` });
+      }
+      const rs = r.d.timeline.steps;
+      for (let k = 1; k < rs.length; k++) {
+        const d = rs[k].position - rs[k - 1].position;
+        if (Math.abs(d) > 1e-9 && Math.abs(rs[k].at - t) <= WINDOW) events.push({ at: rs[k].at, who: r.label, color: r.color, text: `position ${d > 0 ? "+" : ""}${fix(d, 3)} → ${fix(rs[k].position, 3)}` });
+      }
+      for (const c of r.d.timeline.calls?.refused || []) { const at = rs[c.step]?.at; if (isNum(at) && Math.abs(at - t) <= WINDOW) events.push({ at, who: r.label, color: "var(--critical)", text: `REFUSED ${c.method}` }); }
+    }
+    events.sort((a, b) => a.at - b.at);
+    const log = `<div class="panel" style="grid-column:1/-1"><div class="k" style="margin-bottom:8px">Events from ${clock(Math.max(0, t - WINDOW))} to ${clock(t + WINDOW)} <span class="muted" style="text-transform:none;letter-spacing:0">(${events.length})</span></div><div class="evlog">${events.map((e) => `<div class="ev ${e.at > (prev?.at ?? -1) && e.at <= t ? "cur" : ""}"><span>${clock(e.at)} <span class="muted">+${e.at}</span></span><span class="who-l"><span class="swatch" style="background:${e.color}"></span>${esc(e.who)}</span><span>${esc(e.text)}</span></div>`).join("") || `<div class="muted">Nothing happened around here.</div>`}</div></div>`;
+    now.innerHTML = world + who + log;
+  }
+  drawLegend();
+  drawCharts();
+  if (isNum(startAt)) { pinned = true; setCursor(startAt, false); } else setCursor(0, false);
 }
 
 // ---------- trial ----------
 function trialHeader(n, t, tab) {
-  setCrumbs([[index.name || "bench", "#/"], [`${shortTask(t.task)} · ${shortModel(t.model)}`, null], [t.trial, `#/trial/${n}`]]);
-  app.innerHTML = "";
+  setCrumbs([[index.name || "bench", "#/"], [shortTask(t.task), `#/task/${encodeURIComponent(t.task)}`], [`${shortModel(t.model)} · ${t.trial}`, `#/trial/${n}`]]);
+  app.innerHTML = ""; delete app.dataset.task;
   div(`<h1>${esc(shortModel(t.model))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
   const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
   div(`<div class="cards">
@@ -697,7 +1073,8 @@ function trialLogs(n, trial) {
 async function renderSession(n, name) {
   const trial = await api(`/api/trial/${n}`);
   const t = trial.summary;
-  setCrumbs([[index.name || "bench", "#/"], [`${shortTask(t.task)} · ${shortModel(t.model)}`, null], [t.trial, `#/trial/${n}`], [name, null]]);
+  setCrumbs([[index.name || "bench", "#/"], [shortTask(t.task), `#/task/${encodeURIComponent(t.task)}`], [`${shortModel(t.model)} · ${t.trial}`, `#/trial/${n}`], [name, null]]);
+  delete app.dataset.task;
   app.innerHTML = `<div class="loading">Loading ${esc(name)}…</div>`;
   const [bot, ref] = await Promise.all([
     api(`/api/session/${n}/bot/${encodeURIComponent(name)}`),
@@ -888,7 +1265,7 @@ async function renderSession(n, name) {
   logPanel("Reference log", `verifier/bot/reference/${name}.log`);
 }
 
-route();
+loadIndex().then(route).catch(fail);
 </script>
 </body>
 </html>

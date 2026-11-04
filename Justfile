@@ -183,6 +183,9 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
     fi
     export MTH_EVAL_SEED
     (umask 077 && printf '%s' "$MTH_EVAL_SEED" > "$batch/.seed")
+    # The plan, for `mth bench review`: trials not started yet show as queued.
+    python3 -I -c 'import json, sys; out, m, k, n, v, x = sys.argv[1:]; json.dump({"models": m.split(), "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x)}, open(out, "w"), indent=2)' \
+      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}"
     for model in {{models}}; do
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
       # The harness is pinned, so numbers compare across releases: the
