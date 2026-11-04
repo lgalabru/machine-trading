@@ -37,7 +37,7 @@ mtx bench compare 0.9.0...0.8.0 [--open]     # skill by task and model, and the 
 ```
 
 - **Review page:** a breadcrumb (`mtx › release › task › trial ›
-  session`, with menus to switch release or task), the tasks as tiles, and
+  session`, with menus to switch release or task), the tasks as a column of tiles on the left, and
   an overview of the bench: a leaderboard of skill by model and task. A
   task adds its equity curves, with the models as cards on the right. Below
   them, each trial's sessions against the reference, the agent's
