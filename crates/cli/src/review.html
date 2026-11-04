@@ -136,12 +136,15 @@
     --ios-teal: #40C8E0; --ios-teal-2: #2AAEC6;
     --ios-gray: #8E8E93; --ios-gray-2: #76767B;
   }
-  nav.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); scrollbar-width: thin; }
+  .layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); }
+  .content { min-width: 0; }
+  /* The tasks: a vertical list of tiles, the window's height, scrolling. */
+  nav.tiles { display: flex; flex-direction: column; gap: 12px; padding: 16px; position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); scrollbar-width: thin; }
   nav.tiles:empty { display: none; }
   .tile {
     --tile: var(--ios-gray); --tile-2: var(--ios-gray-2);
     display: flex; flex-direction: column; justify-content: space-between; gap: 6px; flex: none;
-    min-width: 0; height: 112px; padding: 12px 14px; border-radius: 16px;
+    flex: none; min-width: 0; height: 112px; padding: 12px 14px; border-radius: 16px;
     background: linear-gradient(180deg, var(--tile) 0%, var(--tile-2) 100%);
     color: #fff; text-decoration: none; font-size: 12px; overflow: hidden;
     box-shadow: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.06);
@@ -212,8 +215,7 @@
   .tabs a { padding: 9px 14px; text-decoration: none; color: var(--text-3); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
   .tabs a.on { color: var(--text); border-color: var(--accent); }
   .tabs a:hover { color: var(--text); }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr)); gap: 16px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
   .chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 6px; margin-bottom: 10px; }
   .chart .title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 4px; }
@@ -261,10 +263,14 @@
 </head>
 <body>
 <nav class="crumbbar" id="crumbbar" aria-label="Breadcrumb"></nav>
+<div class="layout">
 <nav class="tiles" id="side" aria-label="Tasks"></nav>
+<div class="content">
 <header class="hero" id="hero"></header>
 <div class="body">
   <main><div id="app"><div class="loading">Loading…</div></div></main>
+</div>
+</div>
 </div>
 <div class="tip" id="tip"></div>
 <script>
@@ -887,7 +893,7 @@ function renderOverview() {
   const sessions = Math.max(0, ...trials.map((t) => t.sessions || 0));
   const seeds = [...new Set(trials.map((t) => t.eval_seed_sha256).filter(Boolean))];
   div(`<div class="ov-title"><h1>Machine Trading</h1><span class="ver">${esc(dataset)} ${esc(index.version || "")}</span></div>
-    <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}. Pick a task above to see its curves.</p>`);
+    <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}. Pick a task on the left to see its curves.</p>`);
   div([
     card("Trials", int(trials.length), `${index.tasks.length} tasks × ${modelOrder.length} models`),
     card("Hidden sessions", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per trial"),
