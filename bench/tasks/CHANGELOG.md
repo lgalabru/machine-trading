@@ -4,7 +4,8 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
-- **0.10.0.** Reports a reviewer can dig into.
+- **0.10.0.** Verifiers that finish, orders that all run, and reports a
+  reviewer can dig into.
   - **`mth` is now `mtx`:** the CLI, the SDK crate (`mtx-botkit`), the
     `MTX_*` variables, `/opt/mtx` in the images, the `mtx-bot*` users and
     the turn protocol, now `mtx-turn-1`.
