@@ -25,6 +25,8 @@
     --ask: #f87171;
     --critical: #ef4444;
     --warn: #f59e0b;
+    --up: #5ed16a;
+    --down: #ff5f57;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   }
   * { box-sizing: border-box; }
@@ -34,30 +36,51 @@
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   /* The header: the bench, its version, and a summary chart. */
   header.hero {
-    height: 400px; border-bottom: 1px solid var(--line); position: relative; overflow: hidden;
-    background:
-      radial-gradient(ellipse 60% 90% at 80% -10%, rgba(162, 239, 91, 0.12), transparent 62%),
-      radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0) 0 0 / 22px 22px,
-      var(--bg);
+    border-bottom: 1px solid var(--line); position: relative; overflow: hidden;
+    background: radial-gradient(ellipse 70% 120% at 85% -20%, rgba(94, 209, 106, 0.10), transparent 60%), var(--bg);
   }
-  .hero-inner { height: 100%; display: grid; grid-template-columns: minmax(340px, 0.8fr) 1.6fr; gap: 28px; padding: 26px 32px 22px; }
+  .hero-inner { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 40px; padding: 24px 32px 26px; }
   .hero-left { display: flex; flex-direction: column; min-width: 0; }
-  .hero h1 { font-size: 34px; letter-spacing: -0.03em; margin: 22px 0 6px; }
-  .hero .ver { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; background: #0e0e10; border: 1px solid rgba(63,63,70,.5); font: 600 12px var(--mono); color: var(--text-2); width: fit-content; }
-  .hero .ver b { color: var(--accent); }
-  .hero .meta { color: var(--text-3); font-size: 13px; margin-top: 10px; }
-  .hero .tallies { display: grid; grid-template-columns: repeat(4, auto); gap: 6px 18px; margin-top: auto; width: fit-content; }
-  .hero .tally .n { font: 600 24px var(--mono); }
-  .hero .tally .k { display: flex; align-items: center; gap: 6px; }
-  .hero-chart { min-width: 0; display: flex; flex-direction: column; }
-  .hero-chart .chart { flex: 1; margin: 0; background: rgba(9,9,11,.75); backdrop-filter: blur(2px); }
+  .hero h1 { font-size: 30px; letter-spacing: -0.03em; margin: 20px 0 4px; line-height: 1.1; }
+  .hero .ver { color: var(--text-3); font: 500 12px var(--mono); }
+  .hero .ver b { color: var(--text); font-weight: 600; }
+  .hero .meta { color: var(--text-3); font-size: 12px; margin-top: 6px; }
+  .hero .tallies { display: flex; gap: 14px; margin-top: 12px; font: 500 12px var(--mono); color: var(--text-2); }
+  .hero .tallies span { display: inline-flex; align-items: center; gap: 6px; }
+  .hero .tallies .light { width: 7px; height: 7px; }
+  /* The watchlist: one row per model, like a stock ticker. */
+  .watch { margin-top: 20px; border-top: 1px solid var(--line-soft); }
+  .watch .row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px; align-items: center; gap: 12px; padding: 10px 8px; border-bottom: 1px solid var(--line-soft); cursor: pointer; border-radius: 6px; }
+  .watch .row:hover { background: rgba(255,255,255,.03); }
+  .watch .row.on { background: rgba(255,255,255,.07); }
+  .watch .name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .watch .sub { color: var(--text-3); font-size: 11px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .watch .chip { justify-self: end; width: 72px; text-align: right; padding: 4px 8px; border-radius: 6px; font: 600 13px var(--mono); color: var(--text-2); background: #2c2c2e; }
+  .watch .chip.up { background: var(--up); color: #04160a; }
+  .watch .chip.down { background: var(--down); color: #fff; }
+  .hero-right { min-width: 0; display: flex; flex-direction: column; }
+  .seg { display: flex; gap: 2px; padding: 2px; background: #1c1c1e; border-radius: 9px; width: fit-content; }
+  .seg a { padding: 5px 14px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-2); text-decoration: none; }
+  .seg a.on { background: #3a3a3c; color: var(--text); }
+  .quote { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 18px 0 4px; }
+  .quote .big { font: 600 42px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .quote .chg { font: 600 15px var(--mono); }
+  .quote .chg.up { color: var(--up); } .quote .chg.down { color: var(--down); }
+  .quote-sub { color: var(--text-3); font-size: 12px; min-height: 18px; }
+  .quote-sub .key { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
+  .quote-sub b { color: var(--text-2); font-weight: 500; }
+  .area { position: relative; margin-top: 12px; height: 240px; }
+  .area svg { display: block; width: 100%; height: 100%; overflow: visible; touch-action: none; }
+  .area .ylab { font: 500 11px var(--mono); fill: #8e8e93; }
+  .area .xlab { font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #8e8e93; }
+  .area-empty { height: 240px; display: grid; place-items: center; color: var(--text-3); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; margin-top: 12px; }
   .light { display: inline-block; width: 9px; height: 9px; border-radius: 99px; flex: none; }
   .light.l-success { background: var(--accent); box-shadow: 0 0 8px rgba(162,239,91,.55); }
   .light.l-error { background: var(--critical); box-shadow: 0 0 8px rgba(239,68,68,.55); }
   .light.l-pending { background: var(--warn); box-shadow: 0 0 8px rgba(245,158,11,.55); animation: blink 1.2s ease-in-out infinite; }
   .light.l-queued { background: var(--text-4); }
   @keyframes blink { 50% { opacity: .35; } }
-  .body { display: grid; grid-template-columns: 330px minmax(0, 1fr); min-height: calc(100vh - 400px); }
+  .body { display: grid; grid-template-columns: 330px minmax(0, 1fr); min-height: 60vh; }
   aside.side { border-right: 1px solid var(--line); padding: 16px 12px; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; }
   aside .k { padding: 0 8px 8px; }
   .task-item { display: flex; gap: 11px; padding: 12px 12px; border-radius: 10px; text-decoration: none; border: 1px solid transparent; margin-bottom: 4px; }
@@ -518,12 +541,14 @@ async function route() {
     if (!index) await loadIndex();
     if (parts[0] === "trial") {
       const t = index.trials[+parts[1]];
-      currentTask = t?.task ?? currentTask; renderSide();
+      if (t?.task && t.task !== currentTask) { currentTask = t.task; renderHero(); }
+      renderSide();
       if (parts.length >= 4 && parts[2] === "session") return await renderSession(+parts[1], parts[3]);
       return await renderTrial(+parts[1], parts[2] || "sessions");
     }
     const task = parts[0] === "task" ? parts[1] : index.tasks[0]?.name;
-    currentTask = task; renderSide();
+    if (currentTask !== task) { currentTask = task; renderHero(); }
+    renderSide();
     if (!task) { app.innerHTML = `<div class="empty">No trials yet.</div>`; return; }
     return await renderTask(task, parts[2] || null, parts[3] !== undefined ? +parts[3] : null);
   } catch (e) { fail(e); }
@@ -533,68 +558,171 @@ let resizeTimer, lastWidth = innerWidth;
 addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) return; lastWidth = innerWidth; clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { renderHero(); route(); }, 250); });
 
 // ---------- header ----------
+// The bench at a glance, styled like a stock quote: a watchlist of models on
+// the left, and the selected model's equity curve on the right. The curve is
+// its cumulative PnL over the hidden sessions, in order, against the
+// reference's on the same sessions.
+// The model picked per task; else the best mean skill.
+const heroPick = {};
+const naturalCmp = (a, b) => a.localeCompare(b, "en", { numeric: true });
+// A task's curves: per model, the mean PnL of its graded trials on each
+// session of the most common hidden set, accumulated; and the reference's.
+function equity(taskName) {
+  const graded = index.trials.filter((t) => t.task === taskName && t.graded && t.pnls && Object.keys(t.pnls).length);
+  const bySeed = new Map();
+  for (const t of graded) { const k = t.eval_seed_sha256 || "?"; bySeed.set(k, [...(bySeed.get(k) || []), t]); }
+  let set = []; for (const v of bySeed.values()) if (v.length > set.length) set = v;
+  const sessions = [...new Set(set.flatMap((t) => Object.keys(t.pnls)))].sort(naturalCmp);
+  const curve = (ts, key) => {
+    let acc = 0;
+    return [0, ...sessions.map((s) => { acc += mean(ts.map((t) => t[key]?.[s])) ?? 0; return acc; })];
+  };
+  const models = modelOrder.map((m) => {
+    const all = index.trials.filter((t) => t.task === taskName && t.model === m);
+    const mine = set.filter((t) => t.model === m);
+    return {
+      model: m, trials: all.length, graded: mine.length,
+      running: all.filter((t) => t.status === "pending").length,
+      skill: mean(mine.map((t) => t.skill)),
+      curve: mine.length ? curve(mine, "pnls") : null,
+    };
+  }).filter((r) => r.trials);
+  return { sessions, models, reference: set.length ? curve(set, "reference_pnls") : null };
+}
+const compactUsd = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + compact(Math.abs(x));
+const trend = (x) => isNum(x) ? (x >= 0 ? "up" : "down") : "";
+function sparkline(curve, cls) {
+  if (!curve || curve.length < 2) return `<svg width="64" height="26"></svg>`;
+  const lo = Math.min(0, ...curve), hi = Math.max(0, ...curve), r = hi - lo || 1;
+  const pts = curve.map((y, i) => `${(i / (curve.length - 1) * 62 + 1).toFixed(1)},${(24 - (y - lo) / r * 22).toFixed(1)}`).join(" ");
+  const z = (24 - (0 - lo) / r * 22).toFixed(1);
+  return `<svg width="64" height="26" viewBox="0 0 64 26"><line x1="1" x2="63" y1="${z}" y2="${z}" stroke="#3a3a3c" stroke-dasharray="1 2"/><polyline points="${pts}" fill="none" stroke="var(--${cls || "text-3"})" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+}
 function renderHero() {
+  if (!index) return;
   const trials = index.trials;
   const all = index.tasks.reduce((c, t) => { for (const k in t.counts) c[k] = (c[k] || 0) + t.counts[k]; return c; }, {});
   const cost = sum(trials.map((t) => t.cost_usd));
   const agentMs = sum(trials.map((t) => span(t.agent_execution)));
-  const seeds = [...new Set(trials.map((t) => t.eval_seed_sha256).filter(Boolean))];
   const b = index.batch;
   const dataset = index.dataset || "machine-trading";
+  const task = index.tasks.find((t) => t.name === currentTask) || index.tasks[0];
+  const eq = task ? equity(task.name) : { models: [], sessions: [] };
+  // The selected model: the user's pick, else the best mean skill.
+  const ranked = [...eq.models].sort((x, y) => (y.skill ?? -Infinity) - (x.skill ?? -Infinity));
+  const key = task?.name;
+  if (!eq.models.some((m) => m.model === heroPick[key])) heroPick[key] = ranked[0]?.model ?? null;
+  const heroModel = heroPick[key];
+  const pick = eq.models.find((m) => m.model === heroModel);
   hero.innerHTML = `<div class="hero-inner"><div class="hero-left">
       <a class="brand" href="#/"><span class="dot"></span>mtx <small>bench review</small></a>
       <h1>${esc(shortTask(dataset).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))}</h1>
-      <span class="ver">${esc(dataset)} <b>${esc(index.version || "?")}</b></span>
-      <div class="meta">${esc(index.name || "")}${b ? ` · ${b.models.length} models × ${b.attempts} attempts · ${fix(b.timeout_multiplier, 0)}× time` : ""}${seeds.length === 1 ? ` · set ${esc(seeds[0].slice(0, 10))}…` : seeds.length > 1 ? ` · ${seeds.length} hidden sets` : ""}</div>
-      <div class="meta">${int(trials.length)} trials · ${index.tasks.length} tasks · ${modelOrder.length} models · ${usd(cost, 0)} agent cost · ${dur(agentMs)} agent time</div>
-      <div class="tallies">${["success", "error", "pending", "queued"].map((k) => `<div class="tally"><div class="n">${int(all[k] || 0)}</div><div class="k">${light(k)}${k === "pending" ? "running" : k}</div></div>`).join("")}</div>
-    </div><div class="hero-chart" id="hero-chart"></div></div>`;
-  heroChart(document.getElementById("hero-chart"));
-}
-// Mean skill by model, per task, with each trial as a dot; the reference is 1.
-function heroChart(host) {
-  const groups = index.tasks.map((task) => ({
-    task, rows: modelOrder.map((m) => {
-      const ts = index.trials.filter((t) => t.task === task.name && t.model === m);
-      const sk = ts.map((t) => t.skill).filter(isNum);
-      return { model: m, n: ts.length, skill: mean(sk), skills: sk, pending: ts.filter((t) => t.status === "pending").length };
-    }).filter((r) => r.n),
-  }));
-  const slots = []; groups.forEach((g, gi) => { g.rows.forEach((r) => slots.push({ g: gi, r })); slots.push(null); });
-  slots.pop();
-  const xs = [-0.7, slots.length - 0.3];
-  const bars = [], marks = [], xticks = [];
-  slots.forEach((s, i) => {
-    if (!s) return;
-    if (isNum(s.r.skill)) bars.push([i, s.r.skill, s.r]);
-    for (const k of s.r.skills) marks.push({ x: i, y: k, color: "#fafafa", r: 2.6, opacity: 0.85 });
-  });
-  const labels = slots.map((s) => s ? shortModel(s.r.model) : "");
-  groups.forEach((g, gi) => { const idx = slots.map((s, i) => s && s.g === gi ? i : null).filter((i) => i !== null); xticks.push(...idx); });
-  const ys = [0, 1.2, ...bars.map((b) => b[1]), ...marks.map((m) => m.y)];
-  const c = chart(host, {
-    title: "Skill by model, per task (the reference scores 1)", height: 300, x: xs, xticks, xfmt: (i) => labels[Math.round(i)] || "",
-    y: [Math.min(...ys), Math.max(...ys)], zero: true, yfmt: (v) => fix(v, 1) + "×",
-    series: [{ label: "", type: "bars", color: "var(--accent)", width: 0.7, data: bars, colorOf: (p) => modelColor(p[2].model), opacity: 0.85, noTip: true, hideLegend: true }],
-    marks, hlines: [{ y: 1, color: "var(--ref)", label: "reference" }],
-    readout: (x) => { const s = slots[Math.round(x)]; return s ? `<div class="row"><span>${esc(shortTask(s.r.model ? groups[s.g].task.short : ""))}</span><span></span></div><div class="row"><span>mean skill</span><span>${times(s.r.skill)}</span></div><div class="row"><span>trials</span><span>${s.r.skills.map((k) => fix(k)).join(", ") || "–"}${s.r.pending ? ` · ${s.r.pending} running` : ""}</span></div>` : ""; },
-    tipLabel: (x) => { const s = slots[Math.round(x)]; return s ? shortModel(s.r.model) : ""; },
-    legendExtra: groups.map((g) => `<span class="muted">${esc(g.task.short)}</span>`).join('<span class="muted">·</span>'),
-  });
-  // Task names under their groups.
-  const svg = host.querySelector("svg");
-  if (svg) {
-    const W = +svg.getAttribute("viewBox").split(" ")[2], L = 64, R = 14;
-    const sx = (x) => L + (x - xs[0]) / (xs[1] - xs[0]) * (W - L - R);
-    groups.forEach((g, gi) => {
-      const idx = slots.map((s, i) => s && s.g === gi ? i : null).filter((i) => i !== null);
-      if (!idx.length) return;
-      const mid = (idx[0] + idx[idx.length - 1]) / 2;
-      const t = el("text", { x: sx(mid), y: 14, "text-anchor": "middle", fill: "var(--text-2)", "font-size": 12, "font-weight": 600 }, svg);
-      t.textContent = g.task.short;
-    });
+      <div class="ver">${esc(dataset)} <b>${esc(index.version || "?")}</b></div>
+      <div class="meta">${esc(index.name || "")}${b ? ` · ${b.models.length} models × ${b.attempts}` : ""} · ${usd(cost, 0)} · ${dur(agentMs)} agent time</div>
+      <div class="tallies">${["success", "error", "pending", "queued"].map((k) => `<span title="${k === "pending" ? "running" : k}">${light(k)}${int(all[k] || 0)}</span>`).join("")}</div>
+      <div class="watch">${ranked.map((m) => {
+        const last = m.curve?.at(-1);
+        return `<div class="row ${m.model === heroModel ? "on" : ""}" data-model="${esc(m.model)}">
+          <div style="min-width:0"><div class="name">${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · ${m.graded}/${m.trials}` : m.running ? `${m.running} running` : "not graded"}</div></div>
+          ${sparkline(m.curve, trend(last))}
+          ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's">${times(m.skill)}</div>`
+            : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
+        </div>`;
+      }).join("")}</div>
+    </div><div class="hero-right">
+      ${index.tasks.length > 1 ? `<div class="seg">${index.tasks.map((t) => `<a class="${t === task ? "on" : ""}" href="#/task/${encodeURIComponent(t.name)}">${esc(t.short)}</a>`).join("")}</div>` : ""}
+      <div class="quote"><span class="big" id="q-big"></span><span class="chg" id="q-chg"></span></div>
+      <div class="quote-sub" id="q-sub"></div>
+      <div id="q-area"></div>
+    </div></div>`;
+  hero.querySelectorAll(".watch .row").forEach((r) => r.addEventListener("click", () => { heroPick[key] = r.dataset.model; renderHero(); }));
+  const area = document.getElementById("q-area");
+  const big = document.getElementById("q-big"), chg = document.getElementById("q-chg"), sub = document.getElementById("q-sub");
+  if (!pick?.curve) {
+    big.textContent = pick ? shortModel(pick.model) : "No trials";
+    sub.innerHTML = pick?.running ? `${pick.running} trial${pick.running > 1 ? "s" : ""} still running` : "";
+    area.outerHTML = `<div class="area-empty">${pick?.running ? "Waiting for the first graded trial" : "Nothing graded yet"}</div>`;
+    return;
   }
-  return c;
+  // The quote: the PnL so far, and how it stands against the reference's.
+  const quote = (i) => {
+    const y = pick.curve[i], r = eq.reference?.[i];
+    big.textContent = susd(y, 0);
+    big.style.color = "";
+    const d = isNum(r) ? y - r : null;
+    chg.className = "chg " + trend(d);
+    chg.textContent = isNum(d) ? `${susd(d, 0)} vs reference` : "";
+    const at = i === pick.curve.length - 1
+      ? `<b>${esc(shortModel(pick.model))}</b> · cumulative PnL over ${eq.sessions.length} hidden session${eq.sessions.length > 1 ? "s" : ""}${isNum(pick.skill) ? ` · skill <b>${times(pick.skill)}</b>` : ""}`
+      : i === 0 ? `<b>${esc(shortModel(pick.model))}</b> · before the first session`
+      : `<b>${esc(shortModel(pick.model))}</b> · after <b>${esc(eq.sessions[i - 1])}</b> (${i} of ${eq.sessions.length}) · reference ${susd(r, 0)}`;
+    sub.innerHTML = at + (eq.reference ? `<span class="key"><svg width="18" height="6"><line x1="0" x2="18" y1="3" y2="3" stroke="#8e8e93" stroke-dasharray="4 3"/></svg>reference</span>` : "");
+  };
+  quote(pick.curve.length - 1);
+  areaChart(area, { y: pick.curve, ref: eq.reference, labels: ["start", ...eq.sessions], onScrub: (i) => quote(i ?? pick.curve.length - 1) });
+}
+// A stock-style area chart: a line with a gradient under it, a quiet grid,
+// values on the right. Green when the curve ends at or above zero.
+function areaChart(host, { y, ref, labels, onScrub }) {
+  host.className = "area";
+  host.innerHTML = "";
+  const W = Math.max(320, host.clientWidth), H = host.clientHeight || 230;
+  const L = 4, R = 64, T = 10, B = 24;
+  const vals = [...y, ...(ref || [])].filter(isNum);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const n = y.length;
+  const sx = (i) => L + (n > 1 ? i / (n - 1) : 0.5) * (W - L - R);
+  const sy = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
+  const color = (y.at(-1) ?? 0) >= 0 ? "var(--up)" : "var(--down)";
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}` }, host);
+  const id = "g" + Math.random().toString(36).slice(2, 8);
+  const defs = el("defs", {}, svg);
+  const g = el("linearGradient", { id, x1: 0, x2: 0, y1: 0, y2: 1 }, defs);
+  el("stop", { offset: "0%", "stop-color": color, "stop-opacity": 0.42 }, g);
+  el("stop", { offset: "100%", "stop-color": color, "stop-opacity": 0.02 }, g);
+  // Grid: four values, on the right.
+  for (const v of ticks(lo, hi, 4)) {
+    if (v < lo || v > hi) continue;
+    el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v), stroke: "#2c2c2e", "stroke-width": 1 }, svg);
+    const t = el("text", { x: W - R + 10, y: sy(v) + 4, class: "ylab" }, svg); t.textContent = susd(v, 0).replace("+", "");
+  }
+  if (lo < 0 && hi > 0) el("line", { x1: L, x2: W - R, y1: sy(0), y2: sy(0), stroke: "#48484a", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
+  // Session labels along the bottom, at most about one per 90 px.
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - L - R) / 90))));
+  for (let i = every; i < n; i += every) {
+    el("line", { x1: sx(i), x2: sx(i), y1: T, y2: H - B, stroke: "#1c1c1e", "stroke-width": 1 }, svg);
+    const t = el("text", { x: sx(i), y: H - 6, class: "xlab", "text-anchor": "middle" }, svg); t.textContent = String(labels[i]).replace(/^hidden-/, "#");
+  }
+  const path = (ys) => ys.map((v, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join("");
+  if (ref) {
+    el("path", { d: path(ref), fill: "none", stroke: "#8e8e93", "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: 0.7 }, svg);
+  }
+  el("path", { d: `${path(y)}L${sx(n - 1)},${H - B}L${sx(0)},${H - B}Z`, fill: `url(#${id})` }, svg);
+  el("path", { d: path(y), fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  el("circle", { cx: sx(n - 1), cy: sy(y.at(-1)), r: 3.5, fill: color }, svg);
+  // Scrub: a cursor and a dot follow the pointer; the quote follows them.
+  const cur = el("line", { y1: T, y2: H - B, stroke: "#d1d1d6", "stroke-width": 1, opacity: 0 }, svg);
+  const dot = el("circle", { r: 5, fill: color, stroke: "#000", "stroke-width": 2, opacity: 0 }, svg);
+  const rdot = el("circle", { r: 3.5, fill: "#8e8e93", opacity: 0 }, svg);
+  const show = (i) => {
+    const on = i !== null;
+    for (const e of [cur, dot]) e.setAttribute("opacity", on ? 1 : 0);
+    rdot.setAttribute("opacity", on && ref ? 1 : 0);
+    if (on) {
+      cur.setAttribute("x1", sx(i)); cur.setAttribute("x2", sx(i));
+      dot.setAttribute("cx", sx(i)); dot.setAttribute("cy", sy(y[i]));
+      if (ref) { rdot.setAttribute("cx", sx(i)); rdot.setAttribute("cy", sy(ref[i])); }
+    }
+    onScrub?.(i);
+  };
+  svg.addEventListener("pointermove", (ev) => {
+    const box = svg.getBoundingClientRect();
+    const x = (ev.clientX - box.left) / box.width * W;
+    show(Math.max(0, Math.min(n - 1, Math.round((x - L) / (W - L - R) * (n - 1)))));
+  });
+  svg.addEventListener("pointerleave", () => show(null));
 }
 
 // ---------- side ----------
