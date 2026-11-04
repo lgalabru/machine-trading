@@ -42,6 +42,8 @@ const MAX_FILE_BYTES: u64 = 4 << 20;
 /// page gets.
 const MAX_MESSAGE_CHARS: usize = 6_000;
 const MAX_TOOL_CHARS: usize = 3_000;
+/// How much of a file an agent wrote the page gets.
+const MAX_FILE_CHARS: usize = 60_000;
 /// How much of a user message (the task's instruction) the page gets.
 const MAX_USER_CHARS: usize = 40_000;
 /// Directories inside a trial the page may read files from, and single
@@ -971,14 +973,39 @@ async fn get_trajectory(
                 .map(|call| {
                     let id = call["tool_call_id"].as_str().unwrap_or_default();
                     let args = &call["arguments"];
-                    let input = match args.get("command") {
-                        Some(command) => text_of(command),
-                        None => serde_json::to_string_pretty(args).unwrap_or_default(),
+                    // What the call acted on, and its input as the page shows
+                    // it: a command, a file written, an edit, or the
+                    // arguments as JSON.
+                    let path = ["file_path", "path", "notebook_path"]
+                        .iter()
+                        .find_map(|k| args.get(*k).and_then(Value::as_str));
+                    let (input, kind) = if let Some(command) = args.get("command") {
+                        (text_of(command), "command")
+                    } else if let Some(content) = args.get("content").and_then(Value::as_str) {
+                        (content.to_string(), "file")
+                    } else if let (Some(old), Some(new)) = (
+                        args.get("old_string").and_then(Value::as_str),
+                        args.get("new_string").and_then(Value::as_str),
+                    ) {
+                        let lines = |text: &str, mark: char| {
+                            text.lines().map(|l| format!("{mark} {l}")).collect::<Vec<_>>().join("\n")
+                        };
+                        (format!("{}\n{}", lines(old, '-'), lines(new, '+')), "edit")
+                    } else {
+                        (serde_json::to_string_pretty(args).unwrap_or_default(), "json")
                     };
+                    let summary = args
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .or(path)
+                        .or_else(|| ["pattern", "query", "url", "prompt", "subject"].iter().find_map(|k| args.get(*k).and_then(Value::as_str)));
                     json!({
                         "name": call["function_name"],
-                        "description": args.get("description"),
-                        "input": clip(&input, MAX_TOOL_CHARS),
+                        "description": summary,
+                        "path": path,
+                        "kind": kind,
+                        "input_chars": input.chars().count(),
+                        "input": clip(&input, if kind == "file" { MAX_FILE_CHARS } else { MAX_TOOL_CHARS }),
                         "output": outputs.get(id).map(|o| clip(o, MAX_TOOL_CHARS)),
                     })
                 })
