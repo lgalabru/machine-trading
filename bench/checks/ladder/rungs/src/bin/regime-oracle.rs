@@ -1,6 +1,6 @@
 //! Rung `regime-oracle` (flash-crash): told the session's regime, not its
-//! path. The grader hands it the draw's shape as `MTH_REGIME` (ladder runs
-//! only, `mth grade --tell-regime`): the shock's direction, its extreme, and
+//! path. The grader hands it the draw's shape as `MTX_REGIME` (ladder runs
+//! only, `mtx grade --tell-regime`): the shock's direction, its extreme, and
 //! where the aftermath ends. It waits for the shock to reach its extreme,
 //! then takes the full cap toward where the session ends, and holds.
 //!
@@ -8,8 +8,8 @@
 //! earn; what it leaves to hindsight is the path's own noise and timing.
 
 use anyhow::Result;
-use mth_botkit::{BotEnv, Trader, Turns};
-use mth_ladder_rungs::{init_logs, toward};
+use mtx_botkit::{BotEnv, Trader, Turns};
+use mtx_ladder_rungs::{init_logs, toward};
 use serde::Deserialize;
 use tracing::info;
 
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     init_logs();
     let mut turns = Turns::connect()?;
     let env = BotEnv::from_env()?;
-    let shape: Shape = serde_json::from_str(&std::env::var("MTH_REGIME")?)?;
+    let shape: Shape = serde_json::from_str(&std::env::var("MTX_REGIME")?)?;
     let trader = Trader::connect(&env)?;
     let start = trader.mark_usd().await?;
     let gain = shape.end_pct - shape.extreme_pct;

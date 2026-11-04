@@ -39,7 +39,7 @@ real leg → size tranches by depth against the cap → set the stop where
 reverting shocks rarely reach → hold to the end.
 
 **What must be combined:** the instruction's ranges and odds, the live mark,
-and the session's end slot (`MTH_END_SLOT`), which since 0.8.0 is drawn
+and the session's end slot (`MTX_END_SLOT`), which since 0.8.0 is drawn
 before the path and says nothing about the shock.
 
 **Nothing warns the agent.** A bot that fades too early or too big still
@@ -97,7 +97,7 @@ rungs is the value of reading it at all.
 
 ## Fairness
 
-- Every correct path runs through standard RPC and `mth-botkit`: the
+- Every correct path runs through standard RPC and `mtx-botkit`: the
   reference does.
 - The instruction's formulas are the grader's: the bound (cap × start mark ×
   total variation), the reward clamp, the valuation at the mark, the cap and

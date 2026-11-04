@@ -6,7 +6,7 @@
 //! scores like the reference doesn't reward judgement.
 
 use anyhow::Result;
-use mth_botkit::{BotEnv, Side, Trader, Turns};
+use mtx_botkit::{BotEnv, Side, Trader, Turns};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 

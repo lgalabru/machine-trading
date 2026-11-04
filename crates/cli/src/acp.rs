@@ -1,4 +1,4 @@
-//! An ACP client: mth drives a coding agent (Claude Code, Codex) to author
+//! An ACP client: mtx drives a coding agent (Claude Code, Codex) to author
 //! scenarios. Ported from pay-acp.
 //!
 //! The agent is a child process speaking NDJSON JSON-RPC on stdio: an ACP
@@ -7,7 +7,7 @@
 //! stream of [`TurnEvent`]s so a caller can relay text as it arrives.
 //!
 //! Kept whole from pay-acp, tests included, so the two stay easy to diff;
-//! mth uses a subset.
+//! mtx uses a subset.
 #![allow(dead_code)]
 
 use std::{
@@ -240,7 +240,7 @@ impl AgentClient {
         let reader_shared = Arc::clone(&shared);
         let reader_writer = Arc::clone(&writer);
         thread::Builder::new()
-            .name("mth-acp-reader".into())
+            .name("mtx-acp-reader".into())
             .spawn(move || {
                 read_loop(reader, &reader_writer, &reader_shared, permissions);
                 reader_shared.disconnect();
@@ -265,7 +265,7 @@ impl AgentClient {
                     "fs": { "readTextFile": false, "writeTextFile": false },
                     "terminal": false,
                 },
-                "clientInfo": { "name": "mth", "version": env!("CARGO_PKG_VERSION") },
+                "clientInfo": { "name": "mtx", "version": env!("CARGO_PKG_VERSION") },
             }),
         )?;
         serde_json::from_value(result).map_err(|e| Error::Protocol(format!("initialize: {e}")))
@@ -527,7 +527,7 @@ fn answer_agent_request(
                 None => json!({ "outcome": { "outcome": "cancelled" } }),
             })
         }
-        _ => Err((-32601, format!("method not supported by mth: {method}"))),
+        _ => Err((-32601, format!("method not supported by mtx: {method}"))),
     }
 }
 

@@ -1,7 +1,7 @@
-//! `mth scenario play`: register a scenario on a surfnet and chart the
+//! `mtx scenario play`: register a scenario on a surfnet and chart the
 //! market as it plays out, in a small web UI.
 //!
-//! The page is served by mth itself. It shows the planned path as soon as it
+//! The page is served by mtx itself. It shows the planned path as soon as it
 //! loads; pressing Play (or `--autoplay`) registers the scenario at the
 //! current slot, and Pause stops the surfnet's clock, which holds the
 //! scenario where it is. The page has a chart per venue and dimension (see
@@ -24,7 +24,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::StreamExt;
-use mth_core::{
+use mtx_core::{
     chain,
     phoenix::Phoenix,
     snapshot::{self, OfflineWorld},
@@ -306,7 +306,7 @@ impl AppState {
                 if live.stopped { "stopped" } else { "resetting" }
             );
         }
-        Ok(mth_botkit::rpc_client(live.rpc_url.clone()))
+        Ok(mtx_botkit::rpc_client(live.rpc_url.clone()))
     }
 
     /// Start the scenario: register it at the current slot the first time,
@@ -419,7 +419,7 @@ impl AppState {
         Session { world, sampler }
     }
 
-    /// The chart mth samples.
+    /// The chart mtx samples.
     fn prices(&self) -> &Chart {
         &self.plan.charts[0]
     }
@@ -626,7 +626,7 @@ async fn sample(
     payer: Pubkey,
     symbols: Vec<String>,
 ) {
-    let rpc = mth_botkit::rpc_client(rpc_url);
+    let rpc = mtx_botkit::rpc_client(rpc_url);
     let mut last = None;
     loop {
         let result: Result<()> = async {
@@ -787,7 +787,7 @@ async fn post_reset(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 /// Stop the session: answer, then shut the server down, which drops the
-/// surfnet and ends `mth scenario play`.
+/// surfnet and ends `mtx scenario play`.
 async fn post_stop(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     state.live().stopped = true;
     state.stop.notify_one();

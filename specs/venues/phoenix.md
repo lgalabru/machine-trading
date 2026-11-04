@@ -33,13 +33,13 @@ PDA index 0, subaccount 0, together with the authority's wallet USDC.
 
 ## The benchmark's enforcer
 
-`mth grade` audits every rule:
+`mtx grade` audits every rule:
 
 - It measures the account twice a second while the bot runs, and once more
   at the term's last slot.
 - It reports the peak position, the most markets held outside the universe,
   and the deepest drawdown, and disqualifies the session on any breach.
-- It hands the bot its copy of the mandate in `MTH_MANDATE`, with the term
+- It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
 
 Separately, the benchmark gates the RPC methods a bot may call. That is a

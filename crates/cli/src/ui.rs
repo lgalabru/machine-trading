@@ -40,7 +40,7 @@ fn ui() -> &'static Ui {
         let tty = io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         if tty {
             std::thread::Builder::new()
-                .name("mth-spinner".into())
+                .name("mtx-spinner".into())
                 .spawn(spin)
                 .expect("spawn the spinner thread");
         }

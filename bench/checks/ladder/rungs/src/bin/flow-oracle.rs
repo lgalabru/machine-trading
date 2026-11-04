@@ -1,5 +1,5 @@
 //! Rung `flow-oracle` (market-making): a perfect reader of the tape. The
-//! grader hands it, as `MTH_REGIME` (ladder runs only, `mth grade
+//! grader hands it, as `MTX_REGIME` (ladder runs only, `mtx grade
 //! --tell-regime`), the session's informed taker orders by slot and side; it
 //! looks only at those that have already traded, so it learns of a burst the
 //! moment its first order hits the book, as a trader who could tell informed
@@ -14,8 +14,8 @@
 //! An exploit bot above it reads something no honest trader could.
 
 use anyhow::Result;
-use mth_botkit::{BotEnv, Side, Trader, Turns};
-use mth_ladder_rungs::{SLICE, init_logs, inside_competitor_bps};
+use mtx_botkit::{BotEnv, Side, Trader, Turns};
+use mtx_ladder_rungs::{SLICE, init_logs, inside_competitor_bps};
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     init_logs();
     let mut turns = Turns::connect()?;
     let env = BotEnv::from_env()?;
-    let informed: Vec<Informed> = serde_json::from_str(&std::env::var("MTH_REGIME")?)?;
+    let informed: Vec<Informed> = serde_json::from_str(&std::env::var("MTX_REGIME")?)?;
     let start_slot = turns.hello().start_slot;
     let slots_per_step = turns.hello().slots_per_step;
     let trader = Trader::connect(&env)?;

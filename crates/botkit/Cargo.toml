@@ -1,8 +1,8 @@
 # No workspace inheritance: this crate also ships inside the task image at
-# /opt/mth/sdk, where bots build against it outside this workspace.
+# /opt/mtx/sdk, where bots build against it outside this workspace.
 [package]
-name = "mth-botkit"
-description = "Plumbing for mth trading bots: the runtime contract, Phoenix access, and transactions, on luce."
+name = "mtx-botkit"
+description = "Plumbing for mtx trading bots: the runtime contract, Phoenix access, and transactions, on luce."
 edition = "2024"
 version = "0.1.0"
 license = "MIT"

@@ -27,7 +27,7 @@ model can only be trained against rewards that can be verified.
 | 🛠️ **Harness** | An agent harness for trading on Solana: tools for market data, order entry and risk checks over [`luce`](crates/luce), plus guardrails, running against the same sandboxes. | Next |
 | 🧠 **Models** | Trading models trained on the bench: RL against task rewards, SFT on agent trajectories, evaluated on held-out scenarios. | Later |
 
-Every area builds on the same core: the `mth` grader and simulator
+Every area builds on the same core: the `mtx` grader and simulator
 ([`crates/`](crates/)), reference bots ([`bots/`](bots/)), pinned mainnet
 state ([`snapshots/`](snapshots/)), and the agent skills
 ([`skills/`](skills/)) that encode how to build all of the above.
@@ -47,7 +47,7 @@ harbor run -d solana-foundation/machine-trading -i solana-foundation/phoenix-fla
 # From a checkout: the reference solution, skill 1 by construction. The
 # verifier draws its hidden set from the batch's secret; it refuses to grade
 # without one.
-export MTH_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+export MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 harbor run -p bench/tasks/phoenix-flash-crash -a oracle
 ```
 
@@ -155,10 +155,10 @@ machine-trading/
 │   ├── checks/            cheating bots every task must score 0
 │   └── image/             the images every task builds on: dev (agents) and runtime (verifiers)
 ├── crates/                🦀 shared Rust
-│   ├── core/              mth-core: offline worlds, scenario families, RPC guard, sessions, grading
-│   ├── cli/               mth: the grader, scenario generator, and agent-authored scenarios
+│   ├── core/              mtx-core: offline worlds, scenario families, RPC guard, sessions, grading
+│   ├── cli/               mtx: the grader, scenario generator, and agent-authored scenarios
 │   ├── luce/              luce: the trading library (exact Decimal model, Solana runtime, Phoenix)
-│   └── botkit/            mth-botkit: the SDK bots build on, over luce (both ship in the task image)
+│   └── botkit/            mtx-botkit: the SDK bots build on, over luce (both ship in the task image)
 ├── bots/                  🤖 starter, reference (the oracle), and baselines
 ├── snapshots/             📸 pinned mainnet state (surfnet.json is gitignored)
 ├── specs/                 📜 the mandate: what an agent may trade, and its limits
@@ -180,7 +180,7 @@ sharing `crates/`, `bots/` and `snapshots/`.
   (cheatcode locks, SDK snapshots, clock restore) until it ships in a release.
 - The snapshot's `surfnet.json`, which is too big for git:
   `just snapshot-pull` copies it out of the published task image. To fork a
-  fresh one instead, put a mainnet RPC URL in `.env` as `MTH_FORK_RPC_URL`
+  fresh one instead, put a mainnet RPC URL in `.env` as `MTX_FORK_RPC_URL`
   and run `just snapshot-prepare`.
 
 ### Everyday loop
@@ -191,7 +191,7 @@ just grade bots/reference bench/tasks/phoenix-flash-crash/environment/practice/*
 just test lint                                     # unit tests and clippy
 ```
 
-`mth grade` runs exactly what the verifier runs. Bot logs land in
+`mtx grade` runs exactly what the verifier runs. Bot logs land in
 `target/logs/`. Don't run heavy builds while grading: slots advance on the
 wall clock, and a starved machine gives bots fewer looks per slot.
 
@@ -199,10 +199,10 @@ wall clock, and a starved machine gives bots fewer looks per slot.
 
 ```sh
 just bench                          # results go to jobs/bench/<batch>/
-mth bench review jobs/bench/<batch> # or `just review jobs/bench/<batch>`
+mtx bench review jobs/bench/<batch> # or `just review jobs/bench/<batch>`
 ```
 
-`mth bench review` opens a page over everything under the path: a batch, a
+`mtx bench review` opens a page over everything under the path: a batch, a
 Harbor job or one trial. It shows a leaderboard per task (skill, reward, PnL,
 disqualifications, timeouts, agent time and cost by model, and skill by
 trial). Each trial has its sessions against the reference's, the agent's
@@ -214,24 +214,24 @@ of events. The lanes show the scenario's moves, the account's fills, every
 transaction the bot sent (decoded, with failures and duplicates), refused
 calls, overrun turns, and for market making each taker order with the
 informed ones marked. Session timelines come from the detail files the
-verifier writes to `verifier/sessions/` (`mth grade --details`) once every
+verifier writes to `verifier/sessions/` (`mtx grade --details`) once every
 bot has stopped: trials graded before those files existed show their
 sessions as a table only.
 
 ### Author and play scenarios
 
-`mth scenario new` has a coding agent write a
+`mtx scenario new` has a coding agent write a
 [Surfpool scenario](https://github.com/solana-foundation/surfpool/tree/main/crates/core/src/scenarios)
 from a request. The agent runs over [ACP](https://agentclientprotocol.com)
 with the Surfpool MCP server attached, pointed at a surfnet restored from the
-snapshot, so it reads the same prices the scenario starts from. mth checks
+snapshot, so it reads the same prices the scenario starts from. mtx checks
 what it writes (known templates and properties, Phoenix steps within 4%,
 an uncross after each move) and sends problems back until it passes.
 
 ```sh
-mth scenario new "simulate a crash for SPCX" -a claude-code   # writes scenario.json
-mth scenario play "simulate a crash for SPCX" -a claude-code  # authors it, then plays it
-mth scenario play scenario.json                               # replays a saved one
+mtx scenario new "simulate a crash for SPCX" -a claude-code   # writes scenario.json
+mtx scenario play "simulate a crash for SPCX" -a claude-code  # authors it, then plays it
+mtx scenario play scenario.json                               # replays a saved one
 ```
 
 `play` serves a page with a chart per venue and dimension, every override
