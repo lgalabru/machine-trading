@@ -568,7 +568,10 @@ function setCrumbs(state = {}) {
   const rs = releaseOrder(index.releases || []);
   const verLabel = (r) => r.published ? `v${r.label.replace(/^v/, "")}` : r.label;
   const here = rs.find((r) => r.label === index.release) || { label: index.release || index.name || "bench", published: index.published };
-  const relHref = (r) => r.primary ? "#/" : `#/@${encodeURIComponent(r.label)}/`;
+  // Switching release keeps the task, and the session, when there is one: a
+  // trial is one release's, so its session opens as the task's variant.
+  const keep = state.task ? `task/${encodeURIComponent(state.task)}${state.variant || state.session ? `/${encodeURIComponent(state.variant || state.session)}` : ""}` : "";
+  const relHref = (r) => (r.primary ? "#/" : `#/@${encodeURIComponent(r.label)}/`) + keep;
   const menu = (summary, items) => `<details class="crumb-menu"><summary class="crumb ${state.task || state.extra ? "" : "here"}">${summary}<span class="caret">▾</span></summary><div class="crumb-list">${items}</div></details>`;
   const out = [`<a class="crumb brand" href="#/"><span class="dot"></span>mtx</a>`, sep];
   out.push(rs.length > 1
@@ -682,6 +685,8 @@ async function route() {
     if (currentTask !== task) { currentTask = task; renderHero(); }
     renderSide();
     if (!task) return renderOverview();
+    // A task this release doesn't have (after switching release): its overview.
+    if (!index.tasks.some((t) => t.name === task)) { history.replaceState(null, "", home()); currentTask = null; renderHero(); renderSide(); return renderOverview(); }
     return await renderTask(task, parts[2] || null, parts[3] !== undefined ? +parts[3] : null);
   } catch (e) { fail(e); }
 }
@@ -943,7 +948,7 @@ function who(trials) {
 async function renderTask(name, variant, at) {
   const task = index.tasks.find((t) => t.name === name);
   if (!task) { fail(new Error(`no task ${name}`)); return; }
-  setCrumbs({ task: name, variant: variant || undefined });
+  setCrumbs({ task: name });
   const trials = task.trials.map(trialById).filter(Boolean);
   // Re-rendering the same task (a new variant): keep the page, swap the explorer.
   const same = app.dataset.task === name && app.querySelector("#explorer");
@@ -1002,12 +1007,15 @@ async function renderExplorer(host, task, trials, variant, at) {
   const set = comparable(trials);
   host.innerHTML = "";
   section("Variants", set.length ? `${set.length} trial${set.length === 1 ? "" : "s"} on the same hidden set` : "", host);
-  if (!set.length) { div(`<div class="empty">No trial of this task has step-by-step session files yet${trials.some((t) => t.status === "pending") ? " (some are still running)" : ""}. Trials graded before they existed have their sessions on the trial page.</div>`, "", host); return; }
+  // A session this release doesn't have: the task, without it.
+  const drop = () => { if (variant) history.replaceState(null, "", taskHref(task.name)); };
+  if (!set.length) { drop(); div(`<div class="empty">No trial of this task has step-by-step session files yet${trials.some((t) => t.status === "pending") ? " (some are still running)" : ""}. Trials graded before they existed have their sessions on the trial page.</div>`, "", host); return; }
   const people = who(set);
   // What each variant was drawn as, from one trial's detail files.
   const first = await api(`/api/trial/${set[0].id}`);
   const names = first.sessions.bot;
   const stats = first.session_stats || {};
+  if (variant && !names.includes(variant)) drop();
   const v = variant && names.includes(variant) ? variant : names[0];
   setCrumbs({ task: task.name, variant: v });
   const rows = names.map((n, i) => ({ i, name: n, kind: [stats[n]?.description, describeAnnotation(stats[n]?.annotation)].filter(Boolean).join(" · "), ref: set[0].reference_pnls?.[n], pnl: Object.fromEntries(people.map((p) => [p.t.id, p.t.pnls?.[n]])) }));
