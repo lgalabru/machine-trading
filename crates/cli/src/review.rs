@@ -6,6 +6,9 @@
 //! session step by step (from the verifier's `sessions/` detail files), the
 //! agent's trajectory and the bot it wrote.
 //!
+//! It also serves every release published under `bench/results/<version>`
+//! (`mtx bench publish`), so the page can switch to one, or compare them.
+//!
 //! The server only reads, and only inside the trials it found: never a
 //! batch's `.seed`, nor anything else whose name starts with a dot.
 
@@ -41,26 +44,40 @@ const MAX_MESSAGE_CHARS: usize = 6_000;
 const MAX_TOOL_CHARS: usize = 3_000;
 /// Directories inside a trial the page may read files from, and single
 /// files it may read.
-const FILE_DIRS: &[&str] = &["artifacts/app/bot/", "verifier/bot/"];
-const FILES: &[&str] = &[
+pub(crate) const FILE_DIRS: &[&str] = &["artifacts/app/bot/", "verifier/bot/"];
+pub(crate) const FILES: &[&str] = &[
     "verifier/test-stdout.txt",
     "agent/claude-code.txt",
     "exception.txt",
     "trial.log",
 ];
 /// What a bot's source listing leaves out: build output.
-const SKIPPED_DIRS: &[&str] = &["target", "bin", "node_modules", ".git"];
+pub(crate) const SKIPPED_DIRS: &[&str] = &["target", "bin", "node_modules", ".git"];
 
 pub struct ReviewOptions {
     pub port: u16,
     pub open: bool,
+    /// Where the page opens, after the `#`.
+    pub start: Option<String>,
+}
+
+/// A directory of trials the page can show: the one asked for, or a
+/// published release.
+#[derive(Clone, Debug)]
+pub struct Root {
+    /// The release's version, or the directory's name.
+    pub label: String,
+    pub path: PathBuf,
+    /// Under `bench/results`.
+    pub published: bool,
 }
 
 struct AppState {
-    root: PathBuf,
-    /// Every trial found so far. A trial keeps its index for the server's
-    /// life: new ones (a bench still running) are appended.
-    trials: std::sync::Mutex<Vec<PathBuf>>,
+    /// The first is the one asked for.
+    roots: Vec<Root>,
+    /// Every trial found so far, with its root. A trial keeps its index for
+    /// the server's life: new ones (a bench still running) are appended.
+    trials: std::sync::Mutex<Vec<(usize, PathBuf)>>,
     /// Task metadata by name and digest, read once.
     tasks: std::sync::Mutex<HashMap<(String, String), Value>>,
 }
@@ -71,17 +88,30 @@ impl AppState {
             .lock()
             .expect("review lock")
             .get(n)
-            .cloned()
+            .map(|(_, dir)| dir.clone())
             .ok_or(ApiError::NotFound)
     }
 
+    /// The root a trial was found under.
+    fn root_of(&self, n: usize) -> &Root {
+        let i = self
+            .trials
+            .lock()
+            .expect("review lock")
+            .get(n)
+            .map(|(i, _)| *i)
+            .unwrap_or(0);
+        &self.roots[i]
+    }
+
     /// Look for trials again, keeping the ones known at their indices.
-    fn refresh(&self) -> Vec<PathBuf> {
-        let found = discover(&self.root);
+    fn refresh(&self) -> Vec<(usize, PathBuf)> {
         let mut trials = self.trials.lock().expect("review lock");
-        for dir in found {
-            if !trials.contains(&dir) {
-                trials.push(dir);
+        for (i, root) in self.roots.iter().enumerate() {
+            for dir in discover(&root.path) {
+                if !trials.iter().any(|(_, known)| known == &dir) {
+                    trials.push((i, dir));
+                }
             }
         }
         trials.clone()
@@ -90,13 +120,33 @@ impl AppState {
     /// A task's `[task]` table (name, version, description) as its
     /// `task.toml` has it: from Harbor's cache by digest, the trial's local
     /// task path, or this checkout's tasks.
-    fn task_meta(&self, name: &str, digest: &str, local: Option<&str>) -> Value {
+    fn task_meta(&self, root: &FsPath, name: &str, digest: &str, local: Option<&str>) -> Value {
         let key = (name.to_string(), digest.to_string());
         if let Some(meta) = self.tasks.lock().expect("review lock").get(&key) {
             return meta.clone();
         }
+        let meta = task_toml(root, name, digest, local)
+            .map(|toml| task_table(&toml))
+            .unwrap_or_else(|| json!({}));
+        self.tasks
+            .lock()
+            .expect("review lock")
+            .insert(key, meta.clone());
+        meta
+    }
+}
+
+/// A task's `task.toml`: a published release's copy, Harbor's cache by
+/// digest, the trial's local task path, or this checkout's tasks.
+pub(crate) fn task_toml(
+    root: &FsPath,
+    name: &str,
+    digest: &str,
+    local: Option<&str>,
+) -> Option<String> {
+    {
         let short = name.rsplit('/').next().unwrap_or(name);
-        let mut candidates = Vec::new();
+        let mut candidates = vec![root.join("tasks").join(short).join("task.toml")];
         if let Some(home) = std::env::var_os("HOME") {
             candidates.push(
                 PathBuf::from(home)
@@ -115,16 +165,9 @@ impl AppState {
                 .join(short)
                 .join("task.toml"),
         );
-        let meta = candidates
+        candidates
             .iter()
             .find_map(|path| std::fs::read_to_string(path).ok())
-            .map(|toml| task_table(&toml))
-            .unwrap_or_else(|| json!({}));
-        self.tasks
-            .lock()
-            .expect("review lock")
-            .insert(key, meta.clone());
-        meta
     }
 }
 
@@ -177,23 +220,20 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
-    let root = path
-        .canonicalize()
-        .with_context(|| path.display().to_string())?;
-    let trials = discover(&root);
-    if trials.is_empty() {
+pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
+    let primary = roots.first().context("nothing to review")?;
+    if discover(&primary.path).is_empty() {
         bail!(
             "no Harbor trials under {} (a trial is a directory whose config.json names it)",
-            root.display()
+            primary.path.display()
         );
     }
-    let count = trials.len();
     let state = Arc::new(AppState {
-        root,
-        trials: std::sync::Mutex::new(trials),
+        roots,
+        trials: std::sync::Mutex::default(),
         tasks: std::sync::Mutex::default(),
     });
+    let count = state.refresh().iter().filter(|(i, _)| *i == 0).count();
     let app = Router::new()
         .route(
             "/",
@@ -201,6 +241,8 @@ pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
             get(|| async { ([(header::CACHE_CONTROL, "no-store")], Html(PAGE)) }),
         )
         .route("/api/index", get(get_index))
+        .route("/api/index/{release}", get(get_release_index))
+        .route("/api/releases", get(get_releases))
         .route("/api/trial/{n}", get(get_trial))
         .route("/api/session/{n}/{role}/{name}", get(get_session))
         .route("/api/trajectory/{n}", get(get_trajectory))
@@ -210,14 +252,25 @@ pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
         .await
         .context("binding the review server")?;
     let url = format!("http://{}", listener.local_addr()?);
+    let page = match &opts.start {
+        Some(start) => format!("{url}/#/{start}"),
+        None => url.clone(),
+    };
     info!(%url, trials = count, "review ready; Ctrl-C to stop");
     ui::done(format!(
         "Reviewing {count} trial{} at {}",
         if count == 1 { "" } else { "s" },
-        ui::accent(&url)
+        ui::accent(&page)
     ));
+    let releases = state.roots.iter().filter(|r| r.published).count();
+    if releases > 0 {
+        ui::note(format!(
+            "{releases} published release{} to switch to or compare",
+            if releases == 1 { "" } else { "s" }
+        ));
+    }
     if opts.open {
-        crate::play::open_browser(&url);
+        crate::play::open_browser(&page);
     }
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -225,13 +278,13 @@ pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
         })
         .await?;
     ui::clear();
-    Ok(json!({ "root": state.root, "trials": count, "url": url }))
+    Ok(json!({ "root": state.roots[0].path, "trials": count, "url": page }))
 }
 
 /// Trials below `root`, in path order: directories whose `config.json` (or,
 /// once done, `result.json`) names a trial. A trial still running has no
 /// `result.json` yet.
-fn discover(root: &FsPath) -> Vec<PathBuf> {
+pub(crate) fn discover(root: &FsPath) -> Vec<PathBuf> {
     let mut found = Vec::new();
     walk(root, 0, &mut found);
     found.sort();
@@ -260,18 +313,18 @@ fn walk(dir: &FsPath, depth: usize, found: &mut Vec<PathBuf>) {
     }
 }
 
-fn read_json(path: &FsPath) -> Option<Value> {
+pub(crate) fn read_json(path: &FsPath) -> Option<Value> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
 /// A trial at a glance: what the leaderboard and the trial's header show.
-fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
+fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
     let result = read_json(&dir.join("result.json")).unwrap_or(Value::Null);
     let config = read_json(&dir.join("config.json")).unwrap_or(Value::Null);
     let report = read_json(&dir.join("verifier/report.json"));
     let rewards = read_json(&dir.join("verifier/reward.json")).unwrap_or(Value::Null);
     let relative = |path: &FsPath| {
-        path.strip_prefix(&state.root)
+        path.strip_prefix(&root.path)
             .unwrap_or(path)
             .display()
             .to_string()
@@ -341,6 +394,7 @@ fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
         .collect();
     json!({
         "id": n,
+        "release": root.label,
         "path": relative(dir),
         "job": dir.parent().map(relative).unwrap_or_default(),
         "task": task,
@@ -382,12 +436,39 @@ fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
     })
 }
 
-async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let dirs = state.refresh();
-    let trials: Vec<Value> = dirs
+async fn get_index(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
+    index_of(&state, None)
+}
+
+async fn get_release_index(
+    State(state): State<Arc<AppState>>,
+    Path(release): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    index_of(&state, Some(release))
+}
+
+/// The page's index for one root: the one asked for, or a release.
+fn index_of(state: &AppState, release: Option<String>) -> Result<Json<Value>, ApiError> {
+    let at = match &release {
+        None => 0,
+        Some(label) => state
+            .roots
+            .iter()
+            .position(|r| &r.label == label)
+            .ok_or(ApiError::NotFound)?,
+    };
+    let root = &state.roots[at];
+    let all = state.refresh();
+    let picked: Vec<(usize, &PathBuf)> = all
         .iter()
         .enumerate()
-        .map(|(n, dir)| summary(&state, n, dir))
+        .filter(|(_, (i, _))| *i == at)
+        .map(|(n, (_, dir))| (n, dir))
+        .collect();
+    let dirs: Vec<PathBuf> = picked.iter().map(|(_, dir)| (*dir).clone()).collect();
+    let trials: Vec<Value> = picked
+        .iter()
+        .map(|(n, dir)| summary(root, *n, dir))
         .collect();
     // Jobs: the Harbor runs the trials came from, with their configs.
     let mut jobs: Vec<Value> = Vec::new();
@@ -400,7 +481,7 @@ async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
         let result = read_json(&job.join("result.json")).unwrap_or(Value::Null);
         let config = read_json(&job.join("config.json")).unwrap_or(Value::Null);
         jobs.push(json!({
-            "path": job.strip_prefix(&state.root).unwrap_or(job).display().to_string(),
+            "path": job.strip_prefix(&root.path).unwrap_or(job).display().to_string(),
             "started_at": result["started_at"],
             "finished_at": result["finished_at"],
             "n_total_trials": result["n_total_trials"],
@@ -415,7 +496,7 @@ async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
     // attempts each, so trials not started yet show as queued.
     // A batch is the root or the directory above a job.
     let mut batches: Vec<Value> = Vec::new();
-    let mut batch_dirs: Vec<PathBuf> = vec![state.root.clone()];
+    let mut batch_dirs: Vec<PathBuf> = vec![root.path.clone()];
     batch_dirs.extend(
         dirs.iter()
             .filter_map(|d| Some(d.parent()?.parent()?.to_path_buf())),
@@ -445,7 +526,7 @@ async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
             .find_map(|t| t["task_ref"].as_str())
             .unwrap_or_default();
         let local = mine.iter().find_map(|t| t["task_path"].as_str());
-        let meta = state.task_meta(name, digest, local);
+        let meta = state.task_meta(&root.path, name, digest, local);
         let count = |status: &str| mine.iter().filter(|t| t["status"] == json!(status)).count();
         // Planned: the batch's models times its attempts; otherwise each
         // job's agents times its attempts.
@@ -496,16 +577,116 @@ async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
     let dataset = jobs
         .iter()
         .find_map(|j| j["datasets"][0]["name"].as_str().map(str::to_string));
-    Json(json!({
-        "root": state.root,
-        "name": state.root.file_name().map(|n| n.to_string_lossy().to_string()),
+    let releases: Vec<Value> = state
+        .roots
+        .iter()
+        .enumerate()
+        .map(|(i, r)| json!({ "label": r.label, "published": r.published, "primary": i == 0 }))
+        .collect();
+    Ok(Json(json!({
+        "root": root.path,
+        "release": root.label,
+        "published": root.published,
+        "releases": releases,
+        "name": if root.published { Some(root.label.clone()) } else { root.path.file_name().map(|n| n.to_string_lossy().to_string()) },
         "dataset": dataset,
         "version": version,
         "batch": batch,
         "tasks": tasks,
         "jobs": jobs,
         "trials": trials,
-    }))
+    })))
+}
+
+/// Every root's scores, for switching and comparing: per task, each model's
+/// mean skill over its graded trials.
+async fn get_releases(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let all = state.refresh();
+    let releases: Vec<Value> = state
+        .roots
+        .iter()
+        .enumerate()
+        .map(|(i, root)| {
+            let trials: Vec<Value> = all
+                .iter()
+                .enumerate()
+                .filter(|(_, (r, _))| *r == i)
+                .map(|(n, (_, dir))| summary(root, n, dir))
+                .collect();
+            let mut out = scores(root, &trials);
+            out["primary"] = json!(i == 0);
+            out
+        })
+        .collect();
+    Json(json!({ "releases": releases }))
+}
+
+/// A root's scores from its trials' summaries: per task (by short name),
+/// per model, the mean skill, reward and PnL of its graded trials.
+pub(crate) fn scores_of(root: &Root) -> Value {
+    let trials: Vec<Value> = discover(&root.path)
+        .iter()
+        .enumerate()
+        .map(|(n, dir)| summary(root, n, dir))
+        .collect();
+    scores(root, &trials)
+}
+
+fn scores(root: &Root, trials: &[Value]) -> Value {
+    let mean = |xs: Vec<f64>| (!xs.is_empty()).then(|| xs.iter().sum::<f64>() / xs.len() as f64);
+    let mut tasks = serde_json::Map::new();
+    let mut names: Vec<&str> = trials.iter().filter_map(|t| t["task"].as_str()).collect();
+    names.sort();
+    names.dedup();
+    for name in names {
+        let mine: Vec<&Value> = trials.iter().filter(|t| t["task"] == json!(name)).collect();
+        let mut models: Vec<&str> = mine.iter().filter_map(|t| t["model"].as_str()).collect();
+        models.sort();
+        models.dedup();
+        let per_model: serde_json::Map<String, Value> = models
+            .iter()
+            .map(|model| {
+                let ts: Vec<&&Value> = mine.iter().filter(|t| t["model"] == json!(model)).collect();
+                let graded: Vec<&&Value> = ts
+                    .iter()
+                    .copied()
+                    .filter(|t| t["graded"] == json!(true))
+                    .collect();
+                let pick =
+                    |key: &str| mean(graded.iter().filter_map(|t| t[key].as_f64()).collect());
+                (
+                    model.to_string(),
+                    json!({
+                        "trials": ts.len(),
+                        "graded": graded.len(),
+                        "skill": pick("skill"),
+                        "skills": graded.iter().map(|t| t["skill"].clone()).collect::<Vec<_>>(),
+                        "reward": pick("reward"),
+                        "pnl_usd": pick("pnl_usd"),
+                        "sessions": graded.iter().filter_map(|t| t["sessions"].as_u64()).max(),
+                    }),
+                )
+            })
+            .collect();
+        let digest = mine
+            .iter()
+            .find_map(|t| t["task_ref"].as_str())
+            .unwrap_or_default();
+        let local = mine.iter().find_map(|t| t["task_path"].as_str());
+        let version = task_toml(&root.path, name, digest, local)
+            .map(|toml| task_table(&toml)["version"].clone())
+            .unwrap_or(Value::Null);
+        tasks.insert(
+            name.rsplit('/').next().unwrap_or(name).to_string(),
+            json!({ "name": name, "version": version, "models": per_model }),
+        );
+    }
+    json!({
+        "label": root.label,
+        "published": root.published,
+        "trials": trials.len(),
+        "tasks": tasks,
+    })
 }
 
 async fn get_trial(
@@ -537,6 +718,7 @@ async fn get_trial(
         .collect();
     let result = read_json(&dir.join("result.json")).unwrap_or(Value::Null);
     let bot_sessions = sessions("bot");
+    let root = state.root_of(n);
     // Per session, what the report doesn't carry: what the scenario was drawn
     // as, and how the bot's transactions went.
     let session_stats: serde_json::Map<String, Value> = bot_sessions
@@ -569,14 +751,15 @@ async fn get_trial(
         })
         .collect();
     Ok(Json(json!({
-        "summary": summary(&state, n, &dir),
+        "summary": summary(root, n, &dir),
         "session_stats": session_stats,
         "report": read_json(&dir.join("verifier/report.json")),
         "rewards": read_json(&dir.join("verifier/reward.json")),
         "sessions": { "bot": bot_sessions, "reference": sessions("reference") },
         "files": files,
         "logs": logs,
-        "trajectory": dir.join("agent/trajectory.json").is_file(),
+        "trajectory": dir.join("agent/trajectory.json").is_file()
+            || dir.join("agent/trajectory.json.gz").is_file(),
         "exception": result["exception_info"],
         "config": result["config"],
         "timings": {
@@ -694,7 +877,13 @@ async fn get_trajectory(
     Path(n): Path<usize>,
 ) -> Result<Json<Value>, ApiError> {
     let dir = state.trial(n)?;
-    let trajectory = read_json(&dir.join("agent/trajectory.json")).ok_or(ApiError::NotFound)?;
+    // Published releases keep it gzipped.
+    let trajectory = read_json(&dir.join("agent/trajectory.json"))
+        .or_else(|| {
+            let file = std::fs::File::open(dir.join("agent/trajectory.json.gz")).ok()?;
+            serde_json::from_reader(flate2::read::GzDecoder::new(file)).ok()
+        })
+        .ok_or(ApiError::NotFound)?;
     let steps: Vec<Value> = trajectory["steps"]
         .as_array()
         .into_iter()

@@ -201,10 +201,20 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
     fi
     python3 -I bench/report.py "$batch"
     echo "browse it: just review $batch"
+    echo "publish it: just publish $batch {{version}}"
 
-# Browse a bench's results: a batch, a Harbor job or one trial.
+# Browse a bench's results: a batch, a Harbor job, one trial, or a
+# published release by its version (`just review 0.9.0`).
 review path:
     cargo run --release -q -- bench review {{path}}
+
+# Publish a finished batch to bench/results/<version>, to commit.
+publish batch version:
+    cargo run --release -q -- bench publish {{batch}} {{version}}
+
+# Compare two releases task by task, as in `just compare 0.9.0...0.8.0`.
+compare range:
+    cargo run --release -q -- bench compare {{range}} --open
 
 # Copy the reference bot into the task's solution.
 solution:
