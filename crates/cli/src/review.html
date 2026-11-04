@@ -37,37 +37,58 @@
   /* The header: the bench, its version, and a summary chart. */
   header.hero {
     border-bottom: 1px solid var(--line); position: relative; overflow: hidden;
-    background: radial-gradient(ellipse 70% 120% at 85% -20%, rgba(94, 209, 106, 0.10), transparent 60%), var(--bg);
+    background: radial-gradient(ellipse 70% 120% at 30% -20%, rgba(94, 209, 106, 0.08), transparent 60%), var(--bg);
   }
-  .hero-inner { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 40px; padding: 24px 32px 26px; }
-  .hero-left { display: flex; flex-direction: column; min-width: 0; }
-  .hero h1 { font-size: 30px; letter-spacing: -0.03em; margin: 20px 0 4px; line-height: 1.1; }
-  .hero .ver { color: var(--text-3); font: 500 12px var(--mono); }
-  .hero .ver b { color: var(--text); font-weight: 600; }
-  .hero .meta { color: var(--text-3); font-size: 12px; margin-top: 6px; }
-  .hero .tallies { display: flex; gap: 14px; margin-top: 12px; font: 500 12px var(--mono); color: var(--text-2); }
-  .hero .tallies span { display: inline-flex; align-items: center; gap: 6px; }
-  .hero .tallies .light { width: 7px; height: 7px; }
-  /* The watchlist: one row per model, like a stock ticker. */
-  .watch { margin-top: 20px; border-top: 1px solid var(--line-soft); }
-  .watch .row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px; align-items: center; gap: 12px; padding: 10px 8px; border-bottom: 1px solid var(--line-soft); cursor: pointer; border-radius: 6px; }
-  .watch .row:hover { background: rgba(255,255,255,.03); }
-  .watch .row.on { background: rgba(255,255,255,.07); }
-  .watch .name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  header.hero:empty { display: none; }
+  .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; padding: 22px 32px 24px; }
+  /* The model selector: a vertical list of cards, one per model. */
+  .watch { display: flex; flex-direction: column; gap: 8px; }
+  .watch .k { margin-bottom: 2px; }
+  .watch .row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 72px; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); transition: border-color .15s, background .15s; }
+  .watch .row:hover { background: var(--panel-2); }
+  .watch .row.on { border-color: var(--mc, var(--text-3)); box-shadow: 0 0 0 1px var(--mc, var(--text-3)) inset; }
+  .watch .name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 7px; }
+  .watch .name .sw { width: 8px; height: 8px; border-radius: 3px; background: var(--mc); }
   .watch .sub { color: var(--text-3); font-size: 11px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .watch .chip { justify-self: end; width: 72px; text-align: right; padding: 4px 8px; border-radius: 6px; font: 600 13px var(--mono); color: var(--text-2); background: #2c2c2e; }
+  .watch .chip { justify-self: end; width: 68px; text-align: right; padding: 4px 8px; border-radius: 6px; font: 600 13px var(--mono); color: var(--text-2); background: #2c2c2e; }
   .watch .chip.up { background: var(--up); color: #04160a; }
   .watch .chip.down { background: var(--down); color: #fff; }
+  /* The breadcrumb: mtx › release › task › trial › session, with menus. */
+  nav.crumbbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 4px; padding: 10px 24px; min-height: 52px; background: rgba(0,0,0,.82); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); font-size: 13px; }
+  .crumb { font: 500 13px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 8px; color: var(--text-2); text-decoration: none; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  a.crumb:hover, .crumb-menu > summary:hover { background: #1c1c1e; color: var(--text); }
+  .crumb.here { color: var(--text); font-weight: 600; }
+  .crumb.brand { font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+  .crumb.brand .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 10px rgba(162,239,91,.6); }
+  .crumb .tbadge { font: 700 9px var(--mono); padding: 2px 5px; border-radius: 4px; color: #fff; background: var(--tc, #3a3a3c); }
+  .crumb .caret { color: var(--text-4); font-size: 10px; }
+  .crumb-sep { color: var(--text-4); font-size: 14px; padding: 0 1px; user-select: none; }
+  .crumb-menu { position: relative; }
+  .crumb-menu > summary { list-style: none; cursor: pointer; }
+  .crumb-menu > summary::-webkit-details-marker { display: none; }
+  .crumb-menu[open] > summary { background: #1c1c1e; color: var(--text); }
+  .crumb-list { position: absolute; top: calc(100% + 6px); left: 0; min-width: 240px; padding: 6px; background: #161618; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.55); z-index: 30; }
+  .crumb-list a { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; text-decoration: none; color: var(--text-2); }
+  .crumb-list a:hover { background: #232326; color: var(--text); }
+  .crumb-list a.on { color: var(--text); font-weight: 600; }
+  .crumb-list a .note { margin-left: auto; color: var(--text-4); font: 11px var(--mono); }
+  .crumbbar .right { margin-left: auto; display: flex; align-items: center; gap: 14px; font: 500 12px var(--mono); color: var(--text-2); }
+  .crumbbar .right span { display: inline-flex; align-items: center; gap: 6px; }
+  .crumbbar .right .light { width: 7px; height: 7px; }
+  /* The overview: the bench at a glance, before any task is picked. */
+  .ov-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .ov-title h1 { font-size: 34px; letter-spacing: -0.03em; margin: 0; }
+  .ov-title .ver { font: 600 12px var(--mono); color: var(--text-2); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); }
+  .ov-lede { color: var(--text-2); max-width: 820px; font-size: 15px; line-height: 1.55; margin: 10px 0 22px; }
+  .ov-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 8px; }
+  .ov-judge { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .ov-judge .card p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; line-height: 1.5; }
+  @media (max-width: 1100px) { .ov-judge { grid-template-columns: 1fr; } .hero-inner { grid-template-columns: 1fr; } }
+  .lb td.cell { cursor: pointer; }
   .hero-right { min-width: 0; display: flex; flex-direction: column; }
   .seg { display: flex; gap: 2px; padding: 2px; background: #1c1c1e; border-radius: 9px; width: fit-content; }
   .seg a { padding: 5px 14px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-2); text-decoration: none; }
   .seg a.on { background: #3a3a3c; color: var(--text); }
-  .hero-bar .eyebrow { font-size: 13px; font-weight: 600; color: var(--text); }
-  .hero-bar .eyebrow .muted { font: 500 11px var(--mono); color: var(--text-3); margin-left: 8px; }
-  .hero-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-  .rel { display: flex; align-items: center; gap: 10px; }
-  .cmp-link { font-size: 12px; font-weight: 600; color: var(--text-2); text-decoration: none; }
-  .cmp-link:hover { color: var(--text); }
   /* Compare: one card per task. */
   .cmp-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 6px; }
   .cmp-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 16px 18px; margin: 18px 0; }
@@ -115,12 +136,12 @@
     --ios-teal: #40C8E0; --ios-teal-2: #2AAEC6;
     --ios-gray: #8E8E93; --ios-gray-2: #76767B;
   }
-  nav.tiles { display: flex; gap: 12px; padding: 16px 32px; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel); scrollbar-width: thin; }
+  nav.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); scrollbar-width: thin; }
   nav.tiles:empty { display: none; }
   .tile {
     --tile: var(--ios-gray); --tile-2: var(--ios-gray-2);
     display: flex; flex-direction: column; justify-content: space-between; gap: 6px; flex: none;
-    width: 240px; height: 112px; padding: 12px 14px; border-radius: 16px;
+    min-width: 0; height: 112px; padding: 12px 14px; border-radius: 16px;
     background: linear-gradient(180deg, var(--tile) 0%, var(--tile-2) 100%);
     color: #fff; text-decoration: none; font-size: 12px; overflow: hidden;
     box-shadow: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.06);
@@ -143,14 +164,9 @@
   .tile .foot { opacity: .8; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
   .tile .live { width: 6px; height: 6px; border-radius: 99px; background: currentColor; animation: blink 1.2s ease-in-out infinite; }
   .tile.c2 .tbadge, .tile.c3 .tbadge, .tile.c6 .tbadge { background: rgba(0,0,0,.18); }
-  #crumbs { display: flex; gap: 8px; color: var(--text-3); font-size: 13px; flex-wrap: wrap; margin-bottom: 14px; }
   .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: -0.01em; }
   .brand .dot { width: 9px; height: 9px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 12px rgba(162,239,91,.6); }
   .brand small { color: var(--text-3); font-weight: 500; }
-  #crumbs { display: flex; gap: 8px; color: var(--text-3); font-size: 13px; flex-wrap: wrap; }
-  #crumbs a { text-decoration: none; color: var(--text-2); }
-  #crumbs a:hover { color: var(--text); }
-  #crumbs .sep { color: var(--text-4); }
   main { padding: 22px 28px 80px; min-width: 0; }
   .legend-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
   .who { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; cursor: pointer; user-select: none; }
@@ -244,10 +260,11 @@
 </style>
 </head>
 <body>
-<header class="hero" id="hero"></header>
+<nav class="crumbbar" id="crumbbar" aria-label="Breadcrumb"></nav>
 <nav class="tiles" id="side" aria-label="Tasks"></nav>
+<header class="hero" id="hero"></header>
 <div class="body">
-  <main><nav id="crumbs"></nav><div id="app"><div class="loading">Loading…</div></div></main>
+  <main><div id="app"><div class="loading">Loading…</div></div></main>
 </div>
 <div class="tip" id="tip"></div>
 <script>
@@ -528,12 +545,41 @@ function table(container, rows, cols, opts = {}) {
 
 // ---------- shell ----------
 const app = document.getElementById("app");
-const crumbs = document.getElementById("crumbs");
 const hero = document.getElementById("hero");
 const side = document.getElementById("side");
-function setCrumbs(items) {
-  crumbs.innerHTML = items.map(([label, href]) => href ? `<a href="${href}">${esc(label)}</a>` : `<span>${esc(label)}</span>`).join('<span class="sep">/</span>');
+// The breadcrumb bar: mtx › release › task › trial › session. The release
+// and the task open menus; the right side shows how the trials stand.
+let crumbState = {};
+function setCrumbs(state = {}) {
+  crumbState = state;
+  if (!index) return;
+  const sep = `<span class="crumb-sep">›</span>`;
+  const rs = releaseOrder(index.releases || []);
+  const verLabel = (r) => r.published ? `v${r.label.replace(/^v/, "")}` : r.label;
+  const here = rs.find((r) => r.label === index.release) || { label: index.release || index.name || "bench", published: index.published };
+  const relHref = (r) => r.primary ? "#/" : `#/@${encodeURIComponent(r.label)}/`;
+  const menu = (summary, items) => `<details class="crumb-menu"><summary class="crumb ${state.task || state.extra ? "" : "here"}">${summary}<span class="caret">▾</span></summary><div class="crumb-list">${items}</div></details>`;
+  const out = [`<a class="crumb brand" href="#/"><span class="dot"></span>mtx</a>`, sep];
+  out.push(rs.length > 1
+    ? menu(esc(verLabel(here)), rs.map((r) => `<a class="${r.label === here.label ? "on" : ""}" href="${relHref(r)}">${esc(verLabel(r))}<span class="note">${r.published ? "published" : "this batch"}</span></a>`).join(""))
+    : `<a class="crumb ${state.task || state.extra ? "" : "here"}" href="${home()}">${esc(verLabel(here))}</a>`);
+  if (state.task) {
+    const i = index.tasks.findIndex((t) => t.name === state.task);
+    const t = index.tasks[i];
+    const label = t ? `<span class="tbadge" style="--tc:${TILE_COLORS[i % TILE_COLORS.length]}">${esc(taskBadge(t.short))}</span>${esc(taskTitle(t.short))}` : esc(shortTask(state.task));
+    out.push(sep, `<details class="crumb-menu"><summary class="crumb ${state.trial === undefined && !state.variant ? "here" : ""}">${label}<span class="caret">▾</span></summary><div class="crumb-list">${index.tasks.map((x, j) => `<a class="${x.name === state.task ? "on" : ""}" href="${taskHref(x.name)}"><span class="tbadge" style="--tc:${TILE_COLORS[j % TILE_COLORS.length]};font:700 9px var(--mono);padding:2px 5px;border-radius:4px;color:#fff;background:var(--tc)">${esc(taskBadge(x.short))}</span>${esc(taskTitle(x.short))}<span class="note">${x.counts.success} graded</span></a>`).join("")}</div></details>`);
+  }
+  if (state.trial !== undefined) out.push(sep, `<a class="crumb ${state.session ? "" : "here"}" href="${home()}trial/${state.trial}">${esc(state.trialLabel || "trial " + state.trial)}</a>`);
+  if (state.session) out.push(sep, `<span class="crumb here">${esc(state.session)}</span>`);
+  if (state.variant) out.push(sep, `<span class="crumb here">${esc(state.variant)}</span>`);
+  if (state.extra) out.push(sep, `<span class="crumb here">${esc(state.extra)}</span>`);
+  const all = index.tasks.reduce((c, t) => { for (const k in t.counts) c[k] = (c[k] || 0) + t.counts[k]; return c; }, {});
+  out.push(`<div class="right">${["success", "error", "pending", "queued"].map((k) => `<span title="${k === "pending" ? "running" : k}">${light(k)}${int(all[k] || 0)}</span>`).join("")}</div>`);
+  document.getElementById("crumbbar").innerHTML = out.join("");
+  // One menu open at a time; a click elsewhere closes it.
+  document.querySelectorAll(".crumb-menu").forEach((d) => d.addEventListener("toggle", () => { if (d.open) document.querySelectorAll(".crumb-menu").forEach((o) => { if (o !== d) o.open = false; }); }));
 }
+addEventListener("click", (e) => { if (!e.target.closest(".crumb-menu")) document.querySelectorAll(".crumb-menu[open]").forEach((d) => { d.open = false; }); });
 function fail(error) { app.innerHTML = `<div class="error">${esc(error.message || error)}</div>`; }
 function section(title, sub, parent = app) { const h = document.createElement("h2"); h.innerHTML = esc(title) + (sub ? `<small>${sub}</small>` : ""); parent.appendChild(h); return h; }
 function div(html = "", className, parent = app) { const d = document.createElement("div"); if (className) d.className = className; d.innerHTML = html; parent.appendChild(d); return d; }
@@ -585,6 +631,7 @@ async function loadIndex(fresh) {
   modelOrder = [...new Set(index.trials.map((t) => t.model).filter(Boolean))].sort();
   renderHero();
   renderSide();
+  setCrumbs(crumbState);
   // A bench still running: look again every 30 s.
   const live = index.tasks.some((t) => t.counts.pending || t.counts.queued);
   clearTimeout(poller);
@@ -603,6 +650,7 @@ async function route() {
     }
     onCompare = parts[0] === "compare";
     if (onCompare) {
+      if (currentTask !== null) { currentTask = null; renderHero(); }
       renderSide();
       return await renderCompare(...(parts.slice(1).join("/").split(/\.{2,3}/)));
     }
@@ -619,10 +667,10 @@ async function route() {
       if (parts.length >= 4 && parts[2] === "session") return await renderSession(+parts[1], parts[3]);
       return await renderTrial(+parts[1], parts[2] || "sessions");
     }
-    const task = parts[0] === "task" ? parts[1] : index.tasks[0]?.name;
+    const task = parts[0] === "task" ? parts[1] : null;
     if (currentTask !== task) { currentTask = task; renderHero(); }
     renderSide();
-    if (!task) { app.innerHTML = `<div class="empty">No trials yet.</div>`; return; }
+    if (!task) return renderOverview();
     return await renderTask(task, parts[2] || null, parts[3] !== undefined ? +parts[3] : null);
   } catch (e) { fail(e); }
 }
@@ -674,44 +722,28 @@ function sparkline(curve, cls) {
 }
 function renderHero() {
   if (!index) return;
-  const trials = index.trials;
-  const all = index.tasks.reduce((c, t) => { for (const k in t.counts) c[k] = (c[k] || 0) + t.counts[k]; return c; }, {});
-  const cost = sum(trials.map((t) => t.cost_usd));
-  const agentMs = sum(trials.map((t) => span(t.agent_execution)));
-  const b = index.batch;
-  const dataset = index.dataset || "machine-trading";
-  const task = index.tasks.find((t) => t.name === currentTask) || index.tasks[0];
-  const eq = task ? equity(task.name) : { models: [], sessions: [] };
+  const task = index.tasks.find((t) => t.name === currentTask);
+  if (!task) { hero.innerHTML = ""; return; }
+  const eq = equity(task.name);
   // The selected model: the user's pick, else the best mean skill.
   const ranked = [...eq.models].sort((x, y) => (y.skill ?? -Infinity) - (x.skill ?? -Infinity));
-  const key = task?.name;
+  const key = task.name;
   if (!eq.models.some((m) => m.model === heroPick[key])) heroPick[key] = ranked[0]?.model ?? null;
   const heroModel = heroPick[key];
   const pick = eq.models.find((m) => m.model === heroModel);
-  hero.innerHTML = `<div class="hero-inner"><div class="hero-left">
-      <a class="brand" href="${home()}"><span class="dot"></span>mtx <small>bench review</small></a>
-      <h1>${esc(shortTask(dataset).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))}</h1>
-      <div class="ver">${esc(dataset)} <b>${esc(index.version || "?")}</b></div>
-      <div class="meta">${esc(index.name || "")}${b ? ` · ${b.models.length} models × ${b.attempts}` : ""} · ${usd(cost, 0)} · ${dur(agentMs)} agent time</div>
-      <div class="tallies">${["success", "error", "pending", "queued"].map((k) => `<span title="${k === "pending" ? "running" : k}">${light(k)}${int(all[k] || 0)}</span>`).join("")}</div>
-      <div class="watch">${ranked.map((m) => {
+  hero.innerHTML = `<div class="hero-inner"><div class="hero-right">
+      <div class="quote"><span class="big" id="q-big"></span><span class="chg" id="q-chg"></span></div>
+      <div class="quote-sub" id="q-sub"></div>
+      <div id="q-area"></div>
+    </div><div class="watch"><div class="k">Models · ${esc(taskTitle(task.short))}</div>${ranked.map((m) => {
         const last = m.curve?.at(-1);
-        return `<div class="row ${m.model === heroModel ? "on" : ""}" data-model="${esc(m.model)}">
-          <div style="min-width:0"><div class="name">${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · ${m.graded}/${m.trials}` : m.running ? `${m.running} running` : "not graded"}</div></div>
+        return `<div class="row ${m.model === heroModel ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}">
+          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · ${m.graded}/${m.trials}` : m.running ? `${m.running} running` : "not graded"}</div></div>
           ${sparkline(m.curve, trend(last))}
           ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's">${times(m.skill)}</div>`
             : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
         </div>`;
-      }).join("")}</div>
-    </div><div class="hero-right">
-      <div class="hero-bar">
-        <span class="eyebrow">${task ? `${esc(taskTitle(task.short))} <span class="muted">${esc(task.name)}</span>` : ""}</span>
-        ${releaseBar()}
-      </div>
-      <div class="quote"><span class="big" id="q-big"></span><span class="chg" id="q-chg"></span></div>
-      <div class="quote-sub" id="q-sub"></div>
-      <div id="q-area"></div>
-    </div></div>`;
+      }).join("") || `<div class="muted">No trials yet.</div>`}</div></div>`;
   hero.querySelectorAll(".watch .row").forEach((r) => r.addEventListener("click", () => { heroPick[key] = r.dataset.model; renderHero(); }));
   const area = document.getElementById("q-area");
   const big = document.getElementById("q-big"), chg = document.getElementById("q-chg"), sub = document.getElementById("q-sub");
@@ -740,16 +772,6 @@ function renderHero() {
 }
 // Releases newest first, after the batch reviewed if it isn't one.
 const releaseOrder = (rs) => [...rs.filter((r) => !r.published), ...rs.filter((r) => r.published).sort((x, y) => naturalCmp(y.label, x.label))];
-// The releases to switch to, and a comparison with the one before.
-function releaseBar() {
-  const rs = releaseOrder(index.releases || []);
-  if (rs.length < 2) return "";
-  const here = index.release;
-  const prev = compareTarget()?.[1];
-  const href = (r) => r.primary ? "#/" : `#/@${encodeURIComponent(r.label)}/`;
-  return `<div class="rel"><span class="k">Release</span><div class="seg">${rs.map((r) => `<a class="${r.label === here ? "on" : ""}" href="${href(r)}" title="${r.published ? "published in bench/results" : "the batch reviewed"}">${esc(r.label)}</a>`).join("")}</div>
-    ${prev && prev !== here ? `<a class="cmp-link" href="#/compare/${encodeURIComponent(here)}...${encodeURIComponent(prev)}">Compare with ${esc(prev)} →</a>` : ""}</div>`;
-}
 // A stock-style area chart: a line with a gradient under it, a quiet grid,
 // values on the right. Green when the curve ends at or above zero.
 function areaChart(host, { y, ref, labels, onScrub }) {
@@ -821,6 +843,7 @@ const taskBadge = (short) => VENUES[short.split("-")[0]] || short.slice(0, 3).to
 // "phoenix-flash-crash" reads as "Flash crash".
 const taskTitle = (short) => { const words = short.split("-"); if (VENUES[words[0]] && words.length > 1) words.shift(); const t = words.join(" "); return t.charAt(0).toUpperCase() + t.slice(1); };
 let onCompare = false;
+const TILE_COLORS = ["#FF375F", "#0A84FF", "#E5B800", "#22B648", "#FF9F0A", "#BF5AF2", "#2AAEC6"];
 function renderSide() {
   const tiles = index.tasks.map((t, i) => {
     const c = t.counts;
@@ -851,6 +874,43 @@ function compareTarget() {
   return prev && prev !== here ? [here, prev] : null;
 }
 
+// ---------- overview ----------
+// The bench before a task is picked: what it is, how bots are judged, and
+// each model's skill on every task.
+function renderOverview() {
+  setCrumbs({});
+  app.innerHTML = ""; delete app.dataset.task;
+  const trials = index.trials, b = index.batch;
+  const dataset = index.dataset || "solana-foundation/machine-trading";
+  const cost = sum(trials.map((t) => t.cost_usd));
+  const agentMs = sum(trials.map((t) => span(t.agent_execution)));
+  const sessions = Math.max(0, ...trials.map((t) => t.sessions || 0));
+  const seeds = [...new Set(trials.map((t) => t.eval_seed_sha256).filter(Boolean))];
+  div(`<div class="ov-title"><h1>Machine Trading</h1><span class="ver">${esc(dataset)} ${esc(index.version || "")}</span></div>
+    <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}. Pick a task above to see its curves.</p>`);
+  div([
+    card("Trials", int(trials.length), `${index.tasks.length} tasks × ${modelOrder.length} models`),
+    card("Hidden sessions", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per trial"),
+    card("Agent cost", usd(cost, 0), `${usd(trials.length ? cost / trials.length : null)} a trial`),
+    card("Agent time", dur(agentMs), `${dur(trials.length ? agentMs / trials.length : null)} a trial`),
+  ].join(""), "ov-stats");
+  // The leaderboard: mean skill by model and task.
+  section("Leaderboard", "mean skill: PnL over the reference's on the same sessions; the reference scores 1×");
+  const rows = modelOrder.map((m) => {
+    const per = index.tasks.map((t) => mean(index.trials.filter((x) => x.task === t.name && x.model === m && x.graded).map((x) => x.skill)));
+    return { model: m, per, mean: mean(per) };
+  }).sort((x, y) => (y.mean ?? -Infinity) - (x.mean ?? -Infinity));
+  const chipFor = (v) => isNum(v) ? `<span class="delta ${Math.round(v * 100) >= 100 ? "up" : "down"}">${times(v)}</span>` : `<span class="muted">–</span>`;
+  div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v)}</td>`).join("")}<td class="num">${chipFor(r.mean)}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
+  app.querySelectorAll("td.cell").forEach((td) => td.addEventListener("click", () => { location.hash = taskHref(td.dataset.task); }));
+  section("How bots are judged");
+  div([
+    `<div class="card"><div class="k">The score is PnL</div><p><b>skill</b> is a bot's total PnL over the hidden set divided by the reference bot's on the same sessions. <b>reward</b> divides it by a hindsight bound no bot reaches.</p></div>`,
+    `<div class="card"><div class="k">Risk is a set of limits</div><p>One market, a position cap and a loss limit, checked every step, plus standard RPC only and no liquidation at the end. One breach in any session scores 0.</p></div>`,
+    `<div class="card"><div class="k">Reported, not scored</div><p>Worst session, tail loss, max drawdown, profitable share and Sharpe, per trial. Too noisy over a few dozen sessions to weigh into a score.</p></div>`,
+  ].join(""), "ov-judge");
+}
+
 // ---------- task ----------
 // Trials of a task that can be compared session by session: the ones graded
 // on the most common hidden set.
@@ -872,7 +932,7 @@ function who(trials) {
 async function renderTask(name, variant, at) {
   const task = index.tasks.find((t) => t.name === name);
   if (!task) { fail(new Error(`no task ${name}`)); return; }
-  setCrumbs([[index.name || "bench", home()], [task.short, null]]);
+  setCrumbs({ task: name, variant: variant || undefined });
   const trials = task.trials.map(trialById).filter(Boolean);
   // Re-rendering the same task (a new variant): keep the page, swap the explorer.
   const same = app.dataset.task === name && app.querySelector("#explorer");
@@ -938,6 +998,7 @@ async function renderExplorer(host, task, trials, variant, at) {
   const names = first.sessions.bot;
   const stats = first.session_stats || {};
   const v = variant && names.includes(variant) ? variant : names[0];
+  setCrumbs({ task: task.name, variant: v });
   const rows = names.map((n, i) => ({ i, name: n, kind: [stats[n]?.description, describeAnnotation(stats[n]?.annotation)].filter(Boolean).join(" · "), ref: set[0].reference_pnls?.[n], pnl: Object.fromEntries(people.map((p) => [p.t.id, p.t.pnls?.[n]])) }));
   const wrap = div("", "", host);
   const all = rows.flatMap((r) => Object.values(r.pnl)).filter(isNum).map(Math.abs);
@@ -1135,7 +1196,7 @@ async function renderCompare(a, b) {
   const label = (r) => r.label;
   const byLabel = new Map(releases.map((r) => [r.label, r]));
   const ra = byLabel.get(a), rb = byLabel.get(b);
-  setCrumbs([[index.name || "bench", home()], ["compare", null]]);
+  setCrumbs({ extra: `Compare ${a} with ${b}` });
   app.innerHTML = ""; delete app.dataset.task;
   const pickers = (side, current) => releases.map((r) => `<a class="${r.label === current ? "on" : ""}" href="#/compare/${encodeURIComponent(side === "a" ? r.label : a)}...${encodeURIComponent(side === "b" ? r.label : b)}">${esc(r.label)}</a>`).join("");
   div(`<h1>${esc(a)} <small>vs</small> ${esc(b)}</h1>
@@ -1208,7 +1269,7 @@ function skillLines(host, { labels, marked, series }) {
 
 // ---------- trial ----------
 function trialHeader(n, t, tab) {
-  setCrumbs([[index.name || "bench", home()], [shortTask(t.task), taskHref(t.task)], [`${shortModel(t.model)} · ${t.trial}`, `${home()}trial/${n}`]]);
+  setCrumbs({ task: t.task, trial: n, trialLabel: `${shortModel(t.model)} · ${t.trial}` });
   app.innerHTML = ""; delete app.dataset.task;
   div(`<h1>${esc(shortModel(t.model))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
   const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
@@ -1392,7 +1453,7 @@ function trialLogs(n, trial) {
 async function renderSession(n, name) {
   const trial = await api(`/api/trial/${n}`);
   const t = trial.summary;
-  setCrumbs([[index.name || "bench", home()], [shortTask(t.task), taskHref(t.task)], [`${shortModel(t.model)} · ${t.trial}`, `${home()}trial/${n}`], [name, null]]);
+  setCrumbs({ task: t.task, trial: n, trialLabel: `${shortModel(t.model)} · ${t.trial}`, session: name });
   delete app.dataset.task;
   app.innerHTML = `<div class="loading">Loading ${esc(name)}…</div>`;
   const [bot, ref] = await Promise.all([
