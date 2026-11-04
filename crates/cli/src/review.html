@@ -113,11 +113,12 @@
   .cmp-chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
   .cmp-chart .ylab { font: 500 11px var(--mono); fill: #8e8e93; }
   .cmp-chart .xlab { font: 600 11px var(--mono); fill: #8e8e93; }
-  .quote { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 18px 0 4px; }
+  .quote { display: flex; align-items: flex-end; gap: 14px; height: 64px; overflow: hidden; margin: 10px 0 4px; }
+  .quote:not(.multi) { align-items: baseline; padding-top: 22px; }
   .quote .big { font: 600 42px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
   .quote .chg { font: 600 15px var(--mono); }
   .quote .chg.up { color: var(--up); } .quote .chg.down { color: var(--down); }
-  .quote-sub { color: var(--text-3); font-size: 12px; min-height: 18px; }
+  .quote-sub { color: var(--text-3); font-size: 12px; height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .quote-sub .key { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
   .quote-sub b { color: var(--text-2); font-weight: 500; }
   .area { position: relative; margin-top: 12px; height: 240px; }
@@ -739,12 +740,13 @@ function equity(taskName) {
 }
 const compactUsd = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + compact(Math.abs(x));
 const trend = (x) => isNum(x) ? (x >= 0 ? "up" : "down") : "";
-function sparkline(curve, model) {
+// A card's miniature: green when the curve ends at or above zero, red below.
+function sparkline(curve) {
   if (!curve || curve.length < 2) return `<svg width="64" height="26"></svg>`;
   const lo = Math.min(0, ...curve), hi = Math.max(0, ...curve), r = hi - lo || 1;
   const pts = curve.map((y, i) => `${(i / (curve.length - 1) * 62 + 1).toFixed(1)},${(24 - (y - lo) / r * 22).toFixed(1)}`).join(" ");
   const z = (24 - (0 - lo) / r * 22).toFixed(1);
-  return `<svg width="64" height="26" viewBox="0 0 64 26"><line x1="1" x2="63" y1="${z}" y2="${z}" stroke="#3a3a3c" stroke-dasharray="1 2"/><polyline points="${pts}" fill="none" stroke="${model ? modelColor(model) : "var(--text-3)"}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+  return `<svg width="64" height="26" viewBox="0 0 64 26"><line x1="1" x2="63" y1="${z}" y2="${z}" stroke="#3a3a3c" stroke-dasharray="1 2"/><polyline points="${pts}" fill="none" stroke="var(--${trend(curve.at(-1)) || "text-3"})" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
 }
 function renderHero() {
   if (!index) return;
@@ -776,8 +778,8 @@ function renderHero() {
       ${ranked.map((m) => {
         const last = m.curve?.at(-1);
         return `<div class="row ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to add or remove">
-          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · ${usd(m.cost, 0)} a trial` : m.running ? `${m.running} running` : "not graded"}</div></div>
-          ${sparkline(m.curve, m.model)}
+          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · cost ${usd(m.cost, 0)}` : m.running ? `${m.running} running` : "not graded"}</div></div>
+          ${sparkline(m.curve)}
           ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's">${times(m.skill)}</div>`
             : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
         </div>`;
