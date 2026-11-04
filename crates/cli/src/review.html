@@ -443,6 +443,7 @@
   .pill .pl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pill .pm { flex: none; font: 11px var(--mono); color: var(--text-4); }
   .pill-body { margin: 8px 0 6px; }
+  .pill-path { font-size: 11.5px; color: var(--text-3); margin: 0 0 6px 2px; }
   .pill-body pre.code { max-height: 380px; margin: 0 0 6px; }
   .pill-body pre.code.out { color: var(--text-2); background: #0b0b0d; }
   .pill-body .msg.doc { padding: 16px 20px; border: 1px solid #2c2c2e; border-radius: 12px; background: #0e0e10; }
@@ -2266,10 +2267,17 @@ async function trialAgent(n, trial) {
     list.innerHTML = shown.slice(0, 300).map((s) => {
       const tools = s.tools.map((c) => {
         const color = TOOL[c.name] || "#8e8e93";
-        const input = c.name === "Bash" ? highlight(String(c.input || ""), "sh").join("\n") : esc(c.input);
+        // The input as what it is: a command, the file written, an edit.
+        const lang = c.kind === "command" ? "sh" : c.kind === "file" && c.path ? languageOf(c.path) : c.kind === "json" ? "json" : null;
+        const input = c.kind === "edit"
+          ? String(c.input || "").split("\n").map((l) => `<span class="${l.startsWith("+") ? "pos" : l.startsWith("-") ? "neg" : ""}">${esc(l)}</span>`).join("\n")
+          : lang ? highlight(String(c.input || ""), lang).join("\n") : esc(c.input);
         const out = c.output !== null && c.output !== undefined ? String(ansi(c.output)) : null;
-        return `<details class="pill"><summary><span class="tb" style="--tc:${color}">${esc(c.name)}</span><span class="pl">${esc(c.description || String(c.input || "").split("\n")[0].slice(0, 90))}</span>${out !== null ? `<span class="pm" title="characters of output">${kb(out.length)} chars</span>` : ""}</summary>
-          <div class="pill-body"><pre class="code wrap">${input}</pre>${out !== null ? `<pre class="code wrap out">${esc(out) || '<span class="muted">(no output)</span>'}</pre>` : ""}</div></details>`;
+        const label = c.description || String(c.input || "").split("\n").find((l) => l.trim() && l.trim() !== "{") || "";
+        const size = c.kind === "file" ? `${kb(c.input_chars || 0)} chars written` : out !== null ? `${kb(out.length)} chars out` : "";
+        const path = c.path && c.description !== c.path ? `<div class="pill-path mono">${esc(c.path)}</div>` : "";
+        return `<details class="pill"><summary><span class="tb" style="--tc:${color}">${esc(c.name)}</span><span class="pl ${c.path && label === c.path ? "mono" : ""}">${esc(String(label).slice(0, 120))}</span>${size ? `<span class="pm">${size}</span>` : ""}</summary>
+          <div class="pill-body">${path}<pre class="code wrap">${input}</pre>${out !== null && c.kind !== "file" ? `<pre class="code wrap out">${esc(out) || '<span class="muted">(no output)</span>'}</pre>` : out ? `<div class="sub mono">${esc(out.split(/\s[[(]/)[0].slice(0, 160))}</div>` : ""}</div></details>`;
       }).join("");
       const kind = s.source === "user" ? "user" : s.tools.length ? "tool" : "say";
       const message = s.source === "user" && s.message.length > 1200
