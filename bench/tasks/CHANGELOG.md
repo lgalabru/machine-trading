@@ -22,6 +22,18 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
   - **Duplicate sends are flagged.** Within a turn the blockhash doesn't
     move, so the same order sent twice is the same transaction, and the
     chain runs it once. A detail file marks every repeat.
+  - **Equal orders within a turn all run.** Phoenix orders went out with
+    client order id 0, so two equal orders in a turn were the same
+    transaction, and the chain ran it once. The flash-crash reference sends
+    its position in equal slices and lost about 46% of them. Every order now
+    carries its own id (counting from 1 per trader, so sessions still
+    replay). The flash-crash practice set is recalibrated; market-making's
+    reference sent no repeats and is unchanged.
+  - **The verifier stays under its memory limit.** With glibc's allocator,
+    the grader held on to what each session freed and peaked near 4.7 GiB
+    on the reference's pass alone (four sessions at a time), so under load
+    0.9.0's verifiers were killed at their 6 GiB limit and wrote no reward.
+    `mtx` now runs on mimalloc: 2.1 to 3.1 GiB over the same 48 sessions.
   - Session reports gain `wall_ms`.
   - **`mtx bench review <path>`** browses a batch, a job or a trial;
     `mtx bench publish` keeps a batch's results in `bench/results/<version>`,
