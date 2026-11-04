@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mth · bench review</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #000;
+    --panel: #09090b;
+    --panel-2: #0e0e10;
+    --line: #27272a;
+    --line-soft: #18181b;
+    --text: #fafafa;
+    --text-2: #a1a1aa;
+    --text-3: #71717a;
+    --text-4: #52525b;
+    --accent: #a2ef5b;
+    --accent-soft: rgba(162, 239, 91, 0.14);
+    --ref: #7aa2f7;
+    --ref-soft: rgba(122, 162, 247, 0.16);
+    --index: #f5b74a;
+    --bid: #34d399;
+    --ask: #f87171;
+    --critical: #ef4444;
+    --warn: #f59e0b;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .page { max-width: 1400px; min-height: 100vh; margin: 0 auto; border-inline: 1px solid var(--line); }
+  header.top {
+    display: flex; align-items: center; gap: 18px; padding: 18px 28px; border-bottom: 1px solid var(--line);
+    background: radial-gradient(ellipse 60% 140% at 85% -40%, rgba(162, 239, 91, 0.10), transparent 60%), var(--bg);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: -0.01em; }
+  .brand .dot { width: 9px; height: 9px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 12px rgba(162,239,91,.6); }
+  .brand small { color: var(--text-3); font-weight: 500; }
+  #crumbs { display: flex; gap: 8px; color: var(--text-3); font-size: 13px; flex-wrap: wrap; }
+  #crumbs a { text-decoration: none; color: var(--text-2); }
+  #crumbs a:hover { color: var(--text); }
+  #crumbs .sep { color: var(--text-4); }
+  main { padding: 24px 28px 80px; }
+  h1 { font-size: 24px; letter-spacing: -0.02em; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 12px; color: var(--text); letter-spacing: -0.01em; }
+  h2 small, h1 small { color: var(--text-3); font-weight: 500; font-size: 13px; margin-left: 8px; }
+  .sub { color: var(--text-3); font-size: 13px; }
+  .muted { color: var(--text-3); }
+  .k { font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-3); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 18px 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .card .v { font: 600 20px/1.2 var(--mono); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .v.big { font-size: 30px; color: var(--accent); }
+  .card .d { color: var(--text-3); font-size: 12px; margin-top: 2px; }
+  .pos { color: var(--accent); } .neg { color: var(--ask); }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
+  .badge.bad { color: #fecaca; border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.12); }
+  .badge.warn { color: #fde68a; border-color: rgba(245,158,11,.45); background: rgba(245,158,11,.1); }
+  .badge.good { color: var(--accent); border-color: rgba(162,239,91,.45); background: var(--accent-soft); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  th { color: var(--text-3); font-weight: 600; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; position: sticky; top: 0; background: var(--bg); cursor: default; }
+  th.sort { cursor: pointer; } th.sort:hover { color: var(--text); }
+  td.r, th.r { text-align: right; }
+  tbody tr.click { cursor: pointer; }
+  tbody tr.click:hover { background: var(--panel-2); }
+  .table-wrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 640px; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 22px 0 18px; }
+  .tabs a { padding: 9px 14px; text-decoration: none; color: var(--text-3); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+  .tabs a.on { color: var(--text); border-color: var(--accent); }
+  .tabs a:hover { color: var(--text); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 6px; margin-bottom: 10px; }
+  .chart .title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .chart .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+  .chart .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .axis text { fill: var(--text-4); font: 10.5px var(--mono); }
+  .axis line, .grid line { stroke: var(--line-soft); }
+  .zero { stroke: var(--text-4); stroke-dasharray: 2 3; }
+  .cross { stroke: rgba(250,250,250,.35); pointer-events: none; }
+  .tip { position: fixed; pointer-events: none; z-index: 20; background: rgba(9,9,11,.96); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: 12px/1.5 var(--mono); color: var(--text-2); display: none; max-width: 420px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .tip b { color: var(--text); font-weight: 600; }
+  .tip .row { display: flex; justify-content: space-between; gap: 16px; }
+  .tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  pre.code { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 12px/1.55 var(--mono); color: #d4d4d8; overflow: auto; max-height: 720px; white-space: pre; }
+  pre.wrap { white-space: pre-wrap; word-break: break-word; }
+  .files { display: grid; grid-template-columns: 280px 1fr; gap: 14px; }
+  .files .list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 720px; }
+  .files .list a { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
+  .files .list a.on, .files .list a:hover { background: var(--panel-2); color: var(--text); }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .btn { background: var(--panel-2); border: 1px solid var(--line); color: var(--text-2); border-radius: 7px; padding: 5px 10px; font: 500 12px inherit; cursor: pointer; }
+  .btn.on, .btn:hover { color: var(--text); border-color: var(--text-4); }
+  .btn.on { background: var(--accent-soft); border-color: rgba(162,239,91,.45); color: var(--accent); }
+  input.search { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 7px; padding: 6px 10px; font: 13px inherit; width: 260px; }
+  .step { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: var(--panel); }
+  .step > .head { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; color: var(--text-3); }
+  .step > .head b { color: var(--text-2); }
+  .step .body { padding: 8px 12px; }
+  .step .msg { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: #e4e4e7; }
+  details { margin: 6px 0; }
+  details > summary { cursor: pointer; color: var(--text-2); font: 12px var(--mono); }
+  details > summary:hover { color: var(--text); }
+  details pre { margin: 6px 0 0; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+  .kv dt { color: var(--text-3); }
+  .kv dd { margin: 0; font-family: var(--mono); color: var(--text); overflow-wrap: anywhere; }
+  .cmp { width: 100%; }
+  .cmp td:first-child { color: var(--text-3); }
+  .error { color: #fecaca; background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.4); border-radius: 10px; padding: 12px 14px; margin: 12px 0; white-space: pre-wrap; }
+  .empty { color: var(--text-3); padding: 30px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .loading { color: var(--text-3); padding: 40px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <a class="brand" href="#/"><span class="dot"></span>mth <small>bench review</small></a>
+    <nav id="crumbs"></nav>
+  </header>
+  <main id="app"><div class="loading">Loading…</div></main>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+"use strict";
+// ---------- data ----------
+const cache = new Map();
+async function api(path, text = false) {
+  const key = (text ? "t:" : "j:") + path;
+  if (!cache.has(key)) {
+    cache.set(key, fetch(path).then(async (r) => {
+      if (!r.ok) {
+        let message = r.statusText;
+        try { message = (await r.json()).error || message; } catch (_) {}
+        throw new Error(`${path}: ${message}`);
+      }
+      return text ? r.text() : r.json();
+    }));
+  }
+  try { return await cache.get(key); } catch (e) { cache.delete(key); throw e; }
+}
+const fileUrl = (n, path) => `/api/file/${n}/${path.split("/").map(encodeURIComponent).join("/")}`;
+
+// ---------- formatting ----------
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+const fix = (x, d = 2) => isNum(x) ? x.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "–";
+const usd = (x, d = 2) => isNum(x) ? (x < 0 ? "−$" : "$") + fix(Math.abs(x), d) : "–";
+const susd = (x, d = 2) => isNum(x) ? (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + fix(Math.abs(x), d) : "–";
+const cls = (x) => isNum(x) ? (x > 0 ? "pos" : x < 0 ? "neg" : "") : "";
+const times = (x) => isNum(x) ? fix(x, 2) + "×" : "–";
+const pct = (x, d = 1) => isNum(x) ? fix(x * 100, d) + "%" : "–";
+const int = (x) => isNum(x) ? Math.round(x).toLocaleString("en-US") : "–";
+const compact = (x) => !isNum(x) ? "–" : Math.abs(x) >= 1e9 ? fix(x / 1e9, 1) + "B" : Math.abs(x) >= 1e6 ? fix(x / 1e6, 1) + "M" : Math.abs(x) >= 1e3 ? fix(x / 1e3, 1) + "k" : String(Math.round(x));
+const SLOT_MS = 250;
+const clock = (slots) => { const s = Math.round(slots * SLOT_MS / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const span = (a, b) => { const t = Date.parse(a?.finished_at ?? b) - Date.parse(a?.started_at ?? a); return isNum(t) ? t : null; };
+const dur = (ms) => { if (!isNum(ms)) return "–"; const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : m >= 1 ? `${m}m` : `${Math.round(ms / 1000)}s`; };
+const shortModel = (m) => String(m ?? "?").replace(/^anthropic\//, "").replace(/^claude-/, "");
+const shortTask = (t) => String(t ?? "?").replace(/^solana-foundation\//, "");
+const ansi = (s) => String(s).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+const mean = (xs) => { const v = xs.filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+const sum = (xs) => xs.filter(isNum).reduce((a, b) => a + b, 0);
+
+// ---------- tooltip ----------
+const tip = document.getElementById("tip");
+function showTip(html, ev) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = ev.clientX + 16, y = ev.clientY + 16;
+  if (x + w > innerWidth - 8) x = ev.clientX - w - 16;
+  if (y + h > innerHeight - 8) y = ev.clientY - h - 16;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+// ---------- charts ----------
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function ticks(lo, hi, count) {
+  if (!(hi > lo)) return [lo];
+  const step0 = (hi - lo) / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= step0) || step0;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+// The value of a step series at x: the last point at or before it.
+function at(points, x) {
+  let lo = 0, hi = points.length - 1, found = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (points[mid][0] <= x) { found = points[mid]; lo = mid + 1; } else hi = mid - 1; }
+  return found;
+}
+// A group of charts sharing an x axis and a crosshair.
+class Group {
+  constructor() { this.charts = []; }
+  add(chart) { this.charts.push(chart); chart.group = this; }
+  move(x, ev) {
+    for (const c of this.charts) c.cross(x);
+    const parts = this.charts.map((c) => c.readout(x)).filter(Boolean);
+    if (parts.length && ev) showTip(`<b>${this.label ? this.label(x) : fix(x)}</b>` + parts.join(""), ev);
+  }
+  leave() { for (const c of this.charts) c.cross(null); hideTip(); }
+}
+// A line, step, area or bar chart. opts: {height, x: [lo, hi], y?, series, hlines, vlines, marks, xfmt, yfmt, title, legend}
+function chart(container, opts) {
+  const card = document.createElement("div"); card.className = "chart";
+  const legend = (opts.series || []).filter((s) => s.label && !s.hideLegend).map((s) =>
+    `<span><i style="background:${s.color};${s.dash ? "opacity:.7" : ""}"></i>${esc(s.label)}</span>`).join("") + (opts.legendExtra || "");
+  card.innerHTML = `<div class="title"><span class="k">${esc(opts.title || "")}</span><span class="legend">${legend}</span></div>`;
+  container.appendChild(card);
+  const W = Math.max(card.clientWidth - 24, 300), H = opts.height || 180, L = opts.left ?? 64, R = 14, T = 8, B = opts.xaxis === false ? 8 : 24;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, card);
+  const [x0, x1] = opts.x;
+  let ys = [];
+  for (const s of opts.series || []) for (const p of s.data) { if (isNum(p[1])) ys.push(p[1]); if (isNum(p[2])) ys.push(p[2]); }
+  for (const m of opts.marks || []) if (isNum(m.y)) ys.push(m.y);
+  for (const h of opts.hlines || []) if (h.fit !== false && isNum(h.y)) ys.push(h.y);
+  let [y0, y1] = opts.y || [Math.min(...ys), Math.max(...ys)];
+  if (!isNum(y0) || !isNum(y1)) { y0 = 0; y1 = 1; }
+  if (opts.zero) { y0 = Math.min(y0, 0); y1 = Math.max(y1, 0); }
+  if (y1 - y0 < 1e-9) { y0 -= 1; y1 += 1; }
+  const pad = (y1 - y0) * 0.06; y0 -= pad; y1 += pad;
+  const sx = (x) => L + (x - x0) / (x1 - x0 || 1) * (W - L - R);
+  const sy = (y) => T + (1 - (y - y0) / (y1 - y0)) * (H - T - B);
+  const axis = el("g", { class: "axis" }, svg);
+  for (const v of ticks(y0, y1, opts.yticks || 4)) {
+    el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v) }, axis);
+    el("text", { x: L - 8, y: sy(v) + 3.5, "text-anchor": "end" }, axis).textContent = (opts.yfmt || fix)(v);
+  }
+  if (opts.xaxis !== false) {
+    const xt = opts.xticks || ticks(x0, x1, Math.max(2, Math.floor((W - L) / 90)));
+    for (const v of xt) el("text", { x: sx(v), y: H - 6, "text-anchor": "middle" }, axis).textContent = (opts.xfmt || fix)(v);
+  }
+  if (y0 < 0 && y1 > 0) el("line", { class: "zero", x1: L, x2: W - R, y1: sy(0), y2: sy(0) }, svg);
+  for (const h of opts.hlines || []) {
+    if (!(h.y >= y0 && h.y <= y1)) continue;
+    el("line", { x1: L, x2: W - R, y1: sy(h.y), y2: sy(h.y), stroke: h.color || "var(--text-4)", "stroke-dasharray": h.dash || "4 4", "stroke-width": 1 }, svg);
+    if (h.label) el("text", { x: W - R - 4, y: sy(h.y) - 4, "text-anchor": "end", fill: h.color || "var(--text-3)", "font-size": 10.5, "font-family": "var(--mono)" }, svg).textContent = h.label;
+  }
+  for (const v of opts.vlines || []) {
+    el("line", { x1: sx(v.x), x2: sx(v.x), y1: T, y2: H - B, stroke: v.color || "var(--line)", "stroke-dasharray": v.dash || "2 3" }, svg);
+  }
+  for (const s of opts.series || []) {
+    if (!s.data.length) continue;
+    if (s.type === "band") {
+      let d = "", back = "";
+      s.data.forEach((p, i) => { d += (i ? "L" : "M") + sx(p[0]) + "," + sy(p[1]); });
+      for (let i = s.data.length - 1; i >= 0; i--) back += "L" + sx(s.data[i][0]) + "," + sy(s.data[i][2]);
+      el("path", { d: d + back + "Z", fill: s.color, opacity: s.opacity ?? 0.12, stroke: "none" }, svg);
+      continue;
+    }
+    if (s.type === "bars") {
+      const bw = Math.max(1, (W - L - R) / (x1 - x0 || 1) * (s.width ?? 0.8));
+      for (const p of s.data) {
+        if (!isNum(p[1])) continue;
+        const y = sy(Math.max(p[1], 0)), h = Math.abs(sy(p[1]) - sy(0));
+        el("rect", { x: sx(p[0]) - bw / 2 + (s.offset || 0) * bw, y, width: bw, height: Math.max(h, 0.5), fill: s.colorOf ? s.colorOf(p) : s.color, opacity: s.opacity ?? 0.9, rx: 1 }, svg);
+      }
+      continue;
+    }
+    let d = "", prev = null;
+    for (const p of s.data) {
+      if (!isNum(p[1])) { prev = null; continue; }
+      const X = sx(p[0]), Y = sy(p[1]);
+      if (prev === null) d += `M${X},${Y}`;
+      else d += s.step ? `H${X}V${Y}` : `L${X},${Y}`;
+      prev = p;
+    }
+    if (s.step && prev) d += `H${sx(x1)}`;
+    el("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 1.5, "stroke-dasharray": s.dash, opacity: s.opacity ?? 1, "stroke-linejoin": "round" }, svg);
+  }
+  for (const m of opts.marks || []) {
+    const X = sx(m.x), Y = sy(m.y), r = m.r || 2.5;
+    if (m.shape === "up") el("path", { d: `M${X},${Y - r * 1.6}L${X + r * 1.4},${Y + r}L${X - r * 1.4},${Y + r}Z`, fill: m.color, opacity: m.opacity ?? 0.95 }, svg);
+    else if (m.shape === "down") el("path", { d: `M${X},${Y + r * 1.6}L${X + r * 1.4},${Y - r}L${X - r * 1.4},${Y - r}Z`, fill: m.color, opacity: m.opacity ?? 0.95 }, svg);
+    else if (m.shape === "tick") el("line", { x1: X - r, x2: X + r, y1: Y, y2: Y, stroke: m.color, "stroke-width": 1.6, opacity: m.opacity ?? 0.8 }, svg);
+    else el("circle", { cx: X, cy: Y, r, fill: m.fill ?? m.color, stroke: m.stroke, "stroke-width": m.stroke ? 1.2 : 0, opacity: m.opacity ?? 0.9 }, svg);
+  }
+  const line = el("line", { class: "cross", x1: 0, x2: 0, y1: T, y2: H - B, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" }, svg);
+  const self = {
+    group: null,
+    cross(x) {
+      if (x === null || x < x0 || x > x1) { line.setAttribute("visibility", "hidden"); return; }
+      line.setAttribute("x1", sx(x)); line.setAttribute("x2", sx(x)); line.setAttribute("visibility", "visible");
+    },
+    readout(x) {
+      if (opts.readout) return opts.readout(x);
+      const rows = (opts.series || []).filter((s) => s.label && s.type !== "band" && !s.noTip).map((s) => {
+        const p = s.type === "bars" ? s.data.find((q) => Math.abs(q[0] - x) < 0.5) : at(s.data, x);
+        return p ? `<div class="row"><span><i style="background:${s.color}"></i>${esc(s.label)}</span><span>${(s.fmt || opts.yfmt || fix)(p[1])}</span></div>` : "";
+      }).join("");
+      return rows ? `<div style="margin-top:4px">${rows}</div>` : "";
+    },
+  };
+  const toX = (ev) => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    let x = x0 + (px - L) / (W - L - R) * (x1 - x0);
+    if (opts.snap) x = opts.snap(x);
+    return Math.min(x1, Math.max(x0, x));
+  };
+  hit.addEventListener("mousemove", (ev) => { const x = toX(ev); if (self.group) self.group.move(x, ev); else { self.cross(x); const r = self.readout(x); if (r) showTip(`<b>${(opts.tipLabel || opts.xfmt || fix)(x)}</b>${r}`, ev); } });
+  hit.addEventListener("mouseleave", () => { if (self.group) self.group.leave(); else { self.cross(null); hideTip(); } });
+  if (opts.onClick) { hit.style.cursor = "pointer"; hit.addEventListener("click", (ev) => opts.onClick(toX(ev))); }
+  return self;
+}
+// Lanes of events on a shared x axis: rows of marks.
+function lanes(container, opts) {
+  const card = document.createElement("div"); card.className = "chart";
+  card.innerHTML = `<div class="title"><span class="k">${esc(opts.title || "Events")}</span><span class="legend">${opts.legend || ""}</span></div>`;
+  container.appendChild(card);
+  const rowH = 20, L = opts.left ?? 64, R = 14, T = 4, B = 22;
+  const W = Math.max(card.clientWidth - 24, 300), H = T + B + rowH * opts.rows.length;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, card);
+  const [x0, x1] = opts.x;
+  const sx = (x) => L + (x - x0) / (x1 - x0 || 1) * (W - L - R);
+  const axis = el("g", { class: "axis" }, svg);
+  for (const v of ticks(x0, x1, Math.max(2, Math.floor((W - L) / 90)))) el("text", { x: sx(v), y: H - 6, "text-anchor": "middle" }, axis).textContent = (opts.xfmt || fix)(v);
+  const all = [];
+  opts.rows.forEach((row, i) => {
+    const cy = T + rowH * i + rowH / 2;
+    el("line", { x1: L, x2: W - R, y1: cy, y2: cy, stroke: "var(--line-soft)" }, svg);
+    el("text", { x: L - 8, y: cy + 3.5, "text-anchor": "end", fill: "var(--text-3)", "font-size": 10.5, "font-family": "var(--mono)" }, svg).textContent = row.label;
+    for (const e of row.events) {
+      const X = sx(e.x);
+      if (e.shape === "bar") el("rect", { x: X - 1, y: cy - 7, width: 2, height: 14, fill: e.color, opacity: e.opacity ?? 0.85 }, svg);
+      else if (e.shape === "x") { el("path", { d: `M${X - 4},${cy - 4}L${X + 4},${cy + 4}M${X + 4},${cy - 4}L${X - 4},${cy + 4}`, stroke: e.color, "stroke-width": 1.8 }, svg); }
+      else el("circle", { cx: X, cy, r: e.r || 3, fill: e.fill ?? e.color, stroke: e.stroke, "stroke-width": e.stroke ? 1.3 : 0, opacity: e.opacity ?? 0.85 }, svg);
+      all.push({ x: e.x, X, cy, e, row: row.label });
+    }
+  });
+  const line = el("line", { class: "cross", x1: 0, x2: 0, y1: T, y2: H - B, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: L, y: 0, width: W - L - R, height: H, fill: "transparent" }, svg);
+  const self = {
+    group: null,
+    cross(x) {
+      if (x === null || x < x0 || x > x1) { line.setAttribute("visibility", "hidden"); return; }
+      line.setAttribute("x1", sx(x)); line.setAttribute("x2", sx(x)); line.setAttribute("visibility", "visible");
+    },
+    readout(x) {
+      const near = all.filter((a) => Math.abs(a.x - x) <= (x1 - x0) / 300 + 1 && a.e.title).slice(0, 8);
+      return near.length ? `<div style="margin-top:4px">${near.map((a) => `<div>${esc(a.row)}: ${a.e.title}</div>`).join("")}</div>` : "";
+    },
+  };
+  const toX = (ev) => { const box = svg.getBoundingClientRect(); const px = (ev.clientX - box.left) / box.width * W; return Math.min(x1, Math.max(x0, x0 + (px - L) / (W - L - R) * (x1 - x0))); };
+  hit.addEventListener("mousemove", (ev) => { const x = toX(ev); if (self.group) self.group.move(x, ev); });
+  hit.addEventListener("mouseleave", () => self.group && self.group.leave());
+  return self;
+}
+
+// ---------- tables ----------
+// rows: objects; cols: [{key, label, r?, fmt(row) -> html, sort(row) -> value}]
+function table(container, rows, cols, opts = {}) {
+  const wrap = document.createElement("div"); wrap.className = "table-wrap";
+  if (opts.maxHeight) wrap.style.maxHeight = opts.maxHeight;
+  container.appendChild(wrap);
+  let sortBy = opts.sortBy ?? null, desc = opts.desc ?? false, limit = opts.limit || 400;
+  const draw = () => {
+    let list = rows.slice();
+    if (sortBy !== null) {
+      const c = cols[sortBy], get = c.sort || ((r) => r[c.key]);
+      list.sort((a, b) => { const x = get(a), y = get(b); const cmp = (x ?? -Infinity) > (y ?? -Infinity) ? 1 : (x ?? -Infinity) < (y ?? -Infinity) ? -1 : 0; return desc ? -cmp : cmp; });
+    }
+    const shown = list.slice(0, limit);
+    wrap.innerHTML = `<table><thead><tr>${cols.map((c, i) => `<th class="sort ${c.r ? "r" : ""}" data-i="${i}">${esc(c.label)}${sortBy === i ? (desc ? " ↓" : " ↑") : ""}</th>`).join("")}</tr></thead><tbody>${shown.map((r, i) => `<tr class="${opts.onClick ? "click" : ""}" data-i="${rows.indexOf(r)}">${cols.map((c) => `<td class="${c.r ? "r num" : c.mono ? "num" : ""}">${c.fmt ? c.fmt(r) : esc(r[c.key])}</td>`).join("")}</tr>`).join("")}</tbody></table>` +
+      (list.length > limit ? `<div style="padding:10px"><button class="btn" data-more>Show ${Math.min(400, list.length - limit)} more of ${list.length - limit}</button></div>` : "");
+    wrap.querySelectorAll("th").forEach((th) => th.addEventListener("click", () => { const i = +th.dataset.i; if (sortBy === i) desc = !desc; else { sortBy = i; desc = !!cols[i].r; } draw(); }));
+    if (opts.onClick) wrap.querySelectorAll("tbody tr").forEach((tr) => tr.addEventListener("click", () => opts.onClick(rows[+tr.dataset.i])));
+    const more = wrap.querySelector("[data-more]"); if (more) more.addEventListener("click", () => { limit += 400; draw(); });
+  };
+  draw();
+}
+
+// ---------- shell ----------
+const app = document.getElementById("app");
+const crumbs = document.getElementById("crumbs");
+function setCrumbs(items) {
+  crumbs.innerHTML = items.map(([label, href]) => href ? `<a href="${href}">${esc(label)}</a>` : `<span>${esc(label)}</span>`).join('<span class="sep">/</span>');
+}
+function fail(error) { app.innerHTML = `<div class="error">${esc(error.message || error)}</div>`; }
+function section(title, sub) { const h = document.createElement("h2"); h.innerHTML = esc(title) + (sub ? `<small>${sub}</small>` : ""); app.appendChild(h); return h; }
+function div(html = "", className) { const d = document.createElement("div"); if (className) d.className = className; d.innerHTML = html; app.appendChild(d); return d; }
+const card = (k, v, d, big) => `<div class="card"><div class="k">${esc(k)}</div><div class="v ${big ? "big" : ""}">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
+function exceptionBadge(t) {
+  if (!t.exception) return "";
+  const type = t.exception.type || "error";
+  return `<span class="badge ${type === "AgentTimeoutError" ? "warn" : "bad"}" title="${esc(t.exception.message)}">${esc(type)}</span>`;
+}
+function statusBadges(t) {
+  const out = [];
+  if (t.tampered) out.push(`<span class="badge bad" title="${esc(t.tampered)}">tampered</span>`);
+  if (t.disqualified) out.push(`<span class="badge bad">disqualified</span>`);
+  if (!t.graded) out.push(`<span class="badge bad">no grade</span>`);
+  out.push(exceptionBadge(t));
+  return out.join(" ");
+}
+
+let index = null;
+async function route() {
+  hideTip();
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  try {
+    index = index || await api("/api/index");
+    if (parts[0] === "trial" && parts.length >= 4 && parts[2] === "session") return await renderSession(+parts[1], parts[3]);
+    if (parts[0] === "trial") return await renderTrial(+parts[1], parts[2] || "sessions");
+    return renderIndex();
+  } catch (e) { fail(e); }
+}
+addEventListener("hashchange", () => { scrollTo(0, 0); route(); });
+let resizeTimer; addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(route, 200); });
+
+// ---------- index ----------
+function renderIndex() {
+  setCrumbs([[index.name || "bench", null]]);
+  app.innerHTML = "";
+  const trials = index.trials;
+  const tasks = [...new Set(trials.map((t) => t.task))].sort();
+  const models = [...new Set(trials.map((t) => t.model))].sort();
+  const graded = trials.filter((t) => t.graded);
+  div(`<h1>${esc(index.name || "Bench")}<small>${trials.length} trials · ${tasks.length} task${tasks.length === 1 ? "" : "s"} · ${models.length} model${models.length === 1 ? "" : "s"}</small></h1><div class="sub num">${esc(index.root)}</div>`);
+  const seeds = [...new Set(graded.map((t) => t.eval_seed_sha256).filter(Boolean))];
+  const cost = sum(trials.map((t) => t.cost_usd));
+  div(`<div class="cards">${card("Trials", int(trials.length), `${graded.length} graded`)}${card("Hidden sets", seeds.length ? int(seeds.length) : "–", seeds.length === 1 ? `secret ${seeds[0].slice(0, 12)}…` : seeds.length > 1 ? "trials graded on different sets" : "no drawn set")}${card("Agent cost", usd(cost, 0), "all trials")}${card("Exceptions", int(trials.filter((t) => t.exception).length), Object.entries(trials.reduce((m, t) => (t.exception && (m[t.exception.type] = (m[t.exception.type] || 0) + 1), m), {})).map(([k, v]) => `${v} ${k}`).join(", ") || "none")}${card("Disqualified", int(trials.filter((t) => t.disqualified || t.tampered).length), "trials")}</div>`);
+  for (const task of tasks) {
+    const rows = trials.filter((t) => t.task === task);
+    section(shortTask(task), `${rows.length} trials`);
+    const host = div("", "grid2");
+    const left = document.createElement("div"), right = document.createElement("div");
+    host.append(left, right);
+    const byModel = models.filter((m) => rows.some((t) => t.model === m)).map((m) => {
+      const ts = rows.filter((t) => t.model === m), sk = ts.map((t) => t.skill).filter(isNum);
+      return {
+        model: m, n: ts.length, graded: ts.filter((t) => t.graded).length,
+        skill: mean(sk), lo: sk.length ? Math.min(...sk) : null, hi: sk.length ? Math.max(...sk) : null,
+        reward: mean(ts.map((t) => t.reward)), pnl: mean(ts.map((t) => t.pnl_usd)), ref: mean(ts.map((t) => t.reference_pnl_usd)),
+        dq: ts.filter((t) => t.disqualified || t.tampered).length,
+        timeouts: ts.filter((t) => t.exception?.type === "AgentTimeoutError").length,
+        errors: ts.filter((t) => t.exception && t.exception.type !== "AgentTimeoutError").length,
+        minutes: mean(ts.map((t) => span(t.agent_execution))), cost: mean(ts.map((t) => t.cost_usd)),
+      };
+    }).sort((a, b) => (b.skill ?? -1e9) - (a.skill ?? -1e9));
+    table(left, byModel, [
+      { key: "model", label: "Model", fmt: (r) => `<b>${esc(shortModel(r.model))}</b>` },
+      { key: "skill", label: "Skill", r: true, fmt: (r) => `<b>${times(r.skill)}</b> <span class="muted">${r.lo !== null && r.n > 1 ? `${fix(r.lo)}–${fix(r.hi)}` : ""}</span>` },
+      { key: "reward", label: "Reward", r: true, fmt: (r) => fix(r.reward, 3) },
+      { key: "pnl", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl)}">${susd(r.pnl, 0)}</span>` },
+      { key: "n", label: "Trials", r: true, fmt: (r) => `${r.graded}/${r.n}` },
+      { key: "dq", label: "DQ", r: true, fmt: (r) => r.dq ? `<span class="neg">${r.dq}</span>` : "0" },
+      { key: "timeouts", label: "Timeouts", r: true },
+      { key: "minutes", label: "Agent", r: true, fmt: (r) => dur(r.minutes) },
+      { key: "cost", label: "Cost", r: true, fmt: (r) => usd(r.cost, 2) },
+    ], { maxHeight: "none" });
+    // Skill per trial, by model; the reference scores 1.
+    const pts = rows.filter((t) => isNum(t.skill));
+    if (pts.length) {
+      const order = byModel.map((m) => m.model);
+      const marks = pts.map((t) => ({ x: order.indexOf(t.model), y: t.skill, color: t.disqualified || t.tampered ? "var(--ask)" : t.exception ? "var(--warn)" : "var(--accent)", r: 4.5, opacity: 0.85 }));
+      chart(right, {
+        title: "Skill by trial", height: 220, x: [-0.6, order.length - 0.4], xticks: order.map((_, i) => i), xfmt: (i) => shortModel(order[Math.round(i)] ?? ""),
+        series: [], marks, zero: true, hlines: [{ y: 1, color: "var(--ref)", label: "reference = 1" }], yfmt: (v) => fix(v, 1) + "×",
+        readout: (x) => { const i = Math.round(x); const ts = pts.filter((t) => order.indexOf(t.model) === i); return ts.length ? ts.map((t) => `<div class="row"><span>${esc(t.trial)}</span><span>${times(t.skill)}</span></div>`).join("") : ""; },
+        tipLabel: (x) => shortModel(order[Math.round(x)] ?? ""),
+        legendExtra: `<span><i style="background:var(--accent)"></i>graded</span><span><i style="background:var(--warn)"></i>agent timed out</span><span><i style="background:var(--ask)"></i>disqualified</span>`,
+      });
+    } else right.innerHTML = `<div class="empty">No graded trials yet.</div>`;
+  }
+  section("All trials");
+  const host = div();
+  table(host, trials, [
+    { key: "task", label: "Task", fmt: (t) => esc(shortTask(t.task)) },
+    { key: "model", label: "Model", fmt: (t) => `<b>${esc(shortModel(t.model))}</b>` },
+    { key: "trial", label: "Trial", mono: true },
+    { key: "skill", label: "Skill", r: true, fmt: (t) => `<b class="${t.skill >= 1 ? "pos" : ""}">${times(t.skill)}</b>` },
+    { key: "reward", label: "Reward", r: true, fmt: (t) => fix(t.reward, 3) },
+    { key: "pnl_usd", label: "PnL", r: true, fmt: (t) => `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>` },
+    { key: "reference_pnl_usd", label: "Reference", r: true, fmt: (t) => susd(t.reference_pnl_usd) },
+    { key: "sessions", label: "Sessions", r: true },
+    { key: "agent", label: "Agent time", r: true, sort: (t) => span(t.agent_execution), fmt: (t) => dur(span(t.agent_execution)) },
+    { key: "verifier", label: "Grading", r: true, sort: (t) => span(t.verifier_execution), fmt: (t) => dur(span(t.verifier_execution)) },
+    { key: "cost_usd", label: "Cost", r: true, fmt: (t) => usd(t.cost_usd) },
+    { key: "status", label: "Status", sort: (t) => (t.exception?.type || "") + (t.disqualified ? "dq" : ""), fmt: statusBadges },
+  ], { onClick: (t) => { location.hash = `#/trial/${t.id}`; } });
+  if (index.jobs.length) {
+    section("Harbor jobs");
+    const h = div();
+    table(h, index.jobs, [
+      { key: "path", label: "Job", mono: true },
+      { key: "agents", label: "Agents", fmt: (j) => esc((j.agents || []).map((a) => `${a.name}${a.model_name ? " " + shortModel(a.model_name) : ""}`).join(", ")) },
+      { key: "datasets", label: "Dataset", fmt: (j) => esc((j.datasets || []).map((d) => d.name ? `${d.name}${d.version ? "@" + d.version : ""}` : d.path || "").join(", ")) },
+      { key: "n_total_trials", label: "Trials", r: true },
+      { key: "timeout_multiplier", label: "Time ×", r: true },
+      { key: "started_at", label: "Started", mono: true, fmt: (j) => esc(String(j.started_at || "").replace("T", " ").slice(0, 16)) },
+      { key: "dur", label: "Took", r: true, sort: (j) => span(j), fmt: (j) => dur(span(j)) },
+    ], { maxHeight: "none" });
+  }
+}
+
+// ---------- trial ----------
+function trialHeader(n, t, tab) {
+  setCrumbs([[index.name || "bench", "#/"], [`${shortTask(t.task)} · ${shortModel(t.model)}`, null], [t.trial, `#/trial/${n}`]]);
+  app.innerHTML = "";
+  div(`<h1>${esc(shortModel(t.model))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
+  const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
+  div(`<div class="cards">
+    ${card("Skill", times(t.skill), "PnL over the reference's; 1 matches it", true)}
+    ${card("Reward", fix(t.reward, 4), "PnL over the hindsight bound")}
+    ${card("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, `reference ${susd(t.reference_pnl_usd)}`)}
+    ${card("Sessions", int(t.sessions), t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : "none disqualifying")}
+    ${card("Worst session", susd(t.risk?.worst_pnl_usd), `tail ${susd(t.risk?.tail_pnl_usd)}`)}
+    ${card("Max drawdown", usd(t.risk?.max_drawdown_usd), `${pct(t.risk?.profitable_share, 0)} profitable · sharpe ${fix(t.risk?.sharpe)}`)}
+    ${card("Agent", dur(agentMs), `${compact(t.tokens?.output)} output tokens`)}
+    ${card("Cost", usd(t.cost_usd), `${compact(t.tokens?.input)} input · ${compact(t.tokens?.cache)} cached`)}
+    ${card("Grading", dur(verifierMs), t.eval_seed_sha256 ? `set ${String(t.eval_seed_sha256).slice(0, 12)}…` : "")}
+  </div>`);
+  if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
+  const tabs = [["sessions", "Sessions"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
+  div(tabs.map(([k, label]) => `<a href="#/trial/${n}/${k}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
+}
+
+async function renderTrial(n, tab) {
+  const trial = await api(`/api/trial/${n}`);
+  const t = trial.summary;
+  trialHeader(n, t, tab);
+  if (tab === "sessions") return trialSessions(n, trial);
+  if (tab === "agent") return trialAgent(n, trial);
+  if (tab === "bot") return trialFiles(n, trial, trial.files.map((f) => f.path), "artifacts/app/bot/");
+  if (tab === "logs") return trialLogs(n, trial);
+  if (tab === "raw") {
+    div(`<details open><summary>verifier/report.json (sessions folded)</summary><pre class="code wrap">${esc(JSON.stringify(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} sessions: see the Sessions tab` } : null, null, 2))}</pre></details>
+      <details><summary>verifier/reward.json</summary><pre class="code">${esc(JSON.stringify(trial.rewards, null, 2))}</pre></details>
+      <details><summary>Harbor config</summary><pre class="code">${esc(JSON.stringify(trial.config, null, 2))}</pre></details>
+      <details><summary>Timings</summary><pre class="code">${esc(JSON.stringify(trial.timings, null, 2))}</pre></details>
+      ${trial.exception ? `<details><summary>Exception</summary><pre class="code wrap">${esc(trial.exception.exception_traceback || JSON.stringify(trial.exception, null, 2))}</pre></details>` : ""}`);
+  }
+}
+
+function describeAnnotation(a) {
+  if (!a) return "";
+  if (a.shape) {
+    const s = a.shape;
+    const parts = [s.direction, s.aftermath].filter(Boolean);
+    if (Array.isArray(s.legs)) parts.push(`${s.legs.length} leg${s.legs.length === 1 ? "" : "s"}`);
+    return parts.join(" · ") || JSON.stringify(s).slice(0, 60);
+  }
+  if (Array.isArray(a.informed)) { const k = a.informed.filter(Boolean).length; return k ? `${k} informed orders` : "no informed flow"; }
+  return "";
+}
+
+function trialSessions(n, trial) {
+  const scenarios = trial.report?.scenarios || [];
+  if (!scenarios.length) { div(`<div class="empty">No sessions in this trial's report.</div>`); return; }
+  const stats = trial.session_stats || {};
+  const rows = scenarios.map((s, i) => ({ i, ...s, stat: stats[s.scenario] || {}, delta: isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : null }));
+  const host = div();
+  const xs = [-0.6, rows.length - 0.4];
+  const every = Math.max(1, Math.ceil(rows.length / 24));
+  const xticks = rows.map((r) => r.i).filter((i) => i % every === 0);
+  const group = new Group(); group.label = (x) => rows[Math.round(x)]?.scenario ?? "";
+  const open = (x) => { const r = rows[Math.round(x)]; if (r && trial.sessions.bot.includes(r.scenario)) location.hash = `#/trial/${n}/session/${encodeURIComponent(r.scenario)}`; };
+  const bars = chart(host, {
+    title: "PnL by session", height: 220, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
+    series: [
+      { label: "bot", type: "bars", color: "var(--accent)", width: 0.42, offset: -0.5, data: rows.map((r) => [r.i, r.pnl_usd]), colorOf: (p) => rows[p[0]].disqualified ? "var(--ask)" : "var(--accent)", fmt: susd },
+      { label: "reference", type: "bars", color: "var(--ref)", width: 0.42, offset: 0.5, data: rows.map((r) => [r.i, r.reference_pnl_usd]), opacity: 0.75, fmt: susd },
+    ],
+    onClick: open,
+  });
+  let cb = 0, cr = 0;
+  const cum = chart(host, {
+    title: "Cumulative PnL", height: 180, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
+    series: [
+      { label: "bot", color: "var(--accent)", width: 2, data: rows.map((r) => [r.i, (cb += r.pnl_usd)]), fmt: susd },
+      { label: "reference", color: "var(--ref)", width: 2, data: rows.map((r) => [r.i, (cr += r.reference_pnl_usd ?? 0)]), fmt: susd },
+    ],
+    onClick: open,
+  });
+  group.add(bars); group.add(cum);
+  if (!trial.sessions.bot.length) div(`<div class="sub" style="margin:6px 0 0">This trial has no step-by-step session files (it was graded before the verifier recorded them), so there's no timeline per session.</div>`);
+  section("Sessions", "click one for its timeline");
+  const t = div();
+  table(t, rows, [
+    { key: "i", label: "#", r: true, fmt: (r) => r.i + 1 },
+    { key: "scenario", label: "Session", mono: true, fmt: (r) => `${esc(r.scenario)}${r.disqualified ? ` <span class="badge bad" title="${esc(r.disqualified)}">disqualified</span>` : ""}` },
+    { key: "kind", label: "Drawn as", sort: (r) => describeAnnotation(r.stat.annotation), fmt: (r) => `<span class="muted">${esc(describeAnnotation(r.stat.annotation))}</span>` },
+    { key: "pnl_usd", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl_usd)}">${susd(r.pnl_usd)}</span>` },
+    { key: "reference_pnl_usd", label: "Reference", r: true, fmt: (r) => susd(r.reference_pnl_usd) },
+    { key: "delta", label: "Δ", r: true, fmt: (r) => `<span class="${cls(r.delta)}">${susd(r.delta)}</span>` },
+    { key: "max_drawdown_usd", label: "Drawdown", r: true, fmt: (r) => usd(r.max_drawdown_usd) },
+    { key: "peak_position", label: "Peak pos", r: true, fmt: (r) => fix(r.peak_position) },
+    { key: "end_position", label: "End pos", r: true, fmt: (r) => fix(r.end_position) },
+    { key: "txs", label: "Txs", r: true, sort: (r) => r.stat.txs, fmt: (r) => int(r.stat.txs) + (r.stat.failed ? ` <span class="neg">(${r.stat.failed} failed)</span>` : "") + (r.stat.duplicates ? ` <span style="color:var(--warn)">(${r.stat.duplicates} dup)</span>` : "") },
+    { key: "refused", label: "Refused", r: true, sort: (r) => (r.refused_calls || []).length, fmt: (r) => (r.refused_calls || []).length ? `<span class="neg">${r.refused_calls.length}</span>` : "0" },
+    { key: "overran", label: "Overran", r: true, sort: (r) => r.turns?.overran, fmt: (r) => r.turns?.legacy ? `<span class="badge warn">no turns</span>` : int(r.turns?.overran) },
+    { key: "turn", label: "Turn time", r: true, sort: (r) => r.turns?.wall_ms, fmt: (r) => isNum(r.turns?.wall_ms) ? `${fix(r.turns.wall_ms / 1000, 1)}s` : "–" },
+    { key: "exit", label: "Bot exit", fmt: (r) => r.bot_exit ? `<span class="badge warn">${esc(r.bot_exit)}</span>` : "" },
+  ], { onClick: (r) => { if (trial.sessions.bot.includes(r.scenario)) location.hash = `#/trial/${n}/session/${encodeURIComponent(r.scenario)}`; } });
+}
+
+async function trialAgent(n, trial) {
+  if (!trial.trajectory) { div(`<div class="empty">No agent trajectory in this trial.</div>`); return; }
+  const host = div(`<div class="loading">Loading the trajectory…</div>`);
+  const tr = await api(`/api/trajectory/${n}`);
+  const fm = tr.final_metrics || {};
+  const steps = tr.steps || [];
+  const t0 = Date.parse(steps[0]?.timestamp);
+  const toolCounts = {};
+  for (const s of steps) for (const c of s.tools) toolCounts[c.name] = (toolCounts[c.name] || 0) + 1;
+  host.innerHTML = `<div class="cards">
+    ${card("Steps", int(fm.total_steps ?? steps.length), `${esc(tr.agent?.name || "")} ${esc(tr.agent?.version || "")}`)}
+    ${card("Tool calls", int(sum(Object.values(toolCounts))), Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${v}`).join(" · "))}
+    ${card("Prompt tokens", compact(fm.total_prompt_tokens), `${compact(fm.total_cached_tokens)} cached`)}
+    ${card("Output tokens", compact(fm.total_completion_tokens), "")}
+    ${card("Cost", usd(fm.total_cost_usd), "")}
+  </div>`;
+  // Activity: tool calls over the agent's time.
+  if (isNum(t0) && steps.length > 1) {
+    const tEnd = Date.parse(steps[steps.length - 1].timestamp);
+    const names = Object.keys(toolCounts).sort((a, b) => toolCounts[b] - toolCounts[a]).slice(0, 6);
+    const palette = ["var(--accent)", "var(--ref)", "var(--index)", "var(--bid)", "var(--ask)", "#c084fc"];
+    lanes(host, {
+      title: "Activity", x: [0, (tEnd - t0) / 60000], xfmt: (m) => `${Math.round(m)}m`,
+      rows: [
+        { label: "message", events: steps.filter((s) => s.source === "agent" && s.message && !s.tools.length).map((s) => ({ x: (Date.parse(s.timestamp) - t0) / 60000, color: "var(--text-2)", title: esc(String(s.message).slice(0, 80)) })) },
+        ...names.map((name, i) => ({ label: name.slice(0, 9), events: steps.flatMap((s) => s.tools.filter((c) => c.name === name).map((c) => ({ x: (Date.parse(s.timestamp) - t0) / 60000, color: palette[i], shape: "bar", title: esc(String(c.description || c.input).slice(0, 90)) }))) })),
+      ],
+    }).group = { move: (x, ev) => showTip(`<b>${fix(x, 1)} min</b>`, ev), leave: hideTip };
+  }
+  const bar = document.createElement("div"); bar.className = "btns";
+  bar.innerHTML = `<input class="search" placeholder="Filter steps (text, tool, output)…"> <button class="btn" data-f="all">All</button><button class="btn" data-f="msg">Messages</button><button class="btn" data-f="tools">Tool calls</button>`;
+  host.appendChild(bar);
+  const list = document.createElement("div"); host.appendChild(list);
+  let filter = "all", query = "";
+  const draw = () => {
+    const q = query.toLowerCase();
+    const shown = steps.filter((s) => (filter === "all" || (filter === "msg" ? s.message && s.source !== "system" : s.tools.length)) &&
+      (!q || JSON.stringify(s).toLowerCase().includes(q)));
+    list.innerHTML = shown.slice(0, 300).map((s) => {
+      const off = isNum(t0) ? `+${fix((Date.parse(s.timestamp) - t0) / 60000, 1)}m` : "";
+      const tools = s.tools.map((c) => `<details><summary>${esc(c.name)}${c.description ? ` — ${esc(c.description)}` : ""}</summary><pre class="code wrap">${esc(c.input)}</pre>${c.output !== null && c.output !== undefined ? `<pre class="code wrap" style="color:var(--text-2)">${esc(ansi(c.output))}</pre>` : ""}</details>`).join("");
+      const message = s.source === "user" && s.message.length > 1200
+        ? `<details><summary>${esc(s.id === 1 ? "The task's instruction" : "User message")} (${int(s.message.length)} characters)</summary><div class="msg">${esc(s.message)}</div></details>`
+        : s.message ? `<div class="msg">${esc(s.message)}</div>` : "";
+      return `<div class="step"><div class="head"><b>#${esc(s.id)}</b><span>${esc(s.source)}</span><span class="num">${off}</span>${s.metrics?.completion_tokens ? `<span class="num">${compact(s.metrics.completion_tokens)} out</span>` : ""}</div><div class="body">${message}${s.reasoning ? `<details><summary>reasoning</summary><pre class="code wrap">${esc(s.reasoning)}</pre></details>` : ""}${tools}</div></div>`;
+    }).join("") + (shown.length > 300 ? `<div class="sub">${shown.length - 300} more steps; narrow the filter.</div>` : "") || `<div class="empty">No steps match.</div>`;
+    bar.querySelectorAll("[data-f]").forEach((b) => b.classList.toggle("on", b.dataset.f === filter));
+  };
+  bar.querySelector("input").addEventListener("input", (e) => { query = e.target.value; draw(); });
+  bar.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => { filter = b.dataset.f; draw(); }));
+  draw();
+}
+
+function trialFiles(n, trial, paths, prefix) {
+  if (!paths.length) { div(`<div class="empty">No files.</div>`); return; }
+  const host = div("", "files");
+  const list = document.createElement("div"); list.className = "list";
+  const view = document.createElement("div");
+  host.append(list, view);
+  const sizes = Object.fromEntries((trial.files || []).map((f) => [f.path, f.bytes]));
+  const show = async (path) => {
+    list.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.p === path));
+    view.innerHTML = `<div class="loading">Loading…</div>`;
+    try {
+      const text = ansi(await api(fileUrl(n, path), true));
+      const lines = text.split("\n");
+      view.innerHTML = `<div class="sub num" style="margin-bottom:6px">${esc(path)} · ${int(lines.length)} lines</div><pre class="code">${lines.map((l, i) => `<span style="color:var(--text-4);user-select:none">${String(i + 1).padStart(4)}  </span>${esc(l)}`).join("\n")}</pre>`;
+    } catch (e) { view.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  };
+  list.innerHTML = paths.map((p) => `<a href="javascript:void 0" data-p="${esc(p)}"><span>${esc(p.startsWith(prefix) ? p.slice(prefix.length) : p)}</span><span class="muted">${sizes[p] !== undefined ? compact(sizes[p]) + "B" : ""}</span></a>`).join("");
+  list.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => show(a.dataset.p)));
+  const first = paths.find((p) => /src\/main\.rs$/.test(p)) || paths.find((p) => /\.(rs|py|ts|js)$/.test(p)) || paths[0];
+  show(first);
+}
+
+function trialLogs(n, trial) {
+  const paths = [...trial.logs];
+  for (const s of trial.report?.scenarios || []) paths.push(`verifier/bot/${s.scenario}.log`);
+  trialFiles(n, trial, paths, "");
+}
+
+// ---------- session ----------
+async function renderSession(n, name) {
+  const trial = await api(`/api/trial/${n}`);
+  const t = trial.summary;
+  setCrumbs([[index.name || "bench", "#/"], [`${shortTask(t.task)} · ${shortModel(t.model)}`, null], [t.trial, `#/trial/${n}`], [name, null]]);
+  app.innerHTML = `<div class="loading">Loading ${esc(name)}…</div>`;
+  const [bot, ref] = await Promise.all([
+    api(`/api/session/${n}/bot/${encodeURIComponent(name)}`),
+    trial.sessions.reference.includes(name) ? api(`/api/session/${n}/reference/${encodeURIComponent(name)}`).catch(() => null) : null,
+  ]);
+  app.innerHTML = "";
+  const names = trial.sessions.bot, idx = names.indexOf(name);
+  const nav = (i) => names[i] ? `<a class="btn" href="#/trial/${n}/session/${encodeURIComponent(names[i])}">${i < idx ? "← " : ""}${esc(names[i])}${i > idx ? " →" : ""}</a>` : "";
+  const rep = bot.report, tl = bot.timeline, sc = bot.scenario;
+  const making = !!sc.making;
+  div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(shortModel(t.model))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div><div class="btns">${nav(idx - 1)}${nav(idx + 1)}</div></div>`);
+  const refPnl = ref?.report?.pnl_usd ?? sc.reference_pnl_usd;
+  const txs = tl.transactions || [], failed = txs.filter((x) => !x.ok);
+  div(`<div class="cards">
+    ${card("PnL", `<span class="${cls(rep.pnl_usd)}">${susd(rep.pnl_usd)}</span>`, `reference ${susd(refPnl)}`, false)}
+    ${card("Vs reference", isNum(refPnl) ? `<span class="${cls(rep.pnl_usd - refPnl)}">${susd(rep.pnl_usd - refPnl)}</span>` : "–", "")}
+    ${card("Bound", usd(bot.bound_pnl_usd), "hindsight (+ spread)")}
+    ${card("Max drawdown", usd(rep.max_drawdown_usd), `limit ${usd(rep.mandate?.limits?.max_drawdown_usd)}`)}
+    ${card("Peak position", fix(rep.peak_position), `cap ${fix(rep.mandate?.universe?.[0]?.max_position)} · end ${fix(rep.end_position)}`)}
+    ${card("Transactions", int(txs.length), [failed.filter((x) => !x.duplicate).length ? `<span class="neg">${failed.filter((x) => !x.duplicate).length} failed</span>` : "none failed", txs.some((x) => x.duplicate) ? `<span style="color:var(--warn)">${txs.filter((x) => x.duplicate).length} duplicates</span>` : ""].filter(Boolean).join(" · "))}
+    ${card("Mark", usd(rep.end_mark_usd), `from ${usd(rep.start_mark_usd)} (${pct(rep.end_mark_usd / rep.start_mark_usd - 1)}) · valued at the ${esc(rep.valuation)}`)}
+    ${card("Turns", int(rep.turns?.steps), rep.turns?.legacy ? "never answered the hello" : `${int(rep.turns?.overran)} overran · ${fix((rep.turns?.wall_ms || 0) / 1000, 1)}s`)}
+  </div>`);
+
+  const steps = tl.steps || [], rsteps = ref?.timeline?.steps || [];
+  const xEnd = Math.max(tl.end_slot - tl.start_slot, steps.length ? steps[steps.length - 1].at : 1);
+  const X = [0, xEnd];
+  const group = new Group(); group.label = (x) => `${clock(x)} · slot +${Math.round(x)}`;
+  const host = div();
+  // Price: mark, index, the planned level, the book's best bid and ask, and the bot's orders.
+  const orderMarks = [];
+  for (const tx of txs) {
+    if (!isNum(tx.at)) continue;
+    for (const ix of tx.instructions || []) {
+      const o = ix.order; if (!o || !isNum(o.price_usd)) continue;
+      const bid = o.side === "bid";
+      orderMarks.push(o.kind === "ImmediateOrCancel"
+        ? { x: tx.at, y: o.price_usd, shape: bid ? "up" : "down", color: bid ? "var(--bid)" : "var(--ask)", r: 3.5 }
+        : { x: tx.at, y: o.price_usd, shape: "tick", color: bid ? "var(--bid)" : "var(--ask)", r: 3, opacity: tx.ok ? 0.7 : 0.25 });
+    }
+  }
+  const P = (k) => steps.map((s) => [s.at, s[k]]);
+  const priceChart = chart(host, {
+    title: "Price", height: 260, x: X, xfmt: clock, yfmt: (v) => "$" + fix(v), marks: orderMarks.length > 3000 ? orderMarks.filter((_, i) => i % Math.ceil(orderMarks.length / 3000) === 0) : orderMarks,
+    series: [
+      { label: "best bid / ask", type: "band", color: "var(--text-2)", opacity: 0.1, data: steps.filter((s) => isNum(s.best_bid_usd) && isNum(s.best_ask_usd)).map((s) => [s.at, s.best_bid_usd, s.best_ask_usd]) },
+      { label: "best bid", color: "var(--bid)", width: 1, opacity: 0.55, step: true, data: P("best_bid_usd"), fmt: (v) => "$" + fix(v) },
+      { label: "best ask", color: "var(--ask)", width: 1, opacity: 0.55, step: true, data: P("best_ask_usd"), fmt: (v) => "$" + fix(v) },
+      { label: "planned level", color: "var(--text-3)", dash: "4 3", width: 1.2, step: true, data: P("level_usd"), fmt: (v) => "$" + fix(v) },
+      { label: "index", color: "var(--index)", width: 1.2, step: true, data: P("index_usd"), fmt: (v) => "$" + fix(v) },
+      { label: "mark", color: "var(--text)", width: 1.6, step: true, data: P("mark_usd"), fmt: (v) => "$" + fix(v) },
+    ],
+    legendExtra: orderMarks.length ? `<span><i style="background:var(--bid)"></i>bot bids</span><span><i style="background:var(--ask)"></i>bot asks</span><span class="muted">▲▼ market orders</span>` : "",
+  });
+  group.add(priceChart);
+  const cap = rep.mandate?.universe?.[0]?.max_position;
+  group.add(chart(host, {
+    title: "Position", height: 150, x: X, xfmt: clock, zero: true, yfmt: (v) => fix(v, 1),
+    hlines: isNum(cap) ? [{ y: cap, color: "var(--ask)", label: `cap ${fix(cap, 0)}`, fit: false }, { y: -cap, color: "var(--ask)", fit: false }] : [],
+    series: [
+      { label: "bot", color: "var(--accent)", width: 1.8, step: true, data: P("position"), fmt: (v) => fix(v, 3) },
+      ...(rsteps.length ? [{ label: "reference", color: "var(--ref)", width: 1.4, step: true, opacity: 0.85, data: rsteps.map((s) => [s.at, s.position]), fmt: (v) => fix(v, 3) }] : []),
+    ],
+  }));
+  const ddLimit = rep.mandate?.limits?.max_drawdown_usd;
+  // Drawdown from the running peak: what the limit is measured against.
+  let peak = -Infinity;
+  const drawdown = steps.map((s) => { peak = Math.max(peak, s.pnl_usd); return [s.at, s.pnl_usd - Math.max(peak, 0)]; });
+  group.add(chart(host, {
+    title: "PnL", height: 190, x: X, xfmt: clock, zero: true, yfmt: (v) => usd(v, 0),
+    hlines: isNum(ddLimit) ? [{ y: -ddLimit, color: "var(--ask)", label: `drawdown limit ${usd(ddLimit, 0)}`, fit: false }] : [],
+    series: [
+      { label: "drawdown", color: "var(--ask)", width: 1, opacity: 0.5, step: true, data: drawdown, fmt: susd },
+      ...(rsteps.length ? [{ label: "reference", color: "var(--ref)", width: 1.5, step: true, data: rsteps.map((s) => [s.at, s.pnl_usd]), fmt: susd }] : []),
+      { label: "bot", color: "var(--accent)", width: 2, step: true, data: P("pnl_usd"), fmt: susd },
+    ],
+  }));
+  // Events: the scenario's moves, the bot's transactions and refusals, the takers.
+  const informed = Array.isArray(bot.annotation?.informed) ? bot.annotation.informed : [];
+  const rows = [];
+  let last = 0;
+  rows.push({ label: "scenario", events: (sc.path || []).map((w) => { const e = { x: w.slot, color: "var(--text-2)", shape: "bar", title: `level ${w.level_pct > 0 ? "+" : ""}${fix(w.level_pct)}% (${w.level_pct - last >= 0 ? "+" : ""}${fix(w.level_pct - last)} pts)` }; last = w.level_pct; return e; }).filter((e) => e.x <= xEnd) });
+  const describeTx = (tx) => (tx.instructions || []).filter((i) => i.program !== "compute_budget").map((i) => i.order ? `${i.order.kind === "ImmediateOrCancel" ? "market" : "limit"} ${i.order.side} ${fix(i.order.size, 3)}${isNum(i.order.price_usd) ? " @ $" + fix(i.order.price_usd) : ""}` : (i.name || i.program.slice(0, 8))).join(", ") || "transaction";
+  // What the account traded each step: the position's change, whoever's
+  // order it was (the bot's market orders, or takers filling its quotes).
+  const fills = [];
+  for (let i = 1; i < steps.length; i++) {
+    const d = steps[i].position - steps[i - 1].position;
+    if (Math.abs(d) > 1e-9) fills.push({ x: steps[i].at, color: d > 0 ? "var(--bid)" : "var(--ask)", r: Math.min(6, 1.8 + Math.sqrt(Math.abs(d))), opacity: 0.8, title: `${d > 0 ? "bought" : "sold"} ${fix(Math.abs(d), 3)} → ${fix(steps[i].position, 3)}` });
+  }
+  rows.push({ label: "position Δ", events: fills });
+  rows.push({ label: "bot tx", events: txs.filter((x) => isNum(x.at)).map((x) => ({ x: x.at, color: x.ok ? "var(--accent)" : "var(--ask)", r: 2.4, opacity: 0.7, title: `${x.ok ? "" : "FAILED "}${esc(describeTx(x))}` })) });
+  if (failed.length) rows.push({ label: "not run", events: failed.map((x) => ({ x: x.at ?? (isNum(x.step) ? steps[x.step]?.at : 0) ?? 0, color: x.duplicate ? "var(--warn)" : "var(--ask)", shape: "x", title: esc((x.duplicate ? "duplicate: " + describeTx(x) : x.error || "").slice(0, 120)) })) });
+  const calls = tl.calls || {};
+  const stepAt = (k) => isNum(k) ? (steps[k]?.at ?? k * tl.slots_per_step) : 0;
+  if ((calls.refused || []).length) rows.push({ label: "refused", events: calls.refused.map((c) => ({ x: stepAt(c.step), color: "var(--critical)", shape: "x", title: esc(c.method) })) });
+  if ((calls.late || []).length) rows.push({ label: "late send", events: calls.late.map((c) => ({ x: stepAt(c.step), color: "var(--warn)", title: "sent while the world moved" })) });
+  const over = steps.filter((s) => s.answered === false);
+  if (over.length) rows.push({ label: "overran", events: over.map((s) => ({ x: s.at, color: "var(--warn)", shape: "bar", title: `turn took ${s.turn_ms} ms` })) });
+  if (making) {
+    const takers = tl.taker_orders || [];
+    const ev = (side) => takers.map((o, i) => ({ o, i })).filter(({ o }) => o.side === side).map(({ o, i }) => ({ x: o.at, color: side === "buy" ? "var(--bid)" : "var(--ask)", r: informed[i] ? 3.4 : 2.2, fill: informed[i] ? "transparent" : undefined, stroke: informed[i] ? (side === "buy" ? "var(--bid)" : "var(--ask)") : undefined, opacity: informed[i] ? 1 : 0.55, title: `${side} ${fix(o.size, 3)} (limit $${fix(o.limit_usd)})${informed[i] ? " · informed" : ""}${o.ok ? "" : " · FAILED " + esc(o.error || "")}` }));
+    rows.push({ label: "taker buy", events: ev("buy") }, { label: "taker sell", events: ev("sell") });
+  }
+  group.add(lanes(host, { title: "Events", x: X, xfmt: clock, rows, legend: making ? `<span class="muted">○ informed taker orders</span>` : "" }));
+  if (steps.some((s) => isNum(s.turn_ms))) {
+    group.add(chart(host, {
+      title: "Turn time", height: 110, x: X, xfmt: clock, yfmt: (v) => `${Math.round(v)}ms`, zero: true,
+      series: [{ label: "bot turn", type: "bars", color: "var(--text-3)", width: tl.slots_per_step * 0.8, data: steps.filter((s) => isNum(s.turn_ms)).map((s) => [s.at, s.turn_ms]), colorOf: (p) => steps.find((s) => s.at === p[0])?.answered === false ? "var(--warn)" : "var(--text-3)", fmt: (v) => `${v} ms` }],
+      readout: (x) => { const s = at(steps.map((q) => [q.at, q]), x)?.[1]; return s && isNum(s.turn_ms) ? `<div class="row"><span>turn ${s.k}</span><span>${s.turn_ms} ms${s.answered === false ? " (overran)" : ""}</span></div>` : ""; },
+    }));
+  }
+
+  // Side by side.
+  section("Bot and reference");
+  const cmp = div("", "grid2");
+  const metric = (r) => r ? {
+    "PnL": susd(r.report.pnl_usd), "End value": usd(r.report.end_value_usd), "Max drawdown": usd(r.report.max_drawdown_usd),
+    "Peak position": fix(r.report.peak_position, 3), "End position": fix(r.report.end_position, 3),
+    "Transactions": int((r.timeline.transactions || []).length), "Failed": int((r.timeline.transactions || []).filter((x) => !x.ok && !x.duplicate).length),
+    "Duplicates (didn't run)": int((r.timeline.transactions || []).filter((x) => x.duplicate).length),
+    "Orders placed": int((r.timeline.transactions || []).flatMap((x) => x.instructions || []).filter((i) => i.order).length),
+    "Refused calls": int((r.report.refused_calls || []).length), "Late sends": int(r.report.turns?.late_sends),
+    "Turns overran": int(r.report.turns?.overran), "Turn time": `${fix((r.report.turns?.wall_ms || 0) / 1000, 1)}s`,
+    "Session wall": isNum(r.report.wall_ms) ? `${fix(r.report.wall_ms / 1000, 1)}s` : "–", "Bot exit": r.report.bot_exit || "ran to the end",
+  } : null;
+  const mb = metric(bot), mr = metric(ref);
+  cmp.innerHTML = `<div class="panel"><table class="cmp"><thead><tr><th></th><th class="r">bot</th><th class="r">reference</th></tr></thead><tbody>${Object.keys(mb).map((k) => `<tr><td>${k}</td><td class="r num">${mb[k]}</td><td class="r num">${mr ? mr[k] : "–"}</td></tr>`).join("")}</tbody></table></div>
+    <div class="panel"><div class="k" style="margin-bottom:8px">RPC calls by method</div><table class="cmp"><tbody>${Object.entries(calls.methods || {}).sort((a, b) => b[1] - a[1]).map(([m, c]) => `<tr><td class="num">${esc(m)}</td><td class="r num">${int(c)}</td><td class="r num muted">${ref?.timeline?.calls?.methods?.[m] !== undefined ? int(ref.timeline.calls.methods[m]) : ""}</td></tr>`).join("") || `<tr><td class="muted">none recorded</td></tr>`}</tbody></table>${calls.sends_dropped ? `<div class="sub">${int(calls.sends_dropped)} sends past the log's limit weren't kept.</div>` : ""}</div>`;
+
+  section("Transactions", `${int(txs.length)} sent by the bot`);
+  const txHost = div();
+  const fbar = document.createElement("div"); fbar.className = "btns";
+  fbar.innerHTML = ["all", "orders", "market", "failed", "duplicate"].map((f) => `<button class="btn" data-f="${f}">${f}</button>`).join("");
+  txHost.appendChild(fbar);
+  const txTable = document.createElement("div"); txHost.appendChild(txTable);
+  let txFilter = "all";
+  const drawTx = () => {
+    fbar.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.f === txFilter));
+    const list = txs.filter((x) => txFilter === "all" || (txFilter === "failed" ? !x.ok && !x.duplicate : txFilter === "duplicate" ? x.duplicate : txFilter === "market" ? (x.instructions || []).some((i) => i.order?.kind === "ImmediateOrCancel") : (x.instructions || []).some((i) => i.order)));
+    txTable.innerHTML = "";
+    table(txTable, list, [
+      { key: "step", label: "Turn", r: true, fmt: (x) => int(x.step) },
+      { key: "at", label: "Time", mono: true, fmt: (x) => isNum(x.at) ? `${clock(x.at)} <span class="muted">+${x.at}</span>` : "–" },
+      { key: "ok", label: "", fmt: (x) => x.ok ? `<span class="pos">✓</span>` : x.duplicate ? `<span class="badge warn">duplicate</span>` : `<span class="neg">✗</span>` },
+      { key: "what", label: "Instructions", sort: describeTx, fmt: (x) => esc(describeTx(x)) },
+      { key: "compute_units", label: "CU", r: true, fmt: (x) => int(x.compute_units) },
+      { key: "error", label: "Error", fmt: (x) => x.error ? `<span class="neg" title="${esc(x.error)}">${esc(String(x.error).slice(0, 80))}</span>` : "" },
+      { key: "signature", label: "Signature", mono: true, fmt: (x) => `<span class="muted" title="${esc(x.signature || "")}">${esc(String(x.signature || "").slice(0, 16))}${x.signature ? "…" : ""}</span>` },
+    ], { maxHeight: "460px", limit: 300 });
+    const failedRows = list.filter((x) => !x.ok && (x.logs || []).length).slice(0, 5);
+    if (failedRows.length) {
+      const d = document.createElement("div");
+      d.innerHTML = failedRows.map((x) => `<details><summary>logs of the failed transaction at ${isNum(x.at) ? clock(x.at) : "?"}: ${esc(String(x.error || "").slice(0, 60))}</summary><pre class="code wrap">${esc(x.logs.join("\n"))}</pre></details>`).join("");
+      txTable.appendChild(d);
+    }
+  };
+  fbar.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { txFilter = b.dataset.f; drawTx(); }));
+  drawTx();
+
+  if (making && (tl.taker_orders || []).length) {
+    section("Taker flow", `${int(tl.taker_orders.length)} orders · ${int(informed.filter(Boolean).length)} informed`);
+    const h = div();
+    table(h, tl.taker_orders.map((o, i) => ({ ...o, i, informed: !!informed[i] })), [
+      { key: "at", label: "Time", mono: true, fmt: (o) => `${clock(o.at)} <span class="muted">+${o.at}</span>` },
+      { key: "side", label: "Side", fmt: (o) => `<span class="${o.side === "buy" ? "pos" : "neg"}">${o.side}</span>` },
+      { key: "size", label: "Size", r: true, fmt: (o) => fix(o.size, 3) },
+      { key: "limit_usd", label: "Limit", r: true, fmt: (o) => "$" + fix(o.limit_usd) },
+      { key: "account", label: "Account", r: true },
+      { key: "informed", label: "Informed", fmt: (o) => o.informed ? `<span class="badge warn">informed</span>` : "" },
+      { key: "ok", label: "", fmt: (o) => o.ok ? "" : `<span class="neg" title="${esc(o.error || "")}">failed</span>` },
+    ], { maxHeight: "360px" });
+  }
+
+  section("Scenario", `${int((sc.path || []).length)} waypoints · ${int(sc.duration_slots)} slots (${clock(sc.duration_slots)})`);
+  div(`<details><summary>The scenario as drawn${bot.annotation ? ", with what it was drawn as" : ""}</summary><pre class="code">${esc(JSON.stringify({ annotation: bot.annotation, ...sc, making: sc.making ? { ...sc.making, takers: `${sc.making.takers.length} orders: see Taker flow` } : undefined }, null, 2))}</pre></details>`);
+
+  section("Logs");
+  const logs = div("", "grid2");
+  const logPanel = async (label, path) => {
+    const d = document.createElement("div");
+    d.innerHTML = `<div class="k" style="margin-bottom:6px">${esc(label)}</div><pre class="code wrap" style="max-height:420px">Loading…</pre>`;
+    logs.appendChild(d);
+    try { const text = ansi(await api(fileUrl(n, path), true)); d.querySelector("pre").textContent = text || "(empty)"; }
+    catch (e) { d.querySelector("pre").textContent = e.message; }
+  };
+  logPanel("Bot log", `verifier/bot/${name}.log`);
+  logPanel("Reference log", `verifier/bot/reference/${name}.log`);
+}
+
+route();
+</script>
+</body>
+</html>

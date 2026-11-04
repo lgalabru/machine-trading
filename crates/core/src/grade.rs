@@ -203,10 +203,61 @@ pub struct GradeOptions<'a> {
     /// whatever the rest do, and a bot that ignores turns runs each session
     /// in real time. The report then covers the sessions up to it.
     pub stop_on_disqualify: bool,
+    /// Where to write each session step by step, for review: one file per
+    /// session, as `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
+    /// They hold the scenarios themselves, so they're written once every
+    /// session has ended: a bot can read the verifier's logs while it runs.
+    pub detail_dir: Option<&'a Path>,
+    /// What each scenario was drawn as (a shock's shape, which taker orders
+    /// were informed), recorded in its detail file. Never handed to a bot.
+    pub annotations: Option<&'a [serde_json::Value]>,
+}
+
+/// One session's detail file (see [`GradeOptions::detail_dir`]).
+#[derive(Serialize)]
+struct SessionDetail<'a> {
+    role: &'static str,
+    scenario: &'a Scenario,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotation: Option<&'a serde_json::Value>,
+    disqualified: Option<String>,
+    bound_pnl_usd: f64,
+    report: &'a SessionReport,
+    timeline: &'a session::Timeline,
+}
+
+fn write_details(
+    dir: &Path,
+    role: &'static str,
+    sessions: &[SessionReport],
+    scenarios: &[Scenario],
+    annotations: Option<&[serde_json::Value]>,
+) -> Result<()> {
+    let dir = dir.join(role);
+    std::fs::create_dir_all(&dir).map_err(io_error(&dir))?;
+    for (index, (report, scenario)) in sessions.iter().zip(scenarios).enumerate() {
+        let detail = SessionDetail {
+            role,
+            scenario,
+            annotation: annotations.and_then(|a| a.get(index)),
+            disqualified: disqualification(report),
+            bound_pnl_usd: scenario.bound_usd(report.start_mark_usd),
+            report,
+            timeline: &report.timeline,
+        };
+        // Gzipped: a trial writes two of these per session.
+        let path = dir.join(format!("{}.json.gz", scenario.name));
+        let file = std::fs::File::create(&path).map_err(io_error(&path))?;
+        let mut gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        serde_json::to_writer(&mut gz, &detail)?;
+        gz.finish().map_err(io_error(&path))?;
+    }
+    Ok(())
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     let mut scenarios = opts.scenarios.to_vec();
+    let mut anchored = Vec::new();
     if let Some(reference) = opts.reference_dir {
         let anchors = run_sessions(
             opts.snapshot_dir,
@@ -227,6 +278,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             reference_pnl_usd = anchors.iter().map(|a| a.pnl_usd).sum::<f64>(),
             "reference graded"
         );
+        anchored = anchors;
     }
     let sessions = run_sessions(
         opts.snapshot_dir,
@@ -239,6 +291,18 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     )
     .await?;
     check_timing(&sessions)?;
+    // Every bot has stopped: the scenarios can be written out.
+    if let Some(dir) = opts.detail_dir {
+        // Whatever a bot left there goes first, links included: the
+        // grader writes as root.
+        match std::fs::symlink_metadata(dir) {
+            Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(dir).map_err(io_error(dir))?,
+            Ok(_) => std::fs::remove_file(dir).map_err(io_error(dir))?,
+            Err(_) => {}
+        }
+        write_details(dir, "reference", &anchored, &scenarios, opts.annotations)?;
+        write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
+    }
     let report = score(sessions.into_iter().zip(&scenarios).collect());
     info!(
         reward = report.reward,
@@ -493,7 +557,39 @@ mod tests {
             flow: None,
             competitor: None,
             turns: Default::default(),
+            wall_ms: 0,
+            timeline: Default::default(),
         }
+    }
+
+    #[test]
+    fn details_are_written_gzipped_one_per_session() {
+        use std::io::Read;
+        let dir = std::env::temp_dir().join(format!("mth-details-{}", uuid::Uuid::new_v4()));
+        let annotations = [serde_json::json!({ "shape": "crash" })];
+        write_details(
+            &dir,
+            "bot",
+            &[session(5.0)],
+            &[scenario(Some(2.0))],
+            Some(&annotations),
+        )
+        .unwrap();
+        let mut json = String::new();
+        flate2::read::GzDecoder::new(std::fs::File::open(dir.join("bot/s.json.gz")).unwrap())
+            .read_to_string(&mut json)
+            .unwrap();
+        let detail: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(detail["role"], "bot");
+        assert_eq!(detail["annotation"]["shape"], "crash");
+        assert_eq!(detail["report"]["pnl_usd"], 5.0);
+        assert_eq!(detail["scenario"]["reference_pnl_usd"], 2.0);
+        assert!(detail["timeline"]["steps"].is_array());
+        assert!(
+            detail["report"].get("timeline").is_none(),
+            "only once per file"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// One 10% move with a 100-unit cap at a $100 mark: a $1,000 bound.

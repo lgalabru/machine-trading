@@ -811,7 +811,7 @@ async fn blocking(
     }
 }
 
-fn open_browser(url: &str) {
+pub(crate) fn open_browser(url: &str) {
     let program = if cfg!(target_os = "macos") {
         "open"
     } else {

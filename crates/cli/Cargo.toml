@@ -12,6 +12,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 axum.workspace = true
 clap = { workspace = true, features = ["env"] }
+flate2 = "1"
 futures.workspace = true
 mth-botkit.workspace = true
 mth-core.workspace = true

@@ -6,6 +6,9 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
+borsh = "1"
+bs58 = "0.5"
+flate2 = "1"
 libc.workspace = true
 mth-botkit.workspace = true
 phoenix-rise.workspace = true
