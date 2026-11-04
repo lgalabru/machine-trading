@@ -49,7 +49,10 @@
   .peek { position: fixed; top: 52px; right: 0; bottom: 0; left: 440px; min-width: 640px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -28px 0 60px rgba(0,0,0,.65); z-index: 41; display: flex; flex-direction: column; transform: translateX(104%); transition: transform .22s cubic-bezier(.2,.8,.2,1); }
   .peek.on { transform: none; }
   @media (max-width: 1100px) { .peek { left: 150px; min-width: 0; } }
-  .peek-bar { padding: 14px 26px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .peek-bar { position: relative; padding: 4px 26px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .peek-bar .peek-x { position: absolute; top: 12px; right: 16px; }
+  .peek-title[hidden] { display: none; }
+  .peek-head .runstats { padding-right: 40px; }
   .peek-row { display: flex; align-items: center; gap: 10px; }
   .peek-head .runstats { margin: 14px 0 4px; }
   .peek-head .tabs { margin: 8px 0 -1px; border-bottom: 0; justify-content: center; }
@@ -112,6 +115,7 @@
   .scn-view h1 { font-size: 22px; margin: 0 0 4px; }
   /* A scenario's page: room between its parts. */
   .sv-head .sub { margin-top: 2px; }
+  .sv-head .sv-desc { color: var(--text-2); font-size: 14px; margin-top: 0; }
   .scn-view > .runstats { margin: 18px 0 8px; }
   .sv > .chart, .sv > .pair, .sv > .evcur { margin-top: 10px; }
   .sv > h2 { margin: 40px 0 14px; }
@@ -443,7 +447,7 @@
 </div>
 </div>
 <div class="peek-backdrop" id="peek-backdrop"></div>
-<aside class="peek" id="peek" aria-hidden="true"><div class="peek-bar"><div class="peek-row"><span class="peek-title" id="peek-title"></span><button class="peek-x" id="peek-x" aria-label="Close" title="Close (Esc)">✕</button></div><div class="peek-head" id="peek-head"></div></div><div class="peek-body" id="peek-body"></div></aside>
+<aside class="peek" id="peek" aria-hidden="true"><div class="peek-bar"><span class="peek-title" id="peek-title" hidden></span><button class="peek-x" id="peek-x" aria-label="Close" title="Close (Esc)">✕</button><div class="peek-head" id="peek-head"></div></div><div class="peek-body" id="peek-body"></div></aside>
 <div class="tip" id="tip"></div>
 <script>
 "use strict";
@@ -2003,6 +2007,7 @@ async function renderTrial(n, tab, session) {
   if (tab === "bot") return trialFiles(n, trial, trial.files.map((f) => f.path), "artifacts/app/bot/");
   if (tab === "logs") return trialLogs(n, trial);
   if (tab === "raw") {
+    div(`<dl class="facts" style="margin:4px 0 16px"><dt>Run</dt><dd>${esc(runLabel(t))}</dd><dt>Trial</dt><dd class="mono">${esc(t.trial)}</dd><dt>Task</dt><dd class="mono">${esc(t.task)}</dd><dt>Path</dt><dd class="mono">${esc(t.path)}</dd></dl>`);
     div(`<details open><summary>verifier/report.json (scenarios folded)</summary><pre class="code wrap">${esc(JSON.stringify(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} scenarios: see the Scenarios tab` } : null, null, 2))}</pre></details>
       <details><summary>verifier/reward.json</summary><pre class="code">${esc(JSON.stringify(trial.rewards, null, 2))}</pre></details>
       <details><summary>Harbor config</summary><pre class="code">${esc(JSON.stringify(trial.config, null, 2))}</pre></details>
@@ -2170,7 +2175,8 @@ async function renderSession(n, name) {
   const names = trial.sessions.bot, idx = names.indexOf(name);
   const rep = bot.report, tl = bot.timeline, sc = bot.scenario;
   const making = !!sc.making;
-  div(`<div class="sv-head"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div></div>`);
+  // The breadcrumb names the run and the scenario: here, what it was drawn as.
+  div(`<div class="sv-head"><div><div class="sub sv-desc">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div></div>`);
   const refPnl = ref?.report?.pnl_usd ?? sc.reference_pnl_usd;
   const txs = tl.transactions || [], failed = txs.filter((x) => !x.ok);
   div(`<div class="runstats">
@@ -2269,13 +2275,6 @@ async function renderSession(n, name) {
   }
   group.add(lanes(host, { title: "Timeline", x: X, xfmt: clock, rows, legend: making ? `<span class="muted">○ informed taker orders</span>` : "" }));
   eventCursor(host, group, rows, xEnd);
-  if (steps.some((s) => isNum(s.turn_ms))) {
-    group.add(chart(host, {
-      title: "Turn time", height: 110, x: X, xfmt: clock, yfmt: (v) => `${Math.round(v)}ms`, zero: true,
-      series: [{ label: "bot turn", type: "bars", color: "var(--text-3)", width: tl.slots_per_step * 0.8, data: steps.filter((s) => isNum(s.turn_ms)).map((s) => [s.at, s.turn_ms]), colorOf: (p) => steps.find((s) => s.at === p[0])?.answered === false ? "var(--warn)" : "var(--text-3)", fmt: (v) => `${v} ms` }],
-      readout: (x) => { const s = at(steps.map((q) => [q.at, q]), x)?.[1]; return s && isNum(s.turn_ms) ? `<div class="row"><span>turn ${s.k}</span><span>${s.turn_ms} ms${s.answered === false ? " (overran)" : ""}</span></div>` : ""; },
-    }));
-  }
 
   // Side by side.
   section("Bot and reference", "", host);
