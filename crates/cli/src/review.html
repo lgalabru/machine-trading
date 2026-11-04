@@ -419,7 +419,32 @@
   .step > .head { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; color: var(--text-3); }
   .step > .head b { color: var(--text-2); }
   .step .body { padding: 8px 12px; }
-  .step .msg { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: #e4e4e7; }
+  .step .msg, .st .msg { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: #e4e4e7; }
+  /* The agent's run as a timeline: a rail, a dot per step, pills for what
+     it called. */
+  .tl { position: relative; padding: 6px 0 0 26px; }
+  .tl::before { content: ""; position: absolute; left: 8px; top: 14px; bottom: 10px; width: 1px; background: #2c2c2e; }
+  .st { position: relative; padding: 6px 0 14px; }
+  .st::before { content: ""; position: absolute; left: -22px; top: 10px; width: 9px; height: 9px; border-radius: 99px; background: var(--dot, #8e8e93); box-shadow: 0 0 0 3px var(--bg); }
+  .st.user { --dot: #8e8e93; } .st.say { --dot: #e5e5ea; } .st.tool { --dot: #0a84ff; }
+  .st-h { display: flex; gap: 10px; align-items: baseline; font: 11px var(--mono); color: var(--text-4); margin-bottom: 4px; }
+  .st-h b { color: var(--text-3); font-weight: 600; }
+  .st-h .tag { color: #bf5af2; }
+  .st-b > .msg.md { max-width: 860px; margin: 2px 0 6px; }
+  details.pill { margin: 6px 0; }
+  details.pill > summary { list-style: none; display: inline-flex; align-items: center; gap: 9px; max-width: 100%; padding: 5px 12px 5px 6px; border-radius: 999px; background: #141416; border: 1px solid #2c2c2e; font: 12.5px Inter, ui-sans-serif, system-ui, sans-serif; color: var(--text-2); transition: border-color .12s, background .12s; }
+  details.pill > summary::-webkit-details-marker { display: none; }
+  details.pill > summary::after { content: "›"; color: var(--text-4); font-size: 14px; transition: transform .15s; margin-left: 2px; }
+  details.pill[open] > summary::after { transform: rotate(90deg); }
+  details.pill > summary:hover { background: #1c1c1e; border-color: #3a3a3c; color: var(--text); }
+  details.pill[open] > summary { border-color: #3a3a3c; color: var(--text); }
+  .pill .tb { flex: none; font: 600 10.5px var(--mono); padding: 2px 8px; border-radius: 999px; color: var(--tc); background: color-mix(in srgb, var(--tc) 16%, transparent); }
+  .pill .pl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill .pm { flex: none; font: 11px var(--mono); color: var(--text-4); }
+  .pill-body { margin: 8px 0 6px; }
+  .pill-body pre.code { max-height: 380px; margin: 0 0 6px; }
+  .pill-body pre.code.out { color: var(--text-2); background: #0b0b0d; }
+  .pill-body .msg.doc { padding: 16px 20px; border: 1px solid #2c2c2e; border-radius: 12px; background: #0e0e10; }
   /* Markdown, in the agent's messages and the task's instruction. */
   .step .msg.md { white-space: normal; font-size: 13.5px; line-height: 1.6; max-width: 860px; }
   .md p { margin: 0 0 10px; }
@@ -2101,7 +2126,7 @@ function markdown(text) {
 // numbers, then the tabs.
 function trialHeader(n, t, tab, trial) {
   app.innerHTML = ""; delete app.dataset.task;
-  const tabs = [["sessions", "Scenarios"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
+  const tabs = [["sessions", "Scenarios"], ["agent", "Agent"], ["bot", "Strategy"], ["logs", "Logs"], ["raw", "Report"]];
   document.getElementById("peek-head").innerHTML = runStats(t, trial) +
     `<div class="tabs">${tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join("")}</div>`;
   if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
@@ -2227,13 +2252,26 @@ async function trialAgent(n, trial) {
     const q = query.toLowerCase();
     const shown = steps.filter((s) => (filter === "all" || (filter === "msg" ? s.message && s.source !== "system" : s.tools.length)) &&
       (!q || JSON.stringify(s).toLowerCase().includes(q)));
+    // A timeline of the run: a dot per step, its text, and each tool call
+    // as a pill that opens on its input and output.
+    const TOOL = { Bash: "#0a84ff", Write: "#30d158", Edit: "#30d158", MultiEdit: "#30d158", Read: "#40c8e0", Grep: "#40c8e0", Glob: "#40c8e0", Agent: "#bf5af2", Task: "#bf5af2", TodoWrite: "#ff9f0a", WebFetch: "#ff375f", WebSearch: "#ff375f" };
+    const kb = (n) => n >= 1000 ? `${fix(n / 1000, 1)}k` : String(n);
+    list.className = "tl";
     list.innerHTML = shown.slice(0, 300).map((s) => {
       const off = isNum(t0) ? `+${fix((Date.parse(s.timestamp) - t0) / 60000, 1)}m` : "";
-      const tools = s.tools.map((c) => `<details><summary>${esc(c.name)}${c.description ? ` — ${esc(c.description)}` : ""}</summary><pre class="code wrap">${esc(c.input)}</pre>${c.output !== null && c.output !== undefined ? `<pre class="code wrap" style="color:var(--text-2)">${esc(ansi(c.output))}</pre>` : ""}</details>`).join("");
+      const tools = s.tools.map((c) => {
+        const color = TOOL[c.name] || "#8e8e93";
+        const input = c.name === "Bash" ? highlight(String(c.input || ""), "sh").join("\n") : esc(c.input);
+        const out = c.output !== null && c.output !== undefined ? String(ansi(c.output)) : null;
+        return `<details class="pill"><summary><span class="tb" style="--tc:${color}">${esc(c.name)}</span><span class="pl">${esc(c.description || String(c.input || "").split("\n")[0].slice(0, 90))}</span>${out !== null ? `<span class="pm">${kb(out.length)} out</span>` : ""}</summary>
+          <div class="pill-body"><pre class="code wrap">${input}</pre>${out !== null ? `<pre class="code wrap out">${esc(out) || '<span class="muted">(no output)</span>'}</pre>` : ""}</div></details>`;
+      }).join("");
+      const kind = s.source === "user" ? "user" : s.tools.length ? "tool" : "say";
       const message = s.source === "user" && s.message.length > 1200
-        ? `<details open><summary>${esc(s.id === 1 ? "The task's instruction" : "User message")} (${int(s.message.length)} characters)</summary><div class="msg md">${markdown(s.message)}</div></details>`
+        ? `<details class="pill doc"><summary><span class="tb" style="--tc:#8e8e93">${s.id === 1 ? "Instruction" : "User"}</span><span class="pl">${s.id === 1 ? "The task's instruction" : "A user message"}</span><span class="pm">${kb(s.message.length)} chars</span></summary><div class="pill-body"><div class="msg md doc">${markdown(s.message)}</div></div></details>`
         : s.message ? `<div class="msg md">${markdown(s.message)}</div>` : "";
-      return `<div class="step"><div class="head"><b>#${esc(s.id)}</b><span>${esc(s.source)}</span><span class="num">${off}</span>${s.metrics?.completion_tokens ? `<span class="num">${compact(s.metrics.completion_tokens)} out</span>` : ""}</div><div class="body">${message}${s.reasoning ? `<details><summary>reasoning</summary><pre class="code wrap">${esc(s.reasoning)}</pre></details>` : ""}${tools}</div></div>`;
+      const reasoning = s.reasoning ? `<details class="pill"><summary><span class="tb" style="--tc:#ff9f0a">Thinking</span><span class="pl">${esc(String(s.reasoning).trim().split("\n")[0].slice(0, 90))}</span></summary><div class="pill-body"><div class="msg md">${markdown(s.reasoning)}</div></div></details>` : "";
+      return `<div class="st ${kind}"><div class="st-h"><b>#${esc(s.id)}</b><span>${esc(s.source)}</span><span>${off}</span>${s.metrics?.completion_tokens ? `<span>${compact(s.metrics.completion_tokens)} out</span>` : ""}${s.sidechain ? `<span class="tag">subagent</span>` : ""}</div><div class="st-b">${message}${reasoning}${tools}</div></div>`;
     }).join("") + (shown.length > 300 ? `<div class="sub">${shown.length - 300} more steps; narrow the filter.</div>` : "") || `<div class="empty">No steps match.</div>`;
     bar.querySelectorAll("[data-f]").forEach((b) => b.classList.toggle("on", b.dataset.f === filter));
   };
