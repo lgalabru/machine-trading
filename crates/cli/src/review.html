@@ -55,6 +55,34 @@
   .peek-x { background: none; border: 1px solid var(--line); color: var(--text-2); border-radius: 8px; width: 30px; height: 28px; cursor: pointer; font-size: 13px; }
   .peek-x:hover { color: var(--text); background: #1c1c1e; }
   .peek-body { flex: 1; overflow: auto; padding: 18px 26px 60px; }
+  /* A run's stats: stacked bars, and what the agent did. */
+  .sbars { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 6px; }
+  @media (max-width: 1100px) { .sbars { grid-template-columns: 1fr; } }
+  .sbar { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; }
+  .sbar-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 12px; }
+  .sbar-track { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; }
+  .sbar-track i { display: block; min-width: 3px; }
+  .sbar-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px; font-size: 11.5px; color: var(--text-2); }
+  .sbar-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .sbar-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .insights { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 12px; margin: 12px 0 16px; }
+  @media (max-width: 1300px) { .insights { grid-template-columns: 1fr 1fr; } }
+  .ins-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; min-width: 0; }
+  .ins-card .k { margin-bottom: 8px; }
+  .ins-card .k .muted { text-transform: none; letter-spacing: 0; font-weight: 500; margin-left: 6px; }
+  .tw { display: grid; grid-template-columns: minmax(0, 130px) 1fr 52px 34px; gap: 8px; align-items: center; font-size: 12px; padding: 2px 0; }
+  .tw-k { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+  .tw-bar { height: 8px; border-radius: 4px; background: #1c1c1e; overflow: hidden; }
+  .tw-bar i { display: block; height: 100%; background: var(--ref); border-radius: 4px; }
+  .tw .num { text-align: right; }
+  svg.mini { display: block; width: 100%; height: 70px; }
+  .mini-axis { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--text-4); margin-top: 2px; }
+  dl.facts { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 12px; }
+  dl.facts dt { color: var(--text-3); } dl.facts dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+  .pareto { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
+  svg.pareto-svg { display: block; width: 100%; height: auto; }
+  svg.pareto-svg .ylab { font: 500 10px var(--mono); fill: #8e8e93; }
+  svg.pareto-svg .plab { font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #d1d1d6; }
   /* The grid: models › attempts × sessions. */
   .g-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px 18px 12px; }
   .g-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
@@ -1103,12 +1131,50 @@ function renderOverview() {
   const chipFor = (v) => isNum(v) ? `<span class="delta ${Math.round(v * 100) >= 100 ? "up" : "down"}">${times(v)}</span>` : `<span class="muted">–</span>`;
   div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v)}</td>`).join("")}<td class="num">${chipFor(r.mean)}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
   app.querySelectorAll("td.cell").forEach((td) => td.addEventListener("click", () => { location.hash = taskHref(td.dataset.task); }));
+  // Cost against skill, per task: which models are worth what they cost.
+  section("Skill for the money", "each model's mean skill against its mean agent cost per run; the line is the frontier: no model is both cheaper and better");
+  const pareto = div("", "pareto");
+  for (const t of index.tasks) {
+    const pts = modelOrder.map((m) => {
+      const ts = index.trials.filter((x) => x.task === t.name && x.model === m);
+      return { model: m, cost: mean(ts.map((x) => x.cost_usd)), skill: mean(ts.filter((x) => x.graded).map((x) => x.skill)), n: ts.length };
+    }).filter((p) => isNum(p.cost) && isNum(p.skill));
+    const cardEl = div(`<div class="k">${esc(taskTitle(t.short))}</div>`, "ins-card", pareto);
+    paretoChart(cardEl, pts);
+  }
   section("How bots are judged");
   div([
     `<div class="card"><div class="k">The score is PnL</div><p><b>skill</b> is a bot's total PnL over the hidden set divided by the reference bot's on the same sessions. <b>reward</b> divides it by a hindsight bound no bot reaches.</p></div>`,
     `<div class="card"><div class="k">Risk is a set of limits</div><p>One market, a position cap and a loss limit, checked every step, plus standard RPC only and no liquidation at the end. One breach in any session scores 0.</p></div>`,
     `<div class="card"><div class="k">Reported, not scored</div><p>Worst session, tail loss, max drawdown, profitable share and Sharpe, per trial. Too noisy over a few dozen sessions to weigh into a score.</p></div>`,
   ].join(""), "ov-judge");
+}
+
+// Points by cost (x) and skill (y), the frontier stepped through the ones
+// no other point beats on both.
+function paretoChart(host, pts) {
+  if (!pts.length) { host.insertAdjacentHTML("beforeend", `<div class="muted">Nothing graded yet.</div>`); return; }
+  const W = 420, H = 220, L = 46, R = 16, T = 14, B = 30;
+  const xs = pts.map((p) => p.cost), ys = [...pts.map((p) => p.skill), 1, 0];
+  let x0 = 0, x1 = Math.max(...xs) * 1.15 || 1, y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const py = (y1 - y0) * 0.12 || 0.2; y0 -= py; y1 += py;
+  const sx = (x) => L + (x - x0) / (x1 - x0) * (W - L - R), sy = (y) => T + (y1 - y) / (y1 - y0) * (H - T - B);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pareto-svg" }, host);
+  for (const v of ticks(y0, y1, 4)) { if (v < y0 || v > y1) continue; el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v), stroke: "#2c2c2e" }, svg); el("text", { x: L - 8, y: sy(v) + 4, "text-anchor": "end", class: "ylab" }, svg).textContent = fix(v, 1) + "×"; }
+  for (const v of ticks(x0, x1, 4)) { if (v < x0 || v > x1) continue; el("text", { x: sx(v), y: H - 10, "text-anchor": "middle", class: "ylab" }, svg).textContent = usd(v, 0); }
+  el("line", { x1: L, x2: W - R, y1: sy(1), y2: sy(1), stroke: "#8e8e93", "stroke-dasharray": "4 4", opacity: 0.7 }, svg);
+  el("text", { x: L + 4, y: sy(1) - 5, class: "ylab" }, svg).textContent = "reference";
+  const front = []; let best = -Infinity;
+  for (const p of [...pts].sort((a, b) => a.cost - b.cost || b.skill - a.skill)) if (p.skill > best) { front.push(p); best = p.skill; }
+  if (front.length > 1) el("path", { d: front.map((p, i) => `${i ? `H${sx(p.cost).toFixed(1)}V` : `M${sx(p.cost).toFixed(1)},`}${sy(p.skill).toFixed(1)}`).join(""), fill: "none", stroke: "#5ed16a", "stroke-width": 1.5, opacity: 0.7 }, svg);
+  for (const p of pts) {
+    const on = front.includes(p);
+    const c = el("circle", { cx: sx(p.cost), cy: sy(p.skill), r: on ? 6 : 5, fill: modelColor(p.model), stroke: on ? "#fff" : "#000", "stroke-width": on ? 1.5 : 1 }, svg);
+    const right = sx(p.cost) > W - 110;
+    el("text", { x: sx(p.cost) + (right ? -10 : 10), y: sy(p.skill) - 9, "text-anchor": right ? "end" : "start", class: "plab" }, svg).textContent = shortModel(p.model);
+    c.addEventListener("mousemove", (ev) => showTip(`<b>${esc(shortModel(p.model))}</b><div>skill ${times(p.skill)} · ${usd(p.cost)} a run · ${p.n} run${p.n > 1 ? "s" : ""}</div>${on ? `<div class="muted">on the frontier</div>` : ""}`, ev));
+    c.addEventListener("mouseleave", hideTip);
+  }
 }
 
 // ---------- task ----------
@@ -1525,8 +1591,108 @@ function skillLines(host, { labels, marked, series }) {
   }
 }
 
+// ---------- run stats (after Harbor's viewer, and what it leaves out) ----------
+// A run's time by phase: environment setup, agent setup, the agent, grading.
+function phaseBar(timings, t) {
+  const phases = [
+    ["Env setup", timings?.environment_setup, "#636366"],
+    ["Agent setup", timings?.agent_setup, "#8e8e93"],
+    ["Agent", timings?.agent_execution || t.agent_execution, "var(--ref)"],
+    ["Grading", timings?.verifier || t.verifier_execution, "#bf5af2"],
+  ].map(([k, p, c]) => ({ k, c, ms: span(p) })).filter((p) => isNum(p.ms) && p.ms > 0);
+  if (!phases.length) return "";
+  const total = sum(phases.map((p) => p.ms));
+  const wall = span(t);
+  return `<div class="sbar"><div class="sbar-head"><span class="k">Time</span><span class="muted num">${dur(wall ?? total)} end to end</span></div>
+    <div class="sbar-track">${phases.map((p) => `<i style="flex:${Math.max(p.ms / total, 0.015)};background:${p.c}" title="${p.k}: ${dur(p.ms)}"></i>`).join("")}</div>
+    <div class="sbar-legend">${phases.map((p) => `<span><i style="background:${p.c}"></i>${p.k} <b class="num">${dur(p.ms)}</b> <span class="muted">${pct(p.ms / total, 0)}</span></span>`).join("")}</div></div>`;
+}
+// A run's tokens: cache reads, cache writes, fresh input and output. The
+// cache is most of an agent's bill; a run that misses it costs several times
+// more for the same work.
+function tokenBar(t, fm) {
+  const input = fm?.total_prompt_tokens ?? t.tokens?.input, read = fm?.total_cached_tokens ?? t.tokens?.cache;
+  const write = fm?.extra?.total_cache_creation_input_tokens;
+  const out = fm?.total_completion_tokens ?? t.tokens?.output;
+  if (!isNum(input)) return "";
+  const fresh = Math.max(0, input - (read || 0) - (write || 0));
+  const parts = [["Cache read", read, "#48484a"], ["Cache write", write, "#ff9f0a"], ["Fresh input", fresh, "#0a84ff"], ["Output", out, "#5ed16a"]].filter(([, v]) => isNum(v) && v > 0);
+  const total = sum(parts.map((p) => p[1]));
+  return `<div class="sbar"><div class="sbar-head"><span class="k">Tokens</span><span class="muted num">${compact(total)} · ${pct(isNum(read) ? read / input : null, 0)} of input from cache · ${usd(t.cost_usd ?? fm?.total_cost_usd)}</span></div>
+    <div class="sbar-track">${parts.map(([k, v, c]) => `<i style="flex:${Math.max(v / total, 0.012)};background:${c}" title="${k}: ${int(v)}"></i>`).join("")}</div>
+    <div class="sbar-legend">${parts.map(([k, v, c]) => `<span><i style="background:${c}"></i>${k} <b class="num">${compact(v)}</b></span>`).join("")}</div></div>`;
+}
+// What a tool call was, for grouping: the command for Bash (with cargo's
+// subcommand), the tool's name otherwise.
+function callKind(c) {
+  if (c.name !== "Bash") return c.name;
+  const cmd = String(c.input || "").replace(/^\s*(cd [^&;]+(&&|;)\s*)+/, "").trim();
+  const words = cmd.split(/\s+/).filter((w) => !/^[A-Z_]+=/.test(w));
+  const head = (words[0] || "").split("/").pop();
+  if (["cargo", "just", "git", "npm", "pnpm", "python3", "python"].includes(head) && words[1] && !words[1].startsWith("-")) return `${head} ${words[1]}`;
+  return head || "bash";
+}
+// Where the agent's time went, how its context grew, and what it spent.
+function agentInsights(host, steps, fm) {
+  const ts = steps.map((s) => Date.parse(s.timestamp));
+  if (steps.length < 2 || !ts.every(isNum)) return;
+  const t0 = ts[0];
+  // A step's time runs to the next step: split among its tool calls.
+  const kinds = new Map();
+  steps.forEach((s, i) => {
+    const ms = i + 1 < steps.length ? ts[i + 1] - ts[i] : 0;
+    const calls = s.tools.length ? s.tools : [{ name: s.source === "agent" ? "thinking / writing" : s.source, input: "" }];
+    for (const c of calls) {
+      const k = c.name === "thinking / writing" ? c.name : callKind(c);
+      const e = kinds.get(k) || { k, n: 0, ms: 0 };
+      e.n += s.tools.length ? 1 : 0; e.ms += ms / calls.length;
+      kinds.set(k, e);
+    }
+  });
+  const rows = [...kinds.values()].sort((a, b) => b.ms - a.ms);
+  const total = sum(rows.map((r) => r.ms)) || 1;
+  const top = rows.slice(0, 9);
+  const rest = rows.slice(9);
+  if (rest.length) top.push({ k: `${rest.length} others`, n: sum(rest.map((r) => r.n)), ms: sum(rest.map((r) => r.ms)) });
+  // Context: each step's prompt; cost: running total.
+  const ctx = steps.map((s) => s.metrics?.prompt_tokens).filter(isNum);
+  let acc = 0; const cost = steps.map((s) => (acc += s.metrics?.cost_usd || 0));
+  const mins = ts.map((x) => (x - t0) / 60000);
+  const stops = {}; for (const s of steps) if (s.stop_reason) stops[s.stop_reason] = (stops[s.stop_reason] || 0) + 1;
+  const sub = steps.filter((s) => s.sidechain).length, copied = steps.filter((s) => s.copied).length, reasoned = steps.filter((s) => s.reasoning).length;
+  const models = [...new Set(steps.map((s) => s.model).filter(Boolean))];
+  const box = document.createElement("div");
+  box.className = "insights";
+  box.innerHTML = `<div class="ins-card"><div class="k">Where the agent's time went</div>
+      ${top.map((r) => `<div class="tw"><span class="tw-k mono" title="${esc(r.k)}">${esc(r.k)}</span><span class="tw-bar"><i style="width:${(r.ms / total * 100).toFixed(1)}%"></i></span><span class="num">${dur(r.ms)}</span><span class="num muted">${r.n ? `${r.n}×` : ""}</span></div>`).join("")}
+    </div>
+    <div class="ins-card"><div class="k">Context per step <span class="muted">peak ${compact(Math.max(0, ...ctx))} tokens</span></div>${miniArea(mins.slice(0, ctx.length), ctx, "#0a84ff", (v) => compact(v))}
+      <div class="k" style="margin-top:12px">Cost so far <span class="muted">${usd(acc)}</span></div>${miniArea(mins, cost, "#5ed16a", (v) => usd(v, 0))}</div>
+    <div class="ins-card"><div class="k">The run</div>
+      <dl class="facts">
+        <dt>Agent</dt><dd>${esc(models.join(", ") || "–")}</dd>
+        <dt>Steps</dt><dd>${int(steps.length)} · ${int(reasoned)} with reasoning</dd>
+        <dt>Turn ends</dt><dd>${Object.entries(stops).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${v}`).join(" · ") || "–"}</dd>
+        <dt>Subagents</dt><dd>${sub ? `${int(sub)} steps` : "none"}</dd>
+        <dt>Compaction</dt><dd>${copied ? `${int(copied)} steps copied after a summary` : "none"}</dd>
+        <dt>Cache writes</dt><dd>${compact(fm?.extra?.total_cache_creation_input_tokens)} tokens</dd>
+        <dt>Service tier</dt><dd>${esc((fm?.extra?.service_tiers || []).join(", ") || "–")}</dd>
+      </dl></div>`;
+  host.appendChild(box);
+}
+// A small area chart over the agent's minutes.
+function miniArea(xs, ys, color, fmt) {
+  if (ys.length < 2) return `<div class="muted">–</div>`;
+  const W = 320, H = 70, P = 2;
+  const x0 = xs[0], x1 = xs[xs.length - 1] || 1, hi = Math.max(...ys) || 1;
+  const sx = (x) => P + (x - x0) / (x1 - x0 || 1) * (W - 2 * P), sy = (y) => H - P - y / hi * (H - 2 * P - 10);
+  const d = ys.map((y, i) => `${i ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(y).toFixed(1)}`).join("");
+  const id = "m" + Math.random().toString(36).slice(2, 7);
+  return `<svg class="mini" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".35"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${d}L${sx(xs[ys.length - 1])},${H}L${sx(xs[0])},${H}Z" fill="url(#${id})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg><div class="mini-axis"><span>0m</span><span>${fmt(hi)} peak</span><span>${Math.round(x1)}m</span></div>`;
+}
+
 // ---------- trial ----------
-function trialHeader(n, t, tab) {
+function trialHeader(n, t, tab, trial) {
   app.innerHTML = ""; delete app.dataset.task;
   div(`<h1>${esc(runLabel(t))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
   const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
@@ -1541,6 +1707,7 @@ function trialHeader(n, t, tab) {
     ${card("Cost", usd(t.cost_usd), `${compact(t.tokens?.input)} input · ${compact(t.tokens?.cache)} cached`)}
     ${card("Grading", dur(verifierMs), t.eval_seed_sha256 ? `set ${String(t.eval_seed_sha256).slice(0, 12)}…` : "")}
   </div>`);
+  div(phaseBar(trial?.timings, t) + tokenBar(t, null), "sbars");
   if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
   const tabs = [["sessions", "Sessions"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
   div(tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
@@ -1549,7 +1716,7 @@ function trialHeader(n, t, tab) {
 async function renderTrial(n, tab) {
   const trial = await api(`/api/trial/${n}`);
   const t = trial.summary;
-  trialHeader(n, t, tab);
+  trialHeader(n, t, tab, trial);
   if (tab === "sessions") return trialSessions(n, trial);
   if (tab === "agent") return trialAgent(n, trial);
   if (tab === "bot") return trialFiles(n, trial, trial.files.map((f) => f.path), "artifacts/app/bot/");
@@ -1641,6 +1808,7 @@ async function trialAgent(n, trial) {
     ${card("Output tokens", compact(fm.total_completion_tokens), "")}
     ${card("Cost", usd(fm.total_cost_usd), "")}
   </div>`;
+  agentInsights(host, steps, fm);
   // Activity: tool calls over the agent's time.
   if (isNum(t0) && steps.length > 1) {
     const tEnd = Date.parse(steps[steps.length - 1].timestamp);

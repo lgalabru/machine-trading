@@ -36,16 +36,16 @@ mtx bench review 0.9.0                       # browse a published release
 mtx bench compare 0.9.0...0.8.0 [--open]     # skill by task and model, and the change
 ```
 
-- **Review page:** a breadcrumb (`mtx › release › task › trial ›
-  session`, with menus to switch release or task), the tasks as a column of tiles on the left, and
-  an overview of the bench: a leaderboard of skill by model and task. A
-  task adds its equity curves, with the models as cards on the right, and
-  one grid of models › attempts × sessions: a cell is one attempt's bot on
-  one hidden session; a column is that session across every attempt. Below
-  them, each trial's sessions against the reference, the agent's
-  trajectory, the bot it wrote, and a step-by-step timeline of every session
-  (prices, orders, position, PnL and decoded transactions). Timelines need
-  the detail files that the verifier writes with `mtx grade --details`.
+- **Review page:** a breadcrumb (`mtx › release › task › run › session`),
+  the tasks as a column of tiles, and an overview: a leaderboard of skill
+  by model and task, and skill against cost. A task shows its equity
+  curves and one grid of runs × sessions. A run is one model's attempt (a
+  Harbor trial); a session is one hidden scenario every run shares. A row
+  opens the run in a side panel: its time and token breakdowns, where the
+  agent's time went, its context and cost over time, the bot and the logs.
+  A column replays that session for every run; a cell opens one run's
+  session. Session timelines need the detail files the verifier writes
+  with `mtx grade --details`.
 - **Published releases:** small enough to commit, at a few hundred KB a
   trial. A release holds the results, reports, session detail files, the
   bot's source and the trajectory, gzipped. Publishing refuses any release

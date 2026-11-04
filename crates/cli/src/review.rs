@@ -927,6 +927,13 @@ async fn get_trajectory(
                 "reasoning": step.get("reasoning_content").map(|r| clip(&text_of(r), MAX_MESSAGE_CHARS)),
                 "tools": tools,
                 "metrics": step["metrics"],
+                // What Harbor records and its viewer doesn't show: why the
+                // turn ended, subagent and compacted-context steps, LLM calls.
+                "stop_reason": step["extra"]["stop_reason"],
+                "sidechain": step["extra"]["is_sidechain"],
+                "copied": step["is_copied_context"],
+                "llm_calls": step["llm_call_count"],
+                "model": step["model_name"],
             })
         })
         .collect();
