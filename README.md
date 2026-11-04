@@ -195,6 +195,29 @@ just test lint                                     # unit tests and clippy
 `target/logs/`. Don't run heavy builds while grading: slots advance on the
 wall clock, and a starved machine gives bots fewer looks per slot.
 
+### Review a bench
+
+```sh
+just bench                          # results go to jobs/bench/<batch>/
+mth bench review jobs/bench/<batch> # or `just review jobs/bench/<batch>`
+```
+
+`mth bench review` opens a page over everything under the path: a batch, a
+Harbor job or one trial. It shows a leaderboard per task (skill, reward, PnL,
+disqualifications, timeouts, agent time and cost by model, and skill by
+trial). Each trial has its sessions against the reference's, the agent's
+trajectory (every message, tool call and output, with an activity strip),
+the bot it wrote, and the verifier's logs. Each session is a timeline: price
+(mark, index, the planned level, the book's best bid and ask, the bot's
+orders), position and PnL against the reference's, the drawdown, and lanes
+of events. The lanes show the scenario's moves, the account's fills, every
+transaction the bot sent (decoded, with failures and duplicates), refused
+calls, overrun turns, and for market making each taker order with the
+informed ones marked. Session timelines come from the detail files the
+verifier writes to `verifier/sessions/` (`mth grade --details`) once every
+bot has stopped: trials graded before those files existed show their
+sessions as a table only.
+
 ### Author and play scenarios
 
 `mth scenario new` has a coding agent write a

@@ -197,6 +197,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
       echo "the batch's secret appears in the job files above"; exit 1
     fi
     python3 -I bench/report.py "$batch"
+    echo "browse it: just review $batch"
+
+# Browse a bench's results: a batch, a Harbor job or one trial.
+review path:
+    cargo run --release -q -- bench review {{path}}
 
 # Copy the reference bot into the task's solution.
 solution:

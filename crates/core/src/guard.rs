@@ -25,18 +25,24 @@
 //!
 //! [`Guard::internal`] serves the grader's own clients the same way, with no
 //! allowlist and no turns.
+//!
+//! The bot's guard also keeps a [`CallLog`]: every method it was asked for,
+//! and each send and refusal with the turn it came in, for the session's
+//! review.
 
 use std::{
+    collections::BTreeMap,
     net::SocketAddr,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use axum::{
     Router, body::Bytes, extract::State, http::StatusCode, response::IntoResponse, routing::post,
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tracing::warn;
@@ -116,6 +122,49 @@ const KEEP_COMMITMENT: &[&str] = &[
     "getTransaction",
 ];
 
+/// Sends a [`CallLog`] keeps one by one; past this it only counts them, so a
+/// bot that floods the guard can't grow the grader's memory without bound.
+const MAX_LOGGED_SENDS: usize = 50_000;
+/// [`GuardState::step`] before the first turn.
+const NO_STEP: u64 = u64::MAX;
+
+/// What a bot asked the guard for in a session.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct CallLog {
+    /// Calls by method, refused ones included.
+    pub methods: BTreeMap<String, u64>,
+    /// Every `sendTransaction` forwarded, in order (up to [`MAX_LOGGED_SENDS`]).
+    pub sends: Vec<SendRecord>,
+    /// Sends past [`MAX_LOGGED_SENDS`], counted but not kept.
+    pub sends_dropped: u64,
+    /// Refused calls, in order: methods bots may not use.
+    pub refused: Vec<CallRecord>,
+    /// Sends refused because they came while the world moved.
+    pub late: Vec<CallRecord>,
+}
+
+/// A `sendTransaction` the guard forwarded, and what the surfnet answered.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SendRecord {
+    /// The turn it came in, if it came in one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// The surfnet's error, if it refused the transaction (a failed
+    /// preflight, say).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A call the guard refused.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CallRecord {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u64>,
+    pub method: String,
+}
+
 pub struct Guard {
     url: String,
     state: Arc<GuardState>,
@@ -132,6 +181,19 @@ struct GuardState {
     /// Whether the bot may send: true outside lockstep sessions.
     turn_open: AtomicBool,
     late_sends: AtomicUsize,
+    /// The bot's current turn, or [`NO_STEP`].
+    step: AtomicU64,
+    log: Mutex<CallLog>,
+}
+
+impl GuardState {
+    fn step(&self) -> Option<u64> {
+        Some(self.step.load(Ordering::SeqCst)).filter(|k| *k != NO_STEP)
+    }
+
+    fn log(&self) -> std::sync::MutexGuard<'_, CallLog> {
+        self.log.lock().expect("guard lock")
+    }
 }
 
 impl Guard {
@@ -159,6 +221,8 @@ impl Guard {
             refused: Mutex::default(),
             turn_open: AtomicBool::new(true),
             late_sends: AtomicUsize::new(0),
+            step: AtomicU64::new(NO_STEP),
+            log: Mutex::default(),
         });
         let app = Router::new()
             .route("/", post(handle))
@@ -192,6 +256,16 @@ impl Guard {
     pub fn late_sends(&self) -> usize {
         self.state.late_sends.load(Ordering::SeqCst)
     }
+
+    /// The turn calls count toward from now on, in the [`CallLog`].
+    pub fn set_step(&self, k: u64) {
+        self.state.step.store(k, Ordering::SeqCst);
+    }
+
+    /// What the bot asked for so far.
+    pub fn call_log(&self) -> CallLog {
+        self.state.log().clone()
+    }
 }
 
 impl Drop for Guard {
@@ -211,6 +285,13 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
         Value::Array(calls) => calls.iter().collect(),
         call => vec![call],
     };
+    if state.allowlist {
+        let mut log = state.log();
+        for call in &calls {
+            let method = call["method"].as_str().unwrap_or("<missing>");
+            *log.methods.entry(method.to_string()).or_default() += 1;
+        }
+    }
     let refusals: Vec<Value> = calls
         .iter()
         .filter_map(|call| refusal(&state, call).or_else(|| late(&state, call)))
@@ -249,7 +330,11 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
         Ok(response) => {
             let status =
                 StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-            match response.bytes().await {
+            let bytes = response.bytes().await;
+            if let Ok(bytes) = &bytes {
+                record_sends(&state, &request, bytes);
+            }
+            match bytes {
                 Ok(bytes) if statuses.iter().any(|s| *s) => {
                     match serde_json::from_slice::<Value>(&bytes) {
                         Ok(mut reply) => {
@@ -280,6 +365,52 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
             }
         }
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
+/// Log the bot's sends in `request` with what `reply` says of them.
+fn record_sends(state: &GuardState, request: &Value, reply: &[u8]) {
+    let is_send = |call: &Value| call["method"].as_str() == Some("sendTransaction");
+    if !state.allowlist {
+        return;
+    }
+    let sends: Vec<&Value> = match request {
+        Value::Array(calls) => calls.iter().filter(|c| is_send(c)).collect(),
+        call if is_send(call) => vec![call],
+        _ => return,
+    };
+    if sends.is_empty() {
+        return;
+    }
+    let reply: Value = serde_json::from_slice(reply).unwrap_or(Value::Null);
+    let answer = |call: &Value| -> Value {
+        match &reply {
+            Value::Array(replies) => replies
+                .iter()
+                .find(|r| r["id"] == call["id"])
+                .cloned()
+                .unwrap_or(Value::Null),
+            reply => reply.clone(),
+        }
+    };
+    let step = state.step();
+    let mut log = state.log();
+    for call in sends {
+        if log.sends.len() >= MAX_LOGGED_SENDS {
+            log.sends_dropped += 1;
+            continue;
+        }
+        let answer = answer(call);
+        log.sends.push(SendRecord {
+            step,
+            signature: answer["result"].as_str().map(str::to_string),
+            error: answer.get("error").map(|e| {
+                e["message"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| e.to_string())
+            }),
+        });
     }
 }
 
@@ -375,6 +506,10 @@ fn executed_is_final(reply: &mut Value) {
 fn late(state: &GuardState, call: &Value) -> Option<Value> {
     let response = closed_for(state, call)?;
     state.late_sends.fetch_add(1, Ordering::SeqCst);
+    state.log().late.push(CallRecord {
+        step: state.step(),
+        method: "sendTransaction".into(),
+    });
     Some(response)
 }
 
@@ -394,6 +529,10 @@ fn refusal(state: &GuardState, call: &Value) -> Option<Value> {
     let response = refusal_for(state, call)?;
     let method = call["method"].as_str().unwrap_or("<missing>").to_string();
     warn!(method, "rpc guard refused a call");
+    state.log().refused.push(CallRecord {
+        step: state.step(),
+        method: method.clone(),
+    });
     state.refused.lock().expect("guard lock").push(method);
     Some(response)
 }
@@ -436,6 +575,8 @@ mod tests {
             refused: Mutex::default(),
             turn_open: AtomicBool::new(true),
             late_sends: AtomicUsize::new(0),
+            step: AtomicU64::new(NO_STEP),
+            log: Mutex::default(),
         }
     }
 
@@ -477,6 +618,41 @@ mod tests {
         assert!(late(&bot, &read).is_none(), "reads pass between turns");
         assert_eq!(bot.late_sends.load(Ordering::SeqCst), 1);
         assert!(bot.refused.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_log_keeps_sends_and_refusals_by_turn() {
+        let bot = state(true);
+        bot.step.store(3, Ordering::SeqCst);
+        let send = |id: u64| json!({ "jsonrpc": "2.0", "id": id, "method": "sendTransaction" });
+        record_sends(
+            &bot,
+            &send(1),
+            br#"{"jsonrpc":"2.0","id":1,"result":"sig-a"}"#,
+        );
+        let batch = json!([send(2), { "jsonrpc": "2.0", "id": 3, "method": "getSlot" }, send(4)]);
+        record_sends(
+            &bot,
+            &batch,
+            br#"[{"id":2,"result":"sig-b"},{"id":3,"result":7},{"id":4,"error":{"code":-32002,"message":"preflight failed"}}]"#,
+        );
+        assert!(refusal(&bot, &json!({ "id": 5, "method": "surfnet_setAccount" })).is_some());
+        let log = bot.log().clone();
+        let signatures: Vec<_> = log.sends.iter().map(|s| s.signature.as_deref()).collect();
+        assert_eq!(signatures, [Some("sig-a"), Some("sig-b"), None]);
+        assert_eq!(log.sends[2].error.as_deref(), Some("preflight failed"));
+        assert!(log.sends.iter().all(|s| s.step == Some(3)));
+        assert_eq!(
+            log.refused,
+            [CallRecord {
+                step: Some(3),
+                method: "surfnet_setAccount".into()
+            }]
+        );
+        // The grader's own guard keeps nothing.
+        let grader = state(false);
+        record_sends(&grader, &send(1), br#"{"id":1,"result":"sig"}"#);
+        assert!(grader.log().sends.is_empty());
     }
 
     #[test]

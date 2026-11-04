@@ -15,6 +15,7 @@ mod acp;
 mod author;
 mod charts;
 mod play;
+mod review;
 mod ui;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
@@ -51,6 +52,9 @@ enum Command {
     /// Market scenarios: the price paths sessions replay.
     #[command(subcommand)]
     Scenario(ScenarioCommand),
+    /// Bench results: what `just bench` and Harbor runs leave behind.
+    #[command(subcommand)]
+    Bench(BenchCommand),
     /// Run a bot through scenarios and score it against the reference PnL.
     Grade {
         #[command(flatten)]
@@ -85,6 +89,10 @@ enum Command {
         /// Write the full per-scenario report here (it also goes to stdout).
         #[arg(long)]
         report: Option<PathBuf>,
+        /// Write each session step by step here, for `mth bench review`:
+        /// `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
+        #[arg(long)]
+        details: Option<PathBuf>,
     },
     /// Run the reference bot through scenarios and save its PnL in each file.
     Calibrate {
@@ -119,6 +127,23 @@ impl Sessions {
             .map(|path| Ok((path.clone(), Scenario::load(path)?)))
             .collect()
     }
+}
+
+#[derive(Subcommand)]
+enum BenchCommand {
+    /// Browse a bench's results in a web UI: the leaderboard, each trial's
+    /// sessions against the reference's, every session step by step, the
+    /// agent's trajectory and the bot it wrote.
+    Review {
+        /// A batch (jobs/bench/<batch>), a Harbor job, or one trial.
+        path: PathBuf,
+        /// Server port; 0 picks a free one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Don't open a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -313,6 +338,21 @@ async fn run() -> Result<()> {
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
 
     let output = match cli.command {
+        Command::Bench(BenchCommand::Review {
+            path,
+            port,
+            no_open,
+        }) => {
+            let summary = review::review(
+                path,
+                review::ReviewOptions {
+                    port,
+                    open: !no_open,
+                },
+            )
+            .await?;
+            serde_json::to_string_pretty(&summary)?
+        }
         Command::Snapshot(SnapshotCommand::Prepare {
             out,
             fork_rpc,
@@ -435,14 +475,23 @@ async fn run() -> Result<()> {
             stop_on_disqualify,
             reward,
             report,
+            details,
         } => {
             let mut regimes: Option<Vec<String>> = None;
+            // What each drawn scenario was drawn as, for its detail file.
+            let mut annotations: Option<Vec<serde_json::Value>> = None;
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
                     let (seed, hash) = eval_seed()?;
                     let scenarios = match family {
                         Family::FlashCrash => {
                             let drawn = ShockFamily::spcx().draw_set("hidden", count, seed);
+                            annotations = Some(
+                                drawn
+                                    .iter()
+                                    .map(|(_, shape)| serde_json::json!({ "shape": shape }))
+                                    .collect(),
+                            );
                             if tell_regime {
                                 regimes = Some(
                                     drawn
@@ -459,6 +508,14 @@ async fn run() -> Result<()> {
                         Family::MarketMaking => {
                             let drawn =
                                 MakingFamily::spcx().sample_set_labeled("hidden", count, seed);
+                            annotations = Some(
+                                drawn
+                                    .iter()
+                                    .map(
+                                        |(_, informed)| serde_json::json!({ "informed": informed }),
+                                    )
+                                    .collect(),
+                            );
                             if tell_regime {
                                 // The informed orders, by slot and side: what
                                 // a perfect reader of the tape would know.
@@ -510,6 +567,8 @@ async fn run() -> Result<()> {
                 anchor_jobs,
                 regimes: regimes.as_deref(),
                 stop_on_disqualify,
+                detail_dir: details.as_deref(),
+                annotations: annotations.as_deref(),
             })
             .await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
