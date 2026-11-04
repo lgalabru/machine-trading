@@ -1,10 +1,10 @@
 //! What the viewer charts: one chart per venue and dimension.
 //!
 //! Every override lands on a chart. Overrides that move Phoenix prices go to
-//! the Phoenix price chart, with one series per market, which mth samples
+//! the Phoenix price chart, with one series per market, which mtx samples
 //! every slot. Every other template gets a chart for its venue and what it
 //! changes (funding, fees, a lending rate…), so values in different units
-//! never share an axis. mth doesn't sample those yet: their charts show when
+//! never share an axis. mtx doesn't sample those yet: their charts show when
 //! each override lands, not a line.
 
 use serde::Serialize;
@@ -17,7 +17,7 @@ use crate::author::{self, Markets};
 const MARKET_MOVE: &str = "phoenix-market-move";
 const ORACLE_PRICE: &str = "phoenix-oracle-price";
 const MARKET_UNCROSS: &str = "phoenix-market-uncross";
-/// The id of the one chart mth samples.
+/// The id of the one chart mtx samples.
 pub const PHOENIX_PRICE: &str = "phoenix:price";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -25,7 +25,7 @@ pub struct Chart {
     pub id: String,
     pub venue: String,
     pub title: String,
-    /// Whether mth samples this chart's series every slot. A chart that
+    /// Whether mtx samples this chart's series every slot. A chart that
     /// isn't tracked only shows its overrides.
     pub tracked: bool,
     pub series: Vec<Series>,
@@ -198,7 +198,7 @@ fn venue(protocol: &str) -> String {
 }
 
 /// What a template changes, so overrides in the same units share a chart:
-/// `(id, title)`. Templates mth doesn't know get a chart of their own.
+/// `(id, title)`. Templates mtx doesn't know get a chart of their own.
 fn dimension(template_id: &str, name: &str) -> (String, String) {
     let (id, title) = match template_id {
         "phoenix-market-funding" => ("funding", "Funding"),

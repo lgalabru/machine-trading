@@ -5,7 +5,7 @@ and the bot is graded on market scenarios replayed on an offline mainnet
 snapshot restored with [Surfpool](https://github.com/solana-foundation/surfpool).
 
 The verifier runs with no network and receives only the bot. It draws the
-hidden set from the batch's secret (`MTH_EVAL_SEED`), so no task ships one,
+hidden set from the batch's secret (`MTX_EVAL_SEED`), so no task ships one,
 and grades the reference bot on it first. Every cheatcode is locked before
 the bot starts, the surfnet answers only at a secret path, and the bot
 reaches the chain through a proxy that forwards standard Solana RPC methods
@@ -38,7 +38,7 @@ bots.
     move, so the same order sent twice is the same transaction, and the
     chain runs it once. A detail file marks every repeat.
   - Session reports gain `wall_ms`.
-  - **`mth bench review <path>`** browses a batch, a job or a trial (see the
+  - **`mtx bench review <path>`** browses a batch, a job or a trial (see the
     repository README).
 
 - **0.9.0.** Grades replay, hidden sets stay hidden, and a ladder checks
@@ -46,7 +46,7 @@ bots.
   - **A lockstep world.** The grader moves the world one step (two slots) at
     a time: the step's blocks land the scenario's move, then its takers and
     its maker act, then the bot gets the step over a turn socket
-    (`mth-turn-1`, `mth_botkit::Turns`) and the world waits for it, up to
+    (`mtx-turn-1`, `mtx_botkit::Turns`) and the world waits for it, up to
     5 s a turn. The same bot on the same session trades the same way every
     time; in 0.8.0 the grader's maker raced the bot in real time, and the
     same market-making reference made $19.6 in one run and $49 in the next.
@@ -132,15 +132,15 @@ bots.
   between reads is no longer disqualified by mistake.
 - **0.6.0.** Each scenario carries a [mandate](../../specs/mandate.md):
   the market the bot may trade, its position cap and its drawdown limit,
-  with the same values as before. Bots get a copy in `MTH_MANDATE`, next to
+  with the same values as before. Bots get a copy in `MTX_MANDATE`, next to
   the variables they already read. New rule: a bot may hold positions or
   orders only in SPCX. Phoenix offline accepted orders on other markets,
   and nothing checked them. 0.6.0 also republishes the rename from `mt` to
-  `mth` consistently: 0.5.0's agent image used `mth` while its task files
+  `mtx` consistently: 0.5.0's agent image used `mtx` while its task files
   and verifier image used `mt`.
 - **0.5.0.** The project is now Machine Trading: the dataset moves from
   `solana-foundation/open-trading` to `solana-foundation/machine-trading`,
-  and the CLI, SDK and contract variables from `ott`/`OTT_*` to `mth`/`MTH_*`.
+  and the CLI, SDK and contract variables from `ott`/`OTT_*` to `mtx`/`MTX_*`.
   `phoenix-flash-crash` trades SPCX, Phoenix's SpaceX perpetual, instead of
   SOL, on a snapshot from 2026-10-29, with a 70 SPCX position cap (about 1×
   collateral, as before). The family's paths no longer give the script
@@ -156,7 +156,7 @@ bots.
   it doesn't saturate; the reference is a baseline at ~0.2. A session may
   not draw down more than $1,000 from its peak, and risk diagnostics
   (worst session, tail loss, drawdown, profitable share, Sharpe) are
-  reported. Bots build on `luce`, re-exported by `mth-botkit`.
+  reported. Bots build on `luce`, re-exported by `mtx-botkit`.
 - **0.3.0.** `phoenix-flash-crash`: a stronger reference that scales into the
   crash in two tranches and holds for the rebound, with a slide stop (the
   0.2.0 reference left most of the rebound on the table, and agents beat it

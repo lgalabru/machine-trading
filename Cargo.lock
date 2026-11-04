@@ -4542,51 +4542,51 @@ dependencies = [
 ]
 
 [[package]]
-name = "mth-bot-dip-buyer"
+name = "mtx-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mth-botkit",
+ "mtx-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mth-bot-maker"
+name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mth-botkit",
+ "mtx-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mth-bot-reference"
+name = "mtx-bot-reference"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mth-botkit",
+ "mtx-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mth-bot-starter"
+name = "mtx-bot-starter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mth-botkit",
+ "mtx-botkit",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "mth-botkit"
+name = "mtx-botkit"
 version = "0.1.0"
 dependencies = [
  "luce",
@@ -4604,7 +4604,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mth-cli"
+name = "mtx-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4612,8 +4612,8 @@ dependencies = [
  "clap",
  "flate2",
  "futures 0.3.34",
- "mth-botkit",
- "mth-core",
+ "mtx-botkit",
+ "mtx-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4631,7 +4631,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mth-core"
+name = "mtx-core"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -4640,7 +4640,7 @@ dependencies = [
  "flate2",
  "futures 0.3.34",
  "libc",
- "mth-botkit",
+ "mtx-botkit",
  "phoenix-rise",
  "reqwest",
  "serde",

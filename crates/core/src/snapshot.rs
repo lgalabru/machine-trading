@@ -84,7 +84,7 @@ pub async fn prepare(opts: PrepareOptions) -> Result<Manifest> {
         .price(mark_price_usd * 0.5)
         .num_base_lots(phoenix.base_units_to_lots(market, 1.0))
         .build()?;
-    mth_botkit::send(
+    mtx_botkit::send(
         &rpc,
         &warmup,
         phoenix.tx().place_limit_order(bid).await?,
@@ -93,7 +93,7 @@ pub async fn prepare(opts: PrepareOptions) -> Result<Manifest> {
     let cancel = phoenix
         .tx()
         .build_cancel_all_orders(warmup.pubkey(), trader, &opts.symbol)?;
-    mth_botkit::send(&rpc, &warmup, cancel, "warmup cancel")?;
+    mtx_botkit::send(&rpc, &warmup, cancel, "warmup cancel")?;
 
     // Scenario templates fetch accounts the trading path never reads (oracle
     // feeds, maker state). Move the market to where it already is so they load
@@ -271,7 +271,7 @@ async fn crash_test(
         .price(bid_price_usd)
         .num_base_lots(phoenix.base_units_to_lots(market, 5.0))
         .build()?;
-    mth_botkit::send(
+    mtx_botkit::send(
         &rpc,
         &bot,
         phoenix.tx().place_limit_order(bid).await?,

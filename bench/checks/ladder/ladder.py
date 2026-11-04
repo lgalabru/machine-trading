@@ -2,7 +2,7 @@
 
 Each task's rungs and rules are in `<task>.json`. For each set, the ladder
 draws a fresh secret (never printed), grades every rung on the hidden set it
-seeds with `mth grade --draw`, and scores each rung's skill: its total PnL
+seeds with `mtx grade --draw`, and scores each rung's skill: its total PnL
 over the reference's. Then it checks:
 
 - the order rule, on every set: `a < b` compares total PnL (as graded:
@@ -17,7 +17,7 @@ over the reference's. Then it checks:
 - that nothing a rung did was refused or disqualified, except rungs marked
   `may_breach` (the blind bets at the full cap break the drawdown limit).
 
-Usage: python3 ladder.py <task> --mth target/release/mth --snapshot DIR
+Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--out DIR]
 """
 
@@ -36,19 +36,19 @@ ROOT = os.path.abspath(os.path.join(HERE, "../../.."))
 BOOTSTRAP_DRAWS = 2000
 
 
-def grade(mth, snapshot, family, count, jobs, rung, secret, out):
+def grade(mtx, snapshot, family, count, jobs, rung, secret, out):
     report = os.path.join(out, f"{rung['name']}.json")
     if os.path.exists(report):
         with open(report) as f:
             return json.load(f)
     command = [
-        mth, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
+        mtx, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
         "--snapshot", snapshot, "--bot", os.path.join(ROOT, rung["dir"]),
         "--logs", os.path.join(out, "logs", rung["name"]), "--report", report,
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
-    env = dict(os.environ, MTH_EVAL_SEED=secret)
+    env = dict(os.environ, MTX_EVAL_SEED=secret)
     # A failed grade is an infrastructure failure (a session that couldn't
     # set up), not a score: try once more before giving up on the rung.
     for attempt in (1, 2):
@@ -57,7 +57,7 @@ def grade(mth, snapshot, family, count, jobs, rung, secret, out):
         if done.returncode == 0:
             break
     else:
-        raise SystemExit(f"{rung['name']}: mth grade failed twice; see {out}/{rung['name']}.log")
+        raise SystemExit(f"{rung['name']}: mtx grade failed twice; see {out}/{rung['name']}.log")
     with open(report) as f:
         return json.load(f)
 
@@ -111,7 +111,7 @@ def holds(rule, skill):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("task")
-    parser.add_argument("--mth", required=True)
+    parser.add_argument("--mtx", required=True)
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--sets", type=int, default=4)
     parser.add_argument("--count", type=int)
@@ -141,7 +141,7 @@ def main():
         with ThreadPoolExecutor(max_workers=args.parallel) as pool:
             futures = {
                 rung["name"]: pool.submit(
-                    grade, args.mth, args.snapshot, config["family"], count, args.jobs,
+                    grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
                     rung, secret, set_dir,
                 )
                 for rung in config["rungs"]

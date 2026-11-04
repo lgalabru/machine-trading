@@ -1,8 +1,8 @@
 #!/bin/bash
 # Grade /app/bot on a hidden set drawn now, from the batch's secret
-# (MTH_EVAL_SEED, passed by Harbor from the host; the task never holds it).
+# (MTX_EVAL_SEED, passed by Harbor from the host; the task never holds it).
 # The grader runs the reference on the same sessions first, starts an
-# offline surfnet per session, runs the bot as mth-bot behind an RPC guard,
+# offline surfnet per session, runs the bot as mtx-bot behind an RPC guard,
 # and writes the reward.
 set -euo pipefail
 
@@ -15,8 +15,8 @@ chmod -R a+rX /app/bot
 # behind if the grader itself fails.
 trap 'rm -f /logs/verifier/reward.json' ERR
 
-if [ -z "${MTH_EVAL_SEED:-}" ]; then
-  echo "test.sh: MTH_EVAL_SEED is empty: the batch didn't pass its secret, and" \
+if [ -z "${MTX_EVAL_SEED:-}" ]; then
+  echo "test.sh: MTX_EVAL_SEED is empty: the batch didn't pass its secret, and" \
     "hidden sets are drawn from it. Export one before harbor run." >&2
   exit 3
 fi
@@ -25,14 +25,14 @@ fi
 # container, so a bot could reach another session's surfnet while it was
 # being set up, before its cheatcodes locked. The reference is trusted:
 # its sessions run four at a time, before the bot's.
-mth grade \
+mtx grade \
   --draw flash-crash \
   --count 72 \
-  --reference /opt/mth/anchors/flash-crash \
+  --reference /opt/mtx/anchors/flash-crash \
   --anchor-jobs 4 \
   --jobs 1 \
   --stop-on-disqualify \
-  --snapshot "$MTH_SNAPSHOT" \
+  --snapshot "$MTX_SNAPSHOT" \
   --bot /app/bot \
   --logs /logs/verifier/bot \
   --reward /logs/verifier/reward.json \

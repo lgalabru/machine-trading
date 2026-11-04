@@ -1,4 +1,4 @@
-//! Shared logic for the mth Solana trading benchmark.
+//! Shared logic for the mtx Solana trading benchmark.
 
 pub mod chain;
 pub mod compete;

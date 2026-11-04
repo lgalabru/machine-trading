@@ -2,7 +2,7 @@ use std::{io::IsTerminal, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use mth_core::{
+use mtx_core::{
     grade::{self, GradeOptions},
     making::MakingFamily,
     phoenix,
@@ -19,16 +19,16 @@ mod review;
 mod ui;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
-/// absolute path, so an installed `mth` finds it from any directory.
+/// absolute path, so an installed `mtx` finds it from any directory.
 const DEFAULT_SNAPSHOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../snapshots/phoenix-spcx-2026-10-29"
 );
 
-/// Tooling for the mth Solana trading benchmark. Results go to stdout as JSON,
+/// Tooling for the mtx Solana trading benchmark. Results go to stdout as JSON,
 /// logs to stderr.
 #[derive(Parser)]
-#[command(name = "mth", version)]
+#[command(name = "mtx", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -60,7 +60,7 @@ enum Command {
         #[command(flatten)]
         sessions: Sessions,
         /// Draw the scenarios from this family instead of reading files: a
-        /// hidden set, seeded by the secret in `MTH_EVAL_SEED` and never
+        /// hidden set, seeded by the secret in `MTX_EVAL_SEED` and never
         /// written anywhere. Reports carry only the secret's SHA-256.
         #[arg(long, value_enum, conflicts_with = "scenarios")]
         draw: Option<Family>,
@@ -74,7 +74,7 @@ enum Command {
         /// Reference sessions to run at once (1-4).
         #[arg(long, default_value_t = 4)]
         anchor_jobs: usize,
-        /// Hand the bot each drawn session's regime as MTH_REGIME: the
+        /// Hand the bot each drawn session's regime as MTX_REGIME: the
         /// shock's shape (flash-crash), or the informed taker orders
         /// (market-making). For the ladder's oracles, never a graded bot.
         #[arg(long, requires = "draw", hide = true)]
@@ -89,7 +89,7 @@ enum Command {
         /// Write the full per-scenario report here (it also goes to stdout).
         #[arg(long)]
         report: Option<PathBuf>,
-        /// Write each session step by step here, for `mth bench review`:
+        /// Write each session step by step here, for `mtx bench review`:
         /// `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
         #[arg(long)]
         details: Option<PathBuf>,
@@ -114,7 +114,7 @@ struct Sessions {
     logs: PathBuf,
     /// Sessions to run at once, each on its own surfnet (1-4). A machine
     /// that can't keep up fails the run on late slots rather than skewing it.
-    #[arg(long, env = "MTH_JOBS", default_value_t = 1)]
+    #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
     jobs: usize,
     /// Scenario files, run in order.
     scenarios: Vec<PathBuf>,
@@ -215,15 +215,15 @@ struct Authoring {
     #[arg(long, short)]
     model: Option<String>,
     /// Snapshot the surfnet starts from; the agent reads prices from it.
-    #[arg(long, env = "MTH_SNAPSHOT", default_value = DEFAULT_SNAPSHOT)]
+    #[arg(long, env = "MTX_SNAPSHOT", default_value = DEFAULT_SNAPSHOT)]
     snapshot: PathBuf,
     /// Market the scenario trades; defaults to the snapshot's.
     #[arg(long)]
     symbol: Option<String>,
     /// The `surfpool` binary the agent runs as its MCP server.
-    #[arg(long, env = "MTH_SURFPOOL", default_value = "surfpool")]
+    #[arg(long, env = "MTX_SURFPOOL", default_value = "surfpool")]
     surfpool: String,
-    /// Scenarios the agent may hand in before mth gives up.
+    /// Scenarios the agent may hand in before mtx gives up.
     #[arg(long, default_value_t = 3)]
     attempts: usize,
     /// Show every log, the agent's replies and its adapter's output, instead
@@ -273,7 +273,7 @@ enum SnapshotCommand {
         /// Datasource to fork. May embed an API key; only its host is recorded.
         #[arg(
             long,
-            env = "MTH_FORK_RPC_URL",
+            env = "MTX_FORK_RPC_URL",
             default_value = "https://api.mainnet-beta.solana.com"
         )]
         fork_rpc: String,
@@ -294,7 +294,7 @@ enum SnapshotCommand {
     VerifyFork {
         #[arg(
             long,
-            env = "MTH_FORK_RPC_URL",
+            env = "MTX_FORK_RPC_URL",
             default_value = "https://api.mainnet-beta.solana.com"
         )]
         fork_rpc: String,
@@ -606,14 +606,14 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-/// The hidden set's seed, from the secret in `MTH_EVAL_SEED`, and the
+/// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
 /// secret's SHA-256 (hex), which is all a report may say about it.
 fn eval_seed() -> anyhow::Result<(u64, String)> {
     use sha2::{Digest, Sha256};
-    let secret = std::env::var("MTH_EVAL_SEED").unwrap_or_default();
+    let secret = std::env::var("MTX_EVAL_SEED").unwrap_or_default();
     if secret.len() < 32 {
         anyhow::bail!(
-            "MTH_EVAL_SEED must hold the batch's secret (at least 32 characters): \
+            "MTX_EVAL_SEED must hold the batch's secret (at least 32 characters): \
              hidden sets are drawn from it and never shipped"
         );
     }
@@ -621,7 +621,7 @@ fn eval_seed() -> anyhow::Result<(u64, String)> {
     let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     // The seed is a different hash than the one reported, so the report
     // doesn't hand anyone the seed itself.
-    let seed = Sha256::digest([b"mth-eval-seed:".as_slice(), secret.as_bytes()].concat());
+    let seed = Sha256::digest([b"mtx-eval-seed:".as_slice(), secret.as_bytes()].concat());
     Ok((u64::from_le_bytes(seed[..8].try_into()?), hash))
 }
 

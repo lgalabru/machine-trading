@@ -434,7 +434,7 @@ impl MakingFamily {
             description,
             symbol: self.symbol.clone(),
             duration_slots: duration,
-            mandate: mth_botkit::Mandate::perp(
+            mandate: mtx_botkit::Mandate::perp(
                 VENUE,
                 &self.symbol,
                 self.max_position,

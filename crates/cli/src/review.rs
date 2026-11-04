@@ -1,4 +1,4 @@
-//! `mth bench review`: browse a bench's results in a small web UI.
+//! `mtx bench review`: browse a bench's results in a small web UI.
 //!
 //! Point it at a batch (`jobs/bench/<batch>`), a Harbor job inside one, or a
 //! single trial. It finds every trial below the path and serves a page with

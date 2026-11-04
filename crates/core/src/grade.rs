@@ -530,7 +530,7 @@ const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {
-    use mth_botkit::Mandate;
+    use mtx_botkit::Mandate;
 
     use super::*;
     use crate::scenario::{VENUE, Waypoint};
@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn details_are_written_gzipped_one_per_session() {
         use std::io::Read;
-        let dir = std::env::temp_dir().join(format!("mth-details-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mtx-details-{}", uuid::Uuid::new_v4()));
         let annotations = [serde_json::json!({ "shape": "crash" })];
         write_details(
             &dir,

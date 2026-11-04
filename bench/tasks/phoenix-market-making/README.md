@@ -32,13 +32,13 @@ fills nothing.
 
 ## Grading
 
-- **Agent environment:** a Rust toolchain, the `mth-botkit` SDK, a starter
+- **Agent environment:** a Rust toolchain, the `mtx-botkit` SDK, a starter
   bot that builds and never trades, six practice scenarios, the scenario
-  generator (`mth scenario generate --family market-making`), and
-  `mth-practice`, which grades the bot exactly as the verifier does.
+  generator (`mtx scenario generate --family market-making`), and
+  `mtx-practice`, which grades the bot exactly as the verifier does.
 - **Verifier:** the runtime image, with no toolchain and no network. It
   receives only `/app/bot`, draws seventy-two hidden sessions (eighteen
-  calm, thirty-six with jumps, eighteen trending) from the batch's secret (`MTH_EVAL_SEED`;
+  calm, thirty-six with jumps, eighteen trending) from the batch's secret (`MTX_EVAL_SEED`;
   it refuses to grade without one), grades the reference maker on them, then
   the bot, one session at a time, each on a fresh surfnet. Before the bot
   starts, the takers are onboarded, the makers widened, and every cheatcode
@@ -46,7 +46,7 @@ fills nothing.
   bot's only way in is an RPC proxy that forwards standard Solana methods
   only.
 - **Turns:** the world moves in steps of two slots and waits for the bot
-  between them (`mth-turn-1`): the takers' orders due trade against the
+  between them (`mtx-turn-1`): the takers' orders due trade against the
   quotes the bot left, then the step's move lands, then the grader's maker
   requotes, then the bot's turn. (Takers right after a move, before any
   maker could requote, would pick off every quote: a sniper the task

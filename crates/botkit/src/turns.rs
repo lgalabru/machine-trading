@@ -1,8 +1,8 @@
-//! The turn protocol, `mth-turn-1`: the world moves in steps, and waits for
+//! The turn protocol, `mtx-turn-1`: the world moves in steps, and waits for
 //! the bot between them.
 //!
 //! The grader hands the bot one end of a socket as file descriptor
-//! [`TURN_FD`] (named by `MTH_TURN_FD`) and talks JSON lines over it:
+//! [`TURN_FD`] (named by `MTX_TURN_FD`) and talks JSON lines over it:
 //!
 //! 1. Grader to bot: a [`Hello`] with the session's clock. The bot answers
 //!    `{"t":"ready"}`.
@@ -18,8 +18,8 @@
 //! previous step and waits for the next one.
 //!
 //! ```no_run
-//! # async fn example(trader: mth_botkit::Trader) -> mth_botkit::Result<()> {
-//! let mut turns = mth_botkit::Turns::connect()?;
+//! # async fn example(trader: mtx_botkit::Trader) -> mtx_botkit::Result<()> {
+//! let mut turns = mtx_botkit::Turns::connect()?;
 //! while let Some(step) = turns.next()? {
 //!     let mark = trader.mark_usd().await?;
 //!     // ... decide, and send orders: they land before the next step.
@@ -38,10 +38,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-pub const PROTOCOL: &str = "mth-turn-1";
+pub const PROTOCOL: &str = "mtx-turn-1";
 /// The file descriptor the grader passes the turn socket on.
 pub const TURN_FD: i32 = 3;
-pub const TURN_FD_VAR: &str = "MTH_TURN_FD";
+pub const TURN_FD_VAR: &str = "MTX_TURN_FD";
 
 /// The session's clock, sent once before the first step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

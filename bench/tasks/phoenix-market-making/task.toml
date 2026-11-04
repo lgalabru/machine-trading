@@ -15,7 +15,7 @@ email = "ludo.galabru@solana.org"
 [metadata]
 difficulty = "hard"
 category = "trading"
-# Chain state the task trades on (MTH_SNAPSHOT); see snapshots/<name>/manifest.json.
+# Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
 snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
@@ -35,7 +35,7 @@ network_mode = "no-network"
 # The batch's secret: the hidden set is drawn from it inside the verifier.
 # Set it on the host (`just bench` draws one per batch); the verifier
 # refuses to grade without it.
-MTH_EVAL_SEED = "${MTH_EVAL_SEED:-}"
+MTX_EVAL_SEED = "${MTX_EVAL_SEED:-}"
 
 [agent]
 timeout_sec = 3600.0

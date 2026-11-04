@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mth · scenario</title>
+<title>mtx · scenario</title>
 <style>
   :root {
     color-scheme: dark;
@@ -273,7 +273,7 @@
       <button class="ctl" id="reset" title="Reset: restore the snapshot and stage the scenario again" aria-label="Reset">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
       </button>
-      <button class="ctl danger" id="stop" title="Stop the surfnet and quit mth" aria-label="Stop">
+      <button class="ctl danger" id="stop" title="Stop the surfnet and quit mtx" aria-label="Stop">
         <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       </button>
       <button class="play" id="play" aria-label="Play"></button>
@@ -293,7 +293,7 @@
   <div class="error" id="error"></div>
 
   <footer>
-    <span>Served by <code>mth scenario play</code> · Ctrl-C in the terminal stops it</span>
+    <span>Served by <code>mtx scenario play</code> · Ctrl-C in the terminal stops it</span>
     <span class="foot-right">surfnet <code id="rpc"></code>
       <button class="wb-toggle" id="wb-toggle" title="Endpoints and a live websocket stream of the surfnet"><span class="wb-dot" id="wb-toggle-dot"></span>Workbench <kbd>`</kbd></button>
     </span>
@@ -356,7 +356,7 @@ let stripX = null;   // the strip's slot-to-pixel scale, for hovering dots
 // Series colors, in the order a chart lists its instruments. The first is
 // the accent; the rest stay apart from it and from each other on black.
 const PALETTE = ['#a2ef5b', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#2dd4bf', '#fb923c'];
-// Overrides on charts mth doesn't sample: a neutral marker.
+// Overrides on charts mtx doesn't sample: a neutral marker.
 const NEUTRAL = '#a1a1aa';
 const color = {};     // series key -> color
 
@@ -562,7 +562,7 @@ function buildCharts() {
         <div class="legend"></div>
       </div>
       <div class="chart-wrap"><svg class="chart" role="img" aria-label="${esc(c.venue + ' ' + c.title)}"></svg><div class="tooltip"></div></div>
-      ${c.tracked ? '' : `<div class="note">mth doesn't sample ${esc(c.title.toLowerCase())} yet: the markers show when each override lands.</div>`}
+      ${c.tracked ? '' : `<div class="note">mtx doesn't sample ${esc(c.title.toLowerCase())} yet: the markers show when each override lands.</div>`}
     </div>`).join('');
   for (const card of document.querySelectorAll('.chart-card')) {
     const svg = card.querySelector('svg');
@@ -658,7 +658,7 @@ function drawPrices(card, chart) {
   tip.style.top = '8px';
 }
 
-/** A chart mth doesn't sample: when each of its overrides lands. */
+/** A chart mtx doesn't sample: when each of its overrides lands. */
 function drawLane(card, chart) {
   const own = plan.overrides.filter((o) => o.chart === chart.id);
   const legendHtml = `<span><i class="sw-dot" style="border-color:${NEUTRAL};background:${NEUTRAL}"></i>${own.length} override${own.length === 1 ? '' : 's'}</span>`;
@@ -717,7 +717,7 @@ function render() {
   $('clock-total').textContent = '/ ' + clock(total);
   const next = started() ? plan.overrides.find((o) => o.slot > t) : plan.overrides[0];
   $('next').innerHTML = stopped
-    ? `<div class="k">Stopped</div><div class="label">The surfnet is down</div><div class="eta">run mth scenario play to start again</div>`
+    ? `<div class="k">Stopped</div><div class="label">The surfnet is down</div><div class="eta">run mtx scenario play to start again</div>`
     : live.resetting
     ? `<div class="k">Resetting</div><div class="label">Restoring ${esc(plan.snapshot)}</div>`
     : done()
@@ -769,7 +769,7 @@ async function poll() {
     $('error').textContent = r.error ? 'Reading the market: ' + r.error : '';
     frame();
   } catch (e) {
-    $('error').textContent = 'mth is not reachable: ' + e.message;
+    $('error').textContent = 'mtx is not reachable: ' + e.message;
   }
   if (!stopped) setTimeout(poll, 250);
 }
@@ -788,7 +788,7 @@ async function reset() {
 }
 
 async function stop() {
-  if ($('stop').disabled || !confirm('Stop the surfnet? This ends mth scenario play.')) return;
+  if ($('stop').disabled || !confirm('Stop the surfnet? This ends mtx scenario play.')) return;
   if (await post('/api/stop')) { stopped = true; wbSync(live); frame(); }
 }
 
@@ -829,7 +829,7 @@ window.addEventListener('resize', frame);
    accounts the scenario's overrides write, and logs that mention the market.
    It reconnects to the new surfnet after a reset. */
 const WB_MAX = 600;
-const WB_STORE = 'mth.workbench';
+const WB_STORE = 'mtx.workbench';
 const wb = {
   open: false, height: 300,
   ws: null, url: null, surfnet: null, retry: null, nextId: 1, requests: new Map(),
@@ -1116,7 +1116,7 @@ function wbInit() {
     bySlot.get(o.slot).items.push(o);
   }
   // A slot's dot takes the colors of what its overrides move, in the
-  // legend's order; overrides on charts mth doesn't sample are neutral.
+  // legend's order; overrides on charts mtx doesn't sample are neutral.
   const order = [...prices.series.map((s) => color[s.key]), NEUTRAL];
   groups = [...bySlot.values()].map((g) => {
     const colors = new Set(g.items.map(overrideColor));
@@ -1127,7 +1127,7 @@ function wbInit() {
   const venues = [...new Set(plan.charts.map((c) => c.venue))];
   $('handle').textContent = `${prices.series.map((s) => s.symbol).join(', ')} · ${venues.join(', ')} · ${plan.snapshot}`;
   $('description').textContent = plan.description;
-  document.title = `mth · ${plan.name}`;
+  document.title = `mtx · ${plan.name}`;
   buildCharts();
   wbInit();
   // --autoplay started the scenario before the page loaded.

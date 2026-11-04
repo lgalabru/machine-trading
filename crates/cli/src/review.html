@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mth · bench review</title>
+<title>mtx · bench review</title>
 <style>
   :root {
     color-scheme: dark;
@@ -542,7 +542,7 @@ function renderHero() {
   const b = index.batch;
   const dataset = index.dataset || "machine-trading";
   hero.innerHTML = `<div class="hero-inner"><div class="hero-left">
-      <a class="brand" href="#/"><span class="dot"></span>mth <small>bench review</small></a>
+      <a class="brand" href="#/"><span class="dot"></span>mtx <small>bench review</small></a>
       <h1>${esc(shortTask(dataset).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))}</h1>
       <span class="ver">${esc(dataset)} <b>${esc(index.version || "?")}</b></span>
       <div class="meta">${esc(index.name || "")}${b ? ` · ${b.models.length} models × ${b.attempts} attempts · ${fix(b.timeout_multiplier, 0)}× time` : ""}${seeds.length === 1 ? ` · set ${esc(seeds[0].slice(0, 10))}…` : seeds.length > 1 ? ` · ${seeds.length} hidden sets` : ""}</div>

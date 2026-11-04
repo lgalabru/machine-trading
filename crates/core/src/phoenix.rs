@@ -1,9 +1,9 @@
 //! Grader-side Phoenix setup: metadata snapshots, trader onboarding, and
-//! scenario overrides that move the market. Bots use [`mth_botkit::Phoenix`].
+//! scenario overrides that move the market. Bots use [`mtx_botkit::Phoenix`].
 
 use std::time::Duration;
 
-pub use mth_botkit::{Phoenix, load_exchange};
+pub use mtx_botkit::{Phoenix, load_exchange};
 use phoenix_rise::{
     accounts::spline_collection::{SPLINE_REGION_CAPACITY, SplineCollection},
     api::PhoenixHttpClient,
@@ -65,7 +65,7 @@ pub async fn onboard_trader(
     cheats.fund_token(&owner, &USDC_MINT, usdc_units, None)?;
 
     let register = phoenix.tx().build_register_trader(owner, 0, 0)?;
-    mth_botkit::send(&rpc, authority, register, "register trader")?;
+    mtx_botkit::send(&rpc, authority, register, "register trader")?;
 
     let capabilities: serde_json::Map<_, _> = TRADER_CAPABILITIES
         .iter()
@@ -97,7 +97,7 @@ pub async fn onboard_trader(
         let deposit = phoenix
             .tx()
             .build_deposit_funds(owner, trader, deposit_usdc)?;
-        match mth_botkit::send(&rpc, authority, deposit, "deposit collateral") {
+        match mtx_botkit::send(&rpc, authority, deposit, "deposit collateral") {
             Ok(_) => break,
             Err(error) if attempt < 15 && error.to_string().contains("TraderFrozen") => {
                 attempt += 1;

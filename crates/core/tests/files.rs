@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use mth_botkit::Mandate;
-use mth_core::scenario::Scenario;
+use mtx_botkit::Mandate;
+use mtx_core::scenario::Scenario;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

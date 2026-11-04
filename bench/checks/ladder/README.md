@@ -5,7 +5,7 @@ scenarios are right ranks them the way a trader would, on every set; a
 scenario change that reorders them fails, whatever it does to the models'
 scores. `just ladder <task>` (`flash-crash` or `market-making`) draws `sets`
 hidden sets, each from a secret of its own, grades every rung on each with
-`mth grade --draw`, and checks the task's `<task>.json`:
+`mtx grade --draw`, and checks the task's `<task>.json`:
 
 - **The order rule**, on every set, and how often it would hold on a set
   like it: a bootstrap over each set's sessions, at least `min_rule_odds`.
@@ -26,7 +26,7 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `dip-buyer` | the full cap long once the mark is 3% down | below the reference: squeezes and extensions punish it |
 | `momentum` | the full cap with the move once it reaches 4%, held | below the reference: it rides the shock and never fades it |
 | `reference` | rides each move while it runs, fades it once it stops | 1 |
-| `regime-oracle` | told the draw's shape (`mth grade --tell-regime`), not its path: takes the cap from the extreme toward where the session ends | above the reference: what reading the regime well could still earn |
+| `regime-oracle` | told the draw's shape (`mtx grade --tell-regime`), not its path: takes the cap from the extreme toward where the session ends | above the reference: what reading the regime well could still earn |
 | `flash-crash-opus`, `flash-crash-fable` | the frozen 0.6.0 exploit bots | below the regime oracle, losing a quarter of sessions or more |
 | `hindsight` | the bound | top |
 
@@ -38,7 +38,7 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `naive-quoter` | one tick inside the competitor around the oracle, symmetric | below the reference |
 | `skew-quoter` | the same, leaning against its inventory | below the reference |
 | `reference` | `bots/maker`: inside the competitor, skewed, leaning with the drift, backing off one-sided flow | 1 |
-| `flow-oracle` | told which taker orders are informed (`mth grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order takes the cap its way until the jump lands | above the reference: what reading the tape perfectly is worth |
+| `flow-oracle` | told which taker orders are informed (`mtx grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order takes the cap its way until the jump lands | above the reference: what reading the tape perfectly is worth |
 | `market-making-opus`, `market-making-fable` | the frozen 0.7.0 exploit bots | below the flow oracle, losing in a tenth of sessions or more |
 | `hindsight` | the bound (spread plus hindsight) | top |
 
