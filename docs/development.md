@@ -39,7 +39,9 @@ mtx bench compare 0.9.0...0.8.0 [--open]     # skill by task and model, and the 
 - **Review page:** a breadcrumb (`mtx › release › task › trial ›
   session`, with menus to switch release or task), the tasks as a column of tiles on the left, and
   an overview of the bench: a leaderboard of skill by model and task. A
-  task adds its equity curves, with the models as cards on the right. Below
+  task adds its equity curves, with the models as cards on the right, and
+  one grid of models › attempts × sessions: a cell is one attempt's bot on
+  one hidden session; a column is that session across every attempt. Below
   them, each trial's sessions against the reference, the agent's
   trajectory, the bot it wrote, and a step-by-step timeline of every session
   (prices, orders, position, PnL and decoded transactions). Timelines need
