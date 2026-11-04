@@ -451,7 +451,10 @@ async fn run() -> Result<()> {
                                         .collect::<Result<_, _>>()?,
                                 );
                             }
-                            drawn.into_iter().map(|(scenario, _)| scenario).collect::<Vec<_>>()
+                            drawn
+                                .into_iter()
+                                .map(|(scenario, _)| scenario)
+                                .collect::<Vec<_>>()
                         }
                         Family::MarketMaking => {
                             let drawn =
@@ -478,7 +481,10 @@ async fn run() -> Result<()> {
                                         .collect::<Result<_, _>>()?,
                                 );
                             }
-                            drawn.into_iter().map(|(scenario, _)| scenario).collect::<Vec<_>>()
+                            drawn
+                                .into_iter()
+                                .map(|(scenario, _)| scenario)
+                                .collect::<Vec<_>>()
                         }
                     };
                     (scenarios, Some(hash))
