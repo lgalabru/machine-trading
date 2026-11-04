@@ -15,7 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const out = path.join(here, "_site");
 const NAME = "Machine Trading Protocol";
-const SOURCE = "https://github.com/lgalabru/mtp";
+const SOURCE = "https://github.com/lgalabru/machine-trading/tree/main/specs";
 // Folders of the index after the core spec, in order.
 const FOLDERS = [
   { dir: "instruments", title: "Instruments" },
