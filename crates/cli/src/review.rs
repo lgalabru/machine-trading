@@ -42,6 +42,8 @@ const MAX_FILE_BYTES: u64 = 4 << 20;
 /// page gets.
 const MAX_MESSAGE_CHARS: usize = 6_000;
 const MAX_TOOL_CHARS: usize = 3_000;
+/// How much of a user message (the task's instruction) the page gets.
+const MAX_USER_CHARS: usize = 40_000;
 /// Directories inside a trial the page may read files from, and single
 /// files it may read.
 pub(crate) const FILE_DIRS: &[&str] = &["artifacts/app/bot/", "verifier/bot/"];
@@ -985,7 +987,11 @@ async fn get_trajectory(
                 "id": step["step_id"],
                 "timestamp": step["timestamp"],
                 "source": step["source"],
-                "message": clip(&text_of(&step["message"]), MAX_MESSAGE_CHARS),
+                // The task's instruction and other user messages, whole.
+                "message": clip(
+                    &text_of(&step["message"]),
+                    if step["source"] == json!("user") { MAX_USER_CHARS } else { MAX_MESSAGE_CHARS },
+                ),
                 "reasoning": step.get("reasoning_content").map(|r| clip(&text_of(r), MAX_MESSAGE_CHARS)),
                 "tools": tools,
                 "metrics": step["metrics"],
@@ -1068,7 +1074,9 @@ mod tests {
 
     #[test]
     fn curves_thin_to_their_limit_and_keep_the_end() {
-        let steps: Vec<Value> = (0..1000).map(|k| json!({ "at": k * 2, "pnl_usd": k as f64 })).collect();
+        let steps: Vec<Value> = (0..1000)
+            .map(|k| json!({ "at": k * 2, "pnl_usd": k as f64 }))
+            .collect();
         let points = curve(&json!({ "timeline": { "steps": steps } }));
         assert!(points.len() <= CURVE_POINTS + 1, "{}", points.len());
         assert_eq!(points.last().unwrap(), &json!([1998, 999.0, null]));
