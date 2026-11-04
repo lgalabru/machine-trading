@@ -420,6 +420,21 @@
   .step > .head b { color: var(--text-2); }
   .step .body { padding: 8px 12px; }
   .step .msg { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: #e4e4e7; }
+  /* Markdown, in the agent's messages and the task's instruction. */
+  .step .msg.md { white-space: normal; font-size: 13.5px; line-height: 1.6; max-width: 860px; }
+  .md p { margin: 0 0 10px; }
+  .md .md-h { margin: 18px 0 8px; font-size: 14.5px; letter-spacing: -0.01em; color: var(--text); }
+  .md h3.md-h { font-size: 16px; }
+  .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+  .md li { margin: 3px 0; }
+  .md li > ul, .md li > ol { margin: 4px 0 4px; }
+  .md code { font: 12px var(--mono); background: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 4px; padding: 1px 5px; }
+  .md pre.code { margin: 8px 0 12px; }
+  .md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 2px solid #3a3a3c; color: var(--text-2); }
+  .md a { color: var(--ref); }
+  .md hr { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
+  .md table.md-t { border-collapse: collapse; margin: 6px 0 12px; font-size: 12.5px; }
+  .md table.md-t th, .md table.md-t td { border-bottom: 1px solid var(--line-soft); padding: 5px 10px; text-align: left; }
   details { margin: 6px 0; }
   details > summary { cursor: pointer; color: var(--text-2); font: 12px var(--mono); }
   details > summary:hover { color: var(--text); }
@@ -1819,6 +1834,12 @@ const SYNTAX = {
     ["num", /\b\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:\d{2})?)?\b|\b(?:0x[\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)\b/y],
     ["con", /\b(?:true|false|inf|nan)\b/y],
   ],
+  json: [
+    ["key", /"(?:\\.|[^"\\\n])*"(?=\s*:)/y],
+    ["str", /"(?:\\.|[^"\\\n])*"/y],
+    ["num", /-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/y],
+    ["con", /\b(?:true|false|null)\b/y],
+  ],
   sh: [
     ["com", /^#![^\n]*|(?<![\w$#{])#[^\n]*/y],
     ["str", /'[^']*'|"(?:\\[\s\S]|[^"\\])*"/y],
@@ -1829,11 +1850,14 @@ const SYNTAX = {
     ["num", /\b\d+\b/y],
   ],
 };
+// JSON, indented and colored.
+const jsonHtml = (v) => highlight(JSON.stringify(v, null, 2) ?? "null", "json").join("\n");
 function languageOf(path) {
   const name = path.split("/").pop();
   if (/\.rs$/.test(name)) return "rust";
   if (/\.toml$/.test(name) || name === "Cargo.lock") return "toml";
   if (/\.(sh|bash)$/.test(name)) return "sh";
+  if (/\.json$/.test(name)) return "json";
   return null;
 }
 // Lines of HTML, each balanced, for a file's text.
@@ -1986,6 +2010,92 @@ function eventCursor(host, group, rows, xEnd) {
   draw();
 }
 
+// ---------- markdown ----------
+// Enough Markdown for an instruction or an agent's message: headings,
+// paragraphs, lists, quotes, tables, fenced code (highlighted when it's
+// Rust, TOML or shell), and inline code, bold, italics and links. The text
+// is escaped first; links keep only http(s) targets.
+function mdInline(text) {
+  const codes = [];
+  let h = esc(text).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  h = h.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<i>$2</i>")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, "$1<i>$2</i>");
+  return h.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
+}
+function markdown(text) {
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+  const lang = (tag) => ({ rust: "rust", rs: "rust", toml: "toml", sh: "sh", bash: "sh", shell: "sh", console: "sh", json: "json" })[tag] || null;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^\s*(```|~~~)\s*([\w-]*)/);
+    if (fence) {
+      const body = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
+      i++;
+      const l = lang(fence[2].toLowerCase());
+      out.push(`<pre class="code">${l ? highlight(body.join("\n"), l).join("\n") : esc(body.join("\n"))}</pre>`);
+      continue;
+    }
+    const head = line.match(/^(#{1,6})\s+(.*)$/);
+    if (head) { const n = Math.min(6, head[1].length + 2); out.push(`<h${n} class="md-h">${mdInline(head[2])}</h${n}>`); i++; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
+    if (/^\s*>/.test(line)) {
+      const body = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push(`<blockquote>${markdown(body.join("\n"))}</blockquote>`);
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || "")) {
+      const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => mdInline(c.trim()));
+      const headCells = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
+      out.push(`<table class="md-t"><thead><tr>${headCells.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
+    const item = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+    if (item.test(line)) {
+      // Items at this list's indent; anything indented deeper belongs to the
+      // item above it, nested lists included.
+      const first = line.match(item);
+      const base = first[1].length, ordered = /\d/.test(first[2]);
+      const items = [];
+      while (i < lines.length) {
+        const l = lines[i], m = l.match(item);
+        if (m && m[1].length === base) { items.push({ text: m[3], rest: [] }); i++; continue; }
+        if (!l.trim()) {
+          // A blank line ends the list unless the next line carries on.
+          const next = lines[i + 1] || "";
+          const carries = (next.match(/^(\s*)/)[1].length > base && next.trim()) || (item.test(next) && next.match(item)[1].length === base);
+          if (!carries) break;
+          i++; continue;
+        }
+        const indent = l.match(/^(\s*)/)[1].length;
+        if (indent > base && items.length) { items[items.length - 1].rest.push(l.slice(Math.min(indent, base + 2))); i++; continue; }
+        break;
+      }
+      out.push(`<${ordered ? "ol" : "ul"}>${items.map((it) => {
+        const nested = it.rest.some((r) => item.test(r));
+        const tail = nested ? markdown(it.rest.join("\n")) : it.rest.length ? " " + mdInline(it.rest.map((r) => r.trim()).join(" ")) : "";
+        return `<li>${mdInline(it.text)}${tail}</li>`;
+      }).join("")}</${ordered ? "ol" : "ul"}>`);
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|\s*(```|~~~)|\s*>|\s*([-*+]|\d+[.)])\s)/.test(lines[i])) para.push(lines[i++]);
+    if (!para.length) para.push(lines[i++]);
+    out.push(`<p>${mdInline(para.join(" "))}</p>`);
+  }
+  return out.join("");
+}
+
 // ---------- trial ----------
 // The run's header, in the panel's top section with its title: the run's
 // numbers, then the tabs.
@@ -2008,10 +2118,10 @@ async function renderTrial(n, tab, session) {
   if (tab === "logs") return trialLogs(n, trial);
   if (tab === "raw") {
     div(`<dl class="facts" style="margin:4px 0 16px"><dt>Run</dt><dd>${esc(runLabel(t))}</dd><dt>Trial</dt><dd class="mono">${esc(t.trial)}</dd><dt>Task</dt><dd class="mono">${esc(t.task)}</dd><dt>Path</dt><dd class="mono">${esc(t.path)}</dd></dl>`);
-    div(`<details open><summary>verifier/report.json (scenarios folded)</summary><pre class="code wrap">${esc(JSON.stringify(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} scenarios: see the Scenarios tab` } : null, null, 2))}</pre></details>
-      <details><summary>verifier/reward.json</summary><pre class="code">${esc(JSON.stringify(trial.rewards, null, 2))}</pre></details>
-      <details><summary>Harbor config</summary><pre class="code">${esc(JSON.stringify(trial.config, null, 2))}</pre></details>
-      <details><summary>Timings</summary><pre class="code">${esc(JSON.stringify(trial.timings, null, 2))}</pre></details>
+    div(`<details open><summary>verifier/report.json (scenarios folded)</summary><pre class="code wrap">${jsonHtml(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} scenarios: see the Scenarios tab` } : null)}</pre></details>
+      <details><summary>verifier/reward.json</summary><pre class="code">${jsonHtml(trial.rewards)}</pre></details>
+      <details><summary>Harbor config</summary><pre class="code">${jsonHtml(trial.config)}</pre></details>
+      <details><summary>Timings</summary><pre class="code">${jsonHtml(trial.timings)}</pre></details>
       ${trial.exception ? `<details><summary>Exception</summary><pre class="code wrap">${esc(trial.exception.exception_traceback || JSON.stringify(trial.exception, null, 2))}</pre></details>` : ""}`);
   }
 }
@@ -2121,8 +2231,8 @@ async function trialAgent(n, trial) {
       const off = isNum(t0) ? `+${fix((Date.parse(s.timestamp) - t0) / 60000, 1)}m` : "";
       const tools = s.tools.map((c) => `<details><summary>${esc(c.name)}${c.description ? ` — ${esc(c.description)}` : ""}</summary><pre class="code wrap">${esc(c.input)}</pre>${c.output !== null && c.output !== undefined ? `<pre class="code wrap" style="color:var(--text-2)">${esc(ansi(c.output))}</pre>` : ""}</details>`).join("");
       const message = s.source === "user" && s.message.length > 1200
-        ? `<details><summary>${esc(s.id === 1 ? "The task's instruction" : "User message")} (${int(s.message.length)} characters)</summary><div class="msg">${esc(s.message)}</div></details>`
-        : s.message ? `<div class="msg">${esc(s.message)}</div>` : "";
+        ? `<details open><summary>${esc(s.id === 1 ? "The task's instruction" : "User message")} (${int(s.message.length)} characters)</summary><div class="msg md">${markdown(s.message)}</div></details>`
+        : s.message ? `<div class="msg md">${markdown(s.message)}</div>` : "";
       return `<div class="step"><div class="head"><b>#${esc(s.id)}</b><span>${esc(s.source)}</span><span class="num">${off}</span>${s.metrics?.completion_tokens ? `<span class="num">${compact(s.metrics.completion_tokens)} out</span>` : ""}</div><div class="body">${message}${s.reasoning ? `<details><summary>reasoning</summary><pre class="code wrap">${esc(s.reasoning)}</pre></details>` : ""}${tools}</div></div>`;
     }).join("") + (shown.length > 300 ? `<div class="sub">${shown.length - 300} more steps; narrow the filter.</div>` : "") || `<div class="empty">No steps match.</div>`;
     bar.querySelectorAll("[data-f]").forEach((b) => b.classList.toggle("on", b.dataset.f === filter));
