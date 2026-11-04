@@ -2064,10 +2064,9 @@ async function renderSession(n, name) {
   ]);
   app.innerHTML = "";
   const names = trial.sessions.bot, idx = names.indexOf(name);
-  const nav = (i) => names[i] ? `<a class="btn" href="${link({ task: t.task, run: n, session: names[i] })}">${i < idx ? "← " : ""}${esc(names[i])}${i > idx ? " →" : ""}</a>` : "";
   const rep = bot.report, tl = bot.timeline, sc = bot.scenario;
   const making = !!sc.making;
-  div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div><div class="btns">${nav(idx - 1)}${nav(idx + 1)}</div></div>`);
+  div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div></div>`);
   const refPnl = ref?.report?.pnl_usd ?? sc.reference_pnl_usd;
   const txs = tl.transactions || [], failed = txs.filter((x) => !x.ok);
   div(`<div class="runstats">
