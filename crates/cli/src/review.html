@@ -2251,13 +2251,13 @@ async function trialAgent(n, trial) {
     }).group = { move: (x, ev) => showTip(`<b>${fix(x, 1)} min</b>`, ev), leave: hideTip };
   }
   const bar = document.createElement("div"); bar.className = "btns";
-  bar.innerHTML = `<input class="search" placeholder="Filter steps (text, tool, output)…"><div class="seg sm"><a href="javascript:void 0" data-f="all">All</a><a href="javascript:void 0" data-f="msg">Messages</a><a href="javascript:void 0" data-f="tools">Tool calls</a></div>`;
+  bar.innerHTML = `<input class="search" placeholder="Filter steps (text, tool, output)…"><div class="seg sm"><a href="javascript:void 0" data-f="all">All</a><a href="javascript:void 0" data-f="msg">Messages</a><a href="javascript:void 0" data-f="tools">Tool calls</a><a href="javascript:void 0" data-f="reasoning">Reasoning</a></div>`;
   host.appendChild(bar);
   const list = document.createElement("div"); host.appendChild(list);
   let filter = "all", query = "";
   const draw = () => {
     const q = query.toLowerCase();
-    const shown = steps.filter((s) => (filter === "all" || (filter === "msg" ? s.message && s.source !== "system" : s.tools.length)) &&
+    const shown = steps.filter((s) => (filter === "all" || (filter === "msg" ? s.message && s.source !== "system" : filter === "reasoning" ? s.reasoning : s.tools.length)) &&
       (!q || JSON.stringify(s).toLowerCase().includes(q)));
     // A timeline of the run: a dot per step, its text, and each tool call
     // as a pill that opens on its input and output.
@@ -2283,7 +2283,7 @@ async function trialAgent(n, trial) {
       const message = s.source === "user" && s.message.length > 1200
         ? `<details class="pill doc"><summary><span class="tb" style="--tc:#8e8e93">${s.id === 1 ? "Instruction" : "User"}</span><span class="pl">${s.id === 1 ? "The task's instruction" : "A user message"}</span><span class="pm">${kb(s.message.length)} chars</span></summary><div class="pill-body"><div class="msg md doc">${markdown(s.message)}</div></div></details>`
         : s.message ? `<div class="msg md">${markdown(s.message)}</div>` : "";
-      const reasoning = s.reasoning ? `<details class="pill"><summary><span class="tb" style="--tc:#ff9f0a">Thinking</span><span class="pl">${esc(String(s.reasoning).trim().split("\n")[0].slice(0, 90))}</span></summary><div class="pill-body"><div class="msg md">${markdown(s.reasoning)}</div></div></details>` : "";
+      const reasoning = s.reasoning ? `<details class="pill"${filter === "reasoning" ? " open" : ""}><summary><span class="tb" style="--tc:#ff9f0a">Reasoning</span><span class="pl">${esc(String(s.reasoning).trim().split("\n")[0].slice(0, 90))}</span></summary><div class="pill-body"><div class="msg md">${markdown(s.reasoning)}</div></div></details>` : "";
       const mins = isNum(t0) ? (Date.parse(s.timestamp) - t0) / 60000 : null;
       return `<div class="st ${kind}"><div class="st-h"><b title="step ${esc(s.id)} of the agent's trajectory">#${esc(s.id)}</b><span title="who wrote this step">${esc(s.source)}</span>${isNum(mins) ? `<span title="time since the run started">${mins >= 60 ? `${Math.floor(mins / 60)}h${String(Math.floor(mins % 60)).padStart(2, "0")}m` : `${Math.floor(mins)}:${String(Math.floor((mins * 60) % 60)).padStart(2, "0")}`}</span>` : ""}${s.metrics?.completion_tokens ? `<span title="tokens the model wrote in this step">${compact(s.metrics.completion_tokens)} tokens</span>` : ""}${s.sidechain ? `<span class="tag">subagent</span>` : ""}</div><div class="st-b">${message}${reasoning}${tools}</div></div>`;
     }).join("") + (shown.length > 300 ? `<div class="sub">${shown.length - 300} more steps; narrow the filter.</div>` : "") || `<div class="empty">No steps match.</div>`;
