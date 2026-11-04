@@ -62,6 +62,26 @@
   .seg { display: flex; gap: 2px; padding: 2px; background: #1c1c1e; border-radius: 9px; width: fit-content; }
   .seg a { padding: 5px 14px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-2); text-decoration: none; }
   .seg a.on { background: #3a3a3c; color: var(--text); }
+  .hero-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .rel { display: flex; align-items: center; gap: 10px; }
+  .cmp-link { font-size: 12px; font-weight: 600; color: var(--text-2); text-decoration: none; }
+  .cmp-link:hover { color: var(--text); }
+  /* Compare: one card per task. */
+  .cmp-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 6px; }
+  .cmp-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 16px 18px; margin: 18px 0; }
+  .cmp-head { display: flex; align-items: baseline; gap: 12px; }
+  .cmp-head h2 { margin: 0; }
+  .cmp-grid { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.4fr); gap: 28px; align-items: center; margin-top: 10px; }
+  .cmp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cmp-table th { text-align: left; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .cmp-table td { padding: 9px 8px; border-bottom: 1px solid var(--line-soft); }
+  .cmp-table .num { text-align: right; font-family: var(--mono); }
+  .cmp-table .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 8px; }
+  .delta { display: inline-block; min-width: 64px; text-align: right; padding: 3px 8px; border-radius: 6px; font: 600 12px var(--mono); background: #2c2c2e; color: var(--text-2); }
+  .delta.up { background: var(--up); color: #04160a; } .delta.down { background: var(--down); color: #fff; }
+  .cmp-chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
+  .cmp-chart .ylab { font: 500 11px var(--mono); fill: #8e8e93; }
+  .cmp-chart .xlab { font: 600 11px var(--mono); fill: #8e8e93; }
   .quote { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 18px 0 4px; }
   .quote .big { font: 600 42px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
   .quote .chg { font: 600 15px var(--mono); }
@@ -522,9 +542,16 @@ const modelColor = (m) => PALETTE[Math.max(0, modelOrder.indexOf(m)) % PALETTE.l
 
 let index = null;
 let poller = null;
+// The release shown: null for the one `mtx bench review` was given.
+let release = null;
+// A link inside the page, in the release shown.
+const home = (path = "") => "#/" + (release ? `@${encodeURIComponent(release)}/` : "") + path;
+const taskHref = (name) => home(`task/${encodeURIComponent(name)}`);
+const trialById = (n) => index.trials.find((t) => t.id === n);
 async function loadIndex(fresh) {
-  if (fresh) cache.delete("j:/api/index");
-  index = await api("/api/index");
+  const url = release ? `/api/index/${encodeURIComponent(release)}` : "/api/index";
+  if (fresh) cache.delete("j:" + url);
+  index = await api(url);
   modelOrder = [...new Set(index.trials.map((t) => t.model).filter(Boolean))].sort();
   renderHero();
   renderSide();
@@ -538,9 +565,24 @@ async function route() {
   hideTip();
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   try {
-    if (!index) await loadIndex();
+    // #/@0.9.0/…: a published release.
+    const want = parts[0]?.startsWith("@") ? parts.shift().slice(1) : null;
+    if (!index || want !== release) {
+      release = want; heroPickReset(); currentTask = null;
+      await loadIndex();
+    }
+    if (parts[0] === "compare") {
+      renderSide();
+      return await renderCompare(...(parts.slice(1).join("/").split(/\.{2,3}/)));
+    }
     if (parts[0] === "trial") {
-      const t = index.trials[+parts[1]];
+      // A trial of another release: show that release around it.
+      if (!trialById(+parts[1])) {
+        const other = (await api(`/api/trial/${+parts[1]}`)).summary?.release;
+        const primary = index.releases.find((r) => r.primary)?.label;
+        if (other && other !== (release ?? primary)) { release = other === primary ? null : other; heroPickReset(); await loadIndex(); }
+      }
+      const t = trialById(+parts[1]);
       if (t?.task && t.task !== currentTask) { currentTask = t.task; renderHero(); }
       renderSide();
       if (parts.length >= 4 && parts[2] === "session") return await renderSession(+parts[1], parts[3]);
@@ -563,7 +605,8 @@ addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) re
 // its cumulative PnL over the hidden sessions, in order, against the
 // reference's on the same sessions.
 // The model picked per task; else the best mean skill.
-const heroPick = {};
+let heroPick = {};
+const heroPickReset = () => { heroPick = {}; };
 const naturalCmp = (a, b) => a.localeCompare(b, "en", { numeric: true });
 // A task's curves: per model, the mean PnL of its graded trials on each
 // session of the most common hidden set, accumulated; and the reference's.
@@ -615,7 +658,7 @@ function renderHero() {
   const heroModel = heroPick[key];
   const pick = eq.models.find((m) => m.model === heroModel);
   hero.innerHTML = `<div class="hero-inner"><div class="hero-left">
-      <a class="brand" href="#/"><span class="dot"></span>mtx <small>bench review</small></a>
+      <a class="brand" href="${home()}"><span class="dot"></span>mtx <small>bench review</small></a>
       <h1>${esc(shortTask(dataset).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))}</h1>
       <div class="ver">${esc(dataset)} <b>${esc(index.version || "?")}</b></div>
       <div class="meta">${esc(index.name || "")}${b ? ` · ${b.models.length} models × ${b.attempts}` : ""} · ${usd(cost, 0)} · ${dur(agentMs)} agent time</div>
@@ -630,7 +673,10 @@ function renderHero() {
         </div>`;
       }).join("")}</div>
     </div><div class="hero-right">
-      ${index.tasks.length > 1 ? `<div class="seg">${index.tasks.map((t) => `<a class="${t === task ? "on" : ""}" href="#/task/${encodeURIComponent(t.name)}">${esc(t.short)}</a>`).join("")}</div>` : ""}
+      <div class="hero-bar">
+        ${index.tasks.length > 1 ? `<div class="seg">${index.tasks.map((t) => `<a class="${t === task ? "on" : ""}" href="${taskHref(t.name)}">${esc(t.short)}</a>`).join("")}</div>` : "<span></span>"}
+        ${releaseBar()}
+      </div>
       <div class="quote"><span class="big" id="q-big"></span><span class="chg" id="q-chg"></span></div>
       <div class="quote-sub" id="q-sub"></div>
       <div id="q-area"></div>
@@ -650,8 +696,8 @@ function renderHero() {
     big.textContent = susd(y, 0);
     big.style.color = "";
     const d = isNum(r) ? y - r : null;
-    chg.className = "chg " + trend(d);
-    chg.textContent = isNum(d) ? `${susd(d, 0)} vs reference` : "";
+    chg.className = "chg " + (isNum(d) && Math.abs(d) < 0.5 ? "" : trend(d));
+    chg.textContent = !isNum(d) ? "" : Math.abs(d) < 0.5 ? "matches the reference" : `${susd(d, 0)} vs reference`;
     const at = i === pick.curve.length - 1
       ? `<b>${esc(shortModel(pick.model))}</b> · cumulative PnL over ${eq.sessions.length} hidden session${eq.sessions.length > 1 ? "s" : ""}${isNum(pick.skill) ? ` · skill <b>${times(pick.skill)}</b>` : ""}`
       : i === 0 ? `<b>${esc(shortModel(pick.model))}</b> · before the first session`
@@ -660,6 +706,20 @@ function renderHero() {
   };
   quote(pick.curve.length - 1);
   areaChart(area, { y: pick.curve, ref: eq.reference, labels: ["start", ...eq.sessions], onScrub: (i) => quote(i ?? pick.curve.length - 1) });
+}
+// Releases newest first, after the batch reviewed if it isn't one.
+const releaseOrder = (rs) => [...rs.filter((r) => !r.published), ...rs.filter((r) => r.published).sort((x, y) => naturalCmp(y.label, x.label))];
+// The releases to switch to, and a comparison with the one before.
+function releaseBar() {
+  const rs = releaseOrder(index.releases || []);
+  if (rs.length < 2) return "";
+  const here = index.release;
+  const published = rs.filter((r) => r.published).map((r) => r.label);
+  const at = published.indexOf(here);
+  const prev = at >= 0 ? published[at + 1] : published[0];
+  const href = (r) => r.primary ? "#/" : `#/@${encodeURIComponent(r.label)}/`;
+  return `<div class="rel"><span class="k">Release</span><div class="seg">${rs.map((r) => `<a class="${r.label === here ? "on" : ""}" href="${href(r)}" title="${r.published ? "published in bench/results" : "the batch reviewed"}">${esc(r.label)}</a>`).join("")}</div>
+    ${prev && prev !== here ? `<a class="cmp-link" href="#/compare/${encodeURIComponent(here)}...${encodeURIComponent(prev)}">Compare with ${esc(prev)} →</a>` : ""}</div>`;
 }
 // A stock-style area chart: a line with a gradient under it, a quiet grid,
 // values on the right. Green when the curve ends at or above zero.
@@ -730,7 +790,7 @@ function renderSide() {
   side.innerHTML = `<div class="k">Tasks</div>` + index.tasks.map((t) => {
     const st = taskStatus(t.counts);
     const c = t.counts;
-    return `<a class="task-item ${t.name === currentTask ? "on" : ""}" href="#/task/${encodeURIComponent(t.name)}">${light(st)}<div style="min-width:0">
+    return `<a class="task-item ${t.name === currentTask ? "on" : ""}" href="${taskHref(t.name)}">${light(st)}<div style="min-width:0">
       <div class="tname">${esc(t.short)}</div>
       <div class="tid">${esc(t.name)}${t.version ? ` · ${esc(t.version)}` : ""}${t.ref ? ` · ${esc(String(t.ref).replace("sha256:", "").slice(0, 8))}` : ""}</div>
       ${t.description ? `<div class="tdesc">${esc(t.description)}</div>` : ""}
@@ -760,8 +820,8 @@ function who(trials) {
 async function renderTask(name, variant, at) {
   const task = index.tasks.find((t) => t.name === name);
   if (!task) { fail(new Error(`no task ${name}`)); return; }
-  setCrumbs([[index.name || "bench", "#/"], [task.short, null]]);
-  const trials = task.trials.map((i) => index.trials[i]);
+  setCrumbs([[index.name || "bench", home()], [task.short, null]]);
+  const trials = task.trials.map(trialById).filter(Boolean);
   // Re-rendering the same task (a new variant): keep the page, swap the explorer.
   const same = app.dataset.task === name && app.querySelector("#explorer");
   if (!same) {
@@ -810,7 +870,7 @@ function taskLeaderboard(trials) {
     { key: "pnl_usd", label: "PnL", r: true, fmt: (t) => `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd, 0)}</span>` },
     { key: "agent", label: "Agent", r: true, sort: (t) => span(t.agent_execution), fmt: (t) => dur(span(t.agent_execution)) },
     { key: "badges", label: "", sort: (t) => t.exception?.type || "", fmt: statusBadges },
-  ], { onClick: (t) => { location.hash = `#/trial/${t.id}`; }, maxHeight: "none" });
+  ], { onClick: (t) => { location.hash = `${home()}trial/${t.id}`; }, maxHeight: "none" });
 }
 
 // The variants (sessions) every comparable trial ran, and one of them
@@ -837,7 +897,7 @@ async function renderExplorer(host, task, trials, variant, at) {
     { key: "kind", label: "Drawn as", fmt: (r) => `<span class="muted" title="${esc(r.kind)}">${esc(r.kind.length > 70 ? r.kind.slice(0, 70) + "…" : r.kind)}</span>` },
     { key: "ref", label: "Reference", r: true, fmt: (r) => susd(r.ref, 0) },
     ...people.map((p) => ({ key: "p" + p.t.id, label: p.label, r: true, sort: (r) => r.pnl[p.t.id], fmt: (r) => heat(r.pnl[p.t.id]) })),
-  ], { maxHeight: "300px", onClick: (r) => { location.hash = `#/task/${encodeURIComponent(task.name)}/${encodeURIComponent(r.name)}`; } });
+  ], { maxHeight: "300px", onClick: (r) => { location.hash = `${taskHref(task.name)}/${encodeURIComponent(r.name)}`; } });
   wrap.querySelectorAll("tbody tr").forEach((tr) => { if (rows[+tr.dataset.i]?.name === v) { tr.classList.add("sel"); } });
   const view = div("", "", host);
   await renderVariant(view, task, people, v, at);
@@ -952,7 +1012,7 @@ async function renderVariant(host, task, people, name, startAt) {
     if (group) group.pin(cursor);
     drawNow(i);
     // A pinned cursor goes in the address, so the moment can be shared.
-    if (pinned && fromUser) history.replaceState(null, "", `#/task/${encodeURIComponent(task.name)}/${encodeURIComponent(name)}/${cursor}`);
+    if (pinned && fromUser) history.replaceState(null, "", `${taskHref(task.name)}/${encodeURIComponent(name)}/${cursor}`);
   }
   slider.addEventListener("input", () => { pinned = true; setCursor(steps[+slider.value]?.at ?? 0, true); });
   scrub.querySelectorAll("[data-d]").forEach((b) => b.addEventListener("click", () => { pinned = true; const i = Math.min(steps.length - 1, Math.max(0, stepAt(cursor) + +b.dataset.d)); setCursor(steps[i].at, true); }));
@@ -1015,9 +1075,88 @@ async function renderVariant(host, task, people, name, startAt) {
   if (isNum(startAt)) { pinned = true; setCursor(startAt, false); } else setCursor(0, false);
 }
 
+// ---------- compare ----------
+// Two releases (or batches), task by task: each model's mean skill on both,
+// the change, and the skill over every release published.
+async function renderCompare(a, b) {
+  const releases = releaseOrder((await api("/api/releases")).releases);
+  const label = (r) => r.label;
+  const byLabel = new Map(releases.map((r) => [r.label, r]));
+  const ra = byLabel.get(a), rb = byLabel.get(b);
+  setCrumbs([[index.name || "bench", home()], ["compare", null]]);
+  app.innerHTML = ""; delete app.dataset.task;
+  const pickers = (side, current) => releases.map((r) => `<a class="${r.label === current ? "on" : ""}" href="#/compare/${encodeURIComponent(side === "a" ? r.label : a)}...${encodeURIComponent(side === "b" ? r.label : b)}">${esc(r.label)}</a>`).join("");
+  div(`<h1>${esc(a)} <small>vs</small> ${esc(b)}</h1>
+    <div class="cmp-pick"><span class="k">From</span><div class="seg">${pickers("b", b)}</div><span class="k">to</span><div class="seg">${pickers("a", a)}</div>
+    <a class="btn" href="#/compare/${encodeURIComponent(b)}...${encodeURIComponent(a)}">swap</a></div>
+    <div class="sub">Skill is a model's PnL over the reference's on the same hidden sessions, so it compares across releases whose hidden sets differ. A task's version can change between releases too: it's shown under each.</div>`);
+  if (!ra || !rb) { div(`No release named ${esc(!ra ? a : b)}. Known: ${releases.map(label).map(esc).join(", ")}`, "error"); return; }
+  // Oldest first, for the lines over releases.
+  const ordered = [...releases].filter((r) => r.published || r === ra || r === rb).reverse();
+  const models = [...new Set(releases.flatMap((r) => Object.values(r.tasks).flatMap((t) => Object.keys(t.models))))].sort();
+  const color = (m) => PALETTE[models.indexOf(m) % PALETTE.length];
+  const tasks = [...new Set([...Object.keys(ra.tasks), ...Object.keys(rb.tasks)])].sort();
+  for (const task of tasks) {
+    const ta = ra.tasks[task], tb = rb.tasks[task];
+    const ms = [...new Set([...Object.keys(ta?.models || {}), ...Object.keys(tb?.models || {})])].sort();
+    const host = div(`<div class="cmp-head"><h2>${esc(task)}</h2><span class="muted">task ${esc(tb?.version ?? "–")} → ${esc(ta?.version ?? "–")}</span></div>`, "cmp-card");
+    const grid = div("", "cmp-grid", host);
+    const rows = ms.map((m) => {
+      const sa = ta?.models[m]?.skill, sb = tb?.models[m]?.skill;
+      const d = isNum(sa) && isNum(sb) ? sa - sb : null;
+      return `<tr><td><span class="sw" style="background:${color(m)}"></span>${esc(shortModel(m))}</td>
+        <td class="num">${times(sb)}</td><td class="num">${times(sa)}</td>
+        <td><span class="delta ${isNum(d) ? (d >= 0 ? "up" : "down") : ""}">${isNum(d) ? (d >= 0 ? "+" : "−") + fix(Math.abs(d)) + "×" : isNum(sa) ? "new" : "–"}</span></td></tr>`;
+    }).join("");
+    div(`<table class="cmp-table"><thead><tr><th>Model</th><th class="num">${esc(b)}</th><th class="num">${esc(a)}</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table>`, "", grid);
+    const chartHost = div("", "cmp-chart", grid);
+    const cols = ordered.filter((r) => r.tasks[task]);
+    skillLines(chartHost, {
+      labels: cols.map(label), marked: [a, b],
+      series: ms.map((m) => ({ model: m, color: color(m), ys: cols.map((r) => r.tasks[task].models[m]?.skill ?? null) })),
+    });
+  }
+}
+// Each model's skill over releases: lines in the header's style, with the
+// two compared releases marked and the reference at 1×.
+function skillLines(host, { labels, marked, series }) {
+  host.innerHTML = "";
+  const W = Math.max(300, host.clientWidth), H = 220, L = 10, R = 58, T = 14, B = 26;
+  const vals = [1, 0, ...series.flatMap((s) => s.ys)].filter(isNum);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo) * 0.1 || 0.5; lo -= pad; hi += pad;
+  const n = labels.length;
+  const sx = (i) => n > 1 ? L + 16 + i / (n - 1) * (W - L - R - 32) : (L + W - R) / 2;
+  const sy = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "lines" }, host);
+  for (const v of ticks(lo, hi, 4)) {
+    if (v < lo || v > hi) continue;
+    el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v), stroke: "#2c2c2e" }, svg);
+    el("text", { x: W - R + 10, y: sy(v) + 4, class: "ylab" }, svg).textContent = fix(v, 1) + "×";
+  }
+  el("line", { x1: L, x2: W - R, y1: sy(1), y2: sy(1), stroke: "#8e8e93", "stroke-dasharray": "4 4", opacity: 0.8 }, svg);
+  el("text", { x: L + 2, y: sy(1) - 6, class: "ylab" }, svg).textContent = "reference";
+  labels.forEach((l, i) => {
+    const on = marked.includes(l);
+    if (on) el("rect", { x: sx(i) - 18, y: T, width: 36, height: H - T - B, rx: 6, fill: "rgba(255,255,255,.05)" }, svg);
+    el("text", { x: sx(i), y: H - 7, class: "xlab", "text-anchor": "middle", fill: on ? "#fafafa" : undefined }, svg).textContent = l;
+  });
+  for (const s of series) {
+    let d = "", pen = false;
+    s.ys.forEach((v, i) => { if (!isNum(v)) { pen = false; return; } d += `${pen ? "L" : "M"}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`; pen = true; });
+    if (d) el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    s.ys.forEach((v, i) => {
+      if (!isNum(v)) return;
+      const c = el("circle", { cx: sx(i), cy: sy(v), r: marked.includes(labels[i]) ? 4.5 : 3, fill: s.color, stroke: "#000", "stroke-width": 1.5 }, svg);
+      c.addEventListener("mousemove", (ev) => showTip(`<b>${esc(shortModel(s.model))}</b> · ${esc(labels[i])}<br>skill ${times(v)}`, ev));
+      c.addEventListener("mouseleave", hideTip);
+    });
+  }
+}
+
 // ---------- trial ----------
 function trialHeader(n, t, tab) {
-  setCrumbs([[index.name || "bench", "#/"], [shortTask(t.task), `#/task/${encodeURIComponent(t.task)}`], [`${shortModel(t.model)} · ${t.trial}`, `#/trial/${n}`]]);
+  setCrumbs([[index.name || "bench", home()], [shortTask(t.task), taskHref(t.task)], [`${shortModel(t.model)} · ${t.trial}`, `${home()}trial/${n}`]]);
   app.innerHTML = ""; delete app.dataset.task;
   div(`<h1>${esc(shortModel(t.model))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
   const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
@@ -1034,7 +1173,7 @@ function trialHeader(n, t, tab) {
   </div>`);
   if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
   const tabs = [["sessions", "Sessions"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
-  div(tabs.map(([k, label]) => `<a href="#/trial/${n}/${k}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
+  div(tabs.map(([k, label]) => `<a href="${home()}trial/${n}/${k}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
 }
 
 async function renderTrial(n, tab) {
@@ -1076,7 +1215,7 @@ function trialSessions(n, trial) {
   const every = Math.max(1, Math.ceil(rows.length / 24));
   const xticks = rows.map((r) => r.i).filter((i) => i % every === 0);
   const group = new Group(); group.label = (x) => rows[Math.round(x)]?.scenario ?? "";
-  const open = (x) => { const r = rows[Math.round(x)]; if (r && trial.sessions.bot.includes(r.scenario)) location.hash = `#/trial/${n}/session/${encodeURIComponent(r.scenario)}`; };
+  const open = (x) => { const r = rows[Math.round(x)]; if (r && trial.sessions.bot.includes(r.scenario)) location.hash = `${home()}trial/${n}/session/${encodeURIComponent(r.scenario)}`; };
   const bars = chart(host, {
     title: "PnL by session", height: 220, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
     series: [
@@ -1113,7 +1252,7 @@ function trialSessions(n, trial) {
     { key: "overran", label: "Overran", r: true, sort: (r) => r.turns?.overran, fmt: (r) => r.turns?.legacy ? `<span class="badge warn">no turns</span>` : int(r.turns?.overran) },
     { key: "turn", label: "Turn time", r: true, sort: (r) => r.turns?.wall_ms, fmt: (r) => isNum(r.turns?.wall_ms) ? `${fix(r.turns.wall_ms / 1000, 1)}s` : "–" },
     { key: "exit", label: "Bot exit", fmt: (r) => r.bot_exit ? `<span class="badge warn">${esc(r.bot_exit)}</span>` : "" },
-  ], { onClick: (r) => { if (trial.sessions.bot.includes(r.scenario)) location.hash = `#/trial/${n}/session/${encodeURIComponent(r.scenario)}`; } });
+  ], { onClick: (r) => { if (trial.sessions.bot.includes(r.scenario)) location.hash = `${home()}trial/${n}/session/${encodeURIComponent(r.scenario)}`; } });
 }
 
 async function trialAgent(n, trial) {
@@ -1201,7 +1340,7 @@ function trialLogs(n, trial) {
 async function renderSession(n, name) {
   const trial = await api(`/api/trial/${n}`);
   const t = trial.summary;
-  setCrumbs([[index.name || "bench", "#/"], [shortTask(t.task), `#/task/${encodeURIComponent(t.task)}`], [`${shortModel(t.model)} · ${t.trial}`, `#/trial/${n}`], [name, null]]);
+  setCrumbs([[index.name || "bench", home()], [shortTask(t.task), taskHref(t.task)], [`${shortModel(t.model)} · ${t.trial}`, `${home()}trial/${n}`], [name, null]]);
   delete app.dataset.task;
   app.innerHTML = `<div class="loading">Loading ${esc(name)}…</div>`;
   const [bot, ref] = await Promise.all([
@@ -1210,7 +1349,7 @@ async function renderSession(n, name) {
   ]);
   app.innerHTML = "";
   const names = trial.sessions.bot, idx = names.indexOf(name);
-  const nav = (i) => names[i] ? `<a class="btn" href="#/trial/${n}/session/${encodeURIComponent(names[i])}">${i < idx ? "← " : ""}${esc(names[i])}${i > idx ? " →" : ""}</a>` : "";
+  const nav = (i) => names[i] ? `<a class="btn" href="${home()}trial/${n}/session/${encodeURIComponent(names[i])}">${i < idx ? "← " : ""}${esc(names[i])}${i > idx ? " →" : ""}</a>` : "";
   const rep = bot.report, tl = bot.timeline, sc = bot.scenario;
   const making = !!sc.making;
   div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(shortModel(t.model))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div><div class="btns">${nav(idx - 1)}${nav(idx + 1)}</div></div>`);
