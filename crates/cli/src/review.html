@@ -43,6 +43,18 @@
   .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px 32px; padding: 22px 32px 24px; }
   /* The model selector: a vertical list of cards, one per model. */
   .watch { display: flex; flex-direction: column; gap: 8px; }
+  /* The peek: an attempt opened over the page, Notion-style. */
+  .peek-backdrop { position: fixed; inset: 52px 0 0 0; background: rgba(0,0,0,.5); opacity: 0; pointer-events: none; transition: opacity .18s ease; z-index: 40; }
+  .peek-backdrop.on { opacity: 1; pointer-events: auto; cursor: pointer; }
+  .peek { position: fixed; top: 52px; right: 0; bottom: 0; left: 440px; min-width: 640px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -28px 0 60px rgba(0,0,0,.65); z-index: 41; display: flex; flex-direction: column; transform: translateX(104%); transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+  .peek.on { transform: none; }
+  @media (max-width: 1100px) { .peek { left: 150px; min-width: 0; } }
+  .peek-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .peek-title { font-weight: 600; font-size: 13px; margin-right: auto; display: flex; align-items: center; gap: 8px; }
+  .peek-title .sw { width: 9px; height: 9px; border-radius: 3px; }
+  .peek-x { background: none; border: 1px solid var(--line); color: var(--text-2); border-radius: 8px; width: 30px; height: 28px; cursor: pointer; font-size: 13px; }
+  .peek-x:hover { color: var(--text); background: #1c1c1e; }
+  .peek-body { flex: 1; overflow: auto; padding: 18px 26px 60px; }
   /* The grid: models › attempts × sessions. */
   .g-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px 18px 12px; }
   .g-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
@@ -331,6 +343,8 @@
 </div>
 </div>
 </div>
+<div class="peek-backdrop" id="peek-backdrop"></div>
+<aside class="peek" id="peek" aria-hidden="true"><div class="peek-bar"><span class="peek-title" id="peek-title"></span><a class="btn" id="peek-full" href="#">Open as page ↗</a><button class="peek-x" id="peek-x" aria-label="Close" title="Close (Esc)">✕</button></div><div class="peek-body" id="peek-body"></div></aside>
 <div class="tip" id="tip"></div>
 <script>
 "use strict";
@@ -609,7 +623,8 @@ function table(container, rows, cols, opts = {}) {
 }
 
 // ---------- shell ----------
-const app = document.getElementById("app");
+// Where pages render: the main column, or the peek panel while it draws.
+let app = document.getElementById("app");
 const hero = document.getElementById("hero");
 const side = document.getElementById("side");
 // A click on the tasks column outside any tile deselects the task: back to
@@ -712,9 +727,48 @@ async function loadIndex(fresh) {
   if (live) poller = setTimeout(() => loadIndex(true).catch(() => {}), 30000);
 }
 let currentTask = null;
+// The page under the peek, and the peek: #/<page>?peek=<trial>[/<tab>].
+const splitHash = () => { const [base, q] = location.hash.split("?peek="); return { base: base || "#/", peek: q ? q.split("/") : null }; };
+const peekHref = (n, tab) => `${splitHash().base}?peek=${n}${tab && tab !== "sessions" ? "/" + tab : ""}`;
+let peeking = false, baseShown = null;
 async function route() {
   hideTip();
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  const { base, peek } = splitHash();
+  // Only the peek changed: leave the page under it alone.
+  if (index && base === baseShown) return peek ? openPeek(+peek[0], peek[1] || "sessions") : closePeek();
+  if (!peek) closePeek();
+  await routePage(base);
+  baseShown = base;
+  if (peek) await openPeek(+peek[0], peek[1] || "sessions");
+}
+let pageCrumbs = null;
+async function openPeek(n, tab) {
+  const panel = document.getElementById("peek"), body = document.getElementById("peek-body");
+  if (!peeking) pageCrumbs = crumbState;
+  peeking = true;
+  panel.classList.add("on"); panel.setAttribute("aria-hidden", "false");
+  document.getElementById("peek-backdrop").classList.add("on");
+  document.getElementById("peek-full").href = `${home()}trial/${n}${tab !== "sessions" ? "/" + tab : ""}`;
+  const t = trialById(n);
+  document.getElementById("peek-title").innerHTML = t ? `<span class="sw" style="background:${modelColor(t.model)}"></span>${esc(shortModel(t.model))} · ${esc(attemptLabel(t))} <span class="muted mono" style="font-weight:400;font-size:11px">${esc(trialShort(t))}</span>` : `trial ${n}`;
+  const page = app;
+  app = body;
+  try { await renderTrial(n, tab); } catch (e) { fail(e); } finally { app = page; }
+}
+function closePeek() {
+  if (!peeking) return;
+  peeking = false;
+  const panel = document.getElementById("peek");
+  panel.classList.remove("on"); panel.setAttribute("aria-hidden", "true");
+  document.getElementById("peek-backdrop").classList.remove("on");
+  if (pageCrumbs) setCrumbs(pageCrumbs);
+}
+const dismissPeek = () => { if (peeking) location.hash = splitHash().base; };
+document.getElementById("peek-backdrop").addEventListener("click", dismissPeek);
+document.getElementById("peek-x").addEventListener("click", dismissPeek);
+addEventListener("keydown", (e) => { if (e.key === "Escape" && peeking) dismissPeek(); });
+async function routePage(hash) {
+  const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   try {
     // #/@0.9.0/…: a published release.
     const want = parts[0]?.startsWith("@") ? parts.shift().slice(1) : null;
@@ -752,7 +806,7 @@ async function route() {
 }
 addEventListener("hashchange", () => { route(); });
 let resizeTimer, lastWidth = innerWidth;
-addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) return; lastWidth = innerWidth; clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { renderHero(); route(); }, 250); });
+addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) return; lastWidth = innerWidth; clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { baseShown = null; renderHero(); route(); }, 250); });
 
 // ---------- header ----------
 // The bench at a glance, styled like a stock quote: a watchlist of models on
@@ -1128,7 +1182,7 @@ function renderGrid(host, task, trials, eq, sel) {
         : !set.has(t.id) ? `<div class="strip-note">graded on another hidden set</div>`
         : strip(names.map((s) => t.pnls?.[s]), "trial", t.id);
       return `<div class="g-row trial" data-trial="${t.id}" style="--mc:${modelColor(m.model)}">
-        <a class="g-name" href="${home()}trial/${t.id}">${light(t.status === "success" && t.exception ? "success" : t.status, t.status)}<span>${esc(attemptLabel(t))}</span><span class="muted mono">${esc(trialShort(t))}</span>${t.disqualified ? `<span class="badge bad">DQ</span>` : ""}${t.exception?.type === "AgentTimeoutError" ? `<span class="badge">timeout</span>` : ""}</a>
+        <a class="g-name" href="${peekHref(t.id)}">${light(t.status === "success" && t.exception ? "success" : t.status, t.status)}<span>${esc(attemptLabel(t))}</span><span class="muted mono">${esc(trialShort(t))}</span>${t.disqualified ? `<span class="badge bad">DQ</span>` : ""}${t.exception?.type === "AgentTimeoutError" ? `<span class="badge">timeout</span>` : ""}</a>
         ${nums(t.skill, t.pnl_usd, t.cost_usd, span(t.agent_execution))}${state}</div>`;
     }).join("") + (!open ? "" : Array.from({ length: m.queued }, (_, k) => `<div class="g-row trial queued" style="--mc:${modelColor(m.model)}"><span class="g-name">${light("queued")}<span>attempt ${m.trials.length + k + 1}</span></span><span></span><span></span><span></span><span></span><div class="strip-note">queued</div></div>`).join(""));
     return head + kids;
@@ -1494,7 +1548,7 @@ function trialHeader(n, t, tab) {
   </div>`);
   if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
   const tabs = [["sessions", "Sessions"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
-  div(tabs.map(([k, label]) => `<a href="${home()}trial/${n}/${k}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
+  div(tabs.map(([k, label]) => `<a href="${peeking ? peekHref(n, k) : `${home()}trial/${n}/${k}`}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
 }
 
 async function renderTrial(n, tab) {
