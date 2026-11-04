@@ -53,7 +53,7 @@ Reactive agents worth having:
   - Thin markets that feed oracles can be pushed. The [Mango Markets incident](https://www.certik.com/blog/mango-market) (~$116M, Oct 2022) is the canonical example. Decide whether moving the oracle is in bounds.
 - **Funding.** Perp funding accrues over time (Hyperliquid pays hourly at 1/8 of the 8h rate, [docs](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding)). Short scenarios can ignore it. Carry or basis tasks must simulate it across slots.
 - **Liquidations.** If the bot can use leverage, replay the protocol's real liquidation path. In machine-trading, ending the session liquidatable scores 0 because otherwise ruin can't be valued, but mid-session liquidations should happen on-chain as they would on mainnet.
-- **Clock.** Programs read `Clock` (slot and unix time). Snapshot restore must keep both plausible, or time-dependent logic (oracle staleness, funding) misbehaves. See the clock gap in the repo README.
+- **Clock.** Programs read `Clock` (slot and unix time). Snapshot restore must keep both plausible, or time-dependent logic (oracle staleness, funding) misbehaves. machine-trading restores each session at the slot and time the snapshot was taken.
 
 ## Declaring the limits
 

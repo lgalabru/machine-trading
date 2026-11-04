@@ -1,176 +1,153 @@
 # solana-foundation/machine-trading
 
-Trading tasks for agents on Solana. In each task the agent writes a bot,
-and the bot is graded on market scenarios replayed on an offline mainnet
-snapshot restored with [Surfpool](https://github.com/solana-foundation/surfpool).
+Trading tasks for agents on Solana. In each task the agent writes a bot. The
+bot is then graded on hidden market scenarios replayed against an offline
+copy of Solana mainnet, restored with
+[Surfpool](https://github.com/solana-foundation/surfpool).
 
-The verifier runs with no network and receives only the bot. It draws the
-hidden set from the batch's secret (`MTX_EVAL_SEED`), so no task ships one,
-and grades the reference bot on it first. Every cheatcode is locked before
-the bot starts, the surfnet answers only at a secret path, and the bot
-reaches the chain through a proxy that forwards standard Solana RPC methods
-only. The world moves in steps and waits for the bot between them, so grades
-replay. Rewards are the bot's total PnL over the hidden set, as a fraction of
-a hindsight bound no bot can reach, with a per-session drawdown limit;
-`skill`, the bot's PnL over the reference's, is the headline for comparing
-bots.
-
-| Task | Market | Scenario |
+| Task | Market | A good bot… |
 | --- | --- | --- |
-| `phoenix-flash-crash` | Phoenix SPCX (SpaceX) perpetuals | Crashes and squeezes in legs of 0.6–8%, most landing at once, among fizzles: most revert, some stall, some keep going |
-| `phoenix-market-making` | Phoenix SPCX (SpaceX) perpetuals | Make markets against widened mainnet makers and grader-run takers, some informed, while the price walks, trends or jumps |
+| [`phoenix-flash-crash`](phoenix-flash-crash) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
+| [`phoenix-market-making`](phoenix-market-making) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
 
-## Changelog
+Planned tasks are
+[issues labelled `new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22).
+Every release is in the [changelog](CHANGELOG.md).
 
-- **Unreleased.** Reports a reviewer can dig into.
-  - **Session detail files.** Next to `report.json` the verifier writes
-    `sessions/bot/<session>.json.gz` and `sessions/reference/<session>.json.gz`.
-    Each holds the scenario as drawn, with what it was drawn as (a shock's
-    shape, which taker orders were informed), and every step: mark, index,
-    planned level, best bid and ask, position, value and PnL, and how long
-    the turn took. They also hold every transaction the bot sent (where it
-    executed, its instructions decoded with each order's side, price and
-    size, compute units, and the logs of failures), every RPC method it
-    called, its refused calls and late sends, and the takers' orders. They
-    hold the hidden scenarios, so the grader writes them only once every bot
-    has stopped, and clears whatever a bot left in their place first.
-  - **Duplicate sends are flagged.** Within a turn the blockhash doesn't
-    move, so the same order sent twice is the same transaction, and the
-    chain runs it once. A detail file marks every repeat.
-  - Session reports gain `wall_ms`.
-  - **`mtx bench review <path>`** browses a batch, a job or a trial (see the
-    repository README).
+## How a bot is judged
 
-- **0.9.0.** Grades replay, hidden sets stay hidden, and a ladder checks
-  that the tasks rank strategies the way a trader would.
-  - **A lockstep world.** The grader moves the world one step (two slots) at
-    a time: the step's blocks land the scenario's move, then its takers and
-    its maker act, then the bot gets the step over a turn socket
-    (`mtx-turn-1`, `mtx_botkit::Turns`) and the world waits for it, up to
-    5 s a turn. The same bot on the same session trades the same way every
-    time; in 0.8.0 the grader's maker raced the bot in real time, and the
-    same market-making reference made $19.6 in one run and $49 in the next.
-    Sessions also run as fast as the bot answers: a 72-session flash-crash
-    grade takes minutes, not hours. A bot that never answers the hello runs the old way.
-  - **Hidden sets drawn per batch.** No task ships its hidden scenarios. The
-    verifier draws them from the batch's secret, passed by Harbor, and
-    refuses to grade without one; reports carry only the secret's SHA-256.
-    The reference runs first on the same sessions, and a reference that
-    doesn't run cleanly voids the grade. Both tasks grade 72 sessions (up
-    from 36 and 12): at fewer, the ladder couldn't reliably tell the
-    references from simple bots. The verifier's limit is 4 h, and it
-    stops at a bot's first disqualifying session.
-  - **A private surfnet.** The surfnet serves RPC only at a secret path, so a
-    bot that finds its port gets a 404 for everything, standard methods
-    included: the guard is its only way in, and the guard holds its sends to
-    its turn.
-  - **`phoenix-market-making`'s informed flow bites.** On 0.8.0's flow, a
-    naive quoter one tick inside the competitor, never stepping back, beat
-    the reference on fresh sets: the bursts cost it less than backing off
-    did. Now about 85% of jumps are announced (up from 60%), by 8–16 orders
-    (6–12) of 2–4× the noise size (1.5–3×), and jumps run 1.5–4% (0.8–3%).
-    The reference trades with a burst it reads in its fills, a few units the
-    burst's way, and pulls the quote the burst was hitting; it no longer
-    takes its own unwinding for a burst (it did, and leaned back and forth
-    on its own).
-  - **A stronger `phoenix-flash-crash` reference.** The old one, two fading
-    tranches, made $525–$759 on 36 fresh sessions: too little for its ratio
-    to mean anything. The new one rides each move while it runs and fades
-    it once it stops ($647–$2,777 on the same sets).
-  - **`skill`** joins the reward's diagnostics: the bot's PnL over the
-    reference's, 0 if disqualified.
-  - **The ladder** (`just ladder`, `bench/checks/ladder`) replaces `just
-    exploit-checks`: blind bets, a dip-buyer, momentum, naive and skewed
-    quoters, the reference, a regime oracle (flash-crash), a flow oracle
-    (market-making: told which taker orders are informed) and the frozen
-    exploit bots, graded on fresh 72-session hidden sets, with an order rule
-    each set must keep; the exploit bots must stay below the oracles.
-  - **The bench** (`just bench`) draws one secret per batch, pins the Claude
-    Code harness (no web, no memory across trials), runs at a time-limit
-    multiple, and reports skill with 90% bootstrap intervals over sessions
-    and runs (`bench/report.py`). Trials with no reward are void, not 0.
-  - Each task has a design record (`DESIGN.md`), and `just leak-audit`
-    checks the agent's image holds no answer.
+### The score is PnL
 
-- **0.8.0.** Both tasks stop paying for knowing how their scenarios are
-  made. In 0.6.0 and 0.7.0, Opus and Fable beat the reference about 6× on
-  `phoenix-flash-crash`, profitable in every session, by riding legs that
-  always ran at least 3% in several steps and by dating the aftermath from
-  the session's end; on `phoenix-market-making` they scored the maximum,
-  winning every session, by quoting a tick inside makers that never
-  reacted and trading the informed bursts that led every jump. Now:
-  `phoenix-flash-crash` legs run 0.6–8% (log-uniform), about 70% of moves
-  land at once, quiet stretches carry fizzles that give their move back, and
-  a session's length is drawn before its path, so it can end mid-shock. The
-  hidden set grows from 12 to 36 scenarios: a good bot's edge is about $50 a
-  session against swings of about $240, and twelve ranked bots by the luck
-  of the draw. `phoenix-market-making` gets competition: the grader runs a
-  maker of its own that undercuts a better quote by a tick, down to a floor
-  of 2–6 bp, and eases back out when nobody is inside it; and every taker
-  order carries its own limit, so a maker quoting wider than a taker will
-  pay doesn't fill it. In 0.7.0 the makers were static and the takers
-  price-blind, so quoting a tick inside collected most of the spread on
-  every order, unopposed. It also announces about 60% of jumps, sends zero
-  to three fake-out bursts a session in any regime, and sizes informed
-  orders closer to noise; its bound adds the hindsight bound to the spread
-  bound (now each order at its own limit or the competitor's half-spread,
-  whichever is closer), so no bot can pass it. Against the grader's maker
-  the reference roughly breaks even. New release check, `just
-  exploit-checks`: the bots that exploited past versions must lose some
-  sessions, and on flash-crash stay within 3× the reference (see
-  `bench/checks/exploits`).
-- **0.7.0.** New task, `phoenix-market-making`: quote SPCX against Phoenix's
-  own makers, widened to a half-spread drawn per session (8–30 bp), while
-  the price walks, trends or jumps 0.8–3%. The grader sends taker flow
-  from a shared pool of accounts: noise, informed bursts ahead of each jump,
-  and fake-outs. Accounts are valued at the scenario's oracle, not
-  Phoenix's mark, which a maker's own quotes pull. The reward is PnL over a
-  spread bound: every taker order filled at the competitor's half-spread.
-  The SDK adds `Trader::oracle_usd`. `phoenix-flash-crash` moves to 0.7.0
-  unchanged but for the grader: a position outside the mandate's universe
-  now counts only when a second read confirms it, so a bot that requotes
-  between reads is no longer disqualified by mistake.
-- **0.6.0.** Each scenario carries a [mandate](../../specs/mandate.md):
-  the market the bot may trade, its position cap and its drawdown limit,
-  with the same values as before. Bots get a copy in `MTX_MANDATE`, next to
-  the variables they already read. New rule: a bot may hold positions or
-  orders only in SPCX. Phoenix offline accepted orders on other markets,
-  and nothing checked them. 0.6.0 also republishes the rename from `mt` to
-  `mtx` consistently: 0.5.0's agent image used `mtx` while its task files
-  and verifier image used `mt`.
-- **0.5.0.** The project is now Machine Trading: the dataset moves from
-  `solana-foundation/open-trading` to `solana-foundation/machine-trading`,
-  and the CLI, SDK and contract variables from `ott`/`OTT_*` to `mtx`/`MTX_*`.
-  `phoenix-flash-crash` trades SPCX, Phoenix's SpaceX perpetual, instead of
-  SOL, on a snapshot from 2026-10-29, with a 70 SPCX position cap (about 1×
-  collateral, as before). The family's paths no longer give the script
-  away: moves ramp in uneven steps at uneven intervals, legs (3–6% each,
-  up to three) are drawn independently, pauses and holds share one range,
-  the session ends a random 10–40 s after the last move, and the mark
-  wobbles between moves. Opus and Fable had reached 3.5–3.9× the reference
-  on 0.4.0 by reading equal steps and a fixed tail.
-- **0.4.0.** `phoenix-flash-crash`: shocks go both ways, crashes and
-  squeezes 50/50 (when every scenario crashed, shorting the open made 2.4×
-  the reference with no skill). The reward is PnL over a hindsight bound
-  (the position cap held the right way through every move, at no cost), so
-  it doesn't saturate; the reference is a baseline at ~0.2. A session may
-  not draw down more than $1,000 from its peak, and risk diagnostics
-  (worst session, tail loss, drawdown, profitable share, Sharpe) are
-  reported. Bots build on `luce`, re-exported by `mtx-botkit`.
-- **0.3.0.** `phoenix-flash-crash`: a stronger reference that scales into the
-  crash in two tranches and holds for the rebound, with a slide stop (the
-  0.2.0 reference left most of the rebound on the table, and agents beat it
-  5×). Verifiers grade one session at a time, on a slim 384 MB runtime
-  image.
-- **0.2.0.** `phoenix-flash-crash`: crashes now stall or keep sliding as
-  well as rebound; twelve stratified hidden scenarios scored as a set
-  (`Σ PnL / Σ reference PnL`); a 100 SOL position cap, with the reference
-  trading at it; sessions restored at the snapshot's slot and time, with
-  every cheatcode locked before the bot starts.
-- **0.1.0.** `phoenix-flash-crash`: three rebounding crashes, scored per
-  scenario.
+A bot's grade is its total PnL over the whole hidden set. Scoring the set as
+a whole means losing sessions count against winning ones. Two numbers come
+out of it:
 
-Since 0.9.0, no hidden scenario ships with a task: each batch's are drawn
-inside the verifier from a secret its runner holds. Before 0.9.0 they
-shipped in each task's `tests/`, and scores on those versions are a
-development signal, not a held-out evaluation.
+| | Formula | What it's for |
+| --- | --- | --- |
+| **`reward`** | `clamp(Σ PnL / Σ bound, 0, 1)` | The Harbor reward and the RL signal. The bound is a hindsight bound that no bot can reach, so the reward doesn't saturate as bots improve. Each task defines its own bound. |
+| **`skill`** | `Σ PnL / Σ reference PnL` | The headline for comparing bots. The reference runs on the same sessions, so it scores 1 and doing nothing scores 0. The ratio is unclamped. |
+
+### Risk is a set of limits, not a score
+
+Every session carries a [mandate](../../specs/mandate.md). It works like a
+trading desk's limits: one market, a position cap, and a loss limit. The
+grader checks the bot against it after every step (two slots):
+
+| Rule | How it's checked |
+| --- | --- |
+| Trade only the task's market | No position or order on any other market. A second read confirms it, so a requote in flight doesn't count. |
+| Position cap | The position, long or short, never exceeds the cap at any step. |
+| Loss limit | The account's value never falls further below its running peak than the limit. |
+| Standard RPC only | The bot never calls a method the RPC proxy refuses, such as a cheatcode. |
+| Solvent at the end | The account doesn't end the session liquidatable. |
+
+Breaking any rule in any session sets the whole grade to 0, for both
+`reward` and `skill`. The verifier stops at the first breach. A breach never
+scores better than complying.
+
+Within the limits, risk is **reported, not scored**:
+
+| Statistic | Definition |
+| --- | --- |
+| `worst_pnl_usd` | The worst session's PnL. |
+| `tail_pnl_usd` | The mean PnL of the worst sixth of sessions. |
+| `max_drawdown_usd` | The deepest any session's account value fell below its running peak. |
+| `profitable_share` | The share of sessions that made money. |
+| `sharpe` | Mean session PnL over its standard deviation, per session and not annualized. |
+
+These statistics are left out of the score on purpose. Over a few dozen
+short sessions they're noisy, and a score that blended them in would reward
+whatever weights it picked. The loss limit is the risk rule that's enforced.
+A bot that trades recklessly still has to stay inside it in every session.
+
+### When there's no grade
+
+A grade is void, rather than 0, when the baseline it's measured against is
+broken: the reference bot breaks its mandate, crashes, or overruns its
+turns. Some tasks add void conditions of their own. A void trial gets no
+reward. `bench/report.py` lists it as void rather than scoring it 0;
+re-run it on the same set.
+
+## How a session runs
+
+The verifier receives only the agent's `/app/bot`, and it has no network.
+It draws the hidden set from the batch's secret (`MTX_EVAL_SEED`, which no
+task ships) and grades the reference on it first. Then, for each session:
+
+1. It restores a pinned mainnet snapshot into a fresh, offline surfnet, at
+   the slot and time the snapshot was taken. The surfnet serves RPC only at
+   a secret path.
+2. It funds a new trader, stops the clock, registers the scenario, and locks
+   every cheatcode for good.
+3. It starts the bot as an unprivileged user, behind an RPC proxy that
+   forwards standard Solana methods only.
+4. It moves the world one step at a time and waits for the bot between
+   steps over a turn socket (`mtx-turn-1`). Nothing moves while the bot
+   thinks, so grades replay exactly.
+5. After the last step, it stops the bot and values its account on-chain.
+
+The agent's own environment has a Rust toolchain, the `mtx-botkit` SDK, a
+starter bot that builds but never trades, practice scenarios, the scenario
+generator, and `mtx-practice`. `mtx-practice` grades a bot exactly as the
+verifier does.
+
+**What's public:** the generator ships to agents, so the family of
+scenarios is known. Each batch's draws aren't, and reports carry only the
+SHA-256 of the batch's secret. Every trial in a batch is graded on the same
+set. Before 0.9.0 the hidden scenarios shipped in each task's `tests/`, so
+scores on those versions are a development signal, not a held-out
+evaluation.
+
+## Known limits
+
+- **A shared container.** The bot runs in the same container as the
+  surfnet. A bot that finds the surfnet's port gets nothing from it, but it
+  can compete for CPU, which slows the grade but not the market.
+- **One session at a time.** Sessions of untrusted bots run one at a time:
+  run in parallel, a bot could reach another session's surfnet before it
+  locks. `--jobs` is only for trusted bots.
+- **Scripted markets.** Scenarios move the market along a scripted path, and
+  makers don't react to the bot. Each task lists its realism limits.
+- **A public family.** There's no held-out family that would test transfer
+  ([ADR 0001](../../docs/adr/0001-public-and-held-out-scenarios.md)).
+
+## Task READMEs
+
+Every task's README has the same sections, in this order. Anything every
+task shares belongs in this file, not in a task's README.
+
+```markdown
+# solana-foundation/<task>
+
+One sentence: what the agent's bot does, on which market.
+
+| | |
+| --- | --- |
+| Market | venue, instrument, snapshot date |
+| Sessions | hidden per grade, and how they split by regime; practice scenarios |
+| Mandate | position cap, loss limit |
+| Bound | what the reward divides by |
+| Reference | its reward, and what it does in one line |
+
+## The skill
+The thesis ("a good bot profits here because it ___"), what wins, and the
+habits that lose.
+
+## The market
+The scenario family: what moves, how often, and what the agent can observe.
+
+## Scoring
+Only what's specific to this task: how the bound is computed, how the
+account is valued, and any extra void or disqualifying conditions.
+
+## Baselines
+The check table (oracle, nop, cheater, sneaky), the ladder, and the
+reference's numbers on fresh sets.
+
+## Realism limits
+What the simulation doesn't model.
+
+## More
+Links to DESIGN.md (why the task is built this way) and instruction.md
+(the agent's contract).
+```
