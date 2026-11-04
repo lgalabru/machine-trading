@@ -211,7 +211,7 @@
   .watch .chip.up { background: var(--up); color: #04160a; }
   .watch .chip.down { background: var(--down); color: #fff; }
   /* The breadcrumb: mtx › release › task › trial › session, with menus. */
-  nav.crumbbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 4px; padding: 10px 24px; min-height: 52px; background: rgba(0,0,0,.82); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); font-size: 13px; }
+  nav.crumbbar { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 10px 24px; min-height: 52px; background: rgba(0,0,0,.82); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); font-size: 13px; }
   .crumb { font: 500 13px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 8px; color: var(--text-2); text-decoration: none; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
   a.crumb:hover, .crumb-menu > summary:hover { background: #1c1c1e; color: var(--text); }
   .crumb.here { color: var(--text); font-weight: 600; }
@@ -229,6 +229,8 @@
   .crumb-list a:hover { background: #232326; color: var(--text); }
   .crumb-list a.on { color: var(--text); font-weight: 600; }
   .crumb-list a .note { margin-left: auto; color: var(--text-4); font: 11px var(--mono); }
+  .crumb-list a .note.pos { color: var(--up); } .crumb-list a .note.neg { color: var(--down); }
+  .crumb-list-k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-4); padding: 6px 10px 4px; }
   .crumbbar .right { margin-left: auto; display: flex; align-items: center; gap: 14px; font: 500 12px var(--mono); color: var(--text-2); }
   .crumbbar .right span { display: inline-flex; align-items: center; gap: 6px; }
   .crumbbar .right .light { width: 7px; height: 7px; }
@@ -765,7 +767,20 @@ function setCrumbs(state = {}) {
     out.push(sep, `<details class="crumb-menu"><summary class="crumb ${state.run === undefined && !state.session ? "here" : ""}">${label}<span class="caret">▾</span></summary><div class="crumb-list">${index.tasks.map((x, j) => `<a class="${x.name === state.task ? "on" : ""}" href="${taskHref(x.name)}"><span class="tbadge" style="--tc:${TILE_COLORS[j % TILE_COLORS.length]};font:700 9px var(--mono);padding:2px 5px;border-radius:4px;color:#fff;background:var(--tc)">${esc(taskBadge(x.short))}</span>${esc(taskTitle(x.short))}<span class="note">${x.counts.success} graded</span></a>`).join("")}</div></details>`);
   }
   const runT = state.run !== undefined ? trialById(state.run) : null;
-  if (runT) out.push(sep, `<a class="crumb ${state.session ? "" : "here"}" href="${link({ task: state.task, run: state.run })}"><span class="sw" style="width:8px;height:8px;border-radius:3px;background:${modelColor(runT.model)}"></span>${esc(runLabel(runT))}</a>`);
+  // The run: a menu of the task's runs. Switching keeps the scenario and
+  // the tab, so the same scenario compares run against run.
+  if (runT) {
+    const sw = (m) => `<span class="sw" style="width:8px;height:8px;border-radius:3px;background:${modelColor(m)};flex:none"></span>`;
+    const tab = picks().tab;
+    const runs = index.trials.filter((t) => t.task === state.task).sort((a, b) => modelOrder.indexOf(a.model) - modelOrder.indexOf(b.model) || attemptOf(a) - attemptOf(b));
+    const items = runs.map((t) => {
+      const has = !state.session || Object.prototype.hasOwnProperty.call(t.pnls || {}, state.session);
+      const v = state.session ? t.pnls?.[state.session] : t.skill;
+      const note = !t.graded ? (t.status === "pending" ? "running" : "no grade") : state.session ? (has ? susd(v, 0) : "no such scenario") : times(v);
+      return `<a class="${t.id === runT.id ? "on" : ""}" href="${link({ task: state.task, run: t.id, session: has ? state.session : null, tab })}">${sw(t.model)}${esc(runLabel(t))}<span class="note ${state.session && has ? cls(v) : ""}">${note}</span></a>`;
+    }).join("");
+    out.push(sep, `<details class="crumb-menu"><summary class="crumb ${state.session ? "" : "here"}">${sw(runT.model)}${esc(runLabel(runT))}<span class="caret">▾</span></summary><div class="crumb-list"><div class="crumb-list-k">${state.session ? `Runs on ${esc(state.session)}` : "Runs · skill"}</div>${items}</div></details>`);
+  }
   if (state.session) out.push(sep, `<a class="crumb here" href="${link({ task: state.task, run: state.run, session: state.session })}">${esc(state.session)}</a>`);
   if (state.extra) out.push(sep, `<span class="crumb here">${esc(state.extra)}</span>`);
   const all = index.tasks.reduce((c, t) => { for (const k in t.counts) c[k] = (c[k] || 0) + t.counts[k]; return c; }, {});
@@ -1877,7 +1892,7 @@ async function trialScenarios(n, trial, picked) {
   list.innerHTML = sessions.map((s, i) => {
     const d = isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : null;
     return `<a class="scn-item" href="${link({ task: t.task, run: n, session: s.name })}" data-s="${esc(s.name)}">
-      <div class="scn-top"><span class="scn-name">${esc(s.name)}</span>${s.disqualified ? `<span class="badge bad">DQ</span>` : ""}<span class="scn-pnl ${cls(s.pnl_usd)}">${susd(s.pnl_usd, 0)}</span></div>
+      <div class="scn-top"><span class="scn-name">${esc(s.name)}</span>${s.disqualified ? `<span class="badge bad">DQ</span>` : ""}<span class="scn-pnl ${cls(s.pnl_usd)}" title="this run's PnL on ${esc(s.name)}">${susd(s.pnl_usd, 0)}</span></div>
       ${scenarioSpark(s)}
       <div class="scn-sub"><span title="${esc(s.description || "")}">${esc(describeAnnotation(s.annotation) || s.description || "")}</span><span class="${isNum(d) ? (Math.abs(d) < 0.5 ? "" : d > 0 ? "pos" : "neg") : ""}">${isNum(d) ? (Math.abs(d) < 0.5 ? "= ref" : `${susd(d, 0)} vs ref`) : ""}</span></div>
     </a>`;
