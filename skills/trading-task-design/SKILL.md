@@ -110,8 +110,9 @@ graders and read reference answers. Enumerate the cheat surface with
 Replay realism decides whether profit means skill. Fees, slippage, depth,
 latency, funding, liquidations, MEV and oracle behavior: see
 [references/market-realism.md](references/market-realism.md). When realism is
-missing, say so in the task README (for example, "static replay: makers don't
-react to the bot").
+missing, say so in the task README's "Realism limits" (for example, "static
+replay: makers don't react to the bot"). Task READMEs share one template:
+see "Task READMEs" in `bench/tasks/README.md`.
 
 ### 7. Verify, then calibrate against real agents
 

@@ -63,6 +63,7 @@ trading-specific.
 
 ## Publishing
 
-- [ ] Task README states what is public (are hidden scenarios really hidden in this version?).
+- [ ] The dataset README states what is public (are hidden scenarios really hidden in this version?).
+- [ ] The task README follows the template in `bench/tasks/README.md` ("Task READMEs"), with what all tasks share left to the dataset README.
 - [ ] Dataset digests refreshed (`harbor sync bench/tasks`) after any task change.
 - [ ] Image public on GHCR so others can build.
