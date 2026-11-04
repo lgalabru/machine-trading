@@ -4,7 +4,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/phoenix-market-making"
-version = "0.9.0"
+version = "0.10.0"
 description = "Write a bot that makes markets in Phoenix SPCX (SpaceX) perps against competing makers and informed taker flow, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "market-making", "surfpool", "rust"]
 

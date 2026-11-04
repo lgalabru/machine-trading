@@ -5,7 +5,7 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.9.0"
+tag := "0.10.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
 references := "phoenix-flash-crash=reference phoenix-market-making=maker"

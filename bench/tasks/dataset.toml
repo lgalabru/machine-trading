@@ -4,7 +4,7 @@
 
 [dataset]
 name = "solana-foundation/machine-trading"
-version = "0.9.0"
+version = "0.10.0"
 description = "Trading tasks for agents on Solana: bots trade DeFi markets replayed on offline mainnet snapshots with Surfpool."
 keywords = [ "solana", "trading", "defi", "perpetuals", "surfpool",]
 [[dataset.authors]]
