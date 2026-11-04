@@ -372,7 +372,7 @@
   pre.wrap { white-space: pre-wrap; word-break: break-word; }
   /* A list beside a view: the bot's files, a run's scenarios. */
   .files, .scn { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
-  .scn { grid-template-columns: 320px minmax(0, 1fr); }
+  .scn { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; margin-top: 10px; }
   .files .list, .scn-list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: calc(100vh - 300px); position: sticky; top: 0; scrollbar-width: thin; }
   .files .list a, .scn-item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
   .files .list a.on, .files .list a:hover, .scn-item.on, .scn-item:hover { background: var(--panel-2); color: var(--text); }
@@ -2233,17 +2233,6 @@ async function renderSession(n, name) {
   section("Scenario", `${int((sc.path || []).length)} waypoints · ${int(sc.duration_slots)} slots (${clock(sc.duration_slots)})`);
   div(`<details><summary>The scenario as drawn${bot.annotation ? ", with what it was drawn as" : ""}</summary><pre class="code">${esc(JSON.stringify({ annotation: bot.annotation, ...sc, making: sc.making ? { ...sc.making, takers: `${sc.making.takers.length} orders: see Taker flow` } : undefined }, null, 2))}</pre></details>`);
 
-  section("Logs");
-  const logs = div("", "grid2");
-  const logPanel = async (label, path) => {
-    const d = document.createElement("div");
-    d.innerHTML = `<div class="k" style="margin-bottom:6px">${esc(label)}</div><pre class="code wrap" style="max-height:420px">Loading…</pre>`;
-    logs.appendChild(d);
-    try { const text = ansi(await api(fileUrl(n, path), true)); d.querySelector("pre").textContent = text || "(empty)"; }
-    catch (e) { d.querySelector("pre").textContent = e.message; }
-  };
-  logPanel("Bot log", `verifier/bot/${name}.log`);
-  logPanel("Reference log", `verifier/bot/reference/${name}.log`);
 }
 
 loadIndex().then(route).catch(fail);
