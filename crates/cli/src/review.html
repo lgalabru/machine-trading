@@ -96,10 +96,11 @@
   svg.pareto-svg .plab { font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #d1d1d6; }
   /* A run: its title and numbers, then the tabs. */
   .run-head { margin-top: 2px; }
-  .runstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px 0; margin: 6px 0 10px; }
-  .rs { padding: 2px 14px 2px 0; min-width: 0; }
+  .runstats { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 0; margin: 6px 0 10px; }
+  .rs { flex: 1 1 118px; max-width: 220px; padding: 2px 14px; min-width: 0; text-align: center; }
   .rs:last-child { border-right: 0; }
-  .rs-k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+  .rs-k { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+  .rs-of { color: var(--text-3); font-weight: 500; }
   .rs-v { font: 600 14px var(--mono); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rs-d { font-size: 10.5px; line-height: 1.35; color: var(--text-3); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* The scenarios: a list of cards beside the picked one's timeline. */
@@ -1931,7 +1932,7 @@ function runStats(t, trial) {
     ${item("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, `reference ${susd(t.reference_pnl_usd)}`)}
     ${item("Scenarios", int(t.sessions), t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : "none disqualifying")}
     ${item("Worst", susd(t.risk?.worst_pnl_usd), `tail ${susd(t.risk?.tail_pnl_usd)}`)}
-    ${item("Max drawdown", usd(t.risk?.max_drawdown_usd), `${pct(t.risk?.profitable_share, 0)} profitable · Sharpe ${fix(t.risk?.sharpe)}`)}
+    ${item("Drawdown", usd(t.risk?.max_drawdown_usd), `${pct(t.risk?.profitable_share, 0)} profitable · Sharpe ${fix(t.risk?.sharpe)}`)}
     ${item("Agent", dur(agentMs), `${compact(t.tokens?.output)} output tokens`)}
     ${item("Cost", usd(t.cost_usd), `${compact(t.tokens?.input)} in · ${compact(t.tokens?.cache)} cached`)}
     ${item("Grading", dur(verifierMs), t.eval_seed_sha256 ? `set ${esc(String(t.eval_seed_sha256).slice(0, 8))}…` : "")}
@@ -2341,15 +2342,16 @@ async function renderSession(n, name) {
   div(`<div class="sv-head"><div><div class="sub sv-desc">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div></div>`);
   const refPnl = ref?.report?.pnl_usd ?? sc.reference_pnl_usd;
   const txs = tl.transactions || [], failed = txs.filter((x) => !x.ok);
+  // The scenario in five numbers.
+  const dd = rep.max_drawdown_usd, ddLim = rep.mandate?.limits?.max_drawdown_usd, capPos = rep.mandate?.universe?.[0]?.max_position;
+  const failedN = failed.filter((x) => !x.duplicate).length, dupN = txs.filter((x) => x.duplicate).length, overran = rep.turns?.overran || 0;
+  const vsRef = isNum(refPnl) ? rep.pnl_usd - refPnl : null;
   div(`<div class="runstats">
-    ${statItem("PnL", `<span class="${cls(rep.pnl_usd)}">${susd(rep.pnl_usd)}</span>`, `reference ${susd(refPnl)}`, false)}
-    ${statItem("Vs reference", isNum(refPnl) ? `<span class="${cls(rep.pnl_usd - refPnl)}">${susd(rep.pnl_usd - refPnl)}</span>` : "–", "")}
-    ${statItem("Bound", usd(bot.bound_pnl_usd), "hindsight (+ spread)")}
-    ${statItem("Max drawdown", usd(rep.max_drawdown_usd), `limit ${usd(rep.mandate?.limits?.max_drawdown_usd)}`)}
-    ${statItem("Peak position", fix(rep.peak_position), `cap ${fix(rep.mandate?.universe?.[0]?.max_position)} · end ${fix(rep.end_position)}`)}
-    ${statItem("Transactions", int(txs.length), [failed.filter((x) => !x.duplicate).length ? `<span class="neg">${failed.filter((x) => !x.duplicate).length} failed</span>` : "none failed", txs.some((x) => x.duplicate) ? `<span style="color:var(--warn)">${txs.filter((x) => x.duplicate).length} duplicates</span>` : ""].filter(Boolean).join(" · "))}
-    ${statItem("Mark", usd(rep.end_mark_usd), `from ${usd(rep.start_mark_usd)} (${pct(rep.end_mark_usd / rep.start_mark_usd - 1)}) · valued at the ${esc(rep.valuation)}`)}
-    ${statItem("Turns", int(rep.turns?.steps), rep.turns?.legacy ? "never answered the hello" : `${int(rep.turns?.overran)} overran · ${fix((rep.turns?.wall_ms || 0) / 1000, 1)}s`)}
+    ${statItem("PnL", `<span class="${cls(rep.pnl_usd)}">${susd(rep.pnl_usd)}</span>`, isNum(vsRef) ? `vs ref <span class="${Math.abs(vsRef) < 0.005 ? "" : cls(vsRef)}">${Math.abs(vsRef) < 0.005 ? "even" : susd(vsRef)}</span>` : "")}
+    ${statItem("Drawdown", usd(dd), isNum(ddLim) ? `of ${usd(ddLim, 0)} limit` : "")}
+    ${statItem("Position", `${fix(rep.peak_position)}${isNum(capPos) ? `<span class="rs-of"> / ${fix(capPos, 0)}</span>` : ""}`, `peak · ends ${fix(rep.end_position)}`)}
+    ${statItem("Transactions", int(txs.length), [failedN ? `<span class="neg">${failedN} failed</span>` : "none failed", dupN ? `<span style="color:var(--warn)">${dupN} repeated</span>` : "", overran ? `<span style="color:var(--warn)">${overran} turns overran</span>` : ""].filter(Boolean).join(" · "))}
+    ${statItem("Market", usd(rep.end_mark_usd), `${susd(rep.end_mark_usd - rep.start_mark_usd).replace("$", "$")} (${pct(rep.end_mark_usd / rep.start_mark_usd - 1)}) from ${usd(rep.start_mark_usd)}`)}
   </div>`);
 
   const steps = tl.steps || [], rsteps = ref?.timeline?.steps || [];
