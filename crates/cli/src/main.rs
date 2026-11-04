@@ -15,6 +15,7 @@ mod acp;
 mod author;
 mod charts;
 mod play;
+mod publish;
 mod review;
 mod ui;
 
@@ -135,14 +136,48 @@ enum BenchCommand {
     /// sessions against the reference's, every session step by step, the
     /// agent's trajectory and the bot it wrote.
     Review {
-        /// A batch (jobs/bench/<batch>), a Harbor job, or one trial.
-        path: PathBuf,
+        /// A batch (jobs/bench/<batch>), a Harbor job, one trial, or a
+        /// published release's version (bench/results/<version>).
+        path: String,
         /// Server port; 0 picks a free one.
         #[arg(long, default_value_t = 0)]
         port: u16,
         /// Don't open a browser.
         #[arg(long)]
         no_open: bool,
+        /// Where published releases are; defaults to this checkout's
+        /// bench/results.
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Publish a finished batch as a release, small enough to commit:
+    /// bench/results/<version>. It keeps the reports, the session detail
+    /// files, the bot's source and the agent's trajectory (gzipped); never
+    /// the batch's seed, and nothing that holds it or an API key.
+    Publish {
+        /// The batch (jobs/bench/<batch>).
+        batch: PathBuf,
+        /// The release's name: the dataset version it ran, as in 0.9.0.
+        version: String,
+        /// Replace a release already published under that name.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Compare two releases (or batches), task by task: each model's mean
+    /// skill on both, and the change. As in `mtx bench compare 0.9.0...0.8.0`.
+    Compare {
+        /// <a>...<b>: versions or paths.
+        range: String,
+        /// Open the comparison in the review page too.
+        #[arg(long)]
+        open: bool,
+        /// Server port for --open; 0 picks a free one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        #[arg(long)]
+        results: Option<PathBuf>,
     },
 }
 
@@ -342,16 +377,84 @@ async fn run() -> Result<()> {
             path,
             port,
             no_open,
+            results,
         }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let first = publish::resolve(&path, &results)?;
             let summary = review::review(
-                path,
+                publish::roots(first, &results),
                 review::ReviewOptions {
                     port,
                     open: !no_open,
+                    start: None,
                 },
             )
             .await?;
             serde_json::to_string_pretty(&summary)?
+        }
+        Command::Bench(BenchCommand::Publish {
+            batch,
+            version,
+            force,
+            results,
+        }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            ui::start(format!("Publishing {} as {version}", batch.display()));
+            let summary = publish::publish(&batch, &version, &results, force)?;
+            ui::done(format!(
+                "Published {} trial{} to {} ({:.1} MB)",
+                summary["summary"]["trials"],
+                if summary["summary"]["trials"] == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                summary["path"].as_str().unwrap_or_default(),
+                summary["bytes"].as_f64().unwrap_or(0.0) / 1e6
+            ));
+            for skipped in summary["summary"]["skipped"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                ui::note(format!(
+                    "left out, too large: {}",
+                    skipped.as_str().unwrap_or_default()
+                ));
+            }
+            serde_json::to_string_pretty(&summary)?
+        }
+        Command::Bench(BenchCommand::Compare {
+            range,
+            open,
+            port,
+            results,
+        }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let (a, b) = publish::split_range(&range)?;
+            let (a, b) = (
+                publish::resolve(&a, &results)?,
+                publish::resolve(&b, &results)?,
+            );
+            let cmp = publish::compare(&a, &b);
+            publish::print_compare(&cmp);
+            if open {
+                let start = format!("compare/{}...{}", a.label, b.label);
+                let mut roots = publish::roots(a, &results);
+                if !roots.iter().any(|r| r.path == b.path) {
+                    roots.push(b);
+                }
+                review::review(
+                    roots,
+                    review::ReviewOptions {
+                        port,
+                        open: true,
+                        start: Some(start),
+                    },
+                )
+                .await?;
+            }
+            serde_json::to_string_pretty(&cmp)?
         }
         Command::Snapshot(SnapshotCommand::Prepare {
             out,
