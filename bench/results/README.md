@@ -1,7 +1,7 @@
 # Published bench results
 
 One directory per release, written by `mtx bench publish <batch> <version>`
-(see the README's "Publish and compare releases"). Browse one with
+(see [docs/development.md](../../docs/development.md)). Browse one with
 `mtx bench review <version>`, compare two with
 `mtx bench compare <a>...<b>`.
 
