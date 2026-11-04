@@ -218,6 +218,32 @@ verifier writes to `verifier/sessions/` (`mtx grade --details`) once every
 bot has stopped: trials graded before those files existed show their
 sessions as a table only.
 
+The header is the task at a glance: a watchlist of models with their skill,
+and the picked model's cumulative PnL over the hidden sessions against the
+reference's. Hover the curve to read it session by session.
+
+### Publish and compare releases
+
+```sh
+mtx bench publish jobs/bench/<batch> 0.9.0  # or `just publish …`; writes bench/results/0.9.0/
+mtx bench review 0.9.0                      # a published release, by version
+mtx bench compare 0.9.0...0.8.0             # skill by task and model, and the change
+mtx bench compare 0.9.0...0.8.0 --open      # the same in the page
+```
+
+A published release is small enough to commit (a few hundred KB a trial):
+each trial's result, the verifier's report, reward and logs, the session
+detail files, the bot's source without build output, and the agent's
+trajectory, gzipped. It never holds the batch's `.seed`: publishing refuses
+a release where any file contains the seed, an Anthropic API key, or the
+shell's `ANTHROPIC_API_KEY`. Every trial must have finished.
+
+The review page serves every published release next to the path it was
+given: switch between them in the header, or compare any two. Comparisons
+use skill (PnL over the reference's on the same hidden sessions), since each
+batch draws its own hidden set; a task's version can differ between
+releases, and the comparison shows both.
+
 ### Author and play scenarios
 
 `mtx scenario new` has a coding agent write a
