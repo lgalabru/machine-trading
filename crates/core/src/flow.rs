@@ -116,14 +116,33 @@ impl Takers {
                 makers_widened_ticks: self.widened_ticks,
                 ..FlowReport::default()
             },
+            sent: Vec::new(),
         }
     }
+}
+
+/// One taker order as the grader sent it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TakerRecord {
+    /// Slots into the session it was sent at, and the slot the scenario
+    /// lists it for.
+    pub at: u64,
+    pub slot: u64,
+    pub side: TakerSide,
+    pub size: f64,
+    /// Its worst price, in USD.
+    pub limit_usd: f64,
+    pub account: u8,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Where a session's flow is: the next order to send, and what was sent.
 pub struct Flow {
     next: usize,
     report: FlowReport,
+    sent: Vec<TakerRecord>,
 }
 
 impl Flow {
@@ -150,17 +169,30 @@ impl Flow {
             let trader = &takers.traders[order.account as usize];
             self.report.sent += 1;
             self.report.volume += order.size;
-            if let Err(error) = trader
-                .place_market(side, order.size, (limit * 100.0).round() / 100.0)
-                .await
-            {
-                self.report.failed += 1;
-                warn!("a taker order failed: {error}");
-            }
+            let limit_usd = (limit * 100.0).round() / 100.0;
+            let error = match trader.place_market(side, order.size, limit_usd).await {
+                Ok(_) => None,
+                Err(error) => {
+                    self.report.failed += 1;
+                    warn!("a taker order failed: {error}");
+                    Some(error.to_string())
+                }
+            };
+            self.sent.push(TakerRecord {
+                at,
+                slot: order.slot,
+                side: order.side,
+                size: order.size,
+                limit_usd,
+                account: order.account,
+                ok: error.is_none(),
+                error,
+            });
         }
     }
 
-    pub fn report(self) -> FlowReport {
-        self.report
+    /// What the flow did, and each order it sent.
+    pub fn finish(self) -> (FlowReport, Vec<TakerRecord>) {
+        (self.report, self.sent)
     }
 }
