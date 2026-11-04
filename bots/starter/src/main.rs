@@ -3,11 +3,11 @@
 //! Start from here: the plumbing works, the strategy is yours. The world
 //! moves in steps and waits for the bot between them: `Turns::next` hands
 //! over each step, and anything the bot sends before asking for the next one
-//! lands before the world moves again. See `mth_botkit::Trader` for placing
+//! lands before the world moves again. See `mtx_botkit::Trader` for placing
 //! and cancelling orders and reading your position.
 
 use anyhow::Result;
-use mth_botkit::{BotEnv, Trader, Turns};
+use mtx_botkit::{BotEnv, Trader, Turns};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 

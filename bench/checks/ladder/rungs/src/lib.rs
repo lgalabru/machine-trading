@@ -2,7 +2,7 @@
 //! one tick inside the competing makers.
 
 use anyhow::Result;
-use mth_botkit::{Side, Trader};
+use mtx_botkit::{Side, Trader};
 use tracing::warn;
 
 /// Largest market order, in base units: one order that crosses much of the
@@ -42,9 +42,9 @@ pub async fn toward(trader: &Trader, target: f64) -> Result<()> {
 /// The competing makers' half-spread less one tick, in basis points of the
 /// oracle: the closest any enabled spline quotes to its mid.
 pub async fn inside_competitor_bps(trader: &Trader) -> Result<f64> {
-    use mth_botkit::phoenix_rise::accounts::spline_collection::SplineCollection;
+    use mtx_botkit::phoenix_rise::accounts::spline_collection::SplineCollection;
     let market = trader.phoenix.market(&trader.env.symbol)?;
-    let address: mth_botkit::Pubkey = market.spline_pubkey.parse()?;
+    let address: mtx_botkit::Pubkey = market.spline_pubkey.parse()?;
     let account = trader.rpc.get_account(&address)?;
     let collection = SplineCollection::try_from_account_bytes(&account.data)
         .map_err(|e| anyhow::anyhow!("{e}"))?;

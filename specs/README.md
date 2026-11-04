@@ -37,7 +37,7 @@ the reference implementation by `cargo test`.
 
 v0 covers what the `phoenix-flash-crash` task enforces today: one perpetual
 on one venue, a position cap, and a drawdown limit. The reference
-implementation is `mth_botkit::mandate`, which bots read and the grader
+implementation is `mtx_botkit::mandate`, which bots read and the grader
 audits with.
 
 These specs live in this repository until a second venue or a consumer

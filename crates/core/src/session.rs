@@ -5,7 +5,7 @@
 //! 3. Stop the clock, register the scenario and lock the cheatcodes, then
 //!    start the bot (`run.sh` in its directory) with the [`BotEnv`] contract.
 //! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
-//!    give the bot its turn (see [`mth_botkit::turns`]): each step produces
+//!    give the bot its turn (see [`mtx_botkit::turns`]): each step produces
 //!    its blocks, which land the scenario's move; then the grader's own
 //!    traders act; then the bot gets the step and the world waits for it.
 //! 5. After the last step, stop the bot and mark the account to market.
@@ -24,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use mth_botkit::{
+use mtx_botkit::{
     BotEnv, QUOTE_LOTS_PER_USD,
     mandate::{InstrumentRef, Mandate, Observed, Term},
     turns::{self, Hello, Message, Step},
@@ -72,7 +72,7 @@ pub const DEPOSIT_USDC: f64 = 10_000.0;
 /// Unix users bots run as when the grader runs as root, one per session that
 /// can run at once (see [`SessionOptions::slot`]). Each session kills every
 /// process its user owns when it ends, so two sessions never share one.
-pub const BOT_USERS: [&str; 4] = ["mth-bot", "mth-bot-2", "mth-bot-3", "mth-bot-4"];
+pub const BOT_USERS: [&str; 4] = ["mtx-bot", "mtx-bot-2", "mtx-bot-3", "mtx-bot-4"];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 /// Slots from the surfnet's start to the session's: setup runs on the wall
@@ -91,7 +91,7 @@ pub struct SessionOptions<'a> {
     /// Which of [`BOT_USERS`] the bot runs as. Sessions that run at the same
     /// time must use different slots.
     pub slot: usize,
-    /// The session's regime, handed to the bot as `MTH_REGIME` (JSON): only
+    /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
 }
@@ -263,7 +263,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     // The grader's own clients, served the way a stepped world needs: a
     // transaction is final once it executed (see [`Guard::internal`]).
     let internal = Guard::internal(surfnet.rpc_url()).await?;
-    let rpc = mth_botkit::rpc_client(internal.url());
+    let rpc = mtx_botkit::rpc_client(internal.url());
     let setup_from = rpc.get_slot()?;
     let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
     let market = phoenix.market(&scenario.symbol)?;
@@ -939,7 +939,7 @@ struct SessionDir {
 
 impl SessionDir {
     fn create(bot: &Keypair, user: &str) -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("mth-session-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("mtx-session-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).map_err(io_error(&path))?;
         let dir = Self {
             path,
@@ -1030,7 +1030,7 @@ fn spawn_bot(
         .env(turns::TURN_FD_VAR, turns::TURN_FD.to_string())
         .env(
             "RUST_LOG",
-            std::env::var("MTH_BOT_LOG").unwrap_or_else(|_| "info".into()),
+            std::env::var("MTX_BOT_LOG").unwrap_or_else(|_| "info".into()),
         )
         .stdin(Stdio::null())
         .stdout(stdout)
@@ -1042,7 +1042,7 @@ fn spawn_bot(
         command.uid(uid).gid(gid);
     }
     if let Some(regime) = regime {
-        command.env("MTH_REGIME", regime);
+        command.env("MTX_REGIME", regime);
     }
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at

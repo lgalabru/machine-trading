@@ -1,11 +1,11 @@
 [package]
-name = "mth-cli"
+name = "mtx-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "mth"
+name = "mtx"
 path = "src/main.rs"
 
 [dependencies]
@@ -14,8 +14,8 @@ axum.workspace = true
 clap = { workspace = true, features = ["env"] }
 flate2 = "1"
 futures.workspace = true
-mth-botkit.workspace = true
-mth-core.workspace = true
+mtx-botkit.workspace = true
+mtx-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

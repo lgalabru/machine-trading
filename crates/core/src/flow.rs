@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use mth_botkit::{BotEnv, Side, Trader};
+use mtx_botkit::{BotEnv, Side, Trader};
 use serde::Serialize;
 use solana_keypair::Keypair;
 use tracing::{info, warn};
@@ -70,7 +70,7 @@ impl Takers {
         let widened_ticks =
             phoenix::widen_makers(&world.surfnet, phoenix, &scenario.symbol, half_spread_ticks)?;
 
-        let dir = std::env::temp_dir().join(format!("mth-takers-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mtx-takers-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).map_err(io_error(&dir))?;
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS).map(|_| Keypair::new()).collect();
         let onboarded = futures::future::join_all(keypairs.iter().map(|keypair| {

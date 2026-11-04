@@ -1627,7 +1627,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mth-botkit"
+name = "mtx-botkit"
 version = "0.1.0"
 dependencies = [
  "luce",
@@ -1645,11 +1645,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "mth-ladder-rungs"
+name = "mtx-ladder-rungs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "mth-botkit",
+ "mtx-botkit",
  "serde",
  "serde_json",
  "tokio",

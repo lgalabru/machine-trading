@@ -3,7 +3,7 @@
 //! A mandate constrains what an agent does, never why: it names the
 //! instruments the agent may hold (its universe) and limits that can be
 //! checked from the account alone. The grader holds its own copy and audits
-//! every session against it; the copy a bot reads (`MTH_MANDATE`) is for the
+//! every session against it; the copy a bot reads (`MTX_MANDATE`) is for the
 //! bot to plan by. The format is specified in `specs/mandate.md`.
 
 use std::{fmt, path::Path, str::FromStr};
