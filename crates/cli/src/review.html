@@ -83,6 +83,31 @@
   svg.pareto-svg { display: block; width: 100%; height: auto; }
   svg.pareto-svg .ylab { font: 500 10px var(--mono); fill: #8e8e93; }
   svg.pareto-svg .plab { font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #d1d1d6; }
+  /* A run: its title and numbers, then the tabs. */
+  .run-head h1 { margin-bottom: 10px; }
+  .runstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin-bottom: 4px; overflow: hidden; }
+  .rs { padding: 9px 12px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); margin: 0 -1px -1px 0; min-width: 0; }
+  .rs:last-child { border-right: 0; }
+  .rs-k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+  .rs-v { font: 600 14px var(--mono); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rs-d { font-size: 10.5px; line-height: 1.35; color: var(--text-3); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  /* The scenarios: a list of cards beside the picked one's timeline. */
+  .scn { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .scn-list { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; scrollbar-width: thin; }
+  .scn-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; padding: 2px 2px 4px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  .scn-item { display: block; padding: 9px 11px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); text-decoration: none; transition: border-color .12s, background .12s; }
+  .scn-item:hover { background: var(--panel-2); border-color: #3a3a3c; }
+  .scn-item.on { border-color: #fff; box-shadow: 0 0 0 1px #fff inset; }
+  .scn-top { display: flex; align-items: center; gap: 8px; }
+  .scn-name { font: 600 12.5px var(--mono); }
+  .scn-pnl { margin-left: auto; font: 600 13px var(--mono); }
+  .scn-spark { display: block; width: 100%; height: 46px; margin: 5px 0 3px; }
+  .scn-sub { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-3); }
+  .scn-sub span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scn-sub span:last-child { white-space: nowrap; font-family: var(--mono); }
+  .scn-view { min-width: 0; }
+  .scn-view h1 { font-size: 22px; }
+  .scn-view .btns { flex-wrap: nowrap; white-space: nowrap; }
   /* The grid: models › attempts × sessions. */
   .g-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px 18px 12px; }
   .g-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
@@ -681,7 +706,7 @@ function setCrumbs(state = {}) {
   const here = rs.find((r) => r.label === index.release) || { label: index.release || index.name || "bench", published: index.published };
   // Switching release keeps the task, and the session, when there is one: a
   // trial is one release's, so its session opens as the task's variant.
-  const keep = state.task ? `task/${encodeURIComponent(state.task)}${state.session ? `?session=${encodeURIComponent(state.session)}` : ""}` : "";
+  const keep = state.task ? `task/${encodeURIComponent(state.task)}${state.session ? `?scenario=${encodeURIComponent(state.session)}` : ""}` : "";
   const relHref = (r) => (r.primary ? "#/" : `#/@${encodeURIComponent(r.label)}/`) + keep;
   const menu = (summary, items) => `<details class="crumb-menu"><summary class="crumb ${state.task || state.extra ? "" : "here"}">${summary}<span class="caret">▾</span></summary><div class="crumb-list">${items}</div></details>`;
   const out = [`<a class="crumb brand" href="#/"><span class="dot"></span>mtx</a>`, sep];
@@ -708,6 +733,7 @@ addEventListener("click", (e) => { if (!e.target.closest(".crumb-menu")) documen
 function fail(error) { app.innerHTML = `<div class="error">${esc(error.message || error)}</div>`; }
 function section(title, sub, parent = app) { const h = document.createElement("h2"); h.innerHTML = esc(title) + (sub ? `<small>${sub}</small>` : ""); parent.appendChild(h); return h; }
 function div(html = "", className, parent = app) { const d = document.createElement("div"); if (className) d.className = className; d.innerHTML = html; parent.appendChild(d); return d; }
+const statItem = (k, v, d) => `<div class="rs"><div class="rs-k">${esc(k)}</div><div class="rs-v">${v}</div>${d ? `<div class="rs-d">${d}</div>` : ""}</div>`;
 const card = (k, v, d, big) => `<div class="card"><div class="k">${esc(k)}</div><div class="v ${big ? "big" : ""}">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
 function exceptionBadge(t) {
   if (!t.exception) return "";
@@ -763,7 +789,7 @@ async function loadIndex(fresh) {
   if (live) poller = setTimeout(() => loadIndex(true).catch(() => {}), 30000);
 }
 let currentTask = null;
-// The address: #/[@release/]task/<name>?run=<id>&session=<name>&tab=<tab>&at=<step>.
+// The address: #/[@release/]task/<name>?run=<id>&scenario=<name>&tab=<tab>&at=<step>.
 // Two things can be picked on a task: a run (it opens in the side panel)
 // and a session (it replays below the grid, for every run).
 function parseHash() {
@@ -780,13 +806,13 @@ function link({ task, run, session, tab, at } = {}) {
   if (!task) return home();
   const q = new URLSearchParams();
   if (run !== undefined && run !== null) q.set("run", run);
-  if (session) q.set("session", session);
+  if (session) q.set("scenario", session);
   if (tab && tab !== "sessions") q.set("tab", tab);
   if (at !== undefined && at !== null) q.set("at", at);
   const qs = q.toString();
   return taskHref(task) + (qs ? "?" + qs : "");
 }
-const picks = () => { const { q } = parseHash(); return { run: q.has("run") ? +q.get("run") : null, session: q.get("session"), tab: q.get("tab") || "sessions", at: q.has("at") ? +q.get("at") : null }; };
+const picks = () => { const { q } = parseHash(); return { run: q.has("run") ? +q.get("run") : null, session: q.get("scenario") ?? q.get("session"), tab: q.get("tab") || "sessions", at: q.has("at") ? +q.get("at") : null }; };
 let shownPage = null, shownPanel = null;
 async function route() {
   hideTip();
@@ -809,8 +835,10 @@ async function route() {
     if (parts[0] === "task" && parts[2]) { history.replaceState(null, "", link({ task: parts[1], session: parts[2], at: parts[3] })); return route(); }
     const { run, session, tab, at } = picks();
     // The page: redrawn only when what it shows changes, never for the panel.
+    // With a run open, the page under it stays as it was.
     const pageKey = JSON.stringify([release, parts, session]);
-    if (pageKey !== shownPage) { await routePage(parts, session, at); shownPage = pageKey; }
+    const under = shownPage && run !== null && JSON.stringify(JSON.parse(shownPage).slice(0, 2)) === JSON.stringify([release, parts]);
+    if (pageKey !== shownPage && !under) { await routePage(parts, session, at); shownPage = pageKey; }
     // The panel: a run, or one run's session.
     const task = parts[0] === "task" ? parts[1] : null;
     const panelKey = task && run !== null ? JSON.stringify([release, task, run, session, tab]) : null;
@@ -826,13 +854,14 @@ async function openPeek(n, tab, session) {
   document.getElementById("peek-title").innerHTML = t ? `<span class="sw" style="background:${modelColor(t.model)}"></span>${esc(runLabel(t))} <span class="muted mono" style="font-weight:400;font-size:11px">${esc(trialShort(t))}</span>${session ? ` <span class="muted">›</span> ${esc(session)}` : ""}` : `run ${n}`;
   const page = app;
   app = body;
-  body.scrollTop = 0;
+  if (!(body.dataset.run === String(n) && body.dataset.tab === tab)) body.scrollTop = 0;
   try {
-    if (session && t?.details) await renderSession(n, session);
-    else await renderTrial(n, tab);
+    if (body.dataset.run === String(n) && body.dataset.tab === tab && tab === "sessions" && body._select && session) await body._select(session);
+    else { body._select = null; body.dataset.run = n; body.dataset.tab = tab; await renderTrial(n, tab, session); }
   } catch (e) { fail(e); } finally { app = page; }
 }
 function closePeek() {
+  const b = document.getElementById("peek-body"); b._select = null; delete b.dataset.run;
   const panel = document.getElementById("peek");
   panel.classList.remove("on"); panel.setAttribute("aria-hidden", "true");
   document.getElementById("peek-backdrop").classList.remove("on");
@@ -970,7 +999,7 @@ function renderHero() {
   }
   const last = eq.sessions.length;
   const legendRef = eq.reference ? `<span class="key"><svg width="18" height="6"><line x1="0" x2="18" y1="3" y2="3" stroke="#8e8e93" stroke-dasharray="4 3"/></svg>reference</span>` : "";
-  const where = (i) => i === last ? `over ${last} hidden session${last > 1 ? "s" : ""}` : i === 0 ? "before the first session" : `after <b>${esc(eq.sessions[i - 1])}</b> (${i} of ${last})`;
+  const where = (i) => i === last ? `over ${last} hidden scenario${last > 1 ? "s" : ""}` : i === 0 ? "before the first scenario" : `after <b>${esc(eq.sessions[i - 1])}</b> (${i} of ${last})`;
   // The quote: one model's PnL so far, large; several side by side.
   const quote = (i) => {
     const r = eq.reference?.[i];
@@ -1123,12 +1152,12 @@ function renderOverview() {
     <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}. Pick a task on the left to see its curves.</p>`);
   div([
     card("Trials", int(trials.length), `${index.tasks.length} tasks × ${modelOrder.length} models`),
-    card("Hidden sessions", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per trial"),
+    card("Hidden scenarios", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per trial"),
     card("Agent cost", usd(cost, 0), `${usd(trials.length ? cost / trials.length : null)} a trial`),
     card("Agent time", dur(agentMs), `${dur(trials.length ? agentMs / trials.length : null)} a trial`),
   ].join(""), "ov-stats");
   // The leaderboard: mean skill by model and task.
-  section("Leaderboard", "mean skill: PnL over the reference's on the same sessions; the reference scores 1×");
+  section("Leaderboard", "mean skill: PnL over the reference's on the same scenarios; the reference scores 1×");
   const rows = modelOrder.map((m) => {
     const per = index.tasks.map((t) => mean(index.trials.filter((x) => x.task === t.name && x.model === m && x.graded).map((x) => x.skill)));
     return { model: m, per, mean: mean(per) };
@@ -1149,9 +1178,9 @@ function renderOverview() {
   }
   section("How bots are judged");
   div([
-    `<div class="card"><div class="k">The score is PnL</div><p><b>skill</b> is a bot's total PnL over the hidden set divided by the reference bot's on the same sessions. <b>reward</b> divides it by a hindsight bound no bot reaches.</p></div>`,
-    `<div class="card"><div class="k">Risk is a set of limits</div><p>One market, a position cap and a loss limit, checked every step, plus standard RPC only and no liquidation at the end. One breach in any session scores 0.</p></div>`,
-    `<div class="card"><div class="k">Reported, not scored</div><p>Worst session, tail loss, max drawdown, profitable share and Sharpe, per trial. Too noisy over a few dozen sessions to weigh into a score.</p></div>`,
+    `<div class="card"><div class="k">The score is PnL</div><p><b>skill</b> is a bot's total PnL over the hidden set divided by the reference bot's on the same scenarios. <b>reward</b> divides it by a hindsight bound no bot reaches.</p></div>`,
+    `<div class="card"><div class="k">Risk is a set of limits</div><p>One market, a position cap and a loss limit, checked every step, plus standard RPC only and no liquidation at the end. One breach in any scenario scores 0.</p></div>`,
+    `<div class="card"><div class="k">Reported, not scored</div><p>Worst scenario, tail loss, max drawdown, profitable share and Sharpe, per run. Too noisy over a few dozen scenarios to weigh into a score.</p></div>`,
   ].join(""), "ov-judge");
 }
 
@@ -1210,7 +1239,7 @@ async function renderTask(name, session, at) {
   renderGrid(document.getElementById("grid"), task, trials, eq, sel);
   const explorer = document.getElementById("explorer");
   if (!sel) {
-    explorer.innerHTML = `<div class="grid-empty"><b>Pick a session</b>, a column, to replay it for every run. A row opens the run: its agent, bot and logs.</div>`;
+    explorer.innerHTML = `<div class="grid-empty"><b>Pick a scenario</b>, a column, to replay it for every run. A row opens the run: its agent, bot and logs.</div>`;
     return;
   }
   await renderAcross(explorer, task, trials, sel, at);
@@ -1267,13 +1296,13 @@ function renderGrid(host, task, trials, eq, sel) {
   const every = Math.max(1, Math.ceil(n / 12));
   const axis = `<div class="strip axis" style="--n:${n}">${names.map((s, i) => `<i data-c="${i}" data-k="col" class="${s === sel ? "sel" : ""}">${(i + 1) % every === 0 || i === 0 ? i + 1 : ""}</i>`).join("")}</div>`;
   host.innerHTML = `<div class="g-card">
-    <div class="g-top"><div><h2>Runs × sessions</h2><div class="muted">A run is one model's attempt at the task: its agent writes a bot once, and the bot is graded on each of the ${n} hidden sessions every run shares.</div></div>
+    <div class="g-top"><div><h2>Runs × scenarios</h2><div class="muted">A run is one model's attempt at the task: its agent writes a bot once, and the bot is graded on each of the ${n} hidden scenarios every run shares.</div></div>
       <div class="seg sm" title="what a cell's color shows">${[["vs", "vs reference"], ["pnl", "PnL"]].map(([k, l]) => `<a href="javascript:void 0" data-mode="${k}" class="${gridMode === k ? "on" : ""}">${l}</a>`).join("")}</div></div>
     <div class="g-grid">
-      <div class="g-row g-head"><span class="g-name">Run</span><span>Skill</span><span>PnL</span><span>Cost</span><span>Time</span>${n ? axis : `<span class="muted">no graded sessions yet</span>`}</div>
+      <div class="g-row g-head"><span class="g-name">Run</span><span>Skill</span><span>PnL</span><span>Cost</span><span>Time</span>${n ? axis : `<span class="muted">no graded scenarios yet</span>`}</div>
       ${rows}${refRow}
     </div>
-    <div class="g-foot"><span><i class="lg up"></i>${gridMode === "vs" ? "beat the reference" : "made money"}</span><span><i class="lg down"></i>${gridMode === "vs" ? "trailed it" : "lost money"}</span><span class="muted">a row opens the run · a column replays the session for every run · a cell, one run's session</span></div>
+    <div class="g-foot"><span><i class="lg up"></i>${gridMode === "vs" ? "beat the reference" : "made money"}</span><span><i class="lg down"></i>${gridMode === "vs" ? "trailed it" : "lost money"}</span><span class="muted">a row opens the run · a column replays the scenario for every run · a cell, one run's scenario</span></div>
   </div>`;
   // Session descriptions for the tooltips, from a run with detail files.
   const withDetails = trials.find((t) => t.details && set.has(t.id));
@@ -1318,7 +1347,7 @@ function renderGrid(host, task, trials, eq, sel) {
 async function renderAcross(host, task, trials, name, at) {
   const set = comparable(trials);
   if (!set.length) {
-    host.innerHTML = `<div class="grid-empty">No run of this task has step-by-step session files${trials.some((t) => t.status === "pending") ? " yet (some are still running)" : ""}. Trials graded before they existed have their sessions on the trial page.</div>`;
+    host.innerHTML = `<div class="grid-empty">No run of this task has step-by-step scenario files${trials.some((t) => t.status === "pending") ? " yet (some are still running)" : ""}. Trials graded before they existed have their scenarios in the run's panel.</div>`;
     return;
   }
   const people = who(set);
@@ -1531,7 +1560,7 @@ async function renderCompare(a, b) {
   div(`<h1>${esc(a)} <small>vs</small> ${esc(b)}</h1>
     <div class="cmp-pick"><span class="k">From</span><div class="seg">${pickers("b", b)}</div><span class="k">to</span><div class="seg">${pickers("a", a)}</div>
     <a class="btn" href="#/compare/${encodeURIComponent(b)}...${encodeURIComponent(a)}">swap</a></div>
-    <div class="sub">Skill is a model's PnL over the reference's on the same hidden sessions, so it compares across releases whose hidden sets differ. A task's version can change between releases too: it's shown under each.</div>`);
+    <div class="sub">Skill is a model's PnL over the reference's on the same hidden scenarios, so it compares across releases whose hidden sets differ. A task's version can change between releases too: it's shown under each.</div>`);
   if (!ra || !rb) { div(`No release named ${esc(!ra ? a : b)}. Known: ${releases.map(label).map(esc).join(", ")}`, "error"); return; }
   // Oldest first, for the lines over releases.
   const ordered = [...releases].filter((r) => r.published || r === ra || r === rb).reverse();
@@ -1770,38 +1799,96 @@ function highlight(text, lang) {
   return out;
 }
 
+// ---------- a run's scenarios ----------
+// The run's numbers in one line under its title.
+function runStats(t, trial) {
+  const item = (k, v, d) => `<div class="rs"><div class="rs-k">${esc(k)}</div><div class="rs-v">${v}</div>${d ? `<div class="rs-d">${d}</div>` : ""}</div>`;
+  const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
+  return `<div class="runstats">
+    ${item("Skill", `<span class="${isNum(t.skill) ? (Math.round(t.skill * 100) >= 100 ? "pos" : "neg") : ""}">${times(t.skill)}</span>`, "vs reference")}
+    ${item("Reward", fix(t.reward, 4), "vs hindsight bound")}
+    ${item("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, `reference ${susd(t.reference_pnl_usd)}`)}
+    ${item("Scenarios", int(t.sessions), t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : "none disqualifying")}
+    ${item("Worst", susd(t.risk?.worst_pnl_usd), `tail ${susd(t.risk?.tail_pnl_usd)}`)}
+    ${item("Max drawdown", usd(t.risk?.max_drawdown_usd), `${pct(t.risk?.profitable_share, 0)} profitable · Sharpe ${fix(t.risk?.sharpe)}`)}
+    ${item("Agent", dur(agentMs), `${compact(t.tokens?.output)} output tokens`)}
+    ${item("Cost", usd(t.cost_usd), `${compact(t.tokens?.input)} in · ${compact(t.tokens?.cache)} cached`)}
+    ${item("Grading", dur(verifierMs), t.eval_seed_sha256 ? `set ${esc(String(t.eval_seed_sha256).slice(0, 8))}…` : "")}
+  </div>`;
+}
+// The scenarios tab: every scenario as a small chart of the run's PnL
+// through it, green or red by where it ended, on one scale; the picked one's
+// timeline beside them.
+async function trialScenarios(n, trial, picked) {
+  const t = trial.summary;
+  if (!t.details) return trialSessions(n, trial);
+  const host = div(`<div class="loading">Loading the scenarios…</div>`, "scn");
+  const { sessions } = await api(`/api/curves/${n}`);
+  if (!sessions.length) { host.innerHTML = ""; return trialSessions(n, trial); }
+  const pick = sessions.some((s) => s.name === picked) ? picked : sessions[0].name;
+  // One scale for every card, so their sizes compare.
+  const all = sessions.flatMap((s) => [...s.bot, ...(s.reference || [])].map((p) => p[1])).filter(isNum);
+  const lo = Math.min(0, ...all), hi = Math.max(0, ...all);
+  host.innerHTML = `<div class="scn-list"></div><div class="scn-view"></div>`;
+  const list = host.querySelector(".scn-list"), view = host.querySelector(".scn-view");
+  const better = sessions.filter((s) => isNum(s.reference_pnl_usd) && s.pnl_usd > s.reference_pnl_usd + 0.5).length;
+  const worse = sessions.filter((s) => isNum(s.reference_pnl_usd) && s.pnl_usd < s.reference_pnl_usd - 0.5).length;
+  list.innerHTML = `<div class="scn-head"><span class="k">${sessions.length} scenarios</span><span class="muted">${better} beat · ${worse} trail the reference</span></div>` + sessions.map((s, i) => {
+    const d = isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : null;
+    return `<a class="scn-item" href="${link({ task: t.task, run: n, session: s.name })}" data-s="${esc(s.name)}">
+      <div class="scn-top"><span class="scn-name">${esc(s.name)}</span>${s.disqualified ? `<span class="badge bad">DQ</span>` : ""}<span class="scn-pnl ${cls(s.pnl_usd)}">${susd(s.pnl_usd, 0)}</span></div>
+      ${scenarioSpark(s, lo, hi)}
+      <div class="scn-sub"><span title="${esc(s.description || "")}">${esc(describeAnnotation(s.annotation) || s.description || "")}</span><span class="${isNum(d) ? (Math.abs(d) < 0.5 ? "" : d > 0 ? "pos" : "neg") : ""}">${isNum(d) ? (Math.abs(d) < 0.5 ? "= ref" : `${susd(d, 0)} vs ref`) : ""}</span></div>
+    </a>`;
+  }).join("");
+  // Picking another scenario redraws only the view, and keeps the list put.
+  const select = async (name) => {
+    list.querySelectorAll(".scn-item").forEach((a) => a.classList.toggle("on", a.dataset.s === name));
+    const page = app; app = view;
+    try { view.innerHTML = ""; await renderSession(n, name); } catch (e) { fail(e); } finally { app = page; }
+  };
+  document.getElementById("peek-body")._select = select;
+  await select(pick);
+  list.querySelector(".scn-item.on")?.scrollIntoView({ block: "nearest" });
+}
+// A scenario's card chart: the run's PnL through it, the reference dashed.
+function scenarioSpark(s, lo, hi) {
+  const W = 288, H = 46;
+  const pts = s.bot.filter((p) => isNum(p[1]));
+  if (pts.length < 2) return `<div class="scn-spark empty"></div>`;
+  const x1 = Math.max(...pts.map((p) => p[0]), ...(s.reference || []).map((p) => p[0])) || 1;
+  const sx = (x) => (x / x1) * W, sy = (y) => 4 + (hi - y) / ((hi - lo) || 1) * (H - 8);
+  const path = (ps) => ps.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join("");
+  const color = (pts.at(-1)[1] ?? 0) >= 0 ? "var(--up)" : "var(--down)";
+  const id = "s" + Math.random().toString(36).slice(2, 7);
+  const ref = (s.reference || []).filter((p) => isNum(p[1]));
+  return `<svg class="scn-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".38"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    <line x1="0" x2="${W}" y1="${sy(0).toFixed(1)}" y2="${sy(0).toFixed(1)}" stroke="#3a3a3c" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>
+    ${ref.length > 1 ? `<path d="${path(ref)}" fill="none" stroke="#8e8e93" stroke-width="1" stroke-dasharray="3 3" opacity=".75" vector-effect="non-scaling-stroke"/>` : ""}
+    <path d="${path(pts)}L${sx(pts.at(-1)[0]).toFixed(1)},${H}L${sx(pts[0][0]).toFixed(1)},${H}Z" fill="url(#${id})"/>
+    <path d="${path(pts)}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
 // ---------- trial ----------
 function trialHeader(n, t, tab, trial) {
   app.innerHTML = ""; delete app.dataset.task;
-  div(`<h1>${esc(runLabel(t))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1><div class="sub">${statusBadges(t)} <span class="num">${esc(t.path)}</span></div>`);
-  const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
-  div(`<div class="cards">
-    ${card("Skill", times(t.skill), "PnL over the reference's; 1 matches it", true)}
-    ${card("Reward", fix(t.reward, 4), "PnL over the hindsight bound")}
-    ${card("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, `reference ${susd(t.reference_pnl_usd)}`)}
-    ${card("Sessions", int(t.sessions), t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : "none disqualifying")}
-    ${card("Worst session", susd(t.risk?.worst_pnl_usd), `tail ${susd(t.risk?.tail_pnl_usd)}`)}
-    ${card("Max drawdown", usd(t.risk?.max_drawdown_usd), `${pct(t.risk?.profitable_share, 0)} profitable · sharpe ${fix(t.risk?.sharpe)}`)}
-    ${card("Agent", dur(agentMs), `${compact(t.tokens?.output)} output tokens`)}
-    ${card("Cost", usd(t.cost_usd), `${compact(t.tokens?.input)} input · ${compact(t.tokens?.cache)} cached`)}
-    ${card("Grading", dur(verifierMs), t.eval_seed_sha256 ? `set ${String(t.eval_seed_sha256).slice(0, 12)}…` : "")}
-  </div>`);
-  div(phaseBar(trial?.timings, t) + tokenBar(t, null), "sbars");
+  div(`<h1>${esc(runLabel(t))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1>${runStats(t, trial)}`, "run-head");
   if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
-  const tabs = [["sessions", "Sessions"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
+  const tabs = [["sessions", "Scenarios"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
   div(tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
 }
 
-async function renderTrial(n, tab) {
+async function renderTrial(n, tab, session) {
   const trial = await api(`/api/trial/${n}`);
   const t = trial.summary;
   trialHeader(n, t, tab, trial);
-  if (tab === "sessions") return trialSessions(n, trial);
+  if (tab === "sessions") return trialScenarios(n, trial, session);
+  if (tab === "agent") div(phaseBar(trial.timings, t) + tokenBar(t, null), "sbars");
   if (tab === "agent") return trialAgent(n, trial);
   if (tab === "bot") return trialFiles(n, trial, trial.files.map((f) => f.path), "artifacts/app/bot/");
   if (tab === "logs") return trialLogs(n, trial);
   if (tab === "raw") {
-    div(`<details open><summary>verifier/report.json (sessions folded)</summary><pre class="code wrap">${esc(JSON.stringify(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} sessions: see the Sessions tab` } : null, null, 2))}</pre></details>
+    div(`<details open><summary>verifier/report.json (scenarios folded)</summary><pre class="code wrap">${esc(JSON.stringify(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} scenarios: see the Scenarios tab` } : null, null, 2))}</pre></details>
       <details><summary>verifier/reward.json</summary><pre class="code">${esc(JSON.stringify(trial.rewards, null, 2))}</pre></details>
       <details><summary>Harbor config</summary><pre class="code">${esc(JSON.stringify(trial.config, null, 2))}</pre></details>
       <details><summary>Timings</summary><pre class="code">${esc(JSON.stringify(trial.timings, null, 2))}</pre></details>
@@ -1823,7 +1910,7 @@ function describeAnnotation(a) {
 
 function trialSessions(n, trial) {
   const scenarios = trial.report?.scenarios || [];
-  if (!scenarios.length) { div(`<div class="empty">No sessions in this trial's report.</div>`); return; }
+  if (!scenarios.length) { div(`<div class="empty">No scenarios in this run's report.</div>`); return; }
   const stats = trial.session_stats || {};
   const rows = scenarios.map((s, i) => ({ i, ...s, stat: stats[s.scenario] || {}, delta: isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : null }));
   const host = div();
@@ -1833,7 +1920,7 @@ function trialSessions(n, trial) {
   const group = new Group(); group.label = (x) => rows[Math.round(x)]?.scenario ?? "";
   const open = (x) => { const r = rows[Math.round(x)]; if (r && trial.sessions.bot.includes(r.scenario)) location.hash = link({ task: trial.summary.task, run: n, session: r.scenario }); };
   const bars = chart(host, {
-    title: "PnL by session", height: 220, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
+    title: "PnL by scenario", height: 220, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
     series: [
       { label: "bot", type: "bars", color: "var(--accent)", width: 0.42, offset: -0.5, data: rows.map((r) => [r.i, r.pnl_usd]), colorOf: (p) => rows[p[0]].disqualified ? "var(--ask)" : "var(--accent)", fmt: susd },
       { label: "reference", type: "bars", color: "var(--ref)", width: 0.42, offset: 0.5, data: rows.map((r) => [r.i, r.reference_pnl_usd]), opacity: 0.75, fmt: susd },
@@ -1850,12 +1937,12 @@ function trialSessions(n, trial) {
     onClick: open,
   });
   group.add(bars); group.add(cum);
-  if (!trial.sessions.bot.length) div(`<div class="sub" style="margin:6px 0 0">This trial has no step-by-step session files (it was graded before the verifier recorded them), so there's no timeline per session.</div>`);
-  section("Sessions", "click one for its timeline");
+  if (!trial.sessions.bot.length) div(`<div class="sub" style="margin:6px 0 0">This run has no step-by-step scenario files (it was graded before the verifier recorded them), so there's no timeline per scenario.</div>`);
+  section("Scenarios", "click one for its timeline");
   const t = div();
   table(t, rows, [
     { key: "i", label: "#", r: true, fmt: (r) => r.i + 1 },
-    { key: "scenario", label: "Session", mono: true, fmt: (r) => `${esc(r.scenario)}${r.disqualified ? ` <span class="badge bad" title="${esc(r.disqualified)}">disqualified</span>` : ""}` },
+    { key: "scenario", label: "Scenario", mono: true, fmt: (r) => `${esc(r.scenario)}${r.disqualified ? ` <span class="badge bad" title="${esc(r.disqualified)}">disqualified</span>` : ""}` },
     { key: "kind", label: "Drawn as", sort: (r) => describeAnnotation(r.stat.annotation), fmt: (r) => `<span class="muted">${esc(describeAnnotation(r.stat.annotation))}</span>` },
     { key: "pnl_usd", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl_usd)}">${susd(r.pnl_usd)}</span>` },
     { key: "reference_pnl_usd", label: "Reference", r: true, fmt: (r) => susd(r.reference_pnl_usd) },
@@ -1969,18 +2056,18 @@ async function renderSession(n, name) {
   const nav = (i) => names[i] ? `<a class="btn" href="${link({ task: t.task, run: n, session: names[i] })}">${i < idx ? "← " : ""}${esc(names[i])}${i > idx ? " →" : ""}</a>` : "";
   const rep = bot.report, tl = bot.timeline, sc = bot.scenario;
   const making = !!sc.making;
-  div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div><div class="btns"><a class="btn" href="${link({ task: t.task, run: n })}">All sessions</a>${nav(idx - 1)}${nav(idx + 1)}</div></div>`);
+  div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div><div class="btns">${nav(idx - 1)}${nav(idx + 1)}</div></div>`);
   const refPnl = ref?.report?.pnl_usd ?? sc.reference_pnl_usd;
   const txs = tl.transactions || [], failed = txs.filter((x) => !x.ok);
-  div(`<div class="cards">
-    ${card("PnL", `<span class="${cls(rep.pnl_usd)}">${susd(rep.pnl_usd)}</span>`, `reference ${susd(refPnl)}`, false)}
-    ${card("Vs reference", isNum(refPnl) ? `<span class="${cls(rep.pnl_usd - refPnl)}">${susd(rep.pnl_usd - refPnl)}</span>` : "–", "")}
-    ${card("Bound", usd(bot.bound_pnl_usd), "hindsight (+ spread)")}
-    ${card("Max drawdown", usd(rep.max_drawdown_usd), `limit ${usd(rep.mandate?.limits?.max_drawdown_usd)}`)}
-    ${card("Peak position", fix(rep.peak_position), `cap ${fix(rep.mandate?.universe?.[0]?.max_position)} · end ${fix(rep.end_position)}`)}
-    ${card("Transactions", int(txs.length), [failed.filter((x) => !x.duplicate).length ? `<span class="neg">${failed.filter((x) => !x.duplicate).length} failed</span>` : "none failed", txs.some((x) => x.duplicate) ? `<span style="color:var(--warn)">${txs.filter((x) => x.duplicate).length} duplicates</span>` : ""].filter(Boolean).join(" · "))}
-    ${card("Mark", usd(rep.end_mark_usd), `from ${usd(rep.start_mark_usd)} (${pct(rep.end_mark_usd / rep.start_mark_usd - 1)}) · valued at the ${esc(rep.valuation)}`)}
-    ${card("Turns", int(rep.turns?.steps), rep.turns?.legacy ? "never answered the hello" : `${int(rep.turns?.overran)} overran · ${fix((rep.turns?.wall_ms || 0) / 1000, 1)}s`)}
+  div(`<div class="runstats">
+    ${statItem("PnL", `<span class="${cls(rep.pnl_usd)}">${susd(rep.pnl_usd)}</span>`, `reference ${susd(refPnl)}`, false)}
+    ${statItem("Vs reference", isNum(refPnl) ? `<span class="${cls(rep.pnl_usd - refPnl)}">${susd(rep.pnl_usd - refPnl)}</span>` : "–", "")}
+    ${statItem("Bound", usd(bot.bound_pnl_usd), "hindsight (+ spread)")}
+    ${statItem("Max drawdown", usd(rep.max_drawdown_usd), `limit ${usd(rep.mandate?.limits?.max_drawdown_usd)}`)}
+    ${statItem("Peak position", fix(rep.peak_position), `cap ${fix(rep.mandate?.universe?.[0]?.max_position)} · end ${fix(rep.end_position)}`)}
+    ${statItem("Transactions", int(txs.length), [failed.filter((x) => !x.duplicate).length ? `<span class="neg">${failed.filter((x) => !x.duplicate).length} failed</span>` : "none failed", txs.some((x) => x.duplicate) ? `<span style="color:var(--warn)">${txs.filter((x) => x.duplicate).length} duplicates</span>` : ""].filter(Boolean).join(" · "))}
+    ${statItem("Mark", usd(rep.end_mark_usd), `from ${usd(rep.start_mark_usd)} (${pct(rep.end_mark_usd / rep.start_mark_usd - 1)}) · valued at the ${esc(rep.valuation)}`)}
+    ${statItem("Turns", int(rep.turns?.steps), rep.turns?.legacy ? "never answered the hello" : `${int(rep.turns?.overran)} overran · ${fix((rep.turns?.wall_ms || 0) / 1000, 1)}s`)}
   </div>`);
 
   const steps = tl.steps || [], rsteps = ref?.timeline?.steps || [];
@@ -2083,7 +2170,7 @@ async function renderSession(n, name) {
     "Orders placed": int((r.timeline.transactions || []).flatMap((x) => x.instructions || []).filter((i) => i.order).length),
     "Refused calls": int((r.report.refused_calls || []).length), "Late sends": int(r.report.turns?.late_sends),
     "Turns overran": int(r.report.turns?.overran), "Turn time": `${fix((r.report.turns?.wall_ms || 0) / 1000, 1)}s`,
-    "Session wall": isNum(r.report.wall_ms) ? `${fix(r.report.wall_ms / 1000, 1)}s` : "–", "Bot exit": r.report.bot_exit || "ran to the end",
+    "Scenario wall": isNum(r.report.wall_ms) ? `${fix(r.report.wall_ms / 1000, 1)}s` : "–", "Bot exit": r.report.bot_exit || "ran to the end",
   } : null;
   const mb = metric(bot), mr = metric(ref);
   cmp.innerHTML = `<div class="panel"><table class="cmp"><thead><tr><th></th><th class="r">bot</th><th class="r">reference</th></tr></thead><tbody>${Object.keys(mb).map((k) => `<tr><td>${k}</td><td class="r num">${mb[k]}</td><td class="r num">${mr ? mr[k] : "–"}</td></tr>`).join("")}</tbody></table></div>
