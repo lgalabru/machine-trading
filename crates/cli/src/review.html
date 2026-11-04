@@ -1009,7 +1009,7 @@ function renderHero() {
   const quoteEl = document.getElementById("q-quote"), sub = document.getElementById("q-sub");
   if (!shown.length) {
     const p = eq.models.find((m) => m.model === picked[0]);
-    quoteEl.innerHTML = `<span class="big">${esc(p ? shortModel(p.model) : "No trials")}</span>`;
+    quoteEl.innerHTML = `<span class="big">${esc(p ? shortModel(p.model) : "No runs")}</span>`;
     sub.innerHTML = p?.running ? `${p.running} trial${p.running > 1 ? "s" : ""} still running` : "";
     area.outerHTML = `<div class="area-empty">${p?.running ? "Waiting for the first graded run" : "Nothing graded yet"}</div>`;
     return;
