@@ -1859,8 +1859,8 @@ async function trialScenarios(n, trial, picked) {
   if (on && (on.offsetTop < list.scrollTop || on.offsetTop + on.offsetHeight > list.scrollTop + list.clientHeight)) list.scrollTop = on.offsetTop - 40;
 }
 // A scenario's miniature: its market, the mark over the session, as the
-// price chart draws it; green when the run made money on it, red when it
-// lost, gray when it didn't trade.
+// price chart draws it; green when the run won it (matched or beat the
+// reference), red when it lost to it. Without a reference, by its PnL.
 function scenarioSpark(s) {
   const W = 288, H = 46;
   const pts = s.bot.filter((p) => isNum(p[2]));
@@ -1870,8 +1870,8 @@ function scenarioSpark(s) {
   const x1 = pts.at(-1)[0] || 1;
   const sx = (x) => (x / x1) * W, sy = (y) => 4 + (hi - y) / ((hi - lo) || 1) * (H - 8);
   const d = pts.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[2]).toFixed(1)}`).join("");
-  const pnl = s.pnl_usd;
-  const color = !isNum(pnl) || Math.abs(pnl) < 0.5 ? "#8e8e93" : pnl > 0 ? "var(--up)" : "var(--down)";
+  const edge = isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : s.pnl_usd;
+  const color = !isNum(edge) ? "#8e8e93" : edge > -0.5 ? "var(--up)" : "var(--down)";
   const id = "s" + Math.random().toString(36).slice(2, 7);
   return `<svg class="scn-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".32"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
     <path d="${d}L${sx(pts.at(-1)[0]).toFixed(1)},${H}L${sx(pts[0][0]).toFixed(1)},${H}Z" fill="url(#${id})"/>
