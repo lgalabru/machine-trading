@@ -335,6 +335,11 @@
   .tip b { color: var(--text); font-weight: 600; }
   .tip .row { display: flex; justify-content: space-between; gap: 16px; }
   .tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  /* Syntax colors, after GitHub's dark theme. */
+  pre.code .ln { color: var(--text-4); user-select: none; }
+  .hl-kw { color: #ff7b72; } .hl-str { color: #a5d6ff; } .hl-com { color: #8b949e; font-style: italic; }
+  .hl-num, .hl-flag, .hl-con { color: #79c0ff; } .hl-type, .hl-var { color: #ffa657; } .hl-life { color: #ffa657; font-style: italic; }
+  .hl-fn, .hl-mac, .hl-cmd { color: #d2a8ff; } .hl-attr, .hl-key { color: #7ee787; } .hl-table { color: #ffa657; font-weight: 600; }
   pre.code { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 12px/1.55 var(--mono); color: #d4d4d8; overflow: auto; max-height: 720px; white-space: pre; }
   pre.wrap { white-space: pre-wrap; word-break: break-word; }
   .files { display: grid; grid-template-columns: 280px 1fr; gap: 14px; }
@@ -1691,6 +1696,80 @@ function miniArea(xs, ys, color, fmt) {
   return `<svg class="mini" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".35"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${d}L${sx(xs[ys.length - 1])},${H}L${sx(xs[0])},${H}Z" fill="url(#${id})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg><div class="mini-axis"><span>0m</span><span>${fmt(hi)} peak</span><span>${Math.round(x1)}m</span></div>`;
 }
 
+// ---------- syntax ----------
+// A small highlighter for the bots' files: Rust, TOML and shell. Rules are
+// tried in order at each position over the whole file, so block comments and
+// multi-line strings work; the tokens are then split into lines.
+const RUST_KW = "as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return static struct super trait type unsafe use where while";
+const SH_KW = "if then else elif fi for while until do done case esac in function select return exit break continue set export local readonly shift trap source";
+const kw = (words) => new RegExp(`\\b(?:${words.split(" ").join("|")})\\b`, "y");
+const SYNTAX = {
+  rust: [
+    ["com", /\/\/[^\n]*|\/\*[\s\S]*?\*\//y],
+    ["str", /b?r(#*)"[\s\S]*?"\1|b?"(?:\\[\s\S]|[^"\\])*"/y],
+    ["str", /b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|.)|[^\\'\n])'/y],
+    ["life", /'[a-zA-Z_]\w*\b/y],
+    ["attr", /#!?\[[^\]\n]*\]/y],
+    ["mac", /\b[a-zA-Z_]\w*!(?=\s*[([{])/y],
+    ["num", /\b(?:0x[\da-fA-F_]+|0b[01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)(?:_?(?:[iu](?:8|16|32|64|128|size)|f32|f64))?\b/y],
+    ["con", /\b(?:true|false|self|Self|None|Some|Ok|Err)\b/y],
+    ["kw", kw(RUST_KW)],
+    ["type", /\b[A-Z][A-Za-z0-9_]*\b/y],
+    ["fn", /\b[a-z_]\w*(?=\s*(?:::<[^>]*>)?\()/y],
+  ],
+  toml: [
+    ["com", /#[^\n]*/y],
+    ["table", /(?<=^|\n)[ \t]*\[\[?[^\]\n]+\]\]?/y],
+    ["key", /(?<=^|\n|[{,][ \t]*)[ \t]*(?:"[^"\n]*"|[\w.-]+)(?=[ \t]*=)/y],
+    ["str", /"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'[^'\n]*'/y],
+    ["num", /\b\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:\d{2})?)?\b|\b(?:0x[\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)\b/y],
+    ["con", /\b(?:true|false|inf|nan)\b/y],
+  ],
+  sh: [
+    ["com", /^#![^\n]*|(?<![\w$#{])#[^\n]*/y],
+    ["str", /'[^']*'|"(?:\\[\s\S]|[^"\\])*"/y],
+    ["var", /\$\{[^}\n]*\}|\$[A-Za-z_]\w*|\$[@#?*!$0-9-]/y],
+    ["kw", kw(SH_KW)],
+    ["flag", /(?<=[ \t])--?[A-Za-z][\w-]*/y],
+    ["cmd", /(?<=(?:^|\n|[|;&(]|\bthen|\bdo|\belse)[ \t]*)[A-Za-z_./][\w./-]*/y],
+    ["num", /\b\d+\b/y],
+  ],
+};
+function languageOf(path) {
+  const name = path.split("/").pop();
+  if (/\.rs$/.test(name)) return "rust";
+  if (/\.toml$/.test(name) || name === "Cargo.lock") return "toml";
+  if (/\.(sh|bash)$/.test(name)) return "sh";
+  return null;
+}
+// Lines of HTML, each balanced, for a file's text.
+function highlight(text, lang) {
+  const rules = SYNTAX[lang];
+  const out = [""];
+  const put = (cls, chunk) => chunk.split("\n").forEach((part, k) => {
+    if (k) out.push("");
+    if (part) out[out.length - 1] += cls ? `<span class="hl-${cls}">${esc(part)}</span>` : esc(part);
+  });
+  if (!rules) { put(null, text); return out; }
+  const word = /[A-Za-z0-9_]+|[\s\S]/y;
+  let i = 0, plain = "";
+  while (i < text.length) {
+    let hit = null;
+    for (const [cls, re] of rules) {
+      re.lastIndex = i;
+      const m = re.exec(text);
+      if (m && m[0].length) { hit = [cls, m[0]]; break; }
+    }
+    if (hit) { if (plain) { put(null, plain); plain = ""; } put(hit[0], hit[1]); i += hit[1].length; continue; }
+    // Skip a whole word at once, so a rule never starts inside one.
+    word.lastIndex = i;
+    const m = word.exec(text)[0];
+    plain += m; i += m.length;
+  }
+  if (plain) put(null, plain);
+  return out;
+}
+
 // ---------- trial ----------
 function trialHeader(n, t, tab, trial) {
   app.innerHTML = ""; delete app.dataset.task;
@@ -1858,8 +1937,9 @@ function trialFiles(n, trial, paths, prefix) {
     view.innerHTML = `<div class="loading">Loading…</div>`;
     try {
       const text = ansi(await api(fileUrl(n, path), true));
-      const lines = text.split("\n");
-      view.innerHTML = `<div class="sub num" style="margin-bottom:6px">${esc(path)} · ${int(lines.length)} lines</div><pre class="code">${lines.map((l, i) => `<span style="color:var(--text-4);user-select:none">${String(i + 1).padStart(4)}  </span>${esc(l)}`).join("\n")}</pre>`;
+      const lang = languageOf(path);
+      const lines = highlight(text, lang);
+      view.innerHTML = `<div class="sub num" style="margin-bottom:6px">${esc(path)} · ${int(lines.length)} lines${lang ? ` · ${lang}` : ""}</div><pre class="code">${lines.map((l, i) => `<span class="ln">${String(i + 1).padStart(4)}  </span>${l}`).join("\n")}</pre>`;
     } catch (e) { view.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
   };
   list.innerHTML = paths.map((p) => `<a href="javascript:void 0" data-p="${esc(p)}"><span>${esc(p.startsWith(prefix) ? p.slice(prefix.length) : p)}</span><span class="muted">${sizes[p] !== undefined ? compact(sizes[p]) + "B" : ""}</span></a>`).join("");
