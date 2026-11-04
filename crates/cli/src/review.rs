@@ -195,7 +195,11 @@ pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
         tasks: std::sync::Mutex::default(),
     });
     let app = Router::new()
-        .route("/", get(|| async { Html(PAGE) }))
+        .route(
+            "/",
+            // A new build serves a new page: never let a browser keep the old one.
+            get(|| async { ([(header::CACHE_CONTROL, "no-store")], Html(PAGE)) }),
+        )
         .route("/api/index", get(get_index))
         .route("/api/trial/{n}", get(get_trial))
         .route("/api/session/{n}/{role}/{name}", get(get_session))
