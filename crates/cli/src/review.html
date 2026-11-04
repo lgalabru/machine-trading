@@ -49,9 +49,13 @@
   .peek { position: fixed; top: 52px; right: 0; bottom: 0; left: 440px; min-width: 640px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -28px 0 60px rgba(0,0,0,.65); z-index: 41; display: flex; flex-direction: column; transform: translateX(104%); transition: transform .22s cubic-bezier(.2,.8,.2,1); }
   .peek.on { transform: none; }
   @media (max-width: 1100px) { .peek { left: 150px; min-width: 0; } }
-  .peek-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  .peek-title { font-weight: 600; font-size: 13px; margin-right: auto; display: flex; align-items: center; gap: 8px; }
-  .peek-title .sw { width: 9px; height: 9px; border-radius: 3px; }
+  .peek-bar { display: flex; align-items: center; gap: 10px; padding: 14px 26px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .peek-title { margin-right: auto; display: flex; align-items: baseline; gap: 10px; min-width: 0; white-space: nowrap; }
+  .peek-title .sw { width: 11px; height: 11px; border-radius: 3px; align-self: center; flex: none; }
+  .peek-title .pt-run { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .peek-title .pt-sub { font-size: 13px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+  .peek-title .pt-sep { color: var(--text-4); font-size: 16px; }
+  .peek-title .pt-scn { font: 600 15px var(--mono); }
   .peek-x { background: none; border: 1px solid var(--line); color: var(--text-2); border-radius: 8px; width: 30px; height: 28px; cursor: pointer; font-size: 13px; }
   .peek-x:hover { color: var(--text); background: #1c1c1e; }
   .peek-body { flex: 1; overflow: auto; padding: 18px 26px 60px; }
@@ -84,7 +88,7 @@
   svg.pareto-svg .ylab { font: 500 10px var(--mono); fill: #8e8e93; }
   svg.pareto-svg .plab { font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #d1d1d6; }
   /* A run: its title and numbers, then the tabs. */
-  .run-head h1 { margin-bottom: 10px; }
+  .run-head { margin-top: 2px; }
   .runstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin-bottom: 4px; overflow: hidden; }
   .rs { padding: 9px 12px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); margin: 0 -1px -1px 0; min-width: 0; }
   .rs:last-child { border-right: 0; }
@@ -93,7 +97,7 @@
   .rs-d { font-size: 10.5px; line-height: 1.35; color: var(--text-3); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* The scenarios: a list of cards beside the picked one's timeline. */
   .scn { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
-  .scn-list { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; scrollbar-width: thin; }
+  .scn-list { position: sticky; isolation: isolate; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; scrollbar-width: thin; }
   .scn-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; padding: 2px 2px 4px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
   .scn-item { display: block; padding: 9px 11px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); text-decoration: none; transition: border-color .12s, background .12s; }
   .scn-item:hover { background: var(--panel-2); border-color: #3a3a3c; }
@@ -851,7 +855,7 @@ async function openPeek(n, tab, session) {
   panel.classList.add("on"); panel.setAttribute("aria-hidden", "false");
   document.getElementById("peek-backdrop").classList.add("on");
   const t = trialById(n);
-  document.getElementById("peek-title").innerHTML = t ? `<span class="sw" style="background:${modelColor(t.model)}"></span>${esc(runLabel(t))} <span class="muted mono" style="font-weight:400;font-size:11px">${esc(trialShort(t))}</span>${session ? ` <span class="muted">›</span> ${esc(session)}` : ""}` : `run ${n}`;
+  document.getElementById("peek-title").innerHTML = t ? `<span class="sw" style="background:${modelColor(t.model)}"></span><span class="pt-run">${esc(runLabel(t))}</span><span class="pt-sub">${esc(shortTask(t.task))} · ${esc(t.trial)}</span>${session && tab === "sessions" ? `<span class="pt-sep">›</span><span class="pt-scn">${esc(session)}</span>` : ""}` : `run ${n}`;
   const page = app;
   app = body;
   if (!(body.dataset.run === String(n) && body.dataset.tab === tab)) body.scrollTop = 0;
@@ -1847,9 +1851,16 @@ async function trialScenarios(n, trial, picked) {
     const page = app; app = view;
     try { view.innerHTML = ""; await renderSession(n, name); } catch (e) { fail(e); } finally { app = page; }
   };
-  document.getElementById("peek-body")._select = select;
+  document.getElementById("peek-body")._select = async (name) => {
+    const bar = document.getElementById("peek-title");
+    bar.querySelectorAll(".pt-sep, .pt-scn").forEach((e) => e.remove());
+    bar.insertAdjacentHTML("beforeend", `<span class="pt-sep">›</span><span class="pt-scn">${esc(name)}</span>`);
+    await select(name);
+  };
   await select(pick);
-  list.querySelector(".scn-item.on")?.scrollIntoView({ block: "nearest" });
+  // Bring the picked card into the list's view, without scrolling the panel.
+  const on = list.querySelector(".scn-item.on");
+  if (on && (on.offsetTop < list.scrollTop || on.offsetTop + on.offsetHeight > list.scrollTop + list.clientHeight)) list.scrollTop = on.offsetTop - 40;
 }
 // A scenario's card chart: the run's PnL through it, the reference dashed.
 function scenarioSpark(s, lo, hi) {
@@ -1872,7 +1883,7 @@ function scenarioSpark(s, lo, hi) {
 // ---------- trial ----------
 function trialHeader(n, t, tab, trial) {
   app.innerHTML = ""; delete app.dataset.task;
-  div(`<h1>${esc(runLabel(t))} <small>${esc(shortTask(t.task))} · ${esc(t.trial)}</small></h1>${runStats(t, trial)}`, "run-head");
+  div(runStats(t, trial), "run-head");
   if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
   const tabs = [["sessions", "Scenarios"], ["agent", "Agent"], ["bot", "Bot"], ["logs", "Logs"], ["raw", "Report"]];
   div(tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join(""), "tabs");
