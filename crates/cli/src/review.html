@@ -40,9 +40,12 @@
     background: radial-gradient(ellipse 70% 120% at 30% -20%, rgba(94, 209, 106, 0.08), transparent 60%), var(--bg);
   }
   header.hero:empty { display: none; }
-  .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; padding: 22px 32px 24px; }
+  .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px 32px; padding: 22px 32px 24px; }
   /* The model selector: a vertical list of cards, one per model. */
   .watch { display: flex; flex-direction: column; gap: 8px; }
+  .hero-title { grid-column: 1 / -1; }
+  .hero-title h1 { margin: 0; }
+  .hero-title .sub { max-width: 900px; font-size: 14px; color: var(--text-2); margin-top: 4px; }
   .watch-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
   .seg.sm a { padding: 3px 9px; font-size: 11px; }
   .watch-hint { color: var(--text-4); font-size: 11px; text-align: right; margin-top: 2px; }
@@ -769,7 +772,10 @@ function renderHero() {
   heroPick[key] = picked;
   const shown = ranked.filter((m) => picked.includes(m.model) && m.curve);
   const sorts = [["skill", "Skill"], ["pnl", "PnL"], ["cost", "Cost"]];
-  hero.innerHTML = `<div class="hero-inner"><div class="hero-right">
+  hero.innerHTML = `<div class="hero-inner"><div class="hero-title">
+      <h1>${light(taskStatus(task.counts))} ${esc(task.short)} <small>${esc(task.name)}${task.version ? " · " + esc(task.version) : ""}</small></h1>
+      ${task.description ? `<div class="sub">${esc(task.description)}</div>` : ""}
+    </div><div class="hero-right">
       <div class="quote" id="q-quote"></div>
       <div class="quote-sub" id="q-sub"></div>
       <div id="q-area"></div>
@@ -1007,8 +1013,6 @@ async function renderTask(name, variant, at) {
   const same = app.dataset.task === name && app.querySelector("#explorer");
   if (!same) {
     app.innerHTML = ""; app.dataset.task = name;
-    const st = taskStatus(task.counts);
-    div(`<h1>${light(st)} ${esc(task.short)} <small>${esc(task.name)}${task.version ? " · " + esc(task.version) : ""}</small></h1>${task.description ? `<div class="sub" style="max-width:900px;font-size:14px;color:var(--text-2)">${esc(task.description)}</div>` : ""}`);
     taskLeaderboard(trials);
     div("", "", app).id = "explorer";
   }
