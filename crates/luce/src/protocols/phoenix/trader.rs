@@ -115,6 +115,11 @@ pub struct PhoenixTrader {
     rpc_url: String,
     chain: Arc<dyn ChainClient>,
     options: ExecuteOptions,
+    /// The next order's client order id. Without one, two identical orders
+    /// on the same blockhash are the same transaction, and the chain runs it
+    /// once: a bot slicing a position into equal orders within a slot gets
+    /// one slice. Counting from 1 keeps a replayed session the same.
+    next_order_id: std::sync::atomic::AtomicU64,
 }
 
 impl PhoenixTrader {
@@ -139,7 +144,15 @@ impl PhoenixTrader {
             authority,
             rpc_url,
             options: ExecuteOptions::without_receipts(),
+            next_order_id: std::sync::atomic::AtomicU64::new(1),
         })
+    }
+
+    fn order_id(&self) -> u128 {
+        u128::from(
+            self.next_order_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        )
     }
 
     /// Sends through `chain` instead of a fresh RPC client.
@@ -271,6 +284,7 @@ impl PhoenixTrader {
                     .side(phoenix_side(side))
                     .price(self.ticket_price(price)?)
                     .num_base_lots(self.lots(quantity)?)
+                    .client_order_id(self.order_id())
                     .build()?;
                 self.exchange.tx().place_limit_order(ticket).await?
             }
@@ -286,7 +300,8 @@ impl PhoenixTrader {
                     .trader_account(self.account)
                     .symbol(symbol)
                     .side(phoenix_side(side))
-                    .num_base_lots(lots);
+                    .num_base_lots(lots)
+                    .client_order_id(self.order_id());
                 if let Some(price) = worst_price {
                     ticket = ticket.price(self.ticket_price(price)?);
                 }
