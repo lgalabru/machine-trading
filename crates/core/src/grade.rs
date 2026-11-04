@@ -338,14 +338,12 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
                 "never answered the hello".to_string()
             } else if a.turns.overran > 0 {
                 format!("overran {} turns", a.turns.overran)
-            } else if let Some(exit) = a
-                .bot_exit
-                .as_ref()
-                .filter(|e| !e.contains("exit status: 0"))
-            {
-                format!("exited: {exit}")
             } else {
-                return None;
+                let exit = a
+                    .bot_exit
+                    .as_ref()
+                    .filter(|e| !e.contains("exit status: 0"))?;
+                format!("exited: {exit}")
             };
             Some(format!("{}: {why}", a.scenario))
         })
