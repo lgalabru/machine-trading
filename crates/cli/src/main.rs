@@ -11,6 +11,13 @@ use mtx_core::{
 };
 use tracing_subscriber::EnvFilter;
 
+/// Every session starts and drops a whole surfnet, hundreds of megabytes on a
+/// few hundred threads. glibc's allocator keeps the memory a session freed in
+/// per-thread arenas, so a verifier grading 144 sessions grows past its
+/// limit; mimalloc returns it.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod acp;
 mod author;
 mod charts;
