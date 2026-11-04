@@ -58,13 +58,100 @@ pub struct ReviewOptions {
 
 struct AppState {
     root: PathBuf,
-    trials: Vec<PathBuf>,
+    /// Every trial found so far. A trial keeps its index for the server's
+    /// life: new ones (a bench still running) are appended.
+    trials: std::sync::Mutex<Vec<PathBuf>>,
+    /// Task metadata by name and digest, read once.
+    tasks: std::sync::Mutex<HashMap<(String, String), Value>>,
 }
 
 impl AppState {
-    fn trial(&self, n: usize) -> Result<&PathBuf, ApiError> {
-        self.trials.get(n).ok_or(ApiError::NotFound)
+    fn trial(&self, n: usize) -> Result<PathBuf, ApiError> {
+        self.trials
+            .lock()
+            .expect("review lock")
+            .get(n)
+            .cloned()
+            .ok_or(ApiError::NotFound)
     }
+
+    /// Look for trials again, keeping the ones known at their indices.
+    fn refresh(&self) -> Vec<PathBuf> {
+        let found = discover(&self.root);
+        let mut trials = self.trials.lock().expect("review lock");
+        for dir in found {
+            if !trials.contains(&dir) {
+                trials.push(dir);
+            }
+        }
+        trials.clone()
+    }
+
+    /// A task's `[task]` table (name, version, description) as its
+    /// `task.toml` has it: from Harbor's cache by digest, the trial's local
+    /// task path, or this checkout's tasks.
+    fn task_meta(&self, name: &str, digest: &str, local: Option<&str>) -> Value {
+        let key = (name.to_string(), digest.to_string());
+        if let Some(meta) = self.tasks.lock().expect("review lock").get(&key) {
+            return meta.clone();
+        }
+        let short = name.rsplit('/').next().unwrap_or(name);
+        let mut candidates = Vec::new();
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(
+                PathBuf::from(home)
+                    .join(".cache/harbor/tasks/packages")
+                    .join(name)
+                    .join(digest.trim_start_matches("sha256:"))
+                    .join("task.toml"),
+            );
+        }
+        if let Some(local) = local {
+            candidates.push(PathBuf::from(local).join("task.toml"));
+        }
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../bench/tasks")
+                .join(short)
+                .join("task.toml"),
+        );
+        let meta = candidates
+            .iter()
+            .find_map(|path| std::fs::read_to_string(path).ok())
+            .map(|toml| task_table(&toml))
+            .unwrap_or_else(|| json!({}));
+        self.tasks
+            .lock()
+            .expect("review lock")
+            .insert(key, meta.clone());
+        meta
+    }
+}
+
+/// `version` and `description` from a `task.toml`'s `[task]` table: enough
+/// for a header, without a TOML parser.
+fn task_table(toml: &str) -> Value {
+    let mut in_task = false;
+    let mut meta = serde_json::Map::new();
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_task = line == "[task]";
+            continue;
+        }
+        if !in_task {
+            continue;
+        }
+        for key in ["name", "version", "description"] {
+            if let Some(rest) = line.strip_prefix(key)
+                && let Some(value) = rest.trim_start().strip_prefix('=')
+                && let Ok(text) = serde_json::from_str::<String>(value.trim())
+            {
+                meta.insert(key.to_string(), json!(text));
+            }
+        }
+    }
+    Value::Object(meta)
 }
 
 enum ApiError {
@@ -97,12 +184,16 @@ pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
     let trials = discover(&root);
     if trials.is_empty() {
         bail!(
-            "no Harbor trials under {} (a trial is a directory with a result.json naming it)",
+            "no Harbor trials under {} (a trial is a directory whose config.json names it)",
             root.display()
         );
     }
     let count = trials.len();
-    let state = Arc::new(AppState { root, trials });
+    let state = Arc::new(AppState {
+        root,
+        trials: std::sync::Mutex::new(trials),
+        tasks: std::sync::Mutex::default(),
+    });
     let app = Router::new()
         .route("/", get(|| async { Html(PAGE) }))
         .route("/api/index", get(get_index))
@@ -133,8 +224,9 @@ pub async fn review(path: PathBuf, opts: ReviewOptions) -> Result<Value> {
     Ok(json!({ "root": state.root, "trials": count, "url": url }))
 }
 
-/// Trials below `root`, in path order: directories whose `result.json` names
-/// a trial.
+/// Trials below `root`, in path order: directories whose `config.json` (or,
+/// once done, `result.json`) names a trial. A trial still running has no
+/// `result.json` yet.
 fn discover(root: &FsPath) -> Vec<PathBuf> {
     let mut found = Vec::new();
     walk(root, 0, &mut found);
@@ -143,7 +235,9 @@ fn discover(root: &FsPath) -> Vec<PathBuf> {
 }
 
 fn walk(dir: &FsPath, depth: usize, found: &mut Vec<PathBuf>) {
-    if read_json(&dir.join("result.json")).is_some_and(|r| r.get("trial_name").is_some()) {
+    let names_a_trial =
+        |file: &str| read_json(&dir.join(file)).is_some_and(|r| r.get("trial_name").is_some());
+    if names_a_trial("result.json") || names_a_trial("config.json") {
         found.push(dir.to_path_buf());
         return;
     }
@@ -169,6 +263,7 @@ fn read_json(path: &FsPath) -> Option<Value> {
 /// A trial at a glance: what the leaderboard and the trial's header show.
 fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
     let result = read_json(&dir.join("result.json")).unwrap_or(Value::Null);
+    let config = read_json(&dir.join("config.json")).unwrap_or(Value::Null);
     let report = read_json(&dir.join("verifier/report.json"));
     let rewards = read_json(&dir.join("verifier/reward.json")).unwrap_or(Value::Null);
     let relative = |path: &FsPath| {
@@ -203,16 +298,55 @@ fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
         }
     }
     let agent = &result["agent_result"];
+    let graded = report.is_some() || rewards.is_object();
+    let finished = !result["finished_at"].is_null();
+    // success: graded (a timed-out agent's bot is still graded); error:
+    // finished without a grade; pending: still running.
+    let status = match (finished, graded) {
+        (_, true) => "success",
+        (true, false) => "error",
+        (false, false) => "pending",
+    };
+    // A running trial has only its config.
+    let task_config = if result["config"]["task"].is_object() {
+        &result["config"]["task"]
+    } else {
+        &config["task"]
+    };
+    let task = task_config["name"].as_str().unwrap_or_default().to_string();
+    let model = result["agent_info"]["model_info"]["name"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            config["agent"]["model_name"]
+                .as_str()
+                .map(|m| m.trim_start_matches("anthropic/").to_string())
+        });
+    let pnls: serde_json::Map<String, Value> = scenarios
+        .iter()
+        .filter_map(|s| Some((s["scenario"].as_str()?.to_string(), s["pnl_usd"].clone())))
+        .collect();
+    let reference_pnls: serde_json::Map<String, Value> = scenarios
+        .iter()
+        .filter_map(|s| {
+            Some((
+                s["scenario"].as_str()?.to_string(),
+                s["reference_pnl_usd"].clone(),
+            ))
+        })
+        .collect();
     json!({
         "id": n,
         "path": relative(dir),
         "job": dir.parent().map(relative).unwrap_or_default(),
-        "task": result["task_name"],
-        "task_ref": result["config"]["task"]["ref"],
-        "trial": result["trial_name"],
+        "task": task,
+        "task_ref": task_config["ref"],
+        "task_path": task_config["path"],
+        "trial": config["trial_name"].as_str().or(result["trial_name"].as_str()),
+        "status": status,
         "agent": result["agent_info"]["name"],
         "agent_version": result["agent_info"]["version"],
-        "model": result["agent_info"]["model_info"]["name"],
+        "model": model,
         "started_at": result["started_at"],
         "finished_at": result["finished_at"],
         "agent_execution": result["agent_execution"],
@@ -227,7 +361,9 @@ fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
             "cache": agent["n_cache_tokens"],
             "output": agent["n_output_tokens"],
         },
-        "graded": report.is_some() || rewards.is_object(),
+        "graded": graded,
+        "pnls": pnls,
+        "reference_pnls": reference_pnls,
         "reward": pick("reward"),
         "skill": skill,
         "pnl_usd": pick("pnl_usd"),
@@ -243,8 +379,8 @@ fn summary(state: &AppState, n: usize, dir: &FsPath) -> Value {
 }
 
 async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let trials: Vec<Value> = state
-        .trials
+    let dirs = state.refresh();
+    let trials: Vec<Value> = dirs
         .iter()
         .enumerate()
         .map(|(n, dir)| summary(&state, n, dir))
@@ -252,7 +388,7 @@ async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
     // Jobs: the Harbor runs the trials came from, with their configs.
     let mut jobs: Vec<Value> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    for dir in &state.trials {
+    for dir in &dirs {
         let Some(job) = dir.parent() else { continue };
         if !seen.insert(job.to_path_buf()) {
             continue;
@@ -271,9 +407,98 @@ async fn get_index(State(state): State<Arc<AppState>>) -> Json<Value> {
             "timeout_multiplier": config["agent_timeout_multiplier"],
         }));
     }
+    // The batch's plan, if `just bench` wrote one: which models, how many
+    // attempts each, so trials not started yet show as queued.
+    // A batch is the root or the directory above a job.
+    let mut batches: Vec<Value> = Vec::new();
+    let mut batch_dirs: Vec<PathBuf> = vec![state.root.clone()];
+    batch_dirs.extend(
+        dirs.iter()
+            .filter_map(|d| Some(d.parent()?.parent()?.to_path_buf())),
+    );
+    batch_dirs.sort();
+    batch_dirs.dedup();
+    for dir in &batch_dirs {
+        if let Some(plan) = read_json(&dir.join("batch.json")) {
+            batches.push(plan);
+        }
+    }
+    let batch = batches.first().cloned();
+    // Tasks: every task a trial ran, with its metadata and how its trials
+    // stand.
+    let mut tasks: Vec<Value> = Vec::new();
+    let mut names: Vec<String> = trials
+        .iter()
+        .filter_map(|t| t["task"].as_str().map(str::to_string))
+        .filter(|t| !t.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    for name in &names {
+        let mine: Vec<&Value> = trials.iter().filter(|t| t["task"] == json!(name)).collect();
+        let digest = mine
+            .iter()
+            .find_map(|t| t["task_ref"].as_str())
+            .unwrap_or_default();
+        let local = mine.iter().find_map(|t| t["task_path"].as_str());
+        let meta = state.task_meta(name, digest, local);
+        let count = |status: &str| mine.iter().filter(|t| t["status"] == json!(status)).count();
+        // Planned: the batch's models times its attempts; otherwise each
+        // job's agents times its attempts.
+        let planned: usize = match batches.is_empty() {
+            false => batches
+                .iter()
+                .map(|batch| {
+                    batch["models"].as_array().map(Vec::len).unwrap_or(0)
+                        * batch["attempts"].as_u64().unwrap_or(0) as usize
+                })
+                .sum(),
+            true => jobs
+                .iter()
+                .map(|j| {
+                    j["agents"].as_array().map(Vec::len).unwrap_or(1)
+                        * j["n_attempts"].as_u64().unwrap_or(0) as usize
+                })
+                .sum(),
+        };
+        tasks.push(json!({
+            "name": name,
+            "short": name.rsplit('/').next(),
+            "version": meta["version"],
+            "description": meta["description"],
+            "ref": digest,
+            "trials": mine.iter().map(|t| t["id"].clone()).collect::<Vec<_>>(),
+            "counts": {
+                "success": count("success"),
+                "error": count("error"),
+                "pending": count("pending"),
+                "queued": planned.saturating_sub(mine.len()),
+            },
+        }));
+    }
+    let version = batch
+        .as_ref()
+        .and_then(|b| {
+            b["version"]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            tasks
+                .iter()
+                .find_map(|t| t["version"].as_str().map(str::to_string))
+        });
+    let dataset = jobs
+        .iter()
+        .find_map(|j| j["datasets"][0]["name"].as_str().map(str::to_string));
     Json(json!({
         "root": state.root,
         "name": state.root.file_name().map(|n| n.to_string_lossy().to_string()),
+        "dataset": dataset,
+        "version": version,
+        "batch": batch,
+        "tasks": tasks,
         "jobs": jobs,
         "trials": trials,
     }))
@@ -300,7 +525,7 @@ async fn get_trial(
         names
     };
     let mut files = Vec::new();
-    list_files(dir, &dir.join("artifacts/app/bot"), &mut files);
+    list_files(&dir, &dir.join("artifacts/app/bot"), &mut files);
     let logs: Vec<String> = FILES
         .iter()
         .filter(|f| dir.join(f).is_file())
@@ -313,7 +538,7 @@ async fn get_trial(
     let session_stats: serde_json::Map<String, Value> = bot_sessions
         .iter()
         .filter_map(|name| {
-            let detail = read_session(dir, "bot", name).ok()?;
+            let detail = read_session(&dir, "bot", name).ok()?;
             let detail: Value = serde_json::from_slice(&detail).ok()?;
             let txs = detail["timeline"]["transactions"]
                 .as_array()
@@ -331,6 +556,7 @@ async fn get_trial(
                 name.clone(),
                 json!({
                     "annotation": detail["annotation"],
+                    "description": detail["scenario"]["description"],
                     "txs": txs,
                     "failed": failed,
                     "duplicates": duplicates,
@@ -339,7 +565,7 @@ async fn get_trial(
         })
         .collect();
     Ok(Json(json!({
-        "summary": summary(&state, n, dir),
+        "summary": summary(&state, n, &dir),
         "session_stats": session_stats,
         "report": read_json(&dir.join("verifier/report.json")),
         "rewards": read_json(&dir.join("verifier/reward.json")),
@@ -410,7 +636,7 @@ async fn get_session(
     if !["bot", "reference"].contains(&role.as_str()) || !safe_name(&name) {
         return Err(ApiError::Bad("no such session".into()));
     }
-    let bytes = read_session(dir, &role, &name)?;
+    let bytes = read_session(&dir, &role, &name)?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response())
 }
 
@@ -542,7 +768,7 @@ async fn get_file(
     let full = dir.join(path);
     // A link inside the trial could point anywhere.
     let real = full.canonicalize().map_err(|_| ApiError::NotFound)?;
-    if !real.starts_with(dir) || !real.is_file() {
+    if !real.starts_with(&dir) || !real.is_file() {
         return Err(ApiError::NotFound);
     }
     let size = real.metadata().map(|m| m.len()).unwrap_or(0);
