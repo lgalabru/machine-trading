@@ -1,5 +1,5 @@
 [package]
-name = "mth-core"
+name = "mtx-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ borsh = "1"
 bs58 = "0.5"
 flate2 = "1"
 libc.workspace = true
-mth-botkit.workspace = true
+mtx-botkit.workspace = true
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true

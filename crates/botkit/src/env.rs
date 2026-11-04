@@ -15,40 +15,40 @@ use crate::{
 /// What the grader hands a bot, through environment variables.
 #[derive(Debug, Clone)]
 pub struct BotEnv {
-    /// `MTH_RPC_URL`: HTTP JSON-RPC endpoint. Standard Solana methods only.
+    /// `MTX_RPC_URL`: HTTP JSON-RPC endpoint. Standard Solana methods only.
     pub rpc_url: String,
-    /// `MTH_KEYPAIR`: Solana CLI keypair file (JSON array of 64 bytes). Holds
+    /// `MTX_KEYPAIR`: Solana CLI keypair file (JSON array of 64 bytes). Holds
     /// SOL for fees; its Phoenix trader account (PDA index 0, subaccount 0)
     /// is registered and holds the trading collateral.
     pub keypair_path: PathBuf,
-    /// `MTH_EXCHANGE`: Phoenix `/exchange` metadata matching the chain state.
+    /// `MTX_EXCHANGE`: Phoenix `/exchange` metadata matching the chain state.
     pub exchange_path: PathBuf,
-    /// `MTH_SYMBOL`: the market to trade, e.g. `SPCX`.
+    /// `MTX_SYMBOL`: the market to trade, e.g. `SPCX`.
     pub symbol: String,
-    /// `MTH_END_SLOT`: the slot at which the session ends and the account is
+    /// `MTX_END_SLOT`: the slot at which the session ends and the account is
     /// marked to market. The bot is stopped shortly after.
     pub end_slot: u64,
-    /// `MTH_MAX_POSITION`: the largest position, long or short, in base units
+    /// `MTX_MAX_POSITION`: the largest position, long or short, in base units
     /// (e.g. SPCX shares), the bot may ever hold. Holding more disqualifies it.
     pub max_position: f64,
-    /// `MTH_MAX_DRAWDOWN`: the most, in USD, the account's value may fall
+    /// `MTX_MAX_DRAWDOWN`: the most, in USD, the account's value may fall
     /// below its peak during a session. Falling further disqualifies it.
     pub max_drawdown_usd: f64,
-    /// `MTH_MANDATE`: a JSON file with the session's [`Mandate`], the
+    /// `MTX_MANDATE`: a JSON file with the session's [`Mandate`], the
     /// instruments the bot may hold and its limits. The variables above
     /// repeat its values. Optional, for graders that predate it.
     pub mandate_path: Option<PathBuf>,
 }
 
 impl BotEnv {
-    pub const RPC_URL: &str = "MTH_RPC_URL";
-    pub const KEYPAIR: &str = "MTH_KEYPAIR";
-    pub const EXCHANGE: &str = "MTH_EXCHANGE";
-    pub const SYMBOL: &str = "MTH_SYMBOL";
-    pub const END_SLOT: &str = "MTH_END_SLOT";
-    pub const MAX_POSITION: &str = "MTH_MAX_POSITION";
-    pub const MAX_DRAWDOWN: &str = "MTH_MAX_DRAWDOWN";
-    pub const MANDATE: &str = "MTH_MANDATE";
+    pub const RPC_URL: &str = "MTX_RPC_URL";
+    pub const KEYPAIR: &str = "MTX_KEYPAIR";
+    pub const EXCHANGE: &str = "MTX_EXCHANGE";
+    pub const SYMBOL: &str = "MTX_SYMBOL";
+    pub const END_SLOT: &str = "MTX_END_SLOT";
+    pub const MAX_POSITION: &str = "MTX_MAX_POSITION";
+    pub const MAX_DRAWDOWN: &str = "MTX_MAX_DRAWDOWN";
+    pub const MANDATE: &str = "MTX_MANDATE";
 
     pub fn from_env() -> Result<Self> {
         let end_slot = var(Self::END_SLOT)?;
@@ -92,7 +92,7 @@ impl BotEnv {
         vars
     }
 
-    /// The session's mandate: `MTH_MANDATE` when the grader sets it,
+    /// The session's mandate: `MTX_MANDATE` when the grader sets it,
     /// otherwise the one the other variables describe, a single Phoenix
     /// perpetual.
     pub fn mandate(&self) -> Result<Mandate> {
@@ -122,8 +122,8 @@ impl BotEnv {
         load_exchange(&self.exchange_path)
     }
 
-    /// The session's rules as luce [`RiskLimits`]: `MTH_MAX_POSITION` as the
-    /// largest position in base units and `MTH_MAX_DRAWDOWN` as the largest
+    /// The session's rules as luce [`RiskLimits`]: `MTX_MAX_POSITION` as the
+    /// largest position in base units and `MTX_MAX_DRAWDOWN` as the largest
     /// fall from peak equity in USD. Every fraction-of-capital limit is off.
     ///
     /// Evaluate an order with [`RiskLimits::evaluate`] before sending it; a
@@ -203,7 +203,7 @@ mod tests {
         );
         assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MANDATE));
 
-        let dir = std::env::temp_dir().join(format!("mth-mandate-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mtx-mandate-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mandate.json");
         mandate.save(&path).unwrap();

@@ -1,4 +1,4 @@
-# Loads MTH_FORK_RPC_URL for snapshot-prepare.
+# Loads MTX_FORK_RPC_URL for snapshot-prepare.
 set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
@@ -24,22 +24,22 @@ lint:
 test:
     cargo test --workspace
 
-# Run mth from source, like `cargo run --release --`. Arguments keep their
-# quoting, and a leading `mth` is optional: `just run mth scenario play "..."`.
+# Run mtx from source, like `cargo run --release --`. Arguments keep their
+# quoting, and a leading `mtx` is optional: `just run mtx scenario play "..."`.
 [positional-arguments]
 run *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    [ "${1:-}" = mth ] && shift
+    [ "${1:-}" = mtx ] && shift
     exec cargo run --release -- "$@"
 
-# Install a binary into ~/.cargo/bin: `just install` or `just install mth`.
-install bin="mth":
+# Install a binary into ~/.cargo/bin: `just install` or `just install mtx`.
+install bin="mtx":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{bin}}" in
-      mth) cargo install --locked --path crates/cli ;;
-      *) echo "unknown binary {{bin}} (have: mth)"; exit 1 ;;
+      mtx) cargo install --locked --path crates/cli ;;
+      *) echo "unknown binary {{bin}} (have: mtx)"; exit 1 ;;
     esac
 
 # Fork mainnet and write a pinned Phoenix snapshot.
@@ -53,7 +53,7 @@ snapshot-pull:
     set -euo pipefail
     id="$(docker create {{registry}}/{{image}}:{{tag}}-runtime)"
     trap 'docker rm "$id" > /dev/null' EXIT
-    docker cp "$id:/opt/mth/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
+    docker cp "$id:/opt/mtx/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
     echo "snapshots/{{snapshot}}/surfnet.json"
 
 # Replay a snapshot offline and trade through a scripted crash.
@@ -177,13 +177,13 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
     mkdir -p "$batch"
     # One secret per batch: every trial is graded on the same hidden set,
     # drawn inside its verifier. Kept (owner-only) so a void trial can be
-    # re-run on the same set: MTH_EVAL_SEED="$(cat <batch>/.seed)" just bench ...
-    if [ -z "${MTH_EVAL_SEED:-}" ]; then
-      MTH_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+    # re-run on the same set: MTX_EVAL_SEED="$(cat <batch>/.seed)" just bench ...
+    if [ -z "${MTX_EVAL_SEED:-}" ]; then
+      MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
     fi
-    export MTH_EVAL_SEED
-    (umask 077 && printf '%s' "$MTH_EVAL_SEED" > "$batch/.seed")
-    # The plan, for `mth bench review`: trials not started yet show as queued.
+    export MTX_EVAL_SEED
+    (umask 077 && printf '%s' "$MTX_EVAL_SEED" > "$batch/.seed")
+    # The plan, for `mtx bench review`: trials not started yet show as queued.
     python3 -I -c 'import json, sys; out, m, k, n, v, x = sys.argv[1:]; json.dump({"models": m.split(), "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x)}, open(out, "w"), indent=2)' \
       "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}"
     for model in {{models}}; do
@@ -196,7 +196,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
         --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
         --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
     done
-    if grep -rlF --exclude=.seed "$MTH_EVAL_SEED" "$batch"; then
+    if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
     fi
     python3 -I bench/report.py "$batch"
@@ -234,7 +234,7 @@ harbor-checks task="phoenix-flash-crash" surfpool="": (image surfpool) check-sol
       && grep -q '^FROM {{registry}}/{{image}}:{{tag}}-runtime$' {{tasks}}/{{task}}/tests/Dockerfile \
       || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
     # The verifier draws its hidden set from the batch's secret.
-    export MTH_EVAL_SEED="${MTH_EVAL_SEED:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
+    export MTX_EVAL_SEED="${MTX_EVAL_SEED:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
     harbor run -y -p {{tasks}}/{{task}} -a oracle -o jobs
     harbor run -y -p {{tasks}}/{{task}} -a nop -o jobs
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
@@ -252,14 +252,14 @@ leak-audit:
       "then fade it once it stops"
       "one tick inside the competitor"
       "backs off after one-sided fills"
-      "mth-ladder-rungs"
+      "mtx-ladder-rungs"
     )
     image="{{registry}}/{{image}}:{{tag}}"
     # Without the image every probe below fails, which reads as no leak.
     docker image inspect "$image" > /dev/null 2>&1 \
       || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
     found=0
-    for path in /opt/mth/anchors /tests /solution /opt/mth/sdk/bots/reference /opt/mth/sdk/bots/maker; do
+    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker; do
       if docker run --rm --entrypoint test "$image" -e "$path"; then
         echo "LEAK: $image holds $path"; found=1
       fi
@@ -293,5 +293,5 @@ ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     for bot in bench/checks/exploits/{{task}}-*/; do
       CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
-    python3 -I bench/checks/ladder/ladder.py {{task}} --mth target/release/mth \
+    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx target/release/mtx \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}}

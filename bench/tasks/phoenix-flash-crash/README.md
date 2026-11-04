@@ -17,20 +17,20 @@ see: moves ramp in uneven steps, legs are drawn independently, pauses and
 holds share one range, the session ends a random while after the last move,
 and the mark wobbles in between.
 
-- **Agent environment:** a Rust toolchain, the `mth-botkit` SDK, a starter
+- **Agent environment:** a Rust toolchain, the `mtx-botkit` SDK, a starter
   bot that builds and never trades, six practice scenarios, the scenario
-  generator, and `mth-practice`, which grades the bot exactly as the verifier
+  generator, and `mtx-practice`, which grades the bot exactly as the verifier
   does.
 - **Verifier:** a Debian slim image with the grader, the snapshot and the
   reference bot, and no toolchain. It receives only `/app/bot`. With no
   network, it draws seventy-two hidden sessions from the batch's secret
-  (`MTH_EVAL_SEED`, passed by Harbor; it refuses to grade without one),
+  (`MTX_EVAL_SEED`, passed by Harbor; it refuses to grade without one),
   grades the reference on them, then the bot, one session at a time, each on
   a fresh surfnet. Before the bot starts, every cheatcode is locked for good,
   and the surfnet serves RPC only at a secret path: the bot's only way in is
   an RPC proxy that forwards standard Solana methods only.
 - **Turns:** the world moves in steps of two slots and waits for the bot
-  between them (`mth-turn-1`), so the same bot on the same session trades
+  between them (`mtx-turn-1`), so the same bot on the same session trades
   the same way every time, and a session takes as long as the bot thinks,
   not its 80–180 seconds of market time.
 - **Reward:** `clamp(Σ bot PnL / Σ hindsight bound, 0, 1)` over the thirty-six

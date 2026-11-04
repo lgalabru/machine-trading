@@ -35,7 +35,7 @@ jobs:
             harbor lint "$task" --select ALL --ignore unpinned-image
           done
       - name: The play viewer's script parses
-        # viewer.html is embedded in mth; a syntax error would only show as a
+        # viewer.html is embedded in mtx; a syntax error would only show as a
         # blank page.
         run: |
           sed -n '/<script>/,/<\/script>/p' crates/cli/src/viewer.html | sed '1d;$d' > "$RUNNER_TEMP/viewer.js"
@@ -91,7 +91,7 @@ jobs:
         # the world waits for each bot's turn, so the oracle (the reference
         # itself) scores skill 1 exactly.
         run: |
-          export MTH_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+          export MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
           harbor run -p bench/tasks/phoenix-flash-crash -a oracle -o jobs
           skill=$(jq '.skill' "$(find jobs -name reward.json | head -1)")
           echo "oracle skill: $skill"

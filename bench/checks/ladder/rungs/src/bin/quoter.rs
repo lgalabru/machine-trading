@@ -5,8 +5,8 @@
 //! Both stop adding past a quarter of the cap, so neither breaches it.
 
 use anyhow::Result;
-use mth_botkit::{BotEnv, Side, Trader, Turns};
-use mth_ladder_rungs::{init_logs, inside_competitor_bps};
+use mtx_botkit::{BotEnv, Side, Trader, Turns};
+use mtx_ladder_rungs::{init_logs, inside_competitor_bps};
 use tracing::warn;
 
 const SIZE: f64 = 1.0;

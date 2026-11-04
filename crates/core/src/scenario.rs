@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use mth_botkit::mandate::{InstrumentRef, Kind, Mandate};
+use mtx_botkit::mandate::{InstrumentRef, Kind, Mandate};
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
@@ -44,7 +44,7 @@ pub struct Scenario {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub making: Option<Making>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
-    /// Written by `mth calibrate`.
+    /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
 }

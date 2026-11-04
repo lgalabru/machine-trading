@@ -9,8 +9,8 @@ version = "0.1.0"
 license = "MIT"
 
 [workspace.dependencies]
-mth-botkit = { path = "crates/botkit" }
-mth-core = { path = "crates/core" }
+mtx-botkit = { path = "crates/botkit" }
+mtx-core = { path = "crates/core" }
 
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }

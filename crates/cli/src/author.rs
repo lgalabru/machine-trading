@@ -1,10 +1,10 @@
-//! `mth scenario new`: a coding agent authors a Surfpool scenario from a
+//! `mtx scenario new`: a coding agent authors a Surfpool scenario from a
 //! plain-language request.
 //!
 //! The agent runs over ACP with the Surfpool MCP server attached, pointed at
 //! a surfnet restored from the same snapshot `play` uses, so the prices it
 //! reads are the prices the scenario will start from. It writes
-//! `scenario.json` into a scratch directory; mth checks it and sends the
+//! `scenario.json` into a scratch directory; mtx checks it and sends the
 //! problems back until it passes or the attempts run out.
 
 use std::{
@@ -27,7 +27,7 @@ use crate::{
 
 /// The file the agent writes, relative to its working directory.
 const SCENARIO_FILE: &str = "scenario.json";
-/// Matches mth-core's market moves: Phoenix rejects oracle updates more than
+/// Matches mtx-core's market moves: Phoenix rejects oracle updates more than
 /// 5% from the last one, so each step stays inside 4%.
 const MAX_STEP_PCT: f64 = 4.0;
 const MIN_SLOTS_BETWEEN_STEPS: u64 = 2;
@@ -36,7 +36,7 @@ const MARKET_UNCROSS: &str = "phoenix-market-uncross";
 /// Surfnets here run 250 ms slots, as Surfpool does by default.
 pub const SLOTS_PER_SECOND: u64 = 4;
 
-/// Coding agents mth can drive, by their Harbor names.
+/// Coding agents mtx can drive, by their Harbor names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Agent {
     ClaudeCode,
@@ -153,7 +153,7 @@ pub struct AuthorOptions<'a> {
 /// Have the agent write a scenario for `opts.request`, and return it once it
 /// passes [`check`].
 pub fn author(opts: AuthorOptions<'_>) -> Result<Scenario> {
-    let workdir = std::env::temp_dir().join(format!("mth-author-{}", uuid::Uuid::new_v4()));
+    let workdir = std::env::temp_dir().join(format!("mtx-author-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workdir).with_context(|| workdir.display().to_string())?;
     let scenario_path = workdir.join(SCENARIO_FILE);
     let log_path = workdir.join("agent.log");
@@ -253,7 +253,7 @@ pub fn author(opts: AuthorOptions<'_>) -> Result<Scenario> {
             ui::note(problem);
         }
         prompt = format!(
-            "mth rejected ./{SCENARIO_FILE}:\n{}\n\nFix the file, then reply with a one-line summary.",
+            "mtx rejected ./{SCENARIO_FILE}:\n{}\n\nFix the file, then reply with a one-line summary.",
             problems
                 .iter()
                 .map(|p| format!("- {p}"))
@@ -343,7 +343,7 @@ fn instructions(request: &str, markets: &Markets) -> String {
         .join("\n");
     let count = markets.markets.len();
     format!(
-        r#"You are authoring a market scenario for the Machine Trading harness. A scenario is a list of Surfpool account overrides, each applied a number of slots after the scenario starts. mth will replay it on a surfnet and chart the market as it plays.
+        r#"You are authoring a market scenario for the Machine Trading harness. A scenario is a list of Surfpool account overrides, each applied a number of slots after the scenario starts. mtx will replay it on a surfnet and chart the market as it plays.
 
 The request: {request}
 
@@ -352,7 +352,7 @@ A surfnet restored from mainnet is running at http://127.0.0.1:{surfnet_port}, w
 When the request names no market, it is about {symbol}. The surfpool MCP server is attached:
 - `get_override_templates`, then `get_override_template` for each template you use: follow its properties and its llmContext.
 - `list_phoenix_markets` with surfnetPort {surfnet_port}, for each market's markTicks, tickSize and baseLotDecimals, including any market not listed above.
-Only read from the surfnet: don't call `create_scenario`, don't register the scenario, and don't send cheatcodes with `call_surfnet_rpc`. mth registers it.
+Only read from the surfnet: don't call `create_scenario`, don't register the scenario, and don't send cheatcodes with `call_surfnet_rpc`. mtx registers it.
 
 Write the scenario to ./{SCENARIO_FILE}, in Surfpool's Scenario format:
 {{
@@ -364,7 +364,7 @@ Write the scenario to ./{SCENARIO_FILE}, in Surfpool's Scenario format:
   ]
 }}
 
-Rules mth checks:
+Rules mtx checks:
 - A slot is 250 ms. Keep the whole scenario within 1,200 slots (5 minutes) unless the request asks for longer.
 - Phoenix rejects oracle prices more than 5% from the last one: move the price with `{MARKET_MOVE}` in steps of at most {MAX_STEP_PCT}% from the previous level, at least {MIN_SLOTS_BETWEEN_STEPS} slots apart. Ramp bigger moves over several steps.
 - Each market moves on its own: check its steps against its own mark. After the last step of each market's moves, add `{MARKET_UNCROSS}` for that symbol, in the same slot or later, so resting orders the moves crossed get matched.
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn load_checked_reports_missing_files_and_failing_checks() {
-        let dir = std::env::temp_dir().join(format!("mth-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mtx-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let missing = load_checked(&dir.join("nope.json"), &market()).unwrap_err();
         assert!(format!("{missing:#}").contains("was not written"));
@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn save_refuses_to_replace_without_force() {
-        let dir = std::env::temp_dir().join(format!("mth-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mtx-test-{}", uuid::Uuid::new_v4()));
         let path = dir.join("nested/scenario.json");
         let s = scenario(json!([step(4, MARKET_UNCROSS, None)]));
         save(&s, &path, false).unwrap();

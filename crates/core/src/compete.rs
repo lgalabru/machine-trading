@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use mth_botkit::{BotEnv, Side, Trader};
+use mtx_botkit::{BotEnv, Side, Trader};
 use serde::Serialize;
 use solana_keypair::Keypair;
 use tracing::{info, warn};
@@ -73,7 +73,7 @@ impl Competitor {
         scenario: &Scenario,
         rpc_url: &str,
     ) -> Result<Self> {
-        let dir = std::env::temp_dir().join(format!("mth-competitor-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mtx-competitor-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).map_err(io_error(&dir))?;
         let keypair = Keypair::new();
         phoenix::onboard_trader(&world.surfnet, phoenix, &keypair, DEPOSIT_USDC).await?;

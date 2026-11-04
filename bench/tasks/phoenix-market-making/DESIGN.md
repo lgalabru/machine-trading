@@ -86,7 +86,7 @@ resamples at 72 sessions, against 81% at 48.
 
 ## Fairness
 
-- Every correct path runs through standard RPC and `mth-botkit`: the
+- Every correct path runs through standard RPC and `mtx-botkit`: the
   reference does.
 - The instruction states the bound (spread plus hindsight), the valuation at
   the scenario's oracle (`Trader::oracle_usd` reads it), and the flow's
