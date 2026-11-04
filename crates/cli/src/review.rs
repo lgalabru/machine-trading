@@ -848,8 +848,8 @@ fn read_session(dir: &FsPath, role: &str, name: &str) -> Result<Vec<u8>, ApiErro
 /// The most points a session's curve carries in `/api/curves`.
 const CURVE_POINTS: usize = 80;
 
-/// A session's PnL over its steps, thinned to at most [`CURVE_POINTS`]
-/// `[slot offset, PnL]` pairs, the last step always kept.
+/// A session over its steps, thinned to at most [`CURVE_POINTS`]
+/// `[slot offset, PnL, mark]` triples, the last step always kept.
 fn curve(detail: &Value) -> Vec<Value> {
     let steps = detail["timeline"]["steps"]
         .as_array()
@@ -860,7 +860,7 @@ fn curve(detail: &Value) -> Vec<Value> {
         .iter()
         .enumerate()
         .filter(|(i, _)| i % every == 0 || *i + 1 == steps.len())
-        .map(|(_, step)| json!([step["at"], step["pnl_usd"]]))
+        .map(|(_, step)| json!([step["at"], step["pnl_usd"], step["mark_usd"]]))
         .collect()
 }
 
@@ -1071,7 +1071,7 @@ mod tests {
         let steps: Vec<Value> = (0..1000).map(|k| json!({ "at": k * 2, "pnl_usd": k as f64 })).collect();
         let points = curve(&json!({ "timeline": { "steps": steps } }));
         assert!(points.len() <= CURVE_POINTS + 1, "{}", points.len());
-        assert_eq!(points.last().unwrap(), &json!([1998, 999.0]));
+        assert_eq!(points.last().unwrap(), &json!([1998, 999.0, null]));
         assert!(curve(&json!({})).is_empty());
     }
 
