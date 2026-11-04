@@ -246,6 +246,7 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
         .route("/api/trial/{n}", get(get_trial))
         .route("/api/session/{n}/{role}/{name}", get(get_session))
         .route("/api/trajectory/{n}", get(get_trajectory))
+        .route("/api/curves/{n}", get(get_curves))
         .route("/api/file/{n}/{*path}", get(get_file))
         .with_state(Arc::clone(&state));
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], opts.port)))
@@ -844,6 +845,67 @@ fn read_session(dir: &FsPath, role: &str, name: &str) -> Result<Vec<u8>, ApiErro
     }
 }
 
+/// The most points a session's curve carries in `/api/curves`.
+const CURVE_POINTS: usize = 80;
+
+/// A session's PnL over its steps, thinned to at most [`CURVE_POINTS`]
+/// `[slot offset, PnL]` pairs, the last step always kept.
+fn curve(detail: &Value) -> Vec<Value> {
+    let steps = detail["timeline"]["steps"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let every = steps.len().div_ceil(CURVE_POINTS).max(1);
+    steps
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % every == 0 || *i + 1 == steps.len())
+        .map(|(_, step)| json!([step["at"], step["pnl_usd"]]))
+        .collect()
+}
+
+/// Every session of a trial at a glance, for the run's session list: what it
+/// was drawn as, the bot's and the reference's PnL, and both curves.
+async fn get_curves(
+    State(state): State<Arc<AppState>>,
+    Path(n): Path<usize>,
+) -> Result<Json<Value>, ApiError> {
+    let dir = state.trial(n)?;
+    let mut names: Vec<String> = std::fs::read_dir(dir.join("verifier/sessions/bot"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.strip_suffix(".json.gz")
+                .or_else(|| name.strip_suffix(".json"))
+                .map(str::to_string)
+        })
+        .collect();
+    names.sort_by_key(|name| natural_key(name));
+    let parse = |role: &str, name: &str| -> Option<Value> {
+        serde_json::from_slice(&read_session(&dir, role, name).ok()?).ok()
+    };
+    let sessions: Vec<Value> = names
+        .iter()
+        .filter_map(|name| {
+            let bot = parse("bot", name)?;
+            let reference = parse("reference", name);
+            Some(json!({
+                "name": name,
+                "description": bot["scenario"]["description"],
+                "annotation": bot["annotation"],
+                "disqualified": bot["disqualified"],
+                "pnl_usd": bot["report"]["pnl_usd"],
+                "reference_pnl_usd": reference.as_ref().map(|r| r["report"]["pnl_usd"].clone()),
+                "bot": curve(&bot),
+                "reference": reference.as_ref().map(curve),
+            }))
+        })
+        .collect();
+    Ok(Json(json!({ "sessions": sessions })))
+}
+
 fn clip(text: &str, max: usize) -> Value {
     if text.chars().count() <= max {
         json!(text)
@@ -1002,6 +1064,15 @@ mod tests {
         assert!(!allowed("artifacts/app/bot/.env"));
         assert!(!allowed("/etc/passwd"));
         assert!(!allowed("../.seed"));
+    }
+
+    #[test]
+    fn curves_thin_to_their_limit_and_keep_the_end() {
+        let steps: Vec<Value> = (0..1000).map(|k| json!({ "at": k * 2, "pnl_usd": k as f64 })).collect();
+        let points = curve(&json!({ "timeline": { "steps": steps } }));
+        assert!(points.len() <= CURVE_POINTS + 1, "{}", points.len());
+        assert_eq!(points.last().unwrap(), &json!([1998, 999.0]));
+        assert!(curve(&json!({})).is_empty());
     }
 
     #[test]
