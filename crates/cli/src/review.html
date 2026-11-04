@@ -64,18 +64,18 @@
   .peek-x:hover { color: var(--text); background: #1c1c1e; }
   .peek-body { flex: 1; overflow: auto; padding: 16px 26px 60px; }
   /* A run's stats: stacked bars, and what the agent did. */
-  .sbars { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 6px; }
+  .sbars { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 4px 0 14px; }
   @media (max-width: 1100px) { .sbars { grid-template-columns: 1fr; } }
-  .sbar { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; }
+  .sbar { border-top: 1px solid var(--line-soft); padding: 14px 0 4px; }
   .sbar-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 12px; }
   .sbar-track { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; }
   .sbar-track i { display: block; min-width: 3px; }
   .sbar-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px; font-size: 11.5px; color: var(--text-2); }
   .sbar-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .sbar-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-  .insights { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 12px; margin: 12px 0 16px; }
+  .insights { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 28px; margin: 18px 0 22px; }
   @media (max-width: 1300px) { .insights { grid-template-columns: 1fr 1fr; } }
-  .ins-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; min-width: 0; }
+  .ins-card { border-top: 1px solid var(--line-soft); padding: 14px 0 4px; min-width: 0; }
   .ins-card .k { margin-bottom: 8px; }
   .ins-card .k .muted { text-transform: none; letter-spacing: 0; font-weight: 500; margin-left: 6px; }
   .tw { display: grid; grid-template-columns: minmax(0, 130px) 1fr 52px 34px; gap: 8px; align-items: center; font-size: 12px; padding: 2px 0; }
@@ -109,7 +109,34 @@
   .scn-sub span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scn-sub span:last-child { white-space: nowrap; font-family: var(--mono); }
   .scn-view { min-width: 0; }
-  .scn-view h1 { font-size: 22px; }
+  .scn-view h1 { font-size: 22px; margin: 0 0 4px; }
+  /* A scenario's page: room between its parts. */
+  .sv-head .sub { margin-top: 2px; }
+  .scn-view > .runstats { margin: 18px 0 8px; }
+  .sv > .chart, .sv > .pair, .sv > .evcur { margin-top: 10px; }
+  .sv > h2 { margin: 40px 0 14px; }
+  .sv .chart { padding: 16px 0 10px; }
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+  .pair > div { min-width: 0; }
+  @media (max-width: 1100px) { .pair { grid-template-columns: 1fr; } }
+  /* The event cursor. */
+  .evcur { display: flex; flex-direction: column; gap: 8px; padding: 9px 10px; border-radius: 10px; background: #111113; border: 1px solid #232326; font-size: 12px; }
+  .evc-row { display: flex; align-items: center; gap: 10px; }
+  .evc-row .evc-n { margin-left: auto; }
+  .evb { flex: none; width: 26px; height: 24px; border-radius: 6px; border: 1px solid #2c2c2e; background: #1c1c1e; color: var(--text-2); cursor: pointer; font-size: 10px; }
+  .evb:hover { color: var(--text); background: #2c2c2e; }
+  .evb.x { margin-left: 4px; }
+  .evc-hint { color: var(--text-3); }
+  .evc-t { font: 600 13px var(--mono); white-space: nowrap; }
+  .evc-t .muted { font-weight: 500; font-size: 11px; margin-left: 4px; }
+  .evc-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 22px; min-width: 0; color: var(--text-2); padding: 2px 4px 2px; }
+  .evc-e { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .evc-e i { display: inline-block; margin-right: 6px; vertical-align: middle; }
+  .evc-e b { margin-right: 6px; }
+  .evc-e { display: inline-flex; align-items: center; gap: 6px; }
+  .evc-e i { width: 7px; height: 7px; border-radius: 99px; flex: none; }
+  .evc-e b { font: 600 11px var(--mono); color: var(--text-3); }
+  .evc-n { font: 11px var(--mono); white-space: nowrap; }
   .scn-view .btns { flex-wrap: nowrap; white-space: nowrap; }
   /* The grid: models › attempts × sessions. */
   .g-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 16px 18px 12px; }
@@ -376,7 +403,8 @@
   .files .list, .scn-list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: calc(100vh - 300px); position: sticky; top: 0; scrollbar-width: thin; }
   .files .list a, .scn-item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
   .files .list a.on, .files .list a:hover, .scn-item.on, .scn-item:hover { background: var(--panel-2); color: var(--text); }
-  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .btns .search { flex: 1; max-width: 360px; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 10px 0 12px; }
   .btn { background: var(--panel-2); border: 1px solid var(--line); color: var(--text-2); border-radius: 7px; padding: 5px 10px; font: 500 12px inherit; cursor: pointer; }
   .btn.on, .btn:hover { color: var(--text); border-color: var(--text-4); }
   .btn.on { background: var(--accent-soft); border-color: rgba(162,239,91,.45); color: var(--accent); }
@@ -1507,6 +1535,7 @@ async function renderVariant(host, task, people, name, startAt) {
   pinBtn.addEventListener("click", () => { pinned = !pinned; setCursor(cursor, true); });
   const onKey = (e) => {
     if (!document.body.contains(scrub)) { removeEventListener("keydown", onKey); return; }
+    if (document.querySelector(".peek.on")) return;
     if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault(); pinned = true;
@@ -1890,6 +1919,54 @@ function scenarioSpark(s) {
     <path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
+// ---------- event cursor ----------
+// Under a scenario's event lanes: a cursor through its events. Clicking the
+// lanes (or ◀ ▶, or the arrow keys) pins one moment across every chart and
+// says what happened then.
+function eventCursor(host, group, rows, xEnd) {
+  const all = rows.flatMap((r) => r.events.map((e) => ({ ...e, row: r.label }))).filter((e) => isNum(e.x)).sort((a, b) => a.x - b.x);
+  const bar = document.createElement("div");
+  bar.className = "evcur";
+  host.appendChild(bar);
+  let at = null;
+  const near = (x) => all.filter((e) => Math.abs(e.x - x) <= Math.max(2, xEnd / 400));
+  const draw = () => {
+    if (at === null) {
+      bar.innerHTML = `<div class="evc-row"><button class="evb" data-d="-1" title="previous event (←)">◀</button><button class="evb" data-d="1" title="next event (→)">▶</button><span class="evc-hint">Click the timeline, or step from event to event, to pin a moment across the charts · ${int(all.length)} events</span></div>`;
+    } else {
+      const here = near(at);
+      const i = all.findIndex((e) => e.x >= at);
+      bar.innerHTML = `<div class="evc-row"><button class="evb" data-d="-1" title="previous event (←)">◀</button><button class="evb" data-d="1" title="next event (→)">▶</button>
+        <span class="evc-t">${clock(at)} <span class="muted">slot +${Math.round(at)}</span></span>
+        <span class="evc-n muted">${here.length} event${here.length === 1 ? "" : "s"} here · ${i >= 0 ? `${i + 1} of ${all.length}` : ""}</span><button class="evb x" data-x="1" title="unpin">✕</button></div>
+        <div class="evc-list">${here.length ? here.slice(0, 8).map((e) => `<span class="evc-e"><i style="background:${e.color}"></i><b>${esc(e.row)}</b>${e.title || ""}</span>`).join("") : `<span class="muted">no event here</span>`}${here.length > 8 ? `<span class="muted">+${here.length - 8} more</span>` : ""}</div>`;
+    }
+    bar.querySelectorAll("[data-d]").forEach((b) => b.addEventListener("click", () => step(+b.dataset.d)));
+    bar.querySelector("[data-x]")?.addEventListener("click", () => pin(null));
+  };
+  const pin = (x) => { at = x; group.pin(x); draw(); };
+  // Jump to the next (or previous) moment that has an event.
+  const step = (d) => {
+    if (!all.length) return;
+    const from = at ?? (d > 0 ? -Infinity : Infinity);
+    const next = d > 0 ? all.find((e) => e.x > from + 1e-9) : [...all].reverse().find((e) => e.x < from - 1e-9);
+    if (next) pin(next.x);
+  };
+  // A click on the lanes snaps to the nearest event, if there's one close by.
+  group.onClick = (x) => {
+    const close = all.reduce((best, e) => Math.abs(e.x - x) < Math.abs((best?.x ?? Infinity) - x) ? e : best, null);
+    pin(close && Math.abs(close.x - x) <= xEnd / 120 ? close.x : x);
+  };
+  const onKey = (e) => {
+    if (!document.body.contains(bar)) { removeEventListener("keydown", onKey); return; }
+    if (e.target.closest?.("input, textarea")) return;
+    if (e.key === "ArrowRight") { step(1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft") { step(-1); e.preventDefault(); }
+  };
+  addEventListener("keydown", onKey);
+  draw();
+}
+
 // ---------- trial ----------
 // The run's header, in the panel's top section with its title: the run's
 // numbers, then the tabs.
@@ -1990,12 +2067,12 @@ async function trialAgent(n, trial) {
   const t0 = Date.parse(steps[0]?.timestamp);
   const toolCounts = {};
   for (const s of steps) for (const c of s.tools) toolCounts[c.name] = (toolCounts[c.name] || 0) + 1;
-  host.innerHTML = `<div class="cards">
-    ${card("Steps", int(fm.total_steps ?? steps.length), `${esc(tr.agent?.name || "")} ${esc(tr.agent?.version || "")}`)}
-    ${card("Tool calls", int(sum(Object.values(toolCounts))), Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${v}`).join(" · "))}
-    ${card("Prompt tokens", compact(fm.total_prompt_tokens), `${compact(fm.total_cached_tokens)} cached`)}
-    ${card("Output tokens", compact(fm.total_completion_tokens), "")}
-    ${card("Cost", usd(fm.total_cost_usd), "")}
+  host.innerHTML = `<div class="runstats">
+    ${statItem("Steps", int(fm.total_steps ?? steps.length), `${esc(tr.agent?.name || "")} ${esc(tr.agent?.version || "")}`)}
+    ${statItem("Tool calls", int(sum(Object.values(toolCounts))), Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${v}`).join(" · "))}
+    ${statItem("Prompt tokens", compact(fm.total_prompt_tokens), `${compact(fm.total_cached_tokens)} cached`)}
+    ${statItem("Output tokens", compact(fm.total_completion_tokens), "")}
+    ${statItem("Cost", usd(fm.total_cost_usd), "")}
   </div>`;
   agentInsights(host, steps, fm);
   // Activity: tool calls over the agent's time.
@@ -2012,7 +2089,7 @@ async function trialAgent(n, trial) {
     }).group = { move: (x, ev) => showTip(`<b>${fix(x, 1)} min</b>`, ev), leave: hideTip };
   }
   const bar = document.createElement("div"); bar.className = "btns";
-  bar.innerHTML = `<input class="search" placeholder="Filter steps (text, tool, output)…"> <button class="btn" data-f="all">All</button><button class="btn" data-f="msg">Messages</button><button class="btn" data-f="tools">Tool calls</button>`;
+  bar.innerHTML = `<input class="search" placeholder="Filter steps (text, tool, output)…"><div class="seg sm"><a href="javascript:void 0" data-f="all">All</a><a href="javascript:void 0" data-f="msg">Messages</a><a href="javascript:void 0" data-f="tools">Tool calls</a></div>`;
   host.appendChild(bar);
   const list = document.createElement("div"); host.appendChild(list);
   let filter = "all", query = "";
@@ -2078,7 +2155,7 @@ async function renderSession(n, name) {
   const names = trial.sessions.bot, idx = names.indexOf(name);
   const rep = bot.report, tl = bot.timeline, sc = bot.scenario;
   const making = !!sc.making;
-  div(`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div></div>`);
+  div(`<div class="sv-head"><div><h1>${esc(name)} <small>${esc(runLabel(t))} · ${esc(shortTask(t.task))}</small></h1><div class="sub">${esc(sc.description || "")}</div><div class="sub">${esc(describeAnnotation(bot.annotation))}${bot.disqualified ? ` <span class="badge bad">${esc(bot.disqualified)}</span>` : ""}</div></div></div>`);
   const refPnl = ref?.report?.pnl_usd ?? sc.reference_pnl_usd;
   const txs = tl.transactions || [], failed = txs.filter((x) => !x.ok);
   div(`<div class="runstats">
@@ -2096,7 +2173,7 @@ async function renderSession(n, name) {
   const xEnd = Math.max(tl.end_slot - tl.start_slot, steps.length ? steps[steps.length - 1].at : 1);
   const X = [0, xEnd];
   const group = new Group(); group.label = (x) => `${clock(x)} · slot +${Math.round(x)}`;
-  const host = div();
+  const host = div("", "sv");
   // Price: mark, index, the planned level, the book's best bid and ask, and the bot's orders.
   const orderMarks = [];
   for (const tx of txs) {
@@ -2123,9 +2200,12 @@ async function renderSession(n, name) {
     legendExtra: orderMarks.length ? `<span><i style="background:var(--bid)"></i>bot bids</span><span><i style="background:var(--ask)"></i>bot asks</span><span class="muted">▲▼ market orders</span>` : "",
   });
   group.add(priceChart);
+  // Position and PnL side by side, on the price chart's clock.
+  const pair = document.createElement("div"); pair.className = "pair"; host.appendChild(pair);
+  const left = document.createElement("div"), right = document.createElement("div"); pair.append(left, right);
   const cap = rep.mandate?.universe?.[0]?.max_position;
-  group.add(chart(host, {
-    title: "Position", height: 150, x: X, xfmt: clock, zero: true, yfmt: (v) => fix(v, 1),
+  group.add(chart(left, {
+    title: "Position", height: 180, x: X, xfmt: clock, zero: true, yfmt: (v) => fix(v, 1),
     hlines: isNum(cap) ? [{ y: cap, color: "var(--ask)", label: `cap ${fix(cap, 0)}`, fit: false }, { y: -cap, color: "var(--ask)", fit: false }] : [],
     series: [
       { label: "bot", color: "var(--accent)", width: 2, step: true, area: 0.22, data: P("position"), fmt: (v) => fix(v, 3) },
@@ -2136,8 +2216,8 @@ async function renderSession(n, name) {
   // Drawdown from the running peak: what the limit is measured against.
   let peak = -Infinity;
   const drawdown = steps.map((s) => { peak = Math.max(peak, s.pnl_usd); return [s.at, s.pnl_usd - Math.max(peak, 0)]; });
-  group.add(chart(host, {
-    title: "PnL", height: 190, x: X, xfmt: clock, zero: true, yfmt: (v) => usd(v, 0),
+  group.add(chart(right, {
+    title: "PnL", height: 180, x: X, xfmt: clock, zero: true, yfmt: (v) => usd(v, 0),
     hlines: isNum(ddLimit) ? [{ y: -ddLimit, color: "var(--ask)", label: `drawdown limit ${usd(ddLimit, 0)}`, fit: false }] : [],
     series: [
       { label: "drawdown", color: "var(--ask)", width: 1, opacity: 0.5, step: true, data: drawdown, fmt: susd },
@@ -2149,7 +2229,7 @@ async function renderSession(n, name) {
   const informed = Array.isArray(bot.annotation?.informed) ? bot.annotation.informed : [];
   const rows = [];
   let last = 0;
-  rows.push({ label: "scenario", events: (sc.path || []).map((w) => { const e = { x: w.slot, color: "var(--text-2)", shape: "bar", title: `level ${w.level_pct > 0 ? "+" : ""}${fix(w.level_pct)}% (${w.level_pct - last >= 0 ? "+" : ""}${fix(w.level_pct - last)} pts)` }; last = w.level_pct; return e; }).filter((e) => e.x <= xEnd) });
+  rows.push({ label: "moves", events: (sc.path || []).map((w) => { const e = { x: w.slot, color: "var(--text-2)", shape: "bar", title: `level ${w.level_pct > 0 ? "+" : ""}${fix(w.level_pct)}% (${w.level_pct - last >= 0 ? "+" : ""}${fix(w.level_pct - last)} pts)` }; last = w.level_pct; return e; }).filter((e) => e.x <= xEnd) });
   const describeTx = (tx) => (tx.instructions || []).filter((i) => i.program !== "compute_budget").map((i) => i.order ? `${i.order.kind === "ImmediateOrCancel" ? "market" : "limit"} ${i.order.side} ${fix(i.order.size, 3)}${isNum(i.order.price_usd) ? " @ $" + fix(i.order.price_usd) : ""}` : (i.name || i.program.slice(0, 8))).join(", ") || "transaction";
   // What the account traded each step: the position's change, whoever's
   // order it was (the bot's market orders, or takers filling its quotes).
@@ -2158,21 +2238,22 @@ async function renderSession(n, name) {
     const d = steps[i].position - steps[i - 1].position;
     if (Math.abs(d) > 1e-9) fills.push({ x: steps[i].at, color: d > 0 ? "var(--bid)" : "var(--ask)", r: Math.min(6, 1.8 + Math.sqrt(Math.abs(d))), opacity: 0.8, title: `${d > 0 ? "bought" : "sold"} ${fix(Math.abs(d), 3)} → ${fix(steps[i].position, 3)}` });
   }
-  rows.push({ label: "position Δ", events: fills });
+  rows.push({ label: "fills", events: fills });
   rows.push({ label: "bot tx", events: txs.filter((x) => isNum(x.at)).map((x) => ({ x: x.at, color: x.ok ? "var(--accent)" : "var(--ask)", r: 2.4, opacity: 0.7, title: `${x.ok ? "" : "FAILED "}${esc(describeTx(x))}` })) });
   if (failed.length) rows.push({ label: "not run", events: failed.map((x) => ({ x: x.at ?? (isNum(x.step) ? steps[x.step]?.at : 0) ?? 0, color: x.duplicate ? "var(--warn)" : "var(--ask)", shape: "x", title: esc((x.duplicate ? "duplicate: " + describeTx(x) : x.error || "").slice(0, 120)) })) });
   const calls = tl.calls || {};
   const stepAt = (k) => isNum(k) ? (steps[k]?.at ?? k * tl.slots_per_step) : 0;
   if ((calls.refused || []).length) rows.push({ label: "refused", events: calls.refused.map((c) => ({ x: stepAt(c.step), color: "var(--critical)", shape: "x", title: esc(c.method) })) });
-  if ((calls.late || []).length) rows.push({ label: "late send", events: calls.late.map((c) => ({ x: stepAt(c.step), color: "var(--warn)", title: "sent while the world moved" })) });
+  if ((calls.late || []).length) rows.push({ label: "late", events: calls.late.map((c) => ({ x: stepAt(c.step), color: "var(--warn)", title: "sent while the world moved" })) });
   const over = steps.filter((s) => s.answered === false);
   if (over.length) rows.push({ label: "overran", events: over.map((s) => ({ x: s.at, color: "var(--warn)", shape: "bar", title: `turn took ${s.turn_ms} ms` })) });
   if (making) {
     const takers = tl.taker_orders || [];
     const ev = (side) => takers.map((o, i) => ({ o, i })).filter(({ o }) => o.side === side).map(({ o, i }) => ({ x: o.at, color: side === "buy" ? "var(--bid)" : "var(--ask)", r: informed[i] ? 3.4 : 2.2, fill: informed[i] ? "transparent" : undefined, stroke: informed[i] ? (side === "buy" ? "var(--bid)" : "var(--ask)") : undefined, opacity: informed[i] ? 1 : 0.55, title: `${side} ${fix(o.size, 3)} (limit $${fix(o.limit_usd)})${informed[i] ? " · informed" : ""}${o.ok ? "" : " · FAILED " + esc(o.error || "")}` }));
-    rows.push({ label: "taker buy", events: ev("buy") }, { label: "taker sell", events: ev("sell") });
+    rows.push({ label: "buys", events: ev("buy") }, { label: "sells", events: ev("sell") });
   }
-  group.add(lanes(host, { title: "Events", x: X, xfmt: clock, rows, legend: making ? `<span class="muted">○ informed taker orders</span>` : "" }));
+  group.add(lanes(host, { title: "Timeline", x: X, xfmt: clock, rows, legend: making ? `<span class="muted">○ informed taker orders</span>` : "" }));
+  eventCursor(host, group, rows, xEnd);
   if (steps.some((s) => isNum(s.turn_ms))) {
     group.add(chart(host, {
       title: "Turn time", height: 110, x: X, xfmt: clock, yfmt: (v) => `${Math.round(v)}ms`, zero: true,
@@ -2182,8 +2263,8 @@ async function renderSession(n, name) {
   }
 
   // Side by side.
-  section("Bot and reference");
-  const cmp = div("", "grid2");
+  section("Bot and reference", "", host);
+  const cmp = div("", "grid2", host);
   const metric = (r) => r ? {
     "PnL": susd(r.report.pnl_usd), "End value": usd(r.report.end_value_usd), "Max drawdown": usd(r.report.max_drawdown_usd),
     "Peak position": fix(r.report.peak_position, 3), "End position": fix(r.report.end_position, 3),
@@ -2198,15 +2279,15 @@ async function renderSession(n, name) {
   cmp.innerHTML = `<div class="panel"><table class="cmp"><thead><tr><th></th><th class="r">bot</th><th class="r">reference</th></tr></thead><tbody>${Object.keys(mb).map((k) => `<tr><td>${k}</td><td class="r num">${mb[k]}</td><td class="r num">${mr ? mr[k] : "–"}</td></tr>`).join("")}</tbody></table></div>
     <div class="panel"><div class="k" style="margin-bottom:8px">RPC calls by method</div><table class="cmp"><tbody>${Object.entries(calls.methods || {}).sort((a, b) => b[1] - a[1]).map(([m, c]) => `<tr><td class="num">${esc(m)}</td><td class="r num">${int(c)}</td><td class="r num muted">${ref?.timeline?.calls?.methods?.[m] !== undefined ? int(ref.timeline.calls.methods[m]) : ""}</td></tr>`).join("") || `<tr><td class="muted">none recorded</td></tr>`}</tbody></table>${calls.sends_dropped ? `<div class="sub">${int(calls.sends_dropped)} sends past the log's limit weren't kept.</div>` : ""}</div>`;
 
-  section("Transactions", `${int(txs.length)} sent by the bot`);
-  const txHost = div();
+  section("Transactions", `${int(txs.length)} sent by the bot`, host);
+  const txHost = div("", "", host);
   const fbar = document.createElement("div"); fbar.className = "btns";
-  fbar.innerHTML = ["all", "orders", "market", "failed", "duplicate"].map((f) => `<button class="btn" data-f="${f}">${f}</button>`).join("");
+  fbar.innerHTML = `<div class="seg sm">${["all", "orders", "market", "failed", "duplicate"].map((f) => `<a href="javascript:void 0" data-f="${f}">${f}</a>`).join("")}</div>`;
   txHost.appendChild(fbar);
   const txTable = document.createElement("div"); txHost.appendChild(txTable);
   let txFilter = "all";
   const drawTx = () => {
-    fbar.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.f === txFilter));
+    fbar.querySelectorAll("[data-f]").forEach((b) => b.classList.toggle("on", b.dataset.f === txFilter));
     const list = txs.filter((x) => txFilter === "all" || (txFilter === "failed" ? !x.ok && !x.duplicate : txFilter === "duplicate" ? x.duplicate : txFilter === "market" ? (x.instructions || []).some((i) => i.order?.kind === "ImmediateOrCancel") : (x.instructions || []).some((i) => i.order)));
     txTable.innerHTML = "";
     table(txTable, list, [
@@ -2225,12 +2306,12 @@ async function renderSession(n, name) {
       txTable.appendChild(d);
     }
   };
-  fbar.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { txFilter = b.dataset.f; drawTx(); }));
+  fbar.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => { txFilter = b.dataset.f; drawTx(); }));
   drawTx();
 
   if (making && (tl.taker_orders || []).length) {
-    section("Taker flow", `${int(tl.taker_orders.length)} orders · ${int(informed.filter(Boolean).length)} informed`);
-    const h = div();
+    section("Taker flow", `${int(tl.taker_orders.length)} orders · ${int(informed.filter(Boolean).length)} informed`, host);
+    const h = div("", "", host);
     table(h, tl.taker_orders.map((o, i) => ({ ...o, i, informed: !!informed[i] })), [
       { key: "at", label: "Time", mono: true, fmt: (o) => `${clock(o.at)} <span class="muted">+${o.at}</span>` },
       { key: "side", label: "Side", fmt: (o) => `<span class="${o.side === "buy" ? "pos" : "neg"}">${o.side}</span>` },
@@ -2242,7 +2323,7 @@ async function renderSession(n, name) {
     ], { maxHeight: "360px" });
   }
 
-  section("Scenario", `${int((sc.path || []).length)} waypoints · ${int(sc.duration_slots)} slots (${clock(sc.duration_slots)})`);
+  section("Scenario", `${int((sc.path || []).length)} waypoints · ${int(sc.duration_slots)} slots (${clock(sc.duration_slots)})`, host);
   div(`<details><summary>The scenario as drawn${bot.annotation ? ", with what it was drawn as" : ""}</summary><pre class="code">${esc(JSON.stringify({ annotation: bot.annotation, ...sc, making: sc.making ? { ...sc.making, takers: `${sc.making.takers.length} orders: see Taker flow` } : undefined }, null, 2))}</pre></details>`);
 
 }
