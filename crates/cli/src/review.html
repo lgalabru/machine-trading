@@ -971,8 +971,13 @@ function closePeek() {
   panel.classList.remove("on"); panel.setAttribute("aria-hidden", "true");
   document.getElementById("peek-backdrop").classList.remove("on");
 }
-// Closing the panel drops the run, and keeps the session.
-const dismissPeek = () => { const { run, session } = picks(); if (run !== null) location.hash = link({ task: currentTask, session }); };
+// Closing the panel goes back to the page as it was under it: the
+// scenario the page showed, not the one picked in the panel.
+const dismissPeek = () => {
+  if (picks().run === null) return;
+  const under = shownPage ? JSON.parse(shownPage)[2] : null;
+  location.hash = link({ task: currentTask, session: under });
+};
 document.getElementById("peek-backdrop").addEventListener("click", dismissPeek);
 document.getElementById("peek-x").addEventListener("click", dismissPeek);
 addEventListener("keydown", (e) => { if (e.key === "Escape" && picks().run !== null) dismissPeek(); });
