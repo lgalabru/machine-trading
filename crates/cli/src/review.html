@@ -100,19 +100,9 @@
   .rs-v { font: 600 14px var(--mono); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rs-d { font-size: 10.5px; line-height: 1.35; color: var(--text-3); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* The scenarios: a list of cards beside the picked one's timeline. */
-  /* Flush with the panel's left edge and its header. */
-  .scn { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; margin: 0 0 0 -26px; }
-  .peek-body:has(> .scn) { padding-top: 0; }
-  .scn-view { padding-top: 16px; }
-  .scn-list { position: sticky; isolation: isolate; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; display: flex; flex-direction: column; border-right: 1px solid var(--line); scrollbar-width: thin; }
-  .scn-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; padding: 12px 12px 8px 12px; position: sticky; top: 0; background: var(--bg); z-index: 1; border-bottom: 1px solid #2c2c2e; }
-  /* Cells, not cards: a hairline between them, the picked one lit. */
-  .scn-item { display: block; padding: 10px 12px 9px 12px; border-bottom: 1px solid #2c2c2e; text-decoration: none; transition: background .12s; position: relative; }
-  .scn-item:hover { background: rgba(255,255,255,.03); }
-  .scn-item.on { background: rgba(255,255,255,.06); }
-  .scn-item.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #fff; }
+  .scn-list .scn-item { display: block; padding: 8px 10px 7px; }
   .scn-top { display: flex; align-items: center; gap: 8px; }
-  .scn-name { font: 600 12.5px var(--mono); }
+  .scn-name { font: 600 12px var(--mono); }
   .scn-pnl { margin-left: auto; font: 600 13px var(--mono); }
   .scn-spark { display: block; width: 100%; height: 46px; margin: 5px 0 3px; }
   .scn-sub { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-3); }
@@ -380,10 +370,12 @@
   .hl-fn, .hl-mac, .hl-cmd { color: #d2a8ff; } .hl-attr, .hl-key { color: #7ee787; } .hl-table { color: #ffa657; font-weight: 600; }
   pre.code { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 12px/1.55 var(--mono); color: #d4d4d8; overflow: auto; max-height: 720px; white-space: pre; }
   pre.wrap { white-space: pre-wrap; word-break: break-word; }
-  .files { display: grid; grid-template-columns: 280px 1fr; gap: 14px; }
-  .files .list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 720px; }
-  .files .list a { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
-  .files .list a.on, .files .list a:hover { background: var(--panel-2); color: var(--text); }
+  /* A list beside a view: the bot's files, a run's scenarios. */
+  .files, .scn { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .scn { grid-template-columns: 320px minmax(0, 1fr); }
+  .files .list, .scn-list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: calc(100vh - 300px); position: sticky; top: 0; scrollbar-width: thin; }
+  .files .list a, .scn-item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
+  .files .list a.on, .files .list a:hover, .scn-item.on, .scn-item:hover { background: var(--panel-2); color: var(--text); }
   .btns { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
   .btn { background: var(--panel-2); border: 1px solid var(--line); color: var(--text-2); border-radius: 7px; padding: 5px 10px; font: 500 12px inherit; cursor: pointer; }
   .btn.on, .btn:hover { color: var(--text); border-color: var(--text-4); }
