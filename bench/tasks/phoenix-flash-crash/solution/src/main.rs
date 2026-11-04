@@ -85,7 +85,10 @@ async fn main() -> Result<()> {
         last_mark = mark;
         peak_value = peak_value.max(value);
         if !halted && peak_value - value > HALT_DRAWDOWN_USD {
-            warn!(value, peak_value, "drawdown past the halt; closing and stopping");
+            warn!(
+                value,
+                peak_value, "drawdown past the halt; closing and stopping"
+            );
             halted = true;
         }
 
