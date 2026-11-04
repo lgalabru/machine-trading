@@ -43,7 +43,15 @@
   .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; padding: 22px 32px 24px; }
   /* The model selector: a vertical list of cards, one per model. */
   .watch { display: flex; flex-direction: column; gap: 8px; }
-  .watch .k { margin-bottom: 2px; }
+  .watch-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+  .seg.sm a { padding: 3px 9px; font-size: 11px; }
+  .watch-hint { color: var(--text-4); font-size: 11px; text-align: right; margin-top: 2px; }
+  .quote.multi { gap: 22px; }
+  .quote.multi .q { display: flex; flex-direction: column; gap: 2px; }
+  .quote.multi .qn { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+  .quote.multi .qn .sw { width: 8px; height: 8px; border-radius: 3px; }
+  .quote.multi .mid { font: 600 26px/1.05 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .quote.multi .chg { font-size: 12px; }
   .watch .row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 72px; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); transition: border-color .15s, background .15s; }
   .watch .row:hover { background: var(--panel-2); }
   .watch .row.on { border-color: var(--mc, var(--text-3)); box-shadow: 0 0 0 1px var(--mc, var(--text-3)) inset; }
@@ -701,6 +709,7 @@ addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) re
 // reference's on the same sessions.
 // The model picked per task; else the best mean skill.
 let heroPick = {};
+let heroSort = "skill";
 const heroPickReset = () => { heroPick = {}; };
 const naturalCmp = (a, b) => a.localeCompare(b, "en", { numeric: true });
 // A task's curves: per model, the mean PnL of its graded trials on each
@@ -722,6 +731,7 @@ function equity(taskName) {
       model: m, trials: all.length, graded: mine.length,
       running: all.filter((t) => t.status === "pending").length,
       skill: mean(mine.map((t) => t.skill)),
+      cost: mean(all.map((t) => t.cost_usd)),
       curve: mine.length ? curve(mine, "pnls") : null,
     };
   }).filter((r) => r.trials);
@@ -729,117 +739,154 @@ function equity(taskName) {
 }
 const compactUsd = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + compact(Math.abs(x));
 const trend = (x) => isNum(x) ? (x >= 0 ? "up" : "down") : "";
-function sparkline(curve, cls) {
+function sparkline(curve, model) {
   if (!curve || curve.length < 2) return `<svg width="64" height="26"></svg>`;
   const lo = Math.min(0, ...curve), hi = Math.max(0, ...curve), r = hi - lo || 1;
   const pts = curve.map((y, i) => `${(i / (curve.length - 1) * 62 + 1).toFixed(1)},${(24 - (y - lo) / r * 22).toFixed(1)}`).join(" ");
   const z = (24 - (0 - lo) / r * 22).toFixed(1);
-  return `<svg width="64" height="26" viewBox="0 0 64 26"><line x1="1" x2="63" y1="${z}" y2="${z}" stroke="#3a3a3c" stroke-dasharray="1 2"/><polyline points="${pts}" fill="none" stroke="var(--${cls || "text-3"})" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+  return `<svg width="64" height="26" viewBox="0 0 64 26"><line x1="1" x2="63" y1="${z}" y2="${z}" stroke="#3a3a3c" stroke-dasharray="1 2"/><polyline points="${pts}" fill="none" stroke="${model ? modelColor(model) : "var(--text-3)"}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
 }
 function renderHero() {
   if (!index) return;
   const task = index.tasks.find((t) => t.name === currentTask);
   if (!task) { hero.innerHTML = ""; return; }
   const eq = equity(task.name);
-  // The selected model: the user's pick, else the best mean skill.
-  const ranked = [...eq.models].sort((x, y) => (y.skill ?? -Infinity) - (x.skill ?? -Infinity));
   const key = task.name;
-  if (!eq.models.some((m) => m.model === heroPick[key])) heroPick[key] = ranked[0]?.model ?? null;
-  const heroModel = heroPick[key];
-  const pick = eq.models.find((m) => m.model === heroModel);
+  // The cards' order: by skill, PnL or cost (cheapest first).
+  const by = {
+    skill: (m) => m.skill ?? -Infinity,
+    pnl: (m) => m.curve?.at(-1) ?? -Infinity,
+    cost: (m) => -(m.cost ?? Infinity),
+  }[heroSort] || ((m) => m.skill ?? -Infinity);
+  const ranked = [...eq.models].sort((x, y) => by(y) - by(x));
+  // The models shown: the user's picks (Cmd/Ctrl-click adds one), else the
+  // best by skill.
+  const best = [...eq.models].sort((x, y) => (y.skill ?? -Infinity) - (x.skill ?? -Infinity))[0];
+  let picked = (heroPick[key] || []).filter((m) => eq.models.some((x) => x.model === m));
+  if (!picked.length && best) picked = [best.model];
+  heroPick[key] = picked;
+  const shown = ranked.filter((m) => picked.includes(m.model) && m.curve);
+  const sorts = [["skill", "Skill"], ["pnl", "PnL"], ["cost", "Cost"]];
   hero.innerHTML = `<div class="hero-inner"><div class="hero-right">
-      <div class="quote"><span class="big" id="q-big"></span><span class="chg" id="q-chg"></span></div>
+      <div class="quote" id="q-quote"></div>
       <div class="quote-sub" id="q-sub"></div>
       <div id="q-area"></div>
-    </div><div class="watch"><div class="k">Models · ${esc(taskTitle(task.short))}</div>${ranked.map((m) => {
+    </div><div class="watch">
+      <div class="watch-head"><span class="k">Models · ${esc(taskTitle(task.short))}</span><div class="seg sm">${sorts.map(([k, l]) => `<a href="javascript:void 0" data-sort="${k}" class="${heroSort === k ? "on" : ""}">${l}</a>`).join("")}</div></div>
+      ${ranked.map((m) => {
         const last = m.curve?.at(-1);
-        return `<div class="row ${m.model === heroModel ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}">
-          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · ${m.graded}/${m.trials}` : m.running ? `${m.running} running` : "not graded"}</div></div>
-          ${sparkline(m.curve, trend(last))}
+        return `<div class="row ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to add or remove">
+          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · ${usd(m.cost, 0)} a trial` : m.running ? `${m.running} running` : "not graded"}</div></div>
+          ${sparkline(m.curve, m.model)}
           ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's">${times(m.skill)}</div>`
             : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
         </div>`;
-      }).join("") || `<div class="muted">No trials yet.</div>`}</div></div>`;
-  hero.querySelectorAll(".watch .row").forEach((r) => r.addEventListener("click", () => { heroPick[key] = r.dataset.model; renderHero(); }));
+      }).join("") || `<div class="muted">No trials yet.</div>`}
+      <div class="watch-hint">⌘-click to compare models</div>
+    </div></div>`;
+  hero.querySelectorAll(".watch .row").forEach((r) => r.addEventListener("click", (e) => {
+    const m = r.dataset.model;
+    if (e.metaKey || e.ctrlKey) {
+      const has = picked.includes(m);
+      heroPick[key] = has ? picked.filter((x) => x !== m) : [...picked, m];
+      if (!heroPick[key].length) heroPick[key] = [m];
+    } else heroPick[key] = [m];
+    renderHero();
+  }));
+  hero.querySelectorAll(".watch [data-sort]").forEach((a) => a.addEventListener("click", () => { heroSort = a.dataset.sort; renderHero(); }));
   const area = document.getElementById("q-area");
-  const big = document.getElementById("q-big"), chg = document.getElementById("q-chg"), sub = document.getElementById("q-sub");
-  if (!pick?.curve) {
-    big.textContent = pick ? shortModel(pick.model) : "No trials";
-    sub.innerHTML = pick?.running ? `${pick.running} trial${pick.running > 1 ? "s" : ""} still running` : "";
-    area.outerHTML = `<div class="area-empty">${pick?.running ? "Waiting for the first graded trial" : "Nothing graded yet"}</div>`;
+  const quoteEl = document.getElementById("q-quote"), sub = document.getElementById("q-sub");
+  if (!shown.length) {
+    const p = eq.models.find((m) => m.model === picked[0]);
+    quoteEl.innerHTML = `<span class="big">${esc(p ? shortModel(p.model) : "No trials")}</span>`;
+    sub.innerHTML = p?.running ? `${p.running} trial${p.running > 1 ? "s" : ""} still running` : "";
+    area.outerHTML = `<div class="area-empty">${p?.running ? "Waiting for the first graded trial" : "Nothing graded yet"}</div>`;
     return;
   }
-  // The quote: the PnL so far, and how it stands against the reference's.
+  const last = eq.sessions.length;
+  const legendRef = eq.reference ? `<span class="key"><svg width="18" height="6"><line x1="0" x2="18" y1="3" y2="3" stroke="#8e8e93" stroke-dasharray="4 3"/></svg>reference</span>` : "";
+  const where = (i) => i === last ? `over ${last} hidden session${last > 1 ? "s" : ""}` : i === 0 ? "before the first session" : `after <b>${esc(eq.sessions[i - 1])}</b> (${i} of ${last})`;
+  // The quote: one model's PnL so far, large; several side by side.
   const quote = (i) => {
-    const y = pick.curve[i], r = eq.reference?.[i];
-    big.textContent = susd(y, 0);
-    big.style.color = "";
-    const d = isNum(r) ? y - r : null;
-    chg.className = "chg " + (isNum(d) && Math.abs(d) < 0.5 ? "" : trend(d));
-    chg.textContent = !isNum(d) ? "" : Math.abs(d) < 0.5 ? "matches the reference" : `${susd(d, 0)} vs reference`;
-    const at = i === pick.curve.length - 1
-      ? `<b>${esc(shortModel(pick.model))}</b> · cumulative PnL over ${eq.sessions.length} hidden session${eq.sessions.length > 1 ? "s" : ""}${isNum(pick.skill) ? ` · skill <b>${times(pick.skill)}</b>` : ""}`
-      : i === 0 ? `<b>${esc(shortModel(pick.model))}</b> · before the first session`
-      : `<b>${esc(shortModel(pick.model))}</b> · after <b>${esc(eq.sessions[i - 1])}</b> (${i} of ${eq.sessions.length}) · reference ${susd(r, 0)}`;
-    sub.innerHTML = at + (eq.reference ? `<span class="key"><svg width="18" height="6"><line x1="0" x2="18" y1="3" y2="3" stroke="#8e8e93" stroke-dasharray="4 3"/></svg>reference</span>` : "");
+    const r = eq.reference?.[i];
+    const vs = (y) => { const d = isNum(r) ? y - r : null; return !isNum(d) ? "" : Math.abs(d) < 0.5 ? `<span class="chg">matches the reference</span>` : `<span class="chg ${trend(d)}">${susd(d, 0)} vs reference</span>`; };
+    if (shown.length === 1) {
+      const m = shown[0];
+      quoteEl.className = "quote";
+      quoteEl.innerHTML = `<span class="big">${susd(m.curve[i], 0)}</span>${vs(m.curve[i])}`;
+      sub.innerHTML = `<b>${esc(shortModel(m.model))}</b> · cumulative PnL ${where(i)}${i === last && isNum(m.skill) ? ` · skill <b>${times(m.skill)}</b>` : ""}${i !== last && isNum(r) ? ` · reference ${susd(r, 0)}` : ""}${legendRef}`;
+    } else {
+      quoteEl.className = "quote multi";
+      quoteEl.innerHTML = shown.map((m) => `<div class="q"><div class="qn"><span class="sw" style="background:${modelColor(m.model)}"></span>${esc(shortModel(m.model))}</div><span class="mid">${susd(m.curve[i], 0)}</span>${vs(m.curve[i])}</div>`).join("");
+      sub.innerHTML = `cumulative PnL ${where(i)}${isNum(r) ? ` · reference ${susd(r, 0)}` : ""}${legendRef}`;
+    }
   };
-  quote(pick.curve.length - 1);
-  areaChart(area, { y: pick.curve, ref: eq.reference, labels: ["start", ...eq.sessions], onScrub: (i) => quote(i ?? pick.curve.length - 1) });
+  quote(last);
+  // One scale for every model on the task, so switching keeps the axes.
+  const range = [...eq.models.flatMap((m) => m.curve || []), ...(eq.reference || [])];
+  areaChart(area, {
+    series: shown.map((m) => ({ y: m.curve, color: modelColor(m.model) })),
+    ref: eq.reference, range, labels: ["start", ...eq.sessions],
+    onScrub: (i) => quote(i ?? last),
+  });
 }
-// Releases newest first, after the batch reviewed if it isn't one.
-const releaseOrder = (rs) => [...rs.filter((r) => !r.published), ...rs.filter((r) => r.published).sort((x, y) => naturalCmp(y.label, x.label))];
-// A stock-style area chart: a line with a gradient under it, a quiet grid,
-// values on the right. Green when the curve ends at or above zero.
-function areaChart(host, { y, ref, labels, onScrub }) {
+// A stock-style area chart: lines in their models' colors with a gradient
+// under each, a quiet grid, values on the right, on a fixed range.
+function areaChart(host, { series, ref, range, labels, onScrub }) {
   host.className = "area";
   host.innerHTML = "";
   const W = Math.max(320, host.clientWidth), H = host.clientHeight || 230;
   const L = 4, R = 64, T = 10, B = 24;
-  const vals = [...y, ...(ref || [])].filter(isNum);
-  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const vals = (range || [...series.flatMap((s) => s.y), ...(ref || [])]).filter(isNum);
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
   if (hi - lo < 1) { hi += 1; lo -= 1; }
   const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
-  const n = y.length;
+  const n = Math.max(...series.map((s) => s.y.length));
   const sx = (i) => L + (n > 1 ? i / (n - 1) : 0.5) * (W - L - R);
   const sy = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
-  const color = (y.at(-1) ?? 0) >= 0 ? "var(--up)" : "var(--down)";
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}` }, host);
-  const id = "g" + Math.random().toString(36).slice(2, 8);
   const defs = el("defs", {}, svg);
-  const g = el("linearGradient", { id, x1: 0, x2: 0, y1: 0, y2: 1 }, defs);
-  el("stop", { offset: "0%", "stop-color": color, "stop-opacity": 0.42 }, g);
-  el("stop", { offset: "100%", "stop-color": color, "stop-opacity": 0.02 }, g);
   // Grid: four values, on the right.
   for (const v of ticks(lo, hi, 4)) {
     if (v < lo || v > hi) continue;
     el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v), stroke: "#2c2c2e", "stroke-width": 1 }, svg);
-    const t = el("text", { x: W - R + 10, y: sy(v) + 4, class: "ylab" }, svg); t.textContent = susd(v, 0).replace("+", "");
+    el("text", { x: W - R + 10, y: sy(v) + 4, class: "ylab" }, svg).textContent = susd(v, 0).replace("+", "");
   }
   if (lo < 0 && hi > 0) el("line", { x1: L, x2: W - R, y1: sy(0), y2: sy(0), stroke: "#48484a", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
   // Session labels along the bottom, at most about one per 90 px.
   const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - L - R) / 90))));
   for (let i = every; i < n; i += every) {
     el("line", { x1: sx(i), x2: sx(i), y1: T, y2: H - B, stroke: "#1c1c1e", "stroke-width": 1 }, svg);
-    const t = el("text", { x: sx(i), y: H - 6, class: "xlab", "text-anchor": "middle" }, svg); t.textContent = String(labels[i]).replace(/^hidden-/, "#");
+    el("text", { x: sx(i), y: H - 6, class: "xlab", "text-anchor": "middle" }, svg).textContent = String(labels[i]).replace(/^hidden-/, "#");
   }
   const path = (ys) => ys.map((v, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join("");
-  if (ref) {
-    el("path", { d: path(ref), fill: "none", stroke: "#8e8e93", "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: 0.7 }, svg);
-  }
-  el("path", { d: `${path(y)}L${sx(n - 1)},${H - B}L${sx(0)},${H - B}Z`, fill: `url(#${id})` }, svg);
-  el("path", { d: path(y), fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
-  el("circle", { cx: sx(n - 1), cy: sy(y.at(-1)), r: 3.5, fill: color }, svg);
-  // Scrub: a cursor and a dot follow the pointer; the quote follows them.
+  if (ref) el("path", { d: path(ref), fill: "none", stroke: "#8e8e93", "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: 0.7 }, svg);
+  // Fills first, lines on top: one model gets a full gradient, several a
+  // faint one each.
+  const strength = series.length === 1 ? 0.42 : 0.14;
+  series.forEach((s) => {
+    const id = "g" + Math.random().toString(36).slice(2, 8);
+    const g = el("linearGradient", { id, x1: 0, x2: 0, y1: 0, y2: 1 }, defs);
+    el("stop", { offset: "0%", "stop-color": s.color, "stop-opacity": strength }, g);
+    el("stop", { offset: "100%", "stop-color": s.color, "stop-opacity": 0.01 }, g);
+    el("path", { d: `${path(s.y)}L${sx(s.y.length - 1)},${H - B}L${sx(0)},${H - B}Z`, fill: `url(#${id})` }, svg);
+  });
+  series.forEach((s) => {
+    el("path", { d: path(s.y), fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    el("circle", { cx: sx(s.y.length - 1), cy: sy(s.y.at(-1)), r: 3.5, fill: s.color }, svg);
+  });
+  // Scrub: a cursor and a dot per line follow the pointer; the quote follows.
   const cur = el("line", { y1: T, y2: H - B, stroke: "#d1d1d6", "stroke-width": 1, opacity: 0 }, svg);
-  const dot = el("circle", { r: 5, fill: color, stroke: "#000", "stroke-width": 2, opacity: 0 }, svg);
+  const dots = series.map((s) => el("circle", { r: 5, fill: s.color, stroke: "#000", "stroke-width": 2, opacity: 0 }, svg));
   const rdot = el("circle", { r: 3.5, fill: "#8e8e93", opacity: 0 }, svg);
   const show = (i) => {
     const on = i !== null;
-    for (const e of [cur, dot]) e.setAttribute("opacity", on ? 1 : 0);
+    cur.setAttribute("opacity", on ? 1 : 0);
     rdot.setAttribute("opacity", on && ref ? 1 : 0);
+    dots.forEach((d) => d.setAttribute("opacity", on ? 1 : 0));
     if (on) {
       cur.setAttribute("x1", sx(i)); cur.setAttribute("x2", sx(i));
-      dot.setAttribute("cx", sx(i)); dot.setAttribute("cy", sy(y[i]));
+      dots.forEach((d, k) => { const v = series[k].y[Math.min(i, series[k].y.length - 1)]; d.setAttribute("cx", sx(i)); d.setAttribute("cy", sy(v)); });
       if (ref) { rdot.setAttribute("cx", sx(i)); rdot.setAttribute("cy", sy(ref[i])); }
     }
     onScrub?.(i);
@@ -851,6 +898,10 @@ function areaChart(host, { y, ref, labels, onScrub }) {
   });
   svg.addEventListener("pointerleave", () => show(null));
 }
+// Releases newest first, after the batch reviewed if it isn't one.
+const releaseOrder = (rs) => [...rs.filter((r) => !r.published), ...rs.filter((r) => r.published).sort((x, y) => naturalCmp(y.label, x.label))];
+// A stock-style area chart: a line with a gradient under it, a quiet grid,
+// values on the right. Green when the curve ends at or above zero.
 
 // ---------- tiles ----------
 // The venue a task trades, as a tile's badge: phoenix-… is PHX.
