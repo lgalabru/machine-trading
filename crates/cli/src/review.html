@@ -141,6 +141,8 @@
   /* The tasks: a vertical list of tiles, the window's height, scrolling. */
   nav.tiles { display: flex; flex-direction: column; gap: 12px; padding: 16px; position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); scrollbar-width: thin; }
   nav.tiles:empty { display: none; }
+  nav.tiles:has(.tile.on) { cursor: pointer; }
+  nav.tiles .tile { cursor: pointer; }
   .tile {
     --tile: var(--ios-gray); --tile-2: var(--ios-gray-2);
     display: flex; flex-direction: column; justify-content: space-between; gap: 6px; flex: none;
@@ -553,6 +555,9 @@ function table(container, rows, cols, opts = {}) {
 const app = document.getElementById("app");
 const hero = document.getElementById("hero");
 const side = document.getElementById("side");
+// A click on the tasks column outside any tile deselects the task: back to
+// the overview.
+side.addEventListener("click", (e) => { if (!e.target.closest(".tile") && (currentTask || onCompare)) location.hash = home(); });
 // The breadcrumb bar: mtx › release › task › trial › session. The release
 // and the task open menus; the right side shows how the trials stand.
 let crumbState = {};
