@@ -1843,9 +1843,7 @@ async function trialScenarios(n, trial, picked) {
   const lo = Math.min(0, ...all), hi = Math.max(0, ...all);
   host.innerHTML = `<div class="scn-list"></div><div class="scn-view"></div>`;
   const list = host.querySelector(".scn-list"), view = host.querySelector(".scn-view");
-  const better = sessions.filter((s) => isNum(s.reference_pnl_usd) && s.pnl_usd > s.reference_pnl_usd + 0.5).length;
-  const worse = sessions.filter((s) => isNum(s.reference_pnl_usd) && s.pnl_usd < s.reference_pnl_usd - 0.5).length;
-  list.innerHTML = `<div class="scn-head"><span class="k">${sessions.length} scenarios</span><span class="muted">${better} beat · ${worse} trail the reference</span></div>` + sessions.map((s, i) => {
+  list.innerHTML = sessions.map((s, i) => {
     const d = isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : null;
     return `<a class="scn-item" href="${link({ task: t.task, run: n, session: s.name })}" data-s="${esc(s.name)}">
       <div class="scn-top"><span class="scn-name">${esc(s.name)}</span>${s.disqualified ? `<span class="badge bad">DQ</span>` : ""}<span class="scn-pnl ${cls(s.pnl_usd)}">${susd(s.pnl_usd, 0)}</span></div>
