@@ -4610,6 +4610,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "flate2",
  "futures 0.3.34",
  "mth-botkit",
  "mth-core",
@@ -4634,6 +4635,9 @@ name = "mth-core"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "borsh 1.8.1",
+ "bs58",
+ "flate2",
  "futures 0.3.34",
  "libc",
  "mth-botkit",

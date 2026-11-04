@@ -47,8 +47,8 @@ use crate::{
     Error, Result, chain,
     compete::{CompeteReport, Competitor},
     error::io_error,
-    flow::{FlowReport, Takers},
-    guard::Guard,
+    flow::{FlowReport, TakerRecord, Takers},
+    guard::{CallLog, Guard},
     making::level_at,
     phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS, USDC_MINT},
     scenario::Scenario,
@@ -141,6 +141,92 @@ pub struct SessionReport {
     pub competitor: Option<CompeteReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
+    /// The session's wall time, setup included, in milliseconds.
+    pub wall_ms: u64,
+    /// The session step by step, for review. Kept out of the report: the
+    /// grader writes it apart, once no bot is left running (see
+    /// [`crate::grade::GradeOptions::detail_dir`]).
+    #[serde(skip)]
+    pub timeline: Timeline,
+}
+
+/// A session step by step: the market and the account at every step, what
+/// the bot sent and what became of it, and the grader's own orders.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Timeline {
+    /// The session's slots: it starts at `start_slot`, steps every
+    /// `slots_per_step` and ends at `end_slot`. Every `at` below counts slots
+    /// from `start_slot`.
+    pub start_slot: u64,
+    pub end_slot: u64,
+    pub slots_per_step: u64,
+    pub start_mark_usd: f64,
+    pub steps: Vec<StepRecord>,
+    /// The bot's transactions, as the surfnet executed them.
+    pub transactions: Vec<TxRecord>,
+    /// What the bot asked the RPC guard for.
+    pub calls: CallLog,
+    /// Market making: the grader's taker orders, as sent.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub taker_orders: Vec<TakerRecord>,
+}
+
+/// The world and the account after a step's blocks landed, before the bot's
+/// turn.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StepRecord {
+    pub k: u64,
+    pub at: u64,
+    pub mark_usd: f64,
+    /// Phoenix's index (oracle) price.
+    pub index_usd: f64,
+    /// The scenario's planned level.
+    pub level_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_bid_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_ask_usd: Option<f64>,
+    /// The bot's position, in base units; positive is long.
+    pub position: f64,
+    /// The account's value as the session values it, and its PnL so far.
+    pub value_usd: f64,
+    pub pnl_usd: f64,
+    /// The bot's turn after this step: how long it took and whether it
+    /// answered in time. Absent when there was no turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answered: Option<bool>,
+}
+
+/// One of the bot's transactions, looked up once the session ended.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TxRecord {
+    /// The turn the bot sent it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Slots into the session it executed at, if it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+    pub ok: bool,
+    /// The same signature as an earlier send: it didn't run again.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub duplicate: bool,
+    /// Why it failed: the surfnet refusing it, or its execution error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Its instructions, decoded where they're Phoenix's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub instructions: Vec<IxRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_units: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee_lamports: Option<u64>,
+    /// Its program logs, for failed transactions only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<String>,
 }
 
 /// How a session's turns went.
@@ -170,6 +256,7 @@ impl SessionReport {
 }
 
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
+    let began = Instant::now();
     let scenario = opts.scenario;
     let world = snapshot::start_offline(opts.snapshot_dir).await?;
     let surfnet = &world.surfnet;
@@ -358,6 +445,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
                 .await;
         }
     };
+    let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     let mut slot = start_slot;
     for k in 0..steps {
         // A step: the last step's takers trade against the quotes the bot
@@ -400,6 +488,22 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         let value_usd = value(now.value_usd, asset.base_lots, slot, base_slot).await?;
         peak_value_usd = peak_value_usd.max(value_usd);
         max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
+        let bbo = hawkeye.view_bbo(&scenario.symbol).await?.value;
+        let usd = |ticks: u64| phoenix.ticks_to_usd(market, ticks);
+        steps_seen.push(StepRecord {
+            k,
+            at,
+            mark_usd: usd(bbo.mark_price_ticks),
+            index_usd: usd(bbo.index_price_ticks),
+            level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
+            best_bid_usd: bbo.best_bid_ticks().map(usd),
+            best_ask_usd: bbo.best_ask_ticks().map(usd),
+            position: phoenix.lots_to_base_units(market, asset.base_lots),
+            value_usd,
+            pnl_usd: value_usd - start_value_usd,
+            turn_ms: None,
+            answered: None,
+        });
         if bot_exit.is_none()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
@@ -415,6 +519,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         }
 
         // The bot's turn.
+        guard.set_step(k);
         guard.set_turn(true);
         if legacy {
             tokio::time::sleep(TURN_BUDGET_PER_STEP).await;
@@ -445,6 +550,10 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             turns.overran += 1;
         }
         turns.wall_ms += took.as_millis() as u64;
+        if let Some(record) = steps_seen.last_mut() {
+            record.turn_ms = Some(took.as_millis() as u64);
+            record.answered = Some(answered);
+        }
     }
     guard.set_turn(false);
     send_flow(&mut flow, flow_due.take()).await;
@@ -452,7 +561,15 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
-    let flow = flow.map(|flow| flow.report());
+    let (flow, taker_orders) = match flow {
+        Some(flow) => {
+            let (report, orders) = flow.finish();
+            (Some(report), orders)
+        }
+        None => (None, Vec::new()),
+    };
+    let calls = guard.call_log();
+    let transactions = transactions(&rpc, &calls, base_slot, &phoenix, market);
     let competitor = match (quoting, competitor.as_ref()) {
         (Some(quoting), Some(competitor)) => Some(quoting.report(competitor).await),
         _ => None,
@@ -502,6 +619,17 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         flow,
         competitor,
         turns,
+        wall_ms: began.elapsed().as_millis() as u64,
+        timeline: Timeline {
+            start_slot,
+            end_slot,
+            slots_per_step: SLOTS_PER_STEP,
+            start_mark_usd,
+            steps: steps_seen,
+            transactions,
+            calls,
+            taker_orders,
+        },
     };
     info!(
         scenario = report.scenario,
@@ -511,6 +639,183 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         "session finished"
     );
     Ok(report)
+}
+
+/// One instruction of a bot's transaction.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct IxRecord {
+    /// `phoenix`, `compute_budget`, or the program's address.
+    pub program: String,
+    /// The instruction, for the programs it knows (`PlaceLimitOrder`, …).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The order it places, for Phoenix's order instructions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<OrderRecord>,
+}
+
+/// An order as a Phoenix instruction carries it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct OrderRecord {
+    /// `PostOnly`, `Limit` or `ImmediateOrCancel`.
+    pub kind: String,
+    /// `bid` or `ask`.
+    pub side: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_usd: Option<f64>,
+    /// In base units.
+    pub size: f64,
+}
+
+const COMPUTE_BUDGET: &str = "ComputeBudget111111111111111111111111111111";
+
+/// Decode one instruction of a `getTransaction` (`json` encoding).
+fn decode_instruction(
+    ix: &serde_json::Value,
+    keys: &[serde_json::Value],
+    phoenix: &Phoenix,
+    market: &phoenix_rise::types::exchange::ExchangeMarketConfig,
+) -> IxRecord {
+    use phoenix_rise::ix::{PhoenixInstruction, order_packet::OrderPacket};
+    let program = ix["programIdIndex"]
+        .as_u64()
+        .and_then(|i| keys.get(i as usize))
+        .and_then(|k| k.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let data = ix["data"]
+        .as_str()
+        .and_then(|d| bs58::decode(d).into_vec().ok())
+        .unwrap_or_default();
+    if program == COMPUTE_BUDGET {
+        return IxRecord {
+            program: "compute_budget".into(),
+            name: None,
+            order: None,
+        };
+    }
+    let found = data
+        .get(..8)
+        .and_then(|tag| PhoenixInstruction::from_discriminant(tag.try_into().ok()?));
+    let Some(instruction) = found else {
+        return IxRecord {
+            program,
+            name: None,
+            order: None,
+        };
+    };
+    let order = matches!(
+        instruction,
+        PhoenixInstruction::PlaceLimitOrder | PhoenixInstruction::PlaceMarketOrder
+    )
+    .then(|| {
+        let packet = <OrderPacket as borsh::BorshDeserialize>::deserialize(&mut &data[8..]).ok()?;
+        // The packet's kind is private to phoenix-rise; its serde form isn't.
+        let value = serde_json::to_value(&packet).ok()?;
+        let (kind, fields) = value["kind"].as_object()?.iter().next()?;
+        let side = fields["side"].as_str().unwrap_or_default().to_lowercase();
+        Some(OrderRecord {
+            kind: kind.clone(),
+            side,
+            price_usd: fields["price_in_ticks"]
+                .as_u64()
+                .map(|ticks| phoenix.ticks_to_usd(market, ticks)),
+            size: phoenix.lots_to_base_units(market, fields["num_base_lots"].as_i64()?),
+        })
+    })
+    .flatten();
+    IxRecord {
+        program: "phoenix".into(),
+        name: Some(format!("{instruction:?}")),
+        order,
+    }
+}
+
+/// Look up each of the bot's sends: where it executed and how it went.
+fn transactions(
+    rpc: &RpcClient,
+    calls: &CallLog,
+    base_slot: u64,
+    phoenix: &Phoenix,
+    market: &phoenix_rise::types::exchange::ExchangeMarketConfig,
+) -> Vec<TxRecord> {
+    // The chain runs a transaction once: a second send of the same signed
+    // transaction (the same instructions on the same blockhash) gets its
+    // signature back and does nothing.
+    let mut seen: std::collections::HashMap<String, Vec<IxRecord>> =
+        std::collections::HashMap::new();
+    calls
+        .sends
+        .iter()
+        .map(|send| {
+            let mut record = TxRecord {
+                step: send.step,
+                signature: send.signature.clone(),
+                at: None,
+                ok: false,
+                duplicate: false,
+                error: send.error.clone(),
+                instructions: Vec::new(),
+                compute_units: None,
+                fee_lamports: None,
+                logs: Vec::new(),
+            };
+            let Some(signature) = &send.signature else {
+                return record;
+            };
+            if let Some(instructions) = seen.get(signature) {
+                record.instructions = instructions.clone();
+                record.error = Some(
+                    "a duplicate of an earlier send: the same transaction doesn't run twice".into(),
+                );
+                record.duplicate = true;
+                return record;
+            }
+            let found = chain::call(
+                rpc,
+                "getTransaction",
+                json!([signature, { "encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0 }]),
+            );
+            let transaction = match found {
+                Ok(transaction) if transaction.is_object() => transaction,
+                Ok(_) => {
+                    record.error = Some("not found: it never executed".into());
+                    return record;
+                }
+                Err(error) => {
+                    record.error = Some(format!("lookup failed: {error}"));
+                    return record;
+                }
+            };
+            let meta = &transaction["meta"];
+            record.at = transaction["slot"].as_u64().map(|s| s.saturating_sub(base_slot));
+            record.ok = meta["err"].is_null();
+            if !record.ok {
+                record.error = Some(meta["err"].to_string());
+            }
+            record.compute_units = meta["computeUnitsConsumed"].as_u64();
+            record.fee_lamports = meta["fee"].as_u64();
+            let logs: Vec<String> = meta["logMessages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|line| line.as_str().map(str::to_string))
+                .collect();
+            let message = &transaction["transaction"]["message"];
+            let keys = message["accountKeys"].as_array().cloned().unwrap_or_default();
+            record.instructions = message["instructions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|ix| decode_instruction(ix, &keys, phoenix, market))
+                .collect();
+            if !record.ok {
+                record.logs = logs;
+            }
+            seen.insert(signature.clone(), record.instructions.clone());
+            record
+        })
+        .collect()
 }
 
 /// Wait until the surfnet has produced `slot`.

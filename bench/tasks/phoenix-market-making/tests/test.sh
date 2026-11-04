@@ -36,4 +36,5 @@ mth grade \
   --bot /app/bot \
   --logs /logs/verifier/bot \
   --reward /logs/verifier/reward.json \
-  --report /logs/verifier/report.json > /dev/null
+  --report /logs/verifier/report.json \
+  --details /logs/verifier/sessions > /dev/null

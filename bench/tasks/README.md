@@ -22,6 +22,25 @@ bots.
 
 ## Changelog
 
+- **Unreleased.** Reports a reviewer can dig into.
+  - **Session detail files.** Next to `report.json` the verifier writes
+    `sessions/bot/<session>.json.gz` and `sessions/reference/<session>.json.gz`.
+    Each holds the scenario as drawn, with what it was drawn as (a shock's
+    shape, which taker orders were informed), and every step: mark, index,
+    planned level, best bid and ask, position, value and PnL, and how long
+    the turn took. They also hold every transaction the bot sent (where it
+    executed, its instructions decoded with each order's side, price and
+    size, compute units, and the logs of failures), every RPC method it
+    called, its refused calls and late sends, and the takers' orders. They
+    hold the hidden scenarios, so the grader writes them only once every bot
+    has stopped, and clears whatever a bot left in their place first.
+  - **Duplicate sends are flagged.** Within a turn the blockhash doesn't
+    move, so the same order sent twice is the same transaction, and the
+    chain runs it once. A detail file marks every repeat.
+  - Session reports gain `wall_ms`.
+  - **`mth bench review <path>`** browses a batch, a job or a trial (see the
+    repository README).
+
 - **0.9.0.** Grades replay, hidden sets stay hidden, and a ladder checks
   that the tasks rank strategies the way a trader would.
   - **A lockstep world.** The grader moves the world one step (two slots) at
