@@ -51,7 +51,7 @@
   @media (max-width: 1100px) { .peek { left: 150px; min-width: 0; } }
   .peek-bar { padding: 14px 26px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
   .peek-row { display: flex; align-items: center; gap: 10px; }
-  .peek-head .runstats { margin: 12px 0 2px; background: var(--bg); }
+  .peek-head .runstats { margin: 14px 0 4px; }
   .peek-head .tabs { margin: 8px 0 -1px; border-bottom: 0; justify-content: center; }
   .peek-head:empty { display: none; }
   .peek-title { margin-right: auto; display: flex; align-items: baseline; gap: 10px; min-width: 0; white-space: nowrap; }
@@ -93,8 +93,8 @@
   svg.pareto-svg .plab { font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #d1d1d6; }
   /* A run: its title and numbers, then the tabs. */
   .run-head { margin-top: 2px; }
-  .runstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin-bottom: 4px; overflow: hidden; }
-  .rs { padding: 9px 12px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); margin: 0 -1px -1px 0; min-width: 0; }
+  .runstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px 0; margin: 6px 0 10px; }
+  .rs { padding: 2px 14px 2px 0; min-width: 0; }
   .rs:last-child { border-right: 0; }
   .rs-k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
   .rs-v { font: 600 14px var(--mono); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -349,14 +349,14 @@
   .tabs a.on { color: var(--text); border-color: var(--accent); }
   .tabs a:hover { color: var(--text); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr)); gap: 16px; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-  .chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 6px; margin-bottom: 10px; }
+  .panel { border-top: 1px solid var(--line-soft); padding: 14px 0; }
+  .chart { position: relative; padding: 14px 0 8px; border-top: 1px solid var(--line-soft); }
   .chart .title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 4px; }
   .chart .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
   .chart .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
   .chart svg { display: block; width: 100%; overflow: visible; }
-  .axis text { fill: var(--text-4); font: 10.5px var(--mono); }
-  .axis line, .grid line { stroke: var(--line-soft); }
+  .axis text { fill: #8e8e93; font: 500 11px var(--mono); }
+  .axis line, .grid line { stroke: #232326; }
   .zero { stroke: var(--text-4); stroke-dasharray: 2 3; }
   .cross { stroke: rgba(250,250,250,.35); pointer-events: none; }
   .tip { position: fixed; pointer-events: none; z-index: 20; background: rgba(9,9,11,.96); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: 12px/1.5 var(--mono); color: var(--text-2); display: none; max-width: 420px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
@@ -515,7 +515,9 @@ function chart(container, opts) {
     `<span><i style="background:${s.color};${s.dash ? "opacity:.7" : ""}"></i>${esc(s.label)}</span>`).join("") + (opts.legendExtra || "");
   card.innerHTML = `<div class="title"><span class="k">${esc(opts.title || "")}</span><span class="legend">${legend}</span></div>`;
   container.appendChild(card);
-  const W = Math.max(card.clientWidth - 24, 300), H = opts.height || 180, L = opts.left ?? 64, R = 14, T = 8, B = opts.xaxis === false ? 8 : 24;
+  // The header chart's look: values on the right, a quiet grid, the main
+  // series filled with a gradient.
+  const W = Math.max(card.clientWidth, 300), H = opts.height || 180, L = opts.left ?? 4, R = opts.right ?? 64, T = 8, B = opts.xaxis === false ? 8 : 24;
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, card);
   const [x0, x1] = opts.x;
   let ys = [];
@@ -532,7 +534,7 @@ function chart(container, opts) {
   const axis = el("g", { class: "axis" }, svg);
   for (const v of ticks(y0, y1, opts.yticks || 4)) {
     el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v) }, axis);
-    el("text", { x: L - 8, y: sy(v) + 3.5, "text-anchor": "end" }, axis).textContent = (opts.yfmt || fix)(v);
+    el("text", { x: W - R + 10, y: sy(v) + 3.5, "text-anchor": "start" }, axis).textContent = (opts.yfmt || fix)(v);
   }
   if (opts.xaxis !== false) {
     const xt = opts.xticks || ticks(x0, x1, Math.max(2, Math.floor((W - L) / 90)));
@@ -574,7 +576,15 @@ function chart(container, opts) {
       prev = p;
     }
     if (s.step && prev) d += `H${sx(x1)}`;
-    el("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 1.5, "stroke-dasharray": s.dash, opacity: s.opacity ?? 1, "stroke-linejoin": "round" }, svg);
+    if (s.area && d) {
+      const first = s.data.find((p) => isNum(p[1]));
+      const id = "a" + Math.random().toString(36).slice(2, 8);
+      const g = el("linearGradient", { id, x1: 0, x2: 0, y1: 0, y2: 1 }, el("defs", {}, svg));
+      el("stop", { offset: "0%", "stop-color": s.color, "stop-opacity": s.area === true ? 0.32 : s.area }, g);
+      el("stop", { offset: "100%", "stop-color": s.color, "stop-opacity": 0.01 }, g);
+      el("path", { d: `${d}V${H - B}H${sx(first[0])}Z`, fill: `url(#${id})`, stroke: "none" }, svg);
+    }
+    el("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 1.5, "stroke-dasharray": s.dash, opacity: s.opacity ?? 1, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
   }
   for (const m of opts.marks || []) {
     const X = sx(m.x), Y = sy(m.y), r = m.r || 2.5;
@@ -623,8 +633,10 @@ function lanes(container, opts) {
   const card = document.createElement("div"); card.className = "chart";
   card.innerHTML = `<div class="title"><span class="k">${esc(opts.title || "Events")}</span><span class="legend">${opts.legend || ""}</span></div>`;
   container.appendChild(card);
-  const rowH = 20, L = opts.left ?? 64, R = 14, T = 4, B = 22;
-  const W = Math.max(card.clientWidth - 24, 300), H = T + B + rowH * opts.rows.length;
+  // The charts' frame: rows named on the right, where the charts keep their
+  // values, so their times line up.
+  const rowH = 20, L = opts.left ?? 4, R = 64, T = 4, B = 22;
+  const W = Math.max(card.clientWidth, 300), H = T + B + rowH * opts.rows.length;
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, card);
   const [x0, x1] = opts.x;
   const sx = (x) => L + (x - x0) / (x1 - x0 || 1) * (W - L - R);
@@ -634,7 +646,7 @@ function lanes(container, opts) {
   opts.rows.forEach((row, i) => {
     const cy = T + rowH * i + rowH / 2;
     el("line", { x1: L, x2: W - R, y1: cy, y2: cy, stroke: "var(--line-soft)" }, svg);
-    el("text", { x: L - 8, y: cy + 3.5, "text-anchor": "end", fill: "var(--text-3)", "font-size": 10.5, "font-family": "var(--mono)" }, svg).textContent = row.label;
+    el("text", { x: W - R + 10, y: cy + 3.5, "text-anchor": "start", fill: "#8e8e93", "font-size": 10.5, "font-family": "var(--mono)" }, svg).textContent = row.label.length > 9 ? row.label.slice(0, 8) + "…" : row.label;
     for (const e of row.events) {
       const X = sx(e.x);
       if (e.shape === "bar") el("rect", { x: X - 1, y: cy - 7, width: 2, height: 14, fill: e.color, opacity: e.opacity ?? 0.85 }, svg);
@@ -999,7 +1011,7 @@ function renderHero() {
     const p = eq.models.find((m) => m.model === picked[0]);
     quoteEl.innerHTML = `<span class="big">${esc(p ? shortModel(p.model) : "No trials")}</span>`;
     sub.innerHTML = p?.running ? `${p.running} trial${p.running > 1 ? "s" : ""} still running` : "";
-    area.outerHTML = `<div class="area-empty">${p?.running ? "Waiting for the first graded trial" : "Nothing graded yet"}</div>`;
+    area.outerHTML = `<div class="area-empty">${p?.running ? "Waiting for the first graded run" : "Nothing graded yet"}</div>`;
     return;
   }
   const last = eq.sessions.length;
@@ -1156,8 +1168,8 @@ function renderOverview() {
   div(`<div class="ov-title"><h1>Machine Trading</h1><span class="ver">${esc(dataset)} ${esc(index.version || "")}</span></div>
     <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}. Pick a task on the left to see its curves.</p>`);
   div([
-    card("Trials", int(trials.length), `${index.tasks.length} tasks × ${modelOrder.length} models`),
-    card("Hidden scenarios", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per trial"),
+    card("Runs", int(trials.length), `${index.tasks.length} tasks × ${modelOrder.length} models`),
+    card("Hidden scenarios", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per run"),
     card("Agent cost", usd(cost, 0), `${usd(trials.length ? cost / trials.length : null)} a trial`),
     card("Agent time", dur(agentMs), `${dur(trials.length ? agentMs / trials.length : null)} a trial`),
   ].join(""), "ov-stats");
@@ -1440,7 +1452,7 @@ async function renderVariant(host, task, people, name, startAt) {
     }
     const P = (k) => steps.map((q) => [q.at, q[k]]);
     group.add(chart(chartsHost, {
-      title: "Scenario: price and the orders each trial sent", height: 300, x: X, xfmt: clock, yfmt: (v) => "$" + fix(v),
+      title: "Price and the orders each run sent", height: 300, x: X, xfmt: clock, yfmt: (v) => "$" + fix(v),
       vlines: (sc.path || []).filter((w) => w.slot <= xEnd).map((w) => ({ x: w.slot, color: "rgba(250,250,250,.06)", dash: "1 0" })),
       marks: marks.length > 6000 ? marks.filter((_, i) => i % Math.ceil(marks.length / 6000) === 0) : marks,
       series: [
@@ -1467,8 +1479,8 @@ async function renderVariant(host, task, people, name, startAt) {
       series: vis.map((r) => ({ label: r.label, color: r.color, dash: r.dash, width: r.reference ? 1.3 : 2, step: true, data: r.d.timeline.steps.map((q) => [q.at, q.pnl_usd]) })),
     }));
     group.add(lanes(chartsHost, {
-      title: "Transactions by trial", x: X, xfmt: clock, left: 110,
-      rows: vis.map((r) => ({ label: r.label.slice(0, 15), events: (r.d.timeline.transactions || []).filter((x) => isNum(x.at) || isNum(x.step)).map((x) => ({ x: isNum(x.at) ? x.at : (r.d.timeline.steps[x.step]?.at ?? 0), color: x.duplicate ? "var(--warn)" : x.ok ? r.color : "var(--ask)", shape: x.ok ? undefined : "x", r: 2.3, opacity: 0.75 })) })),
+      title: "Transactions by run", x: X, xfmt: clock,
+      rows: vis.map((r) => ({ label: r.reference ? "ref" : r.label.replace(/^(\w+)-[\d-]+ /, "$1 "), events: (r.d.timeline.transactions || []).filter((x) => isNum(x.at) || isNum(x.step)).map((x) => ({ x: isNum(x.at) ? x.at : (r.d.timeline.steps[x.step]?.at ?? 0), color: x.duplicate ? "var(--warn)" : x.ok ? r.color : "var(--ask)", shape: x.ok ? undefined : "x", r: 2.3, opacity: 0.75 })) })),
     }));
     group.onMove = (x) => { if (!pinned) setCursor(x, false); };
     group.onClick = (x) => { pinned = true; setCursor(x, true); };
@@ -1525,7 +1537,7 @@ async function renderVariant(host, task, people, name, startAt) {
       <dt>Next override</dt><dd>${nextW ? `in ${clock(nextW.slot - t)}: level ${nextW.level_pct > 0 ? "+" : ""}${fix(nextW.level_pct)}%` : "none"}</dd>
       ${making ? `<dt>Takers this step</dt><dd>${(tl.taker_orders || []).map((o, j) => ({ o, j })).filter(({ o }) => o.at > (prev?.at ?? -1) && o.at <= t).map(({ o, j }) => `${o.side} ${fix(o.size, 2)}${informed[j] ? " (informed)" : ""}`).join(", ") || "none"}</dd>` : ""}
     </dl></div>`;
-    const who = `<div class="panel"><div class="k" style="margin-bottom:8px">Each trial at ${clock(t)}</div><table class="cmp"><thead><tr><th>Trial</th><th class="r">Position</th><th class="r">Δ</th><th class="r">PnL</th><th>Sent this turn</th></tr></thead><tbody>${per.map(({ r, q, d, here }) => `<tr><td><span class="swatch" style="background:${r.color}"></span>${esc(r.label)}</td><td class="r num">${fix(q.position, 3)}</td><td class="r num ${cls(d)}">${Math.abs(d) > 1e-9 ? (d > 0 ? "+" : "") + fix(d, 3) : ""}</td><td class="r num ${cls(q.pnl_usd)}">${susd(q.pnl_usd)}</td><td style="white-space:normal;font-size:12px">${here.length ? groupTxs(here).map((g) => `<div class="${g.ok ? "" : "neg"}">${g.ok ? "" : "✗ "}${esc(g.text)}${g.n > 1 ? ` <span class="muted">×${g.n}</span>` : ""}${g.dups ? ` <span style="color:var(--warn)" title="the same transaction again: the chain ran it once">${g.dups} duplicate${g.dups > 1 ? "s" : ""}, didn't run</span>` : ""}</div>`).join("") : `<span class="muted">${q.answered === false ? "overran its turn" : "nothing"}</span>`}</td></tr>`).join("")}</tbody></table></div>`;
+    const who = `<div class="panel"><div class="k" style="margin-bottom:8px">Each run at ${clock(t)}</div><table class="cmp"><thead><tr><th>Run</th><th class="r">Position</th><th class="r">Δ</th><th class="r">PnL</th><th>Sent this turn</th></tr></thead><tbody>${per.map(({ r, q, d, here }) => `<tr><td><span class="swatch" style="background:${r.color}"></span>${esc(r.label)}</td><td class="r num">${fix(q.position, 3)}</td><td class="r num ${cls(d)}">${Math.abs(d) > 1e-9 ? (d > 0 ? "+" : "") + fix(d, 3) : ""}</td><td class="r num ${cls(q.pnl_usd)}">${susd(q.pnl_usd)}</td><td style="white-space:normal;font-size:12px">${here.length ? groupTxs(here).map((g) => `<div class="${g.ok ? "" : "neg"}">${g.ok ? "" : "✗ "}${esc(g.text)}${g.n > 1 ? ` <span class="muted">×${g.n}</span>` : ""}${g.dups ? ` <span style="color:var(--warn)" title="the same transaction again: the chain ran it once">${g.dups} duplicate${g.dups > 1 ? "s" : ""}, didn't run</span>` : ""}</div>`).join("") : `<span class="muted">${q.answered === false ? "overran its turn" : "nothing"}</span>`}</td></tr>`).join("")}</tbody></table></div>`;
     // Every event within the window, in time order.
     const events = [];
     for (const w of path) if (Math.abs(w.slot - t) <= WINDOW) events.push({ at: w.slot, who: "scenario", color: "var(--text-2)", text: `override: level ${w.level_pct > 0 ? "+" : ""}${fix(w.level_pct)}%` });
@@ -2106,7 +2118,7 @@ async function renderSession(n, name) {
       { label: "best ask", color: "var(--ask)", width: 1, opacity: 0.55, step: true, data: P("best_ask_usd"), fmt: (v) => "$" + fix(v) },
       { label: "planned level", color: "var(--text-3)", dash: "4 3", width: 1.2, step: true, data: P("level_usd"), fmt: (v) => "$" + fix(v) },
       { label: "index", color: "var(--index)", width: 1.2, step: true, data: P("index_usd"), fmt: (v) => "$" + fix(v) },
-      { label: "mark", color: "var(--text)", width: 1.6, step: true, data: P("mark_usd"), fmt: (v) => "$" + fix(v) },
+      { label: "mark", color: "var(--text)", width: 1.8, step: true, area: 0.16, data: P("mark_usd"), fmt: (v) => "$" + fix(v) },
     ],
     legendExtra: orderMarks.length ? `<span><i style="background:var(--bid)"></i>bot bids</span><span><i style="background:var(--ask)"></i>bot asks</span><span class="muted">▲▼ market orders</span>` : "",
   });
@@ -2116,7 +2128,7 @@ async function renderSession(n, name) {
     title: "Position", height: 150, x: X, xfmt: clock, zero: true, yfmt: (v) => fix(v, 1),
     hlines: isNum(cap) ? [{ y: cap, color: "var(--ask)", label: `cap ${fix(cap, 0)}`, fit: false }, { y: -cap, color: "var(--ask)", fit: false }] : [],
     series: [
-      { label: "bot", color: "var(--accent)", width: 1.8, step: true, data: P("position"), fmt: (v) => fix(v, 3) },
+      { label: "bot", color: "var(--accent)", width: 2, step: true, area: 0.22, data: P("position"), fmt: (v) => fix(v, 3) },
       ...(rsteps.length ? [{ label: "reference", color: "var(--ref)", width: 1.4, step: true, opacity: 0.85, data: rsteps.map((s) => [s.at, s.position]), fmt: (v) => fix(v, 3) }] : []),
     ],
   }));
@@ -2130,7 +2142,7 @@ async function renderSession(n, name) {
     series: [
       { label: "drawdown", color: "var(--ask)", width: 1, opacity: 0.5, step: true, data: drawdown, fmt: susd },
       ...(rsteps.length ? [{ label: "reference", color: "var(--ref)", width: 1.5, step: true, data: rsteps.map((s) => [s.at, s.pnl_usd]), fmt: susd }] : []),
-      { label: "bot", color: "var(--accent)", width: 2, step: true, data: P("pnl_usd"), fmt: susd },
+      { label: "bot", color: (rep.pnl_usd ?? 0) >= 0 ? "var(--up)" : "var(--down)", width: 2, step: true, area: true, data: P("pnl_usd"), fmt: susd },
     ],
   }));
   // Events: the scenario's moves, the bot's transactions and refusals, the takers.
