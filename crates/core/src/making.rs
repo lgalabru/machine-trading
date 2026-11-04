@@ -559,7 +559,10 @@ mod tests {
             let takers = &s.making.as_ref().unwrap().takers;
             assert_eq!(informed.len(), takers.len(), "seed {seed}");
             if family.regime(seed) != Regime::Jumps {
-                assert!(!informed.contains(&true), "seed {seed}: no jumps, nothing informed");
+                assert!(
+                    !informed.contains(&true),
+                    "seed {seed}: no jumps, nothing informed"
+                );
             }
         }
     }
