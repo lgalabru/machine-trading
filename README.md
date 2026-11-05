@@ -54,6 +54,10 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 | [📉 `phoenix-flash-crash`](bench/tasks/phoenix-flash-crash) | fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't |
 | [⚖️ `phoenix-market-making`](bench/tasks/phoenix-market-making) | earns the SPCX spread from noise, and steps back before informed flow |
 
+Results are published at
+[lgalabru.github.io/machine-trading/bench](https://lgalabru.github.io/machine-trading/bench/),
+the same view `mtx bench review` gives locally.
+
 Planned tasks are tracked as
 [issues labelled `new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22).
 
