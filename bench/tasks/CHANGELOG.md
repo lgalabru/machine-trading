@@ -4,6 +4,14 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.10.1.** Agents know their time budget. In 0.10.0, 11 of 18 runs
+  used their whole hour, most of them waiting on a parameter sweep of
+  practice grades when they were stopped: Claude Code doesn't know its
+  time limit, and nothing said that the bot in `/app/bot` when time runs
+  out is what's graded. Both instructions now say so, and to keep a
+  working, built bot there all along. Nothing else changes: same images,
+  graders and scenario families.
+
 - **0.10.0.** Verifiers that finish, orders that all run, and reports a
   reviewer can dig into.
   - **`mth` is now `mtx`:** the CLI, the SDK crate (`mtx-botkit`), the
