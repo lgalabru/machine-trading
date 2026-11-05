@@ -46,7 +46,7 @@ jobs:
       - name: Export the benchmark
         run: |
           cargo build --release --locked -p mtx-cli
-          target/release/mtx bench export specs/site/_site/bench
+          target/release/mtx bench export specs/site/_site/bench --site https://lgalabru.github.io/machine-trading
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:

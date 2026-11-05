@@ -237,6 +237,11 @@ enum BenchCommand {
     Export {
         /// The site's directory, as in specs/site/_site/bench.
         out: PathBuf,
+        /// Where the site is served, as in
+        /// https://lgalabru.github.io/machine-trading: link previews (og:
+        /// tags) point at <site>/social.jpg.
+        #[arg(long)]
+        site: Option<String>,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -547,7 +552,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&summary)?
         }
-        Command::Bench(BenchCommand::Export { out, results }) => {
+        Command::Bench(BenchCommand::Export { out, site, results }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             let releases = publish::releases(&results);
             if releases.is_empty() {
@@ -558,7 +563,7 @@ async fn run() -> Result<()> {
                 releases.len(),
                 if releases.len() == 1 { "" } else { "s" }
             ));
-            let summary = review::export(releases, &out)?;
+            let summary = review::export(releases, &out, site.as_deref())?;
             ui::done(format!("Exported to {}", out.display()));
             serde_json::to_string_pretty(&summary)?
         }
