@@ -119,10 +119,9 @@
   .scn-view h1 { font-size: 22px; margin: 0 0 4px; }
   /* A scenario's page: room between its parts. */
   .sv-head .sub { margin-top: 2px; }
-  .sv-head { margin-bottom: 14px; }
-  .sv-title { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; color: var(--text); line-height: 1.35; }
-  .sv-title .pos, .sv-title .neg { font-family: var(--mono); font-weight: 600; font-size: 16px; }
-  .sv-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .sv-head { margin: 14px auto 18px; text-align: center; max-width: 640px; }
+  .sv-title { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; color: var(--text); line-height: 1.4; text-wrap: balance; }
+  .sv-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 12px; }
   .sv-chips .chip { font-size: 11.5px; color: var(--text-2); padding: 3px 10px; border-radius: 999px; background: #161618; border: 1px solid #2c2c2e; }
   .sv-chips .chip.bad { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
   .scn-view > .runstats { margin: 18px 0 8px; }
@@ -2137,11 +2136,11 @@ function markdown(text) {
   return out.join("");
 }
 
-// A scenario at a glance: what the market does, as a headline with its
-// moves colored, and the rest as chips.
+// A scenario at a glance: what the market does as a headline, and the rest
+// as chips, centered over its numbers.
 function scenarioHeader(description, annotation, disqualified) {
   const parts = String(description || "").split(/;\s*/).filter(Boolean);
-  const moves = (t) => esc(t).replace(/([+−-]\d+(?:\.\d+)?%)/g, (m) => `<span class="${m.startsWith("+") ? "pos" : "neg"}">${m}</span>`);
+  const moves = (t) => esc(t);
   const chips = [...parts.slice(1), ...String(annotation || "").split(/\s·\s/).filter(Boolean)];
   return `<div class="sv-head"><div class="sv-title">${moves(parts[0] || "")}</div>${chips.length || disqualified ? `<div class="sv-chips">${chips.map((c) => `<span class="chip">${moves(c)}</span>`).join("")}${disqualified ? `<span class="chip bad" title="${esc(disqualified)}">disqualified</span>` : ""}</div>` : ""}</div>`;
 }
