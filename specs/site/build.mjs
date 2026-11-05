@@ -194,7 +194,7 @@ write(
   layout({
     page: "index.html",
     title: NAME,
-    head: `<h1>${NAME} Specifications</h1><p class="header-links"><a href="${SOURCE}">Source</a><span class="sep">·</span><a href="mandate.html">Mandate v0</a></p>`,
+    head: `<h1>${NAME} Specifications</h1><p class="header-links"><a href="${SOURCE}">Source</a><span class="sep">·</span><a href="mandate.html">Mandate v0</a><span class="sep">·</span><a href="bench/">Benchmark</a></p>`,
     body: `<div class="intro">${intro}</div><div class="tree">${tree}</div>`,
   }),
 );
