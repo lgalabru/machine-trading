@@ -1932,17 +1932,13 @@ function highlight(text, lang) {
 // The run's numbers in one line under its title.
 function runStats(t, trial) {
   const item = (k, v, d) => `<div class="rs"><div class="rs-k">${esc(k)}</div><div class="rs-v">${v}</div>${d ? `<div class="rs-d">${d}</div>` : ""}</div>`;
-  const agentMs = span(t.agent_execution), verifierMs = span(t.verifier_execution);
+  const vsRef = isNum(t.pnl_usd) && isNum(t.reference_pnl_usd) ? t.pnl_usd - t.reference_pnl_usd : null;
+  const r = t.risk || {};
   return `<div class="runstats">
-    ${item("Skill", `<span class="${isNum(t.skill) ? (Math.round(t.skill * 100) >= 100 ? "pos" : "neg") : ""}">${times(t.skill)}</span>`, "vs reference")}
-    ${item("Reward", fix(t.reward, 4), "vs hindsight bound")}
-    ${item("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, `reference ${susd(t.reference_pnl_usd)}`)}
-    ${item("Scenarios", int(t.sessions), t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : "none disqualifying")}
-    ${item("Worst", susd(t.risk?.worst_pnl_usd), `tail ${susd(t.risk?.tail_pnl_usd)}`)}
-    ${item("Drawdown", usd(t.risk?.max_drawdown_usd), `${pct(t.risk?.profitable_share, 0)} profitable · Sharpe ${fix(t.risk?.sharpe)}`)}
-    ${item("Agent", dur(agentMs), `${compact(t.tokens?.output)} output tokens`)}
-    ${item("Cost", usd(t.cost_usd), `${compact(t.tokens?.input)} in · ${compact(t.tokens?.cache)} cached`)}
-    ${item("Grading", dur(verifierMs), t.eval_seed_sha256 ? `set ${esc(String(t.eval_seed_sha256).slice(0, 8))}…` : "")}
+    ${item("Skill", `<span class="${isNum(t.skill) ? (Math.round(t.skill * 100) >= 100 ? "pos" : "neg") : ""}">${times(t.skill)}</span>`, `reward ${fix(t.reward, 4)}`)}
+    ${item("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : isNum(vsRef) ? `vs ref <span class="${Math.abs(vsRef) < 0.005 ? "" : cls(vsRef)}">${Math.abs(vsRef) < 0.005 ? "even" : susd(vsRef)}</span>` : "")}
+    ${item("Worst scenario", susd(r.worst_pnl_usd), `drawdown ${usd(r.max_drawdown_usd, 0)} · Sharpe ${fix(r.sharpe)}`)}
+    ${item("Agent", dur(span(t.agent_execution)), `${usd(t.cost_usd)} · ${compact(t.tokens?.output)} tokens out`)}
   </div>`;
 }
 // The scenarios tab: every scenario as a small chart of the run's PnL
