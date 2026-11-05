@@ -223,13 +223,12 @@
   .watch .chip.up { background: var(--up); color: #04160a; }
   .watch .chip.down { background: var(--down); color: #fff; }
   /* The breadcrumb: mtx › release › task › trial › session, with menus. */
-  nav.crumbbar { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 10px 24px; min-height: 52px; background: rgba(0,0,0,.82); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); font-size: 13px; }
-  .crumb { font: 500 13px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 8px; color: var(--text-2); text-decoration: none; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  nav.crumbbar { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 0 24px; height: 52px; box-sizing: border-box; background: rgba(0,0,0,.82); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); font-size: 13px; }
+  .crumb { font: 500 13px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; display: inline-flex; align-items: center; gap: 7px; height: 30px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; color: var(--text-2); text-decoration: none; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
   a.crumb:hover, .crumb-menu > summary:hover { background: #1c1c1e; color: var(--text); }
   .crumb.here { color: var(--text); font-weight: 600; }
   .crumb.brand { font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
   .crumb.brand .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 10px rgba(162,239,91,.6); }
-  .crumb .tbadge { font: 700 9px var(--mono); padding: 2px 5px; border-radius: 4px; color: #fff; background: var(--tc, #3a3a3c); }
   .crumb .caret { color: var(--text-4); font-size: 10px; }
   .crumb-sep { color: var(--text-4); font-size: 14px; padding: 0 1px; user-select: none; }
   .crumb-menu { position: relative; }
@@ -322,10 +321,10 @@
     background: linear-gradient(180deg, var(--tile) 0%, var(--tile-2) 100%);
     color: #fff; text-decoration: none; font-size: 12px; overflow: hidden;
     box-shadow: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.06);
-    transition: transform .12s ease, box-shadow .15s ease, filter .15s ease;
+    transition: box-shadow .15s ease, filter .15s ease;
   }
-  .tile:hover { filter: brightness(1.06); transform: translateY(-2px); }
-  .tile:active { transform: translateY(0); filter: brightness(.94); }
+  .tile:hover { filter: brightness(1.06); }
+  .tile:active { filter: brightness(.94); }
   .tile.on { box-shadow: 0 0 0 3px var(--panel), 0 0 0 5px var(--tile), 0 2px 8px rgba(0,0,0,.18); }
   .tile.c0 { --tile: var(--ios-pink); --tile-2: var(--ios-pink-2); }
   .tile.c1 { --tile: var(--ios-blue); --tile-2: var(--ios-blue-2); }
@@ -821,10 +820,9 @@ function setCrumbs(state = {}) {
     ? menu(esc(verLabel(here)), rs.map((r) => `<a class="${r.label === here.label ? "on" : ""}" href="${relHref(r)}">${esc(verLabel(r))}<span class="note">${r.published ? "published" : "this batch"}</span></a>`).join(""))
     : `<a class="crumb ${state.task || state.extra ? "" : "here"}" href="${home()}">${esc(verLabel(here))}</a>`);
   if (state.task) {
-    const i = index.tasks.findIndex((t) => t.name === state.task);
-    const t = index.tasks[i];
-    const label = t ? `<span class="tbadge" style="--tc:${TILE_COLORS[i % TILE_COLORS.length]}">${esc(taskBadge(t.short))}</span>${esc(taskTitle(t.short))}` : esc(shortTask(state.task));
-    out.push(sep, `<details class="crumb-menu"><summary class="crumb ${state.run === undefined && !state.session ? "here" : ""}">${label}<span class="caret">▾</span></summary><div class="crumb-list">${index.tasks.map((x, j) => `<a class="${x.name === state.task ? "on" : ""}" href="${taskHref(x.name)}"><span class="tbadge" style="--tc:${TILE_COLORS[j % TILE_COLORS.length]};font:700 9px var(--mono);padding:2px 5px;border-radius:4px;color:#fff;background:var(--tc)">${esc(taskBadge(x.short))}</span>${esc(taskTitle(x.short))}<span class="note">${x.counts.success} graded</span></a>`).join("")}</div></details>`);
+    const t = index.tasks.find((x) => x.name === state.task);
+    const label = t ? esc(taskTitle(t.short)) : esc(shortTask(state.task));
+    out.push(sep, `<details class="crumb-menu"><summary class="crumb ${state.run === undefined && !state.session ? "here" : ""}">${label}<span class="caret">▾</span></summary><div class="crumb-list">${index.tasks.map((x, j) => `<a class="${x.name === state.task ? "on" : ""}" href="${taskHref(x.name)}">${esc(taskTitle(x.short))}<span class="note">${x.counts.success} graded</span></a>`).join("")}</div></details>`);
   }
   const runT = state.run !== undefined ? trialById(state.run) : null;
   // The run: a menu of the task's runs. Switching keeps the scenario and
