@@ -1,0 +1,69 @@
+x-searcher: &searcher
+  image: mth-backrun-runtime:local
+  user: "1000:1000"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 64
+  dns: [127.0.0.1]
+  mem_limit: 512m
+  memswap_limit: 512m
+  cpus: 1
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  entrypoint: [python3, /usr/local/bin/backrun-searcher]
+
+services:
+  main:
+    image: mth-backrun-verifier:local
+    command: [sleep, infinity]
+    cpuset: "4-11"
+    cpus: 8
+    mem_limit: 3g
+    memswap_limit: 3g
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      MTH_BACKRUN_ISOLATED: "1"
+      MTH_BACKRUN_HARDWARE_PROFILE: "local-linux-native-12cpu-v1"
+    networks: [candidate-net, fast-net, broad-net, patient-net]
+    volumes:
+      - candidate-bootstrap:/bootstrap/0
+      - fast-bootstrap:/bootstrap/1
+      - broad-bootstrap:/bootstrap/2
+      - patient-bootstrap:/bootstrap/3
+  candidate:
+    <<: *searcher
+    image: mth-backrun-candidate:local
+    cpuset: "0"
+    networks: [candidate-net]
+    volumes: [candidate-bootstrap:/input:ro]
+  fast:
+    <<: *searcher
+    cpuset: "1"
+    networks: [fast-net]
+    volumes: [fast-bootstrap:/input:ro]
+  broad:
+    <<: *searcher
+    cpuset: "2"
+    networks: [broad-net]
+    volumes: [broad-bootstrap:/input:ro]
+  patient:
+    <<: *searcher
+    cpuset: "3"
+    networks: [patient-net]
+    volumes: [patient-bootstrap:/input:ro]
+
+networks:
+  candidate-net: &isolated-network
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  fast-net: *isolated-network
+  broad-net: *isolated-network
+  patient-net: *isolated-network
+volumes:
+  candidate-bootstrap: {}
+  fast-bootstrap: {}
+  broad-bootstrap: {}
+  patient-bootstrap: {}

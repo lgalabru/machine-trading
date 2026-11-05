@@ -1,0 +1,9 @@
+.git
+**/target
+work
+**/private
+**/.env
+jobs
+bench/tasks
+docs
+skills

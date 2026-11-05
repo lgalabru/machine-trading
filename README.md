@@ -54,10 +54,15 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 | [📉 `phoenix-flash-crash`](bench/tasks/phoenix-flash-crash) | fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't |
 | [⚖️ `phoenix-market-making`](bench/tasks/phoenix-market-making) | earns the SPCX spread from noise, and steps back before informed flow |
 
+A locally packaged [continuous AMM task](bench/tasks/atomic-arb) runs one
+submitted artifact against three private fixed flows on 128 pools, using
+`mtx evaluate`. It reports signed SOL profit separately for each scenario and
+uses its own isolated execution/scoring contract.
+
 Planned tasks are tracked as
 [issues labelled `new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22).
 
-**How bots are judged.** The score is PnL: `skill` is a bot's total PnL over
+**How the Phoenix bots are judged.** The score is PnL: `skill` is a bot's total PnL over
 the hidden set, divided by a reference bot's on the same sessions. Risk is a
 set of hard limits that work like a trading desk's: one market, a position
 cap, and a loss limit. A bot that breaks one in any session scores 0.

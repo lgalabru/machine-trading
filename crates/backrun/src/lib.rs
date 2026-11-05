@@ -1,0 +1,31 @@
+//! Fixed-fixture spot backruns. Independent of the Phoenix scenario model.
+pub mod artifact;
+pub mod build;
+pub mod cli;
+pub mod fixture;
+pub mod gateway;
+pub mod injector;
+pub mod playground;
+pub mod programs;
+pub mod reference;
+pub mod replay;
+pub mod runner;
+pub mod score;
+pub mod sdk;
+pub mod verifier;
+pub mod wallet;
+pub mod world;
+
+pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+pub const INITIAL_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
+pub const TRADING_LAMPORTS: u64 = 95 * LAMPORTS_PER_SOL;
+pub const FEE_LAMPORTS: u64 = 5 * LAMPORTS_PER_SOL;
+pub const SLOT_MS: u64 = 200;
+pub const MAX_SIMULATIONS: u16 = 16;
+pub const MAX_RPC_READS: u16 = 256;
+pub const PROTOCOL: &str = "continuous-arrival-v1";
+pub const USER_TRANSACTION_CU: u32 = 400_000;
+pub const MAX_TRANSACTION_CU: u32 = 1_400_000;
+pub const WSOL: &str = "So11111111111111111111111111111111111111112";
+pub const CPMM: &str = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
+pub const WHIRLPOOL: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";

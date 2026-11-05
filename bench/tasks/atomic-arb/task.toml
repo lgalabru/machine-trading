@@ -1,0 +1,45 @@
+schema_version = "1.4"
+artifacts = [{ source = "/app/bot", exclude = ["target"] }]
+
+[task]
+name = "solana-foundation/atomic-arb"
+version = "0.5.0"
+description = "Build a continuous spot-arbitrage bot for 128 real AMM pools and private fixed user flows, using native Surfpool arrival-order execution."
+keywords = ["solana", "arbitrage", "backrun", "surfpool", "rust"]
+
+[[task.authors]]
+name = "Machine Trading contributors"
+
+[metadata]
+difficulty = "hard"
+category = "trading"
+# The path is relative to the repository root. The hash pins the private inputs.
+default_release = "work/scenario-set/release"
+fixture_set_hash = "52bf96ae44a62b6a60c99da6c6b303de413befd262628ce9d8862d9f5d3a6ef6"
+
+[agent]
+timeout_sec = 7200.0
+user = "agent"
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 3600.0
+cpus = 4
+memory_mb = 6144
+os = "linux"
+
+[verifier]
+timeout_sec = 3600.0
+environment_mode = "separate"
+# Compose enforces isolation with four disjoint internal-only networks. Leave
+# Harbor's optional kernel egress manager off; it is unavailable on Docker
+# Desktop and would introduce a different network namespace arrangement.
+network_mode = "public"
+
+[verifier.environment]
+network_mode = "public"
+docker_image = "mth-backrun-verifier:local"
+cpus = 8
+memory_mb = 3072
+build_timeout_sec = 3600.0
+os = "linux"

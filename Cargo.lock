@@ -851,6 +851,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
+ "base64 0.22.1",
  "bytes 1.12.1",
  "futures-util",
  "http 1.5.0",
@@ -867,8 +868,10 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
+ "sha1",
  "sync_wrapper",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tower",
  "tower-layer",
  "tower-service",
@@ -4560,6 +4563,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "mth-backrun"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "bs58",
+ "clap",
+ "futures 0.3.34",
+ "hex",
+ "rand 0.9.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "solana-account 4.7.0",
+ "solana-address-lookup-table-interface 3.2.0",
+ "solana-commitment-config",
+ "solana-compute-budget-interface",
+ "solana-fee",
+ "solana-instruction 3.5.1",
+ "solana-keypair",
+ "solana-message 4.6.0",
+ "solana-pubkey 4.3.0",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-signer",
+ "solana-system-interface 3.3.0",
+ "solana-transaction 4.3.0",
+ "spl-associated-token-account-interface",
+ "spl-token-interface 3.0.0",
+ "surfpool-sdk",
+ "surfpool-types",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "wincode",
+]
+
+[[package]]
 name = "mtx-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
@@ -4644,6 +4688,7 @@ dependencies = [
  "surfpool-types",
  "thiserror 2.0.21",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -6829,6 +6874,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-sdk-ids 3.1.0",
  "solana-slot-hashes 3.2.0",
+ "wincode",
 ]
 
 [[package]]
@@ -8660,8 +8706,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
- "tungstenite",
+ "tokio-tungstenite 0.28.0",
+ "tungstenite 0.28.0",
  "url 2.5.8",
 ]
 
@@ -11229,8 +11275,20 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite",
+ "tungstenite 0.28.0",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite 0.29.0",
 ]
 
 [[package]]
@@ -11436,6 +11494,22 @@ dependencies = [
  "thiserror 2.0.21",
  "utf-8",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
+dependencies = [
+ "bytes 1.12.1",
+ "data-encoding",
+ "http 1.5.0",
+ "httparse",
+ "log",
+ "rand 0.9.5",
+ "sha1",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

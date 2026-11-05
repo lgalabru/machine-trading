@@ -21,6 +21,7 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod acp;
 mod author;
 mod charts;
+mod evaluate;
 mod play;
 mod publish;
 mod review;
@@ -54,6 +55,8 @@ enum Family {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Develop one bot and evaluate its artifact with a Harbor task.
+    Evaluate(evaluate::Evaluate),
     /// Pinned chain state for offline tasks.
     #[command(subcommand)]
     Snapshot(SnapshotCommand),
@@ -380,6 +383,7 @@ async fn run() -> Result<()> {
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
 
     let output = match cli.command {
+        Command::Evaluate(args) => evaluate::run(args)?,
         Command::Bench(BenchCommand::Review {
             path,
             port,

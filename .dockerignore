@@ -10,3 +10,7 @@ skills
 docs
 # Images carry the gzipped snapshot; mtx decompresses it on first use.
 snapshots/*/surfnet.json
+
+# Private benchmark fixtures, reports and package contexts.
+work
+**/private
