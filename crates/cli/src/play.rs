@@ -71,7 +71,8 @@ impl World {
         if announce {
             ui::start(format!("Restoring {}", ui::bold(&snapshot_name)));
         }
-        let world = snapshot::start_offline(snapshot_dir)
+        // Trusted: the authoring agent reaches it by port, with no secret path.
+        let world = snapshot::start_offline(snapshot_dir, snapshot::Access::Open)
             .await
             .inspect_err(|_| {
                 if announce {
@@ -215,10 +216,14 @@ async fn bbo(phoenix: &Phoenix, payer: Pubkey, symbol: &str) -> Result<(u64, u64
     Ok((bbo.mark_price_ticks, bbo.best_bid_ticks, bbo.best_ask_ticks))
 }
 
+/// The port in a URL's authority: `http://127.0.0.1:8899/<secret>` is 8899.
+/// The surfnet serves RPC at a secret path, so the port isn't the URL's end.
 fn port_of(url: &str) -> Result<u16> {
-    url.rsplit(':')
-        .next()
-        .and_then(|port| port.trim_end_matches('/').parse().ok())
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    authority
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse().ok())
         .with_context(|| format!("no port in {url}"))
 }
 
@@ -951,6 +956,8 @@ mod tests {
         assert_eq!(port_of("http://127.0.0.1:8899").unwrap(), 8899);
         assert_eq!(port_of("http://127.0.0.1:62048/").unwrap(), 62048);
         assert!(port_of("http://localhost").is_err());
+        assert_eq!(port_of("http://127.0.0.1:58045/3268b1757").unwrap(), 58045);
+        assert!(port_of("http://localhost/secret:path").is_err());
     }
 
     #[test]

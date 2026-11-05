@@ -258,7 +258,7 @@ impl SessionReport {
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let began = Instant::now();
     let scenario = opts.scenario;
-    let world = snapshot::start_offline(opts.snapshot_dir).await?;
+    let world = snapshot::start_offline(opts.snapshot_dir, snapshot::Access::Private).await?;
     let surfnet = &world.surfnet;
     // The grader's own clients, served the way a stepped world needs: a
     // transaction is final once it executed (see [`Guard::internal`]).

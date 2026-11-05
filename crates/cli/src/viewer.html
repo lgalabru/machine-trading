@@ -6,6 +6,8 @@
 <title>mtx · scenario</title>
 <style>
   :root {
+    --up: #5ed16a;
+    --down: #ff5f57;
     color-scheme: dark;
     --bg: #000;
     --panel: #09090b;
@@ -131,7 +133,7 @@
   .legend b { font: 600 12px var(--mono); color: var(--text); }
   .legend small { font: 11px var(--mono); color: var(--text-3); }
   .sw-line { width: 16px; border-top: 2px solid var(--accent); }
-  .sw-band { width: 16px; height: 10px; border-radius: 2px; background: var(--accent-soft); }
+  .sw-band { width: 16px; height: 10px; border-radius: 2px; background: rgba(255,255,255,0.12); }
   .sw-dash { width: 16px; border-top: 2px dashed var(--text-3); }
   .sw-rule { height: 12px; border-left: 1px solid var(--line); }
   .sw-dot { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--text-3); }
@@ -139,8 +141,8 @@
   svg.chart { display: block; width: 100%; height: 360px; }
   .chart-card.lane svg.chart { height: 92px; }
   .chart-card.lane .note { margin-top: 8px; color: var(--text-4); font-size: 12px; }
-  .grid line { stroke: var(--line-soft); }
-  .axis text { fill: var(--text-3); font: 11px var(--mono); }
+  .grid line { stroke: #232326; }
+  .axis text { fill: #8e8e93; font: 500 11px var(--mono); }
   .tooltip {
     position: absolute; pointer-events: none; display: none; min-width: 200px; z-index: 5;
     background: #0e0e10; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
@@ -582,7 +584,8 @@ function legend(card, chart) {
   const items = chart.series.map((series) => {
     const q = lastQuote(series);
     const value = q ? `<b>${usd(q.mark)}</b> <small>${pct((q.mark / series.start_usd - 1) * 100)}</small>` : `<small>${usd(series.start_usd)}</small>`;
-    return `<span><i class="sw-line" style="border-color:${color[series.key]}"></i>${esc(series.symbol)} ${value}</span>`;
+    const line = relative() || !q ? color[series.key] : (q.mark >= series.start_usd ? 'var(--up)' : 'var(--down)');
+    return `<span><i class="sw-line" style="border-color:${line}"></i>${esc(series.symbol)} ${value}</span>`;
   });
   if (!relative()) items.push('<span><i class="sw-band"></i>Bid–ask</span>');
   items.push('<span><i class="sw-dash"></i>Planned</span><span><i class="sw-rule"></i>Override</span>');
@@ -621,31 +624,42 @@ function drawPrices(card, chart) {
       const band = pts.filter((p) => p.bid != null && p.ask != null);
       if (band.length > 1) {
         const d = band.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(p.ask)).join('') + band.slice().reverse().map((p) => 'L' + x(p.x) + ',' + y(p.bid)).join('') + 'Z';
-        el('path', { d, fill: 'var(--accent-soft)' }, plot);
+        el('path', { d, fill: 'rgba(255,255,255,0.06)' }, plot);
       }
     }
-    el('path', { d: plannedPath(series, x, y, xMax), fill: 'none', stroke: relative() ? c : 'var(--text-3)', 'stroke-opacity': relative() ? 0.45 : 1, 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, plot);
+    el('path', { d: plannedPath(series, x, y, xMax), fill: 'none', stroke: relative() ? c : 'var(--text-3)', 'stroke-opacity': relative() ? 0.45 : 0.8, 'stroke-width': 1.3, 'stroke-dasharray': '4 4' }, plot);
     if (pts.length > 1) {
-      el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(scaled(series, p.mark))).join(''), fill: 'none', stroke: c, 'stroke-width': 2, 'stroke-linejoin': 'round' }, plot);
+      // The bench review's chart: a line with a gradient under it, green
+      // when the market is at or above where it started, red below; several
+      // markets keep their colors, faintly filled.
       const last = pts[pts.length - 1];
-      el('circle', { cx: x(last.x), cy: y(scaled(series, last.mark)), r: 4.5, fill: c, stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+      const line = relative() ? c : (last.mark >= series.start_usd ? 'var(--up)' : 'var(--down)');
+      const d = pts.map((p, i) => (i ? 'L' : 'M') + x(p.x) + ',' + y(scaled(series, p.mark))).join('');
+      const gid = 'g-' + clip + '-' + series.key.replace(/\W/g, '');
+      const grad = el('linearGradient', { id: gid, x1: 0, x2: 0, y1: 0, y2: 1 }, el('defs', {}, svg));
+      el('stop', { offset: '0%', 'stop-color': line, 'stop-opacity': relative() ? 0.14 : 0.36 }, grad);
+      el('stop', { offset: '100%', 'stop-color': line, 'stop-opacity': 0.01 }, grad);
+      el('path', { d: d + `L${x(last.x)},${H - M.bottom}L${x(pts[0].x)},${H - M.bottom}Z`, fill: `url(#${gid})` }, plot);
+      el('path', { d, fill: 'none', stroke: line, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, plot);
+      el('circle', { cx: x(last.x), cy: y(scaled(series, last.mark)), r: 4, fill: line, stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+      series._line = line;
     }
   }
 
   const tip = card.querySelector('.tooltip');
   if (!hover || hover.chart !== chart.id) { tip.style.display = 'none'; return; }
   const xv = Math.round(xMin + (hover.px - M.left) / (W - M.left - M.right) * (xMax - xMin));
-  el('line', { x1: x(xv), x2: x(xv), y1: M.top, y2: H - M.bottom, stroke: 'var(--text-3)', 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
+  el('line', { x1: x(xv), x2: x(xv), y1: M.top, y2: H - M.bottom, stroke: '#d1d1d6', 'stroke-width': 1 }, svg);
   let rows = '';
   for (const series of chart.series) {
     const pts = points(series);
     const near = pts.reduce((b, p) => (b == null || Math.abs(p.x - xv) < Math.abs(b.x - xv) ? p : b), null);
     const sample = near && Math.abs(near.x - xv) <= 2 ? near : null;
     const c = color[series.key];
-    if (sample) el('circle', { cx: x(sample.x), cy: y(scaled(series, sample.mark)), r: 4.5, fill: c, stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+    if (sample) el('circle', { cx: x(sample.x), cy: y(scaled(series, sample.mark)), r: 5, fill: series._line || c, stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
     const change = (v) => pct((v / series.start_usd - 1) * 100);
     rows += sample
-      ? `<div class="row"><span><i style="background:${c}"></i>${esc(series.symbol)}</span><b>${usd(sample.mark)} <small style="color:var(--text-3);font-weight:500">${change(sample.mark)}</small></b></div>`
+      ? `<div class="row"><span><i style="background:${series._line || c}"></i>${esc(series.symbol)}</span><b>${usd(sample.mark)} <small style="color:var(--text-3);font-weight:500">${change(sample.mark)}</small></b></div>`
         + (relative() ? '' : `<div class="row">Bid / ask <b>${usd(sample.bid)} / ${usd(sample.ask)}</b></div>`)
       : '';
     if (xv >= 0) rows += `<div class="row"><span>${relative() ? esc(series.symbol) + ' planned' : 'Planned'}</span><b>${usd(planAt(series, xv))}</b></div>`;
