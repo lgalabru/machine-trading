@@ -4,8 +4,8 @@
 # Local secrets (fork RPC key). Never commit.
 .env
 
-# Surfnet account dumps are build artifacts (~170 MB). The manifest and
-# exchange metadata next to them are small and stay in git as provenance.
+# A snapshot's accounts are committed gzipped (surfnet.json.gz, under 3 MB);
+# the plain file is 175 MB, and mtx decompresses it into a cache itself.
 snapshots/*/surfnet.json
 
 .surfpool/

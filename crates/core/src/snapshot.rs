@@ -1,7 +1,11 @@
 //! Pinned chain state for reproducible trading tasks.
 //!
 //! A snapshot directory holds:
-//! - `surfnet.json`: every account the surfnet loaded from mainnet, including programs
+//! - `surfnet.json.gz`: every account the surfnet loaded from mainnet,
+//!   including programs, gzipped. Phoenix's books are mostly empty slots, so
+//!   175 MB of JSON is under 3 MB: small enough for git. A surfnet starts from
+//!   it decompressed once into a cache (see [`surfnet_file`]); a plain
+//!   `surfnet.json` beside it, if there is one, is used as is.
 //! - `exchange.json`: Phoenix's `/exchange` response taken at the same moment
 //! - `manifest.json`: provenance and a few reference values
 //!
@@ -30,6 +34,7 @@ use crate::{
 };
 
 const SURFNET_FILE: &str = "surfnet.json";
+const SURFNET_GZ: &str = "surfnet.json.gz";
 const EXCHANGE_FILE: &str = "exchange.json";
 const MANIFEST_FILE: &str = "manifest.json";
 /// Matches the CLI default, so scenario slot offsets mean the same thing everywhere.
@@ -131,7 +136,7 @@ pub async fn prepare(opts: PrepareOptions) -> Result<Manifest> {
     let fork_slot = rpc.get_slot()?;
     let accounts = chain::export_snapshot(&rpc)?;
     std::fs::create_dir_all(&opts.out_dir).map_err(io_error(&opts.out_dir))?;
-    write_json(&opts.out_dir.join(SURFNET_FILE), &accounts)?;
+    write_gz(&opts.out_dir.join(SURFNET_GZ), &accounts)?;
     write_json(&opts.out_dir.join(EXCHANGE_FILE), &exchange)?;
     let manifest = Manifest {
         created_at_unix: std::time::SystemTime::now()
@@ -212,6 +217,7 @@ pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
     let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
     let exchange_path = dir.join(EXCHANGE_FILE);
     let exchange = phoenix::load_exchange(&exchange_path)?;
+    let accounts_file = surfnet_file(dir, &manifest)?;
     let surfnet = start_surfnet(|| {
         let builder = Surfnet::builder().offline(true);
         let builder = match access {
@@ -223,7 +229,7 @@ pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
             Access::Open => builder,
         };
         builder
-            .snapshot_file(dir.join(SURFNET_FILE))
+            .snapshot_file(accounts_file.clone())
             .block_production_mode(BlockProductionMode::Clock)
             .slot_time_ms(SLOT_TIME_MS)
             // Profiles re-execute every transaction instruction by instruction and
@@ -357,6 +363,59 @@ fn host_of(url: &str) -> String {
         .to_string()
 }
 
+/// The surfnet's accounts as a plain file, which is what Surfpool loads: the
+/// snapshot's `surfnet.json` if there is one, else its `surfnet.json.gz`
+/// decompressed into the system's temp directory, once per snapshot (keyed by
+/// its fork slot and the compressed file's size), and written atomically so
+/// concurrent sessions share it.
+pub fn surfnet_file(dir: &Path, manifest: &Manifest) -> Result<PathBuf> {
+    let plain = dir.join(SURFNET_FILE);
+    if plain.is_file() {
+        return Ok(plain);
+    }
+    let gz = dir.join(SURFNET_GZ);
+    let size = std::fs::metadata(&gz).map_err(io_error(&gz))?.len();
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let cache = std::env::temp_dir().join("mtx-snapshots");
+    let out = cache.join(format!("{name}-{}-{size}.json", manifest.fork_slot));
+    if out.is_file() {
+        return Ok(out);
+    }
+    std::fs::create_dir_all(&cache).map_err(io_error(&cache))?;
+    let partial = cache.join(format!(
+        ".{}.{}",
+        uuid::Uuid::new_v4().simple(),
+        SURFNET_FILE
+    ));
+    let unpack = || -> std::io::Result<()> {
+        let mut input =
+            flate2::read::GzDecoder::new(std::io::BufReader::new(std::fs::File::open(&gz)?));
+        let mut output = std::io::BufWriter::new(std::fs::File::create(&partial)?);
+        std::io::copy(&mut input, &mut output)?;
+        std::io::Write::flush(&mut output)?;
+        std::fs::rename(&partial, &out)
+    };
+    if let Err(error) = unpack() {
+        let _ = std::fs::remove_file(&partial);
+        return Err(io_error(&gz)(error));
+    }
+    debug!(snapshot = %gz.display(), file = %out.display(), "snapshot decompressed");
+    Ok(out)
+}
+
+fn write_gz(path: &Path, value: &impl Serialize) -> Result<()> {
+    let file = std::fs::File::create(path).map_err(io_error(path))?;
+    let mut gz =
+        flate2::write::GzEncoder::new(std::io::BufWriter::new(file), flate2::Compression::best());
+    serde_json::to_writer(&mut gz, value)?;
+    gz.finish()
+        .and_then(|mut w| std::io::Write::flush(&mut w))
+        .map_err(io_error(path))
+}
+
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let contents = serde_json::to_string_pretty(value)?;
     std::fs::write(path, contents).map_err(io_error(path))
@@ -365,4 +424,38 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
     Ok(serde_json::from_str(&contents)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_gzipped_snapshot_is_decompressed_once_and_a_plain_one_wins() {
+        let dir = std::env::temp_dir().join(format!("mtx-snap-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = Manifest {
+            created_at_unix: 0,
+            fork_host: String::new(),
+            fork_slot: 42,
+            accounts: 1,
+            symbol: "SPCX".into(),
+            mark_price_usd: 1.0,
+        };
+        write_gz(&dir.join(SURFNET_GZ), &json!({ "a": { "lamports": 1 } })).unwrap();
+        let first = surfnet_file(&dir, &manifest).unwrap();
+        let text = std::fs::read_to_string(&first).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()["a"]["lamports"],
+            1
+        );
+        assert_eq!(surfnet_file(&dir, &manifest).unwrap(), first, "cached");
+        std::fs::write(dir.join(SURFNET_FILE), "{}").unwrap();
+        assert_eq!(
+            surfnet_file(&dir, &manifest).unwrap(),
+            dir.join(SURFNET_FILE)
+        );
+        let _ = std::fs::remove_file(&first);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

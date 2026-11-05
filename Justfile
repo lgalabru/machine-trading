@@ -46,16 +46,6 @@ install bin="mtx":
 snapshot-prepare out:
     cargo run --release -- snapshot prepare --out {{out}}
 
-# Copy the snapshot's surfnet.json, too big for git, out of the published
-# runtime image.
-snapshot-pull:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    id="$(docker create {{registry}}/{{image}}:{{tag}}-runtime)"
-    trap 'docker rm "$id" > /dev/null' EXIT
-    docker cp "$id:/opt/mtx/snapshots/{{snapshot}}/surfnet.json" snapshots/{{snapshot}}/surfnet.json
-    echo "snapshots/{{snapshot}}/surfnet.json"
-
 # Replay a snapshot offline and trade through a scripted crash.
 snapshot-verify dir=("snapshots/" + snapshot):
     cargo run --release -- snapshot verify --dir {{dir}}
