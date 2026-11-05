@@ -353,7 +353,8 @@
   .scrub input[type=range] { flex: 1; accent-color: var(--accent); }
   .scrub .t { font: 600 14px var(--mono); color: var(--accent); min-width: 150px; }
   .now { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-  @media (max-width: 1200px) { .now { grid-template-columns: 1fr; } }
+  @media (max-width: 1200px) { .now { grid-template-columns: minmax(0, 1fr); } }
+  .now > .panel { min-width: 0; overflow-x: auto; }
   .evlog { max-height: 420px; overflow: auto; font: 12px/1.6 var(--mono); }
   .evlog .ev { display: grid; grid-template-columns: 100px 160px 1fr; gap: 10px; padding: 2px 4px; border-bottom: 1px solid var(--line-soft); }
   .evlog .ev.cur { background: var(--accent-soft); }
@@ -467,6 +468,100 @@
   .md h3.md-h { font-size: 16px; }
   .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
   .md li { margin: 3px 0; }
+  /* Tablets: the tasks become a strip of tiles across the top, and every
+     side-by-side layout stacks. */
+  @media (max-width: 1024px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    nav.tiles { flex-direction: row; position: static; height: auto; overflow-x: auto; overflow-y: hidden; padding: 14px 16px; gap: 12px; border-right: 0; border-bottom: 1px solid var(--line); scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    nav.tiles::-webkit-scrollbar { display: none; }
+    nav.tiles .tile { width: 280px; height: 100px; scroll-snap-align: start; }
+    main { padding: 20px 20px 64px; }
+    .hero-inner { padding: 20px 20px 22px; }
+    .peek { left: 0; min-width: 0; border-left: 0; box-shadow: none; }
+    .peek-backdrop { display: none; }
+    .files, .scn { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    .files .list, .scn-list { position: static; max-height: 300px; }
+    .files .fview pre.code { height: auto; max-height: 70vh; }
+    .insights { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .cmp-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    .g-row { grid-template-columns: minmax(140px, 190px) 52px 70px 46px 50px minmax(0, 1fr); gap: 0 10px; }
+    .cmp-card { overflow-x: auto; }
+    .tabs { overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs a { white-space: nowrap; }
+    .peek-head .tabs { justify-content: flex-start; }
+    .tip { max-width: min(420px, 92vw); }
+    /* Touch: tap targets a finger can hit. */
+    .crumb { height: 36px; }
+    .evb { width: 34px; height: 32px; }
+    .peek-x { width: 36px; height: 34px; }
+  }
+  /* Phones: one column, compact tiles, the run grid down to name, skill and
+     scenarios, and type sized for a hand. */
+  @media (max-width: 640px) {
+    body { font-size: 14px; }
+    nav.crumbbar { padding: 0 8px; gap: 0; overflow-x: auto; overflow-y: visible; scrollbar-width: none; }
+    nav.crumbbar::-webkit-scrollbar { display: none; }
+    .crumb, .crumb-sep, .crumb-menu { flex: none; }
+    .crumb { padding: 0 8px; max-width: 52vw; }
+    .crumb-list { position: fixed; top: 58px; left: 8px; right: 8px; min-width: 0; max-height: 70vh; overflow: auto; }
+    nav.tiles { padding: 12px; gap: 10px; }
+    nav.tiles .tile { width: 210px; height: 74px; padding: 10px 12px; border-radius: 14px; }
+    nav.tiles .tile .desc { display: none; }
+    main { padding: 16px 14px 56px; }
+    .hero-inner { padding: 16px 14px 18px; gap: 12px; }
+    h1 { font-size: 21px; }
+    .ov-title h1 { font-size: 26px; }
+    .ov-lede { font-size: 14px; margin: 8px 0 18px; }
+    .ov-stats, .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .card { padding: 10px 12px; }
+    .card .v { font-size: 17px; }
+    .card .v.big { font-size: 24px; }
+    .quote { height: 52px; }
+    .quote .big { font-size: 32px; }
+    .quote.multi { gap: 14px; overflow-x: auto; }
+    .quote.multi .mid { font-size: 20px; }
+    .area, .area-empty { height: 200px; }
+    .watch .row { grid-template-columns: minmax(0, 1fr) 48px 64px; gap: 8px; padding: 10px; }
+    .watch .chip { width: 60px; font-size: 12px; }
+    .g-card { padding: 12px 10px 10px; border-radius: 12px; }
+    .g-top { flex-direction: column; gap: 8px; }
+    .g-row { grid-template-columns: minmax(0, 112px) 48px minmax(0, 1fr); gap: 0 8px; padding: 0 4px; }
+    .g-row > :nth-child(3), .g-row > :nth-child(4), .g-row > :nth-child(5) { display: none; }
+    .g-row.trial .g-name { padding-left: 14px; }
+    .g-name { font-size: 12px; gap: 6px; }
+    .g-foot { flex-wrap: wrap; gap: 8px 14px; }
+    .g-foot .muted { margin-left: 0; }
+    .strip i { height: 16px; border-radius: 2px; }
+    .strip.axis i { font-size: 0; }
+    .cmp-card { padding: 12px; margin: 14px 0; }
+    .cmp-table { font-size: 12px; }
+    .cmp-table td, .cmp-table th { padding: 7px 5px; }
+    .delta { min-width: 0; padding: 3px 6px; font-size: 11px; }
+    .pareto { grid-template-columns: minmax(0, 1fr); }
+    .peek, .peek-backdrop { top: 52px; }
+    .peek-bar { padding: 4px 12px 0; }
+    .peek-bar .peek-x { top: 10px; right: 10px; }
+    .peek-title .pt-run { font-size: 18px; }
+    .peek-head .tabs { margin-top: 14px; }
+    .peek-body { padding: 16px 12px 56px; }
+    .runstats { gap: 10px 0; }
+    .rs { flex: 1 1 33%; padding: 2px 6px; }
+    .sv-title { font-size: 16px; }
+    .scrub { flex-wrap: wrap; }
+    .scrub .t { min-width: 0; }
+    .evlog .ev { grid-template-columns: 64px minmax(0, 1fr); }
+    .evlog .ev > :nth-child(3) { grid-column: 1 / -1; padding-left: 64px; }
+    .evc-list { grid-template-columns: minmax(0, 1fr); }
+    .tw { grid-template-columns: minmax(0, 92px) 1fr 46px 30px; gap: 6px; }
+    .btns .search, input.search { width: 100%; max-width: none; }
+    .table-wrap { max-height: 70vh; }
+    .tl { padding-left: 20px; }
+    .st::before { left: -17px; }
+    .tl::before { left: 6px; }
+    .step .msg.md, .st-b > .msg.md { font-size: 13.5px; }
+    pre.code { font-size: 11px; padding: 10px; }
+  }
   .md li > ul, .md li > ol { margin: 4px 0 4px; }
   .md code { font: 12px var(--mono); background: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 4px; padding: 1px 5px; }
   .md pre.code { margin: 8px 0 12px; }
