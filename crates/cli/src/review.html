@@ -242,9 +242,6 @@
   .crumb-list a .note { margin-left: auto; color: var(--text-4); font: 11px var(--mono); }
   .crumb-list a .note.pos { color: var(--up); } .crumb-list a .note.neg { color: var(--down); }
   .crumb-list-k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-4); padding: 6px 10px 4px; }
-  .crumbbar .right { margin-left: auto; display: flex; align-items: center; gap: 14px; font: 500 12px var(--mono); color: var(--text-2); }
-  .crumbbar .right span { display: inline-flex; align-items: center; gap: 6px; }
-  .crumbbar .right .light { width: 7px; height: 7px; }
   /* The overview: the bench at a glance, before any task is picked. */
   .ov-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .ov-title h1 { font-size: 34px; letter-spacing: -0.03em; margin: 0; }
@@ -800,8 +797,8 @@ const side = document.getElementById("side");
 // A click on the tasks column outside any tile deselects the task: back to
 // the overview.
 side.addEventListener("click", (e) => { if (!e.target.closest(".tile") && (currentTask || onCompare)) location.hash = home(); });
-// The breadcrumb bar: mtx › release › task › trial › session. The release
-// and the task open menus; the right side shows how the trials stand.
+// The breadcrumb bar: mtx › release › task › run › scenario. The release,
+// the task and the run open menus.
 let crumbState = {};
 function setCrumbs(state = {}) {
   crumbState = state;
@@ -841,8 +838,6 @@ function setCrumbs(state = {}) {
   }
   if (state.session) out.push(sep, `<a class="crumb here" href="${link({ task: state.task, run: state.run, session: state.session })}">${esc(state.session)}</a>`);
   if (state.extra) out.push(sep, `<span class="crumb here">${esc(state.extra)}</span>`);
-  const all = index.tasks.reduce((c, t) => { for (const k in t.counts) c[k] = (c[k] || 0) + t.counts[k]; return c; }, {});
-  out.push(`<div class="right">${["success", "error", "pending", "queued"].map((k) => `<span title="${k === "pending" ? "running" : k}">${light(k)}${int(all[k] || 0)}</span>`).join("")}</div>`);
   document.getElementById("crumbbar").innerHTML = out.join("");
   // One menu open at a time; a click elsewhere closes it.
   document.querySelectorAll(".crumb-menu").forEach((d) => d.addEventListener("toggle", () => { if (d.open) document.querySelectorAll(".crumb-menu").forEach((o) => { if (o !== d) o.open = false; }); }));
