@@ -4,8 +4,10 @@
 //!
 //! A published trial keeps what the review page shows, and nothing it
 //! doesn't need:
-//! - `result.json`, `config.json`, the verifier's report, reward, stdout,
-//!   per-session detail files and the bot's logs;
+//! - `result.json`, `config.json`, the verifier's report and reward, and the
+//!   per-session detail files;
+//! - the bot's per-session logs and the verifier's stdout, gzipped (the
+//!   reference's logs are left out: the page never shows them);
 //! - the bot's source, without build output;
 //! - the agent's trajectory, gzipped.
 //!
@@ -25,8 +27,9 @@ use crate::review::{self, Root};
 
 /// The largest file a release keeps.
 const MAX_FILE_BYTES: u64 = 1 << 20;
-/// What a trial's verifier left that a release keeps (besides `sessions/`).
-const VERIFIER_FILES: &[&str] = &["report.json", "reward.json", "test-stdout.txt"];
+/// What a trial's verifier left that a release keeps as is (besides
+/// `sessions/`); its text logs are gzipped instead.
+const VERIFIER_FILES: &[&str] = &["report.json", "reward.json"];
 
 /// `bench/results` in this checkout: found from the working directory up,
 /// else from where this binary was built.
@@ -213,11 +216,19 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
                 &mut skipped,
             )?;
         }
-        copy_tree(
+        gzip_logs(
             &trial.join("verifier/bot"),
             &dest.join("verifier/bot"),
             &mut skipped,
         )?;
+        let stdout = trial.join("verifier/test-stdout.txt");
+        if stdout.is_file() {
+            gzip_small(
+                &stdout,
+                &dest.join("verifier/test-stdout.txt.gz"),
+                &mut skipped,
+            )?;
+        }
         copy_tree(
             &trial.join("artifacts/app/bot"),
             &dest.join("artifacts/app/bot"),
@@ -325,6 +336,35 @@ fn copy_tree(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<()> {
         } else {
             copy_file(&entry.path(), &to.join(&name), skipped)?;
         }
+    }
+    Ok(())
+}
+
+/// The bot's `<session>.log` files, each gzipped; the reference's logs (in
+/// `reference/`) and anything else are left out.
+fn gzip_logs(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_log = entry.file_type().is_ok_and(|t| t.is_file())
+            && name.ends_with(".log")
+            && !name.starts_with('.');
+        if is_log {
+            gzip_small(&entry.path(), &to.join(format!("{name}.gz")), skipped)?;
+        }
+    }
+    Ok(())
+}
+
+/// Gzip a file, unless even compressed it's over the release's limit.
+fn gzip_small(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<()> {
+    gzip(from, to)?;
+    let size = std::fs::metadata(to).map(|m| m.len()).unwrap_or(0);
+    if size > MAX_FILE_BYTES {
+        std::fs::remove_file(to)?;
+        skipped.push(format!("{} ({size} bytes gzipped)", from.display()));
     }
     Ok(())
 }
@@ -568,6 +608,9 @@ mod tests {
         std::fs::write(trial.join("artifacts/app/bot/target/big"), "built").unwrap();
         std::fs::write(trial.join("agent/trajectory.json"), r#"{"steps":[]}"#).unwrap();
         std::fs::write(trial.join("agent/claude-code.txt"), "raw").unwrap();
+        std::fs::create_dir_all(trial.join("verifier/bot/reference")).unwrap();
+        std::fs::write(trial.join("verifier/bot/hidden-1.log"), "bot log").unwrap();
+        std::fs::write(trial.join("verifier/bot/reference/hidden-1.log"), "ref log").unwrap();
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
@@ -578,6 +621,9 @@ mod tests {
         assert!(out.join("agent/trajectory.json.gz").is_file());
         assert!(!out.join("agent/trajectory.json").exists());
         assert!(!out.join("agent/claude-code.txt").exists());
+        assert!(out.join("verifier/bot/hidden-1.log.gz").is_file());
+        assert!(!out.join("verifier/bot/hidden-1.log").exists());
+        assert!(!out.join("verifier/bot/reference").exists());
         assert!(!out.join("artifacts/app/bot/.env").exists());
         assert!(!out.join("artifacts/app/bot/target").exists());
         assert!(!results.join("1.0.0/.seed").exists());

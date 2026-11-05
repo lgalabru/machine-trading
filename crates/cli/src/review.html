@@ -915,8 +915,6 @@ let currentTask = null;
 function parseHash() {
   const [path, query = ""] = location.hash.replace(/^#\/?/, "").split("?");
   const q = new URLSearchParams(query);
-  // Old addresses: ?peek=<run>/<tab>.
-  if (q.has("peek")) { const [n, tab] = q.get("peek").split("/"); q.delete("peek"); q.set("run", n); if (tab) q.set("tab", tab); }
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   const rel = parts[0]?.startsWith("@") ? parts.shift().slice(1) : null;
   return { rel, parts, q };
@@ -932,27 +930,13 @@ function link({ task, run, session, tab, at } = {}) {
   const qs = q.toString();
   return taskHref(task) + (qs ? "?" + qs : "");
 }
-const picks = () => { const { q } = parseHash(); return { run: q.has("run") ? +q.get("run") : null, session: q.get("scenario") ?? q.get("session"), tab: q.get("tab") || "sessions", at: q.has("at") ? +q.get("at") : null }; };
+const picks = () => { const { q } = parseHash(); return { run: q.has("run") ? +q.get("run") : null, session: q.get("scenario"), tab: q.get("tab") || "sessions", at: q.has("at") ? +q.get("at") : null }; };
 let shownPage = null, shownPanel = null;
 async function route() {
   hideTip();
   const { rel, parts, q } = parseHash();
   try {
     if (!index || rel !== release) { release = rel; heroPickReset(); currentTask = null; shownPage = null; await loadIndex(); }
-    // Old addresses: #/trial/<run>[/<tab> | /session/<name>] and
-    // #/task/<name>/<session>[/<step>] become picks on the task.
-    if (parts[0] === "trial") {
-      const n = +parts[1];
-      let t = trialById(n);
-      if (!t) {
-        const other = (await api(`/api/trial/${n}`)).summary?.release;
-        const primary = index.releases.find((r) => r.primary)?.label;
-        if (other && other !== (release ?? primary)) { release = other === primary ? null : other; heroPickReset(); await loadIndex(); }
-        t = trialById(n);
-      }
-      if (t) { history.replaceState(null, "", link({ task: t.task, run: n, session: parts[2] === "session" ? parts[3] : null, tab: parts[2] !== "session" ? parts[2] : null })); return route(); }
-    }
-    if (parts[0] === "task" && parts[2]) { history.replaceState(null, "", link({ task: parts[1], session: parts[2], at: parts[3] })); return route(); }
     const { run, session, tab, at } = picks();
     // The page: redrawn only when what it shows changes, never for the panel.
     // With a run open, the page under it stays as it was.
@@ -1472,7 +1456,7 @@ function renderGrid(host, task, trials, eq, sel) {
 async function renderAcross(host, task, trials, name, at) {
   const set = comparable(trials);
   if (!set.length) {
-    host.innerHTML = `<div class="grid-empty">No run of this task has step-by-step scenario files${trials.some((t) => t.status === "pending") ? " yet (some are still running)" : ""}. Trials graded before they existed have their scenarios in the run's panel.</div>`;
+    host.innerHTML = `<div class="grid-empty">No run of this task has scenario files${trials.some((t) => t.status === "pending") ? " yet: some are still running" : ""}.</div>`;
     return;
   }
   const people = who(set);
@@ -1952,10 +1936,10 @@ function runStats(t, trial) {
 // timeline beside them.
 async function trialScenarios(n, trial, picked) {
   const t = trial.summary;
-  if (!t.details) return trialSessions(n, trial);
+  if (!t.details) { div(`<div class="empty">This run has no scenario files: it was graded before 0.10.0, or its grade didn't finish.</div>`); return; }
   const host = div(`<div class="loading">Loading the scenarios…</div>`, "scn");
   const { sessions } = await api(`/api/curves/${n}`);
-  if (!sessions.length) { host.innerHTML = ""; return trialSessions(n, trial); }
+  if (!sessions.length) { host.innerHTML = `<div class="empty">No scenarios in this run.</div>`; return; }
   const pick = sessions.some((s) => s.name === picked) ? picked : sessions[0].name;
   host.innerHTML = `<div class="scn-list"></div><div class="scn-view"></div>`;
   const list = host.querySelector(".scn-list"), view = host.querySelector(".scn-view");
@@ -2189,55 +2173,6 @@ function describeAnnotation(a) {
   return "";
 }
 
-function trialSessions(n, trial) {
-  const scenarios = trial.report?.scenarios || [];
-  if (!scenarios.length) { div(`<div class="empty">No scenarios in this run's report.</div>`); return; }
-  const stats = trial.session_stats || {};
-  const rows = scenarios.map((s, i) => ({ i, ...s, stat: stats[s.scenario] || {}, delta: isNum(s.reference_pnl_usd) ? s.pnl_usd - s.reference_pnl_usd : null }));
-  const host = div();
-  const xs = [-0.6, rows.length - 0.4];
-  const every = Math.max(1, Math.ceil(rows.length / 24));
-  const xticks = rows.map((r) => r.i).filter((i) => i % every === 0);
-  const group = new Group(); group.label = (x) => rows[Math.round(x)]?.scenario ?? "";
-  const open = (x) => { const r = rows[Math.round(x)]; if (r && trial.sessions.bot.includes(r.scenario)) location.hash = link({ task: trial.summary.task, run: n, session: r.scenario }); };
-  const bars = chart(host, {
-    title: "PnL by scenario", height: 220, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
-    series: [
-      { label: "bot", type: "bars", color: "var(--accent)", width: 0.42, offset: -0.5, data: rows.map((r) => [r.i, r.pnl_usd]), colorOf: (p) => rows[p[0]].disqualified ? "var(--ask)" : "var(--accent)", fmt: susd },
-      { label: "reference", type: "bars", color: "var(--ref)", width: 0.42, offset: 0.5, data: rows.map((r) => [r.i, r.reference_pnl_usd]), opacity: 0.75, fmt: susd },
-    ],
-    onClick: open,
-  });
-  let cb = 0, cr = 0;
-  const cum = chart(host, {
-    title: "Cumulative PnL", height: 180, x: xs, xticks, zero: true, snap: Math.round, yfmt: (v) => usd(v, 0), xfmt: (i) => String(Math.round(i) + 1),
-    series: [
-      { label: "bot", color: "var(--accent)", width: 2, data: rows.map((r) => [r.i, (cb += r.pnl_usd)]), fmt: susd },
-      { label: "reference", color: "var(--ref)", width: 2, data: rows.map((r) => [r.i, (cr += r.reference_pnl_usd ?? 0)]), fmt: susd },
-    ],
-    onClick: open,
-  });
-  group.add(bars); group.add(cum);
-  if (!trial.sessions.bot.length) div(`<div class="sub" style="margin:6px 0 0">This run has no step-by-step scenario files (it was graded before the verifier recorded them), so there's no timeline per scenario.</div>`);
-  section("Scenarios", "click one for its timeline");
-  const t = div();
-  table(t, rows, [
-    { key: "i", label: "#", r: true, fmt: (r) => r.i + 1 },
-    { key: "scenario", label: "Scenario", mono: true, fmt: (r) => `${esc(r.scenario)}${r.disqualified ? ` <span class="badge bad" title="${esc(r.disqualified)}">disqualified</span>` : ""}` },
-    { key: "kind", label: "Drawn as", sort: (r) => describeAnnotation(r.stat.annotation), fmt: (r) => `<span class="muted">${esc(describeAnnotation(r.stat.annotation))}</span>` },
-    { key: "pnl_usd", label: "PnL", r: true, fmt: (r) => `<span class="${cls(r.pnl_usd)}">${susd(r.pnl_usd)}</span>` },
-    { key: "reference_pnl_usd", label: "Reference", r: true, fmt: (r) => susd(r.reference_pnl_usd) },
-    { key: "delta", label: "Δ", r: true, fmt: (r) => `<span class="${cls(r.delta)}">${susd(r.delta)}</span>` },
-    { key: "max_drawdown_usd", label: "Drawdown", r: true, fmt: (r) => usd(r.max_drawdown_usd) },
-    { key: "peak_position", label: "Peak pos", r: true, fmt: (r) => fix(r.peak_position) },
-    { key: "end_position", label: "End pos", r: true, fmt: (r) => fix(r.end_position) },
-    { key: "txs", label: "Txs", r: true, sort: (r) => r.stat.txs, fmt: (r) => int(r.stat.txs) + (r.stat.failed ? ` <span class="neg">(${r.stat.failed} failed)</span>` : "") + (r.stat.duplicates ? ` <span style="color:var(--warn)">(${r.stat.duplicates} dup)</span>` : "") },
-    { key: "refused", label: "Refused", r: true, sort: (r) => (r.refused_calls || []).length, fmt: (r) => (r.refused_calls || []).length ? `<span class="neg">${r.refused_calls.length}</span>` : "0" },
-    { key: "overran", label: "Overran", r: true, sort: (r) => r.turns?.overran, fmt: (r) => r.turns?.legacy ? `<span class="badge warn">no turns</span>` : int(r.turns?.overran) },
-    { key: "turn", label: "Turn time", r: true, sort: (r) => r.turns?.wall_ms, fmt: (r) => isNum(r.turns?.wall_ms) ? `${fix(r.turns.wall_ms / 1000, 1)}s` : "–" },
-    { key: "exit", label: "Bot exit", fmt: (r) => r.bot_exit ? `<span class="badge warn">${esc(r.bot_exit)}</span>` : "" },
-  ], { onClick: (r) => { if (trial.sessions.bot.includes(r.scenario)) location.hash = link({ task: trial.summary.task, run: n, session: r.scenario }); } });
-}
 
 async function trialAgent(n, trial) {
   if (!trial.trajectory) { div(`<div class="empty">No agent trajectory in this trial.</div>`); return; }
