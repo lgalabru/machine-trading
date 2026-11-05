@@ -183,6 +183,9 @@
   .g-name .sw.dash { background: repeating-linear-gradient(90deg, #8e8e93 0 3px, transparent 3px 5px); }
   .g-name .light { width: 7px; height: 7px; }
   .g-name .badge { font-size: 10px; padding: 0 6px; }
+  .limit { color: var(--text-3); font-size: 11px; cursor: help; }
+  .note-limit { margin: 0 0 14px; padding: 9px 12px; border-radius: 10px; background: #141416; border: 1px solid #2c2c2e; color: var(--text-2); font-size: 12.5px; }
+  .note-limit code { font: 11.5px var(--mono); }
   .strip { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px; align-items: center; }
   .strip i { display: block; height: 18px; border-radius: 3px; background: #1c1c1e; cursor: pointer; transition: transform .08s, box-shadow .08s; }
   .strip i.na { background: transparent; box-shadow: inset 0 0 0 1px #1c1c1e; }
@@ -849,6 +852,7 @@ function div(html = "", className, parent = app) { const d = document.createElem
 const statItem = (k, v, d) => `<div class="rs"><div class="rs-k">${esc(k)}</div><div class="rs-v">${v}</div>${d ? `<div class="rs-d">${d}</div>` : ""}</div>`;
 const card = (k, v, d, big) => `<div class="card"><div class="k">${esc(k)}</div><div class="v ${big ? "big" : ""}">${v}</div>${d ? `<div class="d">${d}</div>` : ""}</div>`;
 function exceptionBadge(t) {
+  if (t.exception?.type === "AgentTimeoutError") return `<span class="limit" title="${esc(t.exception.message)}; the bot as it stood was graded">⏱ time limit</span>`;
   if (!t.exception) return "";
   const type = t.exception.type || "error";
   return `<span class="badge ${type === "AgentTimeoutError" ? "warn" : "bad"}" title="${esc(t.exception.message)}">${esc(type)}</span>`;
@@ -1390,7 +1394,7 @@ function renderGrid(host, task, trials, eq, sel) {
       : !set.has(t.id) ? `<div class="strip-note">graded on another hidden set</div>`
       : strip(names.map((s) => t.pnls?.[s]), "run", t.id);
     return `<div class="g-row run ${first ? "first" : ""} ${picked.has(t.model) ? "picked" : ""}" data-run="${t.id}" style="--mc:${modelColor(t.model)}">
-      <a class="g-name" href="${link({ task: task.name, run: t.id, session: sel })}"><span class="sw"></span><b>${esc(shortModel(t.model))}</b><span class="run-n">#${attemptOf(t)}</span>${t.status === "pending" ? light("pending", "running") : ""}${t.disqualified ? `<span class="badge bad">DQ</span>` : ""}${t.exception?.type === "AgentTimeoutError" ? `<span class="badge">timeout</span>` : ""}</a>
+      <a class="g-name" href="${link({ task: task.name, run: t.id, session: sel })}"><span class="sw"></span><b>${esc(shortModel(t.model))}</b><span class="run-n">#${attemptOf(t)}</span>${t.status === "pending" ? light("pending", "running") : ""}${t.disqualified ? `<span class="badge bad">DQ</span>` : ""}${t.exception?.type === "AgentTimeoutError" ? `<span class="limit" title="The agent used its whole time limit; the bot in /app/bot when time ran out was graded.">⏱</span>` : ""}</a>
       ${nums(t.skill, t.pnl_usd, t.cost_usd, span(t.agent_execution))}${state}</div>`;
   }).join("") + queued.map((r) => `<div class="g-row run queued" style="--mc:${modelColor(r.model)}"><span class="g-name"><span class="sw"></span><b>${esc(shortModel(r.model))}</b><span class="run-n">#${r.k}</span></span><span></span><span></span><span></span><span></span><div class="strip-note">queued</div></div>`).join("");
   const refRow = set.size ? `<div class="g-row ref"><span class="g-name"><span class="sw dash"></span>reference</span>${nums(1, sum(ref), null, null)}${strip(ref, "ref")}</div>` : "";
@@ -1404,7 +1408,7 @@ function renderGrid(host, task, trials, eq, sel) {
       <div class="g-row g-head"><span class="g-name">Run</span><span>Skill</span><span>PnL</span><span>Cost</span><span>Time</span>${n ? axis : `<span class="muted">no graded scenarios yet</span>`}</div>
       ${rows}${refRow}
     </div>
-    <div class="g-foot"><span><i class="lg up"></i>${gridMode === "vs" ? "beat the reference" : "made money"}</span><span><i class="lg down"></i>${gridMode === "vs" ? "trailed it" : "lost money"}</span><span class="muted">a row opens the run · a column replays the scenario for every run · a cell, one run's scenario</span></div>
+    <div class="g-foot"><span><i class="lg up"></i>${gridMode === "vs" ? "beat the reference" : "made money"}</span><span><i class="lg down"></i>${gridMode === "vs" ? "trailed it" : "lost money"}</span>${runs.some((t) => t.exception?.type === "AgentTimeoutError") ? `<span class="limit">⏱ used its whole time limit; its bot was graded as it stood</span>` : ""}<span class="muted">a row opens the run · a column replays the scenario for every run · a cell, one run's scenario</span></div>
   </div>`;
   // Session descriptions for the tooltips, from a run with detail files.
   const withDetails = trials.find((t) => t.details && set.has(t.id));
@@ -2132,7 +2136,9 @@ function trialHeader(n, t, tab, trial) {
   const tabs = [["sessions", "Scenarios"], ["agent", "Agent"], ["bot", "Strategy"], ["logs", "Logs"], ["raw", "Report"]];
   document.getElementById("peek-head").innerHTML = runStats(t, trial) +
     `<div class="tabs">${tabs.map(([k, label]) => `<a href="${link({ task: t.task, run: n, tab: k })}" class="${tab === k ? "on" : ""}">${label}</a>`).join("")}</div>`;
-  if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
+  // Hitting the time limit isn't a failure: the bot as it stood was graded.
+  if (t.exception?.type === "AgentTimeoutError") div(`<div class="note-limit">⏱ The agent used its whole time limit (${dur(span(t.agent_execution))}). The bot in <code>/app/bot</code> when time ran out is what was graded.</div>`);
+  else if (t.exception) div(`<div class="error"><b>${esc(t.exception.type)}</b>: ${esc(t.exception.message)}</div>`);
 }
 
 async function renderTrial(n, tab, session) {
