@@ -16,6 +16,34 @@ on hidden market scenarios replayed against an offline copy of Solana
 mainnet. Real programs, real order books and real fees run in a sandbox that
 no bot can cheat.
 
+## Getting started
+
+```sh
+just install mtx      # build and install the mtx CLI into ~/.cargo/bin
+just snapshot-pull    # the mainnet snapshot scenarios replay on (Docker; too big for git)
+```
+
+A **scenario** is a scripted market: a sequence of changes (prices that
+crash or squeeze, funding, fees, a halt) applied at given slots to an
+offline copy of Solana mainnet, restored from a pinned snapshot. Bots are
+graded on hidden scenarios; `mtx scenario play` has a coding agent write one
+from a request, then plays it on a local surfnet and charts it live:
+
+```sh
+mtx scenario play "SPCX crashes 5% in three legs, then rebounds halfway"
+```
+
+`mtx bench review` browses a bench's results: each model's skill and costs,
+every run, and every scenario step by step. Give it a published release
+(`bench/results/<version>`) or a batch you ran:
+
+```sh
+mtx bench review 0.10.0
+```
+
+The rest (building bots, grading, publishing and comparing releases) is in
+[docs/development.md](docs/development.md).
+
 ## The bench
 
 ```sh
