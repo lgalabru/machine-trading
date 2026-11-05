@@ -88,6 +88,12 @@ time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
 ## Add a task
 
+It's guided. In Claude Code, in this repository, ask for a new task: the
+`mtx` MCP server (`.mcp.json`; `just install mtx` first) interviews you
+with forms, scaffolds the task and its reference bot, then reports what's
+left after every step (`task_status`). From a terminal: `mtx task new`
+(every answer is a flag), `mtx task status <name>`, `mtx task guide <step>`.
+
 Pick an issue labelled
 [`new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22),
 and follow the [`trading-task-design`](../skills/trading-task-design/SKILL.md)
