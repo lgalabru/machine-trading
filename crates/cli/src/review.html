@@ -415,8 +415,14 @@
   .files, .scn { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
   .scn { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; }
   .files .list, .scn-list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: calc(100vh - 300px); position: sticky; top: 0; scrollbar-width: thin; }
-  .files .list a, .scn-item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
+  .files .list a, .scn-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
   .files .list a.on, .files .list a:hover, .scn-item.on, .scn-item:hover { background: var(--panel-2); color: var(--text); }
+  .files .list a .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fi { flex: none; width: 22px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px; font: 700 9px var(--mono); color: var(--fc); background: color-mix(in srgb, var(--fc) 14%, transparent); letter-spacing: -0.02em; }
+  /* The file and its list use the panel's height. */
+  .files .list { max-height: var(--fh, calc(100vh - 300px)); }
+  .files .fview { min-width: 0; }
+  .files .fview pre.code { height: var(--fh, auto); max-height: var(--fh, 720px); margin: 0; }
   .btns .search { flex: 1; max-width: 360px; }
   .btns { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 10px 0 12px; }
   .btn { background: var(--panel-2); border: 1px solid var(--line); color: var(--text-2); border-radius: 7px; padding: 5px 10px; font: 500 12px inherit; cursor: pointer; }
@@ -2307,24 +2313,47 @@ async function trialAgent(n, trial) {
   draw();
 }
 
+// A file's icon, by its type: a colored glyph, like an editor's file tree.
+function fileIcon(path) {
+  const name = path.split("/").pop();
+  const [glyph, color] =
+    /\.rs$/.test(name) ? ["rs", "#dea584"] :
+    name === "Cargo.lock" ? ["🔒", "#8e8e93"] :
+    /\.toml$/.test(name) ? ["⚙", "#9ca3af"] :
+    /\.(sh|bash)$/.test(name) ? [">_", "#89e051"] :
+    /\.json$/.test(name) ? ["{}", "#f1e05a"] :
+    /\.py$/.test(name) ? ["py", "#4f9ddb"] :
+    /\.(ts|js|mjs)$/.test(name) ? ["js", "#f1e05a"] :
+    /\.md$/.test(name) ? ["M↓", "#83a8d8"] :
+    /\.log$|\.txt$/.test(name) ? ["≡", "#8e8e93"] : ["·", "#636366"];
+  return `<span class="fi" style="--fc:${color}">${glyph}</span>`;
+}
 function trialFiles(n, trial, paths, prefix) {
   if (!paths.length) { div(`<div class="empty">No files.</div>`); return; }
   const host = div("", "files");
   const list = document.createElement("div"); list.className = "list";
-  const view = document.createElement("div");
+  const view = document.createElement("div"); view.className = "fview";
   host.append(list, view);
+  // The list and the file fill the panel's height, below the tabs.
+  const fit = () => {
+    if (!document.body.contains(host)) { removeEventListener("resize", fit); return; }
+    const h = Math.max(240, innerHeight - host.getBoundingClientRect().top - 24);
+    host.style.setProperty("--fh", `${h}px`);
+  };
+  addEventListener("resize", fit);
+  requestAnimationFrame(fit);
   const sizes = Object.fromEntries((trial.files || []).map((f) => [f.path, f.bytes]));
   const show = async (path) => {
     list.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.p === path));
     view.innerHTML = `<div class="loading">Loading…</div>`;
     try {
       const text = ansi(await api(fileUrl(n, path), true));
-      const lang = languageOf(path);
-      const lines = highlight(text, lang);
-      view.innerHTML = `<div class="sub num" style="margin-bottom:6px">${esc(path)} · ${int(lines.length)} lines${lang ? ` · ${lang}` : ""}</div><pre class="code">${lines.map((l, i) => `<span class="ln">${String(i + 1).padStart(4)}  </span>${l}`).join("\n")}</pre>`;
+      const lines = highlight(text, languageOf(path));
+      view.innerHTML = `<pre class="code" title="${esc(path)}">${lines.map((l, i) => `<span class="ln">${String(i + 1).padStart(4)}  </span>${l}`).join("\n")}</pre>`;
+      fit();
     } catch (e) { view.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
   };
-  list.innerHTML = paths.map((p) => `<a href="javascript:void 0" data-p="${esc(p)}"><span>${esc(p.startsWith(prefix) ? p.slice(prefix.length) : p)}</span><span class="muted">${sizes[p] !== undefined ? compact(sizes[p]) + "B" : ""}</span></a>`).join("");
+  list.innerHTML = paths.map((p) => `<a href="javascript:void 0" data-p="${esc(p)}">${fileIcon(p)}<span class="fname">${esc(p.startsWith(prefix) ? p.slice(prefix.length) : p)}</span><span class="muted">${sizes[p] !== undefined ? compact(sizes[p]) + "B" : ""}</span></a>`).join("");
   list.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => show(a.dataset.p)));
   const first = paths.find((p) => /src\/main\.rs$/.test(p)) || paths.find((p) => /\.(rs|py|ts|js)$/.test(p)) || paths[0];
   show(first);
