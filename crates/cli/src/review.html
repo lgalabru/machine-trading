@@ -65,7 +65,10 @@
   .peek-title .pt-scn { font: 600 15px var(--mono); }
   .peek-x { background: none; border: 1px solid var(--line); color: var(--text-2); border-radius: 8px; width: 30px; height: 28px; cursor: pointer; font-size: 13px; }
   .peek-x:hover { color: var(--text); background: #1c1c1e; }
-  .peek-body { flex: 1; overflow: auto; padding: 16px 26px 60px; }
+  /* Every tab starts its content at the same distance under the tabs. */
+  .peek-body { flex: 1; overflow: auto; padding: 24px 26px 60px; }
+  .peek-body > :first-child { margin-top: 0 !important; }
+  .peek-body > .sbars:first-child .sbar { border-top: 0; padding-top: 0; }
   /* A run's stats: stacked bars, and what the agent did. */
   .sbars { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 4px 0 14px; }
   @media (max-width: 1100px) { .sbars { grid-template-columns: 1fr; } }
@@ -411,7 +414,7 @@
   pre.wrap { white-space: pre-wrap; word-break: break-word; }
   /* A list beside a view: the bot's files, a run's scenarios. */
   .files, .scn { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
-  .scn { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; margin-top: 10px; }
+  .scn { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; }
   .files .list, .scn-list { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: calc(100vh - 300px); position: sticky; top: 0; scrollbar-width: thin; }
   .files .list a, .scn-item { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; text-decoration: none; color: var(--text-2); font: 12px var(--mono); border-bottom: 1px solid var(--line-soft); }
   .files .list a.on, .files .list a:hover, .scn-item.on, .scn-item:hover { background: var(--panel-2); color: var(--text); }
@@ -2164,7 +2167,7 @@ async function renderTrial(n, tab, session) {
   if (tab === "bot") return trialFiles(n, trial, trial.files.map((f) => f.path), "artifacts/app/bot/");
   if (tab === "logs") return trialLogs(n, trial);
   if (tab === "raw") {
-    div(`<dl class="facts" style="margin:4px 0 16px"><dt>Run</dt><dd>${esc(runLabel(t))}</dd><dt>Trial</dt><dd class="mono">${esc(t.trial)}</dd><dt>Task</dt><dd class="mono">${esc(t.task)}</dd><dt>Path</dt><dd class="mono">${esc(t.path)}</dd></dl>`);
+    div(`<dl class="facts" style="margin:0 0 16px"><dt>Run</dt><dd>${esc(runLabel(t))}</dd><dt>Trial</dt><dd class="mono">${esc(t.trial)}</dd><dt>Task</dt><dd class="mono">${esc(t.task)}</dd><dt>Path</dt><dd class="mono">${esc(t.path)}</dd></dl>`);
     div(`<details open><summary>verifier/report.json (scenarios folded)</summary><pre class="code wrap">${jsonHtml(trial.report ? { ...trial.report, scenarios: `${(trial.report.scenarios || []).length} scenarios: see the Scenarios tab` } : null)}</pre></details>
       <details><summary>verifier/reward.json</summary><pre class="code">${jsonHtml(trial.rewards)}</pre></details>
       <details><summary>Harbor config</summary><pre class="code">${jsonHtml(trial.config)}</pre></details>
