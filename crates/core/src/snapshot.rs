@@ -19,13 +19,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
-use surfpool_sdk::{BlockProductionMode, Surfnet};
-use tracing::{debug, info};
+use surfpool_sdk::{BlockProductionMode, Surfnet, SurfnetBuilder};
+use tracing::{debug, info, warn};
 
 use crate::{
     Result,
     chain::{self, Override},
-    error::io_error,
+    error::{Error, io_error},
     phoenix::{self, Phoenix},
 };
 
@@ -34,6 +34,12 @@ const EXCHANGE_FILE: &str = "exchange.json";
 const MANIFEST_FILE: &str = "manifest.json";
 /// Matches the CLI default, so scenario slot offsets mean the same thing everywhere.
 const SLOT_TIME_MS: u64 = 250;
+/// How long one surfnet start may take, and how many times to try. The SDK
+/// picks its ports by binding and releasing them, so another process on the
+/// machine can take one first: the runloop then exits on the bind error and
+/// `start` waits for a ready event that never comes.
+const SURFNET_START_TIMEOUT: Duration = Duration::from_secs(120);
+const SURFNET_START_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
@@ -171,32 +177,63 @@ pub enum Access {
     Open,
 }
 
+/// Starts the surfnet `build` describes, trying again when a start fails or
+/// hangs (see [`SURFNET_START_TIMEOUT`]). A hung start is left on its thread.
+async fn start_surfnet(build: impl Fn() -> SurfnetBuilder) -> Result<Surfnet> {
+    let mut failure = None;
+    for attempt in 1..=SURFNET_START_ATTEMPTS {
+        let builder = build();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // `start` blocks its thread while it waits, so it gets one of its own.
+        std::thread::Builder::new()
+            .name("surfnet-start".into())
+            .spawn(move || {
+                let _ = tx.send(futures::executor::block_on(builder.start()));
+            })
+            .map_err(|e| Error::Timeout(format!("a surfnet start thread: {e}")))?;
+        let error = match tokio::time::timeout(SURFNET_START_TIMEOUT, rx).await {
+            Ok(Ok(Ok(surfnet))) => return Ok(surfnet),
+            Ok(Ok(Err(e))) => Error::from(e),
+            Ok(Err(_)) => Error::Timeout("a surfnet start that panicked".into()),
+            Err(_) => Error::Timeout(format!(
+                "a surfnet to start ({}s)",
+                SURFNET_START_TIMEOUT.as_secs()
+            )),
+        };
+        warn!(attempt, error = %error, "surfnet didn't start");
+        failure = Some(error);
+    }
+    Err(failure.expect("at least one attempt"))
+}
+
 pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
     // Absolute, because bots get `exchange_path` and run from their own directory.
     let dir = &dir.canonicalize().map_err(io_error(dir))?;
     let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
     let exchange_path = dir.join(EXCHANGE_FILE);
     let exchange = phoenix::load_exchange(&exchange_path)?;
-    let mut builder = Surfnet::builder().offline(true);
-    if access == Access::Private {
-        builder = builder.secret_path(format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        ));
-    }
-    let surfnet = builder
-        .snapshot_file(dir.join(SURFNET_FILE))
-        .block_production_mode(BlockProductionMode::Clock)
-        .slot_time_ms(SLOT_TIME_MS)
-        // Profiles re-execute every transaction instruction by instruction and
-        // keep the accounts it touched, megabytes each for Phoenix's: a
-        // market-making session's hundreds of orders and Hawkeye reads ran a
-        // grader past 8 GB. Nothing here reads profiles.
-        .instruction_profiling(false)
-        .max_profiles(1)
-        .start()
-        .await?;
+    let surfnet = start_surfnet(|| {
+        let builder = Surfnet::builder().offline(true);
+        let builder = match access {
+            Access::Private => builder.secret_path(format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            )),
+            Access::Open => builder,
+        };
+        builder
+            .snapshot_file(dir.join(SURFNET_FILE))
+            .block_production_mode(BlockProductionMode::Clock)
+            .slot_time_ms(SLOT_TIME_MS)
+            // Profiles re-execute every transaction instruction by instruction and
+            // keep the accounts it touched, megabytes each for Phoenix's: a
+            // market-making session's hundreds of orders and Hawkeye reads ran a
+            // grader past 8 GB. Nothing here reads profiles.
+            .instruction_profiling(false)
+            .max_profiles(1)
+    })
+    .await?;
     chain::forward_surfnet_logs(&surfnet);
     // Phoenix reads both the slot and the unix time: it compares oracle and mark
     // update slots against the clock, and its oracle update walks the time since
