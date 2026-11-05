@@ -4,7 +4,7 @@ description: Designs, reviews, and hardens trading tasks for agent evals and RL 
 license: MIT
 metadata:
   author: Solana Foundation
-  version: 0.3.0
+  version: 0.4.0
   repo: lgalabru/machine-trading
 ---
 
@@ -47,6 +47,35 @@ Make these choices without asking unless the user says otherwise:
 | Valuation | From on-chain end state, never from bot logs. At the mark for directional tasks; at the scenario's oracle when the bot quotes, since Phoenix's mark blends in the book | Grade outcomes, not claims. In machine-trading's market-making spike, one lopsided quote moved the mark 0.15%, and a maker quoting around the mark chased its own bid 8 bp above the oracle |
 | Counterparties | When the thesis needs someone to trade with the bot (market making, execution), the grader runs them: takers sending ordinary transactions on a seeded schedule, from a shared pool of accounts, noise and informed overlapping in size | An offline surfnet has nobody else on it: a resting quote fills only when an override moves the price through it, which is pure adverse selection. Separate accounts for informed flow would let a bot read `getBlock` and front-run them |
 | Checks | oracle at its calibrated baseline (`reference_ratio` ≈ 1), nop = 0, cheater = 0, all through Harbor | Proves solvable, non-trivial, and hack-resistant. Against a hindsight bound the oracle scores the baseline (~0.2), not 1 |
+
+## Guided tooling: start here in machine-trading
+
+Making a task here is driven by `mtx`'s authoring tools. Claude Code loads
+them from the repository's `.mcp.json` (run `just install mtx` once):
+
+| Tool (MCP) | CLI | What it does |
+| --- | --- | --- |
+| `task_new` | `mtx task new --name … --base shocks\|making …` | Interviews the author with forms (what the task is, the skill it measures, the mandate), then scaffolds `bench/tasks/<name>` from the closest task, its reference bot `bots/<family>`, and the Justfile pair |
+| `task_status` | `mtx task status <name>` | Each step to publication as done, todo or manual, read from the files, with the next action |
+| `task_guide` | `mtx task guide <step>` | The procedure for one step, and where this skill goes deeper |
+| `task_list` | `mtx task list` | The tasks and their families |
+
+The loop:
+
+1. **Call `task_new`.** Don't invent answers for the author: the forms ask
+   them. Without form support, `task_new` returns `questions`: ask the
+   author those, then call again with every answer. Push back on a thesis
+   that doesn't say what earns.
+2. **Call `task_status`, do its `next`, repeat.** After every step. The
+   steps follow this skill's procedure: design record, scenario family,
+   reference bot, image anchor, practice set, instruction, README, CI and
+   dataset, lint, then the checks on the image and real agents.
+3. **Use `task_guide` for the step at hand**, and the sections below for
+   the reasoning behind it.
+
+The scaffold starts the task as a copy of its base (`shocks`:
+phoenix-flash-crash, `making`: phoenix-market-making), grading on the base's
+family until the task's own exists; `task_status` keeps that visible.
 
 ## Operating procedure
 

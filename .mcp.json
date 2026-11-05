@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mtx": {
+      "command": "mtx",
+      "args": ["mcp"]
+    }
+  }
+}

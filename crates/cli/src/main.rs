@@ -20,7 +20,9 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod acp;
 mod author;
+mod authoring;
 mod charts;
+mod mcp;
 mod play;
 mod publish;
 mod review;
@@ -44,7 +46,7 @@ struct Cli {
 
 /// The scenario families, one per task.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-enum Family {
+pub(crate) enum Family {
     /// phoenix-flash-crash: shocks that crash or squeeze, then revert or not.
     FlashCrash,
     /// phoenix-market-making: a walking, trending, jumping market, competing
@@ -60,6 +62,12 @@ enum Command {
     /// Market scenarios: the price paths sessions replay.
     #[command(subcommand)]
     Scenario(ScenarioCommand),
+    /// Make a new task, guided: scaffold it, then see what's left to do.
+    #[command(subcommand)]
+    Task(TaskCommand),
+    /// Serve the task-authoring tools over MCP (stdio), for Claude Code:
+    /// task_new (an interview with forms), task_status, task_guide, task_list.
+    Mcp,
     /// Bench results: what `just bench` and Harbor runs leave behind.
     #[command(subcommand)]
     Bench(BenchCommand),
@@ -135,6 +143,58 @@ impl Sessions {
             .map(|path| Ok((path.clone(), Scenario::load(path)?)))
             .collect()
     }
+}
+
+#[derive(Subcommand)]
+enum TaskCommand {
+    /// Scaffold bench/tasks/<name> and its reference bot from the closest
+    /// existing task. Every field the interview asks is a flag; leave any out
+    /// and mtx lists what's missing.
+    New {
+        #[command(flatten)]
+        spec: TaskArgs,
+    },
+    /// Where a task stands: each step to publication, done or not, with what
+    /// to do next.
+    Status { task: String },
+    /// The procedure for one step (design, family, reference, anchor,
+    /// practice, instruction, readme, registry, lint, verify).
+    Guide { step: String },
+    /// The repository's tasks.
+    List,
+}
+
+#[derive(clap::Args)]
+struct TaskArgs {
+    /// The task's id, venue first: phoenix-funding-squeeze.
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    title: Option<String>,
+    /// One sentence: what the agent's bot does, on which market.
+    #[arg(long)]
+    summary: Option<String>,
+    /// Start from `shocks` (phoenix-flash-crash) or `making`
+    /// (phoenix-market-making).
+    #[arg(long, value_enum)]
+    base: Option<authoring::Base>,
+    /// A good bot profits here because it ___.
+    #[arg(long)]
+    thesis: Option<String>,
+    #[arg(long)]
+    wins: Option<String>,
+    #[arg(long)]
+    loses: Option<String>,
+    #[arg(long)]
+    regimes: Option<String>,
+    /// Position cap in SPCX.
+    #[arg(long)]
+    max_position: Option<f64>,
+    /// Loss limit per session, USD.
+    #[arg(long)]
+    max_drawdown_usd: Option<f64>,
+    #[arg(long)]
+    hidden_sessions: Option<u32>,
 }
 
 #[derive(Subcommand)]
@@ -380,6 +440,54 @@ async fn run() -> Result<()> {
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
 
     let output = match cli.command {
+        Command::Mcp => {
+            mcp::serve(authoring::repo_root()).await?;
+            return Ok(());
+        }
+        Command::Task(TaskCommand::New { spec: a }) => {
+            let spec = authoring::TaskSpec {
+                name: a.name.unwrap_or_default(),
+                title: a.title.unwrap_or_default(),
+                summary: a.summary.unwrap_or_default(),
+                base: a.base,
+                thesis: a.thesis.unwrap_or_default(),
+                wins: a.wins.unwrap_or_default(),
+                loses: a.loses.unwrap_or_default(),
+                regimes: a.regimes.unwrap_or_default(),
+                max_position: a.max_position,
+                max_drawdown_usd: a.max_drawdown_usd,
+                hidden_sessions: a.hidden_sessions,
+            };
+            let out = authoring::scaffold(&authoring::repo_root(), &spec)?;
+            ui::done(format!("Created bench/tasks/{}", spec.name.trim()));
+            for w in out["written"].as_array().into_iter().flatten() {
+                ui::note(w.as_str().unwrap_or_default());
+            }
+            serde_json::to_string_pretty(&out)?
+        }
+        Command::Task(TaskCommand::Status { task }) => {
+            let steps = authoring::status(&authoring::repo_root(), &task)?;
+            for s in &steps {
+                let mark = match s.state {
+                    "done" => ui::accent("✓"),
+                    "manual" => ui::dim("…"),
+                    _ => "○".to_string(),
+                };
+                eprintln!("{mark} {:<44} {}", s.title, ui::dim(&s.detail));
+            }
+            if let Some(n) = authoring::next(&steps) {
+                eprintln!("\n{} {}\n  {}", ui::bold("Next:"), n.title, n.next);
+            }
+            serde_json::to_string_pretty(&steps)?
+        }
+        Command::Task(TaskCommand::Guide { step }) => {
+            authoring::guide(&step).map(str::to_string).ok_or_else(|| {
+                anyhow::anyhow!("no step `{step}`; steps: {}", authoring::STEPS.join(", "))
+            })?
+        }
+        Command::Task(TaskCommand::List) => {
+            serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
+        }
         Command::Bench(BenchCommand::Review {
             path,
             port,
