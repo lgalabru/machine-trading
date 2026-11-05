@@ -159,22 +159,33 @@ pub struct OfflineWorld {
     pub exchange_path: PathBuf,
 }
 
-pub async fn start_offline(dir: &Path) -> Result<OfflineWorld> {
+/// Who may reach an offline surfnet's RPC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// Only at a secret path the grader alone knows. A graded bot shares the
+    /// machine and can reach the port, but with no path it gets nothing: the
+    /// guard (see [`crate::guard`]) is its only way in.
+    Private,
+    /// At the root, for trusted tools: `mtx scenario play`, whose authoring
+    /// agent reaches the surfnet by its port through Surfpool's MCP server.
+    Open,
+}
+
+pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
     // Absolute, because bots get `exchange_path` and run from their own directory.
     let dir = &dir.canonicalize().map_err(io_error(dir))?;
     let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
     let exchange_path = dir.join(EXCHANGE_FILE);
     let exchange = phoenix::load_exchange(&exchange_path)?;
-    let surfnet = Surfnet::builder()
-        .offline(true)
-        // The surfnet serves RPC only at a path the grader alone knows. A bot
-        // shares the machine and can reach the port, but with no path it
-        // gets nothing: the guard (see [`crate::guard`]) is its only way in.
-        .secret_path(format!(
+    let mut builder = Surfnet::builder().offline(true);
+    if access == Access::Private {
+        builder = builder.secret_path(format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
-        ))
+        ));
+    }
+    let surfnet = builder
         .snapshot_file(dir.join(SURFNET_FILE))
         .block_production_mode(BlockProductionMode::Clock)
         .slot_time_ms(SLOT_TIME_MS)
@@ -205,7 +216,7 @@ pub async fn start_offline(dir: &Path) -> Result<OfflineWorld> {
 /// Start offline from the snapshot, rest a bid below the market, crash the
 /// market through it with a scenario, and check the bid filled.
 pub async fn verify(dir: &Path, crash_pct: f64) -> Result<VerifyReport> {
-    let world = start_offline(dir).await?;
+    let world = start_offline(dir, Access::Open).await?;
     crash_test(
         &world.surfnet,
         world.exchange,
