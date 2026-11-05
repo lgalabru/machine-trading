@@ -1,0 +1,11 @@
+{
+  "models": [
+    "claude-sonnet-5-5",
+    "claude-opus-5-5",
+    "claude-fable-5-1"
+  ],
+  "attempts": 3,
+  "concurrent": 3,
+  "version": "0.10.0",
+  "timeout_multiplier": 1.0
+}

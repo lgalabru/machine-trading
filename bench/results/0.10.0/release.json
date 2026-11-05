@@ -1,0 +1,27 @@
+{
+  "ran_at": "2026-11-04T20:02:15.338751",
+  "skipped": [
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__20-02-10/phoenix-market-making__8GvRxtC/verifier/test-stdout.txt (7162685 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__20-02-10/phoenix-market-making__oyWiJ4m/verifier/test-stdout.txt (7146743 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__20-02-10/phoenix-market-making__v6tpE7v/verifier/test-stdout.txt (7173617 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__23-17-49/phoenix-market-making__dNQvuGW/verifier/test-stdout.txt (7147553 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__23-17-49/phoenix-market-making__qhQsFJx/verifier/test-stdout.txt (7126331 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__23-17-49/phoenix-market-making__xB3funn/verifier/test-stdout.txt (7093869 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-05__02-59-23/phoenix-market-making__9NhtY5X/verifier/test-stdout.txt (7149706 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-05__02-59-23/phoenix-market-making__PQEghnD/verifier/test-stdout.txt (7124468 bytes gzipped)",
+    "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-05__02-59-23/phoenix-market-making__ZmBuRL9/verifier/test-stdout.txt (7033412 bytes gzipped)"
+  ],
+  "source": "20261104-200209-x1",
+  "tasks": {
+    "phoenix-flash-crash": {
+      "name": "solana-foundation/phoenix-flash-crash",
+      "ref": "sha256:632911dfaaf054af880596600b3d3e48e07be7f1386d53b511089a6b2c982cc9"
+    },
+    "phoenix-market-making": {
+      "name": "solana-foundation/phoenix-market-making",
+      "ref": "sha256:b4a8d7f903a1ff73b8e0987d76131baaccd9d59a48c65d04dac93ab688c51d32"
+    }
+  },
+  "trials": 18,
+  "version": "0.10.0"
+}

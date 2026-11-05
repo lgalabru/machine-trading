@@ -1,0 +1,1798 @@
+{
+    "id": "1a3c00d1-8527-4273-83a2-7d2af9827345",
+    "started_at": "2026-11-05T02:59:26.797173",
+    "updated_at": "2026-11-05T06:37:44.603519",
+    "finished_at": "2026-11-05T06:37:44.603519",
+    "n_total_trials": 6,
+    "stats": {
+        "n_completed_trials": 6,
+        "n_errored_trials": 4,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "claude-code__claude-fable-5-1__solana-foundation/machine-trading": {
+                "n_trials": 6,
+                "n_errors": 4,
+                "metrics": [
+                    {
+                        "bound_pnl_usd": 58780.24268472517,
+                        "disqualified": 0.0,
+                        "max_drawdown_usd": 296.26681827503336,
+                        "pnl_hidden-1": 153.33786355266662,
+                        "pnl_hidden-10": 8.246570865466614,
+                        "pnl_hidden-11": 10.336522329166959,
+                        "pnl_hidden-12": 22.01061310143359,
+                        "pnl_hidden-13": 93.1612525536669,
+                        "pnl_hidden-14": 9.17655893523291,
+                        "pnl_hidden-15": 377.8103665122001,
+                        "pnl_hidden-16": 48.64021123699998,
+                        "pnl_hidden-17": -52.76950034723328,
+                        "pnl_hidden-18": 140.95112478695015,
+                        "pnl_hidden-19": 64.41988126579963,
+                        "pnl_hidden-2": 18.460426734649747,
+                        "pnl_hidden-20": 188.91390600783356,
+                        "pnl_hidden-21": 411.9892910636169,
+                        "pnl_hidden-22": 27.512559471716486,
+                        "pnl_hidden-23": 169.8557592169333,
+                        "pnl_hidden-24": -19.980394356949546,
+                        "pnl_hidden-25": 100.28647748575047,
+                        "pnl_hidden-26": 40.46432793436603,
+                        "pnl_hidden-27": 186.83248313879963,
+                        "pnl_hidden-28": 353.11157052918344,
+                        "pnl_hidden-29": 377.3937733309164,
+                        "pnl_hidden-3": 135.84024498305038,
+                        "pnl_hidden-30": 293.73135865466674,
+                        "pnl_hidden-31": -33.98319340723356,
+                        "pnl_hidden-32": 273.685364983067,
+                        "pnl_hidden-33": 21.938496977833285,
+                        "pnl_hidden-34": 143.74172519305012,
+                        "pnl_hidden-35": 537.3155158195332,
+                        "pnl_hidden-36": -30.412870577683254,
+                        "pnl_hidden-37": 250.57146163583306,
+                        "pnl_hidden-38": 609.0806680462165,
+                        "pnl_hidden-39": 534.8595732557336,
+                        "pnl_hidden-4": 101.22087212320032,
+                        "pnl_hidden-40": 118.2513029281666,
+                        "pnl_hidden-41": 129.4843296053335,
+                        "pnl_hidden-42": 6.150992983749954,
+                        "pnl_hidden-43": 457.25060075346664,
+                        "pnl_hidden-44": 198.3013522537,
+                        "pnl_hidden-45": 99.83055724666701,
+                        "pnl_hidden-46": 316.4239102324,
+                        "pnl_hidden-47": 16.26211600208323,
+                        "pnl_hidden-48": 25.40611838675007,
+                        "pnl_hidden-49": 86.97286633333351,
+                        "pnl_hidden-5": 142.44675655291667,
+                        "pnl_hidden-50": 46.964882762133435,
+                        "pnl_hidden-51": -25.871028910099692,
+                        "pnl_hidden-52": 109.03460203965005,
+                        "pnl_hidden-53": -109.16762580209979,
+                        "pnl_hidden-54": 23.70098763466649,
+                        "pnl_hidden-55": 786.3486227507832,
+                        "pnl_hidden-56": 656.8927216786666,
+                        "pnl_hidden-57": 398.5955015165164,
+                        "pnl_hidden-58": 175.27039455486707,
+                        "pnl_hidden-59": 67.59840951306705,
+                        "pnl_hidden-6": 73.40237071256706,
+                        "pnl_hidden-60": 93.70957350416636,
+                        "pnl_hidden-61": 203.23035245308347,
+                        "pnl_hidden-62": 257.6386760344003,
+                        "pnl_hidden-63": 51.55717642748338,
+                        "pnl_hidden-64": 484.0373864742002,
+                        "pnl_hidden-65": 48.867124566500024,
+                        "pnl_hidden-66": -8.498621367933083,
+                        "pnl_hidden-67": 539.3521655173336,
+                        "pnl_hidden-68": 49.63620921333313,
+                        "pnl_hidden-69": 89.44864274773317,
+                        "pnl_hidden-7": 139.28918169979988,
+                        "pnl_hidden-70": -4.893565369266374,
+                        "pnl_hidden-71": 204.77411309160016,
+                        "pnl_hidden-72": 414.8567681444335,
+                        "pnl_hidden-8": -125.92281503771694,
+                        "pnl_hidden-9": 1.1411180938663772,
+                        "pnl_usd": 11805.525090958736,
+                        "profitable_share": 0.7037037037037037,
+                        "reference_pnl_usd": 4599.184999999999,
+                        "reference_ratio": 5.163426352246521,
+                        "refused_calls": 0.0,
+                        "reward": 0.15465660023553798,
+                        "sharpe": 0.565502345245291,
+                        "skill": 5.163426352246521,
+                        "tail_pnl_usd": -83.67976779020137,
+                        "tampered": 0.0,
+                        "worst_pnl_usd": -273.6679608729167
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "bound_pnl_usd": {
+                        "18862.198066450335": [
+                            "phoenix-market-making__9NhtY5X",
+                            "phoenix-market-making__ZmBuRL9",
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "98698.287303": [
+                            "phoenix-flash-crash__ALSzy6R",
+                            "phoenix-flash-crash__PU5sBCJ",
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "disqualified": {
+                        "0.0": [
+                            "phoenix-market-making__9NhtY5X",
+                            "phoenix-flash-crash__ALSzy6R",
+                            "phoenix-market-making__ZmBuRL9",
+                            "phoenix-flash-crash__PU5sBCJ",
+                            "phoenix-market-making__PQEghnD",
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "max_drawdown_usd": {
+                        "43.69405922219994": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "484.37627000000066": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "123.45015425799829": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "666.3375720000004": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "133.74510417000056": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "325.99775000000045": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-1": {
+                        "4.082619744000112": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "170.6467960000009": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "143.91761268879964": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "318.7737300000008": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "52.37606888319897": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "230.23035399999935": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-10": {
+                        "6.921289834601339": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "105.3884049999997": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-32.7482971999998": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-25.436123999999836": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-61.80859244180101": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "57.16274399999929": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-11": {
+                        "18.912893487500696": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-48.60049099999924": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "261.56943002499975": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-130.0574799999995": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "255.0961274625006": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-294.90134600000056": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-12": {
+                        "15.874507830500079": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "76.76499499999954": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "69.15731109120134": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-72.13554099999965": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "52.59452968689948": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-10.19212399999924": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-13": {
+                        "-7.037285871499989": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "216.56993300000067": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-11.274520460499843": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "42.10442900000089": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "85.53855965399998": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "233.0663999999997": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-14": {
+                        "-0.049659209600577014": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-68.73872599999959": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-33.79039720430046": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "42.26192599999922": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-26.459049974700974": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "141.83525999999983": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-15": {
+                        "8.199788695599636": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "517.0149619999993": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-35.8122115999995": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "896.2275420000005": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-47.98424302239982": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "929.2163610000007": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-16": {
+                        "-28.162255309700413": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-164.34983300000022": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "82.30344414259889": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "318.4486219999999": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "82.38056058910115": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1.2207290000005742": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-17": {
+                        "6.639425703999223": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "86.63323300000047": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-7.656991149200621": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-64.94624599999952": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-24.7951896382001": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-312.49123399999917": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-18": {
+                        "6.884064581699931": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "487.2368600000009": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-17.76807204999932": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "154.5622110000004": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "5.839781189999485": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "208.95190399999956": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-19": {
+                        "13.397878575000504": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "156.55201999999917": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-14.783591826600968": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "122.0593289999997": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-21.828247153600387": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "131.12189899999976": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-2": {
+                        "4.170698529100264": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-74.79628000000048": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "48.4624269087999": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "118.04982899999959": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "3.384850970000116": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "11.491034999999101": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-20": {
+                        "-1.4860438209998392": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "499.6470360000003": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "91.96523564749987": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "121.08294399999977": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "66.01324322050095": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "356.26102100000026": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-21": {
+                        "-10.026671093299228": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "621.5432029999993": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "181.82984234019932": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "809.0079540000006": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "102.65521613480087": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "766.9262020000006": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-22": {
+                        "8.058033568398969": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-98.14310800000021": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "2.3516852537995874": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "263.57964899999934": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-28.276299991899577": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "17.505397000000812": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-23": {
+                        "-1.8099707975998172": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "316.45379499999945": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-21.707375290399796": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "616.3507599999994": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-0.2861346104000404": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "110.13348100000076": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-24": {
+                        "-10.907926420799413": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-60.182629999999335": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "14.062246321300336": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-13.043391999999585": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-26.027604042199528": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-23.78305999999975": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-25": {
+                        "13.790225829001429": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "341.47378299999946": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "45.152038500000344": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "114.24327000000085": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-83.8687754144994": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "170.9283230000001": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-26": {
+                        "6.011420241198721": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "28.21968100000049": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "55.73109078659945": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "78.37373099999968": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "45.86969157839849": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "28.580352999999377": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-27": {
+                        "4.645132311999987": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "441.0983359999991": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-34.88542712120034": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "436.7380799999992": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "27.61849364199952": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "245.7802840000004": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-28": {
+                        "17.61641667729964": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "708.3430590000007": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "16.26901941759934": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "698.8537670000005": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "135.79436408020047": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "541.7927970000001": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-29": {
+                        "6.971334156000012": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "699.7646229999991": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-10.379560634000882": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "861.1295289999998": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-34.19182653650023": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "741.0685410000006": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-3": {
+                        "-33.27756572030012": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "160.93646199999966": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "95.26607528140084": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "439.6312109999999": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "77.9380823372012": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "74.54720500000076": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-30": {
+                        "15.217653191999489": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "830.1577510000006": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-105.2403541120002": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "424.04954200000066": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "3.844566847999886": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "594.3589929999998": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-31": {
+                        "4.095614068599389": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-18.05179700000008": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-50.26576190100059": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-82.66092899999967": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-49.34765061100006": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-7.668636000000333": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-32": {
+                        "0.11215078160057601": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "452.7009020000005": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "110.11981364160056": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "383.54717899999923": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "89.11679247520078": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "606.5153520000003": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-33": {
+                        "12.779873471599785": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "81.31646700000056": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-23.769011796599443": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "77.68317100000058": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-65.41619780800102": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "49.03667999999925": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-34": {
+                        "2.046397523399719": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "257.8692310000006": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "108.58098654490095": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "207.67897599999924": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "48.79942608999954": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "237.47533400000066": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-35": {
+                        "16.203796681498716": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1160.6369990000003": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-46.16762791079964": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "1033.5475490000008": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-39.37442685350106": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1099.046805": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-36": {
+                        "17.965628993899372": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-136.85983999999917": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-14.377815049099809": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "8.312459999999191": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "23.27399158910157": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-80.79164900000069": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-37": {
+                        "4.832188346599651": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "679.3469960000002": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "6.812505670599421": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "359.86228200000005": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "8.083438797799317": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "444.49135899999965": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-38": {
+                        "6.266089872400698": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1224.361078": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "93.07619771789905": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "1207.1486540000005": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "88.08056868699896": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1035.5514199999998": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-39": {
+                        "6.867853165100314": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1075.5256900000004": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-7.769808396100416": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "874.5731919999998": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-6.690731234599298": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1266.6512440000006": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-4": {
+                        "-24.398775268799": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "41.7667679999995": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "226.81584546240083": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "178.83768000000055": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "228.38424654560004": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-44.08053199999995": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-40": {
+                        "4.183191609199639": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-66.36503400000038": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "0.6239786774003733": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "370.0057949999991": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "11.886360282400346": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "389.1735260000005": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-41": {
+                        "-2.034068479999405": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "241.50780300000042": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "28.744668736000676": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "151.2716959999998": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "148.7610153759997": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "208.65486299999975": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-42": {
+                        "7.8572317750004": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "49.08946499999911": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-5.0520877499984636": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-10.902169000000868": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-73.60188112250034": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "69.51539899999989": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-43": {
+                        "-11.456583463201241": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "884.3479449999995": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "102.69142883200038": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "932.2226499999997": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "33.876399152000886": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "801.8217650000006": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-44": {
+                        "14.495930584898815": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "346.1028330000008": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-18.056527657499828": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "656.1709609999998": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-97.03089540519977": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "288.1258120000002": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-45": {
+                        "9.684446330000355": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "213.8753830000005": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-27.22442609999962": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "225.8112000000001": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-46.04605674999948": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "222.8827970000002": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-46": {
+                        "6.771299908599758": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1114.280385": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "0.4831827246998728": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "327.5455060000004": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "7.817379761099801": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "441.645708": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-47": {
+                        "23.233724100000472": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "3.3842029999996157": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "23.161324374999822": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-3.207046999999875": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "13.040318537499843": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "37.960172999999486": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-48": {
+                        "5.613540303100308": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "180.72582599999987": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-11.88945086000058": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-58.65461200000027": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-20.365462122599638": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "57.006869000000734": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-49": {
+                        "3.2867409999998927": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "193.00304200000028": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-0.9585009999991598": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "183.36535600000025": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-16.236495999999534": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "159.37705599999936": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-5": {
+                        "0.12541030740067072": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-227.59131499999967": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "173.2415143194994": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "539.7674009999992": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "161.13737169060005": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "208.0001570000004": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-50": {
+                        "5.5968892416003655": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-43.71229999999923": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "121.61669382719992": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-30.343575000000783": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "171.95317450400034": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "56.678413999999975": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-51": {
+                        "7.2462078085009125": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-14.122851000000082": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-10.794903700498253": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-31.308343000000605": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-42.081363568600864": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-64.16491999999926": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-52": {
+                        "12.345512872600011": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "286.21930000000066": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-2.8882811494004272": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "361.1850709999999": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-29.9311804853005": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "27.2771900000007": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-53": {
+                        "6.028292442200836": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-341.27417500000047": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "171.88740400340066": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-635.8621050000002": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "43.23232974180064": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "100.98249899999973": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-54": {
+                        "7.459325645999343": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "65.5365270000002": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "4.423980989999109": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-32.15500400000019": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "8.549150172000736": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "88.39194599999973": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-55": {
+                        "4.40424083580001": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1395.5770630000006": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-1.1942254594996484": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "1752.7329539999992": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "3.2483141283992154": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1563.3233899999996": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-56": {
+                        "9.527517623999302": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1271.468535": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "9.491187184001319": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "1344.442954": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-27.718890736001413": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1334.1450270000005": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-57": {
+                        "2.8007322252997255": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "725.4505480000007": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-4.055735710200679": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "815.3866679999992": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "0.7988015840001026": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "851.1919949999992": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-58": {
+                        "-8.191141402799985": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "207.92697100000078": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "246.67937721780072": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "230.1896799999995": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "212.0809505142006": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "162.93653000000086": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-59": {
+                        "4.772865490400363": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "92.7484170000007": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "65.48346761640096": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "125.42197099999976": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "100.88393797160097": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "16.279797999999573": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-6": {
+                        "-14.824069252999834": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "54.34542900000088": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "163.21785026100042": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "61.13188500000069": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "133.1027232674005": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "43.44040599999971": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-60": {
+                        "10.944171946899587": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "52.42425999999978": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-29.93941090000044": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "353.46534299999985": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-26.435992021901257": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "201.7990690000006": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-61": {
+                        "2.647161241300637": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "185.21106900000086": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "3.341161432699664": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "606.6737529999991": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "3.543660044500939": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "417.9653099999996": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-62": {
+                        "0.7255362192008761": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "482.1756289999994": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "9.10145201440173": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "484.3871589999999": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-20.601852027200948": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "590.0441320000009": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-63": {
+                        "-21.749089455899593": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-74.3592379999991": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "102.13318507099939": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "275.9833639999997": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "71.8530369498003": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-44.518200000000434": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-64": {
+                        "10.851438954399782": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "656.9005510000006": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "15.835796090799704": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "1391.352073": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-88.73894719999953": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "918.0234070000006": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-65": {
+                        "-3.6055896484995174": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "87.38275799999974": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-14.331505592499525": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "73.19965299999967": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-1.0133043599998928": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "151.57073599999967": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-66": {
+                        "4.3552475411997875": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-154.50181899999916": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-7.771839977000127": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "6.465016000000105": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-7.249534771799517": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "107.71120200000041": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-67": {
+                        "-2.6832952255990676": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "1111.9956849999999": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "31.22781725599998": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "807.1150010000001": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "132.84958607360022": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "1155.6081990000002": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-68": {
+                        "9.131546968199473": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "123.83210099999997": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-21.253182749400366": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "112.22149899999931": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "78.62039506119982": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-4.73510399999941": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-69": {
+                        "11.068684560999827": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-60.263090000000375": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "193.85611306280043": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "203.3245050000005": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "174.589961862599": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "14.115681999999651": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-7": {
+                        "16.429154390898475": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "299.15473700000075": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-21.92928027619928": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "176.14426900000035": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-3.9529029159002675": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "369.88911299999927": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-70": {
+                        "-0.587213401999179": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "126.1680639999995": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-17.64453837809924": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-108.1494359999997": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-67.20176943549995": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "38.053501000000324": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-71": {
+                        "8.373998070899688": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "344.7544140000009": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-5.801617745699332": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "359.7753909999992": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "8.870176224399984": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "512.6723170000005": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-72": {
+                        "9.682673635399624": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "801.8368900000005": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-19.3355734975994": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "969.4123619999991": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-28.235758271199302": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "755.7800150000003": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-8": {
+                        "-6.425555941199491": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-458.10561100000086": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "119.72779461999926": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-429.4298780000008": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "39.641244094900685": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-20.944884000000457": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_hidden-9": {
+                        "0.8473401295996155": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-45.07898700000078": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-7.153648681600316": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-83.72395499999948": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "167.8094881151992": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-25.85352899999998": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "pnl_usd": {
+                        "260.3402698414011": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "20880.297772000013": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "2544.740624867307": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "23290.874497999994": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "2098.0311190437005": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "21758.866262000003": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "profitable_share": {
+                        "0.75": [
+                            "phoenix-market-making__9NhtY5X",
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "0.5277777777777778": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "0.7777777777777778": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "0.5833333333333334": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "0.8333333333333334": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "reference_pnl_usd": {
+                        "207.34000000000003": [
+                            "phoenix-market-making__9NhtY5X",
+                            "phoenix-market-making__ZmBuRL9",
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "8991.029999999997": [
+                            "phoenix-flash-crash__ALSzy6R",
+                            "phoenix-flash-crash__PU5sBCJ",
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "reference_ratio": {
+                        "1.255620091836602": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "2.3223476923111166": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "12.273273969650365": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "2.590456766132468": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "10.118795789735218": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "2.4200638038133575": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "refused_calls": {
+                        "0.0": [
+                            "phoenix-market-making__9NhtY5X",
+                            "phoenix-flash-crash__ALSzy6R",
+                            "phoenix-market-making__ZmBuRL9",
+                            "phoenix-flash-crash__PU5sBCJ",
+                            "phoenix-market-making__PQEghnD",
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "reward": {
+                        "0.013802223310572752": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "0.21155683996722546": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "0.13491219930478654": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "0.23598053354763787": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "0.11122940771019735": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "0.220458397572808": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "sharpe": {
+                        "0.340993909422231": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "0.707062355153959": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "0.45843734271347214": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "0.7560829587382334": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "0.3695692811666835": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "0.7608682242771669": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "skill": {
+                        "1.255620091836602": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "2.3223476923111166": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "12.273273969650365": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "2.590456766132468": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "10.118795789735218": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "2.4200638038133575": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "tail_pnl_usd": {
+                        "-15.00520907074982": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-160.44567241666664": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-38.62329845104159": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-146.61892533333335": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-63.541733302750195": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-77.8437681666666": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "tampered": {
+                        "0.0": [
+                            "phoenix-market-making__9NhtY5X",
+                            "phoenix-flash-crash__ALSzy6R",
+                            "phoenix-market-making__ZmBuRL9",
+                            "phoenix-flash-crash__PU5sBCJ",
+                            "phoenix-market-making__PQEghnD",
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    },
+                    "worst_pnl_usd": {
+                        "-33.27756572030012": [
+                            "phoenix-market-making__9NhtY5X"
+                        ],
+                        "-458.10561100000086": [
+                            "phoenix-flash-crash__ALSzy6R"
+                        ],
+                        "-105.2403541120002": [
+                            "phoenix-market-making__ZmBuRL9"
+                        ],
+                        "-635.8621050000002": [
+                            "phoenix-flash-crash__PU5sBCJ"
+                        ],
+                        "-97.03089540519977": [
+                            "phoenix-market-making__PQEghnD"
+                        ],
+                        "-312.49123399999917": [
+                            "phoenix-flash-crash__voaQ56V"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "phoenix-market-making__9NhtY5X",
+                        "phoenix-market-making__ZmBuRL9",
+                        "phoenix-flash-crash__PU5sBCJ",
+                        "phoenix-market-making__PQEghnD"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 83101429,
+        "n_cache_tokens": 79514754,
+        "n_output_tokens": 874920,
+        "cost_usd": 103.04505200000001
+    }
+}
