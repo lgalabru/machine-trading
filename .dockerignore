@@ -8,3 +8,5 @@ bench/tasks
 bench/checks
 skills
 docs
+# Images carry the gzipped snapshot; mtx decompresses it on first use.
+snapshots/*/surfnet.json

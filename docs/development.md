@@ -9,10 +9,11 @@
   [surfpool#902](https://github.com/solana-foundation/surfpool/pull/902)
   (cheatcode locks, SDK snapshots, clock restore), until it ships in a
   release.
-- The snapshot's `surfnet.json`, which is too big for git. `just
-  snapshot-pull` copies it out of the published task image. To fork a fresh
-  one instead, put a mainnet RPC URL in `.env` as `MTX_FORK_RPC_URL` and run
-  `just snapshot-prepare`.
+- Nothing for the snapshot: its accounts are committed gzipped
+  (`snapshots/<name>/surfnet.json.gz`, under 3 MB), and `mtx` decompresses
+  them into a temp-directory cache the first time a surfnet starts. To fork
+  a fresh one, put a mainnet RPC URL in `.env` as `MTX_FORK_RPC_URL` and run
+  `just snapshot-prepare snapshots/<name>`, which writes the `.gz`.
 
 ## Everyday loop
 

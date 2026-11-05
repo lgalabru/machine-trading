@@ -20,7 +20,6 @@ no bot can cheat.
 
 ```sh
 just install mtx      # build and install the mtx CLI into ~/.cargo/bin
-just snapshot-pull    # the mainnet snapshot scenarios replay on (Docker; too big for git)
 ```
 
 A **scenario** is a scripted market: a sequence of changes (prices that
