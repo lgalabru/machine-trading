@@ -339,8 +339,6 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         .and_then(|r| r["scenarios"].as_array())
         .map(Vec::as_slice)
         .unwrap_or_default();
-    // Before 0.9.0 reports carried no skill: the reference ratio is the same
-    // number, zeroed for a disqualified bot.
     let disqualified = scenarios
         .iter()
         .filter(|s| !s["disqualified"].is_null())
@@ -352,13 +350,7 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
             .filter(|v| !v.is_null())
             .unwrap_or_else(|| rewards[key].clone())
     };
-    let mut skill = pick("skill");
-    if skill.is_null() {
-        skill = pick("reference_ratio");
-        if disqualified > 0 && skill.is_number() {
-            skill = json!(0.0);
-        }
-    }
+    let skill = pick("skill");
     let agent = &result["agent_result"];
     let graded = report.is_some() || rewards.is_object();
     let finished = !result["finished_at"].is_null();
@@ -706,9 +698,7 @@ async fn get_trial(
             .flatten()
             .filter_map(|entry| {
                 let name = entry.file_name().to_string_lossy().to_string();
-                name.strip_suffix(".json.gz")
-                    .or_else(|| name.strip_suffix(".json"))
-                    .map(str::to_string)
+                name.strip_suffix(".json.gz").map(str::to_string)
             })
             .collect();
         names.sort_by_key(|name| natural_key(name));
@@ -718,7 +708,7 @@ async fn get_trial(
     list_files(&dir, &dir.join("artifacts/app/bot"), &mut files);
     let logs: Vec<String> = FILES
         .iter()
-        .filter(|f| dir.join(f).is_file())
+        .filter(|f| dir.join(f).is_file() || dir.join(format!("{f}.gz")).is_file())
         .map(|f| f.to_string())
         .collect();
     let result = read_json(&dir.join("result.json")).unwrap_or(Value::Null);
@@ -832,21 +822,18 @@ async fn get_session(
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response())
 }
 
-/// A session's detail file, gzipped or not, as JSON bytes.
+/// A session's detail file (`<name>.json.gz`) as JSON bytes.
 fn read_session(dir: &FsPath, role: &str, name: &str) -> Result<Vec<u8>, ApiError> {
-    let base = dir.join("verifier/sessions").join(role);
-    let gz = base.join(format!("{name}.json.gz"));
-    if gz.is_file() {
-        let file =
-            std::fs::File::open(&gz).map_err(|e| anyhow::anyhow!("{}: {e}", gz.display()))?;
-        let mut json = Vec::new();
-        flate2::read::GzDecoder::new(file)
-            .read_to_end(&mut json)
-            .map_err(|e| anyhow::anyhow!("{}: {e}", gz.display()))?;
-        Ok(json)
-    } else {
-        std::fs::read(base.join(format!("{name}.json"))).map_err(|_| ApiError::NotFound)
-    }
+    let gz = dir
+        .join("verifier/sessions")
+        .join(role)
+        .join(format!("{name}.json.gz"));
+    let file = std::fs::File::open(&gz).map_err(|_| ApiError::NotFound)?;
+    let mut json = Vec::new();
+    flate2::read::GzDecoder::new(file)
+        .read_to_end(&mut json)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", gz.display()))?;
+    Ok(json)
 }
 
 /// The most points a session's curve carries in `/api/curves`.
@@ -881,9 +868,7 @@ async fn get_curves(
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name.strip_suffix(".json.gz")
-                .or_else(|| name.strip_suffix(".json"))
-                .map(str::to_string)
+            name.strip_suffix(".json.gz").map(str::to_string)
         })
         .collect();
     names.sort_by_key(|name| natural_key(name));
@@ -1060,25 +1045,35 @@ async fn get_file(
             "{path} isn't a file the review serves"
         )));
     }
+    // A published release keeps text logs gzipped beside their name.
     let full = dir.join(path);
+    let gz = dir.join(format!("{path}.gz"));
+    let (full, gzipped) = if !full.exists() && gz.is_file() {
+        (gz, true)
+    } else {
+        (full, false)
+    };
     // A link inside the trial could point anywhere.
     let real = full.canonicalize().map_err(|_| ApiError::NotFound)?;
     if !real.starts_with(&dir) || !real.is_file() {
         return Err(ApiError::NotFound);
     }
-    let size = real.metadata().map(|m| m.len()).unwrap_or(0);
-    let mut file = std::fs::File::open(&real).map_err(|_| ApiError::NotFound)?;
+    let file = std::fs::File::open(&real).map_err(|_| ApiError::NotFound)?;
+    let mut reader: Box<dyn Read> = if gzipped {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
     let mut bytes = Vec::new();
-    file.by_ref()
+    reader
+        .by_ref()
         .take(MAX_FILE_BYTES)
         .read_to_end(&mut bytes)
         .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+    let more = reader.read(&mut [0u8; 1]).map(|n| n > 0).unwrap_or(false);
     let mut text = String::from_utf8_lossy(&bytes).to_string();
-    if size > MAX_FILE_BYTES {
-        text.push_str(&format!(
-            "\n… ({} more bytes not shown)",
-            size - MAX_FILE_BYTES
-        ));
+    if more {
+        text.push_str("\n… (the rest isn't shown)");
     }
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
 }
