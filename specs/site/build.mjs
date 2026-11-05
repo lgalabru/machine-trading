@@ -15,6 +15,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const out = path.join(here, "_site");
 const NAME = "Machine Trading Protocol";
+// Where the site is served: link previews need absolute URLs.
+const SITE = "https://lgalabru.github.io/machine-trading";
 const SOURCE = "https://github.com/lgalabru/machine-trading/tree/main/specs";
 // Folders of the index after the core spec, in order.
 const FOLDERS = [
@@ -131,6 +133,16 @@ function layout({ page, title, head, body }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escape(index ? `${NAME} Specifications` : `${title} · ${NAME}`)}</title>
 <meta name="description" content="${NAME}: what an agent may trade on someone else's behalf, and the limits it must stay within.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Machine Trading">
+<meta property="og:title" content="${escape(index ? `${NAME} Specifications` : `${title} · ${NAME}`)}">
+<meta property="og:description" content="What an agent may trade on someone else's behalf, and the limits it must stay within.">
+<meta property="og:url" content="${SITE}/${index ? "" : page}">
+<meta property="og:image" content="${SITE}/social.jpg">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="${SITE}/social.jpg">
 <link rel="stylesheet" href="${link(page, "style.css")}">
 </head>
 <body class="${index ? "index" : "spec"}">
@@ -204,6 +216,8 @@ for (const file of files.filter((f) => f.endsWith(".json"))) {
   fs.copyFileSync(file, path.join(out, rel(file)));
 }
 fs.copyFileSync(path.join(here, "style.css"), path.join(out, "style.css"));
+// The link preview, the same image as the repository's social preview.
+fs.copyFileSync(path.join(here, "social.jpg"), path.join(out, "social.jpg"));
 // Serve files as they are: no Jekyll processing on GitHub Pages.
 fs.writeFileSync(path.join(out, ".nojekyll"), "");
 console.log(`built ${specs.length + 1} pages into ${path.relative(process.cwd(), out) || "."}`);

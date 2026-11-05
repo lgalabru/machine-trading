@@ -291,7 +291,7 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
 /// its API would give for these roots, as files. The scenario detail files
 /// and logs stay gzipped: the browser inflates them (`DecompressionStream`).
 /// The first root is the one the page opens on.
-pub fn export(roots: Vec<Root>, out: &FsPath) -> Result<Value> {
+pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Value> {
     let state = AppState {
         roots,
         trials: std::sync::Mutex::default(),
@@ -314,11 +314,24 @@ pub fn export(roots: Vec<Root>, out: &FsPath) -> Result<Value> {
     };
     let err = |e: ApiError| anyhow::anyhow!("{e:?}");
     std::fs::create_dir_all(out)?;
+    // On a website, the page says what it is to link previews; `site` is
+    // where the site is served, with the preview image at its root.
+    let preview = site.map(|site| {
+        let site = site.trim_end_matches('/');
+        let title = "Machine Trading benchmark";
+        let description = "Frontier models write trading bots, graded on hidden market scenarios replayed on an offline copy of Solana mainnet. Every model, run and scenario, step by step.";
+        format!(
+            "\n<meta name=\"description\" content=\"{description}\">\n<meta property=\"og:type\" content=\"website\">\n<meta property=\"og:site_name\" content=\"Machine Trading\">\n<meta property=\"og:title\" content=\"{title}\">\n<meta property=\"og:description\" content=\"{description}\">\n<meta property=\"og:url\" content=\"{site}/bench/\">\n<meta property=\"og:image\" content=\"{site}/social.jpg\">\n<meta property=\"og:image:width\" content=\"1280\">\n<meta property=\"og:image:height\" content=\"640\">\n<meta name=\"twitter:card\" content=\"summary_large_image\">\n<meta name=\"twitter:image\" content=\"{site}/social.jpg\">"
+        )
+    });
     std::fs::write(
         out.join("index.html"),
         PAGE.replacen(
             "<head>",
-            "<head>\n<script>window.MTX_STATIC = true;</script>",
+            &format!(
+                "<head>\n<script>window.MTX_STATIC = true;</script>{}",
+                preview.unwrap_or_default()
+            ),
             1,
         ),
     )?;
