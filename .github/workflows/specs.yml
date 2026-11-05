@@ -2,13 +2,17 @@ name: Specs
 
 # The Machine Trading Protocol site: specs/ rendered by specs/site/build.mjs,
 # served by this repository's GitHub Pages at lgalabru.github.io/machine-trading.
+# It carries the benchmark too, at /bench/: every release in bench/results,
+# shown by the same page `mtx bench review` serves, with its data written out
+# as files (`mtx bench export`). Publishing a release (committing
+# bench/results/<version>) republishes the site.
 # Pushes to main publish it; pull requests only build it.
 on:
   push:
     branches: [main]
-    paths: ["specs/**", ".github/workflows/specs.yml"]
+    paths: ["specs/**", "bench/results/**", "crates/cli/**", "crates/core/**", "Cargo.lock", ".github/workflows/specs.yml"]
   pull_request:
-    paths: ["specs/**", ".github/workflows/specs.yml"]
+    paths: ["specs/**", "bench/results/**", "crates/cli/**", "crates/core/**", "Cargo.lock", ".github/workflows/specs.yml"]
   workflow_dispatch:
 
 permissions:
@@ -33,6 +37,16 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev clang libclang-dev
+      - name: Install the Rust toolchain
+        # rust-toolchain pins it.
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - name: Export the benchmark
+        run: |
+          cargo build --release --locked -p mtx-cli
+          target/release/mtx bench export specs/site/_site/bench
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:

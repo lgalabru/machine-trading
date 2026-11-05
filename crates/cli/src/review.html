@@ -508,8 +508,33 @@
 "use strict";
 // ---------- data ----------
 const cache = new Map();
+// Served as a static site (`mtx bench export`, GitHub Pages): every API
+// answer is a file beside the page, and the big ones are gzipped for the
+// browser to inflate.
+const STATIC = !!window.MTX_STATIC;
+function staticUrl(path) {
+  const p = path.replace(/^\/api\//, "");
+  if (p.startsWith("session/")) return { url: `api/${p}.json.gz`, gz: true };
+  if (p.startsWith("file/")) return { url: `api/${p}.gz`, gz: true };
+  return { url: `api/${p}.json`, gz: false };
+}
+async function inflate(response) {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  // A host may already have decoded it (Content-Encoding): only gunzip gzip.
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new TextDecoder().decode(bytes);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
+}
 async function api(path, text = false) {
   const key = (text ? "t:" : "j:") + path;
+  if (STATIC && !cache.has(key)) {
+    const { url, gz } = staticUrl(path);
+    cache.set(key, fetch(url).then(async (r) => {
+      if (!r.ok) throw new Error(`${path}: not in this export`);
+      const body = gz ? await inflate(r) : await r.text();
+      return text ? body : JSON.parse(body);
+    }));
+  }
   if (!cache.has(key)) {
     cache.set(key, fetch(path).then(async (r) => {
       if (!r.ok) {

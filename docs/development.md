@@ -48,6 +48,11 @@ mtx bench compare 0.9.0...0.8.0 [--open]     # skill by task and model, and the 
   the bot and the logs. A column replays that scenario for every run.
   Timelines need the detail files the verifier writes with
   `mtx grade --details`.
+- **The website:** every published release is on GitHub Pages at
+  `/bench/`, as the same page with its data written out as files
+  (`mtx bench export <dir>`; the browser inflates the gzipped ones). The
+  Pages workflow rebuilds it whenever `bench/results` changes, so
+  committing a release publishes it.
 - **Published releases:** small enough to commit, at a few hundred KB a
   trial. A release holds the results, reports, session detail files, the
   bot's source and the trajectory, gzipped. Publishing refuses any release

@@ -201,6 +201,7 @@ fn task_table(toml: &str) -> Value {
     Value::Object(meta)
 }
 
+#[derive(Debug)]
 enum ApiError {
     NotFound,
     Bad(String),
@@ -284,6 +285,118 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
         .await?;
     ui::clear();
     Ok(json!({ "root": state.roots[0].path, "trials": count, "url": page }))
+}
+
+/// Write the review as a static site into `out`: the page, and every answer
+/// its API would give for these roots, as files. The scenario detail files
+/// and logs stay gzipped: the browser inflates them (`DecompressionStream`).
+/// The first root is the one the page opens on.
+pub fn export(roots: Vec<Root>, out: &FsPath) -> Result<Value> {
+    let state = AppState {
+        roots,
+        trials: std::sync::Mutex::default(),
+        tasks: std::sync::Mutex::default(),
+    };
+    let all = state.refresh();
+    let api = out.join("api");
+    let write = |rel: &str, bytes: &[u8]| -> Result<()> {
+        let path = api.join(rel);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, bytes).with_context(|| path.display().to_string())
+    };
+    let json = |v: &Value| serde_json::to_vec(v).unwrap_or_default();
+    let gz = |bytes: &[u8]| -> Vec<u8> {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        let _ = std::io::Write::write_all(&mut e, bytes);
+        e.finish().unwrap_or_default()
+    };
+    let err = |e: ApiError| anyhow::anyhow!("{e:?}");
+    std::fs::create_dir_all(out)?;
+    std::fs::write(
+        out.join("index.html"),
+        PAGE.replacen(
+            "<head>",
+            "<head>\n<script>window.MTX_STATIC = true;</script>",
+            1,
+        ),
+    )?;
+    write("index.json", &json(&index_of(&state, None).map_err(err)?.0))?;
+    for root in &state.roots {
+        let index = index_of(&state, Some(root.label.clone())).map_err(err)?.0;
+        write(&format!("index/{}.json", root.label), &json(&index))?;
+    }
+    write("releases.json", &json(&releases_json(&state)))?;
+    let mut files = 0usize;
+    for (n, (_, dir)) in all.iter().enumerate() {
+        let trial = trial_json(&state, n).map_err(err)?;
+        write(&format!("trial/{n}.json"), &json(&trial))?;
+        if trial["summary"]["details"] == json!(true) {
+            write(
+                &format!("curves/{n}.json"),
+                &json(&curves_json(&state, n).map_err(err)?),
+            )?;
+        }
+        if trial["trajectory"] == json!(true) {
+            write(
+                &format!("trajectory/{n}.json"),
+                &json(&trajectory_json(&state, n).map_err(err)?),
+            )?;
+        }
+        for role in ["bot", "reference"] {
+            for name in trial["sessions"][role]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                let src = dir
+                    .join("verifier/sessions")
+                    .join(role)
+                    .join(format!("{name}.json.gz"));
+                if let Ok(bytes) = std::fs::read(&src) {
+                    write(&format!("session/{n}/{role}/{name}.json.gz"), &bytes)?;
+                    files += 1;
+                }
+            }
+        }
+        // What the Strategy and Logs tabs open: the bot's source, the
+        // verifier's stdout, and each scenario's bot log.
+        let mut paths: Vec<String> = trial["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f["path"].as_str().map(str::to_string))
+            .collect();
+        paths.extend(
+            trial["logs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|l| l.as_str().map(str::to_string)),
+        );
+        paths.extend(
+            trial["report"]["scenarios"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| {
+                    s["scenario"]
+                        .as_str()
+                        .map(|name| format!("verifier/bot/{name}.log"))
+                }),
+        );
+        for path in paths {
+            if let Ok(text) = file_text(&state, n, &path) {
+                write(&format!("file/{n}/{path}.gz"), &gz(text.as_bytes()))?;
+                files += 1;
+            }
+        }
+    }
+    Ok(
+        json!({ "out": out, "releases": state.roots.iter().map(|r| r.label.clone()).collect::<Vec<_>>(), "runs": all.len(), "files": files }),
+    )
 }
 
 /// Trials below `root`, in path order: directories whose `config.json` (or,
@@ -597,7 +710,7 @@ fn index_of(state: &AppState, release: Option<String>) -> Result<Json<Value>, Ap
 
 /// Every root's scores, for switching and comparing: per task, each model's
 /// mean skill over its graded trials.
-async fn get_releases(State(state): State<Arc<AppState>>) -> Json<Value> {
+fn releases_json(state: &AppState) -> Value {
     let all = state.refresh();
     let releases: Vec<Value> = state
         .roots
@@ -615,7 +728,11 @@ async fn get_releases(State(state): State<Arc<AppState>>) -> Json<Value> {
             out
         })
         .collect();
-    Json(json!({ "releases": releases }))
+    json!({ "releases": releases })
+}
+
+async fn get_releases(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(releases_json(&state))
 }
 
 /// A root's scores from its trials' summaries: per task (by short name),
@@ -686,10 +803,8 @@ fn scores(root: &Root, trials: &[Value]) -> Value {
     })
 }
 
-async fn get_trial(
-    State(state): State<Arc<AppState>>,
-    Path(n): Path<usize>,
-) -> Result<Json<Value>, ApiError> {
+/// A trial: what the run panel needs.
+fn trial_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
     let dir = state.trial(n)?;
     let sessions = |role: &str| -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir.join("verifier/sessions").join(role))
@@ -745,7 +860,7 @@ async fn get_trial(
             ))
         })
         .collect();
-    Ok(Json(json!({
+    Ok(json!({
         "summary": summary(root, n, &dir),
         "session_stats": session_stats,
         "report": read_json(&dir.join("verifier/report.json")),
@@ -763,7 +878,14 @@ async fn get_trial(
             "agent_execution": result["agent_execution"],
             "verifier": result["verifier"],
         },
-    })))
+    }))
+}
+
+async fn get_trial(
+    State(state): State<Arc<AppState>>,
+    Path(n): Path<usize>,
+) -> Result<Json<Value>, ApiError> {
+    trial_json(&state, n).map(Json)
 }
 
 /// `hidden-10` after `hidden-9`.
@@ -857,10 +979,7 @@ fn curve(detail: &Value) -> Vec<Value> {
 
 /// Every session of a trial at a glance, for the run's session list: what it
 /// was drawn as, the bot's and the reference's PnL, and both curves.
-async fn get_curves(
-    State(state): State<Arc<AppState>>,
-    Path(n): Path<usize>,
-) -> Result<Json<Value>, ApiError> {
+fn curves_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
     let dir = state.trial(n)?;
     let mut names: Vec<String> = std::fs::read_dir(dir.join("verifier/sessions/bot"))
         .into_iter()
@@ -892,7 +1011,14 @@ async fn get_curves(
             }))
         })
         .collect();
-    Ok(Json(json!({ "sessions": sessions })))
+    Ok(json!({ "sessions": sessions }))
+}
+
+async fn get_curves(
+    State(state): State<Arc<AppState>>,
+    Path(n): Path<usize>,
+) -> Result<Json<Value>, ApiError> {
+    curves_json(&state, n).map(Json)
 }
 
 fn clip(text: &str, max: usize) -> Value {
@@ -923,10 +1049,7 @@ fn text_of(value: &Value) -> String {
 
 /// The agent's trajectory (Harbor's ATIF), condensed: each step's message,
 /// tool calls and their output, clipped.
-async fn get_trajectory(
-    State(state): State<Arc<AppState>>,
-    Path(n): Path<usize>,
-) -> Result<Json<Value>, ApiError> {
+fn trajectory_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
     let dir = state.trial(n)?;
     // Published releases keep it gzipped.
     let trajectory = read_json(&dir.join("agent/trajectory.json"))
@@ -1017,11 +1140,18 @@ async fn get_trajectory(
             })
         })
         .collect();
-    Ok(Json(json!({
+    Ok(json!({
         "agent": trajectory["agent"],
         "final_metrics": trajectory["final_metrics"],
         "steps": steps,
-    })))
+    }))
+}
+
+async fn get_trajectory(
+    State(state): State<Arc<AppState>>,
+    Path(n): Path<usize>,
+) -> Result<Json<Value>, ApiError> {
+    trajectory_json(&state, n).map(Json)
 }
 
 /// A path inside the trial the page may read: a listed file, or one under a
@@ -1034,12 +1164,9 @@ fn allowed(path: &str) -> bool {
     clean && (FILES.contains(&path) || FILE_DIRS.iter().any(|d| path.starts_with(d)))
 }
 
-async fn get_file(
-    State(state): State<Arc<AppState>>,
-    Path((n, path)): Path<(usize, String)>,
-) -> Result<Response, ApiError> {
+/// A file the page may show, as text (gzipped ones inflated), clipped.
+fn file_text(state: &AppState, n: usize, path: &str) -> Result<String, ApiError> {
     let dir = state.trial(n)?;
-    let path = path.as_str();
     if !allowed(path) {
         return Err(ApiError::Bad(format!(
             "{path} isn't a file the review serves"
@@ -1075,6 +1202,14 @@ async fn get_file(
     if more {
         text.push_str("\n… (the rest isn't shown)");
     }
+    Ok(text)
+}
+
+async fn get_file(
+    State(state): State<Arc<AppState>>,
+    Path((n, path)): Path<(usize, String)>,
+) -> Result<Response, ApiError> {
+    let text = file_text(&state, n, &path)?;
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
 }
 

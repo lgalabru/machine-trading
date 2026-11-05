@@ -232,6 +232,14 @@ enum BenchCommand {
         #[arg(long)]
         results: Option<PathBuf>,
     },
+    /// Write every published release as a static site: the review page and
+    /// its data, for GitHub Pages. The browser inflates the gzipped files.
+    Export {
+        /// The site's directory, as in specs/site/_site/bench.
+        out: PathBuf,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
     /// Compare two releases (or batches), task by task: each model's mean
     /// skill on both, and the change. As in `mtx bench compare 0.9.0...0.8.0`.
     Compare {
@@ -537,6 +545,21 @@ async fn run() -> Result<()> {
                     skipped.as_str().unwrap_or_default()
                 ));
             }
+            serde_json::to_string_pretty(&summary)?
+        }
+        Command::Bench(BenchCommand::Export { out, results }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let releases = publish::releases(&results);
+            if releases.is_empty() {
+                anyhow::bail!("no published release in {}", results.display());
+            }
+            ui::start(format!(
+                "Exporting {} release{}",
+                releases.len(),
+                if releases.len() == 1 { "" } else { "s" }
+            ));
+            let summary = review::export(releases, &out)?;
+            ui::done(format!("Exported to {}", out.display()));
             serde_json::to_string_pretty(&summary)?
         }
         Command::Bench(BenchCommand::Compare {
