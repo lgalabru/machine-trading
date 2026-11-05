@@ -554,6 +554,11 @@
     .evlog .ev > :nth-child(3) { grid-column: 1 / -1; padding-left: 64px; }
     .evc-list { grid-template-columns: minmax(0, 1fr); }
     .tw { grid-template-columns: minmax(0, 92px) 1fr 46px 30px; gap: 6px; }
+    /* A run's scenarios: a strip of cards to swipe through. */
+    .scn-list { display: flex; overflow-x: auto; overflow-y: hidden; max-height: none; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .scn-list::-webkit-scrollbar { display: none; }
+    .scn-list .scn-item { flex: 0 0 72%; min-width: 0; border-bottom: 0; border-right: 1px solid var(--line-soft); scroll-snap-align: start; }
+    .scn-list .scn-item:last-child { border-right: 0; }
     .btns .search, input.search { width: 100%; max-width: none; }
     .table-wrap { max-height: 70vh; }
     .tl { padding-left: 20px; }
@@ -2083,7 +2088,11 @@ async function trialScenarios(n, trial, picked) {
   await select(pick);
   // Bring the picked card into the list's view, without scrolling the panel.
   const on = list.querySelector(".scn-item.on");
-  if (on && (on.offsetTop < list.scrollTop || on.offsetTop + on.offsetHeight > list.scrollTop + list.clientHeight)) list.scrollTop = on.offsetTop - 40;
+  if (on && list.scrollWidth > list.clientWidth + 1) {
+    // A phone's strip: bring the picked scenario into view sideways.
+    const l = list.getBoundingClientRect(), r = on.getBoundingClientRect();
+    if (r.left < l.left || r.right > l.right) list.scrollLeft += r.left - l.left - 12;
+  } else if (on && (on.offsetTop < list.scrollTop || on.offsetTop + on.offsetHeight > list.scrollTop + list.clientHeight)) list.scrollTop = on.offsetTop - 40;
 }
 // A scenario's miniature: its market, the mark over the session, as the
 // price chart draws it; green when the run won it (matched or beat the
