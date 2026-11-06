@@ -170,5 +170,8 @@ anything.
 
 The numbers in a model are a teaching model, and the guide says so. Use the
 spec's terms and limits, and leave a venue's exact margin and funding rules
-to its venue profile. Before publishing, check what each preset's `note`
-claims against what the model computes.
+to its venue profile. Before publishing, run `npm run check`, which prints
+every lab's readouts under each preset's claim, and make the two agree.
+
+The approach behind the guides, and how to check and publish one, is in the
+`training-guides` skill (`.claude/skills/training-guides/SKILL.md`).
