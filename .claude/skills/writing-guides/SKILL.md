@@ -4,7 +4,7 @@ description: Writes and revises the interactive guides on the Machine Trading Pr
 license: MIT
 metadata:
   author: Solana Foundation
-  version: 0.2.0
+  version: 0.3.0
   repo: lgalabru/machine-trading
 ---
 
@@ -29,6 +29,7 @@ the two disagree, the spec wins, and the guide says so.
 | The build | `specs/site/build.mjs`; `npm run build` in `specs/site` |
 | The checker | `npm run check` in `specs/site` |
 | The published pages | `https://lgalabru.github.io/machine-trading/guides/...` |
+| The guides' index | `guides/index.html`, built from `GUIDE_FOLDERS` in `build.mjs`: a new folder of guides needs an entry there |
 
 Read `specs/site/guides/README.md` for the callout kinds, the lab JSON and
 the model contract before writing a lab. Copy the closest existing guide
@@ -39,8 +40,12 @@ rather than starting blank: `instruments/perp.md` for an instrument,
 
 ### One running example, everywhere
 
-Every guide uses the same reader and the same market: **you have $1,000,
-and SPCX trades at $100**. Numbers carry across sections and across guides,
+Every guide uses the same reader and the same price: **you have $1,000,
+and the market is at $100**. Perp guides use SPCX, the benchmark's perp;
+spot guides use SOL, because the spot markets the specs name trade
+SOL-USDC; strategy guides keep whichever their instrument used, and say so.
+A strategy about size, such as selling a treasury's 30,000 SOL, keeps the
+$100 and says whose holding it is. Numbers carry across sections and across guides,
 so a strategy guide can say "your 50 SPCX from the perp guide" and the
 reader already knows them. Labs fix the shared numbers (`"fixed": { "entry":
 100, "deposit": 1000 }`) rather than offering them as sliders.
@@ -198,6 +203,10 @@ Not: as long as, how long
 A guide makes numeric claims in three places: the prose, the tables, and
 the preset notes. All three must match what the models compute.
 
+0. **Probe the model before writing its claims.** Run its cases (a few
+   lines of node calling the registered model) and write each preset's note
+   from what it prints, not the other way round. If the cases don't each
+   teach something different, change the model before the text.
 1. **Run the checker.** In `specs/site`, `npm run check` prints every lab's
    readouts for its defaults and for each preset, under the preset's claim.
    Read them side by side and fix whichever is wrong. It exits non-zero on a
