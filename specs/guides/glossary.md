@@ -148,8 +148,9 @@ funding follow it.
 Also: trading hours, market closed, closed market
 
 The hours an underlying's own market trades. A perp trades around the clock,
-so outside them its price is set by perp traders alone, with no index to
-anchor it.
+so outside them the venue prices it on its own: on Phoenix, equity perps use
+external prices 24 hours a day, 5 days a week, and their own order book,
+within a cap, over weekends and holidays.
 
 ### Last price
 
@@ -280,7 +281,7 @@ Also: cross-margin
 
 One pool of margin backs every position in the account, so a gain on one
 supports a loss on another, and a big enough loss on one can liquidate them
-all. Phoenix trader accounts are cross-margined.
+all. On Phoenix, equity perps such as SPCX are cross-margined.
 
 ### Isolated margin
 
