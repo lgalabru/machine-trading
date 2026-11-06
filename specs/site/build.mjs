@@ -23,11 +23,17 @@ const FOLDERS = [
   { dir: "instruments", title: "Instruments" },
   { dir: "venues", title: "Venues" },
   { dir: "examples", title: "Examples" },
-  // Guides for people, not readers implementing the specs.
-  { dir: "guides", title: "Guides" },
-  { dir: "guides/instruments", title: "Guides: instruments" },
-  { dir: "guides/strategies", title: "Guides: strategies" },
 ];
+// The guides have their own index, guides/index.html, in the same style.
+const GUIDE_FOLDERS = [
+  { dir: "guides/instruments", title: "Instruments" },
+  { dir: "guides/strategies", title: "Strategies" },
+  { dir: "guides", title: "Reference" },
+];
+const GUIDES_INDEX = "guides/index.html";
+const GUIDES_INTRO = `<p>Guides that teach the protocol's instruments and strategies to people, one idea at a time, with interactive figures. They follow one running example: you have $1,000, and the market is at $100.</p>
+<p>The guides are not normative. Where a guide and a specification disagree, the <a href="../index.html">specification</a> is right.</p>`;
+const INDEX_PAGES = new Set(["index.html", GUIDES_INDEX]);
 // Guide pages load the labs' runtime, and their own models: the .js file
 // next to the guide, such as guides/instruments/perp.js.
 const isGuide = (page) => page.startsWith("guides/");
@@ -269,14 +275,25 @@ const TOC_SPY = `<script>
 })();
 </script>`;
 
+/** Where a folder of the breadcrumb trail links: its place in its index. */
+function folderLink(page, dir) {
+  if (dir === "guides") return link(page, GUIDES_INDEX);
+  if (dir.startsWith("guides/")) return `${link(page, GUIDES_INDEX)}#${folderId(dir)}`;
+  return `${link(page, "index.html")}#${folderId(dir)}`;
+}
+
+/** The links under an index's title. */
+const headerLinks = (page) =>
+  `<p class="header-links"><a href="${SOURCE}">Source</a><span class="sep">·</span><a href="${link(page, "mandate.html")}">Mandate v1</a><span class="sep">·</span><a href="${link(page, "bench/")}">Benchmark</a><span class="sep">·</span><a href="${link(page, GUIDES_INDEX)}">Guides</a></p>`;
+
 function layout({ page, title, head, body }) {
-  const index = page === "index.html";
+  const index = INDEX_PAGES.has(page);
   const trail = [`<a href="${link(page, "index.html")}">${NAME}</a>`]
     .concat(
       page
         .split("/")
         .slice(0, -1)
-        .map((dir, i, dirs) => `<a href="${link(page, "index.html")}#${folderId(dirs.slice(0, i + 1).join("/"))}">${dir}</a>`),
+        .map((dir, i, dirs) => `<a href="${folderLink(page, dirs.slice(0, i + 1).join("/"))}">${dir}</a>`),
     )
     .join('<span class="sep">/</span>');
   return `<!doctype html>
@@ -284,13 +301,13 @@ function layout({ page, title, head, body }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escape(index ? `${NAME} Specifications` : `${title} · ${NAME}`)}</title>
+<title>${escape(index ? title : `${title} · ${NAME}`)}</title>
 <meta name="description" content="${NAME}: what an agent may trade on someone else's behalf, and the limits it must stay within.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Machine Trading">
-<meta property="og:title" content="${escape(index ? `${NAME} Specifications` : `${title} · ${NAME}`)}">
+<meta property="og:title" content="${escape(index ? title : `${title} · ${NAME}`)}">
 <meta property="og:description" content="What an agent may trade on someone else's behalf, and the limits it must stay within.">
-<meta property="og:url" content="${SITE}/${index ? "" : page}">
+<meta property="og:url" content="${SITE}/${page === "index.html" ? "" : page}">
 <meta property="og:image" content="${SITE}/social.jpg">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
@@ -298,7 +315,7 @@ function layout({ page, title, head, body }) {
 <meta name="twitter:image" content="${SITE}/social.jpg">
 <link rel="stylesheet" href="${link(page, "style.css")}">
 ${
-  isGuide(page)
+  isGuide(page) && !index
     ? `<link rel="stylesheet" href="${link(page, "guides/mt.css")}">
 <script defer src="${link(page, "guides/mt.js")}"></script>
 ${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defer src="${path.posix.basename(page).replace(/\.html$/, ".js")}"></script>` : ""}
@@ -310,7 +327,7 @@ ${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defe
 ${index ? "" : `<p class="trail">${trail}</p>`}
 ${head}
 ${body}
-${isGuide(page) ? glossaryData(page) : ""}
+${isGuide(page) && !index ? glossaryData(page) : ""}
 ${index ? "" : TOC_SPY}
 </body>
 </html>
@@ -348,34 +365,49 @@ for (const spec of specs) {
   );
 }
 
-// The index: the README's opening paragraphs, then the tree of specs.
+// The indexes: the specs' (the README's opening paragraphs, then the tree of
+// specs) and the guides', each a tree of folders.
+const entry = (child, last) =>
+  `<div class="spec-entry"><span class="branch">${last ? "└──" : "├──"}</span> <a class="spec-title" href="${escape(child.href)}">${escape(child.title)}</a> <span class="formats">${child.note}</span></div>`;
+function treeOf(folders, from) {
+  let tree = "";
+  for (const { dir, title } of folders) {
+    const children = files
+      .filter((f) => path.posix.dirname(rel(f)) === dir && /\.(md|json)$/.test(f))
+      .sort()
+      .map((f) => {
+        const spec = specs.find((s) => s.file === f);
+        if (!spec) return { href: link(from, rel(f)), title: path.basename(f), note: "JSON" };
+        const short = spec.title.replace(/^.*?:\s*/, "").replace(/,\s*v\d+$/, "");
+        const name = short.charAt(0).toUpperCase() + short.slice(1);
+        return { href: link(from, spec.page), title: name, note: escape(spec.status ?? "") };
+      });
+    if (!children.length) continue;
+    tree += `<div class="folder" id="${folderId(dir)}"><span class="folder-icon">~/</span>${title}</div>`;
+    tree += children.map((c, i) => entry(c, i === children.length - 1)).join("");
+  }
+  return tree;
+}
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 const intro = new Marked({ gfm: true }).parse(readme.replace(/^#\s+.*$/m, "").split(/^##\s/m)[0].trim());
 const core = specs.find((s) => s.page === "mandate.html");
-const entry = (child, last) =>
-  `<div class="spec-entry"><span class="branch">${last ? "└──" : "├──"}</span> <a class="spec-title" href="${escape(child.href)}">${escape(child.title)}</a> <span class="formats">${child.note}</span></div>`;
-let tree = `<div class="folder"><a class="spec-title" href="${core.page}"><span class="folder-icon">~/</span>${escape(core.title)}</a> <span class="formats">${escape(core.status ?? "")}</span></div>`;
-for (const { dir, title } of FOLDERS) {
-  const children = files
-    .filter((f) => path.posix.dirname(rel(f)) === dir && /\.(md|json)$/.test(f))
-    .sort()
-    .map((f) => {
-      const spec = specs.find((s) => s.file === f);
-      if (!spec) return { href: rel(f), title: path.basename(f), note: "JSON" };
-      const short = spec.title.replace(/^.*?:\s*/, "").replace(/,\s*v\d+$/, "");
-      const name = short.charAt(0).toUpperCase() + short.slice(1);
-      return { href: spec.page, title: name, note: escape(spec.status ?? "") };
-    });
-  tree += `<div class="folder" id="${folderId(dir)}"><span class="folder-icon">~/</span>${title}</div>`;
-  tree += children.map((c, i) => entry(c, i === children.length - 1)).join("");
-}
+const coreEntry = `<div class="folder"><a class="spec-title" href="${core.page}"><span class="folder-icon">~/</span>${escape(core.title)}</a> <span class="formats">${escape(core.status ?? "")}</span></div>`;
 write(
   "index.html",
   layout({
     page: "index.html",
-    title: NAME,
-    head: `<h1>${NAME} Specifications</h1><p class="header-links"><a href="${SOURCE}">Source</a><span class="sep">·</span><a href="mandate.html">Mandate v0</a><span class="sep">·</span><a href="bench/">Benchmark</a></p>`,
-    body: `<div class="intro">${intro}</div><div class="tree">${tree}</div>`,
+    title: `${NAME} Specifications`,
+    head: `<h1>${NAME} Specifications</h1>${headerLinks("index.html")}`,
+    body: `<div class="intro">${intro}</div><div class="tree">${coreEntry}${treeOf(FOLDERS, "index.html")}</div>`,
+  }),
+);
+write(
+  GUIDES_INDEX,
+  layout({
+    page: GUIDES_INDEX,
+    title: `${NAME} Guides`,
+    head: `<h1>${NAME} Guides</h1>${headerLinks(GUIDES_INDEX)}`,
+    body: `<div class="intro">${GUIDES_INTRO}</div><div class="tree">${treeOf(GUIDE_FOLDERS, GUIDES_INDEX)}</div>`,
   }),
 );
 

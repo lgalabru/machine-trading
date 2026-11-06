@@ -108,6 +108,29 @@ Profit and loss: what a position has made or lost. Unrealized PnL is what it
 would make if closed at the current price; realized PnL is what closed
 trades actually made.
 
+### Base and quote
+
+Also: base asset, quote asset, base token, quote token, pair, trading pair
+
+The two assets of a spot market, written base-quote: in `SOL-USDC`, SOL is
+the base, what the market trades, and USDC the quote, what prices are in.
+
+### Wallet
+
+Also: wallets
+
+The agent authority's own token accounts, outside any venue. Tokens move
+between the wallet and a venue's accounts as the agent deposits, trades and
+settles.
+
+### Wrapped SOL
+
+Also: wSOL
+
+SOL in the form of a token, which venues can trade like any other.
+Native SOL also pays transaction fees, so the venue profiles count only
+the wrapped kind as a holding.
+
 ### Hedge
 
 Also: hedges, hedging, hedged
@@ -153,6 +176,19 @@ The hours an underlying's own market trades. A perp trades around the clock,
 so outside them the venue prices it on its own: on Phoenix, equity perps use
 external prices 24 hours a day, 5 days a week, and their own order book,
 within a cap, over weekends and holidays.
+
+### Mid price
+
+Also: mid, the mid
+
+Halfway between the best bid and the best ask.
+
+### Arrival price
+
+Also: arrival
+
+The price when a sale or a purchase starts, which its result is measured
+against.
 
 ### Last price
 
@@ -396,6 +432,27 @@ rebate to orders that rested on its book and charging the orders that took
 them. The model spread to nearly every electronic venue.
 :::
 
+### Open orders account
+
+Also: open orders accounts, OpenOrders
+
+On OpenBook, the account that holds a trader's orders and balances on one
+market: what its fills paid it, and what its resting orders lock.
+
+### Seat
+
+Also: seats
+
+On a Phoenix spot market, a trader's place in the market account, holding
+its free and locked balances.
+
+### Settle
+
+Also: settles, settled, settling, settle funds
+
+Moving what a venue holds for you back to your wallet. Unsettled balances
+are still yours, and still count as your holdings.
+
 ### Slippage
 
 The difference between the price you expected and the price you got,
@@ -502,6 +559,43 @@ Quoting both a price to buy and a price to sell, and earning the gap between
 them from the traders who take the quotes. The market maker ends up holding
 whatever those traders didn't want.
 
+### Implementation shortfall
+
+Also: shortfall, shortfalls
+
+What a sale or purchase lost against its arrival price: the paper value
+minus the proceeds and the value of whatever is left. See the
+[guide](strategies/selling-a-large-position.md).
+
+### Market impact
+
+Also: impact, temporary impact, permanent impact, price impact
+
+How far your own trading moves the price. Temporary impact fades as the
+book refills; permanent impact stays, because the market has learned there
+is a seller or a buyer.
+
+### TWAP
+
+Also: time-weighted average price
+
+Selling, or buying, the same amount in every period of a session, so the
+result is roughly the market's average price over it.
+
+### Schedule
+
+Also: schedules, slice, slices
+
+How much a large order trades when: a slice in each period, sized by a
+rule.
+
+### Front-running
+
+Also: front-runner, front-runners, front-run, traded ahead of
+
+Trading just ahead of an order you've seen or predicted, to profit from
+the price move it causes.
+
 ## Mandates
 
 ### Mandate
@@ -541,6 +635,20 @@ Also: max_drawdown_usd
 
 The most, in USD, an account's value may fall below its running peak:
 `max_drawdown_usd`. It covers the whole account.
+
+### Sides
+
+Also: sell-only, buy-only
+
+Whether a mandate lets the agent buy, sell, or both, in an instrument. It
+covers resting orders as well as fills.
+
+### Limit price
+
+Also: price floor, floor, min_sell_price, max_buy_price
+
+The worst price at which a mandate lets the agent sell (`min_sell_price`)
+or buy (`max_buy_price`). It applies to every fill, not the average.
 
 ### Enforcer
 

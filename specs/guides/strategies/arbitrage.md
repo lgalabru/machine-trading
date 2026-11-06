@@ -229,17 +229,37 @@ The numbers an arbitrage bot needs before it trades:
 
 ## Arbitrage under a mandate
 
-A v0 [mandate](../../mandate.md) holds perps on one venue only, so neither
-kind of arbitrage fits in one yet:
+[Mandate v1](../../mandate.md) can hold both kinds: it allows `spot`
+instruments, and a universe that spans several venues, with the account's
+value added up across them.
 
-- **Cross-venue arbitrage** needs a universe that spans two venues, with the
-  account's value added up across them.
-- **Cash and carry** needs a `spot` instrument for its long leg.
+**Cross-venue arbitrage** on SOL allows the same pair on two venues, both
+sides:
 
-Both are listed as [later changes](../../mandate.md#changes-in-later-versions).
-A mandate for cash and carry would allow the spot and the perp, cap each
-leg's position, and set a drawdown limit on the two together. The two caps
-should be equal, so the agent can't hold more on one leg than the other.
+```json
+{
+  "version": "v1",
+  "universe": [
+    { "instrument": "openbook:spot:SOL-USDC", "max_position": 100 },
+    { "instrument": "phoenix:spot:SOL-USDC", "max_position": 100 }
+  ],
+  "limits": { "max_drawdown_usd": 500 }
+}
+```
+
+Both allowances measure the same SOL, held wherever it is, so the cap bounds
+the SOL the agent has bought and not yet sold, across both venues.
+
+**Cash and carry** pairs a spot leg with a perp leg on the same asset:
+`openbook:spot:SOL-USDC` long and `phoenix:perp:SOL` short. The spot
+position is the SOL held; the perp position is the short. Setting both caps
+equal keeps the agent from holding more on one leg than the other, and the
+drawdown limit covers the two legs together, since the account's value adds
+them up.
+
+Neither mandate says the legs must match: it bounds what the agent may hold,
+not how it hedges. A short perp leg left without its spot leg is within both
+caps, and only the drawdown limit catches what it costs.
 
 ## Check yourself
 
