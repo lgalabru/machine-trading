@@ -182,7 +182,7 @@ venue whose maintenance margin is 3%. Four numbers matter as SPCX moves:
 | $100 | $1,000 + 50 × $0 = $1,000 | $5,000 | $150 | 5× | fine |
 | $90 | $1,000 − 50 × $10 = $500 | $4,500 | $135 | 9× | fine |
 | $85 | $1,000 − 50 × $15 = $250 | $4,250 | $127.50 | 17× | getting close |
-| $82.47 | $1,000 − 50 × $17.53 = $123.70 | $4,123.50 | $123.70 | 33× | **liquidated** |
+| about $82.47 | $1,000 − 50 × $17.53 ≈ $123.70 | ≈ $4,123.70 | ≈ $123.70 | 33× | **liquidated** |
 
 The liquidation price is where what's left equals what the venue requires:
 
