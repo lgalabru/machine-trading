@@ -8,19 +8,18 @@ how a [mandate](../../mandate.md) keeps an agent trading one inside limits.
 The [instrument profile](../../instruments/perp.md) is the normative text;
 when this guide and the profile disagree, the profile is right.
 
-The figures are a teaching model with made-up prices. Margin covers one
-position, and funding accrues every hour at a fixed rate. A
+It builds one idea at a time, on a single example: you have $1,000, and SPCX
+trades at $100. The figures use made-up prices and a simplified venue; a
 [venue profile](../../venues/), such as [Phoenix](../../venues/phoenix.md),
-defines the real mark price, margin and funding.
+defines the real rules.
 
 :::glance
-- **Kind:** `perp`, as in `phoenix:perp:SPCX`
-- **You hold:** a signed quantity of the underlying. Positive is long, negative is short
-- **You gain when:** the price moves your way
-- **You pay or earn:** funding, for as long as you hold
-- **Expiry:** none
-- **Worst case:** liquidation, which takes the margin you posted
-- **Mandate limits:** `max_position` per perp, `max_drawdown_usd` per account
+- **You bet on:** a price going up (long) or down (short)
+- **You put down:** a deposit, called margin, not the full price
+- **You gain or lose:** $1 per unit for every $1 the price moves
+- **It never expires:** you hold it as long as you like
+- **While you hold:** you pay or earn a small fee, called funding
+- **Worst case:** the venue closes your bet and keeps the deposit
 :::
 
 :::eli5
@@ -47,10 +46,9 @@ stock or a token, without anyone owning the underlying. Buying one (going
 it falls. Shorting is as easy as buying, which is the main reason traders use
 perps.
 
-A perp has no expiry. A dated future converges to the underlying's price by
-settling on its expiry date. A perp has no such date, so it is held close to
-the underlying's price by **funding**: periodic payments between longs and
-shorts, covered [below](#funding).
+A perp never expires: you hold it for as long as you like. What keeps its
+price close to the underlying's is a payment between longs and shorts called
+funding, which comes [later](#funding), once the basics are in place.
 
 :::history Where perps come from
 The economist Robert Shiller proposed perpetual futures in 1993, as a way
@@ -128,11 +126,10 @@ so one odd trade can't liquidate anyone.
   "controls": [
     { "id": "side", "label": "You think SPCX will", "type": "choice", "options": [["long", "Go up (long)"], ["short", "Go down (short)"]], "value": "long" },
     { "id": "deposit", "label": "Your dollars (margin)", "min": 100, "max": 10000, "step": 100, "value": 1000, "format": "usd0" },
-    { "id": "leverage", "label": "Leverage", "min": 1, "max": 25, "step": 0.5, "value": 5, "format": "x", "hint": "Position size ÷ your dollars." },
-    { "id": "exit", "label": "SPCX moves to", "min": 50, "max": 150, "step": 0.5, "value": 110, "format": "price" },
-    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num", "hint": "The venue liquidates you when what's left falls below this share of the position." }
+    { "id": "leverage", "label": "Leverage", "min": 1, "max": 25, "step": 0.5, "value": 5, "format": "x", "hint": "How many times your dollars the position is worth." },
+    { "id": "exit", "label": "SPCX moves to", "min": 50, "max": 150, "step": 0.5, "value": 110, "format": "price" }
   ],
-  "fixed": { "entry": 100 },
+  "fixed": { "maintenance": 3, "entry": 100 },
   "presets": [
     { "label": "Like buying the shares", "set": { "leverage": 1 }, "note": "1×: the perp line sits on the grey one. Long 10 SPCX is the same bet as buying 10 SPCX, and only SPCX going to zero wipes it out." },
     { "label": "5×, SPCX up 10%", "set": { "leverage": 5, "exit": 110 }, "note": "A 10% rise turns $1,000 into $1,500: five times what buying the shares makes." },
@@ -140,7 +137,7 @@ so one odd trade can't liquidate anyone.
     { "label": "20×, a small dip", "set": { "leverage": 20, "exit": 97.5 }, "note": "At 20×, a 2.5% dip is enough to liquidate you." },
     { "label": "Short, SPCX falls", "set": { "side": "short", "leverage": 5, "exit": 90 }, "note": "Short 50 SPCX: the 10% fall that cost the long $500 makes the short $500." }
   ],
-  "caption": "Each $1 SPCX moves is worth $1 per unit you hold. Leverage sets how many units your dollars carry, so it steepens the line, and it moves the liquidation point closer: past it, the line drops to zero."
+  "caption": "Each $1 SPCX moves is worth $1 per unit you hold. Leverage sets how many units your dollars carry, so it steepens the line, and it moves the liquidation point closer: past it, the line drops to zero. The [next section](#margin-leverage-and-liquidation) explains exactly where that point is."
 }
 ```
 
@@ -201,15 +198,15 @@ to pay for the cleanup.
   "title": "Where SPCX has to go to liquidate you",
   "lede": "Your $1,000 again, SPCX at $100. Move the leverage and watch the liquidation prices close in on today's price. The shaded band is how far SPCX moves on an ordinary day.",
   "controls": [
-    { "id": "leverage", "label": "Your leverage", "min": 1, "max": 50, "step": 0.5, "value": 5, "format": "x" },
+    { "id": "leverage", "label": "Your leverage", "min": 1, "max": 30, "step": 0.5, "value": 5, "format": "x" },
     { "id": "daily", "label": "SPCX on an ordinary day (± %)", "min": 0.5, "max": 15, "step": 0.5, "value": 3, "format": "num", "hint": "A big stock moves 1–2% a day; a small token 5% or more." },
-    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 5, "step": 0.25, "value": 1, "format": "num", "hint": "Leverage can't exceed 1 ÷ this." }
+    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 1, "max": 5, "step": 0.5, "value": 3, "format": "num", "hint": "The floor from the table above. Leverage can't exceed 1 ÷ this." }
   ],
   "fixed": { "entry": 100, "deposit": 1000 },
   "presets": [
-    { "label": "Calm SPCX", "set": { "daily": 1.5 }, "note": "SPCX moving about 1.5% a day, like a large stock: an ordinary day only liquidates you past about 40×." },
-    { "label": "Wild SPCX", "set": { "daily": 8 }, "note": "SPCX moving 8% a day: from about 11× up, an ordinary day liquidates you." },
-    { "label": "Max leverage", "set": { "leverage": 50 }, "note": "At 50×, $1,000 holds 500 SPCX, and SPCX falling to about $99 ends the trade." }
+    { "label": "Calm SPCX", "set": { "daily": 1.5 }, "note": "SPCX moving about 1.5% a day, like a large stock: an ordinary day only liquidates you past about 22×." },
+    { "label": "Wild SPCX", "set": { "daily": 8 }, "note": "SPCX moving 8% a day: from about 9.5× up, an ordinary day liquidates you." },
+    { "label": "30×", "set": { "leverage": 30 }, "note": "At 30×, $1,000 holds 300 SPCX, and SPCX falling to about $99.66 ends the trade: a third of a percent." }
   ],
   "caption": "The liquidation price moves toward today's price roughly as one over the leverage. Once a line enters the band, a normal day's move is enough to end the trade."
 }
@@ -223,8 +220,10 @@ the time a position typically survives by about four.
 
 ## Funding
 
-Since a perp never settles, something has to stop its price drifting away
-from the underlying's. That something is **funding**: at a regular interval
+A **dated future**, the older kind of future, has an expiry date on which it
+settles at the underlying's price, so its price has to meet the
+underlying's by then. A perp never settles, so something else has to stop
+its price drifting away from the underlying's. That something is **funding**: at a regular interval
 the venue compares the perp's price with the underlying's, and moves money
 between longs and shorts.
 
@@ -247,10 +246,9 @@ position elsewhere earns the funding with no price exposure.
     { "id": "side", "label": "You are", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
     { "id": "leverage", "label": "Leverage", "min": 1, "max": 20, "step": 0.5, "value": 5, "format": "x", "hint": "Funding is paid on the position, not on your dollars." },
     { "id": "rate", "label": "Funding rate, per hour", "min": -3, "max": 3, "step": 0.05, "value": 0.15, "format": "bp", "hint": "Positive: longs pay shorts. 1 bp is 0.01%." },
-    { "id": "days", "label": "Days held", "min": 1, "max": 90, "step": 1, "value": 30, "format": "d" },
-    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num" }
+    { "id": "days", "label": "Days held", "min": 1, "max": 90, "step": 1, "value": 30, "format": "d" }
   ],
-  "fixed": { "entry": 100, "deposit": 1000 },
+  "fixed": { "maintenance": 3, "entry": 100, "deposit": 1000 },
   "presets": [
     { "label": "Calm market", "set": { "rate": 0.15 }, "note": "About 13% a year on the position. At 5× that is about 65% a year on your $1,000: $54 over a month." },
     { "label": "Crowded long", "set": { "rate": 2 }, "note": "Everyone is long SPCX. Your long 50 SPCX pays $24 a day, and a month costs you $720 of your $1,000." },
@@ -332,41 +330,6 @@ part of the trade.
 ::
 :::
 
-## Scenarios
-
-Each scenario plays 48 hours of a made-up SPCX market against one perp
-position, under a mandate. The three panels share a time axis: hover one to read all
-three at that hour. The top panel is the market, the middle what the position
-made, and the bottom how far it fell from its best, against the mandate's
-drawdown limit.
-
-```lab
-{
-  "model": "perp.scenario",
-  "title": "48 hours of SPCX, under a mandate",
-  "lede": "SPCX starts at $100. Choose what it does over the next two days, then size your position and set the mandate's limits.",
-  "controls": [
-    { "id": "path", "label": "What SPCX does", "type": "choice", "options": [["rally", "Rally"], ["chop", "Chop"], ["bleed", "Slow bleed"], ["flash-crash", "Flash crash"], ["squeeze", "Short squeeze"]], "value": "flash-crash" },
-    { "id": "side", "label": "Side", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
-    { "id": "size", "label": "Position (SPCX)", "min": 0, "max": 120, "step": 1, "value": 50, "format": "num" },
-    { "id": "leverage", "label": "Leverage", "min": 1, "max": 20, "step": 0.5, "value": 3, "format": "x" },
-    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num" },
-    { "id": "funding", "label": "Funding rate, per hour", "min": -3, "max": 3, "step": 0.05, "value": 0.15, "format": "bp" },
-    { "id": "cap", "label": "Mandate: max_position", "min": 10, "max": 120, "step": 1, "value": 70, "format": "num" },
-    { "id": "limit", "label": "Mandate: max_drawdown_usd", "min": 100, "max": 3000, "step": 50, "value": 1000, "format": "usd0" }
-  ],
-  "presets": [
-    { "label": "Long into a flash crash", "set": { "path": "flash-crash", "side": "long", "size": 50, "leverage": 3 }, "note": "A 22% fall in an hour. The position survives the venue but breaks the drawdown limit, which no recovery undoes." },
-    { "label": "Same, at 5×", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 5 }, "note": "At 5× the venue liquidates the position at the bottom, and it misses the rebound." },
-    { "label": "Sized for the limit", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 3 }, "note": "40 SPCX: the same crash costs less than the drawdown limit, if only just, and the mandate holds." },
-    { "label": "Short into a squeeze", "set": { "path": "squeeze", "side": "short", "size": 40, "leverage": 8 }, "note": "A short squeeze: the price jumps 20% in three hours and the short is liquidated." },
-    { "label": "Paying to wait", "set": { "path": "chop", "side": "long", "size": 60, "funding": 2.5 }, "note": "A market going nowhere, with crowded funding: the position bleeds funding every hour." },
-    { "label": "Over the cap", "set": { "path": "rally", "size": 90 }, "note": "A winning trade that breaks the mandate anyway: 90 SPCX against a cap of 70." }
-  ],
-  "caption": "The drawdown limit counts from the running peak, not from entry: a position that first gains and then gives it back can break it without ever being down overall. Sizing so that `max_drawdown_usd ÷ position` is larger than the moves you expect keeps the mandate."
-}
-```
-
 ## Trading a perp under a mandate
 
 The [mandate](../../mandate.md) bounds an agent with two numbers for a perp,
@@ -391,6 +354,41 @@ limit, through replayed sessions in which the price may crash. Holding the
 full cap into a crash of more than about $14 breaks the limit, so a bot has
 to size for the crash it can't predict, or cut quickly when it starts.
 :::
+
+## Scenarios
+
+Each scenario plays 48 hours of a made-up SPCX market against one perp
+position, under a mandate. The three panels share a time axis: hover one to read all
+three at that hour. The top panel is the market, the middle what the position
+made, and the bottom how far it fell from its best, against the mandate's
+drawdown limit.
+
+```lab
+{
+  "model": "perp.scenario",
+  "title": "48 hours of SPCX, under a mandate",
+  "lede": "SPCX starts at $100. Choose what it does over the next two days, then size your position and set the mandate's limits.",
+  "controls": [
+    { "id": "path", "label": "What SPCX does", "type": "choice", "options": [["rally", "Rally"], ["chop", "Chop"], ["bleed", "Slow bleed"], ["flash-crash", "Flash crash"], ["squeeze", "Short squeeze"]], "value": "flash-crash" },
+    { "id": "side", "label": "Side", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
+    { "id": "size", "label": "Position (SPCX)", "min": 0, "max": 120, "step": 1, "value": 50, "format": "num" },
+    { "id": "leverage", "label": "Leverage", "min": 1, "max": 20, "step": 0.5, "value": 3, "format": "x" },
+    { "id": "funding", "label": "Funding rate, per hour", "min": -3, "max": 3, "step": 0.05, "value": 0.15, "format": "bp" },
+    { "id": "cap", "label": "Mandate: max_position", "min": 10, "max": 120, "step": 1, "value": 70, "format": "num" },
+    { "id": "limit", "label": "Mandate: max_drawdown_usd", "min": 100, "max": 3000, "step": 50, "value": 1000, "format": "usd0" }
+  ],
+  "fixed": { "maintenance": 3 },
+  "presets": [
+    { "label": "Long into a flash crash", "set": { "path": "flash-crash", "side": "long", "size": 50, "leverage": 3 }, "note": "A 22% fall in an hour. The position survives the venue but breaks the drawdown limit, which no recovery undoes." },
+    { "label": "Same, at 5×", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 5 }, "note": "At 5× the venue liquidates the position at the bottom, and it misses the rebound." },
+    { "label": "Sized for the limit", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 3 }, "note": "40 SPCX: the same crash costs less than the drawdown limit, if only just, and the mandate holds." },
+    { "label": "Short into a squeeze", "set": { "path": "squeeze", "side": "short", "size": 40, "leverage": 8 }, "note": "A short squeeze: the price jumps 20% in three hours and the short is liquidated." },
+    { "label": "Paying to wait", "set": { "path": "chop", "side": "long", "size": 60, "funding": 2.5 }, "note": "A market going nowhere, with crowded funding: the position bleeds funding every hour." },
+    { "label": "Over the cap", "set": { "path": "rally", "size": 90 }, "note": "A winning trade that breaks the mandate anyway: 90 SPCX against a cap of 70." }
+  ],
+  "caption": "The drawdown limit counts from the running peak, not from entry: a position that first gains and then gives it back can break it without ever being down overall. Sizing so that `max_drawdown_usd ÷ position` is larger than the moves you expect keeps the mandate."
+}
+```
 
 ## Check yourself
 
