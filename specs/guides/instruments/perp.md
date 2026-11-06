@@ -264,7 +264,33 @@ position elsewhere earns the funding with no price exposure.
 }
 ```
 
-## Parameters
+### When SPCX's own market is closed
+
+The perp trades around the clock, even when the market it tracks doesn't.
+If SPCX is a stock, its exchange closes every evening and every weekend,
+but the perp is a separate market between perp traders on the venue, and
+its price is whatever they agree on, at any hour.
+
+What closing stops is the anchor. While SPCX's market is open, the venue's
+index price follows it, and funding and arbitrageurs keep the perp close.
+When it closes:
+
+| | SPCX's market open | SPCX's market closed |
+| --- | --- | --- |
+| **Index price** | Follows SPCX's market | Stuck at the last price, or missing |
+| **Perp price** | Held near the index | Set by perp traders alone |
+| **News** | Moves both | Moves only the perp |
+| **Your position** | Re-valued as usual | Still re-valued, still liquidated if the floor is hit |
+
+When the market reopens, the index jumps to wherever SPCX opens, and funding
+and arbitrage pull the perp toward it. If perp traders guessed wrong in the
+meantime, the perp moves in one step, and a position can be liquidated at a
+price SPCX never traded at in between.
+
+Venues handle the closed hours differently: some value positions at the
+perp's own order book, some pause funding, lower the leverage they allow,
+or halt the market. The venue profile says what yours does.
+
 
 What a perp is, as the specs and a venue describe it:
 
@@ -305,6 +331,11 @@ large order in a thin book moves the price against itself as it fills.
 Positions are valued at the venue's mark, not the price you see elsewhere. A
 mark that lags or diverges from other markets can liquidate a position the
 other markets say is safe.
+::
+::risk Closed markets
+The perp trades when SPCX's own market is closed, with nothing to anchor it.
+When the market reopens, the price can jump straight past your liquidation
+price.
 ::
 ::risk Venue risk
 The venue holds the margin. Its software, its oracles and its solvency are
