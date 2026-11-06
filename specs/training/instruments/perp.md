@@ -161,6 +161,40 @@ is left of the margin covers the loss and the liquidation's fee. A
 liquidation is final. If the price comes back an hour later, you are no
 longer in the trade to recover.
 
+### Maintenance margin, step by step
+
+Back to your $1,000, long 50 SPCX at $100, on a venue whose maintenance
+margin is 3%. What's left in your account (your equity) is your $1,000 plus
+your PnL. The venue requires it to stay above 3% of what the position is
+worth right now:
+
+| SPCX | What's left | Venue requires (3% × 50 × SPCX) | |
+| --- | --- | --- | --- |
+| $100 | $1,000 | $150 | fine |
+| $90 | $500 | $135 | fine |
+| $85 | $250 | $127.50 | fine, getting close |
+| about $82.47 | about $124 | about $124 | **liquidated** |
+
+So you are liquidated with about $124 still in the account, not at zero. The
+venue doesn't wait for zero because closing takes time: it has to sell your
+50 SPCX into the market, the price keeps moving while it does, and selling in
+a hurry costs money. The cushion pays for that, and for the venue's
+liquidation fee, so your loss never lands on the venue or other traders.
+Whatever is left after the close may come back to you, depending on the
+venue. The figures in this guide treat it as lost.
+
+Opening a position needs more: the **initial margin**. If it is 10%, a
+$5,000 position needs at least $500, so 10× is the most leverage you can
+open with. The gap between the initial and the maintenance margin is your
+room to lose before liquidation. And leverage above 1 ÷ maintenance (33× at
+3%) is impossible: the position would be under the floor the moment it opened.
+
+:::eli5 Like a rental deposit
+A landlord holds your deposit while you live there. If the damage you do
+nearly uses it up, they end the lease before it's all gone, keeping enough
+to pay for the cleanup.
+:::
+
 ```lab
 {
   "model": "perp.leverage",
