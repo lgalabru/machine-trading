@@ -396,24 +396,78 @@ drawdown limit.
 
 ## Check yourself
 
+Three questions for each idea, all on SPCX. Work each one out on the ticket
+first (margin, leverage, notional, position), then open the answer.
+
+### PnL and leverage
+
 :::check You're long 10 SPCX from $100 at 5×. SPCX falls to $95. What is your PnL, and what share of your margin is it?
-−$50. The notional was $1,000 and the margin $200, so −$50 is 25% of the
-margin: 5× the 5% move.
+−$50. The notional is 10 × $100 = $1,000, so the margin is $1,000 ÷ 5 = $200,
+and −$50 is 25% of it: 5× the 5% move.
 :::
+
+:::check You put $1,000 of margin at 10× into a long, with SPCX at $100. SPCX rises to $104. What is your equity?
+$1,400. The notional is $10,000, so the position is 100 SPCX, and the PnL is
+100 × $4 = +$400: a 4% move is 40% on your margin.
+:::
+
+:::check You're short 20 SPCX from $100 at 4×. SPCX rises to $103. What is your PnL, and what's left of your margin?
+−$60, leaving $440. The notional is $2,000, so the margin is $500. A short
+loses when SPCX rises: 20 × $3 = $60, which is 12% of the margin.
+:::
+
+### Funding
 
 :::check Funding is +1 bp an hour and you're short $10,000 of notional. Do you pay or receive, and how much a day?
 You receive. Positive funding means longs pay shorts: 0.01% × $10,000 × 24 =
 $24 a day.
 :::
 
-:::check Your mandate's drawdown limit is $1,000 and you're long 50 SPCX. How far can SPCX fall from its peak before you break it?
-$20: $1,000 ÷ 50 SPCX. From a peak of $110, SPCX falling below $90 breaks it. Funding paid along the way uses up some of that room.
+:::check You're long 50 SPCX at $100, and funding is −0.5 bp an hour. Do you pay or receive, and how much a day?
+You receive. Negative funding means shorts pay longs: 0.005% × $5,000 × 24 =
+$6 a day.
 :::
+
+:::check You're long with $1,000 of margin at 5×, and funding is +2 bp an hour. SPCX doesn't move. How long until funding has cost you 10% of your margin?
+About 4 days. Funding is paid on the $5,000 notional, not the margin:
+0.02% × $5,000 × 24 = $24 a day, and $100 ÷ $24 ≈ 4.2 days.
+:::
+
+### The drawdown limit
+
+:::check Your mandate's drawdown limit is $1,000 and you're long 50 SPCX. How far can SPCX fall from its peak before you break it?
+$20: $1,000 ÷ 50 SPCX. From a peak of $110, SPCX falling below $90 breaks it.
+Funding paid along the way uses up some of that room.
+:::
+
+:::check Your limit is $500 and you're long 25 SPCX from $100. SPCX rises to $120, then falls. At what price do you break the limit?
+Below $100, where you started. The peak is at $120, and the limit allows
+$500 ÷ 25 = $20 from there. You break the mandate with a PnL of zero, because
+the limit counts from the peak, not from your entry.
+:::
+
+:::check Your limit is $1,000 and you're short 40 SPCX. How far can SPCX rise before you break it?
+$25 from its lowest point since you opened: $1,000 ÷ 40 SPCX. For a short,
+the peak of your account is where SPCX bottomed.
+:::
+
+### The mandate's rules
 
 :::check Why can a winning trade still break the mandate?
 Because the position cap is independent of PnL: a position over
 `max_position` breaks the mandate whether or not it is making money. And the
 drawdown limit counts from the peak, so giving back gains counts too.
+:::
+
+:::check Your `max_position` is 70. You're long 60 SPCX, with a buy order for 20 more resting on the book. Have you broken the mandate?
+Not yet: open orders don't count until they fill. But if the order fills,
+you're long 80 SPCX and over the cap. Size resting orders so that no fill can
+take you past it: here, 10 SPCX at most.
+:::
+
+:::check Your mandate's universe is only `phoenix:perp:SPCX`. You leave an order on another Phoenix market resting, and it never fills. Have you broken the mandate?
+Yes. The universe rule covers open orders as well as positions: an order in
+an instrument outside the universe breaks it, filled or not.
 :::
 
 ## Glossary
