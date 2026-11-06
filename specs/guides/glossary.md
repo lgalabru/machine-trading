@@ -160,7 +160,7 @@ closes.
 
 ### Bid and ask
 
-Also: bid, ask, bids, asks, best bid, best ask
+Also: bid, bids, best bid, best ask
 
 The highest price a buyer is offering (the bid) and the lowest a seller is
 asking (the ask). A market order buys at the ask and sells at the bid.

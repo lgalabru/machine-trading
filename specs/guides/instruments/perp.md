@@ -57,76 +57,69 @@ They took off in crypto instead: BitMEX launched a perpetual swap on bitcoin
 in 2016, and perps are now the most traded crypto derivative.
 :::
 
-### A first trade, step by step
+### Your first trade
 
 You have **$1,000**, and you think SPCX, trading at **$100**, is going up.
+Without a perp, your $1,000 buys 10 SPCX. With a perp, you open a long
+position on a venue instead, and the trade comes down to five numbers, in
+the order you meet them:
 
-**Without a perp**, you buy 10 SPCX with your $1,000. If SPCX rises to $110
-you have $1,100. If it falls to $90 you have $900. You own the shares, and
-the most you can lose is the $1,000.
-
-**With a perp**, you deposit the $1,000 on the venue, and open a long
-position. You don't buy any SPCX: you hold a contract whose value moves by $1
-per unit for every $1 SPCX moves. The deposit, your **margin**, is there to
-cover the losses.
-
-No money changes hands while SPCX moves. The venue re-values your position
-every time its mark price updates, which on an on-chain venue can be several
-times a second, and counts the gain or loss against your margin. That running
-number is your unrealized PnL, and it is what the venue checks to decide
-whether to liquidate you. It becomes real dollars when you close. The one
-payment that does happen while you hold is [funding](#funding), on a fixed
-schedule.
-
-You choose the size, and the venue lets you choose more than your dollars
-would buy:
-
-- **Long 10 SPCX** is a $1,000 position on $1,000 of margin: 1× leverage.
-  It moves exactly like buying the 10 shares.
-- **Long 50 SPCX** is a $5,000 position on the same $1,000: 5× leverage.
-  Every $1 SPCX moves is now $50 to you.
-
-At 5×, here is what your $1,000 becomes:
-
-| SPCX moves to | Your PnL | You have |
+| Number | Your trade | What it is |
 | --- | --- | --- |
-| $110 | 50 × +$10 = +$500 | $1,500 |
+| **SPCX price** | $100 | What SPCX trades at when you open. |
+| **Margin** | $1,000 | What you commit: you deposit it on the venue. It's the most you can lose. |
+| **Leverage** | 5× | The one number you choose: how many times your margin the bet is. |
+| **Notional** | $5,000 | The size of your bet in dollars: margin × leverage. You never pay it. |
+| **Position** | 50 SPCX | The notional in SPCX: $5,000 ÷ $100. Long is +50; short would be −50. |
+
+You don't own any SPCX. You hold a contract that gains $50, $1 for each of
+your 50 SPCX, every time SPCX rises $1, and loses $50 every time it falls $1.
+Buying 10 SPCX outright is the same ticket at 1×: a $1,000 notional, 10 SPCX.
+
+### As SPCX moves
+
+Two more numbers follow from the ticket as SPCX moves. Your **PnL** (profit
+and loss) is your position times how far SPCX has moved. Your **equity** is
+your margin plus your PnL: what's left, and what you'd walk away with if you
+closed now.
+
+| SPCX | PnL: 50 × (SPCX − $100) | Equity: $1,000 + PnL |
+| --- | --- | --- |
+| $110 | +$500 | $1,500 |
 | $100 | $0 | $1,000 |
-| $90 | 50 × −$10 = −$500 | $500 |
-| about $82 | about −$880 | **liquidated**: the venue closes the position, and the margin is gone |
+| $90 | −$500 | $500 |
+| ≈ $82.47 | ≈ −$876 | ≈ $124, and the venue closes your position |
 
-The last row is the catch. Once your losses eat almost all of your margin,
-the venue closes the position for you, even if SPCX is back at $100 the next
-day.
+The last row is the catch: the venue closes the position before your equity
+reaches zero. That is **liquidation**, and the [next
+section](#leverage-and-liquidation) explains exactly where it happens. Going
+**short** is the mirror image: short 50 SPCX gains $50 for every $1 SPCX
+falls.
 
-Going **short** is the mirror image: short 50 SPCX gains $50 for every $1
-SPCX falls. Without a perp you would have to borrow shares to sell them.
-
-### Position and PnL
-
-In the specs, the position is the number of units, positive when long and
-negative when short: +50, or −50. It is counted in the underlying's units,
-here SPCX, not in dollars. Its **notional** is the units times the price,
-and its **PnL** (profit and loss) is the units times how far the price has
-moved since you opened it:
+The ticket and the ledger, in four lines:
 
 ```
-PnL = position × (mark price − entry price)
+notional = margin × leverage                 $1,000 × 5    = $5,000
+position = notional ÷ SPCX at entry          $5,000 ÷ $100 = 50 SPCX
+PnL      = position × (SPCX now − SPCX at entry)
+equity   = margin + PnL
 ```
 
-The **mark price** is the price the venue values positions at. It is usually
-built from an index of other markets rather than the last trade on the venue,
-so one odd trade can't liquidate anyone.
+No money changes hands while SPCX moves: the venue re-values your position
+each time its **mark price** for SPCX updates, several times a second on an
+on-chain venue, and your equity moves with it. The PnL becomes real dollars
+when you close. The mark price is built from other markets' prices rather
+than the venue's last trade, so one odd trade can't liquidate anyone.
 
 ```lab
 {
   "model": "perp.payoff",
   "title": "What your dollars become",
-  "lede": "Deposit some dollars, pick the leverage, then drag where SPCX goes. The blue line is what you'd have with the perp, the grey one what you'd have without it.",
+  "lede": "The ticket from above: set your margin and leverage, then drag where SPCX goes. The blue line is your equity with the perp, the grey one what your margin would be worth if you had bought SPCX with it.",
   "controls": [
     { "id": "side", "label": "You think SPCX will", "type": "choice", "options": [["long", "Go up (long)"], ["short", "Go down (short)"]], "value": "long" },
-    { "id": "deposit", "label": "Your dollars (margin)", "min": 100, "max": 10000, "step": 100, "value": 1000, "format": "usd0" },
-    { "id": "leverage", "label": "Leverage", "min": 1, "max": 25, "step": 0.5, "value": 5, "format": "x", "hint": "How many times your dollars the position is worth." },
+    { "id": "deposit", "label": "Margin: what you commit", "min": 100, "max": 10000, "step": 100, "value": 1000, "format": "usd0" },
+    { "id": "leverage", "label": "Leverage", "min": 1, "max": 25, "step": 0.5, "value": 5, "format": "x", "hint": "Notional ÷ margin." },
     { "id": "exit", "label": "SPCX moves to", "min": 50, "max": 150, "step": 0.5, "value": 110, "format": "price" }
   ],
   "fixed": { "maintenance": 3, "entry": 100 },
@@ -137,54 +130,39 @@ so one odd trade can't liquidate anyone.
     { "label": "20×, a small dip", "set": { "leverage": 20, "exit": 97.5 }, "note": "At 20×, a 2.5% dip is enough to liquidate you." },
     { "label": "Short, SPCX falls", "set": { "side": "short", "leverage": 5, "exit": 90 }, "note": "Short 50 SPCX: the 10% fall that cost the long $500 makes the short $500." }
   ],
-  "caption": "Each $1 SPCX moves is worth $1 per unit you hold. Leverage sets how many units your dollars carry, so it steepens the line, and it moves the liquidation point closer: past it, the line drops to zero. The [next section](#margin-leverage-and-liquidation) explains exactly where that point is."
+  "caption": "Each $1 SPCX moves is worth $1 per unit you hold. Leverage sets how many units your dollars carry, so it steepens the line, and it moves the liquidation point closer: past it, the line drops to zero. The [next section](#leverage-and-liquidation) explains exactly where that point is."
 }
 ```
 
-## Margin, leverage and liquidation
+## Leverage and liquidation
 
-You don't pay the notional to open a perp. You post **margin**, a deposit
-that covers your losses. **Leverage** is notional divided by margin: at 5×,
-$1,000 of margin backs a $5,000 position.
+Leverage is the one number on the ticket you choose. With the same $1,000 of
+margin, it sets everything else:
 
-With your $1,000, leverage decides how big a position you hold, and so how
-much each $1 SPCX moves is worth to you:
-
-| Leverage | Your position | Each $1 SPCX moves | SPCX moves 1% |
-| --- | --- | --- | --- |
-| 1× | 10 SPCX, $1,000 | $10 | 1% of your money |
-| 5× | 50 SPCX, $5,000 | $50 | 5% of your money |
-| 20× | 200 SPCX, $20,000 | $200 | 20% of your money |
-
-Leverage multiplies the percentage you gain or lose on your own money: a 1%
-move in SPCX is 1% of it at 1×, and 20% of it at 20×. That works in both
-directions, which is what the rest of this section is about.
-
-The venue requires your equity (margin plus PnL) to stay above a
-**maintenance margin**, a small share of the notional. When it falls below,
-the venue **liquidates** you: it closes the position at the market, and what
-is left of the margin covers the loss and the liquidation's fee. A
-liquidation is final. If the price comes back an hour later, you are no
-longer in the trade to recover.
-
-### Maintenance margin, step by step
-
-Back to your $1,000 at 5×: long 50 SPCX at $100, a $5,000 position, on a
-venue whose maintenance margin is 3%. Four numbers matter as SPCX moves:
-
-- **What's left** (your equity): $1,000 + 50 × (SPCX − $100).
-- **What the position is worth now**: 50 × SPCX.
-- **What the venue requires**: 3% of what the position is worth now.
-- **Your leverage now**: what the position is worth ÷ what's left.
-
-| SPCX | What's left | Position worth | Venue requires (3%) | Leverage now | |
+| Leverage | Margin | Notional | Position | Each $1 SPCX moves | SPCX moves 1% |
 | --- | --- | --- | --- | --- | --- |
-| $100 | $1,000 + 50 × $0 = $1,000 | $5,000 | $150 | 5× | fine |
-| $90 | $1,000 − 50 × $10 = $500 | $4,500 | $135 | 9× | fine |
-| $85 | $1,000 − 50 × $15 = $250 | $4,250 | $127.50 | 17× | getting close |
-| about $82.47 | $1,000 − 50 × $17.53 ≈ $123.70 | ≈ $4,123.70 | ≈ $123.70 | 33× | **liquidated** |
+| 1× | $1,000 | $1,000 | 10 SPCX | $10 | 1% of your margin |
+| 5× | $1,000 | $5,000 | 50 SPCX | $50 | 5% of your margin |
+| 20× | $1,000 | $20,000 | 200 SPCX | $200 | 20% of your margin |
 
-The liquidation price is where what's left equals what the venue requires:
+Leverage multiplies the percentage you gain or lose on your margin. It
+works in both directions, and the losing direction has a floor.
+
+### Liquidation
+
+The venue doesn't let your equity fall to zero. It requires it to stay
+above the **maintenance margin**: a share of what your position is worth
+now, 3% on this venue. Here is the ledger from your first trade again, at
+5×, with the columns the venue watches:
+
+| SPCX | PnL | Equity | Notional now (50 × SPCX) | Maintenance (3% of notional) | Leverage now (notional ÷ equity) |
+| --- | --- | --- | --- | --- | --- |
+| $100 | $0 | $1,000 | $5,000 | $150 | 5× |
+| $90 | −$500 | $500 | $4,500 | $135 | 9× |
+| $85 | −$750 | $250 | $4,250 | $127.50 | 17× |
+| ≈ $82.47 | ≈ −$876 | ≈ $124 | ≈ $4,124 | ≈ $124 | 33×: **liquidated** |
+
+Liquidation happens where equity meets the maintenance margin:
 
 ```
 1,000 + 50 × (P − 100) = 0.03 × 50 × P
@@ -193,24 +171,24 @@ The liquidation price is where what's left equals what the venue requires:
 P                      = 82.47
 ```
 
-Notice the last column: your leverage climbs as you lose. You opened at 5×,
-but every loss shrinks what's left while the position stays 50 SPCX. You are
-liquidated exactly when it reaches 1 ÷ 3%, about 33×: the maintenance margin
-seen from the other side.
+The last column shows the same thing from the other side. The position
+stays 50 SPCX while your equity shrinks, so your leverage climbs as you
+lose: 5×, 9×, 17×. The venue liquidates you when it reaches 1 ÷ 3%, about
+33×.
 
-So you are liquidated with about $124 still in the account, not at zero. The
-venue doesn't wait for zero because closing takes time: it has to sell your
-50 SPCX into the market, the price keeps moving while it does, and selling in
-a hurry costs money. The cushion pays for that, and for the venue's
-liquidation fee, so your loss never lands on the venue or other traders.
-Whatever is left after the close may come back to you, depending on the
-venue. The figures in this guide treat it as lost.
+When it does, the venue sells your 50 SPCX into the market, at whatever the
+price is by then. It doesn't wait for zero because selling takes time and
+costs money: the $124 cushion pays for that and for the venue's liquidation
+fee, so your loss never lands on the venue or other traders. Whatever is left
+may come back to you, depending on the venue; this guide counts it as lost.
+A liquidation is final: if SPCX is back at $100 an hour later, you are no
+longer in the trade.
 
-Opening a position needs more: the **initial margin**. If it is 10%, a
-$5,000 position needs at least $500, so 10× is the most leverage you can
-open with. The gap between the initial and the maintenance margin is your
-room to lose before liquidation. And leverage above 1 ÷ maintenance (33× at
-3%) is impossible: the position would be under the floor the moment it opened.
+To open a position, the venue asks for more than the maintenance margin: the
+**initial margin**. If it is 10%, a $5,000 notional needs at least $500 of
+margin, so 10× is the most you can open with. The gap between the two is your
+room to lose. Leverage above 1 ÷ maintenance (33× here) is impossible: the
+position would be liquidated the moment it opened.
 
 :::eli5 Like a rental deposit
 A landlord holds your deposit while you live there. If the damage you do
