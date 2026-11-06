@@ -169,17 +169,34 @@ longer in the trade to recover.
 
 ### Maintenance margin, step by step
 
-Back to your $1,000, long 50 SPCX at $100, on a venue whose maintenance
-margin is 3%. What's left in your account (your equity) is your $1,000 plus
-your PnL. The venue requires it to stay above 3% of what the position is
-worth right now:
+Back to your $1,000 at 5×: long 50 SPCX at $100, a $5,000 position, on a
+venue whose maintenance margin is 3%. Four numbers matter as SPCX moves:
 
-| SPCX | What's left | Venue requires (3% × 50 × SPCX) | |
-| --- | --- | --- | --- |
-| $100 | $1,000 | $150 | fine |
-| $90 | $500 | $135 | fine |
-| $85 | $250 | $127.50 | fine, getting close |
-| about $82.47 | about $124 | about $124 | **liquidated** |
+- **What's left** (your equity): $1,000 + 50 × (SPCX − $100).
+- **What the position is worth now**: 50 × SPCX.
+- **What the venue requires**: 3% of what the position is worth now.
+- **Your leverage now**: what the position is worth ÷ what's left.
+
+| SPCX | What's left | Position worth | Venue requires (3%) | Leverage now | |
+| --- | --- | --- | --- | --- | --- |
+| $100 | $1,000 + 50 × $0 = $1,000 | $5,000 | $150 | 5× | fine |
+| $90 | $1,000 − 50 × $10 = $500 | $4,500 | $135 | 9× | fine |
+| $85 | $1,000 − 50 × $15 = $250 | $4,250 | $127.50 | 17× | getting close |
+| $82.47 | $1,000 − 50 × $17.53 = $123.70 | $4,123.50 | $123.70 | 33× | **liquidated** |
+
+The liquidation price is where what's left equals what the venue requires:
+
+```
+1,000 + 50 × (P − 100) = 0.03 × 50 × P
+1,000 + 50 P − 5,000   = 1.5 P
+48.5 P                 = 4,000
+P                      = 82.47
+```
+
+Notice the last column: your leverage climbs as you lose. You opened at 5×,
+but every loss shrinks what's left while the position stays 50 SPCX. You are
+liquidated exactly when it reaches 1 ÷ 3%, about 33×: the maintenance margin
+seen from the other side.
 
 So you are liquidated with about $124 still in the account, not at zero. The
 venue doesn't wait for zero because closing takes time: it has to sell your
