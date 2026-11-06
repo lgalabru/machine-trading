@@ -60,8 +60,10 @@ What an account holds in an instrument: a signed quantity, positive when
 
 Also: the underlying's, underlyings
 
-The asset a contract's price follows, such as a stock or a token. A perp on
-SPCX tracks SPCX without anyone holding SPCX.
+What a contract's price follows: a token such as SOL, one share of a
+company such as SpaceX, a stock index such as the S&P 500, a commodity such as
+gold, or even a private company's valuation. The perp tracks it without
+anyone holding it.
 
 ### Base units
 
@@ -291,6 +293,7 @@ show.
 
 ### Equity
 
+Not: equity perp, equity perps, equity perpetuals
 Margin plus unrealized PnL: what the account would be worth if every
 position were closed at the mark.
 
