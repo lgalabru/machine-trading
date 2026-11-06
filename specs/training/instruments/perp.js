@@ -62,37 +62,49 @@ MT.register("perp.payoff", (p) => {
 });
 
 MT.register("perp.leverage", (p) => {
+  const { entry, deposit, leverage } = p;
   const mm = p.maintenance / 100;
   const move = p.daily / 100;
   const levels = MT.range(1, 50, 197);
   // Past 1 ÷ maintenance, a position is liquidated as soon as it opens.
-  const longDist = (L) => Math.max(0, 1 - liquidationPrice(1, 1, L, mm));
-  const shortDist = (L) => Math.max(0, liquidationPrice(-1, 1, L, mm) - 1);
-  const chosen = longDist(p.leverage);
-  // The leverage at which an ordinary day's move liquidates a long.
-  const fatal = levels.find((L) => longDist(L) <= move);
+  const longLiq = (L) => Math.min(entry, liquidationPrice(1, entry, L, mm));
+  const shortLiq = (L) => Math.max(entry, liquidationPrice(-1, entry, L, mm));
+  const low = entry * (1 - move);
+  const high = entry * (1 + move);
+  // Enough room to see the day's range and the chosen leverage's prices.
+  const reach = Math.min(0.6, Math.max(4 * move, 1.3 * (1 - longLiq(leverage)), 0.12));
+  const units = (deposit * leverage) / entry;
+  const myLong = longLiq(leverage);
+  const myShort = shortLiq(leverage);
+  // The leverage from which an ordinary day's fall liquidates a long.
+  const fatal = levels.find((L) => longLiq(L) >= low);
+  const tone = (inside, near) => (inside ? "bad" : near ? "warn" : "good");
   return {
     stats: [
-      { label: "Long is liquidated after", value: MT.format("pct", chosen), hint: "a fall of this much", tone: chosen <= move ? "bad" : chosen <= 3 * move ? "warn" : "good" },
-      { label: "Short is liquidated after", value: MT.format("pct", shortDist(p.leverage)), hint: "a rise of this much" },
-      { label: "Typical days to survive", value: chosen <= move ? "less than 1" : MT.format("num", Math.floor((chosen / move) ** 2)), hint: "a random walk's rough reach (√days)" },
-      { label: "Leverage an ordinary day ends", value: fatal ? MT.format("x", Math.round(fatal * 10) / 10) : "over 50×", hint: `a ${MT.format("pct", move)} day, long` },
+      { label: "Your position", value: `${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `worth ${MT.format("usd0", units * entry)}, on your ${MT.format("usd0", deposit)}` },
+      { label: "Long: liquidated if SPCX falls to", value: MT.format("price", myLong), tone: tone(myLong >= low, myLong >= entry * (1 - 3 * move)), hint: `a ${MT.format("pct", 1 - myLong / entry)} fall` },
+      { label: "Short: liquidated if SPCX rises to", value: MT.format("price", myShort), tone: tone(myShort <= high, myShort <= entry * (1 + 3 * move)), hint: `a ${MT.format("pct", myShort / entry - 1)} rise` },
+      { label: "An ordinary day", value: `${MT.format("price", low)} – ${MT.format("price", high)}`, hint: `SPCX ± ${MT.format("num", p.daily)}%` },
+      { label: "An ordinary day liquidates you from", value: fatal ? MT.format("x", Math.round(fatal * 2) / 2) : "over 50×", hint: "for a long" },
     ],
-    note: p.leverage * mm >= 1 ? `At ${MT.format("x", p.leverage)} the margin is below the ${MT.format("num", p.maintenance)}% maintenance margin: the venue would refuse the position, or liquidate it at once.` : "",
+    note: leverage * mm >= 1 ? `At ${MT.format("x", leverage)} the margin is below the ${MT.format("num", p.maintenance)}% maintenance margin: the venue would refuse the position, or liquidate it at once.` : "",
     panels: [
       {
         x: { label: "Leverage", format: "x" },
-        y: { label: "Move to liquidation", format: "pct0", min: 0, max: Math.min(1, Math.max(0.6, move * 2)) },
+        y: { label: "SPCX price that liquidates you", format: "price", min: entry * (1 - reach), max: entry * (1 + reach) },
         series: [
-          { name: "Long (price falls)", points: levels.map((L) => [L, longDist(L)]) },
-          { name: "Short (price rises)", points: levels.map((L) => [L, shortDist(L)]), color: "s2" },
+          { name: "Long: liquidated below", points: levels.map((L) => [L, longLiq(L)]) },
+          { name: "Short: liquidated above", points: levels.map((L) => [L, shortLiq(L)]), color: "s2" },
         ],
         rules: [
-          { axis: "x", at: p.leverage, label: `You: ${MT.format("x", p.leverage)}` },
-          { axis: "y", at: move, label: "An ordinary day's move", tone: "danger" },
+          { axis: "x", at: leverage, label: `You: ${MT.format("x", leverage)}` },
+          { axis: "y", at: entry, label: "Today: $100" },
         ],
-        bands: [{ axis: "y", from: 0, to: move, tone: "danger", label: "Liquidated by an ordinary day" }],
-        dots: [{ x: p.leverage, y: chosen, tone: "s1" }],
+        bands: [{ axis: "y", from: low, to: high, tone: "danger", label: "An ordinary day's range" }],
+        dots: [
+          { x: leverage, y: myLong, tone: "s1" },
+          { x: leverage, y: myShort, tone: "s2" },
+        ],
       },
     ],
   };
@@ -100,33 +112,46 @@ MT.register("perp.leverage", (p) => {
 
 MT.register("perp.funding", (p) => {
   const s = sideOf(p);
-  const notional = p.size * p.price;
+  const { entry, deposit, leverage } = p;
+  const mm = p.maintenance / 100;
+  const units = (deposit * leverage) / entry;
+  const notional = units * entry;
   const rate = p.rate / 10000; // per hour, from basis points
   const hours = p.days * 24;
-  // Positive funding: longs pay shorts. What this position receives:
+  // Positive funding: longs pay shorts. What this position receives an hour:
   const perHour = -s * rate * notional;
-  const pts = MT.range(0, hours, Math.min(400, hours + 1)).map((h) => [h / 24, perHour * h]);
-  const total = perHour * hours;
+  // Funding alone liquidates the position once what's left of the margin
+  // reaches the maintenance margin.
+  const floor = mm * notional;
+  const liquidatedAt = perHour < 0 && deposit > floor ? (deposit - floor) / -perHour : null;
+  const value = (h) => (liquidatedAt !== null && h >= liquidatedAt ? 0 : deposit + perHour * h);
+  const pts = MT.range(0, hours, Math.min(400, hours + 1)).map((h) => [h / 24, value(h)]);
+  const end = value(hours);
   const apr = rate * 24 * 365;
   const payer = rate === 0 ? "nobody pays" : rate > 0 ? "longs pay shorts" : "shorts pay longs";
+  const gone = liquidatedAt !== null && liquidatedAt <= hours;
   return {
     stats: [
+      { label: "Your position", value: `${s > 0 ? "long" : "short"} ${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `worth ${MT.format("usd0", notional)}` },
       { label: "Who pays", value: payer },
       { label: "Per day, you", value: perHour * 24, format: "+usd", tone: perHour > 0 ? "good" : perHour < 0 ? "bad" : undefined },
-      { label: `Over ${MT.format("d", p.days)}`, value: total, format: "+usd", tone: total > 0 ? "good" : total < 0 ? "bad" : undefined, hint: `${MT.format("+pct", total / notional)} of notional` },
-      { label: "Rate, per year", value: MT.format("pct", apr), hint: `${MT.format("bp", p.rate)} an hour × 8,760` },
+      { label: `After ${MT.format("d", p.days)}, you have`, value: end, format: "usd0", tone: gone ? "bad" : end > deposit ? "good" : end < deposit ? "bad" : undefined, hint: gone ? "liquidated by funding alone" : `${MT.format("+pct", end / deposit - 1)} on your dollars` },
+      { label: "Rate, per year", value: MT.format("pct", Math.abs(apr)), hint: `on the position; ${MT.format("pct", Math.abs(apr * leverage))} on your dollars` },
     ],
-    note:
-      perHour < 0
-        ? `Holding costs you ${MT.format("usd", -perHour * 24)} a day even if the price never moves. To break even on funding alone the price must move ${MT.format("pct", -total / notional)} your way over the ${MT.format("d", p.days)}.`
+    note: gone
+      ? `SPCX never moved, yet funding eats the margin down to the maintenance margin by day ${MT.format("num", Math.ceil(liquidatedAt / 24))}, and the venue liquidates you.`
+      : perHour < 0
+        ? `Holding costs you ${MT.format("usd", -perHour * 24)} a day even though SPCX never moves. To break even, SPCX would have to ${s > 0 ? "rise" : "fall"} ${MT.format("price", (-perHour * hours) / units)} over the ${MT.format("d", p.days)}.`
         : perHour > 0
           ? "You're paid to hold, but only while the crowd stays on the other side. The rate can flip quickly."
           : "",
     panels: [
       {
         x: { label: "Days held", format: "d" },
-        y: { label: "Funding received", format: "+usd" },
-        series: [{ name: "Funding received", points: pts, fill: "sign" }],
+        y: { label: `What your ${MT.format("usd0", deposit)} becomes`, format: "usd0" },
+        series: [{ name: "What you have", points: pts }],
+        rules: [{ axis: "y", at: deposit, label: "What you put in" }],
+        dots: gone ? [{ x: liquidatedAt / 24, y: floor, label: "Liquidated", tone: "danger" }] : [],
       },
     ],
   };
@@ -195,10 +220,11 @@ MT.register("perp.scenario", (p) => {
   const overCap = p.size > p.cap;
   const tolerated = p.size > 0 ? p.limit / p.size : Infinity;
   const stats = [
-    { label: "PnL at the end", value: final, format: "+usd", tone: final >= 0 ? "good" : "bad" },
+    { label: "Your dollars at stake", value: margin, format: "usd0", hint: `${MT.format("num", p.size)} SPCX at ${MT.format("x", p.leverage)}` },
+    { label: "PnL at the end", value: final, format: "+usd", tone: final >= 0 ? "good" : "bad", hint: margin > 0 ? `${MT.format("+pct", final / margin)} on your dollars` : "" },
     { label: "Deepest drawdown", value: worst, format: "usd", tone: worst > p.limit ? "bad" : worst > 0.7 * p.limit ? "warn" : "good", hint: `limit ${MT.format("usd0", p.limit)}` },
     { label: "Position cap", value: overCap ? "broken" : "kept", tone: overCap ? "bad" : "good", hint: `${MT.format("num", p.size)} of ${MT.format("num", p.cap)} allowed` },
-    { label: "Move the limit tolerates", value: Number.isFinite(tolerated) ? MT.format("price", tolerated) : "any", hint: Number.isFinite(tolerated) ? `${MT.format("pct", tolerated / entry)} against you, from the peak` : "no position" },
+    { label: "SPCX move the limit tolerates", value: Number.isFinite(tolerated) ? MT.format("price", tolerated) : "any", hint: Number.isFinite(tolerated) ? "against you, from your best moment" : "no position" },
     { label: "Funding", value: funding, format: "+usd", hint: `${MT.format("bp", p.funding)} an hour` },
   ];
   const events = [];
@@ -214,11 +240,11 @@ MT.register("perp.scenario", (p) => {
     note,
     panels: [
       {
-        title: "Price",
+        title: "SPCX",
         height: 190,
         x: { label: "Hour", format: "h" },
-        y: { label: "Mark price", format: "price", zero: false },
-        series: [{ name: "Mark price", points: price }],
+        y: { label: "SPCX mark price", format: "price", zero: false },
+        series: [{ name: "SPCX", points: price }],
         rules: [
           { axis: "y", at: entry, label: "Entry" },
           ...(p.size > 0 && Math.abs(liq / entry - 1) < 0.4 ? [{ axis: "y", at: liq, label: "Liquidation", tone: "danger" }] : []),

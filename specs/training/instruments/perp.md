@@ -164,19 +164,20 @@ longer in the trade to recover.
 ```lab
 {
   "model": "perp.leverage",
-  "title": "How far the price can move before you're liquidated",
-  "lede": "Move the leverage, and compare the distance to liquidation with how much this market moves on an ordinary day.",
+  "title": "Where SPCX has to go to liquidate you",
+  "lede": "Your $1,000 again, SPCX at $100. Move the leverage and watch the liquidation prices close in on today's price. The shaded band is how far SPCX moves on an ordinary day.",
   "controls": [
     { "id": "leverage", "label": "Your leverage", "min": 1, "max": 50, "step": 0.5, "value": 5, "format": "x" },
-    { "id": "daily", "label": "An ordinary day's move (%)", "min": 0.5, "max": 15, "step": 0.5, "value": 3, "format": "num", "hint": "Volatile tokens move 5% or more on a normal day." },
+    { "id": "daily", "label": "SPCX on an ordinary day (± %)", "min": 0.5, "max": 15, "step": 0.5, "value": 3, "format": "num", "hint": "A big stock moves 1–2% a day; a small token 5% or more." },
     { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 5, "step": 0.25, "value": 1, "format": "num", "hint": "Leverage can't exceed 1 ÷ this." }
   ],
+  "fixed": { "entry": 100, "deposit": 1000 },
   "presets": [
-    { "label": "Quiet stock", "set": { "daily": 1.5 }, "note": "A large stock moving about 1.5% a day." },
-    { "label": "Volatile token", "set": { "daily": 8 }, "note": "A small token moving 8% a day: anything above about 11× is liquidated by an ordinary day." },
-    { "label": "Max leverage", "set": { "leverage": 50 }, "note": "At 50× a move of about 1% liquidates you." }
+    { "label": "Calm SPCX", "set": { "daily": 1.5 }, "note": "SPCX moving about 1.5% a day, like a large stock: an ordinary day only liquidates you past about 40×." },
+    { "label": "Wild SPCX", "set": { "daily": 8 }, "note": "SPCX moving 8% a day: from about 11× up, an ordinary day liquidates you." },
+    { "label": "Max leverage", "set": { "leverage": 50 }, "note": "At 50×, $1,000 holds 500 SPCX, and SPCX falling to about $99 ends the trade." }
   ],
-  "caption": "The distance to liquidation shrinks roughly as one over the leverage. Where the curve dips into the shaded band, a normal day's move is enough to end the trade."
+  "caption": "The liquidation price moves toward today's price roughly as one over the leverage. Once a line enters the band, a normal day's move is enough to end the trade."
 }
 ```
 
@@ -206,22 +207,24 @@ position elsewhere earns the funding with no price exposure.
 ```lab
 {
   "model": "perp.funding",
-  "title": "What funding costs or pays you over time",
-  "lede": "The price never moves in this figure. Everything you see is funding.",
+  "title": "What funding does to your $1,000",
+  "lede": "SPCX stays at $100 the whole time in this figure: everything that happens to your dollars is funding.",
   "controls": [
-    { "id": "side", "label": "Side", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
-    { "id": "size", "label": "Position (units)", "min": 1, "max": 100, "step": 1, "value": 50, "format": "num" },
-    { "id": "price", "label": "Price", "min": 20, "max": 200, "step": 1, "value": 100, "format": "price" },
+    { "id": "side", "label": "You are", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
+    { "id": "leverage", "label": "Leverage", "min": 1, "max": 20, "step": 0.5, "value": 5, "format": "x", "hint": "Funding is paid on the position, not on your dollars." },
     { "id": "rate", "label": "Funding rate, per hour", "min": -3, "max": 3, "step": 0.05, "value": 0.15, "format": "bp", "hint": "Positive: longs pay shorts. 1 bp is 0.01%." },
-    { "id": "days", "label": "Days held", "min": 1, "max": 90, "step": 1, "value": 30, "format": "d" }
+    { "id": "days", "label": "Days held", "min": 1, "max": 90, "step": 1, "value": 30, "format": "d" },
+    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num" }
   ],
+  "fixed": { "entry": 100, "deposit": 1000 },
   "presets": [
-    { "label": "Calm market", "set": { "rate": 0.15 }, "note": "A small positive rate, about 13% a year: longs pay a modest carry." },
-    { "label": "Crowded long", "set": { "rate": 2 }, "note": "Everyone is long. Holding a long now costs about 175% a year." },
-    { "label": "Paid to short", "set": { "side": "short", "rate": 2 }, "note": "The other side of a crowded long: shorts collect what longs pay." },
-    { "label": "Crowded short", "set": { "rate": -1.5 }, "note": "Negative funding: shorts pay longs." }
+    { "label": "Calm market", "set": { "rate": 0.15 }, "note": "About 13% a year on the position. At 5× that is about 65% a year on your $1,000: $54 over a month." },
+    { "label": "Crowded long", "set": { "rate": 2 }, "note": "Everyone is long SPCX. Your long 50 SPCX pays $24 a day, and a month costs you $720 of your $1,000." },
+    { "label": "Funding liquidates you", "set": { "rate": 2, "days": 60 }, "note": "Same crowded market, held for two months: funding alone eats the margin, and the venue liquidates you around day 36 without SPCX moving a cent." },
+    { "label": "Paid to short", "set": { "side": "short", "rate": 2 }, "note": "The other side of the crowd: short 50 SPCX collects $24 a day." },
+    { "label": "1×, crowded", "set": { "rate": 2, "leverage": 1 }, "note": "At 1× the same rate costs a fifth as much: $4.80 a day, on 10 SPCX." }
   ],
-  "caption": "Funding grows in a straight line with time and notional. A rate that looks tiny per hour is large per year, so it matters most for positions held for days."
+  "caption": "Funding grows in a straight line with the days held and the size of the position. A rate that looks tiny per hour is large per year, and leverage multiplies it on your dollars."
 }
 ```
 
@@ -297,8 +300,8 @@ part of the trade.
 
 ## Scenarios
 
-Each scenario plays 48 hours of a made-up market against one perp position,
-under a mandate. The three panels share a time axis: hover one to read all
+Each scenario plays 48 hours of a made-up SPCX market against one perp
+position, under a mandate. The three panels share a time axis: hover one to read all
 three at that hour. The top panel is the market, the middle what the position
 made, and the bottom how far it fell from its best, against the mandate's
 drawdown limit.
@@ -306,12 +309,12 @@ drawdown limit.
 ```lab
 {
   "model": "perp.scenario",
-  "title": "A position through a market, under a mandate",
-  "lede": "Choose a market, then size the position and its limits.",
+  "title": "48 hours of SPCX, under a mandate",
+  "lede": "SPCX starts at $100. Choose what it does over the next two days, then size your position and set the mandate's limits.",
   "controls": [
-    { "id": "path", "label": "Market", "type": "choice", "options": [["rally", "Rally"], ["chop", "Chop"], ["bleed", "Slow bleed"], ["flash-crash", "Flash crash"], ["squeeze", "Short squeeze"]], "value": "flash-crash" },
+    { "id": "path", "label": "What SPCX does", "type": "choice", "options": [["rally", "Rally"], ["chop", "Chop"], ["bleed", "Slow bleed"], ["flash-crash", "Flash crash"], ["squeeze", "Short squeeze"]], "value": "flash-crash" },
     { "id": "side", "label": "Side", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
-    { "id": "size", "label": "Position (units)", "min": 0, "max": 120, "step": 1, "value": 50, "format": "num" },
+    { "id": "size", "label": "Position (SPCX)", "min": 0, "max": 120, "step": 1, "value": 50, "format": "num" },
     { "id": "leverage", "label": "Leverage", "min": 1, "max": 20, "step": 0.5, "value": 3, "format": "x" },
     { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num" },
     { "id": "funding", "label": "Funding rate, per hour", "min": -3, "max": 3, "step": 0.05, "value": 0.15, "format": "bp" },
@@ -321,10 +324,10 @@ drawdown limit.
   "presets": [
     { "label": "Long into a flash crash", "set": { "path": "flash-crash", "side": "long", "size": 50, "leverage": 3 }, "note": "A 22% fall in an hour. The position survives the venue but breaks the drawdown limit, which no recovery undoes." },
     { "label": "Same, at 5×", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 5 }, "note": "At 5× the venue liquidates the position at the bottom, and it misses the rebound." },
-    { "label": "Sized for the limit", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 3 }, "note": "40 units: the same crash costs less than the drawdown limit, if only just, and the mandate holds." },
+    { "label": "Sized for the limit", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 3 }, "note": "40 SPCX: the same crash costs less than the drawdown limit, if only just, and the mandate holds." },
     { "label": "Short into a squeeze", "set": { "path": "squeeze", "side": "short", "size": 40, "leverage": 8 }, "note": "A short squeeze: the price jumps 20% in three hours and the short is liquidated." },
     { "label": "Paying to wait", "set": { "path": "chop", "side": "long", "size": 60, "funding": 2.5 }, "note": "A market going nowhere, with crowded funding: the position bleeds funding every hour." },
-    { "label": "Over the cap", "set": { "path": "rally", "size": 90 }, "note": "A winning trade that breaks the mandate anyway: 90 units against a cap of 70." }
+    { "label": "Over the cap", "set": { "path": "rally", "size": 90 }, "note": "A winning trade that breaks the mandate anyway: 90 SPCX against a cap of 70." }
   ],
   "caption": "The drawdown limit counts from the running peak, not from entry: a position that first gains and then gives it back can break it without ever being down overall. Sizing so that `max_drawdown_usd ÷ position` is larger than the moves you expect keeps the mandate."
 }
@@ -357,7 +360,7 @@ to size for the crash it can't predict, or cut quickly when it starts.
 
 ## Check yourself
 
-:::check You're long 10 units from $100 at 5×. The price falls to $95. What is your PnL, and what share of your margin is it?
+:::check You're long 10 SPCX from $100 at 5×. SPCX falls to $95. What is your PnL, and what share of your margin is it?
 −$50. The notional was $1,000 and the margin $200, so −$50 is 25% of the
 margin: 5× the 5% move.
 :::
@@ -367,8 +370,8 @@ You receive. Positive funding means longs pay shorts: 0.01% × $10,000 × 24 =
 $24 a day.
 :::
 
-:::check Your mandate's drawdown limit is $1,000 and your position is 50 units. How far can the price move against you from its peak before you break it?
-$20 a unit: $1,000 ÷ 50. Funding paid along the way uses up some of that room.
+:::check Your mandate's drawdown limit is $1,000 and you're long 50 SPCX. How far can SPCX fall from its peak before you break it?
+$20: $1,000 ÷ 50 SPCX. From a peak of $110, SPCX falling below $90 breaks it. Funding paid along the way uses up some of that room.
 :::
 
 :::check Why can a winning trade still break the mandate?
