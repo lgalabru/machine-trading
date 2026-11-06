@@ -108,13 +108,27 @@ is positive, longs pay shorts. So you **short the perp** and collect
 funding, and you **buy the same amount of SPCX itself** (spot) so the price
 can't hurt you. This is called **cash and carry**, or a basis trade.
 
-With your $1,000 and a short leg at 5×:
+With your $1,000, the trade is two tickets that share it. The perp ticket
+has the same numbers as in the [perp guide](../instruments/perp.md):
 
-- You buy 8.3 SPCX spot for $833.
-- You short 8.3 SPCX on the perp, which needs $167 of margin at 5×.
-- SPCX rises $10: the spot leg gains $83, the short loses $83. Nothing
-  changes. SPCX falls $10: the same, the other way.
-- Every hour, the short collects funding on its $833.
+| Number | Spot leg | Perp leg | What it is |
+| --- | --- | --- | --- |
+| **SPCX price** | $100 | $100 | Both legs open at the same price. |
+| **Committed** | $833 | $167 of margin | Your $1,000, split so both legs hold the same SPCX. |
+| **Leverage** | 1× | 5× | Spot is never leveraged; you choose the perp's. |
+| **Notional** | $833 | $833 | $167 × 5 on the perp. |
+| **Position** | +8.3 SPCX | −8.3 SPCX | Long on one side, short on the other: they cancel. |
+
+And the ledger, as SPCX moves, before funding:
+
+| SPCX | Spot leg PnL | Perp leg PnL | Together |
+| --- | --- | --- | --- |
+| $110 | +$83 | −$83 | $0 |
+| $100 | $0 | $0 | $0 |
+| $90 | −$83 | +$83 | $0 |
+
+What's left is funding: every hour, the perp leg collects it on its $833
+notional.
 
 The catch is that the legs are in two places. The spot leg's gains sit in
 your SPCX, while the short leg's losses eat its margin. In a rally the short
