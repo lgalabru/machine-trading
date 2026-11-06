@@ -23,7 +23,13 @@ const FOLDERS = [
   { dir: "instruments", title: "Instruments" },
   { dir: "venues", title: "Venues" },
   { dir: "examples", title: "Examples" },
+  // Guides for people, not readers implementing the specs.
+  { dir: "training/instruments", title: "Training: instruments" },
 ];
+// Training pages load the labs' runtime, and their own models: the .js file
+// next to the guide, such as training/instruments/perp.js.
+const isTraining = (page) => page.startsWith("training/");
+const folderId = (dir) => dir.replace(/\//g, "-");
 
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -66,14 +72,102 @@ function rewrite(href, page) {
   return link(page, to) + (anchor ? `#${anchor}` : "");
 }
 
+// Callouts, in guides: a block between `:::kind Optional title` and `:::`.
+const CALLOUTS = {
+  glance: ["◎", "At a glance"],
+  eli5: ["✦", "Explain it like I'm five"],
+  use: ["✓", "Use it when"],
+  avoid: ["✕", "Don't use it when"],
+  risk: ["!", "Risk"],
+  note: ["i", "Note"],
+  example: ["→", "Example"],
+  check: ["?", "Check yourself"],
+};
+const callout = {
+  name: "callout",
+  level: "block",
+  start: (src) => src.match(/^:::/m)?.index,
+  tokenizer(src) {
+    const match = /^:::([a-z0-9-]+)[ \t]*([^\n]*)\n([\s\S]*?)\n:::[ \t]*(?:\n+|$)/.exec(src);
+    if (!match) return undefined;
+    const [raw, kind, title, inner] = match;
+    const token = { type: "callout", raw, kind, title: title.trim(), tokens: [] };
+    if (kind === "group") token.tokens = this.lexer.blockTokens(inner.replace(/^::/gm, ":::"), []);
+    else this.lexer.blockTokens(inner, token.tokens);
+    return token;
+  },
+  renderer(token) {
+    const body = this.parser.parse(token.tokens);
+    // ::group wraps callouts side by side; inside it they open with `::`.
+    if (token.kind === "group") return `<div class="callouts">${body}</div>\n`;
+    const known = CALLOUTS[token.kind];
+    if (!known) throw new Error(`unknown callout :::${token.kind}`);
+    const [icon, fallback] = known;
+    const title = token.title ? new Marked().parseInline(token.title) : fallback;
+    if (token.kind === "check")
+      return `<details class="callout callout-check"><summary>${title}</summary>${body}</details>\n`;
+    return `<aside class="callout callout-${token.kind}"><p class="callout-title"><span class="icon" aria-hidden="true">${icon}</span>${title}</p>${body}</aside>\n`;
+  },
+};
+
+/**
+ * A lab, in guides: a ```lab block of JSON naming one of the page's models,
+ * its controls and presets. Checked here, so a broken lab fails the build
+ * rather than the page.
+ */
+function lab(json, page, models) {
+  let config;
+  try {
+    config = JSON.parse(json);
+  } catch (error) {
+    throw new Error(`${page}: a lab is not valid JSON: ${error.message}`);
+  }
+  const fail = (why) => {
+    throw new Error(`${page}: lab ${config.model ?? "?"}: ${why}`);
+  };
+  if (!models.includes(config.model)) fail(`no model registers it in ${page.replace(/\.html$/, ".js")}`);
+  if (!Array.isArray(config.controls)) fail("controls must be an array");
+  const ids = new Set();
+  for (const c of config.controls) {
+    if (!c.id || !c.label || c.value === undefined) fail("every control needs an id, a label and a value");
+    if (ids.has(c.id)) fail(`two controls are called ${c.id}`);
+    ids.add(c.id);
+    if (c.type === "choice" && !c.options?.some(([v]) => v === c.value)) fail(`${c.id}: its value is not an option`);
+    if (c.type !== "choice" && !(c.min <= c.value && c.value <= c.max)) fail(`${c.id}: its value is outside min..max`);
+  }
+  for (const p of config.presets ?? [])
+    for (const id of Object.keys(p.set ?? {})) if (!ids.has(id)) fail(`preset ${p.label} sets unknown control ${id}`);
+  const inline = (text) => (text ? new Marked().parseInline(text) : "");
+  const data = JSON.stringify(config).replace(/</g, "\\u003c");
+  return `<figure class="mt-lab">
+${config.title ? `<p class="mt-lab-title">${inline(config.title)}</p>` : ""}${config.lede ? `<p class="mt-lab-lede">${inline(config.lede)}</p>` : ""}
+<div class="mt-lab-body"><noscript><p>This figure needs JavaScript.</p></noscript></div>
+${config.caption ? `<figcaption>${new Marked().parse(config.caption)}</figcaption>` : ""}
+<script type="application/json">${data}</script>
+</figure>
+`;
+}
+
+/** The models a training page's script registers. */
+function modelsOf(file) {
+  const script = file.replace(/\.md$/, ".js");
+  if (!fs.existsSync(script)) return [];
+  return [...fs.readFileSync(script, "utf8").matchAll(/MT\.register\(\s*["']([^"']+)["']/g)].map((m) => m[1]);
+}
+
 /** A spec's body as HTML, with its sections numbered, and its table of contents. */
-function render(markdown, page) {
+function render(markdown, page, models = []) {
   const toc = [];
   let section = 0;
   let subsection = 0;
   const marked = new Marked({
     gfm: true,
+    extensions: isTraining(page) ? [callout] : [],
     renderer: {
+      code({ text, lang }) {
+        if (lang === "lab" && isTraining(page)) return lab(text, page, models);
+        return false;
+      },
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens);
         if (depth === 1) return "";
@@ -123,7 +217,7 @@ function layout({ page, title, head, body }) {
       page
         .split("/")
         .slice(0, -1)
-        .map((dir) => `<a href="${link(page, "index.html")}#${dir}">${dir}</a>`),
+        .map((dir, i, dirs) => `<a href="${link(page, "index.html")}#${folderId(dirs.slice(0, i + 1).join("/"))}">${dir}</a>`),
     )
     .join('<span class="sep">/</span>');
   return `<!doctype html>
@@ -144,8 +238,15 @@ function layout({ page, title, head, body }) {
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="${SITE}/social.jpg">
 <link rel="stylesheet" href="${link(page, "style.css")}">
+${
+  isTraining(page)
+    ? `<link rel="stylesheet" href="${link(page, "training/mt.css")}">
+<script defer src="${link(page, "training/mt.js")}"></script>
+${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defer src="${path.posix.basename(page).replace(/\.html$/, ".js")}"></script>` : ""}`
+    : ""
+}
 </head>
-<body class="${index ? "index" : "spec"}">
+<body class="${index ? "index" : isTraining(page) ? "spec training" : "spec"}">
 ${index ? "" : `<p class="trail">${trail}</p>`}
 ${head}
 ${body}
@@ -170,7 +271,7 @@ const specs = files
   });
 
 for (const spec of specs) {
-  const { body, toc } = render(spec.markdown, spec.page);
+  const { body, toc } = render(spec.markdown, spec.page, modelsOf(spec.file));
   const meta = spec.status
     ? `<dl class="meta"><dt>Status</dt><dd>${escape(spec.status)}</dd><dt>Source</dt><dd><a href="${SOURCE}">${SOURCE.replace("https://", "")}</a></dd></dl>`
     : "";
@@ -189,7 +290,7 @@ const entry = (child, last) =>
 let tree = `<div class="folder"><a class="spec-title" href="${core.page}"><span class="folder-icon">~/</span>${escape(core.title)}</a> <span class="formats">${escape(core.status ?? "")}</span></div>`;
 for (const { dir, title } of FOLDERS) {
   const children = files
-    .filter((f) => path.posix.dirname(rel(f)) === dir)
+    .filter((f) => path.posix.dirname(rel(f)) === dir && /\.(md|json)$/.test(f))
     .sort()
     .map((f) => {
       const spec = specs.find((s) => s.file === f);
@@ -198,7 +299,7 @@ for (const { dir, title } of FOLDERS) {
       const name = short.charAt(0).toUpperCase() + short.slice(1);
       return { href: spec.page, title: name, note: escape(spec.status ?? "") };
     });
-  tree += `<div class="folder" id="${dir}"><span class="folder-icon">~/</span>${title}</div>`;
+  tree += `<div class="folder" id="${folderId(dir)}"><span class="folder-icon">~/</span>${title}</div>`;
   tree += children.map((c, i) => entry(c, i === children.length - 1)).join("");
 }
 write(
@@ -215,7 +316,12 @@ for (const file of files.filter((f) => f.endsWith(".json"))) {
   fs.mkdirSync(path.dirname(path.join(out, rel(file))), { recursive: true });
   fs.copyFileSync(file, path.join(out, rel(file)));
 }
+// Training pages' models, next to their guides.
+for (const file of files.filter((f) => f.endsWith(".js"))) fs.copyFileSync(file, path.join(out, rel(file)));
 fs.copyFileSync(path.join(here, "style.css"), path.join(out, "style.css"));
+fs.mkdirSync(path.join(out, "training"), { recursive: true });
+for (const asset of ["mt.js", "mt.css"])
+  fs.copyFileSync(path.join(here, "training", asset), path.join(out, "training", asset));
 // The link preview, the same image as the repository's social preview.
 fs.copyFileSync(path.join(here, "social.jpg"), path.join(out, "social.jpg"));
 // Serve files as they are: no Jekyll processing on GitHub Pages.
