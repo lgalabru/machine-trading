@@ -14,7 +14,7 @@ no funding, and it cannot hold less than nothing: selling more than the
 account holds would need a loan, which is a `money-market` instrument, not
 spot.
 
-Spot is defined from mandate v1. A v0 reader rejects it.
+The reference implementation does not read spot instruments yet.
 
 ## Position
 

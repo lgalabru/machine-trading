@@ -1,11 +1,10 @@
-# Venue profile: Phoenix (`phoenix`), v1
+# Venue profile: Phoenix (`phoenix`), v0
 
 Status: draft
 
 [Phoenix](https://phoenix.trade) runs two kinds of market on Solana, each its
 own program: perpetual futures with cross-margin trader accounts, and spot
 order books (Phoenix v1, program `PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY`).
-v1 of this profile adds the spot markets.
 
 ## Instruments
 
@@ -19,7 +18,7 @@ Named spot markets:
 
 | Symbol | Market address | Base | Quote |
 | --- | --- | --- | --- |
-| `SOL-USDC` | `4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg` | SOL (wrapped, `So11111111111111111111111111111111111111112`) | USDC (`EPjFWdd5AufqSSquM8ZiZRXbwhqRBLx1uExtCRgXk68w`) |
+| `SOL-USDC` | `4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg` | SOL (wrapped, `So11111111111111111111111111111111111111112`) | USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) |
 
 ## Perpetual markets
 

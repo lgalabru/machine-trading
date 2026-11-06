@@ -215,7 +215,7 @@ asking (the ask). A market order buys at the ask and sells at the bid.
 ### Spread
 
 Also: bid-ask spread
-Not: spreads your
+Not: spreads your, spread over
 
 The gap between the best ask and the best bid. Crossing it is a cost every
 taker pays.
@@ -294,6 +294,7 @@ venue. The venue profile says.
 
 ### Margin
 
+Not: a margin above, a margin of
 
 
 The deposit that backs a position and absorbs its losses. Opening a perp
@@ -344,9 +345,10 @@ position, and a 1% move is 5% of the margin.
 
 Also: liquidations, liquidated, liquidates, liquidate
 
-The venue closing a position whose equity fell below maintenance margin. It
-is forced and final: if the price recovers afterwards, the position is no
-longer there to recover.
+The venue closing a position whose equity fell below maintenance margin, or,
+on a money market, anyone repaying part of a borrow and taking collateral
+for it once the borrow's LTV reaches the liquidation LTV. It is forced, and
+what it takes doesn't come back if the price recovers.
 
 ### Liquidation price
 
@@ -513,6 +515,93 @@ scrambled to buy. In January 2021 GameStop's price rose more than tenfold
 in weeks as retail traders squeezed the funds short of it.
 :::
 
+## Money markets
+
+### Money market
+
+Also: money markets, lending market, lending markets, lending protocol
+
+A program that pools an asset from lenders and lends it to borrowers
+against collateral. See the [guide](instruments/money-market.md).
+
+### Reserve
+
+Also: reserves, pool, pools
+
+One asset's pool in a lending market: everyone's supply of it, and
+everyone's borrows from it.
+
+### Supply
+
+Also: supplies, supplied, supplying, lend, lends, lending, lender, lenders
+
+Lending an asset to a money market's pool, to earn interest on it.
+
+### Borrow
+
+Also: borrows, borrowed, borrowing, borrower, borrowers
+
+Taking an asset from a money market's pool against collateral, and paying
+interest on it until it's repaid.
+
+### Collateral
+
+Also: collateral token, collateral tokens
+
+What a borrower has supplied and the venue holds as security. On Kamino,
+supplying gives you collateral tokens, a claim on the pool that rises in
+value as interest comes in.
+
+### Obligation
+
+Also: obligations
+
+On Kamino, the account that holds one owner's deposits and borrows in a
+lending market, and their values as of its last refresh.
+
+### LTV
+
+Also: loan to value, loan-to-value, max LTV, liquidation LTV, current LTV
+
+Loan to value: debt divided by collateral value. Below the **max LTV** you
+may borrow more; at the **liquidation LTV**, the venue may liquidate.
+
+### Health
+
+Also: health factor
+
+The liquidation LTV divided by the current LTV. Above 1 a borrow is safe;
+at 1 or below, the venue may liquidate it.
+
+### Borrow factor
+
+Also: borrow factors
+
+A weight on risky borrowed assets: with a borrow factor of 1.25, $100
+borrowed counts as $125 of debt in the LTV.
+
+### Utilization
+
+The share of a pool's supply that is lent out. Borrow rates rise with it,
+slowly up to the curve's **kink**, steeply after.
+
+### Liquidation bonus
+
+Also: liquidation bonuses, liquidation penalty
+
+The extra collateral a liquidator takes for repaying part of a borrow: what
+the borrower pays for being liquidated.
+
+### Close factor
+
+The most of a borrow's debt one liquidation may repay: 20% on Kamino, unless
+the borrow is near insolvency.
+
+### Bad debt
+
+A borrow worth more than its collateral: liquidation can no longer repay it,
+and the pool's lenders take the loss.
+
 ## Strategies
 
 ### Strategy
@@ -624,10 +713,19 @@ breaks the mandate.
 
 ### Position cap
 
-Also: max_position
+Also: max_position, min_position
 
-The largest position, long or short, a mandate allows in an instrument, in
-base units: `max_position`. Open orders don't count until they fill.
+The range a mandate allows an instrument's position, in base units: up to
+`max_position`, and down to `min_position`, which is `−max_position` unless
+the mandate sets it. Open orders don't count until they fill.
+
+### Minimum health
+
+Also: min_health
+
+The lowest health a mandate lets any of the account's borrows reach:
+`min_health`. Set above 1, it makes the agent act before the venue could
+liquidate it.
 
 ### Drawdown limit
 

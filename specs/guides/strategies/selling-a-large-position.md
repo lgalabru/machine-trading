@@ -157,7 +157,7 @@ all, reading the flow is just trading.
 
 ## Under a mandate
 
-A treasury's mandate, in [mandate v1](../../mandate.md#examples), allows the
+A treasury's mandate, in the [mandate](../../mandate.md#examples), allows the
 SOL-USDC spot markets on OpenBook and Phoenix, sell-only, never below $94:
 
 - **`sides: ["sell"]`**: no buys, and no resting bids, even to buy back

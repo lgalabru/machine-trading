@@ -157,7 +157,8 @@ MT.register("perp.payoff", (p) => ({
 - **Series** are lines, with points sorted by x. `fill: "sign"` shades the
   area above zero as profit and below as loss. `color` is `s1`, `s2`, `s3`
   (the default order) or `muted`; `dash: true` for a reference line.
-- **Rules** are labelled reference lines, **bands** shaded ranges (`danger`
+- **Rules** are labelled reference lines (a y rule's label sits at the
+  right, or the left with `align: "start"`, when two lines are close), **bands** shaded ranges (`danger`
   is also hatched), and **dots** labelled events.
 - **Formats** are `num`, `usd`, `usd0`, `+usd`, `price`, `pct`, `pct0`,
   `+pct`, `bp`, `x`, `h` and `d`. Percentages are fractions: `0.05` is 5%.

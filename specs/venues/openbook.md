@@ -18,7 +18,7 @@ Named markets:
 
 | Symbol | Market address | Base | Quote |
 | --- | --- | --- | --- |
-| `SOL-USDC` | `CFSMrBssNG8Ud1edW59jNLnq2cwrQ9uY5cM3wXmqRJj3` | SOL (wrapped, `So11111111111111111111111111111111111111112`) | USDC (`EPjFWdd5AufqSSquM8ZiZRXbwhqRBLx1uExtCRgXk68w`) |
+| `SOL-USDC` | `CFSMrBssNG8Ud1edW59jNLnq2cwrQ9uY5cM3wXmqRJj3` | SOL (wrapped, `So11111111111111111111111111111111111111112`) | USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) |
 
 A market's `name` field is not a symbol: two markets can share a name.
 
