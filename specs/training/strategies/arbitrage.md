@@ -13,12 +13,12 @@ It assumes the [perp guide](../instruments/perp.md): the same $1,000 and
 SPCX at $100. The figures are a teaching model with made-up prices.
 
 :::glance
-- **Kind:** a strategy, not an instrument
-- **You hold:** two positions that cancel each other's price risk
-- **You earn:** a price gap, or funding, not a price move
-- **You need:** two places to trade, or two instruments on the same thing
-- **It ends when:** the gap closes, often because arbitrageurs closed it
-- **Worst case:** one leg fails or is liquidated, and you're left holding the other
+- **The idea:** the same thing has two prices, or pays you to hold it
+- **You hold:** two opposite positions, so a price move doesn't matter
+- **You earn:** the gap between the prices, or funding
+- **You need:** two places to trade, or two ways to hold the same thing
+- **It ends when:** the gap closes, often because traders like you closed it
+- **Worst case:** one side of the trade fails, and you're left holding the other
 :::
 
 :::eli5
@@ -130,10 +130,9 @@ bet you set out to avoid.
   "controls": [
     { "id": "path", "label": "What SPCX does", "type": "choice", "options": [["flat", "Drifts"], ["rally", "Rallies 30%"], ["crash", "Falls 30%"], ["spike", "Spikes, then back"]], "value": "flat" },
     { "id": "rate", "label": "Funding rate, per hour", "min": -2, "max": 3, "step": 0.05, "value": 1, "format": "bp", "hint": "Positive: longs pay shorts, so your short collects." },
-    { "id": "leverage", "label": "Short leg leverage", "min": 1, "max": 10, "step": 0.5, "value": 5, "format": "x", "hint": "More leverage puts more dollars into SPCX, and the short leg closer to liquidation." },
-    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 5, "step": 0.5, "value": 3, "format": "num" }
+    { "id": "leverage", "label": "Short leg leverage", "min": 1, "max": 10, "step": 0.5, "value": 5, "format": "x", "hint": "More leverage puts more dollars into SPCX, and the short leg closer to liquidation." }
   ],
-  "fixed": { "capital": 1000, "entry": 100, "days": 30 },
+  "fixed": { "maintenance": 3, "capital": 1000, "entry": 100, "days": 30 },
   "presets": [
     { "label": "The carry works", "set": {}, "note": "SPCX drifts, the legs cancel, and the short collects about 1 bp an hour: about $60 in a month on $1,000." },
     { "label": "Rally at 5×", "set": { "path": "rally" }, "note": "SPCX rises 30%. The short leg is liquidated near $122 (the funding it collected bought it a little room), leaving you long SPCX, unhedged. SPCX kept rising, so the month ends up: luck, not the trade. A fall from there would have been all loss." },
