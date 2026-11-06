@@ -49,6 +49,7 @@ const slug = (text) =>
   text
     .toLowerCase()
     .replace(/<[^>]+>/g, "")
+    .replace(/&#?\w+;/g, "")
     .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .trim()
     .replace(/\s+/g, "-");
@@ -187,6 +188,9 @@ function modelsOf(file) {
 /** A spec's body as HTML, with its sections numbered, and its table of contents. */
 function render(markdown, page, models = []) {
   const toc = [];
+  // Two headings with the same text get distinct anchors: the first keeps
+  // the plain one, so links written against it still land there.
+  const ids = new Map();
   let section = 0;
   let subsection = 0;
   const marked = new Marked({
@@ -200,7 +204,10 @@ function render(markdown, page, models = []) {
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens);
         if (depth === 1) return "";
-        const id = slug(html);
+        const base = slug(html);
+        const seen = ids.get(base) ?? 0;
+        ids.set(base, seen + 1);
+        const id = seen ? `${base}-${seen + 1}` : base;
         let number = "";
         // The abstract isn't numbered, as in an RFC.
         if (depth <= 3 && !/^abstract$/i.test(html)) {
