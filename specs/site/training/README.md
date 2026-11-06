@@ -33,7 +33,7 @@ every instrument reads the same:
    mandate.
 8. **Trading it under a mandate**: how the mandate's limits apply to it.
 9. **Check yourself**: `:::check` questions.
-10. **Glossary**.
+10. **Glossary**: a pointer to the [glossary](../../training/glossary.md), not a table.
 
 Start the title with `Guide: `, and set `Status: guide`.
 
@@ -52,10 +52,35 @@ Markdown.
 | `use`, `avoid` | When to use it, and when not to. |
 | `risk` | One risk, named in the title. |
 | `note`, `example` | An aside, or a worked example. |
+| `history` | Where a name or an instrument comes from, when there is a story worth telling. Don't force one. |
 | `check` | A question, in the title, whose answer is hidden until clicked. |
 
 To lay callouts side by side, wrap them in `:::group`, and open and close each
 one inside it with `::` instead of `:::`.
+
+## The glossary
+
+`specs/training/glossary.md` defines every term the guides use, one
+`### Term` per entry, grouped under `##` topics. In every training page the
+first mention of a term in each section is underlined, and shows its
+definition on hover or tap (`terms.js`). The definition is the entry's first
+paragraph, so make that paragraph stand alone.
+
+Two optional lines under an entry's heading tune the matching, and the page
+doesn't show them:
+
+```
+### Long
+
+Also: longs, going long, long position
+Not: as long as, how long
+```
+
+- `Also:` lists the other forms that mean the term: plurals, verbs, phrases.
+- `Not:` lists phrases that contain a form but mean something else.
+
+When a guide uses a new term, add it to the glossary rather than defining it
+in the guide.
 
 ## Labs
 
