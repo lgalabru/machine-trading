@@ -49,9 +49,11 @@ PDA index 0, subaccount 0, together with the authority's wallet USDC.
 
 On each spot market in the universe, the account is the agent authority's
 seat on that market: its `TraderState` in the market account, which the
-program keeps for every trader with a seat. With the authority's wallet
-token accounts for the market's base and quote mints, they hold everything
-the account has on the market.
+program keeps for every trader with a seat, together with the authority's
+wallet token accounts for the market's base and quote mints.
+
+The wallet matters for trading too: a `Swap` order trades straight from the
+wallet's token accounts, without a seat.
 
 ### Measurements
 
@@ -67,10 +69,13 @@ From them:
   in base units. For SOL, the wallet's holding is its wrapped SOL token
   account; native SOL is not counted, since the authority spends it on
   transaction fees.
-- **Fills.** Each fill is a `Fill` event the program logs, with the price
-  in ticks and the base lots filled; the maker order's sequence number gives
-  its side, and the taker's is the opposite. Phoenix settles both sides of a
-  match in the same instruction, so the position never lags a fill.
+- **Fills.** Each match is a `Fill` event in the instruction's audit log,
+  with the maker (`maker_id`), the maker order's `order_sequence_number`,
+  the price (`price_in_ticks`) and the size (`base_lots_filled`). The
+  sequence number gives the maker's side (`Side::from_order_sequence_number`),
+  and the taker's is the opposite; the log's header names the taker, as
+  `signer`. Phoenix settles both sides of a match in the same instruction,
+  so the position never lags a fill.
 - **Open orders.** An order resting in the market's book whose trader index
   is the authority's seat.
 - **Value.** Base and quote holdings, wallet and trader state together, with

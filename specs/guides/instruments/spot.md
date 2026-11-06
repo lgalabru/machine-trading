@@ -348,8 +348,10 @@ Yes. A spot position is your holdings of the asset wherever they are:
 :::
 
 :::check Your ask fills on OpenBook as a maker, and nobody has consumed the event heap yet. Have you sold?
-Yes. The fill happened, and an enforcer counts it from the venue's events.
-Your open orders account only shows it once the heap is consumed.
+Yes. The fill happened, and an enforcer counts it from the venue's records:
+the fill waits in the heap as an event. Your open orders account shows it
+once the heap is consumed, or at once if the taker's transaction settled
+it.
 :::
 
 ### The mandate
