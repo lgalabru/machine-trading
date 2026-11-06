@@ -19,7 +19,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 body.index { font-family: var(--mono); }
-body.spec { font-family: "Noto Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+/* One font across the site: the index's monospace. */
+body.spec { font-family: var(--mono); font-size: 15px; }
 
 a { color: var(--color-link); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -64,6 +65,23 @@ pre code { background: none; padding: 0; font-size: 0.85rem; }
 table { border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; display: block; overflow-x: auto; }
 th, td { border: 1px solid var(--color-rule); padding: 0.4rem 0.7rem; text-align: left; vertical-align: top; }
 th { background: #fafafa; }
+
+/* Wide screens: the table of contents sits beside the text, fixed, as on
+   paymentauth.org, with the section being read highlighted. */
+.toc a.active { color: #000; font-weight: 700; }
+@media (min-width: 1180px) {
+  body.spec { max-width: 1240px; padding-right: 330px; box-sizing: border-box; }
+  .spec .toc {
+    position: fixed; top: 2rem; right: max(1rem, calc((100vw - 1240px) / 2 + 1rem)); width: 290px;
+    max-height: calc(100vh - 4rem); overflow-y: auto; margin: 0; padding: 0 0 0 1.25rem;
+    border: none; border-left: 1px solid var(--color-rule); border-radius: 0;
+  }
+  .spec .toc h2 { font-size: 0.85rem; font-weight: 400; color: var(--color-muted); padding-bottom: 0.5rem; border-bottom: 1px solid var(--color-rule); }
+  .spec .toc ul { font-size: 0.82rem; }
+  .spec .toc .depth-3 { padding-left: 1.25rem; }
+  .spec .toc li a { display: flex; }
+  .spec .toc .number { flex: none; }
+}
 
 @media (max-width: 600px) {
   .spec-entry { padding-left: 0.5rem; }
