@@ -1,4 +1,4 @@
-# Mandate v1
+# Mandate v0
 
 Status: draft
 
@@ -10,9 +10,9 @@ the agent acts, handed to the agent, and checked by an enforcer that does not
 trust the agent. A mandate constrains *what* the agent does, never *why*:
 strategy, signals and sizing logic are out of scope.
 
-v1 extends v0 with spot instruments, a universe that can span several
-venues, the sides an agent may trade, and limit prices. Every v0 mandate is a
-valid v1 mandate with the same meaning. See [Changes from v0](#changes-from-v0).
+v0 is a draft, and grows as instruments are added: perpetuals, spot and
+money markets so far, on one venue or several. The reference implementation
+reads a subset of it; see [Implementation status](#implementation-status).
 
 ## Conventions
 
@@ -42,7 +42,7 @@ A mandate is a JSON object with these members:
 
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `version` | string | yes | `"v1"` for this specification, or `"v0"`. |
+| `version` | string | yes | `"v0"` for this specification. |
 | `term` | object | no | When the mandate ends. See [Term](#term). |
 | `universe` | array of allowances | yes | The instruments the account may hold, each with its own limits. MUST NOT be empty. |
 | `limits` | object | yes | Limits on the account as a whole. See [Limits](#limits). |
@@ -52,18 +52,17 @@ An **allowance** is an object:
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `instrument` | string | yes | An [instrument reference](#instrument-references). An instrument MUST NOT appear in two allowances. |
-| `max_position` | number | yes | The largest position, long or short, in the instrument's base units. MUST be positive. |
-| `sides` | array of strings | no | The sides the agent may trade: `"buy"`, `"sell"`, or both. Absent means both. MUST NOT be empty or repeat a side. |
-| `min_sell_price` | number | no | The lowest price at which the account may sell, in the instrument's quote currency per base unit. MUST be positive. |
-| `max_buy_price` | number | no | The highest price at which the account may buy, in the same units. MUST be positive. |
+| `max_position` | number | yes | The largest position, in the instrument's base units. With `min_position` absent, it bounds a short too: the position may go down to `−max_position`. MUST NOT be negative. |
+| `min_position` | number | no | The smallest position allowed, in the same units. Absent means `−max_position`. MUST NOT be above `max_position`. `0` forbids a negative position: no shorting a perp, no borrowing from a money market. |
+| `sides` | array of strings | no | The sides the agent may trade: `"buy"`, `"sell"`, or both. Absent means both. MUST NOT be empty or repeat a side. Not for `money-market` instruments. |
+| `min_sell_price` | number | no | The lowest price at which the account may sell, in the instrument's quote currency per base unit. MUST be positive. Not for `money-market` instruments. |
+| `max_buy_price` | number | no | The highest price at which the account may buy, in the same units. MUST be positive. Not for `money-market` instruments. |
 
 A reader MUST reject a mandate with a member it does not know, at any level.
 A limit a reader doesn't know is one it can't enforce, and a mandate read as
 looser than written is worse than one refused.
 
-A reader MUST reject a `version` it does not implement. A v1 reader MUST
-accept `"v0"` documents, which can contain none of the members v1 adds, and
-read them as v1.
+A reader MUST reject a `version` it does not implement.
 
 ### Instrument references
 
@@ -71,10 +70,9 @@ An instrument is referenced as `<venue>:<kind>:<symbol>`, for example
 `phoenix:perp:SPCX` or `openbook:spot:SOL-USDC`:
 
 - `venue` names a [venue profile](venues/), such as `phoenix` or `openbook`.
-- `kind` names an [instrument profile](instruments/). v1 defines `perp` and
-  `spot`. `future`, `option` and `money-market` are reserved for later
-  versions, and a v1 reader MUST reject them. A v0 document MUST NOT use
-  `spot`.
+- `kind` names an [instrument profile](instruments/). This specification
+  defines `perp`, `spot` and `money-market`. `future` and `option` are
+  reserved for later, and a reader MUST reject them.
 - `symbol` is the market's identifier on the venue, as the venue profile
   defines it.
 
@@ -97,9 +95,10 @@ term first, so the agent reads everything it is held to from one document.
 
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `max_drawdown_usd` | number | in v0 | The most, in USD, the account's value may fall below its running peak during the term. MUST be positive. OPTIONAL in v1. |
+| `max_drawdown_usd` | number | no | The most, in USD, the account's value may fall below its running peak during the term. MUST be positive. |
+| `min_health` | number | no | The lowest health any of the account's borrowing positions may reach, as the venue profile defines health. MUST be at least 1, the point at which the venue may liquidate. |
 
-A v1 mandate MAY have no limits, `"limits": {}`, when its allowances bound
+A mandate MAY have no limits, `"limits": {}`, when its allowances bound
 everything the principal cares about. A mandate to sell a holding is an
 example: the holding's value falls with the market whatever the agent does,
 so a drawdown limit would measure the market, not the agent.
@@ -111,10 +110,10 @@ these holds:
 
 1. **Universe.** The account holds a position, or has an open order, in an
    instrument not in the universe.
-2. **Position cap.** The absolute size of the account's position in an
-   instrument exceeds that instrument's `max_position`. Positions are
-   measured as the instrument profile defines. Open orders do not count until
-   they fill.
+2. **Position cap.** The account's position in an instrument is above that
+   instrument's `max_position`, or below its `min_position` (`−max_position`
+   when absent). Positions are measured as the instrument profile defines.
+   Open orders do not count until they fill.
 3. **Drawdown limit.** When the mandate sets `max_drawdown_usd`, the
    account's running peak value, from the start of the term, minus its
    current value exceeds it. Account value is measured as in
@@ -125,6 +124,9 @@ these holds:
    `min_sell_price`, or a buy fill above its `max_buy_price`. A fill's price
    is the price the venue records for it, before fees. Resting orders at any
    price are allowed; only fills are checked.
+6. **Health.** When the mandate sets `min_health`, the health of any of the
+   account's borrowing positions, measured as the venue profile defines, is
+   below it.
 
 The rules are cumulative: a mandate allows only what every rule allows.
 
@@ -132,7 +134,8 @@ The rules are cumulative: a mandate allows only what every rule allows.
 
 The account's value is everything it holds, each asset counted once, at the
 prices the venue profiles define, plus the unrealized PnL of its perpetual
-positions, as the perp profile defines.
+positions, as the perp profile defines, minus everything it owes, such as a
+money market's borrows.
 
 An asset two venue profiles both count, such as USDC in the authority's
 wallet, MUST be counted once. When two profiles price the same asset
@@ -181,24 +184,23 @@ above it, is a cost the principal accepts. It belongs in how a session is
 scored, and a limit the agent may cross for a price is not one this
 specification can state.
 
-## Changes from v0
+## Implementation status
 
-- The `spot` instrument kind, defined by the [spot profile](instruments/spot.md).
-- A universe that spans several venues, with the account's value added up
-  across them, each asset counted once.
-- `sides`, `min_sell_price` and `max_buy_price` on an allowance, and the
-  rules that check them against every fill.
-- `max_drawdown_usd` is optional.
+The reference implementation, `mtx_botkit::mandate`, reads and enforces the
+part of this specification the benchmark's tasks use today: `perp`
+instruments on one venue, `max_position`, and `max_drawdown_usd`. It rejects
+documents that use anything else, so the examples of spot and money-market
+mandates below live here rather than in [`examples/`](examples/), which
+`cargo test` checks against it.
 
 ## Changes in later versions
 
-Each of these would be a new version, since a reader must reject what it
-cannot enforce:
+Each of these would change what a reader must enforce, so each will be a new
+version once v0 is final:
 
 - More limits: `max_notional_usd`, `max_leverage`, a participation cap (a
   share of a venue's traded volume), and order rate limits.
-- More instrument kinds: dated `future`, `option`, and `money-market`
-  (supply and borrow).
+- More instrument kinds: dated `future` and `option`.
 - More allowed actions per instrument, such as reduce-only, or no borrowing.
 - Limit prices relative to a reference, such as the price at the start of
   the term, rather than fixed in the document.
@@ -221,11 +223,11 @@ A v0 template, as the `phoenix-flash-crash` task carries it:
 The copy a session hands its bot adds the term: `"term": { "until_slot": 412480 }`.
 See [`examples/`](examples/).
 
-A v1 mandate to sell a treasury's 30,000 SOL on two venues, never below $94:
+A mandate to sell a treasury's 30,000 SOL on two venues, never below $94:
 
 ```json
 {
-  "version": "v1",
+  "version": "v0",
   "term": { "until_slot": 412600 },
   "universe": [
     { "instrument": "openbook:spot:SOL-USDC", "max_position": 30000, "sides": ["sell"], "min_sell_price": 94.0 },
@@ -239,5 +241,23 @@ Both allowances bound the same SOL: a spot position is the account's
 holdings of the base asset, wherever it sits (see the
 [spot profile](instruments/spot.md#position)). The agent may only sell, on
 either venue, never below $94, and has no drawdown limit, since the
-holding's value moves with SOL. v1 is not yet implemented by the reference
-implementation, so this example lives here rather than in `examples/`.
+holding's value moves with SOL.
+
+A mandate to borrow USDC against SOL on Kamino, never shorting SOL and
+never borrowing more than $50,000, with a cushion above liquidation:
+
+```json
+{
+  "version": "v0",
+  "universe": [
+    { "instrument": "kamino:money-market:SOL", "max_position": 1000, "min_position": 0 },
+    { "instrument": "kamino:money-market:USDC", "max_position": 50000 }
+  ],
+  "limits": { "min_health": 1.25 }
+}
+```
+
+The SOL allowance's `min_position: 0` means the agent may supply SOL but
+never borrow it; the USDC allowance lets the position go to −50,000, a
+$50,000 borrow. `min_health: 1.25` keeps the borrow at least 25% away from
+the point where Kamino may liquidate it.

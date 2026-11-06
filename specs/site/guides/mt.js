@@ -15,7 +15,7 @@
 //       title, height?,
 //       x: { label, format }, y: { label, format, zero? },
 //       series: [{ name, points: [[x, y], ...], color?, fill?: "sign", dash? }],
-//       rules:  [{ axis: "x" | "y", at, label, tone? }],
+//       rules:  [{ axis: "x" | "y", at, label, tone?, align?: "start" }],
 //       bands:  [{ axis: "x" | "y", from, to, tone, label? }],
 //       dots:   [{ x, y, label, tone? }],
 //     }],
@@ -203,7 +203,9 @@
         if (r.at < y0 || r.at > y1) continue;
         const y = Y(r.at);
         el("line", { x1: m.left, x2: m.left + iw, y1: y, y2: y, class: "mt-rule" }, svg).style.stroke = toneOf(r.tone);
-        el("text", { x: m.left + iw - 4, y: y - 4, class: "mt-rule-label", "text-anchor": "end" }, svg).textContent = r.label;
+        // A y rule's label sits at the right end, or the left with `align: "start"`.
+        const start = r.align === "start";
+        el("text", { x: start ? m.left + 4 : m.left + iw - 4, y: y - 4, class: "mt-rule-label", "text-anchor": start ? "start" : "end" }, svg).textContent = r.label;
       }
     }
 
