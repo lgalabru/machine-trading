@@ -1,4 +1,4 @@
-# Glossary: trading terms
+# Glossary
 
 Status: guide
 
@@ -109,6 +109,7 @@ trades actually made.
 ### Hedge
 
 Also: hedges, hedging, hedged
+Not: hedge fund, hedge funds
 
 A position held to offset the risk of another. A short perp hedges a
 holding of the same token: what one loses, the other gains.
@@ -166,7 +167,8 @@ asking (the ask). A market order buys at the ask and sells at the bid.
 
 ### Spread
 
-Also: spreads, bid-ask spread
+Also: bid-ask spread
+Not: spreads your
 
 The gap between the best ask and the best bid. Crossing it is a cost every
 taker pays.
@@ -441,6 +443,52 @@ world when shorts found that Porsche controlled most of its shares and
 scrambled to buy. In January 2021 GameStop's price rose more than tenfold
 in weeks as retail traders squeezed the funds short of it.
 :::
+
+## Strategies
+
+### Strategy
+
+Also: strategies
+
+A repeatable rule for when to trade, which side to take, and how much. A
+mandate bounds what a strategy may do, but never says what it is.
+
+### Arbitrage
+
+Also: arbitrageur, arbitrageurs, arbitrages, arb
+
+Buying something where it is cheap and selling it where it is dear, at the
+same time, so the profit doesn't depend on which way the price moves next.
+See the [guide](strategies/arbitrage.md).
+
+### Leg
+
+Also: legs
+
+One of the positions in a trade made of several. An arbitrage has two legs
+whose price risks cancel.
+
+### Delta-neutral
+
+Also: delta neutral, hedged position
+
+Holding positions whose gains and losses from a price move cancel, so the
+total doesn't change when the price does.
+
+### Cash and carry
+
+Also: cash-and-carry, basis trade, carry trade, carry
+
+Buying an asset and shorting a future or perp on it, to earn the premium or
+the funding without exposure to the price.
+
+### Market making
+
+Also: market maker, market makers, making markets
+
+Quoting both a price to buy and a price to sell, and earning the gap between
+them from the traders who take the quotes. The market maker ends up holding
+whatever those traders didn't want.
 
 ## Mandates
 
