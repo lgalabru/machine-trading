@@ -57,6 +57,27 @@ They took off in crypto instead: BitMEX launched a perpetual swap on bitcoin
 in 2016, and perps are now the most traded crypto derivative.
 :::
 
+### The underlying
+
+The **underlying** is whatever the perp's price follows. You never hold it:
+the perp only borrows its price, through the venue's index. On Phoenix, it
+can be one of five kinds of thing, and the kind decides where the price
+comes from and when:
+
+| Kind | Example perp | Its underlying | Where the price comes from |
+| --- | --- | --- | --- |
+| Crypto | `SOL`, `BTC` | The token itself | Spot markets, which trade around the clock |
+| Stock | `SPCX`, `AAPL` | One share of a listed company: SpaceX, Apple | US stock trading, 24 hours a day on weekdays |
+| ETF | `SPY`, `QQQ` | A stock index: the S&P 500, the Nasdaq 100 | The index's prices, on the same weekday hours |
+| Commodity | `GOLD`, `WTIOIL` | Gold's spot price; a crude oil futures contract | Spot and futures markets, closed from Friday to Sunday evening and for an hour each weekday evening |
+| Pre-IPO | `ANTHROPIC` | A private company's valuation: $1 of the perp is $1 billion | No public market: Phoenix's own pricing, within bounds it resets every four hours |
+
+The further the underlying is from a market that trades around the clock,
+the more of the week the perp spends without its anchor, which comes up
+again [below](#when-spcxs-own-market-is-closed). This guide follows `SPCX`
+throughout. Phoenix lists every market and its underlying in its
+[market specs](https://docs.phoenix.trade/phoenix/real-world-assets/market-specs.md).
+
 ### Your first trade
 
 You have **$1,000**, and you think SPCX, trading at **$100**, is going up.
