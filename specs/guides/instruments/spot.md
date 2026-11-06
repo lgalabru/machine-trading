@@ -275,7 +275,7 @@ away while it waits.
 
 ## Spot under a mandate
 
-[Mandate v1](../../mandate.md) adds spot. For a spot instrument:
+The [mandate](../../mandate.md) covers spot too. For a spot instrument:
 
 - **The position is your holdings of the base asset**, wherever they are:
   wallet, free and locked on every venue. Two allowances on SPCX, one on

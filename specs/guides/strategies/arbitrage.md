@@ -229,7 +229,7 @@ The numbers an arbitrage bot needs before it trades:
 
 ## Arbitrage under a mandate
 
-[Mandate v1](../../mandate.md) can hold both kinds: it allows `spot`
+The [mandate](../../mandate.md) can hold both kinds: it allows `spot`
 instruments, and a universe that spans several venues, with the account's
 value added up across them.
 
@@ -238,7 +238,7 @@ sides:
 
 ```json
 {
-  "version": "v1",
+  "version": "v0",
   "universe": [
     { "instrument": "openbook:spot:SOL-USDC", "max_position": 100 },
     { "instrument": "phoenix:spot:SOL-USDC", "max_position": 100 }

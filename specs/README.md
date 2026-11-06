@@ -32,20 +32,19 @@ the reference implementation by `cargo test`.
 
 | Spec | Version | Status |
 | --- | --- | --- |
-| [Mandate](mandate.md) | v1 | Draft |
+| [Mandate](mandate.md) | v0 | Draft |
 | [Perpetual](instruments/perp.md) | v0 | Draft |
 | [Spot](instruments/spot.md) | v0 | Draft |
-| [Phoenix](venues/phoenix.md) | v1 | Draft |
+| [Money market](instruments/money-market.md) | v0 | Draft |
+| [Phoenix](venues/phoenix.md) | v0 | Draft |
 | [OpenBook](venues/openbook.md) | v0 | Draft |
+| [Kamino](venues/kamino.md) | v0 | Draft |
 
-v0 covers what the benchmark's tasks enforce today: one perpetual on one
-venue, a position cap, and a drawdown limit. The reference implementation is
-`mtx_botkit::mandate`, which bots read and the grader audits with.
-
-v1 adds spot markets, a universe across several venues, the sides an agent
-may trade, and limit prices, for tasks like selling a large holding. It is
-specified ahead of its implementation: the reference implementation still
-reads v0 only.
+v0 is a draft. It specifies perpetuals, spot and money markets, on one venue
+or several. The reference implementation is `mtx_botkit::mandate`, which
+bots read and the grader audits with; it implements the part the
+benchmark's tasks enforce today, one perpetual on one venue with a position
+cap and a drawdown limit, and rejects the rest.
 
 These specs live in this repository until a second venue or a consumer
 outside the benchmark needs them.

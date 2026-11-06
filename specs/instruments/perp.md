@@ -19,9 +19,11 @@ such as shares or tokens. It is positive when long and negative when short.
 The venue profile defines the base unit and how to convert the venue's own
 quantities into it.
 
-`max_position` bounds the absolute value of the filled position. Open
-orders do not count until they fill, so an agent that must stay under the cap
-sizes its resting orders so that fills can't take it over.
+`max_position` and `min_position` bound the filled position: with
+`min_position` absent, it may go from −`max_position` (short) to
+`max_position` (long), and `min_position: 0` makes the allowance long-only.
+Open orders do not count until they fill, so an agent that must stay under
+the cap sizes its resting orders so that fills can't take it over.
 
 ## Value
 
