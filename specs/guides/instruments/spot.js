@@ -3,7 +3,7 @@
 // $100 mid, and fees are a flat rate per trade. A venue profile defines the
 // real book and fees.
 
-/** Walk a flat ladder: `levels` of `depth` SOL every `step` dollars, from `best`. */
+/** Walk a flat ladder: `levels` of `depth` SPCX every `step` dollars, from `best`. */
 function walk(size, best, step, depth, dir) {
   let left = size;
   let cost = 0;
@@ -37,7 +37,7 @@ MT.register("spot.book", (p) => {
   const stats =
     p.order === "market"
       ? [
-          { label: pay ? "You pay, on average" : "You receive, on average", value: MT.format("price", m.avg), hint: `per SOL, for ${MT.format("num", p.size)} SOL` },
+          { label: pay ? "You pay, on average" : "You receive, on average", value: MT.format("price", m.avg), hint: `per SPCX, for ${MT.format("num", p.size)} SPCX` },
           { label: "Spread and slippage", value: MT.format("bp", Math.round(slip * 1e5) / 10), tone: slip > 0.002 ? "bad" : slip > 0.0005 ? "warn" : "good", hint: `vs the $100 mid: ${MT.format("usd", Math.abs(m.avg - mid) * p.size)}` },
           { label: "Fees", value: fees, format: "usd", hint: `${MT.format("bp", p.fee)} of ${MT.format("usd0", m.total)}` },
           { label: pay ? "Total cost" : "Total received", value: pay ? m.total + fees : m.total - fees, format: "usd" },
@@ -53,19 +53,19 @@ MT.register("spot.book", (p) => {
     stats,
     note:
       p.order === "market" && p.size > p.depth * 20
-        ? `Your order eats ${MT.format("num", Math.ceil(p.size / p.depth))} levels of the book: the last SOL ${pay ? "costs" : "sells for"} ${MT.format("price", m.last)}. Selling a holding this size in one go is what the selling-a-large-position guide is about.`
+        ? `Your order eats ${MT.format("num", Math.ceil(p.size / p.depth))} levels of the book: the last SPCX ${pay ? "costs" : "sells for"} ${MT.format("price", m.last)}. Selling a holding this size in one go is what the selling-a-large-position guide is about.`
         : "",
     panels: [
       {
-        x: { label: `SOL you ${pay ? "buy" : "sell"} at once`, format: "num" },
-        y: { label: "Price per SOL", format: "price", zero: false },
+        x: { label: `SPCX you ${pay ? "buy" : "sell"} at once`, format: "num" },
+        y: { label: "Price per SPCX", format: "price", zero: false },
         series: [
           { name: "Average price", points: xs.map((q) => [q, market(q).avg]) },
-          { name: "Last SOL's price", points: xs.map((q) => [q, market(q).last]), color: "s2", dash: true },
+          { name: "Last SPCX's price", points: xs.map((q) => [q, market(q).last]), color: "s2", dash: true },
         ],
         rules: [
           { axis: "y", at: mid, label: "Mid: $100" },
-          { axis: "x", at: p.size, label: `You: ${MT.format("num", p.size)} SOL` },
+          { axis: "x", at: p.size, label: `You: ${MT.format("num", p.size)} SPCX` },
         ],
         dots: [{ x: p.size, y: m.avg, tone: "s1" }],
       },
@@ -87,18 +87,18 @@ MT.register("spot.compare", (p) => {
   const xs = MT.range(40, 160, 241);
   return {
     stats: [
-      { label: "Spot: you hold", value: `${MT.format("num", sol)} SOL`, hint: "bought with your $1,000" },
-      { label: `Spot, if SOL goes to ${MT.format("price", exit)}`, value: spot(exit), format: "usd0", tone: spot(exit) >= deposit ? "good" : "bad", hint: "never liquidated, never pays funding" },
-      { label: `Perp at ${MT.format("x", leverage)}`, value: perp(exit), format: "usd0", tone: perp(exit) === 0 ? "bad" : perp(exit) >= deposit ? "good" : "bad", hint: exit <= liq ? "liquidated on the way" : `long ${MT.format("num", units)} SOL, after funding` },
+      { label: "Spot: you hold", value: `${MT.format("num", sol)} SPCX`, hint: "bought with your $1,000" },
+      { label: `Spot, if SPCX goes to ${MT.format("price", exit)}`, value: spot(exit), format: "usd0", tone: spot(exit) >= deposit ? "good" : "bad", hint: "never liquidated, never pays funding" },
+      { label: `Perp at ${MT.format("x", leverage)}`, value: perp(exit), format: "usd0", tone: perp(exit) === 0 ? "bad" : perp(exit) >= deposit ? "good" : "bad", hint: exit <= liq ? "liquidated on the way" : `long ${MT.format("num", units)} SPCX, after funding` },
       { label: `Funding over ${MT.format("d", days)}`, value: -funding, format: "+usd", hint: "the perp's cost of holding; spot has none" },
       { label: "Perp liquidated below", value: liq < 0.01 ? "only at $0" : MT.format("price", liq) },
     ],
     panels: [
       {
-        x: { label: "Where SOL goes", format: "price" },
+        x: { label: "Where SPCX goes", format: "price" },
         y: { label: "What your $1,000 becomes", format: "usd0" },
         series: [
-          { name: "Spot: 10 SOL", points: xs.map((x) => [x, spot(x)]) },
+          { name: "Spot: 10 SPCX", points: xs.map((x) => [x, spot(x)]) },
           { name: `Perp at ${MT.format("x", leverage)}`, points: xs.map((x) => [x, perp(x)]), color: "s2" },
         ],
         rules: [
