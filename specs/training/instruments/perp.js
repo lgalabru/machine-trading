@@ -15,47 +15,47 @@ const sideOf = (p) => (p.side === "short" ? -1 : 1);
 
 MT.register("perp.payoff", (p) => {
   const s = sideOf(p);
-  const { entry, size, leverage } = p;
+  const { entry, deposit, leverage, exit } = p;
   const mm = p.maintenance / 100;
-  const notional = size * entry;
-  const margin = notional / leverage;
+  const units = (deposit * leverage) / entry;
   const liq = liquidationPrice(s, entry, leverage, mm);
-  const reach = Math.max(0.3, Math.abs(liq / entry - 1) * 1.35);
-  const lo = entry * (1 - reach);
-  const hi = entry * (1 + reach);
-  const raw = (price) => s * size * (price - entry);
   const liquidated = (price) => (s > 0 ? price <= liq : price >= liq);
-  const xs = MT.range(lo, hi, 241);
-  const pnl = xs.map((x) => [x, liquidated(x) ? -margin : raw(x)]);
-  const up10 = raw(entry * 1.1);
+  // What the deposit is worth if SPCX ends at `price`, with the perp, and
+  // without it: holding the shares when long, holding dollars when short.
+  // The figure assumes the price goes there directly.
+  const withPerp = (price) => (liquidated(price) ? 0 : deposit + s * units * (price - entry));
+  const without = (price) => (s > 0 ? (deposit / entry) * price : deposit);
+  const xs = MT.range(50, 150, 401);
+  const have = withPerp(exit);
+  const plain = without(exit);
+  const name = s > 0 ? "Buying SPCX with it" : "Keeping the dollars";
   return {
-    note: leverage * mm >= 1 ? `At ${MT.format("x", leverage)} the margin is below the ${MT.format("num", p.maintenance)}% maintenance margin: the venue would refuse the position, or liquidate it at once.` : "",
     stats: [
-      { label: "Notional", value: notional, format: "usd", hint: `${MT.format("num", size)} units × ${MT.format("price", entry)}` },
-      { label: "Margin posted", value: margin, format: "usd", hint: `notional ÷ ${MT.format("x", leverage)}` },
-      { label: "PnL per 1% move", value: notional * 0.01, format: "usd", hint: `${MT.format("pct", leverage * 0.01)} of your margin` },
-      {
-        label: "Liquidation price",
-        value: MT.format("price", liq),
-        tone: Math.abs(liq / entry - 1) < 0.1 ? "bad" : undefined,
-        hint: `a ${MT.format("pct", Math.abs(liq / entry - 1))} move ${s > 0 ? "down" : "up"}`,
-      },
-      { label: "If the price rises 10%", value: up10, format: "+usd", tone: up10 >= 0 ? "good" : "bad", hint: `${MT.format("+pct", up10 / margin)} on margin` },
+      { label: "Your position", value: `${s > 0 ? "long" : "short"} ${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `worth ${MT.format("usd0", units * entry)}, on your ${MT.format("usd0", deposit)}` },
+      { label: "Each $1 SPCX moves", value: `${MT.format("usd", units)} to you`, hint: `${s > 0 ? "up" : "down"} is a gain` },
+      { label: `If SPCX goes to ${MT.format("price", exit)}`, value: have, format: "usd0", tone: liquidated(exit) ? "bad" : have >= deposit ? "good" : "bad", hint: liquidated(exit) ? "liquidated: the margin is gone" : `${MT.format("+pct", have / deposit - 1)} on your dollars` },
+      { label: name, value: plain, format: "usd0", hint: s > 0 ? `${MT.format("num", deposit / entry)} SPCX, no leverage` : "you'd have exactly what you started with" },
+      { label: "Liquidated if SPCX reaches", value: liq < 0.01 ? "only at $0" : MT.format("price", liq), tone: Math.abs(liq / entry - 1) < 0.1 ? "bad" : undefined, hint: `a ${MT.format("pct", Math.abs(liq / entry - 1))} move ${s > 0 ? "down" : "up"}` },
     ],
+    note: leverage * mm >= 1 ? `At ${MT.format("x", leverage)} the margin is below the ${MT.format("num", p.maintenance)}% maintenance margin: the venue would refuse the position, or liquidate it at once.` : "",
     panels: [
       {
-        x: { label: "Price when you close", format: "price" },
-        y: { label: "PnL", format: "+usd" },
+        x: { label: "Where SPCX goes", format: "price" },
+        y: { label: `What your ${MT.format("usd0", deposit)} becomes`, format: "usd0" },
         series: [
-          { name: "PnL", points: pnl, fill: "sign" },
-          { name: "Without liquidation", points: xs.map((x) => [x, raw(x)]), color: "muted", dash: true },
+          { name: "With the perp", points: xs.map((x) => [x, withPerp(x)]) },
+          { name, points: xs.map((x) => [x, without(x)]), color: "muted", dash: true },
         ],
         rules: [
-          { axis: "x", at: entry, label: "Entry" },
+          { axis: "x", at: entry, label: "Today: $100" },
           { axis: "x", at: liq, label: "Liquidation", tone: "danger" },
-          { axis: "y", at: -margin, label: "All your margin", tone: "danger" },
+          { axis: "y", at: deposit, label: "What you put in" },
         ],
         bands: [{ axis: "x", from: s > 0 ? -Infinity : liq, to: s > 0 ? liq : Infinity, tone: "danger", label: "Liquidated" }],
+        dots: [
+          { x: exit, y: have, label: MT.format("usd0", have), tone: "s1" },
+          { x: exit, y: plain, tone: "muted" },
+        ],
       },
     ],
   };
