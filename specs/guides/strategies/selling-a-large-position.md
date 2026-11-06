@@ -8,9 +8,11 @@ doing it. This guide explains how professionals sell a large holding, which
 the benchmark's planned treasury task tests, and how a
 [mandate](../../mandate.md) keeps an agent doing it inside limits.
 
-It assumes the [spot guide](../instruments/spot.md): SOL at **$100**, a book
-of asks and bids, slippage. This time the holding is a treasury's, not
-yours: **30,000 SOL**. The figures are a teaching model with made-up prices.
+It assumes the [spot guide](../instruments/spot.md): a book of asks and bids,
+slippage, a floor. The spot guide bought SPCX with your $1,000; this time
+the holding is a treasury's, and it's the token a treasury on Solana
+usually holds: **30,000 SOL**, at **$100**, sold on the SOL-USDC markets
+the specs name. The figures are a teaching model with made-up prices.
 
 :::glance
 - **The job:** turn a large holding into dollars, close to the price when you started
