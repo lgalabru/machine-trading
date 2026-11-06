@@ -23,7 +23,7 @@ on each rail:
 | Core | The mandate document, its rules, and how they are enforced | [`mandate.md`](mandate.md) |
 | Instruments | What a position is for each kind of instrument, and how its limits apply | [`instruments/`](instruments/) |
 | Venues | How each venue's accounts are measured against a mandate | [`venues/`](venues/) |
-| Training | Guides that teach each instrument to people, with interactive figures. Not normative | [`training/`](training/instruments/) |
+| Guides | Guides that teach instruments and strategies to people, with interactive figures. Not normative | [`guides/`](guides/instruments/) |
 
 Examples live in [`examples/`](examples/). Every example is checked against
 the reference implementation by `cargo test`.

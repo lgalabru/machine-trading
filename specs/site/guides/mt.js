@@ -1,4 +1,4 @@
-// The training pages' interactive figures ("labs").
+// The guide pages' interactive figures ("labs").
 //
 // A lab is written in a guide's Markdown as a ```lab block holding JSON: a
 // model name, its controls (sliders and choices) and presets. build.mjs turns
@@ -22,7 +22,7 @@
 //   }));
 //
 // Models know nothing about the DOM, so a new instrument only writes models.
-// See specs/site/training/README.md.
+// See specs/site/guides/README.md.
 
 (() => {
   const SVG = "http://www.w3.org/2000/svg";

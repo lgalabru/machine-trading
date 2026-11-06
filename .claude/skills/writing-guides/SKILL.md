@@ -1,6 +1,6 @@
 ---
-name: training-guides
-description: Writes and revises the interactive training guides on the Machine Trading Protocol site (specs/training/): instrument guides such as perp, strategy guides such as arbitrage or market making, and the glossary. Covers the teaching approach (one running example, one idea at a time, story before formula, ELI5, history notes only when real), the components (::: callouts, ```lab blocks backed by pure models, glossary hovers), checking every number a guide claims with `npm run check`, and looking at the rendered page. Use when the user asks to "write a guide", "add a training page", "explain an instrument", "add a strategy guide", "write the market making guide", "add a lab", "add a widget", "add a glossary term", "this guide is confusing", "simplify this guide", or to review or restructure anything under specs/training/.
+name: writing-guides
+description: Writes and revises the interactive guides on the Machine Trading Protocol site (specs/guides/): instrument guides such as perp, strategy guides such as arbitrage or market making, and the glossary. Covers the teaching approach (one running example, one idea at a time, story before formula, ELI5, history notes only when real), the components (::: callouts, ```lab blocks backed by pure models, glossary hovers), checking every number a guide claims with `npm run check`, and looking at the rendered page. Use when the user asks to "write a guide", "add a guide pages", "explain an instrument", "add a strategy guide", "write the market making guide", "add a lab", "add a widget", "add a glossary term", "this guide is confusing", "simplify this guide", or to review or restructure anything under specs/guides/.
 license: MIT
 metadata:
   author: Solana Foundation
@@ -8,9 +8,9 @@ metadata:
   repo: lgalabru/machine-trading
 ---
 
-# Writing training guides
+# Writing guides
 
-A training guide teaches one instrument or one strategy to someone who has
+A guide teaches one instrument or one strategy to someone who has
 never traded it. A great guide gets a reader from "I have dollars and I'm
 looking at SPCX" to understanding what can go wrong, without ever asking
 them to hold an idea the page hasn't given them yet.
@@ -22,15 +22,15 @@ the two disagree, the spec wins, and the guide says so.
 
 | What | Where |
 | --- | --- |
-| A guide's text | `specs/training/instruments/<kind>.md`, `specs/training/strategies/<name>.md` |
+| A guide's text | `specs/guides/instruments/<kind>.md`, `specs/guides/strategies/<name>.md` |
 | Its models (what the labs compute) | the `.js` file next to it |
-| The glossary | `specs/training/glossary.md` |
-| The components, and their full API | `specs/site/training/` (`mt.js`, `terms.js`, `mt.css`) and its `README.md` |
+| The glossary | `specs/guides/glossary.md` |
+| The components, and their full API | `specs/site/guides/` (`mt.js`, `terms.js`, `mt.css`) and its `README.md` |
 | The build | `specs/site/build.mjs`; `npm run build` in `specs/site` |
 | The checker | `npm run check` in `specs/site` |
-| The published pages | `https://lgalabru.github.io/machine-trading/training/...` |
+| The published pages | `https://lgalabru.github.io/machine-trading/guides/...` |
 
-Read `specs/site/training/README.md` for the callout kinds, the lab JSON and
+Read `specs/site/guides/README.md` for the callout kinds, the lab JSON and
 the model contract before writing a lab. Copy the closest existing guide
 rather than starting blank: `instruments/perp.md` for an instrument,
 `strategies/arbitrage.md` for a strategy.
@@ -151,9 +151,9 @@ Instruments and strategies use the same outline, in this order:
 
 ## The glossary
 
-Every term a guide uses lives in `specs/training/glossary.md`, one `###`
+Every term a guide uses lives in `specs/guides/glossary.md`, one `###`
 entry per term under `##` topics. The first paragraph is what the hover
-shows on every training page, so it must stand alone.
+shows on every guide pages, so it must stand alone.
 
 ```
 ### Long
@@ -189,7 +189,7 @@ the preset notes. All three must match what the models compute.
    ```sh
    C="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
    "$C" --headless=new --hide-scrollbars --window-size=1400,9000 \
-     --virtual-time-budget=4000 --screenshot=/tmp/guide.png http://localhost:8799/training/instruments/perp.html
+     --virtual-time-budget=4000 --screenshot=/tmp/guide.png http://localhost:8799/guides/instruments/perp.html
    ```
 
    Chrome won't size a window below about 500px, so check phones through a
@@ -203,7 +203,7 @@ Pushing to `main` publishes the site through the Specs workflow, after a
 deploy of over ten minutes. A new push cancels the deploy in progress, so
 batch changes and push once. If the deploy job times out while the build
 job passed, re-run the failed job (`gh run rerun <id> --failed`). Commit with
-Conventional Commits, `feat(training): ...` or `docs(training): ...`.
+Conventional Commits, `feat(guides): ...` or `docs(guides): ...`.
 
 ## Pitfalls seen so far
 

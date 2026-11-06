@@ -1,5 +1,5 @@
 // Models for the perpetual guide's labs (perp.md). Each is a pure function
-// from a lab's control values to what it draws; specs/site/training/mt.js
+// from a lab's control values to what it draws; specs/site/guides/mt.js
 // draws it. The numbers are a teaching model, not a venue's: margin is
 // isolated to the one position, and funding accrues every hour at a fixed
 // rate. A venue profile defines the real mark, margin and funding.
