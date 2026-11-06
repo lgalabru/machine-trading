@@ -210,6 +210,22 @@ function tocHtml(toc) {
   return `<nav class="toc"><h2 id="toc">Table of Contents</h2><ul>${items}</ul></nav>`;
 }
 
+// Highlights the table of contents' entry for the section being read.
+const TOC_SPY = `<script>
+(() => {
+  const links = [...document.querySelectorAll(".toc a[href^='#']")];
+  const sections = links.map((a) => document.getElementById(decodeURIComponent(a.hash.slice(1)))).filter(Boolean);
+  if (!sections.length) return;
+  const update = () => {
+    let current = sections[0];
+    for (const s of sections) if (s.getBoundingClientRect().top < 120) current = s;
+    for (const a of links) a.classList.toggle("active", a.hash.slice(1) === current.id);
+  };
+  addEventListener("scroll", update, { passive: true });
+  update();
+})();
+</script>`;
+
 function layout({ page, title, head, body }) {
   const index = page === "index.html";
   const trail = [`<a href="${link(page, "index.html")}">${NAME}</a>`]
@@ -250,6 +266,7 @@ ${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defe
 ${index ? "" : `<p class="trail">${trail}</p>`}
 ${head}
 ${body}
+${index ? "" : TOC_SPY}
 </body>
 </html>
 `;
