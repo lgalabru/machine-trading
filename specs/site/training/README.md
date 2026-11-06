@@ -16,6 +16,17 @@ A guide is two files:
 table of contents, and loads `mt.js` and `mt.css` (this folder) and the
 guide's own script on the page.
 
+## Kinds of guide
+
+- **Instruments**, in `specs/training/instruments/<kind>.md`: what a thing
+  you can hold is, and how it gains and loses. The outline below.
+- **Strategies**, in `specs/training/strategies/<name>.md`: a repeatable way
+  of trading instruments. Same outline, with "What it is" explaining where
+  the profit comes from and what it costs to capture, "Parameters" listing
+  what a bot has to decide before it trades, and "Under a mandate" saying
+  whether the mandate can express it yet. Use the instrument guides' running
+  example ($1,000, SPCX at $100) so readers can carry their numbers across.
+
 ## The outline
 
 Copy `specs/training/instruments/perp.md` and keep its sections, in order, so

@@ -3,6 +3,7 @@
   --mt-s1: #2a78d6;
   --mt-s2: #eb6834;
   --mt-s3: #1baf7a;
+  --mt-ink: #222;
   --mt-profit: #2a78d6;
   --mt-loss: #e34948;
   --mt-good: #0ca30c;
@@ -17,7 +18,7 @@
 .callout > :first-child { margin-top: 0; }
 .callout > :last-child { margin-bottom: 0; }
 .callout-title { font-weight: 700; font-size: 0.85rem; letter-spacing: 0.02em; text-transform: uppercase; color: #000; margin: 0 0 0.35rem; }
-.callout-title .icon { display: inline-block; width: 1.3rem; }
+.callout-title .icon { display: inline-block; width: 1.3rem; text-transform: none; }
 .callout-eli5 { border-left-color: var(--mt-s1); background: #f6f9fe; }
 .callout-use { border-left-color: var(--mt-good); }
 .callout-avoid { border-left-color: var(--mt-danger); }
