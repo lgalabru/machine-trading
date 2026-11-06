@@ -54,7 +54,7 @@
 .mt-control { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
 .mt-control-head { display: flex; justify-content: space-between; gap: 0.5rem; }
 .mt-control-label { color: var(--color-muted); }
-.mt-control-value { font-family: var(--mono); font-size: 0.82rem; color: #000; }
+.mt-control-value { font-size: 0.85rem; font-weight: 600; color: #000; font-variant-numeric: tabular-nums; }
 .mt-control-hint { font-size: 0.75rem; color: var(--color-muted); }
 .mt-control input[type="range"] { width: 100%; accent-color: #000; margin: 0.2rem 0; }
 .mt-control-wide { grid-column: span 2; }
@@ -64,7 +64,7 @@
 .mt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem; }
 .mt-stat { padding: 0.45rem 0.6rem; border: 1px solid var(--color-rule); border-radius: 4px; background: #fff; }
 .mt-stat-label { font-size: 0.72rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.03em; }
-.mt-stat-value { font-family: var(--mono); font-size: 1rem; font-weight: 600; color: #000; }
+.mt-stat-value { font-size: 1.05rem; font-variant-numeric: tabular-nums; font-weight: 600; color: #000; }
 .mt-stat-hint { font-size: 0.75rem; color: var(--color-muted); }
 .mt-stat-good { border-color: var(--mt-good); }
 .mt-stat-good .mt-stat-icon { color: var(--mt-good); }
@@ -107,7 +107,7 @@
 }
 .mt-tip-head { color: var(--color-muted); margin-bottom: 0.15rem; }
 .mt-tip-row { display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
-.mt-tip-row strong { font-family: var(--mono); font-weight: 600; color: #000; }
+.mt-tip-row strong { font-weight: 600; font-variant-numeric: tabular-nums; color: #000; }
 .mt-tip-name { color: var(--color-muted); }
 .mt-key { display: inline-block; width: 12px; border-top: 2px solid; }
 .mt-key-dash { border-top-style: dashed; }
@@ -118,7 +118,7 @@
 .mt-table summary { cursor: pointer; color: var(--color-link); }
 .mt-table table { font-size: 0.8rem; display: table; }
 .mt-table caption { text-align: left; font-weight: 600; padding: 0.25rem 0; }
-.mt-table td { font-family: var(--mono); }
+.mt-table td { font-variant-numeric: tabular-nums; }
 
 @media (max-width: 600px) {
   .mt-lab { padding: 0.75rem 0.6rem 0.5rem; margin-left: -0.4rem; margin-right: -0.4rem; }
