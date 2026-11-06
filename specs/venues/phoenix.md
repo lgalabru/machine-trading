@@ -1,22 +1,34 @@
-# Venue profile: Phoenix (`phoenix`), v0
+# Venue profile: Phoenix (`phoenix`), v1
 
 Status: draft
 
-[Phoenix](https://phoenix.trade) is a perpetual futures exchange on Solana
-with cross-margin trader accounts.
+[Phoenix](https://phoenix.trade) runs two kinds of market on Solana, each its
+own program: perpetual futures with cross-margin trader accounts, and spot
+order books (Phoenix v1, program `PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY`).
+v1 of this profile adds the spot markets.
 
 ## Instruments
 
 | Reference | Meaning |
 | --- | --- |
 | `phoenix:perp:<SYMBOL>` | The Phoenix perpetual market whose symbol is `<SYMBOL>` in Phoenix's `/exchange` metadata, such as `SPCX`. |
+| `phoenix:spot:<SYMBOL>` | The Phoenix v1 spot market `<SYMBOL>` names in the table below. |
+| `phoenix:spot:<ADDRESS>` | The Phoenix v1 spot market at the base58 address `<ADDRESS>`. |
 
-## Account
+Named spot markets:
+
+| Symbol | Market address | Base | Quote |
+| --- | --- | --- | --- |
+| `SOL-USDC` | `4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg` | SOL (wrapped, `So11111111111111111111111111111111111111112`) | USDC (`EPjFWdd5AufqSSquM8ZiZRXbwhqRBLx1uExtCRgXk68w`) |
+
+## Perpetual markets
+
+### Account
 
 The account is the agent authority's Phoenix cross-margin trader account at
 PDA index 0, subaccount 0, together with the authority's wallet USDC.
 
-## Measurements
+### Measurements
 
 - **Position.** The trader's `base_lots` in the market, from Hawkeye's
   `view_margin_for_asset`, converted to base units with the market's lot
@@ -31,9 +43,48 @@ PDA index 0, subaccount 0, together with the authority's wallet USDC.
   withdrawn from Phoenix to the wallet keeps its value, so withdrawing can't
   hide a drawdown.
 
+## Spot markets
+
+### Account
+
+On each spot market in the universe, the account is the agent authority's
+seat on that market: its `TraderState` in the market account, which the
+program keeps for every trader with a seat. With the authority's wallet
+token accounts for the market's base and quote mints, they hold everything
+the account has on the market.
+
+### Measurements
+
+For a market with base lot size `BL` and quote lot size `QL`, the trader's
+`TraderState` holds:
+
+- **Base**: (`base_lots_free` + `base_lots_locked`) × `BL`, in base atoms.
+- **Quote**: (`quote_lots_free` + `quote_lots_locked`) × `QL`, in quote atoms.
+
+From them:
+
+- **Position.** The base held in the wallet, plus the trader state's base,
+  in base units. For SOL, the wallet's holding is its wrapped SOL token
+  account; native SOL is not counted, since the authority spends it on
+  transaction fees.
+- **Fills.** Each fill is a `Fill` event the program logs, with the price
+  in ticks and the base lots filled; the maker order's sequence number gives
+  its side, and the taker's is the opposite. Phoenix settles both sides of a
+  match in the same instruction, so the position never lags a fill.
+- **Open orders.** An order resting in the market's book whose trader index
+  is the authority's seat.
+- **Value.** Base and quote holdings, wallet and trader state together, with
+  the base at the Pyth price feed for it (for SOL, the SOL/USD feed
+  `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`) and
+  USDC at $1.
+
+Wallet balances that both Phoenix and another venue in the universe count,
+such as the authority's USDC, are counted once, as the
+[mandate](../mandate.md#account-value) requires.
+
 ## The benchmark's enforcer
 
-`mtx grade` audits every rule:
+`mtx grade` audits every rule for the perpetual markets:
 
 - It measures the account twice a second while the bot runs, and once more
   at the term's last slot.
@@ -41,6 +92,8 @@ PDA index 0, subaccount 0, together with the authority's wallet USDC.
   and the deepest drawdown, and disqualifies the session on any breach.
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
+
+No benchmark task enforces the spot markets yet.
 
 Separately, the benchmark gates the RPC methods a bot may call. That is a
 rule of the benchmark's sandbox, not part of the mandate.
