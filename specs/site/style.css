@@ -19,8 +19,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 body.index { font-family: var(--mono); }
-/* One font across the site: the index's monospace. */
-body.spec { font-family: var(--mono); font-size: 15px; }
+body.spec { font-family: "Noto Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
 
 a { color: var(--color-link); text-decoration: none; }
 a:hover { text-decoration: underline; }

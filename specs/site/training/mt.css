@@ -123,3 +123,16 @@
 @media (max-width: 600px) {
   .mt-lab { padding: 0.75rem 0.6rem 0.5rem; margin-left: -0.4rem; margin-right: -0.4rem; }
 }
+
+/* Glossary terms, linked by terms.js, and their definitions on hover. */
+a.term { color: inherit; text-decoration: underline dotted #8a8984; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a.term:hover, a.term:focus-visible { color: var(--color-link); text-decoration-color: var(--color-link); }
+.term-pop {
+  position: absolute; z-index: 10; padding: 0.6rem 0.8rem; font-size: 0.85rem; line-height: 1.5;
+  background: #fff; border: 1px solid var(--color-rule); border-radius: 4px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+.term-pop p { margin: 0 0 0.4rem; }
+.term-pop-title { font-weight: 700; color: #000; }
+.term-pop-more { font-size: 0.8rem; }
+.callout-history { border-left-color: #a07a3c; background: #fcfaf5; }
+.callout-history .callout-title { color: #6b5028; }
