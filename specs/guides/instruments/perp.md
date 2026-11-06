@@ -106,10 +106,12 @@ equity   = margin + PnL
 ```
 
 No money changes hands while SPCX moves: the venue re-values your position
-each time its **mark price** for SPCX updates, several times a second on an
-on-chain venue, and your equity moves with it. The PnL becomes real dollars
-when you close. The mark price is built from other markets' prices rather
-than the venue's last trade, so one odd trade can't liquidate anyone.
+at its **mark price** for SPCX, recomputed continuously, and your equity
+moves with it. The PnL becomes real dollars when you close. On Phoenix the
+mark is the middle of three prices: an oracle price for SPCX, its own order
+book (best bid, best ask and last trade), and a smoothed blend of the two.
+Taking the middle one means a single odd trade or a single bad oracle
+update can't move the mark, or liquidate anyone, on its own.
 
 ```lab
 {
@@ -176,11 +178,14 @@ stays 50 SPCX while your equity shrinks, so your leverage climbs as you
 lose: 5×, 9×, 17×. The venue liquidates you when it reaches 1 ÷ 3%, about
 33×.
 
-When it does, the venue sells your 50 SPCX into the market, at whatever the
-price is by then. It doesn't wait for zero because selling takes time and
-costs money: the $124 cushion pays for that and for the venue's liquidation
-fee, so your loss never lands on the venue or other traders. Whatever is left
-may come back to you, depending on the venue; this guide counts it as lost.
+When it does, the venue sells SPCX out of your position into the market, at
+whatever the price is by then. It doesn't wait for zero because selling takes
+time and costs money: the $124 cushion pays for that and for the venue's
+liquidation fee, so your loss never lands on the venue or other traders.
+Phoenix sells only as much as it takes to bring your account back above the
+floor, so a liquidation can be partial; if the book can't absorb it, a
+backstop account takes the position over. This guide simplifies: it closes
+the whole position and counts what's left as lost.
 A liquidation is final: if SPCX is back at $100 an hour later, you are no
 longer in the trade.
 
@@ -189,6 +194,11 @@ To open a position, the venue asks for more than the maintenance margin: the
 margin, so 10× is the most you can open with. The gap between the two is your
 room to lose. Leverage above 1 ÷ maintenance (33× here) is impossible: the
 position would be liquidated the moment it opened.
+
+On Phoenix, SPCX allows at most 15×, so its initial margin is 1 ÷ 15 ≈ 6.67%
+of the notional, and its maintenance margin is half of that, about 3.33%.
+This guide uses a round 3%: at Phoenix's 3.33%, your first trade would be
+liquidated at $82.76 instead of $82.47.
 
 :::eli5 Like a rental deposit
 A landlord holds your deposit while you live there. If the damage you do
@@ -237,7 +247,10 @@ between longs and shorts.
 - When the perp trades *below*, funding is negative and **shorts pay longs**.
 
 Funding is paid on the notional, whatever the margin. It is small per
-interval and adds up over time. It is also how perps are used without a view
+interval and adds up over time. On Phoenix it settles every hour, on your
+position times the index price. With no premium at all, an equity perp's
+longs still pay shorts a small base rate, 0.005% per 8 hours, about 0.06 bp
+an hour; the guide's figures use made-up rates around it. It is also how perps are used without a view
 on the price: a trader who is paid funding on a perp and holds the opposite
 position elsewhere earns the funding with no price exposure.
 
@@ -266,31 +279,33 @@ position elsewhere earns the funding with no price exposure.
 
 ### When SPCX's own market is closed
 
-The perp trades around the clock, even when the market it tracks doesn't.
-If SPCX is a stock, its exchange closes every evening and every weekend,
-but the perp is a separate market between perp traders on the venue, and
-its price is whatever they agree on, at any hour.
+SPCX tracks one share of SpaceX, which trades on US stock exchanges. The
+perp is a separate market between perp traders on the venue, and it trades
+around the clock, so for part of the week it trades when its anchor can't.
 
-What closing stops is the anchor. While SPCX's market is open, the venue's
-index price follows it, and funding and arbitrageurs keep the perp close.
-When it closes:
+On Phoenix, the index follows external prices **24 hours a day, 5 days a
+week**: from Sunday 8 PM to Friday 8 PM Eastern, across pre-market, the
+regular session, post-market and overnight trading. Outside that window,
+over weekends and holidays, Phoenix switches to its own pricing:
 
-| | SPCX's market open | SPCX's market closed |
+| | External window (Sunday 8 PM – Friday 8 PM ET) | Closed (weekends, holidays) |
 | --- | --- | --- |
-| **Index price** | Follows SPCX's market | Stuck at the last price, or missing |
-| **Perp price** | Held near the index | Set by perp traders alone |
-| **News** | Moves both | Moves only the perp |
-| **Your position** | Re-valued as usual | Still re-valued, still liquidated if the floor is hit |
+| **Index price** | Follows external SPCX prices | Starts at the last external price, and drifts toward the price Phoenix's own order book implies, smoothed over about an hour |
+| **Perp price** | Held near the index by funding and arbitrage | Capped within 1 ÷ max leverage of the last external price: 6.67% for SPCX, which allows 15×. Trades outside the cap don't execute |
+| **News** | Moves both | Moves the perp, within the cap |
+| **Your position** | Re-valued and liquidated as usual | Re-valued and liquidated as usual |
 
-When the market reopens, the index jumps to wherever SPCX opens, and funding
-and arbitrage pull the perp toward it. If perp traders guessed wrong in the
-meantime, the perp moves in one step, and a position can be liquidated at a
-price SPCX never traded at in between.
+When the external window reopens, the index snaps to wherever external SPCX
+trades, in one step. If perp traders guessed wrong over the weekend, or the
+news moved SPCX further than the cap allowed, the mark price follows, and a
+position can be liquidated at a price nobody traded at in between.
 
-Venues handle the closed hours differently: some value positions at the
-perp's own order book, some pause funding, lower the leverage they allow,
-or halt the market. The venue profile says what yours does.
+Phoenix's [index price](https://docs.phoenix.trade/phoenix/real-world-assets/index-price.md)
+and [impact pricing](https://docs.phoenix.trade/phoenix/real-world-assets/impact-pricing.md)
+pages describe the details. Other venues handle closed hours differently,
+and their venue profiles should say how.
 
+## Parameters
 
 What a perp is, as the specs and a venue describe it:
 
@@ -333,9 +348,9 @@ mark that lags or diverges from other markets can liquidate a position the
 other markets say is safe.
 ::
 ::risk Closed markets
-The perp trades when SPCX's own market is closed, with nothing to anchor it.
-When the market reopens, the price can jump straight past your liquidation
-price.
+Over weekends and holidays, the perp trades on the venue's own pricing, with
+no external SPCX price to anchor it. When the external window reopens, the
+price can jump straight past your liquidation price.
 ::
 ::risk Venue risk
 The venue holds the margin. Its software, its oracles and its solvency are
