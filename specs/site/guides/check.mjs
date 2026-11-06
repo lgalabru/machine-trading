@@ -1,8 +1,8 @@
 // Prints what every lab shows, for its defaults and for each preset, so a
 // guide's claims can be checked against its models without a browser:
 //
-//   node training/check.mjs                      every guide
-//   node training/check.mjs ../training/strategies/arbitrage.md
+//   node guides/check.mjs                      every guide
+//   node guides/check.mjs ../guides/strategies/arbitrage.md
 //
 // Read each preset's note next to the readouts printed under it: they must
 // agree. Exits non-zero if a model throws or returns a non-finite number.
@@ -32,7 +32,7 @@ globalThis.MT = { ...MT, register: (name, fn) => (models[name] = fn) };
 
 const files = process.argv.slice(2).map((f) => path.resolve(f));
 let failed = false;
-for (const file of files.length ? files : guides(path.join(specs, "training"))) {
+for (const file of files.length ? files : guides(path.join(specs, "guides"))) {
   new Function(fs.readFileSync(file.replace(/\.md$/, ".js"), "utf8"))();
   console.log(`\n# ${path.relative(specs, file)}`);
   const markdown = fs.readFileSync(file, "utf8");

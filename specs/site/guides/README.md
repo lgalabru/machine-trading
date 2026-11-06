@@ -1,10 +1,10 @@
-# Training guides: how to write one
+# Guides: how to write one
 
-A training guide explains one instrument to people: what it is, how it gains
+A guide explains one instrument to people: what it is, how it gains
 and loses, its parameters, its risks, and when to use it. Guides live in
-`specs/training/instruments/<kind>.md`, next to the spec they explain
+`specs/guides/instruments/<kind>.md`, next to the spec they explain
 (`specs/instruments/<kind>.md`), and are published at
-`training/instruments/<kind>.html`. The specs are normative; a guide teaches
+`guides/instruments/<kind>.html`. The specs are normative; a guide teaches
 them and never adds a rule.
 
 A guide is two files:
@@ -18,9 +18,9 @@ guide's own script on the page.
 
 ## Kinds of guide
 
-- **Instruments**, in `specs/training/instruments/<kind>.md`: what a thing
+- **Instruments**, in `specs/guides/instruments/<kind>.md`: what a thing
   you can hold is, and how it gains and loses. The outline below.
-- **Strategies**, in `specs/training/strategies/<name>.md`: a repeatable way
+- **Strategies**, in `specs/guides/strategies/<name>.md`: a repeatable way
   of trading instruments. Same outline, with "What it is" explaining where
   the profit comes from and what it costs to capture, "Parameters" listing
   what a bot has to decide before it trades, and "Under a mandate" saying
@@ -29,7 +29,7 @@ guide's own script on the page.
 
 ## The outline
 
-Copy `specs/training/instruments/perp.md` and keep its sections, in order, so
+Copy `specs/guides/instruments/perp.md` and keep its sections, in order, so
 every instrument reads the same:
 
 1. `:::glance`, then `:::eli5`, before the first section.
@@ -44,7 +44,7 @@ every instrument reads the same:
    mandate.
 8. **Trading it under a mandate**: how the mandate's limits apply to it.
 9. **Check yourself**: `:::check` questions.
-10. **Glossary**: a pointer to the [glossary](../../training/glossary.md), not a table.
+10. **Glossary**: a pointer to the [glossary](../../guides/glossary.md), not a table.
 
 Start the title with `Guide: `, and set `Status: guide`.
 
@@ -71,8 +71,8 @@ one inside it with `::` instead of `:::`.
 
 ## The glossary
 
-`specs/training/glossary.md` defines every term the guides use, one
-`### Term` per entry, grouped under `##` topics. In every training page the
+`specs/guides/glossary.md` defines every term the guides use, one
+`### Term` per entry, grouped under `##` topics. In every guide pages the
 first mention of a term in each section is underlined, and shows its
 definition on hover or tap (`terms.js`). The definition is the entry's first
 paragraph, so make that paragraph stand alone.
@@ -174,4 +174,4 @@ to its venue profile. Before publishing, run `npm run check`, which prints
 every lab's readouts under each preset's claim, and make the two agree.
 
 The approach behind the guides, and how to check and publish one, is in the
-`training-guides` skill (`.claude/skills/training-guides/SKILL.md`).
+`writing-guides` skill (`.claude/skills/writing-guides/SKILL.md`).

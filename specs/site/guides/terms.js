@@ -1,7 +1,7 @@
-// Glossary terms in the training pages: the first mention of each term in a
+// Glossary terms in the guide pages: the first mention of each term in a
 // section links to its glossary entry, and hovering it (or tapping it, on a
 // touch screen) shows the definition. build.mjs embeds the glossary in the
-// page as JSON (#mt-glossary), from training/glossary.md.
+// page as JSON (#mt-glossary), from guides/glossary.md.
 
 (() => {
   const data = document.getElementById("mt-glossary");
