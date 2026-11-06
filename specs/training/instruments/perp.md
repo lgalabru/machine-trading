@@ -59,15 +59,53 @@ They took off in crypto instead: BitMEX launched a perpetual swap on bitcoin
 in 2016, and perps are now the most traded crypto derivative.
 :::
 
+### A first trade, step by step
+
+You have **$1,000**, and you think SPCX, trading at **$100**, is going up.
+
+**Without a perp**, you buy 10 SPCX with your $1,000. If SPCX rises to $110
+you have $1,100. If it falls to $90 you have $900. You own the shares, and
+the most you can lose is the $1,000.
+
+**With a perp**, you deposit the $1,000 on the venue, and open a long
+position. You don't buy any SPCX: you hold a contract that pays you $1 for
+every unit, every time SPCX rises $1, and costs you $1 when it falls. The
+deposit, your **margin**, is there to cover those costs.
+
+You choose the size, and the venue lets you choose more than your dollars
+would buy:
+
+- **Long 10 SPCX** is a $1,000 position on $1,000 of margin: 1× leverage.
+  It moves exactly like buying the 10 shares.
+- **Long 50 SPCX** is a $5,000 position on the same $1,000: 5× leverage.
+  Every $1 SPCX moves is now $50 to you.
+
+At 5×, here is what your $1,000 becomes:
+
+| SPCX moves to | Your PnL | You have |
+| --- | --- | --- |
+| $110 | 50 × +$10 = +$500 | $1,500 |
+| $100 | $0 | $1,000 |
+| $90 | 50 × −$10 = −$500 | $500 |
+| about $82 | about −$880 | **liquidated**: the venue closes the position, and the margin is gone |
+
+The last row is the catch. Once your losses eat almost all of your margin,
+the venue closes the position for you, even if SPCX is back at $100 the next
+day.
+
+Going **short** is the mirror image: short 50 SPCX gains $50 for every $1
+SPCX falls. Without a perp you would have to borrow shares to sell them.
+
 ### Position and PnL
 
-A position is a quantity of the underlying, in its base units: shares or
-tokens, not dollars. It is positive when long and negative when short. Its
-**notional** is the quantity times the price, and its **PnL** (profit and
-loss) is the quantity times how far the price has moved since entry:
+In the specs, the position is the number of units, positive when long and
+negative when short: +50, or −50. It is counted in the underlying's units,
+here SPCX, not in dollars. Its **notional** is the units times the price,
+and its **PnL** (profit and loss) is the units times how far the price has
+moved since you opened it:
 
 ```
-PnL = quantity × (mark price − entry price)
+PnL = position × (mark price − entry price)
 ```
 
 The **mark price** is the price the venue values positions at. It is usually
@@ -77,21 +115,24 @@ so one odd trade can't liquidate anyone.
 ```lab
 {
   "model": "perp.payoff",
-  "title": "What you make or lose when you close",
-  "lede": "Pick a side and a size. The line is your PnL at each price you could close at.",
+  "title": "What your dollars become",
+  "lede": "Deposit some dollars, pick the leverage, then drag where SPCX goes. The blue line is what you'd have with the perp, the grey one what you'd have without it.",
   "controls": [
-    { "id": "side", "label": "Side", "type": "choice", "options": [["long", "Long"], ["short", "Short"]], "value": "long" },
-    { "id": "size", "label": "Position (units)", "min": 1, "max": 100, "step": 1, "value": 50, "format": "num" },
-    { "id": "entry", "label": "Entry price", "min": 20, "max": 200, "step": 1, "value": 100, "format": "price" },
-    { "id": "leverage", "label": "Leverage", "min": 1, "max": 25, "step": 0.5, "value": 5, "format": "x" },
-    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num", "hint": "Equity below this share of notional is liquidated." }
+    { "id": "side", "label": "You think SPCX will", "type": "choice", "options": [["long", "Go up (long)"], ["short", "Go down (short)"]], "value": "long" },
+    { "id": "deposit", "label": "Your dollars (margin)", "min": 100, "max": 10000, "step": 100, "value": 1000, "format": "usd0" },
+    { "id": "leverage", "label": "Leverage", "min": 1, "max": 25, "step": 0.5, "value": 5, "format": "x", "hint": "Position size ÷ your dollars." },
+    { "id": "exit", "label": "SPCX moves to", "min": 50, "max": 150, "step": 0.5, "value": 110, "format": "price" },
+    { "id": "maintenance", "label": "Maintenance margin (%)", "min": 0.5, "max": 4, "step": 0.5, "value": 3, "format": "num", "hint": "The venue liquidates you when what's left falls below this share of the position." }
   ],
+  "fixed": { "entry": 100 },
   "presets": [
-    { "label": "Careful long", "set": { "leverage": 2 }, "note": "2× leverage: the price has to fall by almost half before you're liquidated." },
-    { "label": "Aggressive long", "set": { "leverage": 20 }, "note": "20× leverage: a fall of about 2% takes everything you posted." },
-    { "label": "Short", "set": { "side": "short" }, "note": "A short is the mirror image: it gains as the price falls and is liquidated if it rises." }
+    { "label": "Like buying the shares", "set": { "leverage": 1 }, "note": "1×: the perp line sits on the grey one. Long 10 SPCX is the same bet as buying 10 SPCX, and only SPCX going to zero wipes it out." },
+    { "label": "5×, SPCX up 10%", "set": { "leverage": 5, "exit": 110 }, "note": "A 10% rise turns $1,000 into $1,500: five times what buying the shares makes." },
+    { "label": "5×, SPCX down 10%", "set": { "leverage": 5, "exit": 90 }, "note": "The same 10% the other way costs $500, half your money." },
+    { "label": "20×, a small dip", "set": { "leverage": 20, "exit": 97.5 }, "note": "At 20×, a 2.5% dip is enough to liquidate you." },
+    { "label": "Short, SPCX falls", "set": { "side": "short", "leverage": 5, "exit": 90 }, "note": "Short 50 SPCX: the 10% fall that cost the long $500 makes the short $500." }
   ],
-  "caption": "PnL is a straight line: every dollar the price moves is worth one dollar per unit you hold. Leverage doesn't change the line, only how much margin backs it, and so where liquidation cuts it off."
+  "caption": "Each $1 SPCX moves is worth $1 per unit you hold. Leverage sets how many units your dollars carry, so it steepens the line, and it moves the liquidation point closer: past it, the line drops to zero."
 }
 ```
 
