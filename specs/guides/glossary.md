@@ -143,6 +143,14 @@ Also: index prices
 The underlying's price, combined from other markets. A perp's mark and
 funding follow it.
 
+### Market hours
+
+Also: trading hours, market closed, closed market
+
+The hours an underlying's own market trades. A perp trades around the clock,
+so outside them its price is set by perp traders alone, with no index to
+anchor it.
+
 ### Last price
 
 Also: last trade
