@@ -9,6 +9,9 @@ by settling at it. The two carry different risks: a dated future has to be
 rolled at expiry, while a perpetual pays or earns funding for as long as it
 is held. They are therefore separate kinds, and `future` is reserved.
 
+New to perpetuals? The [guide](../training/instruments/perp.md) explains
+them with interactive figures.
+
 ## Position
 
 A position is a signed quantity of the underlying, in its **base units**,
