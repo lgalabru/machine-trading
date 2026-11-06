@@ -68,9 +68,17 @@ you have $1,100. If it falls to $90 you have $900. You own the shares, and
 the most you can lose is the $1,000.
 
 **With a perp**, you deposit the $1,000 on the venue, and open a long
-position. You don't buy any SPCX: you hold a contract that pays you $1 for
-every unit, every time SPCX rises $1, and costs you $1 when it falls. The
-deposit, your **margin**, is there to cover those costs.
+position. You don't buy any SPCX: you hold a contract whose value moves by $1
+per unit for every $1 SPCX moves. The deposit, your **margin**, is there to
+cover the losses.
+
+No money changes hands while SPCX moves. The venue re-values your position
+every time its mark price updates, which on an on-chain venue can be several
+times a second, and counts the gain or loss against your margin. That running
+number is your unrealized PnL, and it is what the venue checks to decide
+whether to liquidate you. It becomes real dollars when you close. The one
+payment that does happen while you hold is [funding](#funding), on a fixed
+schedule.
 
 You choose the size, and the venue lets you choose more than your dollars
 would buy:
