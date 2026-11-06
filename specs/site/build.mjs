@@ -26,6 +26,7 @@ const FOLDERS = [
   // Guides for people, not readers implementing the specs.
   { dir: "training", title: "Training" },
   { dir: "training/instruments", title: "Training: instruments" },
+  { dir: "training/strategies", title: "Training: strategies" },
 ];
 // Training pages load the labs' runtime, and their own models: the .js file
 // next to the guide, such as training/instruments/perp.js.
