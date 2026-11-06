@@ -1,5 +1,5 @@
 // Models for the arbitrage guide's labs (arbitrage.md), drawn by
-// specs/site/training/mt.js. A teaching model: slippage is linear in size,
+// specs/site/guides/mt.js. A teaching model: slippage is linear in size,
 // margin is isolated to the perp leg, and funding accrues every hour.
 
 MT.register("arb.spread", (p) => {

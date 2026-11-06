@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "check": "node training/check.mjs"
+    "check": "node guides/check.mjs"
   },
   "dependencies": {
     "marked": "18.1.2"

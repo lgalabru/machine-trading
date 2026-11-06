@@ -24,13 +24,13 @@ const FOLDERS = [
   { dir: "venues", title: "Venues" },
   { dir: "examples", title: "Examples" },
   // Guides for people, not readers implementing the specs.
-  { dir: "training", title: "Training" },
-  { dir: "training/instruments", title: "Training: instruments" },
-  { dir: "training/strategies", title: "Training: strategies" },
+  { dir: "guides", title: "Guides" },
+  { dir: "guides/instruments", title: "Guides: instruments" },
+  { dir: "guides/strategies", title: "Guides: strategies" },
 ];
-// Training pages load the labs' runtime, and their own models: the .js file
-// next to the guide, such as training/instruments/perp.js.
-const isTraining = (page) => page.startsWith("training/");
+// Guide pages load the labs' runtime, and their own models: the .js file
+// next to the guide, such as guides/instruments/perp.js.
+const isGuide = (page) => page.startsWith("guides/");
 const folderId = (dir) => dir.replace(/\//g, "-");
 
 function walk(dir) {
@@ -152,12 +152,12 @@ ${config.caption ? `<figcaption>${new Marked().parse(config.caption)}</figcaptio
 }
 
 /**
- * The glossary, training/glossary.md: every `### Term` is an entry, with
+ * The glossary, guides/glossary.md: every `### Term` is an entry, with
  * optional `Also:` (other forms that refer to it) and `Not:` (phrases that
  * contain it but mean something else) lines, which the page doesn't show.
  * The entry's first paragraph is its definition on hover, in every guide.
  */
-const GLOSSARY = "training/glossary.md";
+const GLOSSARY = "guides/glossary.md";
 function glossaryOf(markdown) {
   const list = (line) => (line ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   return markdown
@@ -177,7 +177,7 @@ function glossaryOf(markdown) {
 }
 const stripGlossaryData = (markdown) => markdown.replace(/^(Also|Not):.*\n/gm, "");
 
-/** The models a training page's script registers. */
+/** The models a guide pages's script registers. */
 function modelsOf(file) {
   const script = file.replace(/\.md$/, ".js");
   if (!fs.existsSync(script)) return [];
@@ -191,10 +191,10 @@ function render(markdown, page, models = []) {
   let subsection = 0;
   const marked = new Marked({
     gfm: true,
-    extensions: isTraining(page) ? [callout] : [],
+    extensions: isGuide(page) ? [callout] : [],
     renderer: {
       code({ text, lang }) {
-        if (lang === "lab" && isTraining(page)) return lab(text, page, models);
+        if (lang === "lab" && isGuide(page)) return lab(text, page, models);
         return false;
       },
       heading({ tokens, depth }) {
@@ -291,19 +291,19 @@ function layout({ page, title, head, body }) {
 <meta name="twitter:image" content="${SITE}/social.jpg">
 <link rel="stylesheet" href="${link(page, "style.css")}">
 ${
-  isTraining(page)
-    ? `<link rel="stylesheet" href="${link(page, "training/mt.css")}">
-<script defer src="${link(page, "training/mt.js")}"></script>
+  isGuide(page)
+    ? `<link rel="stylesheet" href="${link(page, "guides/mt.css")}">
+<script defer src="${link(page, "guides/mt.js")}"></script>
 ${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defer src="${path.posix.basename(page).replace(/\.html$/, ".js")}"></script>` : ""}
-<script defer src="${link(page, "training/terms.js")}"></script>`
+<script defer src="${link(page, "guides/terms.js")}"></script>`
     : ""
 }
 </head>
-<body class="${index ? "index" : isTraining(page) ? "spec training" : "spec"}">
+<body class="${index ? "index" : isGuide(page) ? "spec guide" : "spec"}">
 ${index ? "" : `<p class="trail">${trail}</p>`}
 ${head}
 ${body}
-${isTraining(page) ? glossaryData(page) : ""}
+${isGuide(page) ? glossaryData(page) : ""}
 ${index ? "" : TOC_SPY}
 </body>
 </html>
@@ -376,14 +376,23 @@ for (const file of files.filter((f) => f.endsWith(".json"))) {
   fs.mkdirSync(path.dirname(path.join(out, rel(file))), { recursive: true });
   fs.copyFileSync(file, path.join(out, rel(file)));
 }
-// Training pages' models, next to their guides.
+// Guide pages' models, next to their guides.
 for (const file of files.filter((f) => f.endsWith(".js"))) fs.copyFileSync(file, path.join(out, rel(file)));
 fs.copyFileSync(path.join(here, "style.css"), path.join(out, "style.css"));
-fs.mkdirSync(path.join(out, "training"), { recursive: true });
+fs.mkdirSync(path.join(out, "guides"), { recursive: true });
 for (const asset of ["mt.js", "mt.css", "terms.js"])
-  fs.copyFileSync(path.join(here, "training", asset), path.join(out, "training", asset));
+  fs.copyFileSync(path.join(here, "guides", asset), path.join(out, "guides", asset));
 // The link preview, the same image as the repository's social preview.
 fs.copyFileSync(path.join(here, "social.jpg"), path.join(out, "social.jpg"));
 // Serve files as they are: no Jekyll processing on GitHub Pages.
 fs.writeFileSync(path.join(out, ".nojekyll"), "");
+// The guides were first published under training/: keep those links working.
+for (const spec of specs.filter((s) => isGuide(s.page))) {
+  const old = spec.page.replace(/^guides\//, "training/");
+  const target = link(old, spec.page);
+  write(
+    old,
+    `<!doctype html><meta charset="utf-8"><title>Moved</title><link rel="canonical" href="${SITE}/${spec.page}"><meta http-equiv="refresh" content="0; url=${target}"><script>location.replace(${JSON.stringify(target)} + location.hash)</script><p>This page moved to <a href="${target}">${escape(spec.title)}</a>.</p>\n`,
+  );
+}
 console.log(`built ${specs.length + 1} pages into ${path.relative(process.cwd(), out) || "."}`);
