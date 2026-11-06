@@ -41,11 +41,11 @@ rather than starting blank: `instruments/perp.md` for an instrument,
 ### One running example, everywhere
 
 Every guide uses the same reader and the same price: **you have $1,000,
-and the market is at $100**. Perp guides use SPCX, the benchmark's perp;
-spot guides use SOL, because the spot markets the specs name trade
-SOL-USDC; strategy guides keep whichever their instrument used, and say so.
-A strategy about size, such as selling a treasury's 30,000 SOL, keeps the
-$100 and says whose holding it is. Numbers carry across sections and across guides,
+and SPCX is at $100**, in every instrument guide, spot included. Where the
+specs only name other markets (spot names SOL-USDC), say once that the SPCX
+market is illustrative and the real ones work the same way. A strategy guide
+may switch asset when its story needs it, as selling a treasury's 30,000 SOL
+does: keep the $100, say whose holding it is, and say why it's that asset. Numbers carry across sections and across guides,
 so a strategy guide can say "your 50 SPCX from the perp guide" and the
 reader already knows them. Labs fix the shared numbers (`"fixed": { "entry":
 100, "deposit": 1000 }`) rather than offering them as sliders.
