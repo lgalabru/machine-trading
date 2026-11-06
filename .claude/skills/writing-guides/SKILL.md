@@ -4,7 +4,7 @@ description: Writes and revises the interactive guides on the Machine Trading Pr
 license: MIT
 metadata:
   author: Solana Foundation
-  version: 0.1.0
+  version: 0.2.0
   repo: lgalabru/machine-trading
 ---
 
@@ -69,14 +69,39 @@ everything before it.
   funding) come before the mandate's limits, and the mandate section comes
   before any lab that uses `max_position` or `max_drawdown_usd`.
 
+### A ticket and a ledger
+
+Every trade in a guide is shown the same two ways, with the same names:
+
+- **The ticket**: every number of the trade, in one table, in the order the
+  reader meets them, each with what it is and where it comes from. For a
+  perp: SPCX price, margin (what you commit), leverage (the one number you
+  choose), notional (margin × leverage), position (notional ÷ price).
+- **The ledger**: what happens as the price moves, one row per price, with
+  each column's formula in its header (`PnL: 50 × (SPCX − $100)`, `Equity:
+  $1,000 + PnL`).
+
+A later section that needs more reuses the ledger and **adds columns**
+(notional now, maintenance, leverage now); it never renames a column or
+starts a new table with different words for the same numbers. Labs use the
+ticket's names too ("Margin: what you commit", "Position", "Equity"), and a
+strategy with several legs gets one ticket column per leg.
+
+Stop stacking complexity: if a section needs three new ideas, it is three
+sections, or the ideas belong in an earlier ticket. When a reader says a
+section "feels backward", look for a number used before the ticket defines
+it, or the same number under two names.
+
 ### Story before formula
 
 Every section opens with what happens to the reader's dollars, step by
 step, and only then gives the general rule:
 
 1. A short walkthrough: "You deposit the $1,000, and open a long."
-2. A table of a few cases: SPCX at $110, $100, $90, and the case that breaks.
-3. Then the formula, in a code block, in words the walkthrough used.
+2. The ticket, then the ledger: SPCX at $110, $100, $90, and the case that
+   breaks.
+3. Then the formulas, in a code block, in the ticket's words, with the
+   example's numbers worked beside them.
 4. Then the lab, to explore the cases in between.
 
 When the reader asks "at which frequency?" or "how does X work?", the guide
@@ -216,3 +241,8 @@ Conventional Commits, `feat(guides): ...` or `docs(guides): ...`.
 - Prose that says money is "paid" continuously when it is only re-valued:
   say what actually moves and when.
 - Unit slips in notes ("3,000 SPCX" for 300). Compute, don't estimate.
+- The same number under different names in different tables ("You have",
+  "What's left", "Equity"), or a ticket number (the leverage) left implicit
+  in a table that depends on it.
+- Ordinary words caught by the glossary hover ("the venue asks for" read as
+  the ask price): drop the alias or add a `Not:`.

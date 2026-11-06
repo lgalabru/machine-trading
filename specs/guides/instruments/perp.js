@@ -31,9 +31,9 @@ MT.register("perp.payoff", (p) => {
   const name = s > 0 ? "Buying SPCX with it" : "Keeping the dollars";
   return {
     stats: [
-      { label: "Your position", value: `${s > 0 ? "long" : "short"} ${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `worth ${MT.format("usd0", units * entry)}, on your ${MT.format("usd0", deposit)}` },
+      { label: "Position", value: `${s > 0 ? "long" : "short"} ${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `notional ${MT.format("usd0", units * entry)}, on ${MT.format("usd0", deposit)} of margin` },
       { label: "Each $1 SPCX moves", value: `${MT.format("usd", units)} to you`, hint: `${s > 0 ? "up" : "down"} is a gain` },
-      { label: `If SPCX goes to ${MT.format("price", exit)}`, value: have, format: "usd0", tone: liquidated(exit) ? "bad" : have >= deposit ? "good" : "bad", hint: liquidated(exit) ? "liquidated: the margin is gone" : `${MT.format("+pct", have / deposit - 1)} on your dollars` },
+      { label: `Equity if SPCX goes to ${MT.format("price", exit)}`, value: have, format: "usd0", tone: liquidated(exit) ? "bad" : have >= deposit ? "good" : "bad", hint: liquidated(exit) ? "liquidated: the margin is gone" : `${MT.format("+pct", have / deposit - 1)} on your margin` },
       { label: name, value: plain, format: "usd0", hint: s > 0 ? `${MT.format("num", deposit / entry)} SPCX, no leverage` : "you'd have exactly what you started with" },
       { label: "Liquidated if SPCX reaches", value: liq < 0.01 ? "only at $0" : MT.format("price", liq), tone: Math.abs(liq / entry - 1) < 0.1 ? "bad" : undefined, hint: `a ${MT.format("pct", Math.abs(liq / entry - 1))} move ${s > 0 ? "down" : "up"}` },
     ],
@@ -41,7 +41,7 @@ MT.register("perp.payoff", (p) => {
     panels: [
       {
         x: { label: "Where SPCX goes", format: "price" },
-        y: { label: `What your ${MT.format("usd0", deposit)} becomes`, format: "usd0" },
+        y: { label: `Equity: what your ${MT.format("usd0", deposit)} becomes`, format: "usd0" },
         series: [
           { name: "With the perp", points: xs.map((x) => [x, withPerp(x)]) },
           { name, points: xs.map((x) => [x, without(x)]), color: "muted", dash: true },
@@ -49,7 +49,7 @@ MT.register("perp.payoff", (p) => {
         rules: [
           { axis: "x", at: entry, label: "Today: $100" },
           { axis: "x", at: liq, label: "Liquidation", tone: "danger" },
-          { axis: "y", at: deposit, label: "What you put in" },
+          { axis: "y", at: deposit, label: "Your margin" },
         ],
         bands: [{ axis: "x", from: s > 0 ? -Infinity : liq, to: s > 0 ? liq : Infinity, tone: "danger", label: "Liquidated" }],
         dots: [
@@ -81,7 +81,7 @@ MT.register("perp.leverage", (p) => {
   const tone = (inside, near) => (inside ? "bad" : near ? "warn" : "good");
   return {
     stats: [
-      { label: "Your position", value: `${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `worth ${MT.format("usd0", units * entry)}, on your ${MT.format("usd0", deposit)}` },
+      { label: "Position", value: `${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `notional ${MT.format("usd0", units * entry)}, on ${MT.format("usd0", deposit)} of margin` },
       { label: "Long: liquidated if SPCX falls to", value: MT.format("price", myLong), tone: tone(myLong >= low, myLong >= entry * (1 - 3 * move)), hint: `a ${MT.format("pct", 1 - myLong / entry)} fall` },
       { label: "Short: liquidated if SPCX rises to", value: MT.format("price", myShort), tone: tone(myShort <= high, myShort <= entry * (1 + 3 * move)), hint: `a ${MT.format("pct", myShort / entry - 1)} rise` },
       { label: "An ordinary day", value: `${MT.format("price", low)} – ${MT.format("price", high)}`, hint: `SPCX ± ${MT.format("num", p.daily)}%` },
@@ -132,10 +132,10 @@ MT.register("perp.funding", (p) => {
   const gone = liquidatedAt !== null && liquidatedAt <= hours;
   return {
     stats: [
-      { label: "Your position", value: `${s > 0 ? "long" : "short"} ${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `worth ${MT.format("usd0", notional)}` },
+      { label: "Position", value: `${s > 0 ? "long" : "short"} ${MT.format("num", Math.round(units * 10) / 10)} SPCX`, hint: `notional ${MT.format("usd0", notional)}` },
       { label: "Who pays", value: payer },
       { label: "Per day, you", value: perHour * 24, format: "+usd", tone: perHour > 0 ? "good" : perHour < 0 ? "bad" : undefined },
-      { label: `After ${MT.format("d", p.days)}, you have`, value: end, format: "usd0", tone: gone ? "bad" : end > deposit ? "good" : end < deposit ? "bad" : undefined, hint: gone ? "liquidated by funding alone" : `${MT.format("+pct", end / deposit - 1)} on your dollars` },
+      { label: `Equity after ${MT.format("d", p.days)}`, value: end, format: "usd0", tone: gone ? "bad" : end > deposit ? "good" : end < deposit ? "bad" : undefined, hint: gone ? "liquidated by funding alone" : `${MT.format("+pct", end / deposit - 1)} on your margin` },
       { label: "Rate, per year", value: MT.format("pct", Math.abs(apr)), hint: `on the position; ${MT.format("pct", Math.abs(apr * leverage))} on your dollars` },
     ],
     note: gone
@@ -148,9 +148,9 @@ MT.register("perp.funding", (p) => {
     panels: [
       {
         x: { label: "Days held", format: "d" },
-        y: { label: `What your ${MT.format("usd0", deposit)} becomes`, format: "usd0" },
-        series: [{ name: "What you have", points: pts }],
-        rules: [{ axis: "y", at: deposit, label: "What you put in" }],
+        y: { label: `Equity: what your ${MT.format("usd0", deposit)} of margin becomes`, format: "usd0" },
+        series: [{ name: "Equity", points: pts }],
+        rules: [{ axis: "y", at: deposit, label: "Your margin" }],
         dots: gone ? [{ x: liquidatedAt / 24, y: floor, label: "Liquidated", tone: "danger" }] : [],
       },
     ],
@@ -220,8 +220,8 @@ MT.register("perp.scenario", (p) => {
   const overCap = p.size > p.cap;
   const tolerated = p.size > 0 ? p.limit / p.size : Infinity;
   const stats = [
-    { label: "Your dollars at stake", value: margin, format: "usd0", hint: `${MT.format("num", p.size)} SPCX at ${MT.format("x", p.leverage)}` },
-    { label: "PnL at the end", value: final, format: "+usd", tone: final >= 0 ? "good" : "bad", hint: margin > 0 ? `${MT.format("+pct", final / margin)} on your dollars` : "" },
+    { label: "Margin", value: margin, format: "usd0", hint: `${MT.format("num", p.size)} SPCX at ${MT.format("x", p.leverage)}: notional ${MT.format("usd0", p.size * entry)}` },
+    { label: "PnL at the end", value: final, format: "+usd", tone: final >= 0 ? "good" : "bad", hint: margin > 0 ? `${MT.format("+pct", final / margin)} on your margin` : "" },
     { label: "Deepest drawdown", value: worst, format: "usd", tone: worst > p.limit ? "bad" : worst > 0.7 * p.limit ? "warn" : "good", hint: `limit ${MT.format("usd0", p.limit)}` },
     { label: "Position cap", value: overCap ? "broken" : "kept", tone: overCap ? "bad" : "good", hint: `${MT.format("num", p.size)} of ${MT.format("num", p.cap)} allowed` },
     { label: "SPCX move the limit tolerates", value: Number.isFinite(tolerated) ? MT.format("price", tolerated) : "any", hint: Number.isFinite(tolerated) ? "against you, from your best moment" : "no position" },
