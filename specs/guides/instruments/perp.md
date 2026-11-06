@@ -147,9 +147,18 @@ You don't pay the notional to open a perp. You post **margin**, a deposit
 that covers your losses. **Leverage** is notional divided by margin: at 5×,
 $1,000 of margin backs a $5,000 position.
 
-Leverage doesn't change how many dollars you make or lose per dollar the
-price moves. It changes how many of those dollars are *yours*. At 5×, a 1%
-move is 5% of your margin; at 20×, it's 20%.
+With your $1,000, leverage decides how big a position you hold, and so how
+much each $1 SPCX moves is worth to you:
+
+| Leverage | Your position | Each $1 SPCX moves | SPCX moves 1% |
+| --- | --- | --- | --- |
+| 1× | 10 SPCX, $1,000 | $10 | 1% of your money |
+| 5× | 50 SPCX, $5,000 | $50 | 5% of your money |
+| 20× | 200 SPCX, $20,000 | $200 | 20% of your money |
+
+Leverage multiplies the percentage you gain or lose on your own money: a 1%
+move in SPCX is 1% of it at 1×, and 20% of it at 20×. That works in both
+directions, which is what the rest of this section is about.
 
 The venue requires your equity (margin plus PnL) to stay above a
 **maintenance margin**, a small share of the notional. When it falls below,
