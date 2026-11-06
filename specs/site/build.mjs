@@ -24,6 +24,7 @@ const FOLDERS = [
   { dir: "venues", title: "Venues" },
   { dir: "examples", title: "Examples" },
   // Guides for people, not readers implementing the specs.
+  { dir: "training", title: "Training" },
   { dir: "training/instruments", title: "Training: instruments" },
 ];
 // Training pages load the labs' runtime, and their own models: the .js file
@@ -81,6 +82,7 @@ const CALLOUTS = {
   risk: ["!", "Risk"],
   note: ["i", "Note"],
   example: ["→", "Example"],
+  history: ["§", "A bit of history"],
   check: ["?", "Check yourself"],
 };
 const callout = {
@@ -148,6 +150,32 @@ ${config.caption ? `<figcaption>${new Marked().parse(config.caption)}</figcaptio
 `;
 }
 
+/**
+ * The glossary, training/glossary.md: every `### Term` is an entry, with
+ * optional `Also:` (other forms that refer to it) and `Not:` (phrases that
+ * contain it but mean something else) lines, which the page doesn't show.
+ * The entry's first paragraph is its definition on hover, in every guide.
+ */
+const GLOSSARY = "training/glossary.md";
+function glossaryOf(markdown) {
+  const list = (line) => (line ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return markdown
+    .split(/^### /m)
+    .slice(1)
+    .map((chunk) => {
+      const [heading, ...rest] = chunk.split("\n");
+      const term = heading.trim();
+      const body = rest.join("\n");
+      const also = body.match(/^Also:(.*)$/m)?.[1];
+      const not = body.match(/^Not:(.*)$/m)?.[1];
+      const text = body.replace(/^(Also|Not):.*$/gm, "").split(/^## /m)[0].trim();
+      const first = text.split(/\n\s*\n/)[0].replace(/\n/g, " ");
+      const html = new Marked().parseInline(first).replace(/<\/?a\b[^>]*>/g, "");
+      return { term, id: slug(term), aliases: list(also), not: list(not), html };
+    });
+}
+const stripGlossaryData = (markdown) => markdown.replace(/^(Also|Not):.*\n/gm, "");
+
 /** The models a training page's script registers. */
 function modelsOf(file) {
   const script = file.replace(/\.md$/, ".js");
@@ -210,6 +238,13 @@ function tocHtml(toc) {
   return `<nav class="toc"><h2 id="toc">Table of Contents</h2><ul>${items}</ul></nav>`;
 }
 
+let glossary = [];
+const glossaryData = (page) =>
+  `<script type="application/json" id="mt-glossary">${JSON.stringify({
+    href: link(page, GLOSSARY.replace(/\.md$/, ".html")),
+    terms: glossary,
+  }).replace(/</g, "\\u003c")}</script>`;
+
 // Highlights the table of contents' entry for the section being read.
 const TOC_SPY = `<script>
 (() => {
@@ -258,7 +293,8 @@ ${
   isTraining(page)
     ? `<link rel="stylesheet" href="${link(page, "training/mt.css")}">
 <script defer src="${link(page, "training/mt.js")}"></script>
-${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defer src="${path.posix.basename(page).replace(/\.html$/, ".js")}"></script>` : ""}`
+${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defer src="${path.posix.basename(page).replace(/\.html$/, ".js")}"></script>` : ""}
+<script defer src="${link(page, "training/terms.js")}"></script>`
     : ""
 }
 </head>
@@ -266,6 +302,7 @@ ${fs.existsSync(path.join(root, page.replace(/\.html$/, ".js"))) ? `<script defe
 ${index ? "" : `<p class="trail">${trail}</p>`}
 ${head}
 ${body}
+${isTraining(page) ? glossaryData(page) : ""}
 ${index ? "" : TOC_SPY}
 </body>
 </html>
@@ -287,6 +324,11 @@ const specs = files
     return { file, page: pageOf(file), title: titleOf(markdown), status: statusOf(markdown), markdown };
   });
 
+const glossarySpec = specs.find((s) => rel(s.file) === GLOSSARY);
+if (glossarySpec) {
+  glossary = glossaryOf(glossarySpec.markdown);
+  glossarySpec.markdown = stripGlossaryData(glossarySpec.markdown);
+}
 for (const spec of specs) {
   const { body, toc } = render(spec.markdown, spec.page, modelsOf(spec.file));
   const meta = spec.status
@@ -337,7 +379,7 @@ for (const file of files.filter((f) => f.endsWith(".json"))) {
 for (const file of files.filter((f) => f.endsWith(".js"))) fs.copyFileSync(file, path.join(out, rel(file)));
 fs.copyFileSync(path.join(here, "style.css"), path.join(out, "style.css"));
 fs.mkdirSync(path.join(out, "training"), { recursive: true });
-for (const asset of ["mt.js", "mt.css"])
+for (const asset of ["mt.js", "mt.css", "terms.js"])
   fs.copyFileSync(path.join(here, "training", asset), path.join(out, "training", asset));
 // The link preview, the same image as the repository's social preview.
 fs.copyFileSync(path.join(here, "social.jpg"), path.join(out, "social.jpg"));

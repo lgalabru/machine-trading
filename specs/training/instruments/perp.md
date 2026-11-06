@@ -52,6 +52,13 @@ settling on its expiry date. A perp has no such date, so it is held close to
 the underlying's price by **funding**: periodic payments between longs and
 shorts, covered [below](#funding).
 
+:::history Where perps come from
+The economist Robert Shiller proposed perpetual futures in 1993, as a way
+to trade things like house prices that have no market to settle against.
+They took off in crypto instead: BitMEX launched a perpetual swap on bitcoin
+in 2016, and perps are now the most traded crypto derivative.
+:::
+
 ### Position and PnL
 
 A position is a quantity of the underlying, in its base units: shares or
@@ -323,16 +330,5 @@ drawdown limit counts from the peak, so giving back gains counts too.
 
 ## Glossary
 
-| Term | Meaning |
-| --- | --- |
-| Long, short | A positive position gains when the price rises; a negative one when it falls. |
-| Base units | What the position is counted in: shares or tokens, not dollars. |
-| Notional | The position's size in dollars: quantity times price. |
-| Mark price | The price the venue values and liquidates positions at. |
-| Index price | The underlying's price, from other markets, that the mark and funding follow. |
-| Margin | The deposit that backs a position. |
-| Leverage | Notional divided by margin. |
-| Maintenance margin | The equity below which the venue liquidates the position. |
-| Liquidation | The venue closing a position whose equity fell below maintenance margin. |
-| Funding | Periodic payments between longs and shorts that keep the perp near the index. |
-| Drawdown | How far the account's value is below its running peak. |
+Every term this guide uses is in the [glossary](../glossary.md). In the text,
+an underlined term shows its definition when you hover it or tap it.
