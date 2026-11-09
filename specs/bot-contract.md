@@ -99,7 +99,8 @@ Past either limit, the world moves on without the bot. A transaction sent
 while the world moves is refused, which is not a breach: it just doesn't
 make it into the turn.
 
-`mtx_botkit::Turns` implements the bot's side.
+`mtx_botkit::Turns` implements the bot's side of the protocol, and
+`mtx_botkit::run` the whole bot around a `Strategy`.
 
 ## The chain
 
