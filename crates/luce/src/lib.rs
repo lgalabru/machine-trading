@@ -28,7 +28,8 @@
 //!   Adapters never see a key.
 //! - **Simulate before signing.** [`chain::execute`] simulates every
 //!   transaction right before signing it and refuses to sign one that would
-//!   fail.
+//!   fail. [`chain::submit`], for worlds that land a transaction after the
+//!   sender's turn, does too unless the caller turns it off.
 //! - **One risk vocabulary.** Trading limits ([`core::RiskLimits`]) and
 //!   lending checks ([`lending::risk`]) both report
 //!   [`Pass / Warn / Reject`](core::RiskCheckResult); any rejection blocks.

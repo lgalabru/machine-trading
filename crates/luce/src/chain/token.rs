@@ -1,4 +1,5 @@
-//! SPL token helpers: associated token accounts and native SOL wrapping.
+//! SPL token helpers: associated token accounts, token account state,
+//! transfers and native SOL wrapping.
 //!
 //! Most protocols only deal in SPL tokens, so using SOL means wrapping it:
 //! move lamports into the owner's wrapped-SOL associated token account and
@@ -69,6 +70,72 @@ pub fn close_token_account(owner: &Pubkey, account: &Pubkey) -> Instruction {
         .expect("static program id and accounts are valid")
 }
 
+/// An SPL token account's state, as the token program keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenAccount {
+    /// The mint it holds.
+    pub mint: Pubkey,
+    /// The wallet that controls it.
+    pub owner: Pubkey,
+    /// Its balance, in native units.
+    pub amount: u64,
+    /// A delegate and what it may still move, if any.
+    pub delegate: Option<(Pubkey, u64)>,
+    /// For a wrapped-SOL account, the rent-exempt reserve that is not part
+    /// of the balance.
+    pub native_reserve: Option<u64>,
+    /// Whether the account is frozen.
+    pub frozen: bool,
+}
+
+/// Parses an SPL token account's state from raw account data.
+pub fn token_account(account: &Account) -> Result<TokenAccount, ChainError> {
+    let state = spl_token_interface::state::Account::unpack(&account.data).map_err(|e| {
+        ChainError::Decode {
+            what: "token account",
+            detail: e.to_string(),
+        }
+    })?;
+    Ok(TokenAccount {
+        mint: state.mint,
+        owner: state.owner,
+        amount: state.amount,
+        delegate: Option::from(state.delegate).map(|d| (d, state.delegated_amount)),
+        native_reserve: Option::from(state.is_native),
+        frozen: state.state == spl_token_interface::state::AccountState::Frozen,
+    })
+}
+
+/// `SyncNative`: makes a wrapped-SOL account's balance match its lamports
+/// above the reserve, after SOL was sent to it.
+pub fn sync_native(account: &Pubkey) -> Instruction {
+    spl_token_interface::instruction::sync_native(&token_program(), account)
+        .expect("static program id and account are valid")
+}
+
+/// `TransferChecked` of `amount` native units of `mint` from `source` to
+/// `destination`, signed by `owner`.
+pub fn transfer_checked(
+    source: &Pubkey,
+    mint: &Pubkey,
+    destination: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+    decimals: u8,
+) -> Instruction {
+    spl_token_interface::instruction::transfer_checked(
+        &token_program(),
+        source,
+        mint,
+        destination,
+        owner,
+        &[],
+        amount,
+        decimals,
+    )
+    .expect("static program id and accounts are valid")
+}
+
 /// Parses an SPL token account's balance from raw account data.
 pub fn token_balance(account: &Account) -> Result<u64, ChainError> {
     spl_token_interface::state::Account::unpack(&account.data)
@@ -125,6 +192,43 @@ mod tests {
         assert_eq!(ix.accounts[1].pubkey, owner);
         assert_eq!(ix.accounts[2].pubkey, owner);
         assert!(ix.accounts[2].is_signer);
+    }
+
+    #[test]
+    fn token_account_state_parses() {
+        let owner = Pubkey::new_unique();
+        let state = spl_token_interface::state::Account {
+            mint: native_mint(),
+            owner,
+            amount: 7,
+            is_native: Some(2_039_280).into(),
+            state: spl_token_interface::state::AccountState::Initialized,
+            ..Default::default()
+        };
+        let mut data = vec![0u8; spl_token_interface::state::Account::LEN];
+        state.pack_into_slice(&mut data);
+        let parsed = token_account(&Account {
+            data,
+            owner: token_program(),
+            ..Account::default()
+        })
+        .unwrap();
+        assert_eq!(parsed.owner, owner);
+        assert_eq!(parsed.amount, 7);
+        assert_eq!(parsed.native_reserve, Some(2_039_280));
+        assert_eq!(parsed.delegate, None);
+        assert!(!parsed.frozen);
+
+        let ix = transfer_checked(
+            &Pubkey::new_unique(),
+            &native_mint(),
+            &Pubkey::new_unique(),
+            &owner,
+            5,
+            9,
+        );
+        assert_eq!(ix.data[0], 12);
+        assert_eq!(sync_native(&owner).data, vec![17]);
     }
 
     #[test]
