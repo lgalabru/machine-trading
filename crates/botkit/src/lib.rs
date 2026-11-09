@@ -20,11 +20,16 @@
 //!
 //! The world moves in steps and waits for the bot between them: see
 //! [`turns`] and [`Turns`].
+//!
+//! Most bots need none of that by hand: write a [`Strategy`], and [`run`]
+//! answers the grader, reads the market every step, and sends the strategy's
+//! [`Orders`] inside the mandate. See [`run`](mod@run) and the [`prelude`].
 
 mod env;
 mod error;
 pub mod mandate;
 mod phoenix;
+pub mod run;
 mod trader;
 pub mod turns;
 mod tx;
@@ -49,10 +54,16 @@ pub use luce::{
 };
 pub use mandate::Mandate;
 pub use phoenix::{Phoenix, QUOTE_LOTS_PER_USD, load_exchange};
+pub use run::{Action, BotResult, Execution, Intent, Market, Orders, Session, Strategy, plan, run};
 pub use solana_keypair::Keypair;
 pub use solana_pubkey::Pubkey;
 pub use solana_rpc_client::rpc_client::RpcClient;
 pub use solana_signer::Signer;
 pub use trader::{Position, Trader};
+
+/// What a strategy needs: `use mtx_botkit::prelude::*;`.
+pub mod prelude {
+    pub use crate::{BotResult, Execution, Market, Orders, Position, Session, Side, Strategy};
+}
 pub use turns::{Step, Turns};
 pub use tx::{rpc_client, send};
