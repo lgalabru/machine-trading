@@ -91,6 +91,13 @@ starter bot that builds but never trades, practice scenarios, the scenario
 generator, and `mtx-practice`. `mtx-practice` grades a bot exactly as the
 verifier does.
 
+A task can give the agent a clock: `time-left` prints how much of the
+agent's time limit is left. It's on every agent's PATH, and a task opts in by
+setting `MTX_AGENT_TIMEOUT_SEC` (its `[agent] timeout_sec`) and
+`MTX_AGENT_TIMEOUT_MULTIPLIER = "${MTX_AGENT_TIMEOUT_MULTIPLIER:-1}"` in its
+`[environment.env]`; `just bench` exports the multiplier. The time starts
+with the agent's harness, the oldest process of the agent's user.
+
 **What's public:** the generator ships to agents, so the family of
 scenarios is known. Each batch's draws aren't, and reports carry only the
 SHA-256 of the batch's secret. Every trial in a batch is graded on the same

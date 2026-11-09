@@ -187,6 +187,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
       MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
     fi
     export MTX_EVAL_SEED
+    # For `time-left` in tasks that opt in: their limit scales with the agent's.
+    export MTX_AGENT_TIMEOUT_MULTIPLIER={{limit}}
     (umask 077 && printf '%s' "$MTX_EVAL_SEED" > "$batch/.seed")
     # The plan, written before the first trial starts: what runs (models,
     # harnesses and their versions, attempts, time), what's measured and on
@@ -325,6 +327,11 @@ leak-audit:
 # bot that looks for them.
 keypair-probe:
     bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
+
+# The clock check for a task that opts in to `time-left` (bench/checks/clock):
+# its agent reads half the limit at 0.5x and the clock runs down in step.
+clock-probe task:
+    bench/checks/clock/probe.sh {{tasks}}/{{task}}
 
 # The skill ladder (bench/checks/ladder): fixed bots, from doing nothing to
 # the regime oracle and the frozen exploit bots, graded on `sets` fresh
