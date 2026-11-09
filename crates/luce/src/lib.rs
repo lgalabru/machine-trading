@@ -4,7 +4,8 @@
 //!
 //! ```text
 //!  protocols   phoenix (feature "phoenix"): a Phoenix perp as an Instrument,
-//!     │        exact tick/lot math, a trader that plans orders, an ExecutionDriver
+//!     │        exact tick/lot math, a trader that plans orders, an ExecutionDriver;
+//!     │        phoenix_v1 (spot books, the same pieces), pyth (prices)
 //!     ▼
 //!  chain       ChainClient · TransactionSigner · InstructionGroup → pack →
 //!     │        preview → execute (simulate before every signature) · tokens
@@ -41,6 +42,7 @@
 //! | Feature | Adds |
 //! |---------|------|
 //! | `phoenix` | [`protocols::phoenix`]: Phoenix Eternal perpetuals |
+//! | `phoenix-v1` | [`protocols::phoenix_v1`]: Phoenix v1 spot order books |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
