@@ -979,15 +979,25 @@ mod tests {
                         .all(|w| w.level_pct.abs() <= family.fizzle_pct.1 + 1.0),
                     "seed {seed}"
                 );
-                let peak = path.waypoints.iter().map(|w| w.level_pct.abs()).fold(0.0, f64::max);
+                let peak = path
+                    .waypoints
+                    .iter()
+                    .map(|w| w.level_pct.abs())
+                    .fold(0.0, f64::max);
                 let left = path.waypoints.last().unwrap().level_pct.abs();
-                assert!(left < (1.0 - family.fizzle_giveback.0) * peak + 2.0 * family.noise_pct, "seed {seed}");
+                assert!(
+                    left < (1.0 - family.fizzle_giveback.0) * peak + 2.0 * family.noise_pct,
+                    "seed {seed}"
+                );
                 kept.push(left / peak);
             }
         }
         // How much stays away varies: no exact level to fade back to.
         kept.sort_by(f64::total_cmp);
-        assert!(kept[kept.len() / 10] < 0.1 && kept[kept.len() * 9 / 10] > 0.3, "{kept:?}");
+        assert!(
+            kept[kept.len() / 10] < 0.1 && kept[kept.len() * 9 / 10] > 0.3,
+            "{kept:?}"
+        );
         let share = fizzled as f64 / 200.0;
         assert!(
             (share - family.fizzle_odds).abs() < 0.1,

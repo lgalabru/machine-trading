@@ -33,7 +33,7 @@ const STARTER_RUN: &str = include_str!("../../../bots/strategy/run.sh");
 const LOCKFILE: &str = include_str!("../../../Cargo.lock");
 
 /// The tasks a bot can practise for.
-pub const TASKS: [&str; 2] = ["phoenix-flash-crash", "phoenix-market-making"];
+pub const TASKS: [&str; 2] = ["flash-crash-spcx", "market-making-spcx"];
 
 /// The checkout to read tasks and snapshots from: `--repo` or `MTX_REPO`,
 /// else the one this `mtx` was built from.
