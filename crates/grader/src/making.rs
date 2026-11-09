@@ -449,6 +449,7 @@ impl MakingFamily {
                 competition,
                 takers,
             }),
+            offhours: None,
             funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,

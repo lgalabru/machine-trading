@@ -325,10 +325,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
     }
     // The takers, set up while cheatcodes still work: market making's, with
-    // the makers widened and a competing maker; a tape's, with the makers as
-    // they are.
-    let (takers, competitor) = match &scenario.making {
-        Some(making) => (
+    // the makers widened and a competing maker; off hours', with the makers
+    // widened and no competitor; a tape's, with the makers as they are.
+    let (takers, competitor) = match (&scenario.making, &scenario.offhours) {
+        (Some(making), _) => (
             Some(
                 Takers::prepare(
                     &world,
@@ -342,16 +342,31 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             ),
             Some(Competitor::prepare(&world, &phoenix, scenario, internal.url()).await?),
         ),
-        None if !scenario.tape.is_empty() => (
+        (None, Some(off)) => (
+            Some(
+                Takers::prepare(
+                    &world,
+                    &phoenix,
+                    scenario,
+                    off.half_spread_bps,
+                    start_mark_ticks,
+                    internal.url(),
+                )
+                .await?,
+            ),
+            None,
+        ),
+        (None, None) if !scenario.tape.is_empty() => (
             Some(Takers::onboard(&world, &phoenix, scenario, internal.url()).await?),
             None,
         ),
-        None => (None, None),
+        (None, None) => (None, None),
     };
     // The orders the takers send, whichever kind of scenario lists them.
-    let orders: &[crate::making::TakerOrder] = match &scenario.making {
-        Some(making) => &making.takers,
-        None => &scenario.tape,
+    let orders: &[crate::making::TakerOrder] = match (&scenario.making, &scenario.offhours) {
+        (Some(making), _) => &making.takers,
+        (None, Some(off)) => &off.takers,
+        (None, None) => &scenario.tape,
     };
     // What a market-making account's position is worth: the scenario's own
     // oracle level at `slot`, which quoting can't push the way it can push
@@ -458,6 +473,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
 
     let late_before = surfnet.coalesced_slots();
     let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+    // Off hours: the slot the external market reopens at, from the venue's
+    // calendar, as `MTX_REOPEN_SLOT`.
+    let reopen_slot = scenario
+        .offhours
+        .as_ref()
+        .map(|off| start_slot + off.reopen_slot);
     *bot_started = true;
     let mut child = spawn_bot(
         opts.bot_dir,
@@ -466,6 +487,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         opts.bot_log,
         theirs,
         opts.regime,
+        reopen_slot,
     )?;
     ours.set_nonblocking(true)
         .map_err(io_error("turn socket"))?;
@@ -525,7 +547,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         let (Some(flow), Some(takers), Some(at)) = (flow.as_mut(), takers.as_ref(), at) else {
             return;
         };
-        if scenario.making.is_none() {
+        if scenario.making.is_none() && scenario.offhours.is_none() {
             // The tape trades at the book, where its premium puts it.
             let book = start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0);
             flow.send(takers, orders, book, at).await
@@ -1029,6 +1051,7 @@ fn spawn_bot(
     log: &Path,
     turns: StdUnixStream,
     regime: Option<&str>,
+    reopen_slot: Option<u64>,
 ) -> Result<Child> {
     let run_sh = bot_dir.join("run.sh");
     if !run_sh.is_file() {
@@ -1066,6 +1089,9 @@ fn spawn_bot(
     }
     if let Some(regime) = regime {
         command.env("MTX_REGIME", regime);
+    }
+    if let Some(reopen_slot) = reopen_slot {
+        command.env("MTX_REOPEN_SLOT", reopen_slot.to_string());
     }
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at

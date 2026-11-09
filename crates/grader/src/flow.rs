@@ -1,5 +1,5 @@
 //! The grader's taker flow: a market-making session's (see [`crate::making`]),
-//! and the orders any other scenario lists (a tape).
+//! and the orders any other scenario lists (a weekend's, a tape).
 //!
 //! Before the cheatcodes lock, the grader onboards a pool of taker accounts
 //! and widens the snapshot's makers to the scenario's spread. While the bot
