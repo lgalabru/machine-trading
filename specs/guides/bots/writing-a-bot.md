@@ -230,7 +230,7 @@ The grader clears the environment, then sets exactly:
 | `PATH` | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`. |
 | `RUST_LOG` | The log level, `info` by default. |
 
-What the account holds at the start is the task's: on `phoenix-flash-crash`,
+What the account holds at the start is the task's: on `flash-crash-spcx`,
 SOL for fees and 10,000 USDC of collateral.
 
 ### Turns
