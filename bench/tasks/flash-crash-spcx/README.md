@@ -1,4 +1,4 @@
-# solana-foundation/phoenix-flash-crash
+# solana-foundation/flash-crash-spcx
 
 The agent's bot trades Phoenix's SPCX (SpaceX) perpetual through flash
 crashes and squeezes.
@@ -30,7 +30,8 @@ take it past its loss limit.
 ## The market
 
 - **Shocks:** SPCX crashes or squeezes, 50/50, in one to three legs of
-  0.6–8%. Most legs land at once. Fizzles that give their move back are
+  0.6–8%. Most legs land at once (a big one in parts of unequal, random
+  sizes on consecutive steps). Fizzles that give most or all of their move back are
   mixed in.
 - **Aftermath:** most shocks revert (~65%), some stall (~20%), and some keep
   going (~15%).

@@ -1,4 +1,4 @@
-# Design record: phoenix-flash-crash
+# Design record: flash-crash-spcx
 
 Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
@@ -30,7 +30,7 @@ When, which way, and how much to fade a shock whose aftermath is unknown.
 | Bet at the open | Shocks are coming | Crashes and squeezes are 50/50 |
 | Buy the dip | Most shocks revert | Half the shocks are squeezes, and 15% extend |
 | Ride the move | The first leg shows the direction | Most shocks revert |
-| Fade the first 1% | Earlier entry, more reversion | Wobble and fizzles are 0.4–2% and give it all back |
+| Fade the first 1% | Earlier entry, more reversion | Wobble and fizzles are 0.4–2% and give most or all of it back |
 | Full size at once | More PnL when right | An extension breaches the drawdown limit |
 
 **The calculation chain:** read the mark each turn → tell a shock from a
@@ -71,7 +71,7 @@ gets fills; its cost shows only in the valuation and the drawdown.
 | aftermath mix | revert 65%, stall 20%, extend 15% | sizes for the extension | the odds are in the instruction |
 | legs 0.6–8%, log-uniform, up to three | small legs as common as large | doesn't take the first small move as the shock | a move that holds past the wobble |
 | gaps (70% land at once) | no ramp to read the size from | doesn't extrapolate the first step | — |
-| fizzles (odds 0.5, 0.4–2%, give it all back) | false starts | a threshold above fizzle size | they reverse within 1.5–10 s |
+| fizzles (odds 0.5, 0.4–2%, give back 40–100%) | false starts | a threshold above fizzle size | they reverse within 1.5–10 s, by a share that varies |
 | duration drawn first (80–180 s), path cut at the end | the end slot dates nothing | holds to the end | — |
 | wobble (≤ ~0.25%) | noise between moves | a threshold above it | — |
 
@@ -140,3 +140,4 @@ oracle, with wide intervals; the 0.9.0 bench will say.
 | 0.6.0 | rode legs that always ran ≥ 3% in steps, dated the aftermath from the end: ~6×, profitable in every session | — (mandate only) |
 | 0.8.0 | — | legs 0.6–8% log-uniform, 70% gaps, fizzles, duration drawn first; 36 hidden sessions; exploit checks |
 | 0.8.0 → 0.9.0 | frozen exploit bots made 3–6× the reference on fresh sets; the old reference (two fading tranches) made $525–$759 on 36 sessions, too little to rank the ladder's rungs reliably | a lockstep world; hidden sets drawn per batch from a secret; the reference graded alongside; `skill`; the ladder with a regime oracle; a new reference that rides each move and fades it once it stops ($647–$2,777 on the same sets) |
+| 0.10.0 | faded fizzles that always came all the way back, and rode moves cut into equal steps: 2.3–3.1×, profitable in up to 86% of sessions | 0.11.0: at-once moves past ~3.8% land in parts of unequal random sizes; fizzles give back 40–100% (fading them, near riskless, was most of the edge); renamed `flash-crash-spcx`; the 0.10.0 bots join the exploit checks |

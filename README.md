@@ -98,8 +98,8 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 
 | Task | A good bot… |
 | --- | --- |
-| [📉 `phoenix-flash-crash`](bench/tasks/phoenix-flash-crash) | fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't |
-| [⚖️ `phoenix-market-making`](bench/tasks/phoenix-market-making) | earns the SPCX spread from noise, and steps back before informed flow |
+| [📉 `flash-crash-spcx`](bench/tasks/flash-crash-spcx) | fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't |
+| [⚖️ `market-making-spcx`](bench/tasks/market-making-spcx) | earns the SPCX spread from noise, and steps back before informed flow |
 
 Results are published at
 [lgalabru.github.io/machine-trading/bench](https://lgalabru.github.io/machine-trading/bench/),

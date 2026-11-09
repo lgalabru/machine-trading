@@ -48,9 +48,9 @@ struct Cli {
 /// The scenario families, one per task.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum Family {
-    /// phoenix-flash-crash: shocks that crash or squeeze, then revert or not.
+    /// flash-crash-spcx: shocks that crash or squeeze, then revert or not.
     FlashCrash,
-    /// phoenix-market-making: a walking, trending, jumping market, competing
+    /// market-making-spcx: a walking, trending, jumping market, competing
     /// makers, and taker flow, some of it informed.
     MarketMaking,
 }
@@ -232,7 +232,7 @@ enum TaskCommand {
 
 #[derive(clap::Args)]
 struct TaskArgs {
-    /// The task's id, venue first: phoenix-funding-squeeze.
+    /// The task's id, the skill then the instrument: funding-squeeze-spcx.
     #[arg(long)]
     name: Option<String>,
     #[arg(long)]
@@ -240,8 +240,8 @@ struct TaskArgs {
     /// One sentence: what the agent's bot does, on which market.
     #[arg(long)]
     summary: Option<String>,
-    /// Start from `shocks` (phoenix-flash-crash) or `making`
-    /// (phoenix-market-making).
+    /// Start from `shocks` (flash-crash-spcx) or `making`
+    /// (market-making-spcx).
     #[arg(long, value_enum)]
     base: Option<authoring::Base>,
     /// A good bot profits here because it ___.

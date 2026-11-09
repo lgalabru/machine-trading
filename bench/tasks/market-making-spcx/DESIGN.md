@@ -1,4 +1,4 @@
-# Design record: phoenix-market-making
+# Design record: market-making-spcx
 
 Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
@@ -70,8 +70,9 @@ traded the bursts for PnL the bound didn't count, and scored past it).
 
 ## No tells
 
-- Informed, fake-out and noise orders share one account pool and
-  overlapping sizes, so the account or size doesn't say which is which.
+- Informed, fake-out and noise orders draw their size, limit and account
+  from the same distributions, so no single order says which it is: only a
+  burst's one-sided volume and timing do, and fake-outs share those.
 - Fake-outs happen in every regime, calm included.
 - The grader's maker is onboarded and quotes in every session.
 
@@ -119,3 +120,4 @@ sessions.
 | 0.7.0 | quoted a tick inside static makers; traded the informed bursts: reward 1.0, 9–11× the reference, every session won | — (new task) |
 | 0.8.0 | — | the grader's maker; per-order taker limits; ~60% of jumps announced; fake-outs; informed sizes closer to noise; bound = spread + hindsight |
 | 0.8.0 → 0.9.0 | on 0.8.0's flow a naive quoter beat the reference on fresh sets; the reference took its own unwinding for bursts | a lockstep world (the grader's maker no longer races the bot: grades replay); informed flow that bites; 72 hidden sessions drawn per batch from a secret; the reference graded alongside; `skill`; the ladder, with a flow oracle as the exploit bots' ceiling; a reference that counts only fills that grow its inventory |
+| 0.10.0 | informed orders still ran 2–4× noise sizes and limits, so each stood out as it traded: Opus took the cap with every burst (14–20×), Fable too but chased fake-outs (1.3–12×) | 0.11.0: informed orders drawn exactly like noise (size, limit, account), only their side and timing differ; fake-outs drawn exactly like bursts, 0–2 a session; renamed `market-making-spcx`; the 0.10.0 bots join the exploit checks |

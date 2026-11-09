@@ -3,8 +3,8 @@ schema_version = "1.4"
 artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
-name = "solana-foundation/phoenix-flash-crash"
-version = "0.10.1"
+name = "solana-foundation/flash-crash-spcx"
+version = "0.11.0"
 description = "Write a bot that trades Phoenix SPCX (SpaceX) perps through flash crashes and squeezes, some of which never revert, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 

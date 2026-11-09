@@ -19,7 +19,7 @@
 
 ```sh
 just bots                                          # build every bot's bin/bot
-just grade bots/reference bench/tasks/phoenix-flash-crash/environment/practice/*.json
+just grade bots/reference bench/tasks/flash-crash-spcx/environment/practice/*.json
 just test lint                                     # unit tests and clippy
 ```
 
