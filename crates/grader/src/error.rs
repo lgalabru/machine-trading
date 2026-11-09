@@ -39,6 +39,9 @@ pub enum Error {
     Splines { account: String, reason: String },
     #[error("timed out waiting for {0}")]
     Timeout(String),
+    /// A session failed before its bot started.
+    #[error(transparent)]
+    Setup(Box<Error>),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
     #[error("no bot at {}: a bot is a directory with a run.sh", .0.display())]
