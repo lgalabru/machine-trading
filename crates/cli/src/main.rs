@@ -51,7 +51,8 @@ pub(crate) enum Family {
     /// flash-crash-spcx: shocks that crash or squeeze, then revert or not.
     FlashCrash,
     /// market-making-spcx: a walking, trending, jumping market, competing
-    /// makers, and taker flow, some of it informed.
+    /// makers, and taker flow: noise, fake-out bursts, and informed orders
+    /// ahead of most jumps.
     MarketMaking,
 }
 
@@ -341,10 +342,10 @@ enum BenchCommand {
 
 #[derive(Subcommand)]
 enum ScenarioCommand {
-    /// Draw shock scenarios (crashes and squeezes) from the SPCX family, one
-    /// file per scenario.
-    /// Sets are stratified: each direction and aftermath appears in
-    /// proportion to its odds.
+    /// Draw scenarios from a task's family (`--family`), one file per
+    /// scenario.
+    /// Sets are stratified: each kind of session (a shock's direction and
+    /// aftermath, a market's regime) appears in proportion to its odds.
     Generate {
         #[arg(long)]
         out: PathBuf,
