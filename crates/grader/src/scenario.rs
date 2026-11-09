@@ -17,6 +17,7 @@ use crate::{
     chain::Override,
     error::io_error,
     making::Making,
+    offhours::OffHours,
     phoenix::{SLOTS_BETWEEN_STEPS, market_move, oracle_move},
 };
 
@@ -43,6 +44,11 @@ pub struct Scenario {
     /// flow the grader sends. Without it, nobody trades but the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub making: Option<Making>,
+    /// For a scenario where the underlying's own market is closed: the
+    /// closed period before it reopens, Phoenix's index through it, and the
+    /// taker flow the grader sends (see [`crate::offhours`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offhours: Option<OffHours>,
     /// Phoenix's funding parameters for the session's market, set when the
     /// session starts. Without it, the snapshot's own apply (hourly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,7 +207,14 @@ impl Scenario {
                     waypoint.premium_pct
                 ));
             }
-            free_from = waypoint.slot + move_slots(book, waypoint.book_pct()) + 1;
+            // An off-hours reopen lands at once, in one slot, however many
+            // of Phoenix's steps it takes.
+            free_from = match &self.offhours {
+                Some(off) if waypoint.slot == off.reopen_slot => {
+                    waypoint.slot + SLOTS_BETWEEN_STEPS + 1
+                }
+                _ => waypoint.slot + move_slots(book, waypoint.book_pct()) + 1,
+            };
             book = waypoint.book_pct();
         }
         if let Some(funding) = &self.funding
@@ -212,6 +225,22 @@ impl Scenario {
             return Err(format!(
                 "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
             ));
+        }
+        if let Some(off) = &self.offhours {
+            if self.making.is_some() {
+                return Err("a scenario has either making or offhours, not both".into());
+            }
+            if !self.tape.is_empty() {
+                return Err("an off-hours scenario's takers are its offhours', not a tape".into());
+            }
+            if self.path.iter().any(|w| w.premium_pct != 0.0) {
+                return Err("an off-hours scenario's waypoints carry no premium".into());
+            }
+            off.validate(&self.path, self.duration_slots)
+                .map_err(|reason| format!("offhours: {reason}"))?;
+            if !self.path.iter().any(|w| w.slot == off.reopen_slot) {
+                return Err("offhours: the path has no waypoint at the reopen".into());
+            }
         }
         if let Some(making) = &self.making {
             making
@@ -317,6 +346,9 @@ impl Scenario {
     pub fn overrides(&self, perp_asset_map: Pubkey, start_mark_ticks: u64) -> Vec<Override> {
         let ticks_at =
             |level_pct: f64| (start_mark_ticks as f64 * (1.0 + level_pct / 100.0)).round() as u64;
+        if let Some(off) = &self.offhours {
+            return self.offhours_overrides(off, perp_asset_map, start_mark_ticks);
+        }
         let mut from = start_mark_ticks;
         let mut overrides = Vec::new();
         for waypoint in &self.path {
@@ -395,14 +427,95 @@ impl Scenario {
     pub fn setup_slots(&self) -> u64 {
         if !self.tape.is_empty() {
             TAPE_SETUP_SLOTS
+        } else if self.offhours.is_some() {
+            OFFHOURS_SETUP_SLOTS
         } else {
             SETUP_SLOTS
         }
+    }
+
+    /// An off-hours path: through the closed period, each move of the perp
+    /// lands as Phoenix moves a market (oracle reports and makers), and in
+    /// the same slot the oracle reports go back to the closed period's
+    /// index, which only the reports carry: the makers stay on the perp's
+    /// price. Between moves the index updates on its own. At the reopen the
+    /// market moves from the index to the open, oracle and makers together,
+    /// as on any weekday.
+    fn offhours_overrides(
+        &self,
+        off: &OffHours,
+        perp_asset_map: Pubkey,
+        start_mark_ticks: u64,
+    ) -> Vec<Override> {
+        let ticks_at =
+            |level_pct: f64| (start_mark_ticks as f64 * (1.0 + level_pct / 100.0)).round() as u64;
+        // (slot, order within the slot, override): a move, then the index,
+        // then the uncross.
+        let mut timed: Vec<(u64, u8, Override)> = Vec::new();
+        let mut from = start_mark_ticks;
+        let mut moved_at = std::collections::BTreeSet::new();
+        for waypoint in &self.path {
+            let to = ticks_at(waypoint.level_pct);
+            if waypoint.slot < off.reopen_slot {
+                let (moves, _) = market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+                for o in moves {
+                    let order = if o.template_id == "phoenix-market-uncross" {
+                        2
+                    } else {
+                        0
+                    };
+                    timed.push((o.slot, order, o));
+                }
+                let index = ticks_at(off.index_at(&self.path, waypoint.slot));
+                timed.push((
+                    waypoint.slot,
+                    1,
+                    oracle_move(perp_asset_map, &self.symbol, index, waypoint.slot),
+                ));
+                moved_at.insert(waypoint.slot);
+            } else {
+                // The reopen: from wherever the index is, to the open, in
+                // Phoenix's steps but all in one slot: the index snaps, as
+                // Phoenix's does, and nobody trades between the steps.
+                let atomic = waypoint.slot == off.reopen_slot;
+                if atomic {
+                    from = ticks_at(off.index_at(&self.path, off.reopen_slot - 1));
+                }
+                let (moves, _) = market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+                for mut o in moves {
+                    let order = if o.template_id == "phoenix-market-uncross" {
+                        2
+                    } else {
+                        0
+                    };
+                    if atomic {
+                        o.slot = waypoint.slot;
+                    }
+                    timed.push((o.slot, order, o));
+                }
+            }
+            from = to;
+        }
+        for w in &off.index {
+            if !moved_at.contains(&w.slot) {
+                timed.push((
+                    w.slot,
+                    1,
+                    oracle_move(perp_asset_map, &self.symbol, ticks_at(w.level_pct), w.slot),
+                ));
+            }
+        }
+        timed.sort_by_key(|(slot, order, _)| (*slot, *order));
+        timed.into_iter().map(|(_, _, o)| o).collect()
     }
 }
 
 /// Setup slots for most sessions (see [`Scenario::setup_slots`]).
 pub const SETUP_SLOTS: u64 = 60;
+/// An off-hours session onboards eight takers before the bot: under load (a
+/// verifier grades the reference four sessions at a time) that runs past
+/// 60 slots.
+pub const OFFHOURS_SETUP_SLOTS: u64 = 240;
 /// A session that also onboards a taker tape.
 pub const TAPE_SETUP_SLOTS: u64 = 600;
 
@@ -413,7 +526,7 @@ const JUMP_PART_PCT: f64 = 3.8;
 
 /// Slots a move between two levels spans, uncross included. Mirrors
 /// [`market_move`]'s stepping.
-fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
+pub(crate) fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
     let ratio = (1.0 + to_pct / 100.0) / (1.0 + from_pct / 100.0);
     let steps = (((ratio - 1.0).abs() * 100.0 / 4.0).ceil() as u64).max(1);
     steps * SLOTS_BETWEEN_STEPS
@@ -666,6 +779,7 @@ impl ShockFamily {
             ),
             path: path.waypoints,
             making: None,
+            offhours: None,
             funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
@@ -1298,6 +1412,7 @@ mod tests {
             mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
             path: vec![Waypoint::at(10, -12.0), Waypoint::at(12, 0.0)],
             making: None,
+            offhours: None,
             funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
@@ -1354,6 +1469,7 @@ mod tests {
             mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
             path: vec![Waypoint::at(10, -2.0)],
             making: None,
+            offhours: None,
             funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
@@ -1470,5 +1586,56 @@ mod tests {
             ..plain()
         };
         assert!(short_period.validate().is_err());
+    }
+
+    #[test]
+    fn off_hours_move_the_index_apart_and_reopen_at_once() {
+        let off = OffHours {
+            reopen_slot: 200,
+            band_pct: 5.0,
+            half_spread_bps: 10.0,
+            index: vec![Waypoint::at(20, 1.0)],
+            takers: Vec::new(),
+        };
+        let weekend = Scenario {
+            path: vec![Waypoint::at(20, 1.5), Waypoint::at(200, 3.0)],
+            offhours: Some(off.clone()),
+            ..plain()
+        };
+        assert!(weekend.validate().is_ok());
+        assert_eq!(weekend.setup_slots(), OFFHOURS_SETUP_SLOTS);
+        assert_eq!(plain().setup_slots(), SETUP_SLOTS);
+        let overrides = weekend.overrides(Pubkey::new_unique(), 10_000);
+        let index = overrides
+            .iter()
+            .find(|o| o.template_id == "phoenix-oracle-price")
+            .unwrap();
+        assert_eq!(
+            (index.slot, index.values["target_ticks"].as_str()),
+            (20, Some("10100"))
+        );
+        assert!(
+            overrides
+                .iter()
+                .filter(|o| o.slot >= 200)
+                .all(|o| o.slot == 200),
+            "the reopen lands in one slot"
+        );
+
+        let outside = Scenario {
+            path: vec![Waypoint::at(20, 6.0), Waypoint::at(200, 3.0)],
+            ..weekend.clone()
+        };
+        assert!(outside.validate().unwrap_err().contains("band"));
+        let no_reopen = Scenario {
+            path: vec![Waypoint::at(20, 1.5)],
+            ..weekend.clone()
+        };
+        assert!(no_reopen.validate().unwrap_err().contains("reopen"));
+        let also_making = Scenario {
+            making: crate::making::MakingFamily::spcx().sample("m", 1).making,
+            ..weekend
+        };
+        assert!(also_making.validate().is_err());
     }
 }
