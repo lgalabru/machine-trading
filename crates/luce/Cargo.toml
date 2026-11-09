@@ -17,6 +17,11 @@ phoenix = ["dep:phoenix-rise", "dep:serde_json"]
 # market and seat decoding, exact tick/lot conversions, the trader's
 # instructions, its holdings, a trader and an ExecutionDriver.
 phoenix-v1 = []
+# OpenBook v2 spot order books, as the OpenBook venue profile defines them:
+# market, book side, open orders and indexer decoding, exact lot
+# conversions, the trader's instructions, its holdings, a trader and an
+# ExecutionDriver.
+openbook-v2 = []
 # Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses.
 pyth = []
 # The deterministic in-memory chain client, for tests in dependent crates.
