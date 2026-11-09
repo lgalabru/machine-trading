@@ -32,8 +32,40 @@ const STARTER_RUN: &str = include_str!("../../../bots/strategy/run.sh");
 /// SDK is tested with. Cargo drops the entries the bot doesn't use.
 const LOCKFILE: &str = include_str!("../../../Cargo.lock");
 
-/// The tasks a bot can practise for.
-pub const TASKS: [&str; 2] = ["phoenix-flash-crash", "phoenix-market-making"];
+/// The tasks a bot can practise for: every task in the checkout with a
+/// practice set, by name, in order.
+fn tasks(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(root.join("bench/tasks"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.path().join("environment/practice").is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The task asked for, or the flash-crash task when none is: a name the
+/// checkout has, so a task renamed in the bench stays reachable.
+fn resolve_task(root: &Path, asked: Option<&str>) -> Result<String> {
+    let names = tasks(root);
+    let found = match asked {
+        Some(name) => names.iter().find(|n| *n == name),
+        None => names
+            .iter()
+            .find(|n| n.contains("flash-crash"))
+            .or(names.first()),
+    };
+    found.cloned().with_context(|| {
+        format!(
+            "no task {} in {}: the tasks are {}",
+            asked.unwrap_or("to default to"),
+            root.join("bench/tasks").display(),
+            names.join(", ")
+        )
+    })
+}
 
 /// The checkout to read tasks and snapshots from: `--repo` or `MTX_REPO`,
 /// else the one this `mtx` was built from.
@@ -259,7 +291,7 @@ fn newest_source(dir: &Path) -> Option<std::time::SystemTime> {
 
 pub struct Practice<'a> {
     pub dir: &'a Path,
-    pub task: &'a str,
+    pub task: Option<&'a str>,
     pub scenarios: &'a [PathBuf],
     pub build: bool,
     pub jobs: usize,
@@ -298,9 +330,10 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         bail!("the bot can't run:\n  {}", checked.problems.join("\n  "));
     }
     let root = repo(options.repo)?;
-    let snapshot = task_snapshot(&root, options.task)?;
+    let task = resolve_task(&root, options.task)?;
+    let snapshot = task_snapshot(&root, &task)?;
     let files = if options.scenarios.is_empty() {
-        practice_scenarios(&root, options.task)?
+        practice_scenarios(&root, &task)?
     } else {
         options.scenarios.to_vec()
     };
@@ -313,7 +346,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
     eprintln!(
         "grading on {} {} scenario{}, one session at a time unless --jobs; bot logs in {}",
         scenarios.len(),
-        options.task,
+        task,
         if scenarios.len() == 1 { "" } else { "s" },
         logs.display()
     );
@@ -411,7 +444,13 @@ fn summary(report: &GradeReport, logs: &Path) -> String {
 
 /// `mtx bot pack`: the bot's source, without builds or logs, as one archive,
 /// with a manifest saying which task it's for and which mtx it was made with.
-pub fn pack(dir: &Path, task: &str, out: &Path) -> Result<String> {
+pub fn pack(
+    dir: &Path,
+    task: Option<&str>,
+    given_repo: Option<&Path>,
+    out: &Path,
+) -> Result<String> {
+    let task = resolve_task(&repo(given_repo)?, task)?;
     let dir = dir
         .canonicalize()
         .with_context(|| format!("no bot at {}", dir.display()))?;
@@ -493,7 +532,9 @@ mod tests {
     #[test]
     fn every_task_names_its_snapshot_and_practice_set() {
         let root = repo(None).unwrap();
-        for task in TASKS {
+        let names = tasks(&root);
+        assert!(names.len() >= 2, "{names:?}");
+        for task in &names {
             assert!(
                 task_snapshot(&root, task).unwrap().is_dir(),
                 "{task}: no snapshot"
@@ -503,6 +544,8 @@ mod tests {
                 "{task}: no practice"
             );
         }
+        assert!(resolve_task(&root, None).unwrap().contains("flash-crash"));
+        assert!(resolve_task(&root, Some("no-such-task")).is_err());
     }
 
     #[test]
