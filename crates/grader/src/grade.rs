@@ -22,6 +22,7 @@
 use std::{collections::BTreeMap, path::Path};
 
 use futures::StreamExt;
+use mtx_core::MeterError;
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -522,15 +523,27 @@ async fn run_sessions(
                 tokio::time::sleep(STAGGER * index as u32).await;
             }
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
-            session::run(SessionOptions {
-                snapshot_dir,
-                scenario,
-                bot_dir,
-                bot_log: &bot_log,
-                slot: first_bot_user + index % jobs,
-                regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
-            })
-            .await
+            let run = || {
+                session::run(SessionOptions {
+                    snapshot_dir,
+                    scenario,
+                    bot_dir,
+                    bot_log: &bot_log,
+                    slot: first_bot_user + index % jobs,
+                    regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
+                })
+            };
+            // A session whose setup fails on the machine (a request to its
+            // own surfnet that can't get through on a loaded host) runs once
+            // more, from a fresh surfnet. Its bot hadn't started, so it sees
+            // the session once either way. A second failure fails the grade.
+            match run().await {
+                Err(Error::Setup(error)) if is_transient(&error) => {
+                    warn!(scenario = scenario.name, %error, "session setup failed on the machine; running it again");
+                    run().await
+                }
+                done => done,
+            }
         })
         .buffered(jobs);
     let mut sessions = std::pin::pin!(sessions);
@@ -552,6 +565,22 @@ async fn run_sessions(
 }
 
 const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Errors from the grader's own machinery talking to its surfnet, as
+/// opposed to a missing bot, an invalid scenario or a loaded machine
+/// ([`Error::Degraded`]): worth one more try.
+fn is_transient(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Hawkeye(_)
+            | Error::Rpc(_)
+            | Error::Kit(_)
+            | Error::Surfnet(_)
+            | Error::Timeout(_)
+            | Error::Transaction { .. }
+            | Error::Meter(MeterError::Read(_))
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -784,5 +813,30 @@ mod tests {
         assert!(run(2, 2).await.unwrap().is_empty());
         assert!(run(0, 4).await.unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&logs);
+    }
+
+    #[test]
+    fn only_the_machines_failures_are_retried() {
+        assert!(is_transient(&Error::Timeout("slot 9".into())));
+        assert!(is_transient(&Error::Transaction {
+            label: "onboard".into(),
+            reason: "Blockhash not found".into(),
+        }));
+        assert!(is_transient(&Error::Meter(MeterError::Read(
+            "connection refused".into()
+        ))));
+        assert!(!is_transient(&Error::Meter(MeterError::Decode {
+            what: "margin",
+            detail: "short".into(),
+        })));
+        assert!(!is_transient(&Error::MissingBot("bot".into())));
+        assert!(!is_transient(&Error::Degraded("late slots".into())));
+        assert!(!is_transient(&Error::UnknownMarket("XYZ".into())));
+    }
+
+    #[test]
+    fn a_setup_failure_reads_as_its_cause() {
+        let error = Error::Setup(Box::new(Error::Timeout("slot 9".into())));
+        assert_eq!(error.to_string(), "timed out waiting for slot 9");
     }
 }
