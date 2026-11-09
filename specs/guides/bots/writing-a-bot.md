@@ -1,0 +1,311 @@
+# Guide: writing a bot
+
+Status: guide
+
+A bot is a Rust program that trades one session of a task: a scripted
+market, replayed on an offline copy of Solana mainnet. You write the
+strategy; `mtx-botkit`'s run loop does everything else: it talks to the
+grader, reads the market before every step, and sends your orders without
+breaking the [mandate](../../mandate.md). This guide builds a first bot,
+explains what the run loop hands you and what it does with your orders,
+shows how to test a strategy without a chain, and ends with the rules every
+bot runs under.
+
+It uses the guides' example: SPCX trades at **$100**, on Phoenix, and the
+mandate caps the position at **70 SPCX**. The rules at the end are what
+`mtx grade` enforces, from its source (`crates/core/src/session.rs`,
+`guard.rs`) and `mtx-botkit` (`crates/botkit`).
+
+:::glance
+- **You write:** a `Strategy`: what to do at each step
+- **The run loop does:** the grader's protocol, the market reads, sending your orders
+- **Your orders are:** intentions, such as "be long 70 SPCX", cut to the mandate's cap
+- **You test:** a strategy as plain Rust, with markets you make up
+- **You practise:** `mtx bot practice`, the grader itself, on practice scenarios
+- **A session breaks on:** a forbidden RPC call, a mandate breach, or ending liquidatable
+:::
+
+## Quick start
+
+You need Rust and `mtx` (`just install mtx` in the repository); no Docker.
+
+```sh
+mtx bot new ~/my-bot          # a strategy that watches the market and never trades
+cd ~/my-bot
+mtx bot practice              # build it, and grade it on a task's practice scenarios
+```
+
+The strategy is in `src/main.rs`. `mtx bot practice` builds it with
+`build.sh`, runs the same grader the benchmark uses on the task's practice
+scenarios, and prints one line a session, then the grade:
+
+```
+scenario                     your PnL    reference        bound
+practice-1                      $0.00      +$73.77        $1028
+
+reward 0.000   (your PnL $0.00 over the hindsight bound $1028)
+skill  0.00    (your PnL over the reference bot's: 1 matches it)
+```
+
+The starter doesn't trade, so it scores 0. The rest is yours.
+
+## Your first strategy
+
+A strategy that buys a dip and sells at the next high:
+
+```rust
+use mtx_botkit::prelude::*;
+
+#[derive(Default)]
+struct FadeTheDip {
+    peak: f64,
+}
+
+impl Strategy for FadeTheDip {
+    async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+        self.peak = self.peak.max(market.mark);
+        if market.mark < self.peak * 0.97 {
+            orders.target_position(market.cap); // be long the whole cap
+        } else if market.mark >= self.peak {
+            orders.target_position(0.0); // back to flat
+        }
+        Ok(())
+    }
+}
+
+fn main() -> BotResult {
+    mtx_botkit::run(FadeTheDip::default())
+}
+```
+
+`step` never sends anything itself. It says where it wants to be, and the run
+loop works out the orders after it returns:
+
+| Step | SPCX | `step` asks for | The run loop sends | Position after |
+| --- | --- | --- | --- | --- |
+| 10 | $100.00 | flat | nothing: already flat | 0 |
+| 40 | $96.80 | `target_position(70)` | 7 market buys of 10 SPCX, at no more than $98.74 | 70 |
+| 41 | $96.50 | `target_position(70)` | nothing: already there | 70 |
+| 60 | $100.10 | `target_position(0)` | 7 market sells of 10 SPCX, at no less than $98.10 | 0 |
+
+The buys and sells come in slices of 10 SPCX, because one order that crosses
+much of the book can exceed a transaction's compute budget, and each one may
+fill up to 2% from the mark ($96.80 × 1.02 = $98.74). Both are the defaults
+of `Execution`, which you can change.
+
+## What the run loop does
+
+`mtx_botkit::run(strategy)` is the whole bot. Over one session:
+
+| When | The run loop | Your hook |
+| --- | --- | --- |
+| At start | Answers the grader's hello (the world waits for it), reads the session and its mandate, connects to Phoenix. | `start(&Session)`, optional: read anything you need once. |
+| Every step | Reads the market: the mark, the oracle and your position. Updates its PnL and drawdown estimates. | `step(&Market, &mut Orders)`: decide, and fill in the sheet. |
+| After `step` | Turns the sheet into orders cut to the position cap, sends them, and hands the turn back. | |
+| At the end | Stops when the grader ends the session. | `end(Option<&Market>)`, optional. |
+
+If `step` returns an error, the run loop logs it and sends nothing that
+step; the session goes on. If a read fails, it skips the step. Logs go to
+the session's log, at the level `RUST_LOG` sets.
+
+## The market
+
+`Market` is a plain value, read before each step:
+
+| Field | What it is |
+| --- | --- |
+| `k`, `slot`, `last` | The step (from 0), the chain's slot, and whether it's the last step. |
+| `steps_left`, `slots_left` | How much of the session is left. |
+| `mark`, `oracle` | Phoenix's mark price for SPCX, which values your account, and its oracle price. |
+| `position` | Your position (`size` in SPCX, positive long, and `entry_usd`). |
+| `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
+| `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
+| `budget_left` | What's left of the session's turn budget, 500 ms a step in total. |
+
+And three helpers: `room_to_buy()` and `room_to_sell()`, how much more you
+can trade each way before the cap, and `drawdown_room()`, how far you are
+from the drawdown limit on the estimate.
+
+## The order sheet
+
+`Orders` records what you want. Everything on it goes out after `step`
+returns, in order:
+
+| Call | What the run loop sends |
+| --- | --- |
+| `target_position(units)` | Market orders toward `units`, in slices, as `Execution::default()` says. |
+| `target_position_with(units, execution)` | The same, paced your way: `max_per_step`, `slice`, `slippage_bps`, `min_trade`. |
+| `quote(bid, ask, size)` | Cancels your resting orders, then rests a bid and an ask of `size`. |
+| `buy(size, limit)`, `sell(size, limit)` | A market order, filling no worse than `limit`. |
+| `bid(price, size)`, `ask(price, size)` | A resting order. |
+| `cancel_all()` | Cancels every resting order. |
+
+**The cap is kept for you.** Before anything is sent, the run loop cuts it so
+that no fill can take your position past the mandate's cap, counting every
+earlier order on the sheet as filled:
+
+| You're at | You ask for | What goes out |
+| --- | --- | --- |
+| 0 SPCX | `target_position(500)` | buys up to 70, and a warning in the log |
+| +60 SPCX | `quote(99.0, 101.0, 20)` | a bid of 10 (60 + 10 = 70) and an ask of 20 |
+| 0 SPCX | `buy(50, …)`, then `buy(50, …)` | 50, then 20 |
+
+Resting orders from earlier steps still count once they fill, so keep track
+of them, or use `quote`, which cancels them first. For anything the sheet
+doesn't cover, `orders.trader()` is the Phoenix `Trader`, and what it sends
+goes out at once.
+
+## Testing without a chain
+
+A market is a plain value, so a strategy can be tested like any other Rust
+code. `step_offline` runs one `step` on a market you make up and returns the
+sheet; `plan` shows what the run loop would send:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buys_the_dip_up_to_the_cap() {
+        let mut bot = FadeTheDip { peak: 100.0 };
+        let market = Market { mark: 96.8, cap: 70.0, ..Market::default() };
+        let intents = step_offline(&mut bot, &market).unwrap();
+        let (orders, _notes) = plan(&intents, &market);
+        assert_eq!(orders.len(), 7);
+        assert_eq!(orders[0], Action::Market { side: Side::Bid, size: 10.0, limit: 98.74 });
+    }
+}
+```
+
+`cargo test` runs it in a moment, against no chain. Practise for what tests
+can't show: fills, slippage, and the market moving.
+
+## Practising, checking, packing
+
+| Command | What it does |
+| --- | --- |
+| `mtx bot practice` | Builds the bot, then grades it on the task's practice scenarios. |
+| `mtx bot practice --task phoenix-market-making` | The other task. |
+| `mtx bot practice more/*.json` | Grades on scenarios `mtx scenario generate` drew. |
+| `mtx bot practice --json` | The grader's full report instead of the summary. |
+| `mtx bot check` | Checks the bot directory: `run.sh`, an executable `bin/bot`, built from the current source. |
+| `mtx bot pack -o my-bot.tar.gz` | Packages the source, without builds or logs, with a manifest of the task and the `mtx` it was made with. |
+
+A bot built on macOS is a macOS binary: it practises on your machine, but the
+benchmark grades a Linux build.
+
+## The rules underneath
+
+The run loop keeps to all of this for you. It's here for when you work below
+it, with `Turns`, `BotEnv` and `Trader` directly, or in another language.
+
+### The bot directory
+
+The grader runs `bash run.sh`, from the bot's directory.
+
+- `run.sh` must start the bot without building or downloading anything: the
+  grader has no network, and builds nothing.
+- The bot must run on Debian bookworm (slim) with nothing but its own
+  directory: libc, bash and coreutils, no compiler, interpreter or SDK. The
+  native `bin/bot` that `build.sh` makes meets this.
+- The benchmark's grader receives the directory read-only, without its
+  `target/`.
+
+### The environment
+
+The grader clears the environment, then sets exactly:
+
+| Variable | What it is |
+| --- | --- |
+| `MTX_RPC_URL` | The chain's HTTP JSON-RPC endpoint. |
+| `MTX_KEYPAIR` | The trading authority's keypair file (a JSON array of 64 bytes). |
+| `MTX_EXCHANGE` | Phoenix's `/exchange` metadata, matching the chain. |
+| `MTX_SYMBOL` | The market: `SPCX`. |
+| `MTX_END_SLOT` | The slot at which the session ends and the account is valued. |
+| `MTX_MAX_POSITION`, `MTX_MAX_DRAWDOWN` | The mandate's position cap and drawdown limit. |
+| `MTX_MANDATE` | A file with the session's [mandate](../../mandate.md), its term set to the session's last slot. |
+| `MTX_TURN_FD` | The turn socket's file descriptor: `3`. |
+| `HOME` | A private, writable directory. |
+| `PATH` | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`. |
+| `RUST_LOG` | The log level, `info` by default. |
+
+What the account holds at the start is the task's: on `phoenix-flash-crash`,
+SOL for fees and 10,000 USDC of collateral.
+
+### Turns
+
+The world moves in steps of two slots and waits for the bot between them.
+The protocol, `mtx-turn-1`, is JSON lines over the socket on `MTX_TURN_FD`:
+
+| From | Message | Then |
+| --- | --- | --- |
+| Grader | `{"t":"hello","protocol":"mtx-turn-1","steps":…,"slots_per_step":2,"start_slot":…,"end_slot":…,"turn_wall_ms":5000}` | The bot answers `{"t":"ready"}`. |
+| Grader | `{"t":"step","k":…,"slot":…,"last":…}`: the chain holds the state after step `k`. | The bot reads, sends, and answers `{"t":"done","k":…}`. Nothing moves until it does. |
+| Grader | `{"t":"end"}` | The grader stops the bot. |
+
+Three limits:
+
+| Limit | What happens past it |
+| --- | --- |
+| 10 s for `ready` | The world doesn't wait for the bot at all: it moves at 250 ms a slot. |
+| 5 s for one turn | The world moves on without the bot. |
+| 500 ms a step, summed over the session | The same. |
+
+A transaction sent while the world moves is refused, which isn't a breach: it
+just misses the turn.
+
+### The chain
+
+`MTX_RPC_URL` serves standard Solana JSON-RPC over HTTP, with no websocket:
+read what you need each turn. A transaction is final once it executes; reads
+are at `processed`, and an executed transaction reports `finalized`, so
+clients that wait for confirmation return within the turn.
+
+Only these methods are allowed, and **a single call to any other**, including
+the sandbox's `surfnet_*` cheatcodes and `requestAirdrop`, **disqualifies the
+session**:
+
+`getAccountInfo`, `getBalance`, `getBlock`, `getBlockCommitment`,
+`getBlockHeight`, `getBlockProduction`, `getBlockTime`, `getBlocks`,
+`getBlocksWithLimit`, `getClusterNodes`, `getEpochInfo`, `getEpochSchedule`,
+`getFeeForMessage`, `getFirstAvailableBlock`, `getGenesisHash`, `getHealth`,
+`getHighestSnapshotSlot`, `getIdentity`, `getInflationGovernor`,
+`getInflationRate`, `getInflationReward`, `getLargestAccounts`,
+`getLatestBlockhash`, `getLeaderSchedule`, `getMaxRetransmitSlot`,
+`getMaxShredInsertSlot`, `getMinimumBalanceForRentExemption`,
+`getMultipleAccounts`, `getProgramAccounts`, `getRecentPerformanceSamples`,
+`getRecentPrioritizationFees`, `getSignatureStatuses`,
+`getSignaturesForAddress`, `getSlot`, `getSlotLeader`, `getSlotLeaders`,
+`getStakeMinimumDelegation`, `getSupply`, `getTokenAccountBalance`,
+`getTokenAccountsByDelegate`, `getTokenAccountsByOwner`,
+`getTokenLargestAccounts`, `getTokenSupply`, `getTransaction`,
+`getTransactionCount`, `getVersion`, `getVoteAccounts`, `isBlockhashValid`,
+`minimumLedgerSlot`, `sendTransaction`, `simulateTransaction`.
+
+### The sandbox
+
+- No network but the RPC endpoint.
+- When the grader runs as root, the bot runs as an unprivileged user.
+- The bot runs in its own process group. At the end, the grader sends it
+  `SIGTERM`, and `SIGKILL` 2 seconds later.
+- Standard output and error go to the session's log.
+
+### What breaks a session
+
+The grader disqualifies a session, whatever its PnL, when the bot:
+
+1. called a method outside the list above;
+2. broke its [mandate](../../mandate.md#rules), which the grader checks
+   after every step: a market outside its universe, the position past its
+   cap, the account past its drawdown limit;
+3. ended the session with its account liquidatable;
+4. wrote a file the grader reports its grade in.
+
+On the benchmark, **one disqualified session scores the whole grade 0**.
+Each task's README gives its score, its account, its mandate and its market.
+
+## Glossary
+
+Every term this guide uses is in the [glossary](../glossary.md). In the text,
+an underlined term shows its definition when you hover it or tap it.

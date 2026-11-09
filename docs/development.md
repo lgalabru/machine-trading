@@ -50,7 +50,7 @@ mtx bot pack ~/my-bot -o my-bot.tar.gz     # the source and a manifest, no build
   snapshot and `environment/practice` scenarios, with logs in
   `<bot>/target/mtx-practice-logs`. `--json` prints the full report.
 - A bot built on macOS is a macOS binary: it practises here, but the bench
-  grades Linux builds. The contract is [specs/bot-contract.md](../specs/bot-contract.md).
+  grades Linux builds. The guide, with the rules a bot runs under, is [specs/guides/bots/writing-a-bot.md](../specs/guides/bots/writing-a-bot.md).
 
 ## Run, review and publish a bench
 
