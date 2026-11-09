@@ -1,4 +1,4 @@
-# solana-foundation/phoenix-market-making
+# solana-foundation/market-making-spcx
 
 The agent's bot makes markets in Phoenix's SPCX (SpaceX) perpetual, against
 Phoenix's own makers and grader-run taker flow.
@@ -38,9 +38,9 @@ over.
 - **The flow** is grader-run takers sending ordinary Phoenix market orders
   from a shared pool of eight accounts. It mixes noise on both sides,
   informed bursts ahead of about 85% of jumps, leaning flow in a trend, and
-  fake-out bursts with no jump after them. Informed and noise orders
-  overlap in size and share accounts, so telling them apart takes reading
-  the market, not the generator.
+  fake-out bursts with no jump after them. Every order draws its size,
+  limit and account the same way, informed or not, so telling them apart
+  takes reading the flow, not the generator.
 - **Turn order:** the takers' orders due each step trade against the quotes
   the bot left, then the step's move lands, then the grader's maker
   requotes, then the bot takes its turn.
