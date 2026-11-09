@@ -506,6 +506,35 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     Ok(())
 }
 
+/// Call a strategy's [`Strategy::step`] on a market you built, without a
+/// chain, and return what it put on the sheet: for tests. The sheet's
+/// [`Orders::trader`] is `None`.
+///
+/// ```
+/// use mtx_botkit::prelude::*;
+///
+/// struct AlwaysLong;
+/// impl Strategy for AlwaysLong {
+///     async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+///         orders.target_position(market.cap);
+///         Ok(())
+///     }
+/// }
+///
+/// let market = Market { mark: 100.0, cap: 70.0, ..Market::default() };
+/// let intents = mtx_botkit::step_offline(&mut AlwaysLong, &market).unwrap();
+/// assert!(matches!(intents[0], Intent::Target { position, .. } if position == 70.0));
+/// ```
+pub fn step_offline<S: Strategy>(strategy: &mut S, market: &Market) -> BotResult<Vec<Intent>> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()?
+        .block_on(async {
+            let mut orders = Orders::recording();
+            strategy.step(market, &mut orders).await?;
+            Ok(orders.intents)
+        })
+}
+
 /// Send planned orders, in order. A failed order is logged, and the rest of
 /// the step's orders still go: each is its own transaction.
 async fn send(trader: &Trader, actions: &[Action]) {

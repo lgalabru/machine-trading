@@ -56,7 +56,6 @@ snapshot-verify dir=("snapshots/" + snapshot):
 # Build the bots' bin/bot.
 bots:
     bots/starter/build.sh
-    bots/strategy/build.sh
     bots/reference/build.sh
     bots/maker/build.sh
     bots/dip-buyer/build.sh

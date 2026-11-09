@@ -43,7 +43,7 @@ mtx bench review 0.10.0
 ## Write your own bot
 
 You need Rust and `mtx` (above); no Docker. A bot is a Rust program that
-trades one session, on the [bot contract](https://lgalabru.github.io/machine-trading/bot-contract.html).
+trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
 You write a strategy, and [`mtx-botkit`](crates/botkit)'s run loop does
 the rest: it answers the grader, reads the market before every step, and
 sends your orders inside the mandate.
@@ -82,7 +82,7 @@ PnL and drawdown, the mandate's room, the turn budget left), and `Orders`
 records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
 `orders.trader()` reaches the venue for anything else.
-`mtx bot practice --task market-making-spcx` practises the other task,
+`mtx bot practice --task <name>` practises another task in `bench/tasks`,
 and scenarios `mtx scenario generate` draws can be graded too:
 `mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check
 a bot directory and package its source.

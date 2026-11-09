@@ -143,9 +143,10 @@ enum BotCommand {
         /// The bot directory.
         #[arg(long, default_value = ".")]
         bot: PathBuf,
-        /// The task to practise.
-        #[arg(long, default_value = "flash-crash-spcx", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
-        task: String,
+        /// The task to practise, as named in bench/tasks (default: the
+        /// flash-crash task).
+        #[arg(long)]
+        task: Option<String>,
         /// Grade bin/bot as it is, without running build.sh.
         #[arg(long)]
         no_build: bool,
@@ -174,9 +175,14 @@ enum BotCommand {
     Pack {
         #[arg(default_value = ".")]
         dir: PathBuf,
-        /// The task the bot is for.
-        #[arg(long, default_value = "flash-crash-spcx", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
-        task: String,
+        /// The task the bot is for, as named in bench/tasks (default: the
+        /// flash-crash task).
+        #[arg(long)]
+        task: Option<String>,
+        /// The machine-trading checkout to use (default: the one this mtx was
+        /// built from).
+        #[arg(long, env = "MTX_REPO")]
+        repo: Option<PathBuf>,
         /// The archive to write.
         #[arg(long, short, default_value = "bot.tar.gz")]
         out: PathBuf,
@@ -917,7 +923,7 @@ async fn run() -> Result<()> {
             } => {
                 bot::practice(bot::Practice {
                     dir: &bot,
-                    task: &task,
+                    task: task.as_deref(),
                     scenarios: &scenarios,
                     build: !no_build,
                     jobs,
@@ -943,7 +949,12 @@ async fn run() -> Result<()> {
                 }
                 out
             }
-            BotCommand::Pack { dir, task, out } => bot::pack(&dir, &task, &out)?,
+            BotCommand::Pack {
+                dir,
+                task,
+                repo,
+                out,
+            } => bot::pack(&dir, task.as_deref(), repo.as_deref(), &out)?,
         },
         Command::Calibrate { sessions } => {
             let mut scenarios = sessions.load()?;
