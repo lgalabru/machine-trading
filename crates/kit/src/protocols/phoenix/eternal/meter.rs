@@ -28,6 +28,7 @@ pub struct PhoenixEternalMeter {
     owner: Pubkey,
     trader: Pubkey,
     market: PhoenixMarket,
+    unsettled_funding: bool,
 }
 
 impl PhoenixEternalMeter {
@@ -47,7 +48,18 @@ impl PhoenixEternalMeter {
             rpc_url: rpc_url.into(),
             chain,
             owner,
+            unsettled_funding: false,
         })
+    }
+
+    /// Whether the account's value counts the funding it has accrued and not
+    /// settled yet. Phoenix settles funding into the collateral only when the
+    /// account next trades, so a position held through funding intervals is
+    /// worth its collateral, its unrealized PnL and that funding. Off by
+    /// default: the account is valued as the venue profile defines it.
+    pub fn with_unsettled_funding(mut self, unsettled_funding: bool) -> Self {
+        self.unsettled_funding = unsettled_funding;
+        self
     }
 
     /// The trader account it measures: the owner's cross-margin account.
@@ -75,7 +87,8 @@ impl PhoenixEternalMeter {
 
     /// The trader account from one margin view, with the wallet's
     /// collateral: what Phoenix holds (collateral plus unrealized PnL at
-    /// the mark) and USDC withdrawn back to the wallet, which keeps its
+    /// the mark, plus, when the meter counts it, funding accrued and not
+    /// settled yet) and USDC withdrawn back to the wallet, which keeps its
     /// value so a withdrawal can't hide a drawdown.
     async fn account(&self) -> Result<Account, MeterError> {
         let margin = self
@@ -84,7 +97,10 @@ impl PhoenixEternalMeter {
             .await
             .map_err(read)?
             .value;
-        let quote_lots = margin.collateral_quote_lots + margin.unrealized_pnl_quote_lots;
+        let mut quote_lots = margin.collateral_quote_lots + margin.unrealized_pnl_quote_lots;
+        if self.unsettled_funding {
+            quote_lots += margin.unsettled_funding_quote_lots;
+        }
         // Real USDC, which deposits take from: the canonical mint
         // (`collateral_mint`) lives only inside Phoenix.
         let wallet = token::owned_amount(self.chain.as_ref(), &self.owner, &USDC_MINT)

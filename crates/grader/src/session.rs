@@ -295,6 +295,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
+    // A scenario that sets funding values it with the funding it has accrued
+    // and not settled yet; others as Phoenix's collateral and unrealized PnL
+    // alone.
     let meter = PhoenixEternalMeter::new(
         Arc::new(PhoenixExchange::new(world.exchange.clone())),
         internal.url(),
@@ -302,7 +305,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         bot.pubkey(),
         &scenario.symbol,
     )
-    .map_err(mtx_kit::Error::from)?;
+    .map_err(mtx_kit::Error::from)?
+    .with_unsettled_funding(scenario.funding.is_some());
     if meter.trader() != trader {
         return Err(Error::InvalidExchangeKey(format!(
             "the meter would read trader account {}, but the bot was onboarded at {trader}",
@@ -317,6 +321,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .collect();
     let market_id = scenario.instrument().id();
     let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
+    if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
+        phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
+    }
     // The takers, set up while cheatcodes still work: market making's, with
     // the makers widened and a competing maker; a tape's, with the makers as
     // they are.
@@ -388,6 +395,22 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             first_slot, "setup ran past the session's first slot: this session won't replay"
         );
     }
+    // The market's funding parameters land on the session's first slot, so
+    // they're in force, and their intervals start at the same point, before
+    // the bot starts.
+    let perp_asset_map = phoenix.perp_asset_map()?;
+    if let Some(funding) = &scenario.funding {
+        chain::register_scenario(
+            &rpc,
+            "funding",
+            vec![crate::scenario::funding_override(
+                perp_asset_map,
+                &scenario.symbol,
+                funding,
+                first_slot.saturating_sub(slot).max(1),
+            )],
+        )?;
+    }
     while slot < first_slot {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = wait_for_slot(&rpc, slot + 1).await?;
@@ -397,7 +420,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // the guard's upstream has no cheatcodes, airdrops, or way to stop it.
     // Overrides count from the slot they were registered at; so does the
     // takers' flow.
-    let perp_asset_map = phoenix.perp_asset_map()?;
+    if let Some(funding) = &scenario.funding {
+        while slot < first_slot + 1 {
+            surfnet.send_command(SimnetCommand::SlotForward(None))?;
+            slot = wait_for_slot(&rpc, slot + 1).await?;
+        }
+        phoenix::check_funding(&rpc, &phoenix, &scenario.symbol, funding)?;
+    }
     chain::register_scenario(
         &rpc,
         &scenario.name,
