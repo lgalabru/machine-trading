@@ -26,8 +26,8 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `dip-buyer` | the full cap long once the mark is 3% down | below the reference: squeezes and extensions punish it |
 | `momentum` | the full cap with the move once it reaches 4%, held | below the reference: it rides the shock and never fades it |
 | `reference` | rides each move while it runs, fades it once it stops | 1 |
-| `regime-oracle` | told the draw's shape (`mtx grade --tell-regime`), not its path: takes the cap from the extreme toward where the session ends | above the reference: what reading the regime well could still earn |
-| `flash-crash-opus`, `flash-crash-fable` | the frozen 0.6.0 exploit bots | below the regime oracle, losing a quarter of sessions or more |
+| `regime-oracle` | the reference's trading, told the draw's shape (`mtx grade --tell-regime`), not its path: holds a shock to its extreme, takes the cap from the extreme toward where the aftermath ends, and trades fizzles as the reference does | above the reference: what knowing the regime adds to good trading |
+| `flash-crash-opus`, `flash-crash-fable` (0.6.0), `*-0.10` (0.10.0) | the frozen exploit bots | below the regime oracle, losing a quarter of sessions or more |
 | `hindsight` | the bound | top |
 
 ## Market-making
@@ -39,7 +39,7 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `skew-quoter` | the same, leaning against its inventory | below the reference |
 | `reference` | `bots/maker`: inside the competitor, skewed, leaning with the drift, backing off one-sided flow | 1 |
 | `flow-oracle` | told which taker orders are informed (`mtx grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order takes the cap its way until the jump lands | above the reference: what reading the tape perfectly is worth |
-| `market-making-opus`, `market-making-fable` | the frozen 0.7.0 exploit bots | below the flow oracle, losing in a tenth of sessions or more |
+| `market-making-opus`, `market-making-fable` (0.7.0), `*-0.10` (0.10.0) | the frozen exploit bots | below the flow oracle, losing in a tenth of sessions or more |
 | `hindsight` | the bound (spread plus hindsight) | top |
 
 The flow oracle is market-making's ceiling for the exploit bots, as the
