@@ -91,6 +91,7 @@ RUN apt-get update \
     && chown agent:agent /app /opt/mtx/target
 COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
 COPY bench/image/mtx-practice /usr/local/bin/mtx-practice
+COPY bench/image/time-left /usr/local/bin/time-left
 COPY snapshots/ /opt/mtx/snapshots/
 
 # The SDK, with the repository's lockfile so bots build against the versions
