@@ -199,6 +199,11 @@ impl Scenario {
     }
 }
 
+/// The largest part of an at-once move, in percent of the level it starts
+/// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
+/// to exactly one step.
+const JUMP_PART_PCT: f64 = 3.8;
+
 /// Slots a move between two levels spans, uncross included. Mirrors
 /// [`market_move`]'s stepping.
 fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
@@ -251,8 +256,9 @@ pub enum Aftermath {
 /// - Leg sizes are log-uniform over a wide range, and most legs land at
 ///   once, so a move's first print says little about how far it goes and
 ///   leaves little to ride. The rest ramp in unequal steps.
-/// - Quiet stretches carry fizzles: moves that start like a leg and give it
-///   all back, so not every move away is a shock.
+/// - Quiet stretches carry fizzles: moves that start like a leg and give
+///   most or all of it back, so not every move away is a shock, and fading
+///   one carries risk: how much comes back is drawn, not fixed.
 /// - Each leg is drawn independently and another follows with fixed odds, so
 ///   a leg's size says nothing about whether another is coming; pauses and
 ///   the hold before the aftermath share one range.
@@ -296,10 +302,14 @@ pub struct ShockFamily {
     /// Range of slots between a ramp's steps.
     pub step_gap: (u64, u64),
     /// Odds a quiet stretch carries a fizzle, its size in percent (either
-    /// way), and how many slots it holds before giving it all back.
+    /// way), how many slots it holds, and the share of the move it then
+    /// gives back. In 0.10.0 fizzles gave back all of it, to the exact level
+    /// they left, so fading one once it landed was nearly riskless, and it
+    /// was the best bots' largest edge.
     pub fizzle_odds: f64,
     pub fizzle_pct: (f64, f64),
     pub fizzle_hold: (u64, u64),
+    pub fizzle_giveback: (f64, f64),
     /// Largest change of the wobble per tick, in percent of the starting mark.
     pub noise_pct: f64,
     /// Range of slots between wobble ticks.
@@ -351,6 +361,7 @@ impl ShockFamily {
             fizzle_odds: 0.5,
             fizzle_pct: (0.4, 2.0),
             fizzle_hold: (6, 40),
+            fizzle_giveback: (0.4, 1.0),
             noise_pct: 0.12,
             noise_gap: (4, 12),
             // ~1x the 10,000 USDC of collateral at the snapshot's ~$143 mark.
@@ -594,10 +605,63 @@ impl<'a> PathBuilder<'a> {
         }
     }
 
-    /// Go to `to` in one move: Phoenix steps it as fast as it can.
+    /// Go to `to` at once: as fast as Phoenix moves its price. A move bigger
+    /// than one of Phoenix's steps lands in parts on consecutive steps, of
+    /// unequal random sizes, so the first part says nothing exact about the
+    /// rest. Equal parts did: in 0.10.0, a first step of a given size told
+    /// how many more were coming, and the best bots rode them.
     fn jump(&mut self, to: f64) {
-        let slots = move_slots(self.level, to) + 1;
-        self.push(to, slots);
+        let total = to - self.level;
+        let fits = |from: f64, to: f64| {
+            ((1.0 + to / 100.0) / (1.0 + from / 100.0) - 1.0).abs() * 100.0 <= JUMP_PART_PCT
+        };
+        if fits(self.level, to) {
+            let slots = move_slots(self.level, to) + 1;
+            self.push(to, slots);
+            return;
+        }
+        // Fewest parts that can fit, in ratio terms (a part is a ratio of
+        // the level it starts from), sometimes one more.
+        let ratio = ((1.0 + to / 100.0) / (1.0 + self.level / 100.0)).ln().abs();
+        let min_parts = (ratio / (1.0 + JUMP_PART_PCT / 100.0).ln()).ceil().max(2.0) as u64;
+        let mut parts = min_parts + self.rng.range_u64((0, 1));
+        let from = self.level;
+        // Random weights, redrawn until every part is one step Phoenix takes;
+        // a part more if the draws keep missing.
+        let mut tries = 0;
+        let levels = loop {
+            tries += 1;
+            if tries % 64 == 0 {
+                parts += 1;
+            }
+            let w: Vec<f64> = (0..parts).map(|_| 0.35 + self.rng.next_f64()).collect();
+            let sum: f64 = w.iter().sum();
+            let mut done = 0.0;
+            let levels: Vec<f64> = w
+                .iter()
+                .enumerate()
+                .map(|(i, x)| {
+                    done += x / sum;
+                    if i + 1 == w.len() {
+                        to
+                    } else {
+                        round(from + total * done)
+                    }
+                })
+                .collect();
+            let mut prev = from;
+            if levels.iter().all(|&l| {
+                let ok = fits(prev, l);
+                prev = l;
+                ok
+            }) {
+                break levels;
+            }
+        };
+        for level in levels {
+            let slots = move_slots(self.level, level) + 1;
+            self.push(level, slots);
+        }
     }
 
     /// Walk to `to` in unequal steps at uneven intervals.
@@ -635,7 +699,8 @@ impl<'a> PathBuilder<'a> {
 
     /// Wobble around `base` until `until`, leaving room for a move there.
     /// With the family's fizzle odds, somewhere in the stretch the market
-    /// moves away as a leg would, holds, and gives it all back.
+    /// moves away as a leg would, holds, and gives most or all of it back;
+    /// the rest of the stretch wobbles around where it settled.
     fn quiet(&mut self, base: f64, until: u64) {
         let family = self.family;
         let fizzle = if self.rng.next_f64() < family.fizzle_odds {
@@ -652,14 +717,17 @@ impl<'a> PathBuilder<'a> {
         } else {
             None
         };
+        let mut settle = base;
         if let Some((at, size, hold)) = fizzle {
+            let giveback = self.rng.range_f64(family.fizzle_giveback);
             self.wobble(base, at);
             let away = round(base + size);
             self.travel(away);
             self.wobble(away, self.slot + hold);
-            self.travel(base);
+            settle = round(away - size * giveback);
+            self.travel(settle);
         }
-        self.wobble(base, until);
+        self.wobble(settle, until);
     }
 
     fn wobble(&mut self, base: f64, until: u64) {
@@ -811,7 +879,8 @@ mod tests {
         let (mut at_once, mut uneven, mut ramps) = (0, 0, 0);
         for seed in 0..400 {
             let mut path = PathBuilder::new(&family, SplitMix64(seed));
-            path.travel(5.0);
+            // Within one of Phoenix's steps: at once is a single step.
+            path.travel(3.5);
             let steps: Vec<f64> = std::iter::once(0.0)
                 .chain(path.waypoints.iter().map(|w| w.level_pct))
                 .collect::<Vec<_>>()
@@ -845,11 +914,55 @@ mod tests {
         );
     }
 
-    /// Quiet stretches carry fizzles: a move away that comes all the way back.
+    /// A move bigger than one of Phoenix's steps lands at once in parts that
+    /// Phoenix takes in one step each, of unequal sizes, so the first part
+    /// doesn't say how many follow.
     #[test]
-    fn fizzles_come_all_the_way_back() {
+    fn big_moves_land_in_unequal_parts() {
+        let family = ShockFamily::spcx();
+        let mut first_parts = std::collections::BTreeSet::new();
+        let mut part_counts = std::collections::BTreeSet::new();
+        for seed in 0..300 {
+            for total in [-8.0, 6.0, -5.0] {
+                let mut path = PathBuilder::new(&family, SplitMix64(seed));
+                path.jump(total);
+                let levels: Vec<f64> = std::iter::once(0.0)
+                    .chain(path.waypoints.iter().map(|w| w.level_pct))
+                    .collect();
+                assert_eq!(
+                    *levels.last().unwrap(),
+                    total,
+                    "seed {seed}: lands on the target"
+                );
+                for w in levels.windows(2) {
+                    let step = ((1.0 + w[1] / 100.0) / (1.0 + w[0] / 100.0) - 1.0).abs() * 100.0;
+                    assert!(step <= JUMP_PART_PCT + 1e-9, "seed {seed}: a {step}% part");
+                }
+                let parts: Vec<f64> = levels.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+                first_parts.insert((parts[0] * 10.0).round() as i64);
+                part_counts.insert((total as i64, parts.len()));
+                let (lo, hi) = parts
+                    .iter()
+                    .fold((f64::MAX, f64::MIN), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
+                assert!(
+                    parts.len() < 2 || hi - lo > 1e-6,
+                    "seed {seed}: equal parts {parts:?}"
+                );
+            }
+        }
+        // First parts spread over many sizes, and a move's size doesn't fix
+        // its number of parts.
+        assert!(first_parts.len() > 15, "{first_parts:?}");
+        assert!(part_counts.iter().filter(|(t, _)| *t == -8).count() > 1);
+    }
+
+    /// Quiet stretches carry fizzles: a move away that comes most or all of
+    /// the way back, by a share that varies.
+    #[test]
+    fn fizzles_come_most_of_the_way_back() {
         let family = ShockFamily::spcx();
         let mut fizzled = 0;
+        let mut kept = Vec::new();
         for seed in 0..200 {
             let mut path = PathBuilder::new(&family, SplitMix64(seed));
             path.quiet(0.0, 300);
@@ -859,16 +972,22 @@ mod tests {
                 .any(|w| w.level_pct.abs() >= family.fizzle_pct.0 - 1e-9);
             if away {
                 fizzled += 1;
-                // The last move back lands on the base, before the wobble.
+                // It stays near its size, and settles back most of the way.
                 assert!(
                     path.waypoints
                         .iter()
                         .all(|w| w.level_pct.abs() <= family.fizzle_pct.1 + 1.0),
                     "seed {seed}"
                 );
-                assert!(path.waypoints.last().unwrap().level_pct.abs() < 2.0 * family.noise_pct);
+                let peak = path.waypoints.iter().map(|w| w.level_pct.abs()).fold(0.0, f64::max);
+                let left = path.waypoints.last().unwrap().level_pct.abs();
+                assert!(left < (1.0 - family.fizzle_giveback.0) * peak + 2.0 * family.noise_pct, "seed {seed}");
+                kept.push(left / peak);
             }
         }
+        // How much stays away varies: no exact level to fade back to.
+        kept.sort_by(f64::total_cmp);
+        assert!(kept[kept.len() / 10] < 0.1 && kept[kept.len() * 9 / 10] > 0.3, "{kept:?}");
         let share = fizzled as f64 / 200.0;
         assert!(
             (share - family.fizzle_odds).abs() < 0.1,
