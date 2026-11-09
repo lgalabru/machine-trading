@@ -27,6 +27,28 @@ just test lint                                     # unit tests and clippy
 `target/logs/`. Don't run heavy builds while grading: a starved machine
 slows the grade.
 
+## Write a bot
+
+`mtx bot` is the developer's side of grading, without Harbor or Docker:
+
+```sh
+mtx bot new ~/my-bot                       # from bots/starter, outside this checkout
+mtx bot practice --bot ~/my-bot            # build.sh, then mtx grade on the practice set
+mtx bot practice --task phoenix-market-making --bot ~/my-bot
+mtx bot check ~/my-bot                     # run.sh, an executable bin/bot, not stale
+mtx bot pack ~/my-bot -o my-bot.tar.gz     # the source and a manifest, no builds
+```
+
+- `new` depends on `mtx-botkit` by path to the checkout `mtx` was built
+  from, or with `--git` by git at the commit it was built from, and copies
+  the workspace's `Cargo.lock`. A bot inside this checkout is refused: the
+  workspace's `bots/*` would claim it.
+- `practice` runs the same `grade::grade` as the verifier, on the task's
+  snapshot and `environment/practice` scenarios, with logs in
+  `<bot>/target/mtx-practice-logs`. `--json` prints the full report.
+- A bot built on macOS is a macOS binary: it practises here, but the bench
+  grades Linux builds. The contract is [specs/bot-contract.md](../specs/bot-contract.md).
+
 ## Run, review and publish a bench
 
 ```sh
