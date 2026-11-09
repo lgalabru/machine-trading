@@ -67,23 +67,7 @@ pub async fn onboard_trader(
     let register = phoenix.tx().build_register_trader(owner, 0, 0)?;
     mtx_kit::send(&rpc, authority, register, "register trader")?;
 
-    let capabilities: serde_json::Map<_, _> = TRADER_CAPABILITIES
-        .iter()
-        .map(|name| (name.to_string(), json!("true")))
-        .collect();
-    let enable = || {
-        chain::register_scenario(
-            &rpc,
-            "enable trader",
-            vec![Override {
-                template_id: "phoenix-trader-capabilities",
-                account: trader,
-                values: capabilities.clone().into(),
-                slot: 1,
-                label: "enable trader".into(),
-            }],
-        )
-    };
+    let enable = || chain::register_scenario(&rpc, "enable trader", vec![enable_trader(trader, 1)]);
     enable()?;
     // Capabilities land a slot after registration. Under load (a session
     // onboards the bot, eight takers and a competitor at once) that slot can
@@ -109,6 +93,24 @@ pub async fn onboard_trader(
     }
     info!(%owner, %trader, deposit_usdc, "trader onboarded");
     Ok(trader)
+}
+
+/// An override that gives `trader` the capabilities a fresh account needs,
+/// `slot` slots after it's registered. Playing it again changes nothing on
+/// the trader; like every Phoenix override, surfpool first restamps the
+/// markets' oracle readings with the slot it plays at.
+pub fn enable_trader(trader: Pubkey, slot: u64) -> Override {
+    let capabilities: serde_json::Map<_, _> = TRADER_CAPABILITIES
+        .iter()
+        .map(|name| (name.to_string(), json!("true")))
+        .collect();
+    Override {
+        template_id: "phoenix-trader-capabilities",
+        account: trader,
+        values: capabilities.into(),
+        slot,
+        label: "enable trader".into(),
+    }
 }
 
 /// Phoenix rejects an oracle update more than 5% away from the oracle median,

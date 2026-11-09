@@ -426,6 +426,23 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             )],
         )?;
     }
+    // Surfpool restamps Phoenix's oracle readings, and the slot its mark's
+    // EMA last stepped at, with the current slot whenever it plays a Phoenix
+    // override. Setup's last one (a taker's onboarding) plays wherever the
+    // wall clock put it, and the EMA's next step runs from there: the mark
+    // comes out a tick apart run to run. One more on the session's first
+    // slot restamps them all to it. A funding scenario's own override,
+    // played there, does the same.
+    if scenario.funding.is_none() && (scenario.offhours.is_some() || !scenario.tape.is_empty()) {
+        chain::register_scenario(
+            &rpc,
+            "readings",
+            vec![phoenix::enable_trader(
+                trader,
+                first_slot.saturating_sub(slot).max(1),
+            )],
+        )?;
+    }
     while slot < first_slot {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = wait_for_slot(&rpc, slot + 1).await?;
