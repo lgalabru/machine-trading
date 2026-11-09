@@ -28,6 +28,14 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     informed bursts, zero to two a session.
   - **The 0.10.0 winners join the exploit checks** (`*-0.10`), and the
     ladder grades them on fresh sets of the new families.
+  - **The starter is a strategy on a run loop.** `/app/bot` is a
+    `Strategy` on `mtx_botkit::run`, which answers the grader, reads the
+    market before every step, and sends the step's order sheet cut to the
+    position cap; the instructions show it instead of the hand-written
+    `Turns` loop, which `mtx-botkit` still has. `step_offline` tests a
+    strategy without a chain. Agents get the same trading primitives as
+    before, with less plumbing to write, so scores may not compare with
+    0.10.0's on this alone.
   - **`mtx-practice` runs three sessions at a time** (`MTX_JOBS` to
     change); grades are the same however many run. Practice sets are redrawn
     from the new families and recalibrated.

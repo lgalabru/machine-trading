@@ -43,19 +43,30 @@ The grader runs `bash /app/bot/run.sh` with these environment variables, and not
 
 The world moves one step (two slots) at a time. For each step, the grader produces its blocks, which is when the scenario's moves land, then hands your bot the step and **waits for it**: nothing on the chain moves until your bot says it's done. Whatever your bot sends during its turn lands before the next step.
 
-The protocol (`mtx-turn-1`) is JSON lines over the socket on file descriptor 3. `mtx_botkit::Turns` does it for you:
+The protocol (`mtx-turn-1`) is JSON lines over the socket on file descriptor 3. `mtx_botkit::run` does it, and the rest of the plumbing, for you: you write a `Strategy`, and the run loop answers the grader's hello, reads the market before every step, calls your `step`, sends the orders it put on the sheet, and hands the turn back.
 
 ```rust
-let mut turns = mtx_botkit::Turns::connect()?; // first thing: the world waits for it
-let env = BotEnv::from_env()?;
-let trader = Trader::connect(&env)?;
-while let Some(step) = turns.next()? {
-    // The chain holds the state after step `step.k` (at `step.slot`): read it,
-    // send your orders. Asking for the next step answers this one.
+use mtx_botkit::prelude::*;
+
+#[derive(Default)]
+struct MyBot;
+
+impl Strategy for MyBot {
+    async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+        // `market`: this step's mark and oracle, your position, the mandate's cap
+        // and room, an estimate of your PnL and drawdown, and the turn budget left.
+        let half = market.oracle * 0.001;
+        orders.quote(market.oracle - half, market.oracle + half, 2.0); // cancel, then a bid and an ask
+        Ok(())
+    }
+}
+
+fn main() -> BotResult {
+    mtx_botkit::run(MyBot)
 }
 ```
 
-By hand: the grader sends `{"t":"hello","protocol":"mtx-turn-1","steps":…,"slots_per_step":2,"start_slot":…,"end_slot":…,"turn_wall_ms":5000}` and your bot answers `{"t":"ready"}`; then for each step the grader sends `{"t":"step","k":…,"slot":…,"last":…}` and your bot answers `{"t":"done","k":…}`; at the end it sends `{"t":"end"}`.
+The order sheet (`target_position`, `quote`, `buy`, `sell`, `bid`, `ask`, `cancel_all`) is cut before it's sent, so that no fill can take your position past `MTX_MAX_POSITION`; `orders.trader()` is the `Trader` for anything else. Below the run loop, `mtx_botkit::Turns` speaks the protocol alone. By hand: the grader sends `{"t":"hello","protocol":"mtx-turn-1","steps":…,"slots_per_step":2,"start_slot":…,"end_slot":…,"turn_wall_ms":5000}` and your bot answers `{"t":"ready"}`; then for each step the grader sends `{"t":"step","k":…,"slot":…,"last":…}` and your bot answers `{"t":"done","k":…}`; at the end it sends `{"t":"end"}`.
 
 - **A turn may take up to 5 seconds**, and all of a session's turns together up to half a second per step. Past either, the world moves on without your bot, and a transaction sent while the world moves is refused (not as a violation: it just doesn't make it into the turn).
 - **A transaction is final once it's executed.** There are no forks, and the next block comes only after your turn, so the endpoint serves reads at `processed` and reports a transaction that has executed as `finalized`. Clients that wait for confirmation (`send_and_confirm_transaction`) return within the turn.
@@ -90,8 +101,8 @@ Your reward is 0 if any session makes a refused RPC call, trades a market other 
 
 ## What's in your environment
 
-- `/app/bot`: a working Rust bot that connects, watches the mark price and position, and never trades. `run.sh` starts `bin/bot`. `build.sh` builds the crate and copies the binary to `bin/bot`. **Run `/app/bot/build.sh` after every change.** The grader runs `bin/bot` as it is.
-- `/opt/mtx/sdk/crates/botkit`: the `mtx-botkit` crate the starter uses. `BotEnv` reads the contract, and `Mandate` the mandate file. `Trader` places limit and market orders, cancels orders, and reads the mark price and your position. `phoenix_rise` (the Phoenix Rust SDK) is re-exported for anything else, such as reading the order book. Builds share a target directory (`$CARGO_TARGET_DIR`) where the SDK's dependencies are already compiled.
+- `/app/bot`: a working Rust bot, a `Strategy` on `mtx_botkit::run` that watches the market and never trades: fill in its `step`. `run.sh` starts `bin/bot`. `build.sh` builds the crate and copies the binary to `bin/bot`. **Run `/app/bot/build.sh` after every change.** The grader runs `bin/bot` as it is.
+- `/opt/mtx/sdk/crates/botkit`: the `mtx-botkit` crate the starter uses. `mtx_botkit::run` and its `Strategy`, `Market` and `Orders` are the bot's plumbing (see [Turns](#turns)); `step_offline` runs one `step` on a `Market` you build, for unit tests without a chain. Below them, `BotEnv` reads the contract, `Mandate` the mandate file, and `Trader` places limit and market orders, cancels orders, and reads the mark price and your position. `phoenix_rise` (the Phoenix Rust SDK) is re-exported for anything else, such as reading the order book. Builds share a target directory (`$CARGO_TARGET_DIR`) where the SDK's dependencies are already compiled.
 - `mtx-practice`: grades `/app/bot` on the practice scenarios in `/opt/mtx/practice`, exactly as the hidden scenarios are graded, and prints a JSON report with the reward, each session's PnL and spread bound, the takers' flow, and the reference's PnL. Bot logs go to `/tmp/mtx-practice-logs/`. It runs three sessions at a time (`MTX_JOBS=1` for one), and a run takes about a minute.
 - `mtx`: the grader itself. `mtx scenario generate --family market-making --out DIR --prefix NAME --count N --seed S` draws more scenarios from the same family. Grade your bot on them with `mtx-practice DIR/*.json`: the reward needs no reference, so generated scenarios score the same way the hidden ones do.
 
