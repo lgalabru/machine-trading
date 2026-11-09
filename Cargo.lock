@@ -4623,6 +4623,7 @@ dependencies = [
  "axum",
  "borsh 1.8.1",
  "bs58",
+ "bytemuck",
  "flate2",
  "futures 0.3.34",
  "libc",

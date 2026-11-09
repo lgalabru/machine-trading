@@ -43,6 +43,10 @@ pub struct Scenario {
     /// flow the grader sends. Without it, nobody trades but the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub making: Option<Making>,
+    /// Phoenix's funding parameters for the session's market, set when the
+    /// session starts. Without it, the snapshot's own apply (hourly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<Funding>,
     /// Outside market making: taker orders the grader sends from its own
     /// accounts, priced off the book, as anyone trading the market would.
     /// They keep Phoenix's book price, and with it a book-priced mark, fresh.
@@ -94,9 +98,32 @@ impl Waypoint {
     }
 }
 
+/// Phoenix's funding parameters for one market, as the
+/// `phoenix-market-funding` template sets them: funding accrues on the gap
+/// between Phoenix's mark and its index, and settles every interval at that
+/// gap's average over the interval times `interval / period`, capped at
+/// `max_rate` per interval.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Funding {
+    pub interval_seconds: u64,
+    pub period_seconds: u64,
+    /// The cap on one interval's funding, in quote lots per base lot (the
+    /// template's unit).
+    pub max_rate: i64,
+    /// How Phoenix prices the market's mark in the session, written at
+    /// setup; without it, the snapshot's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<crate::phoenix::MarkConfig>,
+}
+
 /// Lowest level a waypoint may target. Past this, Phoenix's risk checks and
 /// the market's resting liquidity stop behaving like a real market.
 const MIN_LEVEL_PCT: f64 = -40.0;
+
+/// Market time per slot in a session: the surfnet's clock, which Phoenix's
+/// funding reads.
+pub const SLOT_SECONDS: f64 = 0.25;
 
 /// The venue every scenario trades on.
 pub const VENUE: &str = "phoenix";
@@ -177,6 +204,15 @@ impl Scenario {
             free_from = waypoint.slot + move_slots(book, waypoint.book_pct()) + 1;
             book = waypoint.book_pct();
         }
+        if let Some(funding) = &self.funding
+            && (funding.interval_seconds == 0
+                || funding.period_seconds < funding.interval_seconds
+                || funding.max_rate <= 0)
+        {
+            return Err(format!(
+                "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
+            ));
+        }
         if let Some(making) = &self.making {
             making
                 .validate(self.duration_slots)
@@ -242,7 +278,38 @@ impl Scenario {
         let spread = self.making.as_ref().map_or(0.0, |making| {
             making.spread_bound_usd(&self.path, start_mark_usd)
         });
-        spread + self.hindsight_bound_usd(start_mark_usd)
+        spread + self.hindsight_bound_usd(start_mark_usd) + self.funding_bound_usd(start_mark_usd)
+    }
+
+    /// The most funding the cap could collect: held against every premium
+    /// for as long as the path keeps it open, each at most the funding cap,
+    /// at Phoenix's rate of the premium times the time over the funding
+    /// period.
+    pub fn funding_bound_usd(&self, start_mark_usd: f64) -> f64 {
+        let Some(funding) = &self.funding else {
+            return 0.0;
+        };
+        let cap_pct = funding.max_rate as f64 / 1_000.0 / start_mark_usd
+            * 100.0
+            * funding.period_seconds as f64
+            / funding.interval_seconds as f64;
+        let ends = self
+            .path
+            .iter()
+            .skip(1)
+            .map(|w| w.slot)
+            .chain(std::iter::once(self.duration_slots));
+        let premium_seconds: f64 = self
+            .path
+            .iter()
+            .zip(ends)
+            .map(|(w, end)| {
+                w.premium_pct.abs().min(cap_pct) * end.saturating_sub(w.slot) as f64 * SLOT_SECONDS
+            })
+            .sum();
+        self.max_position() * start_mark_usd * premium_seconds
+            / 100.0
+            / funding.period_seconds as f64
     }
 
     /// Surfpool overrides for the whole path, with slots relative to when
@@ -280,6 +347,29 @@ impl Scenario {
 /// oracles from the index to the book.
 const MAX_PREMIUM_PCT: f64 = 3.0;
 
+/// Set the market's funding parameters, `slot` slots after the override is
+/// registered. The session plays it in setup, before the bot starts (see
+/// [`crate::session`]).
+pub fn funding_override(
+    perp_asset_map: Pubkey,
+    symbol: &str,
+    funding: &Funding,
+    slot: u64,
+) -> Override {
+    Override {
+        template_id: "phoenix-market-funding",
+        account: perp_asset_map,
+        values: serde_json::json!({
+            "symbol": symbol,
+            "fundingIntervalSeconds": funding.interval_seconds.to_string(),
+            "fundingPeriodSeconds": funding.period_seconds.to_string(),
+            "maxFundingRate": funding.max_rate.to_string(),
+        }),
+        slot,
+        label: "funding".into(),
+    }
+}
+
 impl Scenario {
     /// The price an open position is valued at, at the end and for the
     /// drawdown: `mark` (Phoenix's), `oracle` (the scenario's level, for
@@ -290,7 +380,7 @@ impl Scenario {
     pub fn valuation(&self) -> &'static str {
         if self.making.is_some() {
             "oracle"
-        } else if self.path.iter().any(|w| w.premium_pct != 0.0) {
+        } else if self.path.iter().any(|w| w.premium_pct != 0.0) || self.funding.is_some() {
             "book"
         } else {
             "mark"
@@ -576,6 +666,7 @@ impl ShockFamily {
             ),
             path: path.waypoints,
             making: None,
+            funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
         };
@@ -1207,6 +1298,7 @@ mod tests {
             mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
             path: vec![Waypoint::at(10, -12.0), Waypoint::at(12, 0.0)],
             making: None,
+            funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
         };
@@ -1262,6 +1354,7 @@ mod tests {
             mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
             path: vec![Waypoint::at(10, -2.0)],
             making: None,
+            funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
         }
@@ -1335,5 +1428,47 @@ mod tests {
             ..plain()
         };
         assert!(late.validate().is_err());
+    }
+
+    #[test]
+    fn funding_is_opt_in_and_checked() {
+        assert_eq!(plain().funding_bound_usd(100.0), 0.0);
+        let funding = Funding {
+            interval_seconds: 4,
+            period_seconds: 20,
+            max_rate: 1_000,
+            mark: None,
+        };
+        let funded = Scenario {
+            funding: Some(funding),
+            path: vec![Waypoint {
+                premium_pct: 1.0,
+                ..Waypoint::at(10, 0.0)
+            }],
+            ..plain()
+        };
+        assert!(funded.validate().is_ok());
+        assert_eq!(funded.valuation(), "book");
+        assert!(funded.funding_bound_usd(100.0) > 0.0);
+        let json = serde_json::to_value(&funded).unwrap();
+        assert_eq!(json["funding"]["interval_seconds"], 4);
+        assert!(json["funding"].get("mark").is_none());
+
+        let no_interval = Scenario {
+            funding: Some(Funding {
+                interval_seconds: 0,
+                ..funding
+            }),
+            ..plain()
+        };
+        assert!(no_interval.validate().unwrap_err().contains("funding"));
+        let short_period = Scenario {
+            funding: Some(Funding {
+                period_seconds: 2,
+                ..funding
+            }),
+            ..plain()
+        };
+        assert!(short_period.validate().is_err());
     }
 }

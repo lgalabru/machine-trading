@@ -690,6 +690,7 @@ mod tests {
             mandate: Mandate::perp(VENUE, "SPCX", 100.0, 1_000.0),
             path: vec![Waypoint::at(10, -10.0)],
             making: None,
+            funding: None,
             tape: Vec::new(),
             reference_pnl_usd,
         }
