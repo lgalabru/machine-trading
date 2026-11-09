@@ -4604,6 +4604,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-strategy"
+version = "0.1.0"
+dependencies = [
+ "mtx-botkit",
+ "tracing",
+]
+
+[[package]]
 name = "mtx-botkit"
 version = "0.1.0"
 dependencies = [
@@ -4618,7 +4626,9 @@ dependencies = [
  "solana-signer",
  "solana-transaction 4.3.0",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

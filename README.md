@@ -43,17 +43,45 @@ mtx bench review 0.10.0
 ## Write your own bot
 
 You need Rust and `mtx` (above); no Docker. A bot is a Rust program that
-trades one session, on the [bot contract](https://lgalabru.github.io/machine-trading/bot-contract.html):
+trades one session, on the [bot contract](https://lgalabru.github.io/machine-trading/bot-contract.html).
+You write a strategy, and [`mtx-botkit`](crates/botkit)'s run loop does
+the rest: it answers the grader, reads the market before every step, and
+sends your orders inside the mandate.
+
+```rust
+use mtx_botkit::prelude::*;
+
+#[derive(Default)]
+struct FadeTheDip { peak: f64 }
+
+impl Strategy for FadeTheDip {
+    async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+        self.peak = self.peak.max(market.mark);
+        if market.mark < self.peak * 0.97 {
+            orders.target_position(market.cap);    // cut to the position cap for you
+        } else if market.mark >= self.peak {
+            orders.target_position(0.0);
+        }
+        Ok(())
+    }
+}
+
+fn main() -> BotResult {
+    mtx_botkit::run(FadeTheDip::default())
+}
+```
 
 ```sh
-mtx bot new ~/my-bot          # a bot that connects, watches the market, never trades
+mtx bot new ~/my-bot          # a strategy that watches the market and never trades
 cd ~/my-bot
 mtx bot practice              # build it, and grade it on a task's practice scenarios
 ```
 
-The strategy goes in `src/main.rs`, with
-[`mtx-botkit`](crates/botkit) for the plumbing: `Turns` for the turn
-protocol, `BotEnv` for the session, `Trader` for orders and positions.
+`Market` is a plain value (the step, mark and oracle, position, estimated
+PnL and drawdown, the mandate's room, the turn budget left), and `Orders`
+records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
+`ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
+`orders.trader()` reaches the venue for anything else.
 `mtx bot practice --task phoenix-market-making` practises the other task,
 and scenarios `mtx scenario generate` draws can be graded too:
 `mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check

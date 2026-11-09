@@ -1,0 +1,17 @@
+# The template `mtx bot new` starts a bot from: a strategy on mtx-botkit's
+# run loop. (bots/starter is the bench's own starter, which the task images
+# hand to agents.) No workspace inheritance, so it builds the same anywhere.
+[package]
+name = "mtx-bot-strategy"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-strategy"
+path = "src/main.rs"
+
+[dependencies]
+mtx-botkit = { path = "../../crates/botkit" }
+tracing = "0.1"

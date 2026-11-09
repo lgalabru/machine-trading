@@ -26,8 +26,8 @@ const REPO_URL: &str = "https://github.com/lgalabru/machine-trading";
 /// The commit this `mtx` was built from, when it was built from a git
 /// checkout (see `build.rs`).
 const BUILT_COMMIT: Option<&str> = option_env!("MTX_GIT_COMMIT");
-const STARTER_MAIN: &str = include_str!("../../../bots/starter/src/main.rs");
-const STARTER_RUN: &str = include_str!("../../../bots/starter/run.sh");
+const STARTER_MAIN: &str = include_str!("../../../bots/strategy/src/main.rs");
+const STARTER_RUN: &str = include_str!("../../../bots/strategy/run.sh");
 /// The workspace's lockfile, so a new bot builds against the versions the
 /// SDK is tested with. Cargo drops the entries the bot doesn't use.
 const LOCKFILE: &str = include_str!("../../../Cargo.lock");
@@ -119,8 +119,8 @@ fn write_executable(path: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
-/// `mtx bot new`: a bot that connects, watches the market and never trades,
-/// ready to build and practise.
+/// `mtx bot new`: a strategy on `mtx-botkit`'s run loop that watches the
+/// market and never trades (bots/strategy), ready to build and practise.
 pub fn new(dir: &Path, git: bool, given_repo: Option<&Path>) -> Result<String> {
     if dir.exists() && dir.read_dir()?.next().is_some() {
         bail!("{} exists and isn't empty", dir.display());
@@ -159,11 +159,8 @@ name = "bot"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
 {botkit}
-tokio = {{ version = "1", features = ["full"] }}
 tracing = "0.1"
-tracing-subscriber = {{ version = "0.3", features = ["env-filter"] }}
 
 # Its own workspace, wherever it's created.
 [workspace]
