@@ -197,26 +197,28 @@ pub struct MakingFamily {
     /// Odds a jump comes with informed flow ahead of it; the rest land
     /// unannounced.
     pub informed_odds: f64,
-    /// Informed orders before a jump, how far ahead they start, and how much
-    /// larger than noise they run.
+    /// Informed orders before a jump, and how far ahead they start. Each one
+    /// is drawn like a noise order (size, limit, account): only its side and
+    /// its timing say it's informed. In 0.10.0 informed orders ran 2 to 4
+    /// times noise sizes with limits of 2 to 4 times the competitor's
+    /// half-spread, ranges noise rarely reached, so each order gave itself
+    /// away and the best bots took the cap with every burst.
     pub informed_orders: (u64, u64),
     pub informed_lead: (u64, u64),
-    pub informed_scale: (f64, f64),
-    /// Fake-out bursts per session, in any regime: informed-looking flow
-    /// with no jump after it.
+    /// Fake-out bursts per session, in any regime: drawn exactly like an
+    /// informed burst, with no jump after it. As common as real bursts, so a
+    /// burst alone is about a coin flip.
     pub fakeouts: (u64, u64),
     /// The grader's maker: its floor, in basis points, how many slots it
     /// takes to react, and its quote size.
     pub floor_bps: (f64, f64),
     pub react_slots: (u64, u64),
     pub competitor_size: (f64, f64),
-    /// Taker limits, as multiples of the competitor's half-spread. Noise
-    /// takers' are lognormal around 1, so some won't pay the competitor's
-    /// price and fill only against a tighter quote; informed takers are in a
-    /// hurry and pay up.
+    /// Taker limits, as multiples of the competitor's half-spread: lognormal
+    /// around 1, so some takers won't pay the competitor's price and fill
+    /// only against a tighter quote. Informed takers draw theirs the same way.
     pub noise_limit_sigma: f64,
     pub noise_limit_clamp: (f64, f64),
-    pub informed_limit: (f64, f64),
     pub max_position: f64,
     pub max_drawdown_usd: f64,
 }
@@ -241,16 +243,14 @@ impl MakingFamily {
             size_sigma: 0.7,
             size_clamp: (0.1, 4.0),
             informed_odds: 0.85,
-            informed_orders: (8, 16),
-            informed_lead: (4, 24),
-            informed_scale: (2.0, 4.0),
-            fakeouts: (0, 3),
+            informed_orders: (6, 14),
+            informed_lead: (6, 30),
+            fakeouts: (0, 2),
             floor_bps: (2.0, 6.0),
             react_slots: (2, 8),
             competitor_size: (2.0, 5.0),
             noise_limit_sigma: 0.5,
             noise_limit_clamp: (0.3, 4.0),
-            informed_limit: (2.0, 4.0),
             // ~0.3x the 10,000 USDC of collateral at ~$143: a maker shouldn't
             // warehouse risk.
             max_position: 20.0,
@@ -358,10 +358,8 @@ impl MakingFamily {
             } else {
                 TakerSide::Sell
             };
-            let size = self.size(&mut rng, 1.0);
-            let (lo, hi) = self.noise_limit_clamp;
-            let limit =
-                competitor_bps * (self.noise_limit_sigma * rng.normal()).exp().clamp(lo, hi);
+            let size = self.size(&mut rng);
+            let limit = self.limit(&mut rng, competitor_bps);
             takers.push((self.order(&mut rng, slot, side, size, limit), false));
         }
         let side_of = |size: f64| {
@@ -387,9 +385,8 @@ impl MakingFamily {
             let lead = rng.range_u64(self.informed_lead).min(at);
             for _ in 0..rng.range_u64(self.informed_orders) {
                 let slot = at - rng.range_u64((1, lead.max(1)));
-                let scale = rng.range_f64(self.informed_scale);
-                let size = self.size(&mut rng, scale);
-                let limit = competitor_bps * rng.range_f64(self.informed_limit);
+                let size = self.size(&mut rng);
+                let limit = self.limit(&mut rng, competitor_bps);
                 takers.push((
                     self.order(&mut rng, slot, side, size, limit),
                     burst < informed_bursts,
@@ -506,9 +503,18 @@ impl MakingFamily {
         scenarios
     }
 
-    fn size(&self, rng: &mut SplitMix64, scale: f64) -> f64 {
-        let size = self.size_median * scale * (self.size_sigma * rng.normal()).exp();
+    /// A taker order's size: lognormal around the median, clamped. Informed
+    /// and noise orders draw it the same way.
+    fn size(&self, rng: &mut SplitMix64) -> f64 {
+        let size = self.size_median * (self.size_sigma * rng.normal()).exp();
         round3(size.clamp(self.size_clamp.0, self.size_clamp.1))
+    }
+
+    /// A taker order's limit, in basis points: lognormal around the
+    /// competitor's half-spread, clamped. Informed and noise orders alike.
+    fn limit(&self, rng: &mut SplitMix64, competitor_bps: f64) -> f64 {
+        let (lo, hi) = self.noise_limit_clamp;
+        competitor_bps * (self.noise_limit_sigma * rng.normal()).exp().clamp(lo, hi)
     }
 
     fn order(
@@ -567,32 +573,19 @@ mod tests {
         }
     }
 
+    /// About 85% of jumps have informed orders on their side just ahead of
+    /// them; the rest land unannounced. Read from the labels: informed
+    /// orders look like noise one at a time, so volume alone can't count them.
     #[test]
     fn informed_flow_leads_most_jumps_not_all() {
         let family = MakingFamily::spcx();
         let (mut jumps, mut led) = (0, 0);
-        for seed in (0..2000)
+        for seed in (0..4000)
             .filter(|&s| family.regime(s) == Regime::Jumps)
-            .take(150)
+            .take(300)
         {
-            let s = family.sample("m", seed);
+            let (s, informed) = family.sample_labeled("m", seed);
             let making = s.making.as_ref().unwrap();
-            // Same-side volume in the 25 slots before `at`.
-            let ahead = |at: u64, side: TakerSide| -> f64 {
-                making
-                    .takers
-                    .iter()
-                    .filter(|o| o.slot < at && o.slot + 25 >= at && o.side == side)
-                    .map(|o| o.size)
-                    .sum()
-            };
-            // A typical 25-slot window's one-sided volume, for scale.
-            let mut windows: Vec<f64> = (25..s.duration_slots)
-                .step_by(25)
-                .map(|at| ahead(at, TakerSide::Buy))
-                .collect();
-            windows.sort_by(f64::total_cmp);
-            let typical = windows[windows.len() / 2].max(0.5);
             for w in s.path.windows(2) {
                 let size = w[1].level_pct - w[0].level_pct;
                 if size.abs() < family.jump_pct.0 - 0.01 {
@@ -604,18 +597,19 @@ mod tests {
                 } else {
                     TakerSide::Sell
                 };
-                if ahead(w[1].slot, side) > 2.5 * typical {
+                let lead = family.informed_lead.1;
+                if making.takers.iter().zip(&informed).any(|(o, i)| {
+                    *i && o.side == side && o.slot < w[1].slot && o.slot + lead >= w[1].slot
+                }) {
                     led += 1;
                 }
             }
         }
         let share = led as f64 / jumps as f64;
-        assert!(jumps > 100, "{jumps} jumps");
-        // About 85% are announced; a burst measured against a busy window
-        // can read as typical, so the measured share runs a little under.
+        assert!(jumps > 300, "{jumps} jumps");
         assert!(
-            (0.65..0.95).contains(&share),
-            "{share} of {jumps} jumps are led by a burst"
+            (0.78..0.92).contains(&share),
+            "{share} of {jumps} jumps are led by informed flow"
         );
     }
 
@@ -699,8 +693,70 @@ mod tests {
         assert!((bound - 0.244).abs() < 1e-9, "{bound}");
     }
 
-    /// Some noise takers won't pay the competitor's price; informed ones
-    /// always do.
+    /// No single order says it's informed: informed and noise orders share
+    /// sizes and limits (in 0.10.0, informed ones ran 2-4x larger with 2-4x
+    /// limits, and gave themselves away).
+    #[test]
+    fn informed_orders_look_like_noise() {
+        let family = MakingFamily::spcx();
+        let mut inf: Vec<(f64, f64)> = vec![];
+        let mut noise: Vec<(f64, f64)> = vec![];
+        for seed in 0..120 {
+            let (s, informed) = family.sample_labeled("m", seed);
+            let m = s.making.as_ref().unwrap();
+            for (o, i) in m.takers.iter().zip(&informed) {
+                let point = (o.size, o.limit_bps / m.competitor_bps);
+                if *i {
+                    inf.push(point)
+                } else {
+                    noise.push(point)
+                }
+            }
+        }
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let (si, sn) = (
+            median(inf.iter().map(|p| p.0).collect()),
+            median(noise.iter().map(|p| p.0).collect()),
+        );
+        let (li, ln) = (
+            median(inf.iter().map(|p| p.1).collect()),
+            median(noise.iter().map(|p| p.1).collect()),
+        );
+        assert!(inf.len() > 500, "{} informed orders", inf.len());
+        assert!(
+            (si / sn - 1.0).abs() < 0.15,
+            "sizes: informed {si}, noise {sn}"
+        );
+        assert!(
+            (li / ln - 1.0).abs() < 0.15,
+            "limits: informed {li}x, noise {ln}x"
+        );
+    }
+
+    /// Fake-outs are as common as informed bursts, so a burst alone is a
+    /// coin flip.
+    #[test]
+    fn fakeouts_are_as_common_as_announced_jumps() {
+        let family = MakingFamily::spcx();
+        let mut jumps_announced = 0.0;
+        for seed in 0..400 {
+            let (_, informed) = family.sample_labeled("m", seed);
+            jumps_announced += informed.iter().any(|i| *i) as u8 as f64;
+        }
+        let fakeouts = (family.fakeouts.0 + family.fakeouts.1) as f64 / 2.0;
+        // Announced jumps per session: jumps odds x mean jumps x informed odds.
+        let announced = family.jumps_odds * 2.0 * family.informed_odds;
+        assert!(
+            (announced / fakeouts - 1.0).abs() < 0.5,
+            "{announced} announced vs {fakeouts} fake-outs a session"
+        );
+        assert!(jumps_announced > 100.0);
+    }
+
+    /// Some takers won't pay the competitor's price, informed or not.
     #[test]
     fn takers_care_about_price() {
         let family = MakingFamily::spcx();
