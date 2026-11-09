@@ -391,7 +391,14 @@ function treeOf(folders, from) {
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 const intro = new Marked({ gfm: true }).parse(readme.replace(/^#\s+.*$/m, "").split(/^##\s/m)[0].trim());
 const core = specs.find((s) => s.page === "mandate.html");
-const coreEntry = `<div class="folder"><a class="spec-title" href="${core.page}"><span class="folder-icon">~/</span>${escape(core.title)}</a> <span class="formats">${escape(core.status ?? "")}</span></div>`;
+// The core specs, at the root: the mandate first, then the rest.
+const coreSpecs = [core, ...specs.filter((s) => !s.page.includes("/") && s !== core)];
+const coreEntry = coreSpecs
+  .map(
+    (s) =>
+      `<div class="folder"><a class="spec-title" href="${s.page}"><span class="folder-icon">~/</span>${escape(s.title)}</a> <span class="formats">${escape(s.status ?? "")}</span></div>`,
+  )
+  .join("");
 write(
   "index.html",
   layout({

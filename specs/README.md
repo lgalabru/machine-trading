@@ -21,6 +21,7 @@ on each rail:
 | Layer | What it defines | Specs |
 | --- | --- | --- |
 | Core | The mandate document, its rules, and how they are enforced | [`mandate.md`](mandate.md) |
+| Core | What a grader gives a bot, expects back, and forbids | [`bot-contract.md`](bot-contract.md) |
 | Instruments | What a position is for each kind of instrument, and how its limits apply | [`instruments/`](instruments/) |
 | Venues | How each venue's accounts are measured against a mandate | [`venues/`](venues/) |
 | Guides | Guides that teach instruments and strategies to people, with interactive figures. Not normative | [`guides/`](guides/instruments/) |
@@ -33,6 +34,7 @@ the reference implementation by `cargo test`.
 | Spec | Version | Status |
 | --- | --- | --- |
 | [Mandate](mandate.md) | v0 | Draft |
+| [Bot contract](bot-contract.md) | v0 | Draft |
 | [Perpetual](instruments/perp.md) | v0 | Draft |
 | [Spot](instruments/spot.md) | v0 | Draft |
 | [Money market](instruments/money-market.md) | v0 | Draft |
