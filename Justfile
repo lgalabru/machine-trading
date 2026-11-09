@@ -315,7 +315,8 @@ keypair-probe:
 # the regime oracle and the frozen exploit bots, graded on `sets` fresh
 # hidden sets, each drawn from a secret of its own. Fails unless the order
 # rule holds on every set and the exploit bots stay within their limits.
-# Run it before benchmarking any scenario change.
+# Run it before benchmarking any scenario change. `parallel` rungs are
+# graded at once, `jobs` sessions each: four in all at most, one bot user each.
 ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     #!/usr/bin/env bash
     set -euo pipefail
