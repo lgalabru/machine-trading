@@ -320,6 +320,38 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     Ok(report)
 }
 
+/// Lift this process's soft limit on open files to its hard limit. Every
+/// session's surfnet, RPC guards and clients live in this one process: with
+/// several sessions at once, a container's default soft limit of 1,024 can
+/// run out, and a request that can't open its socket fails the grade.
+fn raise_open_file_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit only writes the struct given.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return;
+    }
+    // macOS refuses a soft limit above OPEN_MAX, and its hard limit is
+    // usually unlimited.
+    #[cfg(target_os = "macos")]
+    let target = limit.rlim_max.min(10_240);
+    #[cfg(not(target_os = "macos"))]
+    let target = limit.rlim_max;
+    if limit.rlim_cur >= target {
+        return;
+    }
+    let raised = libc::rlimit {
+        rlim_cur: target,
+        ..limit
+    };
+    // SAFETY: setrlimit only reads the struct given.
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } != 0 {
+        warn!(soft = limit.rlim_cur, "couldn't raise the open-file limit");
+    }
+}
+
 /// Score sessions against their scenarios' hindsight bounds.
 fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     let scenarios: Vec<ScenarioResult> = sessions
@@ -515,6 +547,7 @@ async fn run_sessions(
         });
     }
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
+    raise_open_file_limit();
     let sessions = futures::stream::iter(scenarios.iter().enumerate())
         .map(|(index, scenario)| async move {
             // Stagger the first sessions so their surfnets don't race for
@@ -838,5 +871,28 @@ mod tests {
     fn a_setup_failure_reads_as_its_cause() {
         let error = Error::Setup(Box::new(Error::Timeout("slot 9".into())));
         assert_eq!(error.to_string(), "timed out waiting for slot 9");
+    }
+
+    #[test]
+    fn the_open_file_limit_never_drops() {
+        let limit = || {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: getrlimit only writes the struct given.
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+                0
+            );
+            limit
+        };
+        let before = limit();
+        raise_open_file_limit();
+        let after = limit();
+        assert!(after.rlim_cur >= before.rlim_cur);
+        // Linux takes any soft limit up to the hard one.
+        #[cfg(target_os = "linux")]
+        assert_eq!(after.rlim_cur, after.rlim_max);
     }
 }
