@@ -21,6 +21,7 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod acp;
 mod author;
 mod authoring;
+mod bot;
 mod charts;
 mod mcp;
 mod play;
@@ -71,6 +72,9 @@ enum Command {
     /// Bench results: what `just bench` and Harbor runs leave behind.
     #[command(subcommand)]
     Bench(BenchCommand),
+    /// Write your own bot: start one, practise it on a task, package it.
+    #[command(subcommand)]
+    Bot(BotCommand),
     /// Run a bot through scenarios and score it against the reference PnL.
     Grade {
         #[command(flatten)]
@@ -114,6 +118,68 @@ enum Command {
     Calibrate {
         #[command(flatten)]
         sessions: Sessions,
+    },
+}
+
+#[derive(Subcommand)]
+enum BotCommand {
+    /// Make a bot that connects, watches the market and never trades: the
+    /// plumbing works, the strategy is yours.
+    New {
+        /// Where to make it: an empty or new directory, outside this checkout.
+        dir: PathBuf,
+        /// Depend on the bot SDK by git, at the commit this mtx was built
+        /// from, instead of by path to this checkout.
+        #[arg(long)]
+        git: bool,
+        /// The machine-trading checkout to use (default: the one this mtx was
+        /// built from).
+        #[arg(long, env = "MTX_REPO")]
+        repo: Option<PathBuf>,
+    },
+    /// Build a bot with its build.sh, then grade it on a task's practice
+    /// scenarios, exactly as the verifier grades the hidden ones.
+    Practice {
+        /// The bot directory.
+        #[arg(long, default_value = ".")]
+        bot: PathBuf,
+        /// The task to practise.
+        #[arg(long, default_value = "phoenix-flash-crash", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
+        task: String,
+        /// Grade bin/bot as it is, without running build.sh.
+        #[arg(long)]
+        no_build: bool,
+        /// Sessions to run at once, each on its own surfnet (1-4).
+        #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
+        jobs: usize,
+        /// Print the grader's full JSON report instead of a summary.
+        #[arg(long)]
+        json: bool,
+        /// The machine-trading checkout to use (default: the one this mtx was
+        /// built from).
+        #[arg(long, env = "MTX_REPO")]
+        repo: Option<PathBuf>,
+        /// Scenario files to grade on instead of the task's practice set,
+        /// such as ones `mtx scenario generate` drew.
+        scenarios: Vec<PathBuf>,
+    },
+    /// Check a bot directory against the bot contract's shape: run.sh, an
+    /// executable bin/bot, built from the current source.
+    Check {
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Package a bot's source (no builds, no logs) into one archive, with a
+    /// manifest naming its task and the mtx it was made with.
+    Pack {
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+        /// The task the bot is for.
+        #[arg(long, default_value = "phoenix-flash-crash", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
+        task: String,
+        /// The archive to write.
+        #[arg(long, short, default_value = "bot.tar.gz")]
+        out: PathBuf,
     },
 }
 
@@ -442,7 +508,12 @@ async fn run() -> Result<()> {
         ) => !authoring.verbose,
         _ => false,
     };
-    let default_filter = if interactive { "warn" } else { "info" };
+    // `mtx bot` prints its own summary: the grader's logs only if asked.
+    let default_filter = if interactive || matches!(cli.command, Command::Bot(_)) {
+        "warn"
+    } else {
+        "info"
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.into()),
@@ -833,6 +904,47 @@ async fn run() -> Result<()> {
             }
             json
         }
+        Command::Bot(command) => match command {
+            BotCommand::New { dir, git, repo } => bot::new(&dir, git, repo.as_deref())?,
+            BotCommand::Practice {
+                bot,
+                task,
+                no_build,
+                jobs,
+                json,
+                repo,
+                scenarios,
+            } => {
+                bot::practice(bot::Practice {
+                    dir: &bot,
+                    task: &task,
+                    scenarios: &scenarios,
+                    build: !no_build,
+                    jobs,
+                    json,
+                    repo: repo.as_deref(),
+                })
+                .await?
+            }
+            BotCommand::Check { dir } => {
+                let checked = bot::check(&dir);
+                let mut lines: Vec<String> = checked
+                    .problems
+                    .iter()
+                    .map(|p| format!("problem: {p}"))
+                    .collect();
+                lines.extend(checked.notes.iter().map(|n| format!("note: {n}")));
+                if checked.problems.is_empty() {
+                    lines.insert(0, format!("{} is ready to grade", dir.display()));
+                }
+                let out = lines.join("\n");
+                if !checked.problems.is_empty() {
+                    anyhow::bail!(out);
+                }
+                out
+            }
+            BotCommand::Pack { dir, task, out } => bot::pack(&dir, &task, &out)?,
+        },
         Command::Calibrate { sessions } => {
             let mut scenarios = sessions.load()?;
             let reports = grade::calibrate(

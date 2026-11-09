@@ -40,8 +40,27 @@ every run, and every scenario step by step. Give it a published release
 mtx bench review 0.10.0
 ```
 
-The rest (building bots, grading, publishing and comparing releases) is in
-[docs/development.md](docs/development.md).
+## Write your own bot
+
+You need Rust and `mtx` (above); no Docker. A bot is a Rust program that
+trades one session, on the [bot contract](https://lgalabru.github.io/machine-trading/bot-contract.html):
+
+```sh
+mtx bot new ~/my-bot          # a bot that connects, watches the market, never trades
+cd ~/my-bot
+mtx bot practice              # build it, and grade it on a task's practice scenarios
+```
+
+The strategy goes in `src/main.rs`, with
+[`mtx-botkit`](crates/botkit) for the plumbing: `Turns` for the turn
+protocol, `BotEnv` for the session, `Trader` for orders and positions.
+`mtx bot practice --task phoenix-market-making` practises the other task,
+and scenarios `mtx scenario generate` draws can be graded too:
+`mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check
+a bot directory and package its source.
+
+The rest (the bench's own bots, grading, publishing and comparing releases)
+is in [docs/development.md](docs/development.md).
 
 ## The bench
 
