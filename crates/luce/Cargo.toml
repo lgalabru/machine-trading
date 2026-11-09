@@ -13,6 +13,8 @@ default = []
 # Phoenix Eternal perpetuals: market metadata, exact tick/lot conversions, a
 # trader, and an ExecutionDriver.
 phoenix = ["dep:phoenix-rise", "dep:serde_json"]
+# Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses.
+pyth = []
 # The deterministic in-memory chain client, for tests in dependent crates.
 test-util = []
 
