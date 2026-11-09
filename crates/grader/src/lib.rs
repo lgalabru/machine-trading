@@ -1,5 +1,6 @@
 //! Shared logic for the mtx Solana trading benchmark.
 
+pub mod carry;
 pub mod chain;
 pub mod compete;
 mod error;

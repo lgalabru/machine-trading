@@ -45,9 +45,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         'surfpool-core = { path = "/src/surfpool/crates/core" }' \
         'surfpool-types = { path = "/src/surfpool/crates/types" }' > .cargo/config.toml; \
     fi \
-    && cargo build --release --locked -p mtx-cli -p mtx-bot-reference -p mtx-bot-maker \
+    && cargo build --release --locked -p mtx-cli -p mtx-bot-reference -p mtx-bot-maker -p mtx-bot-carry \
     && cp target/release/mtx /usr/local/bin/mtx \
-    && for anchor in flash-crash:reference market-making:maker; do \
+    && for anchor in flash-crash:reference market-making:maker funding-carry:carry; do \
       family="${anchor%%:*}"; bot="${anchor##*:}"; \
       mkdir -p "/opt/mtx/anchors/$family/bin"; \
       cp "bots/$bot/run.sh" "/opt/mtx/anchors/$family/run.sh"; \

@@ -1,0 +1,18 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-carry"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-carry"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+mtx-kit = { path = "../../crates/kit" }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }

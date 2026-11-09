@@ -5,10 +5,10 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.11.0"
+tag := "0.12.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "flash-crash-spcx=reference market-making-spcx=maker"
+references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry"
 # The harness versions `just bench` runs, pinned so results compare: each
 # provider's own coding agent, Claude Code for Anthropic models and Codex for
 # OpenAI's.
@@ -61,6 +61,8 @@ bots:
     bots/reference/build.sh
     bots/maker/build.sh
     bots/dip-buyer/build.sh
+    bots/carry/build.sh
+    bots/carry-gbm/build.sh
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
@@ -300,6 +302,7 @@ leak-audit:
       "then fade it once it stops"
       "one tick inside the competitor"
       "backs off after one-sided fills"
+      "fading the premiums the crowd's positioning opened"
       "mtx-ladder-rungs"
     )
     image="{{registry}}/{{image}}:{{tag}}"
@@ -307,7 +310,7 @@ leak-audit:
     docker image inspect "$image" > /dev/null 2>&1 \
       || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
     found=0
-    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker; do
+    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker /opt/mtx/sdk/bots/carry; do
       if docker run --rm --entrypoint test "$image" -e "$path"; then
         echo "LEAK: $image holds $path"; found=1
       fi
