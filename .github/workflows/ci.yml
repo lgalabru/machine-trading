@@ -22,10 +22,16 @@ jobs:
       - name: Install Harbor
         run: uv tool install harbor==0.25.0
       - name: Each oracle is its task's reference bot
-        # Mirrors `references` in the Justfile.
+        # Mirrors `references` and `check-solution` in the Justfile: every
+        # source file, and the model the bot reads, if any.
         run: |
           for pair in flash-crash-spcx=reference market-making-spcx=maker; do
-            diff -u "bots/${pair#*=}/src/main.rs" "bench/tasks/${pair%%=*}/solution/src/main.rs"
+            bot="bots/${pair#*=}"; solution="bench/tasks/${pair%%=*}/solution"
+            diff -ru "$bot/src" "$solution/src"
+            if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
+            for model in "$bot"/model.*; do
+              if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
+            done
           done
       - name: Lint every task
         # Images are pinned by `just release`; between releases a task may
