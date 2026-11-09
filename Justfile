@@ -8,7 +8,7 @@ image := "machine-trading"
 tag := "0.12.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry"
+references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend"
 # The harness versions `just bench` runs, pinned so results compare: each
 # provider's own coding agent, Claude Code for Anthropic models and Codex for
 # OpenAI's.
@@ -63,6 +63,7 @@ bots:
     bots/dip-buyer/build.sh
     bots/carry/build.sh
     bots/carry-gbm/build.sh
+    bots/weekend/build.sh
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
@@ -303,6 +304,7 @@ leak-audit:
       "one tick inside the competitor"
       "backs off after one-sided fills"
       "fading the premiums the crowd's positioning opened"
+      "hold the gap into the reopen"
       "mtx-ladder-rungs"
     )
     image="{{registry}}/{{image}}:{{tag}}"
@@ -310,7 +312,7 @@ leak-audit:
     docker image inspect "$image" > /dev/null 2>&1 \
       || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
     found=0
-    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker /opt/mtx/sdk/bots/carry; do
+    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker /opt/mtx/sdk/bots/carry /opt/mtx/sdk/bots/weekend; do
       if docker run --rm --entrypoint test "$image" -e "$path"; then
         echo "LEAK: $image holds $path"; found=1
       fi

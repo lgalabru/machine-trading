@@ -25,7 +25,7 @@ jobs:
         # Mirrors `references` and `check-solution` in the Justfile: every
         # source file, and the model the bot reads, if any.
         run: |
-          for pair in flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry; do
+          for pair in flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend; do
             bot="bots/${pair#*=}"; solution="bench/tasks/${pair%%=*}/solution"
             diff -ru "$bot/src" "$solution/src"
             if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi

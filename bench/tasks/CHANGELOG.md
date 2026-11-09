@@ -12,6 +12,10 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     it. A good bot fades the premiums the crowd's positioning opened,
     follows the ones the index follows, and learns from the session's own
     earlier premiums which kind of day it is.
+  - **`weekend-gap-spcx`.** SpaceX's own market is closed for the
+    weekend, so Phoenix prices the SPCX index from its own book until the
+    market reopens. A good bot reads which weekend flow knows where SPCX
+    will open, and holds that gap into the reopen within its loss limit.
 
 - **0.11.0.** Three leaks closed, tasks named for their skill, and OpenAI
   models. Design and evidence: [bench/design/0.11.0.md](../design/0.11.0.md).
