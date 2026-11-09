@@ -152,6 +152,19 @@ pub fn market_move(
     (overrides, slot)
 }
 
+/// An override that moves only `symbol`'s oracle reports to `ticks`, at
+/// `slot`: the makers and resting orders stay where they are, and Phoenix
+/// recomputes the mark from the new reports.
+pub fn oracle_move(perp_asset_map: Pubkey, symbol: &str, ticks: u64, slot: u64) -> Override {
+    Override {
+        template_id: "phoenix-oracle-price",
+        account: perp_asset_map,
+        values: json!({ "symbol": symbol, "target_ticks": ticks.to_string() }),
+        slot,
+        label: format!("{symbol} index"),
+    }
+}
+
 /// Byte layout of a spline collection: a header, then fixed-size splines,
 /// each with its bid and ask tick regions (see phoenix-rise's
 /// `spline_collection`). A region starts with its start and end offsets from
