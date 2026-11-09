@@ -3,6 +3,7 @@ use std::{io::IsTerminal, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use mtx_grader::{
+    carry::CarryFamily,
     grade::{self, GradeOptions},
     making::MakingFamily,
     phoenix,
@@ -54,6 +55,9 @@ pub(crate) enum Family {
     /// makers, and taker flow: noise, fake-out bursts, and informed orders
     /// ahead of most jumps.
     MarketMaking,
+    /// funding-carry-spcx: book premiums over the index, some the crowd's
+    /// positioning opened and some the index follows, and Phoenix's funding.
+    FundingCarry,
 }
 
 #[derive(Subcommand)]
@@ -721,6 +725,7 @@ async fn run() -> Result<()> {
             let scenarios = match family {
                 Family::FlashCrash => ShockFamily::spcx().sample_set(&prefix, count, seed),
                 Family::MarketMaking => MakingFamily::spcx().sample_set(&prefix, count, seed),
+                Family::FundingCarry => CarryFamily::practice().sample_set(&prefix, count, seed),
             };
             let mut written = Vec::new();
             for scenario in scenarios {
@@ -814,27 +819,12 @@ async fn run() -> Result<()> {
                 Some(family) => {
                     let (seed, hash) = eval_seed()?;
                     let scenarios = match family {
-                        Family::FlashCrash => {
-                            let drawn = ShockFamily::spcx().draw_set("hidden", count, seed);
-                            annotations = Some(
-                                drawn
-                                    .iter()
-                                    .map(|(_, shape)| serde_json::json!({ "shape": shape }))
-                                    .collect(),
-                            );
-                            if tell_regime {
-                                regimes = Some(
-                                    drawn
-                                        .iter()
-                                        .map(|(_, shape)| serde_json::to_string(shape))
-                                        .collect::<Result<_, _>>()?,
-                                );
-                            }
-                            drawn
-                                .into_iter()
-                                .map(|(scenario, _)| scenario)
-                                .collect::<Vec<_>>()
-                        }
+                        Family::FlashCrash => shaped(
+                            ShockFamily::spcx().draw_set("hidden", count, seed),
+                            tell_regime,
+                            &mut annotations,
+                            &mut regimes,
+                        )?,
                         Family::MarketMaking => {
                             let drawn =
                                 MakingFamily::spcx().sample_set_labeled("hidden", count, seed);
@@ -873,6 +863,12 @@ async fn run() -> Result<()> {
                                 .map(|(scenario, _)| scenario)
                                 .collect::<Vec<_>>()
                         }
+                        Family::FundingCarry => shaped(
+                            CarryFamily::spcx().draw_set("hidden", count, seed),
+                            tell_regime,
+                            &mut annotations,
+                            &mut regimes,
+                        )?,
                     };
                     (scenarios, Some(hash))
                 }
@@ -982,6 +978,31 @@ async fn run() -> Result<()> {
         println!("{output}");
     }
     Ok(())
+}
+
+/// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`
+/// and, when told, the shape as the regime.
+fn shaped<S: serde::Serialize>(
+    drawn: Vec<(Scenario, S)>,
+    tell_regime: bool,
+    annotations: &mut Option<Vec<serde_json::Value>>,
+    regimes: &mut Option<Vec<String>>,
+) -> Result<Vec<Scenario>> {
+    *annotations = Some(
+        drawn
+            .iter()
+            .map(|(_, shape)| serde_json::json!({ "shape": shape }))
+            .collect(),
+    );
+    if tell_regime {
+        *regimes = Some(
+            drawn
+                .iter()
+                .map(|(_, shape)| serde_json::to_string(shape))
+                .collect::<Result<_, _>>()?,
+        );
+    }
+    Ok(drawn.into_iter().map(|(scenario, _)| scenario).collect())
 }
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the

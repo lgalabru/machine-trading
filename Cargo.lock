@@ -4527,6 +4527,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-carry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "mtx-bot-carry-gbm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mtx-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
