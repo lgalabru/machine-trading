@@ -50,3 +50,7 @@ pub mod lending;
 pub mod protocols;
 
 pub use rust_decimal::{self, Decimal};
+/// The Solana types luce's signatures use, so callers need not pin matching
+/// versions of the Solana crates themselves.
+pub use solana_pubkey::Pubkey;
+pub use solana_transaction::{Hash, Instruction, Signature};

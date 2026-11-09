@@ -62,6 +62,7 @@ pub use solana_keypair::Keypair;
 pub use solana_pubkey::Pubkey;
 pub use solana_rpc_client::rpc_client::RpcClient;
 pub use solana_signer::Signer;
+pub use solana_transaction::{Hash, Instruction, Signature};
 pub use trader::{Position, Trader};
 
 /// What a strategy needs: `use mtx_botkit::prelude::*;`.
