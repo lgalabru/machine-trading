@@ -80,12 +80,6 @@ pub const DEPOSIT_USDC: f64 = 10_000.0;
 pub const BOT_USERS: [&str; 4] = ["mtx-bot", "mtx-bot-2", "mtx-bot-3", "mtx-bot-4"];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
-/// Slots from the surfnet's start to the session's: setup runs on the wall
-/// clock and takes 10 to 15 of them, more on a loaded machine. The world
-/// then steps to this one, so every session starts at the same slot however
-/// long its setup took: state that depends on the slot (Phoenix's funding,
-/// the oracle's age) replays the same.
-const SETUP_SLOTS: u64 = 60;
 
 pub struct SessionOptions<'a> {
     pub snapshot_dir: &'a Path,
@@ -342,17 +336,18 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // oracle level at `slot`, which quoting can't push the way it can push
     // Phoenix's mark. Otherwise the mark, as Phoenix reports it.
     let value = async |value_usd: f64, units: f64, slot: u64, base_slot: u64| -> Result<f64> {
-        if scenario.making.is_none() {
-            return Ok(value_usd);
-        }
+        let at = slot.saturating_sub(base_slot);
+        let level = match scenario.valuation() {
+            "oracle" => level_at(&scenario.path, at),
+            _ => return Ok(value_usd),
+        };
         let mark = hawkeye
             .view_bbo(&scenario.symbol)
             .await?
             .value
             .mark_price_ticks;
-        let oracle = start_mark_usd
-            * (1.0 + level_at(&scenario.path, slot.saturating_sub(base_slot)) / 100.0);
-        Ok(value_usd + units * (oracle - phoenix.ticks_to_usd(market, mark)))
+        let price = start_mark_usd * (1.0 + level / 100.0);
+        Ok(value_usd + units * (price - phoenix.ticks_to_usd(market, mark)))
     };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
@@ -362,7 +357,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         BlockProductionMode::Manual,
     ))?;
     let mut slot = rpc.get_slot()?;
-    let first_slot = setup_from + SETUP_SLOTS;
+    // Slots from the surfnet's start to the session's: setup runs on the
+    // wall clock and takes 10 to 15 of them, more on a loaded machine, and
+    // more again where it onboards takers. The world then steps to this one,
+    // so every session starts at the same slot however long its setup took:
+    // state that depends on the slot (Phoenix's funding, the oracle's age)
+    // replays the same.
+    let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
         warn!(
             slot,
@@ -637,11 +638,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         positions: observed.positions,
         positions_outside_universe,
         max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
-        valuation: if scenario.making.is_some() {
-            "oracle"
-        } else {
-            "mark"
-        },
+        valuation: scenario.valuation(),
         flow,
         competitor,
         turns,

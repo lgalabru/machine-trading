@@ -199,6 +199,30 @@ impl Scenario {
     }
 }
 
+impl Scenario {
+    /// The price an open position is valued at, at the end and for the
+    /// drawdown: `mark` (Phoenix's) or `oracle` (the scenario's level, for
+    /// market making, where a bot's quotes move the mark).
+    pub fn valuation(&self) -> &'static str {
+        if self.making.is_some() {
+            "oracle"
+        } else {
+            "mark"
+        }
+    }
+
+    /// Slots the session's setup gets before the bot's first slot: setup
+    /// must end inside them for the session to replay (state that depends
+    /// on the slot, Phoenix's funding and the oracle's age, starts from the
+    /// same slot every time).
+    pub fn setup_slots(&self) -> u64 {
+        SETUP_SLOTS
+    }
+}
+
+/// Setup slots for most sessions (see [`Scenario::setup_slots`]).
+pub const SETUP_SLOTS: u64 = 60;
+
 /// The largest part of an at-once move, in percent of the level it starts
 /// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
 /// to exactly one step.
