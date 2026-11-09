@@ -26,6 +26,7 @@ const FOLDERS = [
 ];
 // The guides have their own index, guides/index.html, in the same style.
 const GUIDE_FOLDERS = [
+  { dir: "guides/bots", title: "Bots" },
   { dir: "guides/instruments", title: "Instruments" },
   { dir: "guides/strategies", title: "Strategies" },
   { dir: "guides", title: "Reference" },
@@ -432,6 +433,15 @@ for (const asset of ["mt.js", "mt.css", "terms.js"])
 fs.copyFileSync(path.join(here, "social.jpg"), path.join(out, "social.jpg"));
 // Serve files as they are: no Jekyll processing on GitHub Pages.
 fs.writeFileSync(path.join(out, ".nojekyll"), "");
+// Pages that moved: keep their old links working.
+const MOVED = { "bot-contract.html": "guides/bots/writing-a-bot.html" };
+for (const [old, page] of Object.entries(MOVED)) {
+  const target = link(old, page);
+  write(
+    old,
+    `<!doctype html><meta charset="utf-8"><title>Moved</title><link rel="canonical" href="${SITE}/${page}"><meta http-equiv="refresh" content="0; url=${target}"><script>location.replace(${JSON.stringify(target)} + location.hash)</script><p>This page moved to <a href="${target}">${target}</a>.</p>\n`,
+  );
+}
 // The guides were first published under training/: keep those links working.
 for (const spec of specs.filter((s) => isGuide(s.page))) {
   const old = spec.page.replace(/^guides\//, "training/");
