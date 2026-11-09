@@ -48,9 +48,9 @@ struct Cli {
 /// The scenario families, one per task.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum Family {
-    /// flash-crash-spcx: shocks that crash or squeeze, then revert or not.
+    /// phoenix-flash-crash: shocks that crash or squeeze, then revert or not.
     FlashCrash,
-    /// market-making-spcx: a walking, trending, jumping market, competing
+    /// phoenix-market-making: a walking, trending, jumping market, competing
     /// makers, and taker flow, some of it informed.
     MarketMaking,
 }
@@ -143,9 +143,10 @@ enum BotCommand {
         /// The bot directory.
         #[arg(long, default_value = ".")]
         bot: PathBuf,
-        /// The task to practise.
-        #[arg(long, default_value = "flash-crash-spcx", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
-        task: String,
+        /// The task to practise, as named in bench/tasks (default: the
+        /// flash-crash task).
+        #[arg(long)]
+        task: Option<String>,
         /// Grade bin/bot as it is, without running build.sh.
         #[arg(long)]
         no_build: bool,
@@ -174,9 +175,14 @@ enum BotCommand {
     Pack {
         #[arg(default_value = ".")]
         dir: PathBuf,
-        /// The task the bot is for.
-        #[arg(long, default_value = "flash-crash-spcx", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
-        task: String,
+        /// The task the bot is for, as named in bench/tasks (default: the
+        /// flash-crash task).
+        #[arg(long)]
+        task: Option<String>,
+        /// The machine-trading checkout to use (default: the one this mtx was
+        /// built from).
+        #[arg(long, env = "MTX_REPO")]
+        repo: Option<PathBuf>,
         /// The archive to write.
         #[arg(long, short, default_value = "bot.tar.gz")]
         out: PathBuf,
@@ -232,7 +238,7 @@ enum TaskCommand {
 
 #[derive(clap::Args)]
 struct TaskArgs {
-    /// The task's id, the skill then the instrument: funding-squeeze-spcx.
+    /// The task's id, venue first: phoenix-funding-squeeze.
     #[arg(long)]
     name: Option<String>,
     #[arg(long)]
@@ -240,8 +246,8 @@ struct TaskArgs {
     /// One sentence: what the agent's bot does, on which market.
     #[arg(long)]
     summary: Option<String>,
-    /// Start from `shocks` (flash-crash-spcx) or `making`
-    /// (market-making-spcx).
+    /// Start from `shocks` (phoenix-flash-crash) or `making`
+    /// (phoenix-market-making).
     #[arg(long, value_enum)]
     base: Option<authoring::Base>,
     /// A good bot profits here because it ___.
@@ -917,7 +923,7 @@ async fn run() -> Result<()> {
             } => {
                 bot::practice(bot::Practice {
                     dir: &bot,
-                    task: &task,
+                    task: task.as_deref(),
                     scenarios: &scenarios,
                     build: !no_build,
                     jobs,
@@ -943,7 +949,12 @@ async fn run() -> Result<()> {
                 }
                 out
             }
-            BotCommand::Pack { dir, task, out } => bot::pack(&dir, &task, &out)?,
+            BotCommand::Pack {
+                dir,
+                task,
+                repo,
+                out,
+            } => bot::pack(&dir, task.as_deref(), repo.as_deref(), &out)?,
         },
         Command::Calibrate { sessions } => {
             let mut scenarios = sessions.load()?;
