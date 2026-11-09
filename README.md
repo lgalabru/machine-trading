@@ -82,7 +82,7 @@ PnL and drawdown, the mandate's room, the turn budget left), and `Orders`
 records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
 `orders.trader()` reaches the venue for anything else.
-`mtx bot practice --task phoenix-market-making` practises the other task,
+`mtx bot practice --task <name>` practises another task in `bench/tasks`,
 and scenarios `mtx scenario generate` draws can be graded too:
 `mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check
 a bot directory and package its source.

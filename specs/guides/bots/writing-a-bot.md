@@ -186,7 +186,7 @@ can't show: fills, slippage, and the market moving.
 | Command | What it does |
 | --- | --- |
 | `mtx bot practice` | Builds the bot, then grades it on the task's practice scenarios. |
-| `mtx bot practice --task phoenix-market-making` | The other task. |
+| `mtx bot practice --task <name>` | Another task in `bench/tasks`, such as the market-making one. |
 | `mtx bot practice more/*.json` | Grades on scenarios `mtx scenario generate` drew. |
 | `mtx bot practice --json` | The grader's full report instead of the summary. |
 | `mtx bot check` | Checks the bot directory: `run.sh`, an executable `bin/bot`, built from the current source. |
