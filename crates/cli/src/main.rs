@@ -9,6 +9,7 @@ use mtx_grader::{
     phoenix,
     scenario::{Scenario, ShockFamily},
     snapshot,
+    weekend::WeekendFamily,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -58,6 +59,9 @@ pub(crate) enum Family {
     /// funding-carry-spcx: book premiums over the index, some the crowd's
     /// positioning opened and some the index follows, and Phoenix's funding.
     FundingCarry,
+    /// weekend-gap-spcx: a weekend with SPCX's own market closed, flow that
+    /// may know where it reopens, and the reopen.
+    WeekendGap,
 }
 
 #[derive(Subcommand)]
@@ -726,6 +730,7 @@ async fn run() -> Result<()> {
                 Family::FlashCrash => ShockFamily::spcx().sample_set(&prefix, count, seed),
                 Family::MarketMaking => MakingFamily::spcx().sample_set(&prefix, count, seed),
                 Family::FundingCarry => CarryFamily::practice().sample_set(&prefix, count, seed),
+                Family::WeekendGap => WeekendFamily::spcx().sample_set(&prefix, count, seed),
             };
             let mut written = Vec::new();
             for scenario in scenarios {
@@ -865,6 +870,12 @@ async fn run() -> Result<()> {
                         }
                         Family::FundingCarry => shaped(
                             CarryFamily::spcx().draw_set("hidden", count, seed),
+                            tell_regime,
+                            &mut annotations,
+                            &mut regimes,
+                        )?,
+                        Family::WeekendGap => shaped(
+                            WeekendFamily::spcx().draw_set("hidden", count, seed),
                             tell_regime,
                             &mut annotations,
                             &mut regimes,
