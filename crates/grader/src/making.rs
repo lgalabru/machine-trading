@@ -144,6 +144,15 @@ impl Making {
     }
 }
 
+/// The book's level at `slot`, with its premium: the last waypoint at or
+/// before it.
+pub fn book_at(path: &[Waypoint], slot: u64) -> f64 {
+    path.iter()
+        .take_while(|w| w.slot <= slot)
+        .last()
+        .map_or(0.0, |w| w.book_pct())
+}
+
 /// The path's level at `slot`: the last waypoint at or before it.
 pub fn level_at(path: &[Waypoint], slot: u64) -> f64 {
     path.iter()
@@ -337,10 +346,7 @@ impl MakingFamily {
                 }
             };
             level = round3(level);
-            path.push(Waypoint {
-                slot,
-                level_pct: level,
-            });
+            path.push(Waypoint::at(slot, level));
             slot += rng.range_u64(self.step_gap);
         }
 
@@ -443,6 +449,7 @@ impl MakingFamily {
                 competition,
                 takers,
             }),
+            tape: Vec::new(),
             reference_pnl_usd: None,
         };
         (scenario, informed)
@@ -683,10 +690,7 @@ mod tests {
                 },
             ],
         };
-        let path = [Waypoint {
-            slot: 5,
-            level_pct: 10.0,
-        }];
+        let path = [Waypoint::at(5, 10.0)];
         // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1
         // at $110 at the taker's own 4 bp.
         let bound = making.spread_bound_usd(&path, 100.0);

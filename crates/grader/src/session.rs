@@ -54,7 +54,7 @@ use crate::{
     error::io_error,
     flow::{FlowReport, TakerRecord, Takers},
     guard::{CallLog, Guard},
-    making::level_at,
+    making::{book_at, level_at},
     phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS},
     scenario::Scenario,
     snapshot,
@@ -182,8 +182,12 @@ pub struct StepRecord {
     pub mark_usd: f64,
     /// Phoenix's index (oracle) price.
     pub index_usd: f64,
-    /// The scenario's planned level.
+    /// The scenario's planned level: Phoenix's index.
     pub level_usd: f64,
+    /// Where the scenario puts the book's makers, when it gives the book a
+    /// premium over the level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_bid_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -313,8 +317,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .collect();
     let market_id = scenario.instrument().id();
     let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
-    // Market making: the takers and the widened makers, set up while
-    // cheatcodes still work.
+    // The takers, set up while cheatcodes still work: market making's, with
+    // the makers widened and a competing maker; a tape's, with the makers as
+    // they are.
     let (takers, competitor) = match &scenario.making {
         Some(making) => (
             Some(
@@ -330,15 +335,28 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             ),
             Some(Competitor::prepare(&world, &phoenix, scenario, internal.url()).await?),
         ),
+        None if !scenario.tape.is_empty() => (
+            Some(Takers::onboard(&world, &phoenix, scenario, internal.url()).await?),
+            None,
+        ),
         None => (None, None),
+    };
+    // The orders the takers send, whichever kind of scenario lists them.
+    let orders: &[crate::making::TakerOrder] = match &scenario.making {
+        Some(making) => &making.takers,
+        None => &scenario.tape,
     };
     // What a market-making account's position is worth: the scenario's own
     // oracle level at `slot`, which quoting can't push the way it can push
     // Phoenix's mark. Otherwise the mark, as Phoenix reports it.
+    // Where the book trades at a premium, the scenario's book level: what
+    // closing the position would fetch, which Phoenix's mark, a blend of the
+    // book and the index, is not.
     let value = async |value_usd: f64, units: f64, slot: u64, base_slot: u64| -> Result<f64> {
         let at = slot.saturating_sub(base_slot);
         let level = match scenario.valuation() {
             "oracle" => level_at(&scenario.path, at),
+            "book" => book_at(&scenario.path, at),
             _ => return Ok(value_usd),
         };
         let mark = hawkeye
@@ -455,10 +473,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let budget = TURN_BUDGET_PER_STEP * steps as u32;
     let mut spent = Duration::ZERO;
 
-    let mut flow = takers
-        .as_ref()
-        .zip(scenario.making.as_ref())
-        .map(|(takers, making)| takers.flow(&making.takers));
+    let mut flow = takers.as_ref().map(|takers| takers.flow(orders));
     let mut quoting = competitor
         .as_ref()
         .zip(scenario.making.as_ref())
@@ -478,11 +493,16 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // below).
     let mut flow_due: Option<u64> = None;
     let send_flow = async |flow: &mut Option<crate::flow::Flow>, at: Option<u64>| {
-        if let (Some(flow), Some(takers), Some(making), Some(at)) =
-            (flow.as_mut(), takers.as_ref(), scenario.making.as_ref(), at)
-        {
-            flow.step(takers, scenario, &making.takers, start_mark_usd, at)
-                .await;
+        let (Some(flow), Some(takers), Some(at)) = (flow.as_mut(), takers.as_ref(), at) else {
+            return;
+        };
+        if scenario.making.is_none() {
+            // The tape trades at the book, where its premium puts it.
+            let book = start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0);
+            flow.send(takers, orders, book, at).await
+        } else {
+            flow.step(takers, scenario, orders, start_mark_usd, at)
+                .await
         }
     };
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
@@ -528,6 +548,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             mark_usd: usd(bbo.mark_price_ticks),
             index_usd: usd(bbo.index_price_ticks),
             level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
+            book_usd: (scenario.valuation() == "book")
+                .then(|| start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0)),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
             position,
