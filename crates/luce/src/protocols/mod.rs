@@ -9,3 +9,5 @@
 
 #[cfg(feature = "phoenix")]
 pub mod phoenix;
+#[cfg(feature = "pyth")]
+pub mod pyth;

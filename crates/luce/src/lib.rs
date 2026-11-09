@@ -41,6 +41,7 @@
 //! | Feature | Adds |
 //! |---------|------|
 //! | `phoenix` | [`protocols::phoenix`]: Phoenix Eternal perpetuals |
+//! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
 pub mod chain;
