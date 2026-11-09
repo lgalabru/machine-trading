@@ -68,6 +68,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: luce, every feature
+        # The workspace builds luce with the features its users ask for;
+        # the rest (adapters no bot uses yet, test-util) only build here.
+        run: |
+          cargo clippy -p luce --all-features --all-targets -- -D warnings
+          cargo test -p luce --all-features
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.
