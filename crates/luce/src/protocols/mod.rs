@@ -7,6 +7,8 @@
 //! [`ExecutionDriver`](crate::core::ExecutionDriver). Transactions go through
 //! [`chain`](crate::chain).
 
+#[cfg(feature = "openbook-v2")]
+pub mod openbook_v2;
 #[cfg(feature = "phoenix")]
 pub mod phoenix;
 #[cfg(feature = "phoenix-v1")]
@@ -17,7 +19,7 @@ pub mod pyth;
 /// A spot market a venue profile in the repository's `specs/venues/` names
 /// by symbol, such as `SOL-USDC`. Any other market on the venue is named by
 /// its address.
-#[cfg(feature = "phoenix-v1")]
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamedMarket {
     /// The profile's symbol, `BASE-QUOTE`.
@@ -30,7 +32,7 @@ pub struct NamedMarket {
     pub quote_mint: solana_pubkey::Pubkey,
 }
 
-#[cfg(feature = "phoenix-v1")]
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 impl NamedMarket {
     /// The market `symbol` names among `markets`, or the one at `symbol`
     /// read as a base58 address.
@@ -52,11 +54,11 @@ impl NamedMarket {
 
 /// Wrapped SOL's mint. A profile counts SOL held in its token account, not
 /// the wallet's native SOL, which pays the transaction fees.
-#[cfg(feature = "phoenix-v1")]
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
 
 /// USDC's mint.
-#[cfg(feature = "phoenix-v1")]
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 pub(crate) const USDC_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
