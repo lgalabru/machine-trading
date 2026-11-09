@@ -46,6 +46,15 @@ pub enum Error {
     #[error("--jobs must be between 1 and {1}, one per bot user; got {0}")]
     Jobs(usize, usize),
     #[error(
+        "bot users {first} to {} don't exist: there are {users}; lower --first-bot-user or --jobs",
+        first + jobs - 1
+    )]
+    BotUsers {
+        first: usize,
+        jobs: usize,
+        users: usize,
+    },
+    #[error(
         "the machine was too loaded to run these sessions on time, so they can't be scored: {0}; rerun on an idle machine"
     )]
     Degraded(String),

@@ -204,6 +204,12 @@ struct Sessions {
     /// that can't keep up fails the run on late slots rather than skewing it.
     #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
     jobs: usize,
+    /// The first bot user (0-3) sessions run their bots as, when run as
+    /// root; they use `--jobs` of them from there. Graders running at once
+    /// on one machine need ranges that don't overlap: a session's end kills
+    /// every process of its bot user.
+    #[arg(long, default_value_t = 0)]
+    first_bot_user: usize,
     /// Scenario files, run in order.
     scenarios: Vec<PathBuf>,
 }
@@ -886,6 +892,7 @@ async fn run() -> Result<()> {
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
                 jobs: sessions.jobs,
+                first_bot_user: sessions.first_bot_user,
                 reference_dir: reference.as_deref(),
                 anchor_jobs,
                 regimes: regimes.as_deref(),
@@ -963,6 +970,7 @@ async fn run() -> Result<()> {
                 &sessions.bot,
                 &mut scenarios,
                 &sessions.logs,
+                sessions.first_bot_user,
                 sessions.jobs,
             )
             .await?;
