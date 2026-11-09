@@ -328,7 +328,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     &world,
                     &phoenix,
                     scenario,
-                    making,
+                    making.competitor_bps,
                     start_mark_ticks,
                     internal.url(),
                 )
@@ -457,7 +457,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let mut flow = takers
         .as_ref()
         .zip(scenario.making.as_ref())
-        .map(|(takers, making)| takers.flow(making));
+        .map(|(takers, making)| takers.flow(&making.takers));
     let mut quoting = competitor
         .as_ref()
         .zip(scenario.making.as_ref())
@@ -480,7 +480,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         if let (Some(flow), Some(takers), Some(making), Some(at)) =
             (flow.as_mut(), takers.as_ref(), scenario.making.as_ref(), at)
         {
-            flow.step(takers, scenario, making, start_mark_usd, at)
+            flow.step(takers, scenario, &making.takers, start_mark_usd, at)
                 .await;
         }
     };
