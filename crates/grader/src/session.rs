@@ -396,7 +396,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
         BlockProductionMode::Manual,
     ))?;
-    let mut slot = rpc.get_slot()?;
+    let mut slot = manual_slot(&rpc).await?;
     // Slots from the surfnet's start to the session's: setup runs on the
     // wall clock and takes 10 to 15 of them, more on a loaded machine, and
     // more again where it onboards takers. The world then steps to this one,
@@ -932,6 +932,32 @@ fn transactions(
 }
 
 /// Wait until the surfnet has produced `slot`.
+/// The slot once the switch to manual block production has taken: the
+/// runloop takes it in its own time, and until it does the clock can still
+/// produce a slot. Overrides registered next count from the slot they're
+/// registered at, so a slot produced after the read would land them a slot
+/// late, on a wall-clock race.
+async fn manual_slot(rpc: &RpcClient) -> Result<u64> {
+    let mut slot = rpc.get_slot()?;
+    for _ in 0..20 {
+        // Longer than two of the clock's slots.
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let now = rpc.get_slot()?;
+        if now == slot {
+            return Ok(slot);
+        }
+        warn!(
+            from = slot,
+            to = now,
+            "the clock produced slots after the switch to manual"
+        );
+        slot = now;
+    }
+    Err(Error::Timeout(format!(
+        "block production still running at slot {slot}"
+    )))
+}
+
 async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
