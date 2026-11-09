@@ -237,13 +237,23 @@ publish batch version:
 compare range:
     cargo run --release -q -- bench compare {{range}} --open
 
-# Copy the reference bot into the task's solution.
+# Copy the reference bot into the task's solution: its sources, and the
+# model it reads, if any (a `model/` directory, or `model.*` files beside
+# its Cargo.toml).
 solution:
     #!/usr/bin/env bash
     set -euo pipefail
     for pair in {{references}}; do
-      mkdir -p "{{tasks}}/${pair%%=*}/solution/src"
-      cp "bots/${pair#*=}/src/main.rs" "{{tasks}}/${pair%%=*}/solution/src/main.rs"
+      bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
+      mkdir -p "$solution/src"
+      cp "$bot"/src/*.rs "$solution/src/"
+      if [ -d "$bot/model" ]; then
+        mkdir -p "$solution/model"
+        cp "$bot"/model/*.json "$solution/model/"
+      fi
+      for model in "$bot"/model.*; do
+        if [ -e "$model" ]; then cp "$model" "$solution/"; fi
+      done
     done
 
 # Fail if a task's solution drifted from its reference bot.
@@ -251,7 +261,12 @@ check-solution:
     #!/usr/bin/env bash
     set -euo pipefail
     for pair in {{references}}; do
-      diff -u "bots/${pair#*=}/src/main.rs" "{{tasks}}/${pair%%=*}/solution/src/main.rs"
+      bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
+      diff -ru "$bot/src" "$solution/src"
+      if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
+      for model in "$bot"/model.*; do
+        if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
+      done
     done
 
 # The checks every task change should pass: oracle ~1, and nop, cheater and
