@@ -74,7 +74,11 @@ impl Competitor {
         rpc_url: &str,
     ) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("mtx-competitor-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).map_err(io_error(&dir))?;
+        // Root's alone: bots run in the same container, and these keypairs
+        // sign for accounts with collateral of their own.
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&dir)
+            .map_err(io_error(&dir))?;
         let keypair = Keypair::new();
         phoenix::onboard_trader(&world.surfnet, phoenix, &keypair, DEPOSIT_USDC).await?;
         let path = dir.join("competitor.json");

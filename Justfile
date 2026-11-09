@@ -305,6 +305,12 @@ leak-audit:
     [ "$found" = 0 ] && echo "no leaks in $image"
     exit "$found"
 
+# Fail if a bot can read the grader's own keypairs (takers', competitor's):
+# one market-making session in the runtime image `image` built, with a probe
+# bot that looks for them.
+keypair-probe:
+    bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
+
 # The skill ladder (bench/checks/ladder): fixed bots, from doing nothing to
 # the regime oracle and the frozen exploit bots, graded on `sets` fresh
 # hidden sets, each drawn from a secret of its own. Fails unless the order
