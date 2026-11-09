@@ -5,7 +5,7 @@
 //! verifier uses, on a task's practice scenarios and snapshot. What this adds
 //! is the developer's side of it: a starter to begin from, a short report
 //! instead of the verifier's JSON, and a check of the bot directory against
-//! the bot contract (`specs/bot-contract.md`).
+//! the rules every bot runs under (`specs/guides/bots/writing-a-bot.md`).
 
 use std::{
     fmt::Write as _,
@@ -147,7 +147,7 @@ pub fn new(dir: &Path, git: bool, given_repo: Option<&Path>) -> Result<String> {
     let dir = dir.canonicalize()?;
     let cargo = format!(
         r#"# A bot for the machine-trading bench. What the grader runs and allows:
-# https://lgalabru.github.io/machine-trading/bot-contract.html
+# https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html
 [package]
 name = "bot"
 edition = "2024"
@@ -186,7 +186,7 @@ echo "built bin/bot"
     )?;
     std::fs::write(dir.join(".gitignore"), "/target\n/bin\n")?;
     Ok(format!(
-        "made a bot in {}\n\n  cd {}\n  mtx bot practice          # build it, and grade it on the practice scenarios\n\nThe strategy goes in src/main.rs. The contract it runs under: https://lgalabru.github.io/machine-trading/bot-contract.html",
+        "made a bot in {}\n\n  cd {}\n  mtx bot practice          # build it, and grade it on the practice scenarios\n\nThe strategy goes in src/main.rs. How to write it, and the rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
         dir.display(),
         dir.display()
     ))

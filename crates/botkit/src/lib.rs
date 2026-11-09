@@ -54,7 +54,10 @@ pub use luce::{
 };
 pub use mandate::Mandate;
 pub use phoenix::{Phoenix, QUOTE_LOTS_PER_USD, load_exchange};
-pub use run::{Action, BotResult, Execution, Intent, Market, Orders, Session, Strategy, plan, run};
+pub use run::{
+    Action, BotResult, Execution, Intent, Market, Orders, Session, Strategy, plan, run,
+    step_offline,
+};
 pub use solana_keypair::Keypair;
 pub use solana_pubkey::Pubkey;
 pub use solana_rpc_client::rpc_client::RpcClient;
@@ -63,7 +66,10 @@ pub use trader::{Position, Trader};
 
 /// What a strategy needs: `use mtx_botkit::prelude::*;`.
 pub mod prelude {
-    pub use crate::{BotResult, Execution, Market, Orders, Position, Session, Side, Strategy};
+    pub use crate::{
+        Action, BotResult, Execution, Intent, Market, Orders, Position, Session, Side, Strategy,
+        plan, step_offline,
+    };
 }
 pub use turns::{Step, Turns};
 pub use tx::{rpc_client, send};
