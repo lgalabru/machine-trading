@@ -144,7 +144,7 @@ enum BotCommand {
         #[arg(long, default_value = ".")]
         bot: PathBuf,
         /// The task to practise.
-        #[arg(long, default_value = "phoenix-flash-crash", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
+        #[arg(long, default_value = "flash-crash-spcx", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
         task: String,
         /// Grade bin/bot as it is, without running build.sh.
         #[arg(long)]
@@ -175,7 +175,7 @@ enum BotCommand {
         #[arg(default_value = ".")]
         dir: PathBuf,
         /// The task the bot is for.
-        #[arg(long, default_value = "phoenix-flash-crash", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
+        #[arg(long, default_value = "flash-crash-spcx", value_parser = clap::builder::PossibleValuesParser::new(bot::TASKS))]
         task: String,
         /// The archive to write.
         #[arg(long, short, default_value = "bot.tar.gz")]

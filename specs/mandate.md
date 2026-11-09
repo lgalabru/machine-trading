@@ -208,7 +208,7 @@ version once v0 is final:
 
 ## Examples
 
-A v0 template, as the `phoenix-flash-crash` task carries it:
+A v0 template, as the `flash-crash-spcx` task carries it:
 
 ```json
 {
