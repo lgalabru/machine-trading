@@ -28,7 +28,7 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
-use mtx_botkit::{BotEnv, Side, Trader, Turns};
+use mtx_kit::{BotEnv, Side, Trader, Turns};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 

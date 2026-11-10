@@ -1,0 +1,32 @@
+[package]
+name = "mtx-grader"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+async-trait = "0.1"
+borsh = "1"
+bs58 = "0.5"
+flate2 = "1"
+libc.workspace = true
+mtx-core.workspace = true
+# Phoenix v1 and Pyth readers, for the spot meter.
+mtx-kit = { workspace = true, features = ["phoenix-v1", "pyth"] }
+phoenix-rise.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+solana-keypair.workspace = true
+solana-pubkey.workspace = true
+solana-rpc-client.workspace = true
+solana-rpc-client-api.workspace = true
+solana-signer.workspace = true
+surfpool-sdk.workspace = true
+# For ClockCommand, which surfpool-sdk doesn't re-export.
+thiserror.workspace = true
+tokio.workspace = true
+futures.workspace = true
+tracing.workspace = true
+uuid.workspace = true

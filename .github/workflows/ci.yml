@@ -42,7 +42,7 @@ jobs:
           node --check "$RUNNER_TEMP/viewer.js"
       - name: Scenarios carry a reference baseline
         # The rest of a scenario, its mandate included, is checked by
-        # crates/core/tests/files.rs.
+        # crates/grader/tests/files.rs.
         run: |
           for f in bench/tasks/*/environment/practice/*.json; do
             jq -e '(.reference_pnl_usd | type == "number") and (.path | length > 0)' "$f" > /dev/null \
@@ -68,12 +68,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
-      - name: luce, every feature
-        # The workspace builds luce with the features its users ask for;
+      - name: mtx-kit, every feature
+        # The workspace builds mtx-kit with the features its users ask for;
         # the rest (adapters no bot uses yet, test-util) only build here.
         run: |
-          cargo clippy -p luce --all-features --all-targets -- -D warnings
-          cargo test -p luce --all-features
+          cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
+          cargo test -p mtx-kit --all-features
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.

@@ -1,6 +1,6 @@
-# The bot SDK as shipped in the task image at /opt/mtx/sdk: the luce trading
-# library, the botkit crate built on it, and the starter bot, laid out as in
-# the mtx repository.
+# The bot SDK as shipped in the task image at /opt/mtx/sdk: mtx-core (the
+# shared vocabulary and the mandate), mtx-kit (trading and the bot plumbing)
+# built on it, and the starter bot, laid out as in the mtx repository.
 [workspace]
-members = ["crates/luce", "crates/botkit", "bots/starter"]
+members = ["crates/core", "crates/kit", "bots/starter"]
 resolver = "3"

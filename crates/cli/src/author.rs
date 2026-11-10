@@ -27,7 +27,7 @@ use crate::{
 
 /// The file the agent writes, relative to its working directory.
 const SCENARIO_FILE: &str = "scenario.json";
-/// Matches mtx-core's market moves: Phoenix rejects oracle updates more than
+/// Matches mtx-grader's market moves: Phoenix rejects oracle updates more than
 /// 5% from the last one, so each step stays inside 4%.
 const MAX_STEP_PCT: f64 = 4.0;
 const MIN_SLOTS_BETWEEN_STEPS: u64 = 2;

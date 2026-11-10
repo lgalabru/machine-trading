@@ -14,7 +14,7 @@
 //! An exploit bot above it reads something no honest trader could.
 
 use anyhow::Result;
-use mtx_botkit::{BotEnv, Side, Trader, Turns};
+use mtx_kit::{BotEnv, Side, Trader, Turns};
 use mtx_ladder_rungs::{SLICE, init_logs, inside_competitor_bps};
 use serde::Deserialize;
 use tracing::{info, warn};
