@@ -19,12 +19,14 @@ mod driver;
 mod error;
 mod exchange;
 mod market;
+mod meter;
 mod trader;
 
 pub use driver::PhoenixDriver;
 pub use error::PhoenixError;
 pub use exchange::{PhoenixExchange, load_exchange};
 pub use market::{DEFAULT_QUOTE_LOT_DECIMALS, PhoenixMarket};
+pub use meter::PhoenixEternalMeter;
 /// Phoenix's SDK, re-exported so dependents do not have to pin it.
 pub use phoenix_rise;
 pub use trader::{PhoenixOrder, PhoenixTrader};
