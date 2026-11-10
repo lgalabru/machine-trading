@@ -90,8 +90,6 @@ pub enum OpenBookV2Order {
         quantity: Decimal,
         /// The worst price, on the price-lot grid.
         worst_price: Decimal,
-        /// Fill all of `quantity` or nothing.
-        all_or_none: bool,
     },
     /// Rests at `price` on the trader's open orders account; refused if it
     /// would cross.
@@ -123,12 +121,13 @@ fn order_side(side: Side) -> OrderSide {
     }
 }
 
-/// The two book sides' resting orders.
+/// The two book sides' resting orders, best first: by price, then by time
+/// at a price, the order they match in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Book {
-    /// Resting bids, in the tree's order.
+    /// Resting bids, highest price first.
     pub bids: Vec<LeafOrder>,
-    /// Resting asks, in the tree's order.
+    /// Resting asks, lowest price first.
     pub asks: Vec<LeafOrder>,
 }
 
@@ -197,7 +196,8 @@ impl OpenBookV2Trader {
         ix::open_orders_account(&self.authority, ACCOUNT_NUMBER)
     }
 
-    /// Both book sides, in one read.
+    /// Both book sides, in one read, best first. The tree holds each side in
+    /// ascending key order, which is worst first for the bids.
     pub async fn book(&self) -> Result<Book, OpenBookV2Error> {
         let k = &self.market.keys;
         let accounts = self.chain.get_multiple_accounts(&[k.bids, k.asks]).await?;
@@ -207,10 +207,14 @@ impl OpenBookV2Trader {
                 .ok_or(ChainError::AccountNotFound(key))?;
             Ok(book_side_orders(&account.data)?)
         };
-        Ok(Book {
-            bids: side(0, k.bids)?,
-            asks: side(1, k.asks)?,
-        })
+        let mut bids = side(0, k.bids)?;
+        let mut asks = side(1, k.asks)?;
+        // A leaf's key is its price lots, then its sequence number (inverted
+        // on the bid side), so key order is match order on the asks and its
+        // reverse on the bids.
+        bids.sort_by_key(|o| std::cmp::Reverse((o.price_lots, o.sequence_key)));
+        asks.sort_by_key(|o| (o.price_lots, o.sequence_key));
+        Ok(Book { bids, asks })
     }
 
     /// The book by price level. Orders expired at `unix_timestamp` are left
@@ -322,7 +326,6 @@ impl OpenBookV2Trader {
                 side,
                 quantity,
                 worst_price,
-                all_or_none,
             } => Ok(ix::place_take_order(
                 &self.authority,
                 k,
@@ -330,11 +333,7 @@ impl OpenBookV2Trader {
                 self.price_lots(worst_price)?,
                 self.lots(quantity)?,
                 NO_QUOTE_LIMIT,
-                if all_or_none {
-                    PlaceOrderType::FillOrKill
-                } else {
-                    PlaceOrderType::ImmediateOrCancel
-                },
+                PlaceOrderType::ImmediateOrCancel,
                 MATCH_LIMIT,
             )),
             OpenBookV2Order::PostOnly {
@@ -477,7 +476,6 @@ mod tests {
                 side: Side::Sell,
                 quantity: dec!(2.5),
                 worst_price: dec!(149.9),
-                all_or_none: false,
             })
             .unwrap();
         assert_eq!(take.data[8], 1, "an ask");
@@ -503,6 +501,55 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn book_sides_come_best_first() {
+        let chain = Arc::new(MockChainClient::new());
+        let t = trader(chain.clone(), Pubkey::new_unique());
+        let k = &t.market().keys;
+        let owner = Pubkey::new_unique();
+        let account = |data| Account {
+            lamports: 1,
+            data,
+            owner: PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        };
+        // The tree's ascending key order; bids carry inverted sequence numbers.
+        chain.set_account(
+            k.bids,
+            account(book_side_bytes(&[
+                (149_980, !3, 1_000, owner, 0),
+                (149_990, !2, 1_000, owner, 0),
+                (150_000, !5, 500, owner, 0),
+                (150_000, !4, 500, owner, 0),
+            ])),
+        );
+        chain.set_account(
+            k.asks,
+            account(book_side_bytes(&[
+                (150_010, 6, 1_000, owner, 0),
+                (150_010, 7, 1_000, owner, 0),
+                (150_030, 1, 1_000, owner, 0),
+            ])),
+        );
+        let book = t.book().await.unwrap();
+        let bids: Vec<_> = book
+            .bids
+            .iter()
+            .map(|o| (o.price_lots, !o.sequence_key))
+            .collect();
+        assert_eq!(
+            bids,
+            [(150_000, 4), (150_000, 5), (149_990, 2), (149_980, 3)]
+        );
+        let asks: Vec<_> = book
+            .asks
+            .iter()
+            .map(|o| (o.price_lots, o.sequence_key))
+            .collect();
+        assert_eq!(asks, [(150_010, 6), (150_010, 7), (150_030, 1)]);
     }
 
     #[tokio::test]

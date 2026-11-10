@@ -16,10 +16,9 @@ use crate::{
 /// |-------|-------------|
 /// | limit, GTC | limit order on the trader's open orders account |
 /// | limit or market, IOC | take order bounded by the price |
-/// | limit or market, FOK | take order bounded by the price, all or none |
 ///
 /// OpenBook needs a price on every order, so a market order without one is
-/// rejected. Fills against a take order settle in the transaction; fills
+/// rejected. So is a fill-or-kill order: the deployed program has none. Fills against a take order settle in the transaction; fills
 /// against a resting order reach the open orders account when the event
 /// heap is consumed. Either way a sent order is reported
 /// [`OrderStatus::Pending`] with its signature. Orders are cancelled
@@ -61,11 +60,15 @@ impl OpenBookV2Order {
                 price,
                 quantity: order.quantity,
             },
-            (_, tif) => Self::Take {
+            (_, TimeInForce::Fok) => {
+                return Err(OpenBookV2Error::InvalidOrder(
+                    "OpenBook v2's deployed program has no fill-or-kill".into(),
+                ));
+            }
+            _ => Self::Take {
                 side: order.side,
                 quantity: order.quantity,
                 worst_price: price,
-                all_or_none: tif == TimeInForce::Fok,
             },
         })
     }
@@ -141,16 +144,17 @@ mod tests {
             OpenBookV2Order::from_order(&o).unwrap(),
             OpenBookV2Order::Limit { .. }
         ));
-        o.time_in_force = TimeInForce::Fok;
+        o.time_in_force = TimeInForce::Ioc;
         assert_eq!(
             OpenBookV2Order::from_order(&o).unwrap(),
             OpenBookV2Order::Take {
                 side: Side::Sell,
                 quantity: dec!(1),
                 worst_price: dec!(150),
-                all_or_none: true
             }
         );
+        o.time_in_force = TimeInForce::Fok;
+        assert!(OpenBookV2Order::from_order(&o).is_err());
         o.price = None;
         assert!(OpenBookV2Order::from_order(&o).is_err());
     }

@@ -61,7 +61,8 @@ impl OrderSide {
     }
 }
 
-/// How an order trades.
+/// How an order trades. The deployed program has no fill-or-kill: an order
+/// type tagged 5 fails to deserialize (Anchor error 102).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaceOrderType {
     /// Takes what crosses, rests the rest.
@@ -74,8 +75,6 @@ pub enum PlaceOrderType {
     Market,
     /// Rests at the best price that does not cross.
     PostOnlySlide,
-    /// Takes everything or nothing.
-    FillOrKill,
 }
 
 impl PlaceOrderType {
@@ -86,7 +85,6 @@ impl PlaceOrderType {
             Self::PostOnly => 2,
             Self::Market => 3,
             Self::PostOnlySlide => 4,
-            Self::FillOrKill => 5,
         }
     }
 }
