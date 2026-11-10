@@ -146,6 +146,24 @@ impl ChainClient for MockChainClient {
         Ok(out)
     }
 
+    async fn get_token_accounts_by_owner(
+        &self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+    ) -> Result<Vec<(Pubkey, Account)>, ChainError> {
+        let token_program = crate::chain::token::token_program();
+        let mut out: Vec<(Pubkey, Account)> = self
+            .state()
+            .accounts
+            .iter()
+            .filter(|(_, a)| a.owner == token_program && a.data.len() >= 64)
+            .filter(|(_, a)| &a.data[0..32] == mint.as_ref() && &a.data[32..64] == owner.as_ref())
+            .map(|(k, a)| (*k, a.clone()))
+            .collect();
+        out.sort_by_key(|(k, _)| k.to_bytes());
+        Ok(out)
+    }
+
     async fn get_balance(&self, pubkey: &Pubkey) -> Result<u64, ChainError> {
         Ok(self.state().accounts.get(pubkey).map_or(0, |a| a.lamports))
     }

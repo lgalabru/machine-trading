@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn each_kind_reports_its_profiles_position() {
         let mut perp = Position::flat(
-            InstrumentId::new("phoenix:SPCX-PERP"),
+            InstrumentId::new("phoenix:perp:SPCX"),
             VenueId::new("phoenix"),
         );
         perp.quantity = dec!(-12.5);
