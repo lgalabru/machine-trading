@@ -4596,17 +4596,6 @@ dependencies = [
 name = "mtx-bot-starter"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "mtx-botkit",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "mtx-bot-strategy"
-version = "0.1.0"
-dependencies = [
  "mtx-botkit",
  "tracing",
 ]
@@ -4665,6 +4654,7 @@ dependencies = [
 name = "mtx-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "borsh 1.8.1",
  "bs58",

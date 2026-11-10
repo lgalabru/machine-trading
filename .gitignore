@@ -1,5 +1,10 @@
-/target
+# Cargo's builds, wherever a crate is: the workspace's, and those of bots and
+# checks that build on their own (their logs too: `mtx bot practice` writes
+# them under the bot's target/).
+target/
 /jobs
+# `mtx grade`'s default log directory, when run from the root.
+/logs/
 
 # Local secrets (fork RPC key). Never commit.
 .env

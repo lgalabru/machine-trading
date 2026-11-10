@@ -74,7 +74,7 @@ The loop:
    the reasoning behind it.
 
 The scaffold starts the task as a copy of its base (`shocks`:
-phoenix-flash-crash, `making`: phoenix-market-making), grading on the base's
+flash-crash-spcx, `making`: market-making-spcx), grading on the base's
 family until the task's own exists; `task_status` keeps that visible.
 
 ## Operating procedure

@@ -500,7 +500,7 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         .or_else(|| {
             config["agent"]["model_name"]
                 .as_str()
-                .map(|m| m.trim_start_matches("anthropic/").to_string())
+                .map(|m| m.rsplit('/').next().unwrap_or(m).to_string())
         });
     let pnls: serde_json::Map<String, Value> = scenarios
         .iter()
@@ -748,6 +748,24 @@ async fn get_releases(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(releases_json(&state))
 }
 
+/// What a task measures, across its renames: releases from 0.11.0 name tasks
+/// `<skill>-<instrument>` (`flash-crash-spcx`), earlier ones
+/// `<venue>-<skill>` (`phoenix-flash-crash`); both are `flash-crash`, so a
+/// comparison across them lines the task up with itself.
+pub(crate) fn skill_of(short: &str) -> String {
+    const VENUES: &[&str] = &["phoenix-"];
+    if let Some(rest) = VENUES.iter().find_map(|v| short.strip_prefix(v)) {
+        return rest.to_string();
+    }
+    match short.matches('-').count() {
+        0 | 1 => short.to_string(),
+        _ => short
+            .rsplit_once('-')
+            .map_or(short, |(skill, _)| skill)
+            .to_string(),
+    }
+}
+
 /// A root's scores from its trials' summaries: per task (by short name),
 /// per model, the mean skill, reward and PnL of its graded trials.
 pub(crate) fn scores_of(root: &Root) -> Value {
@@ -803,9 +821,10 @@ fn scores(root: &Root, trials: &[Value]) -> Value {
         let version = task_toml(&root.path, name, digest, local)
             .map(|toml| task_table(&toml)["version"].clone())
             .unwrap_or(Value::Null);
+        let short = name.rsplit('/').next().unwrap_or(name);
         tasks.insert(
-            name.rsplit('/').next().unwrap_or(name).to_string(),
-            json!({ "name": name, "version": version, "models": per_model }),
+            skill_of(short),
+            json!({ "name": name, "short": short, "version": version, "models": per_model }),
         );
     }
     json!({
@@ -1251,6 +1270,15 @@ mod tests {
         assert!(points.len() <= CURVE_POINTS + 1, "{}", points.len());
         assert_eq!(points.last().unwrap(), &json!([1998, 999.0, null]));
         assert!(curve(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn a_task_is_the_same_across_its_rename() {
+        assert_eq!(skill_of("phoenix-flash-crash"), "flash-crash");
+        assert_eq!(skill_of("flash-crash-spcx"), "flash-crash");
+        assert_eq!(skill_of("phoenix-market-making"), "market-making");
+        assert_eq!(skill_of("market-making-spcx"), "market-making");
+        assert_eq!(skill_of("demo"), "demo");
     }
 
     #[test]

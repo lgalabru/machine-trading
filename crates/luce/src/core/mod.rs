@@ -7,6 +7,11 @@
 //!   become fills, fills move [`Position`]s, positions roll up into a
 //!   [`Portfolio`]. Every order passes [`RiskLimits::evaluate`] first and goes
 //!   out through an [`ExecutionDriver`].
+//! - **Holding and measuring**: what an account holds differs by instrument,
+//!   not by how it trades: a [`Holding`] is a perp's [`Position`], a spot
+//!   market's [`Holdings`] or a money market's [`LendingBalance`]. An
+//!   [`AccountMeter`] reads them, with value, fills and health,
+//!   from a venue's own records, for an enforcer.
 //! - **Capital**: where money sits when it is not in a trade.
 //!   [`Strategy`], [`performance`] and [`rates`] measure yield-bearing
 //!   positions (lending, staking) with money-weighted arithmetic.
@@ -28,6 +33,8 @@
 //! | [`portfolio`] | Aggregated positions and capital tracking |
 //! | [`risk`] | Risk limits, exposure, and pre-trade evaluation |
 //! | [`execution`] | The [`ExecutionDriver`] trait |
+//! | [`holding`] | What an account holds in an instrument, by instrument kind |
+//! | [`meter`] | The [`AccountMeter`] trait: what an enforcer reads from a venue |
 //! | [`sim`] | Simulated execution driver for backtesting |
 //! | [`command`] | Command pattern wrapping execution with measurement |
 //! | [`rates`] | APR/APY conventions and compounding |
@@ -41,7 +48,9 @@ pub mod book;
 pub mod command;
 pub mod execution;
 pub mod fill;
+pub mod holding;
 pub mod instrument;
+pub mod meter;
 pub mod order;
 pub mod performance;
 pub mod portfolio;
@@ -58,7 +67,9 @@ pub use book::{OrderBook, PriceLevel, Spread};
 pub use command::{CommandOutcome, ExecutionCommand, MeasuredSubmit, SubmitOrder};
 pub use execution::{ExecutionDriver, ExecutionError, ExecutionReport};
 pub use fill::{Fill, FillId, FillQuality};
+pub use holding::{Holding, Holdings, LendingBalance};
 pub use instrument::{Instrument, InstrumentError, InstrumentId, InstrumentKind, Rounding};
+pub use meter::{AccountMeter, Measurement, MeterError, RecordedFill};
 pub use order::{Order, OrderId, OrderStatus, OrderType, Side, TimeInForce};
 pub use performance::{CashFlow, Performance};
 pub use portfolio::Portfolio;
