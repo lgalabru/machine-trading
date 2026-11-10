@@ -20,7 +20,8 @@ use crate::{
         self, ChainClient, ChainError, ExecutionPlan, InstructionGroup, RpcChainClient, SendMode,
         TransactionSigner, token,
     },
-    core::{OrderBook, Side},
+    core::{OrderBook, Side, SpotBalances},
+    protocols::holdings_from_atoms,
 };
 
 /// An order in the form Phoenix v1 takes it, in decimal units.
@@ -68,51 +69,6 @@ fn book_side(side: Side) -> BookSide {
         Side::Buy => BookSide::Bid,
         Side::Sell => BookSide::Ask,
     }
-}
-
-/// What a trader holds on one market, in atoms: the account the Phoenix
-/// venue profile measures, its wallet's token accounts for the market's
-/// two mints and its seat.
-///
-/// For SOL, the wallet's holding is its wrapped-SOL token account; the
-/// wallet's native SOL pays fees and is not counted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Holdings {
-    /// Base atoms in the trader's associated base token account.
-    pub base_wallet: u64,
-    /// Quote atoms in its associated quote token account.
-    pub quote_wallet: u64,
-    /// Base atoms on its seat: (`base_lots_free` + `base_lots_locked`) ×
-    /// the base lot size.
-    pub base_on_seat: u64,
-    /// Quote atoms on its seat: (`quote_lots_free` + `quote_lots_locked`) ×
-    /// the quote lot size.
-    pub quote_on_seat: u64,
-}
-
-impl Holdings {
-    /// The position the spot profile defines: base held in the wallet and
-    /// on the seat, in base units.
-    pub fn base(&self, market: &PhoenixV1Market) -> Decimal {
-        units(
-            self.base_wallet + self.base_on_seat,
-            market.header.base_decimals,
-        )
-    }
-
-    /// Quote held in the wallet and on the seat, in quote units.
-    pub fn quote(&self, market: &PhoenixV1Market) -> Decimal {
-        units(
-            self.quote_wallet + self.quote_on_seat,
-            market.header.quote_decimals,
-        )
-    }
-}
-
-/// `atoms × 10^-decimals`. A market's decimals fit a `Decimal` scale:
-/// [`PhoenixV1Market::new`] refuses a market whose units don't.
-fn units(atoms: u64, decimals: u32) -> Decimal {
-    Decimal::from_i128_with_scale(i128::from(atoms), decimals)
 }
 
 /// One trader in one Phoenix v1 market.
@@ -205,7 +161,12 @@ impl PhoenixV1Trader {
 
     /// What the trader holds in the market's two assets: its wallet's
     /// associated token accounts and its seat.
-    pub async fn holdings(&self) -> Result<Holdings, PhoenixV1Error> {
+    /// What the trader holds on this market, as the Phoenix venue profile
+    /// measures it: its wallet's token accounts for the market's two mints,
+    /// and its seat, free and locked. For SOL, the wallet's holding is its
+    /// wrapped-SOL token account; the wallet's native SOL pays fees and is
+    /// not counted.
+    pub async fn holdings(&self) -> Result<SpotBalances, PhoenixV1Error> {
         let k = &self.market.keys;
         let wallets = [
             token::ata(&self.authority, &k.base_mint),
@@ -217,16 +178,22 @@ impl PhoenixV1Trader {
         };
         let state = self.state().await?;
         let h = &state.header;
-        let seat = state.seat(&self.authority);
-        Ok(Holdings {
-            base_wallet: balance(&accounts[0])?,
-            quote_wallet: balance(&accounts[1])?,
-            base_on_seat: seat.map_or(0, |s| {
-                (s.base_lots_free + s.base_lots_locked) * h.base_lot_size
-            }),
-            quote_on_seat: seat.map_or(0, |s| {
-                (s.quote_lots_free + s.quote_lots_locked) * h.quote_lot_size
-            }),
+        let seat = state.seat(&self.authority).copied().unwrap_or_default();
+        let atoms = |lots: u64, lot_size: u64| i128::from(lots) * i128::from(lot_size);
+        let i = &self.market.instrument;
+        Ok(SpotBalances {
+            base: holdings_from_atoms(
+                &i.base,
+                balance(&accounts[0])?.into(),
+                atoms(seat.base_lots_free, h.base_lot_size),
+                atoms(seat.base_lots_locked, h.base_lot_size),
+            )?,
+            quote: holdings_from_atoms(
+                &i.quote,
+                balance(&accounts[1])?.into(),
+                atoms(seat.quote_lots_free, h.quote_lot_size),
+                atoms(seat.quote_lots_locked, h.quote_lot_size),
+            )?,
         })
     }
 
@@ -487,16 +454,15 @@ mod tests {
         assert!(chain.simulated().is_empty());
 
         let holdings = t.holdings().await.unwrap();
-        assert_eq!(holdings.base_wallet, 0, "no token accounts in the mock");
-        assert_eq!(holdings.base_on_seat, 3_000 * 1_000_000);
-        assert_eq!(holdings.quote_on_seat, 5);
-        assert_eq!(holdings.base(t.market()), dec!(3));
-        let with_wallet = Holdings {
-            base_wallet: 500_000_000,
-            ..holdings
-        };
-        assert_eq!(with_wallet.base(t.market()), dec!(3.5));
-        assert_eq!(with_wallet.quote(t.market()), dec!(0.000005));
+        assert_eq!(
+            holdings.base.wallet,
+            dec!(0),
+            "no token accounts in the mock"
+        );
+        assert_eq!(holdings.base.free + holdings.base.locked, dec!(3));
+        assert_eq!(holdings.base.total(), dec!(3));
+        assert_eq!(holdings.holding().position(), dec!(3));
+        assert_eq!(holdings.quote.total(), dec!(0.000005));
         assert_eq!(t.order_book().await.unwrap().bids.len(), 0);
     }
 }

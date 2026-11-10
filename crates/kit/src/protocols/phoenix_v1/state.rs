@@ -115,7 +115,7 @@ impl RestingOrder {
 }
 
 /// A trader's seat: its `TraderState`, the funds it keeps on the market.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TraderState {
     /// The seat's node index, which its orders refer to.
     pub index: u32,

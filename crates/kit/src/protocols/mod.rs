@@ -52,6 +52,31 @@ impl NamedMarket {
     }
 }
 
+/// One asset's [`Holdings`](crate::core::Holdings) from its amounts in atoms:
+/// in the wallet, free on the venue, and locked behind orders.
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
+pub(crate) fn holdings_from_atoms(
+    asset: &crate::core::Asset,
+    wallet: i128,
+    free: i128,
+    locked: i128,
+) -> Result<crate::core::Holdings, crate::chain::ChainError> {
+    let units = |atoms: i128| {
+        rust_decimal::Decimal::try_from_i128_with_scale(atoms, u32::from(asset.decimals)).map_err(
+            |_| crate::chain::ChainError::Decode {
+                what: "holdings",
+                detail: format!("{atoms} atoms of {} don't fit a decimal", asset.symbol),
+            },
+        )
+    };
+    Ok(crate::core::Holdings {
+        base: asset.clone(),
+        wallet: units(wallet)?,
+        free: units(free)?,
+        locked: units(locked)?,
+    })
+}
+
 /// Wrapped SOL's mint. A profile counts SOL held in its token account, not
 /// the wallet's native SOL, which pays the transaction fees.
 #[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]

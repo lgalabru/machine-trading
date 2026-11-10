@@ -23,54 +23,9 @@ use crate::{
         self, ChainClient, ChainError, ExecutionPlan, InstructionGroup, RpcChainClient, SendMode,
         TransactionSigner, token,
     },
-    core::{OrderBook, Side},
+    core::{OrderBook, Side, SpotBalances},
+    protocols::holdings_from_atoms,
 };
-
-/// What a trader holds on one market: the account the OpenBook venue
-/// profile measures, its wallet's token accounts for the market's two mints
-/// and every open orders account it owns on the market.
-///
-/// For SOL, the wallet's holding is its wrapped-SOL token account; the
-/// wallet's native SOL pays fees and is not counted. A maker's fills count
-/// once `consume_events` has settled them into its open orders account.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Holdings {
-    /// Base atoms in the trader's associated base token account.
-    pub base_wallet: u64,
-    /// Quote atoms in its associated quote token account.
-    pub quote_wallet: u64,
-    /// Each open orders account the trader owns on the market, as its
-    /// indexer lists them.
-    pub open_orders: Vec<(Pubkey, OpenOrdersPosition)>,
-}
-
-impl Holdings {
-    /// The position the spot profile defines: base held in the wallet and
-    /// in every open orders account, in base units.
-    pub fn base(&self, market: &OpenBookV2Market) -> Decimal {
-        let a = &market.account;
-        let atoms = i128::from(self.base_wallet)
-            + self
-                .open_orders
-                .iter()
-                .map(|(_, p)| p.base_atoms(a.base_lot_size))
-                .sum::<i128>();
-        Decimal::from_i128_with_scale(atoms, u32::from(a.base_decimals))
-    }
-
-    /// Quote held in the wallet and in every open orders account, in quote
-    /// units.
-    pub fn quote(&self, market: &OpenBookV2Market) -> Decimal {
-        let a = &market.account;
-        let atoms = i128::from(self.quote_wallet)
-            + self
-                .open_orders
-                .iter()
-                .map(|(_, p)| p.quote_atoms(a.quote_lot_size))
-                .sum::<i128>();
-        Decimal::from_i128_with_scale(atoms, u32::from(a.quote_decimals))
-    }
-}
 
 /// The open orders account this adapter trades from: the trader's first.
 pub const ACCOUNT_NUMBER: u32 = 1;
@@ -239,7 +194,14 @@ impl OpenBookV2Trader {
 
     /// What the trader holds on the market: its wallet's token accounts and
     /// every open orders account its indexer lists on this market.
-    pub async fn holdings(&self) -> Result<Holdings, OpenBookV2Error> {
+    /// What the trader holds on this market, as the OpenBook venue profile
+    /// measures it: its wallet's token accounts for the market's two mints,
+    /// and every open orders account it owns on the market, summed. Free is
+    /// what the accounts may settle; locked is what their resting orders
+    /// hold, asks the base and bids the quote with their maker fees. For SOL,
+    /// the wallet's holding is its wrapped-SOL token account. A maker's
+    /// fills count once `consume_events` has settled them.
+    pub async fn holdings(&self) -> Result<SpotBalances, OpenBookV2Error> {
         let k = &self.market.keys;
         let indexer = ix::open_orders_indexer(&self.authority);
         let wallets = [
@@ -260,18 +222,32 @@ impl OpenBookV2Trader {
         } else {
             self.chain.get_multiple_accounts(&listed).await?
         };
-        let mut held = Vec::new();
-        for (address, account) in listed.into_iter().zip(open_orders) {
-            let Some(account) = account else { continue };
-            let position = OpenOrdersPosition::decode(&account.data)?;
-            if position.market == k.market && position.owner == self.authority {
-                held.push((address, position));
+        let a = &self.market.account;
+        let (mut base_free, mut base_locked, mut quote_free, mut quote_locked) = (0, 0, 0, 0);
+        for account in open_orders.into_iter().flatten() {
+            let p = OpenOrdersPosition::decode(&account.data)?;
+            if p.market == k.market && p.owner == self.authority {
+                base_free += i128::from(p.base_free_native);
+                base_locked += i128::from(p.asks_base_lots) * i128::from(a.base_lot_size);
+                quote_free += i128::from(p.quote_free_native);
+                quote_locked += i128::from(p.bids_quote_lots) * i128::from(a.quote_lot_size)
+                    + i128::from(p.locked_maker_fees);
             }
         }
-        Ok(Holdings {
-            base_wallet: balance(&accounts[0])?,
-            quote_wallet: balance(&accounts[1])?,
-            open_orders: held,
+        let i = &self.market.instrument;
+        Ok(SpotBalances {
+            base: holdings_from_atoms(
+                &i.base,
+                balance(&accounts[0])?.into(),
+                base_free,
+                base_locked,
+            )?,
+            quote: holdings_from_atoms(
+                &i.quote,
+                balance(&accounts[1])?.into(),
+                quote_free,
+                quote_locked,
+            )?,
         })
     }
 
@@ -563,7 +539,11 @@ mod tests {
         assert_eq!(book.bids[0].price, dec!(150));
         assert!(book.asks.is_empty());
         assert_eq!(t.open_orders_position().await.unwrap(), None);
-        assert_eq!(t.holdings().await.unwrap(), Holdings::default());
+        let empty = t.holdings().await.unwrap();
+        assert_eq!(
+            (empty.base.total(), empty.quote.total()),
+            (dec!(0), dec!(0))
+        );
         let plan = t.plan_open_account().unwrap();
         assert_eq!(plan.steps[0].instructions.len(), 2);
         t.send(&plan, &signer).await.unwrap();
@@ -639,9 +619,9 @@ mod tests {
                 open_orders_bytes(&authority, &Pubkey::new_unique(), 0, 9, 0, 9),
             ),
         );
+        // Only this market's accounts count: the third would add 9 more.
         let holdings = t.holdings().await.unwrap();
-        assert_eq!(holdings.open_orders.len(), 2, "only this market's accounts");
-        assert_eq!(holdings.base(t.market()), dec!(1.502));
-        assert_eq!(holdings.quote(t.market()), dec!(9));
+        assert_eq!(holdings.base.total(), dec!(1.502));
+        assert_eq!(holdings.quote.total(), dec!(9));
     }
 }

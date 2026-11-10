@@ -12,7 +12,7 @@
 //! |------------|------|
 //! | the market account | [`MarketState`] (book with owners and sequence numbers, seats) |
 //! | a market | [`PhoenixV1Market`] → [`Instrument`](crate::core::Instrument) (spot, base and quote mints) |
-//! | the account (wallet token accounts and seat) | [`Holdings`], [`Holdings::base`] = the profile's position |
+//! | the account (wallet token accounts and seat) | [`SpotBalances`](crate::core::SpotBalances) from `holdings()`; its base's total is the profile's position |
 //! | ticks, base lots, quote lots | exact [`Decimal`](rust_decimal::Decimal) conversions on [`PhoenixV1Market`] |
 //! | the book | [`OrderBook`](crate::core::OrderBook) with sizes; [`OwnedOrder`]s with their traders |
 //! | `Swap`, post-only and limit orders, cancel all | [`PhoenixV1Trader`] plans, [`chain::execute`](crate::chain::execute) or [`chain::submit`](crate::chain::submit) sends |
@@ -34,7 +34,7 @@ pub use error::PhoenixV1Error;
 pub use market::{OwnedOrder, PhoenixV1Market};
 use solana_pubkey::Pubkey;
 pub use state::{BookSide, MarketHeader, MarketState, RestingOrder, TraderState};
-pub use trader::{Holdings, PhoenixV1Order, PhoenixV1Trader};
+pub use trader::{PhoenixV1Order, PhoenixV1Trader};
 
 use super::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};
 

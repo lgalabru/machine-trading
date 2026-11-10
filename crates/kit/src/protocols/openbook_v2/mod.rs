@@ -11,7 +11,7 @@
 //! | price lots, base lots | exact [`Decimal`](rust_decimal::Decimal) conversions on [`OpenBookV2Market`] |
 //! | the two `BookSide` accounts | [`LeafOrder`]s with owners and placement times; [`OrderBook`](crate::core::OrderBook) with sizes |
 //! | an `OpenOrdersAccount` | [`OpenOrdersPosition`] (free and locked funds, maker volume) |
-//! | the account (wallet token accounts and every open orders account the `OpenOrdersIndexer` lists) | [`Holdings`], [`Holdings::base`] = the profile's position |
+//! | the account (wallet token accounts and every open orders account the `OpenOrdersIndexer` lists) | [`SpotBalances`](crate::core::SpotBalances) from `holdings()`; its base's total is the profile's position |
 //! | take-only (`place_take_order`), post-only and limit orders, cancel all, settle | [`OpenBookV2Trader`] plans, [`chain::execute`](crate::chain::execute) or [`chain::submit`](crate::chain::submit) sends |
 //! | order flow | [`OpenBookV2Driver`] → [`ExecutionDriver`](crate::core::ExecutionDriver) |
 //!
@@ -31,7 +31,7 @@ pub use error::OpenBookV2Error;
 pub use market::{MarketKeys, OpenBookV2Market};
 use solana_pubkey::Pubkey;
 pub use state::{LeafOrder, MarketAccount, OpenOrdersIndexer, OpenOrdersPosition};
-pub use trader::{ACCOUNT_NUMBER, Book, Holdings, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader};
+pub use trader::{ACCOUNT_NUMBER, Book, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader};
 
 use super::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};
 
