@@ -1,110 +1,100 @@
-//! The grader's measurements of a Phoenix perp account: [`PhoenixPerpMeter`],
-//! the first [`AccountMeter`] (`docs/rfd/0001-instrument-traits.md`, step 2).
+//! [`PhoenixEternalMeter`]: what an enforcer measures of a cross-margin
+//! trader account on Phoenix Eternal, as the Phoenix venue profile
+//! (Perpetual markets) defines it.
 //!
-//! Everything here is read from Phoenix through Hawkeye's views and from the
-//! chain, never from the bot. The session turns what it reports into the
-//! grader's `f64`s.
+//! Everything is read from Phoenix through Hawkeye's views, and the wallet
+//! from the chain, through the meter's own clients, never the bot's.
 
-use std::str::FromStr;
+use std::sync::Arc;
 
-use mtx_core::{
-    AccountMeter, Decimal, Holding, InstrumentId, Measurement, MeterError, RecordedFill,
-};
-use mtx_kit::{
-    QUOTE_LOTS_PER_USD,
-    phoenix_rise::{
-        core::PhoenixHawkeyeClient, ix::hawkeye::ViewAssetReturn,
-        types::exchange::ExchangeMarketConfig,
-    },
-    protocols::phoenix::eternal::PhoenixMarket,
-};
-use serde_json::json;
+use phoenix_rise::{core::PhoenixHawkeyeClient, ix::hawkeye::ViewAssetReturn};
+use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
-use solana_rpc_client::rpc_client::RpcClient;
 
+use super::{PhoenixError, PhoenixExchange, PhoenixMarket};
 use crate::{
-    chain,
-    phoenix::{Phoenix, USDC_MINT},
+    chain::{ChainClient, token},
+    core::{AccountMeter, Holding, InstrumentId, Measurement, MeterError, RecordedFill},
+    protocols::USDC_MINT,
 };
 
-/// One trader account on one Phoenix perp market.
-pub struct PhoenixPerpMeter<'a> {
-    rpc: &'a RpcClient,
-    hawkeye: PhoenixHawkeyeClient<'a>,
+const USDC_DECIMALS: u32 = 6;
+
+/// One owner's cross-margin trader account, measured on one perp market.
+pub struct PhoenixEternalMeter {
+    exchange: Arc<PhoenixExchange>,
+    rpc_url: String,
+    chain: Arc<dyn ChainClient>,
     owner: Pubkey,
     trader: Pubkey,
-    market: &'a ExchangeMarketConfig,
-    exact_market: PhoenixMarket,
+    market: PhoenixMarket,
 }
 
-impl<'a> PhoenixPerpMeter<'a> {
-    /// The meter for `owner`'s trader account `trader` on `market`.
+impl PhoenixEternalMeter {
+    /// Measures `owner`'s trader account on `symbol`: Hawkeye's views at
+    /// `rpc_url`, the wallet through `chain`.
     pub fn new(
-        rpc: &'a RpcClient,
-        phoenix: &'a Phoenix,
+        exchange: Arc<PhoenixExchange>,
+        rpc_url: impl Into<String>,
+        chain: Arc<dyn ChainClient>,
         owner: Pubkey,
-        trader: Pubkey,
-        market: &'a ExchangeMarketConfig,
-    ) -> crate::Result<Self> {
+        symbol: &str,
+    ) -> Result<Self, PhoenixError> {
         Ok(Self {
-            rpc,
-            hawkeye: phoenix.hawkeye(owner),
+            market: exchange.market(symbol)?,
+            trader: exchange.trader_account(&owner),
+            exchange,
+            rpc_url: rpc_url.into(),
+            chain,
             owner,
-            trader,
-            market,
-            exact_market: phoenix.exact_market(&market.symbol)?,
         })
     }
 
-    /// The instrument this meter measures, as the universe names it.
+    /// The trader account it measures: the owner's cross-margin account.
+    pub fn trader(&self) -> Pubkey {
+        self.trader
+    }
+
+    /// The instrument this meter measures, as the mandate names it.
     pub fn instrument(&self) -> &InstrumentId {
-        &self.exact_market.instrument.id
+        &self.market.instrument.id
+    }
+
+    fn hawkeye(&self) -> PhoenixHawkeyeClient<'_> {
+        self.exchange.hawkeye(&self.rpc_url, self.owner)
     }
 
     async fn asset(&self) -> Result<ViewAssetReturn, MeterError> {
         Ok(self
-            .hawkeye
+            .hawkeye()
             .view_margin_for_asset(self.owner, 0, 0, self.market.asset_id)
             .await
             .map_err(read)?
             .value)
     }
 
-    /// The trader account, from one margin view, with the wallet's USDC.
+    /// The trader account from one margin view, with the wallet's
+    /// collateral: what Phoenix holds (collateral plus unrealized PnL at
+    /// the mark) and USDC withdrawn back to the wallet, which keeps its
+    /// value so a withdrawal can't hide a drawdown.
     async fn account(&self) -> Result<Account, MeterError> {
         let margin = self
-            .hawkeye
+            .hawkeye()
             .view_margin_for_trader(self.trader)
             .await
             .map_err(read)?
             .value;
         let quote_lots = margin.collateral_quote_lots + margin.unrealized_pnl_quote_lots;
+        // Real USDC, which deposits take from: the canonical mint
+        // (`collateral_mint`) lives only inside Phoenix.
+        let wallet = token::owned_amount(self.chain.as_ref(), &self.owner, &USDC_MINT)
+            .await
+            .map_err(read)?;
         Ok(Account {
-            value_usd: Decimal::from(quote_lots) / quote_lots_per_usd() + self.wallet_usdc()?,
+            value_usd: Decimal::new(quote_lots, u32::from(self.market.quote_lot_decimals))
+                + Decimal::from_i128_with_scale(i128::from(wallet), USDC_DECIMALS),
             position_count: margin.position_count,
         })
-    }
-
-    /// USDC withdrawn back to the owner's wallet.
-    fn wallet_usdc(&self) -> Result<Decimal, MeterError> {
-        let accounts = chain::call(
-            self.rpc,
-            "getTokenAccountsByOwner",
-            json!([self.owner.to_string(), { "mint": USDC_MINT.to_string() }, { "encoding": "jsonParsed" }]),
-        )
-        .map_err(read)?;
-        Ok(accounts["value"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|account| {
-                Decimal::from_str(
-                    account["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmountString"]
-                        .as_str()?,
-                )
-                .ok()
-            })
-            .sum())
     }
 
     /// Markets held other than the universe's, from one pair of reads.
@@ -120,7 +110,7 @@ impl<'a> PhoenixPerpMeter<'a> {
 }
 
 #[async_trait::async_trait]
-impl AccountMeter for PhoenixPerpMeter<'_> {
+impl AccountMeter for PhoenixEternalMeter {
     /// The market's position, read first, then the account. A count of
     /// markets held outside the universe is only kept if a second pair of
     /// reads agrees: the market's view and the account's are two reads, and
@@ -138,7 +128,7 @@ impl AccountMeter for PhoenixPerpMeter<'_> {
             }
         };
         let position = self
-            .exact_market
+            .market
             .position(asset.base_lots, asset.entry_price_quote_lots_per_base_lot);
         Ok(Measurement {
             holdings: vec![(self.instrument().clone(), Holding::Perp(position))],
@@ -149,13 +139,13 @@ impl AccountMeter for PhoenixPerpMeter<'_> {
 
     async fn fills(&self, _after_slot: u64) -> Result<Vec<RecordedFill>, MeterError> {
         Err(MeterError::Unsupported(
-            "Phoenix perp fills: no task's mandate has a fill rule yet".into(),
+            "Phoenix Eternal fills: no task's mandate has a fill rule yet".into(),
         ))
     }
 
     async fn liquidatable(&self) -> Result<bool, MeterError> {
         let margin = self
-            .hawkeye
+            .hawkeye()
             .view_margin(self.owner, 0, 0)
             .await
             .map_err(read)?
@@ -165,15 +155,9 @@ impl AccountMeter for PhoenixPerpMeter<'_> {
 }
 
 struct Account {
-    /// Phoenix collateral plus unrealized PnL at mark, plus any USDC
-    /// withdrawn back to the wallet.
     value_usd: Decimal,
     /// Markets the trader holds a position or orders in.
     position_count: u16,
-}
-
-fn quote_lots_per_usd() -> Decimal {
-    Decimal::try_from(QUOTE_LOTS_PER_USD).expect("a power of ten")
 }
 
 fn read(error: impl std::fmt::Display) -> MeterError {

@@ -243,3 +243,19 @@ cap check reads `Holding::position()`.
   0.1.0 needs `anchor-lang` 0.27. `pyth-solana-receiver-sdk` 2.0 would
   build, but on `solana-pubkey` 3 beside our 4, with all of Anchor, to
   decode 134 bytes.
+- 2026-11-10: the protocols follow the model. `mtx_kit::protocols` has one
+  module per venue and one submodule per program: `phoenix::eternal`,
+  `phoenix::v1` and `openbook::v2`. Each program has its
+  `ExecutionDriver` and its `AccountMeter` side by side:
+  `PhoenixEternalMeter`, `PhoenixV1Meter` and `OpenBookV2Meter`, each
+  reading through the enforcer's own `ChainClient`. The grader builds
+  meters and has no venue code of its own. A program's trader and its
+  meter read the account with one function, `balances()`. A wallet is
+  every token account the owner holds for a mint
+  (`ChainClient::get_token_accounts_by_owner`): reading the associated
+  account alone would miss base moved out of it. An `InstrumentId` is now
+  the mandate's reference, `venue:kind:symbol`, which settles the
+  collision this RFD noted on 2026-11-10. Grades are unchanged on the
+  practice sets. The perp meter's wallet read moved from the node's
+  default commitment to `confirmed`, like the grader's other reads; no
+  practice session holds USDC in its wallet.

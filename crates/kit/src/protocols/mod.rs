@@ -1,11 +1,22 @@
-//! Protocol adapters, each behind a Cargo feature.
+//! Protocol adapters: one module per venue, one submodule per program, each
+//! behind a Cargo feature.
 //!
-//! An adapter maps one protocol onto the [`core`](crate::core) model: its
-//! markets become [`Instrument`](crate::core::Instrument)s, its books
-//! [`OrderBook`](crate::core::OrderBook)s, its accounts
-//! [`Position`](crate::core::Position)s, and its order flow an
-//! [`ExecutionDriver`](crate::core::ExecutionDriver). Transactions go through
-//! [`chain`](crate::chain).
+//! | Venue | Program | Trades through | Holds | Measured by |
+//! |-------|---------|----------------|-------|-------------|
+//! | [`phoenix`] | [`phoenix::eternal`] | `PhoenixDriver` | perp `Position` | `PhoenixEternalMeter` |
+//! | [`phoenix`] | [`phoenix::v1`] | `PhoenixV1Driver` | `SpotBalances` | `PhoenixV1Meter` |
+//! | [`openbook`] | [`openbook::v2`] | `OpenBookV2Driver` | `SpotBalances` | `OpenBookV2Meter` |
+//!
+//! An adapter maps its program onto the [`core`](crate::core) model, as
+//! `docs/rfd/0001-instrument-traits.md` lays out: its markets become
+//! [`Instrument`](crate::core::Instrument)s named by the mandate's reference
+//! (`venue:kind:symbol`), its books [`OrderBook`](crate::core::OrderBook)s,
+//! its order flow an [`ExecutionDriver`](crate::core::ExecutionDriver), what
+//! an account holds a [`Holding`](crate::core::Holding), and what an
+//! enforcer reads an [`AccountMeter`](crate::core::AccountMeter), through the
+//! enforcer's own [`ChainClient`](crate::chain::ChainClient). A program's
+//! trader and its meter read the account with the same function.
+//! Transactions go through [`chain`](crate::chain).
 
 #[cfg(feature = "openbook-v2")]
 pub mod openbook;
@@ -83,7 +94,8 @@ pub(crate) fn holdings_from_atoms(
 pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
 
-/// USDC's mint.
-#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
-pub(crate) const USDC_MINT: solana_pubkey::Pubkey =
+/// USDC's mint: the quote of every spot market the profiles name, and what
+/// Phoenix Eternal's deposits are made from (Phoenix wraps it into its own
+/// canonical mint).
+pub const USDC_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
