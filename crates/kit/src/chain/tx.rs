@@ -360,9 +360,9 @@ pub async fn execute(
     Ok(receipts)
 }
 
-/// Knobs for [`submit`].
+/// Knobs for [`fire_and_forget`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SubmitOptions {
+pub struct FireAndForgetOptions {
     /// Simulate each step against current state before signing it, and
     /// refuse to sign one that would fail. Turn it off only where current
     /// state is not the state the transaction will meet: in a lockstep world
@@ -371,20 +371,20 @@ pub struct SubmitOptions {
     pub simulate: bool,
 }
 
-impl Default for SubmitOptions {
+impl Default for FireAndForgetOptions {
     fn default() -> Self {
         Self { simulate: true }
     }
 }
 
-/// How a plan reaches the chain: [`execute`] or [`submit`].
+/// How a plan reaches the chain: [`execute`] or [`fire_and_forget`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendMode {
     /// Simulate, sign, send and wait for each transaction to land.
     Confirm(ExecuteOptions),
     /// Send and return without waiting: for worlds that land a transaction
     /// after the sender's turn.
-    Submit(SubmitOptions),
+    FireAndForget(FireAndForgetOptions),
 }
 
 impl Default for SendMode {
@@ -407,13 +407,13 @@ impl SendMode {
                 .into_iter()
                 .map(|r| r.signature)
                 .collect()),
-            Self::Submit(options) => submit(plan, signer, client, options).await,
+            Self::FireAndForget(options) => fire_and_forget(plan, signer, client, options).await,
         }
     }
 }
 
 /// Sends a plan step by step without waiting for any step to land: fetch a
-/// blockhash, simulate (unless [`SubmitOptions::simulate`] is off), sign,
+/// blockhash, simulate (unless [`FireAndForgetOptions::simulate`] is off), sign,
 /// send. Returns each step's signature, in order.
 ///
 /// The counterpart of [`execute`] for worlds that land transactions after
@@ -421,11 +421,11 @@ impl SendMode {
 /// so a later step cannot rely on an earlier one having landed: put
 /// dependent instructions in one [`InstructionGroup`]. Stops at the first
 /// step the node refuses; earlier steps are already sent.
-pub async fn submit(
+pub async fn fire_and_forget(
     plan: &ExecutionPlan,
     signer: &dyn TransactionSigner,
     client: &dyn ChainClient,
-    options: SubmitOptions,
+    options: FireAndForgetOptions,
 ) -> Result<Vec<Signature>, ChainError> {
     if signer.address() != plan.payer {
         return Err(ChainError::PayerMismatch {
@@ -439,25 +439,26 @@ pub async fn submit(
     let mut signatures = Vec::with_capacity(plan.steps.len());
     for step in &plan.steps {
         let blockhash = client.get_latest_blockhash().await?;
-        let signature = submit_step(step, &plan.payer, blockhash, signer, client, options).await?;
+        let signature =
+            fire_and_forget_step(step, &plan.payer, blockhash, signer, client, options).await?;
         signatures.push(signature);
     }
     Ok(signatures)
 }
 
 /// Sends one transaction of a plan on `blockhash` without waiting for it:
-/// simulate (unless [`SubmitOptions::simulate`] is off), sign, send.
+/// simulate (unless [`FireAndForgetOptions::simulate`] is off), sign, send.
 ///
 /// For callers that manage blockhashes themselves, such as a bot that
 /// rebuilds a transaction on a fresh blockhash when the node no longer knows
 /// the one it signed with.
-pub async fn submit_step(
+pub async fn fire_and_forget_step(
     step: &TransactionPlan,
     payer: &Pubkey,
     blockhash: Hash,
     signer: &dyn TransactionSigner,
     client: &dyn ChainClient,
-    options: SubmitOptions,
+    options: FireAndForgetOptions,
 ) -> Result<Signature, ChainError> {
     let label = step.label();
     let mut tx = VersionedTransaction::from(step.transaction(payer, blockhash));
@@ -640,7 +641,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_signs_and_sends_without_waiting() {
+    async fn fire_and_forget_signs_and_sends_without_waiting() {
         let signer = Keypair::new();
         let payer = signer.pubkey();
         let client = MockChainClient::new();
@@ -650,7 +651,7 @@ mod tests {
             DEFAULT_COMPUTE_UNIT_LIMIT,
         )
         .unwrap();
-        let signatures = submit(&plan, &signer, &client, SubmitOptions::default())
+        let signatures = fire_and_forget(&plan, &signer, &client, FireAndForgetOptions::default())
             .await
             .unwrap();
         assert_eq!(signatures.len(), 2);
@@ -663,14 +664,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_can_skip_the_simulation_and_refuses_a_failing_one() {
+    async fn fire_and_forget_can_skip_the_simulation_and_refuses_a_failing_one() {
         let signer = Keypair::new();
         let payer = signer.pubkey();
         let client = MockChainClient::new();
         let plan = pack(&payer, &[group("a", &payer, 1)], DEFAULT_COMPUTE_UNIT_LIMIT).unwrap();
-        submit(&plan, &signer, &client, SubmitOptions { simulate: false })
-            .await
-            .unwrap();
+        fire_and_forget(
+            &plan,
+            &signer,
+            &client,
+            FireAndForgetOptions { simulate: false },
+        )
+        .await
+        .unwrap();
         assert!(client.simulated().is_empty());
         assert_eq!(client.sent().len(), 1);
 
@@ -678,14 +684,14 @@ mod tests {
             error: Some(TransactionError::AccountNotFound),
             ..Default::default()
         });
-        let err = submit(&plan, &signer, &client, SubmitOptions::default())
+        let err = fire_and_forget(&plan, &signer, &client, FireAndForgetOptions::default())
             .await
             .unwrap_err();
         assert!(matches!(err, ChainError::Simulation { .. }));
         assert_eq!(client.sent().len(), 1, "a failing step is never sent");
 
         let other = Keypair::new();
-        let err = submit(&plan, &other, &client, SubmitOptions::default())
+        let err = fire_and_forget(&plan, &other, &client, FireAndForgetOptions::default())
             .await
             .unwrap_err();
         assert!(matches!(err, ChainError::PayerMismatch { .. }));

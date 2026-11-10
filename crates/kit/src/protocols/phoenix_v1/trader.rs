@@ -353,7 +353,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        chain::{SubmitOptions, mock::MockChainClient},
+        chain::{FireAndForgetOptions, mock::MockChainClient},
         protocols::phoenix_v1::{
             PROGRAM_ID,
             state::testing::{MarketSpec, market_bytes},
@@ -442,11 +442,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_mode_sends_without_waiting() {
+    async fn fire_and_forget_mode_sends_without_waiting() {
         let chain = Arc::new(MockChainClient::new());
         let signer = Keypair::new();
         let t = trader(chain.clone(), signer.pubkey());
-        let t = t.with_send_mode(SendMode::Submit(SubmitOptions { simulate: false }));
+        let t = t.with_send_mode(SendMode::FireAndForget(FireAndForgetOptions {
+            simulate: false,
+        }));
         let plan = t.plan_cancel_all().unwrap();
         assert_eq!(plan.steps[0].instructions.len(), 2);
         let sig = t.send(&plan, &signer).await.unwrap();
