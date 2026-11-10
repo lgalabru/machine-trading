@@ -1,0 +1,23 @@
+{
+    "task": {
+        "name": "solana-foundation/flash-crash-spcx",
+        "ref": "sha256:b9931ba1c2bf75a830845ca9c58af1a14a2da6db36b6ddbb68576e35fbc7963f",
+        "source": "solana-foundation/machine-trading"
+    },
+    "trial_name": "flash-crash-spcx__mxao2Ay",
+    "trials_dir": "jobs/bench/20261110-052134-x1/2026-11-10__09-26-17",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "claude-code",
+        "model_name": "anthropic/claude-opus-5-5",
+        "kwargs": {
+            "version": "2.1.312",
+            "disallowed_tools": "WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents"
+        },
+        "env": {
+            "ENABLE_TOOL_SEARCH": "false",
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+        }
+    },
+    "job_id": "359384a8-edb0-4851-8aa5-d6e14a5fda1b"
+}

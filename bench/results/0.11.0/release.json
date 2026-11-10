@@ -1,0 +1,39 @@
+{
+  "ran_at": "2026-11-10T05:21:38.931019",
+  "shared_reference_sessions": 2134,
+  "skipped": [
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__05-21-34/market-making-spcx__DiKfpfp/verifier/test-stdout.txt (7964988 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__05-21-34/market-making-spcx__VbhvyMZ/verifier/test-stdout.txt (7866460 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__05-21-34/market-making-spcx__idvxxLC/verifier/test-stdout.txt (7856863 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__05-21-34/market-making-spcx__u8JnQ7p/verifier/test-stdout.txt (7964737 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__05-21-34/market-making-spcx__yrepmZj/verifier/test-stdout.txt (7714418 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__09-26-17/market-making-spcx__DHAZQEt/verifier/test-stdout.txt (7956089 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__09-26-17/market-making-spcx__DKggTWa/verifier/test-stdout.txt (7943658 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__09-26-17/market-making-spcx__KHqYueD/verifier/test-stdout.txt (7984305 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__09-26-17/market-making-spcx__jWDZztz/verifier/test-stdout.txt (7708272 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__09-26-17/market-making-spcx__oYjdPvQ/verifier/test-stdout.txt (7969420 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-23/market-making-spcx__CU7cfCz/verifier/test-stdout.txt (7928721 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-23/market-making-spcx__Xinjosz/verifier/test-stdout.txt (7815368 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-23/market-making-spcx__ZDNjTsj/verifier/test-stdout.txt (7892453 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-23/market-making-spcx__drxFN6c/verifier/test-stdout.txt (7915819 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-23/market-making-spcx__tA6dfWA/verifier/test-stdout.txt (7750256 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-55/market-making-spcx__5swNzNc/verifier/test-stdout.txt (7859946 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-55/market-making-spcx__9HNqysz/verifier/test-stdout.txt (7842956 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-55/market-making-spcx__R9Mf2Ao/verifier/test-stdout.txt (7980714 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-55/market-making-spcx__fqq3X6Z/verifier/test-stdout.txt (7992274 bytes gzipped)",
+    "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-55/market-making-spcx__uasg8cS/verifier/test-stdout.txt (7988564 bytes gzipped)"
+  ],
+  "source": "20261110-052134-x1",
+  "tasks": {
+    "flash-crash-spcx": {
+      "name": "solana-foundation/flash-crash-spcx",
+      "ref": "sha256:b9931ba1c2bf75a830845ca9c58af1a14a2da6db36b6ddbb68576e35fbc7963f"
+    },
+    "market-making-spcx": {
+      "name": "solana-foundation/market-making-spcx",
+      "ref": "sha256:7bcea10a066ae00811723aefa51679d018bc5212d54836d10fdd677392a04cf6"
+    }
+  },
+  "trials": 40,
+  "version": "0.11.0"
+}

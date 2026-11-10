@@ -1,0 +1,27 @@
+{
+    "job_name": "2026-11-10__05-21-34",
+    "jobs_dir": "jobs/bench/20261110-052134-x1",
+    "n_attempts": 5,
+    "agent_timeout_multiplier": 1.0,
+    "n_concurrent_trials": 3,
+    "agents": [
+        {
+            "name": "claude-code",
+            "model_name": "anthropic/claude-sonnet-5-5",
+            "kwargs": {
+                "version": "2.1.312",
+                "disallowed_tools": "WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents"
+            },
+            "env": {
+                "ENABLE_TOOL_SEARCH": "false",
+                "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+            }
+        }
+    ],
+    "datasets": [
+        {
+            "name": "solana-foundation/machine-trading",
+            "ref": "sha256:fddc9ab29bd0de923753a5338c2238b72f058abbd49101051d7bc17bc9e3df72"
+        }
+    ]
+}

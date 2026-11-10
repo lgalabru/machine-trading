@@ -1,0 +1,36 @@
+{
+  "models": [
+    "claude-sonnet-5-5",
+    "claude-opus-5-5",
+    "claude-fable-5-1",
+    "claude-fable-5-2"
+  ],
+  "attempts": 5,
+  "concurrent": 3,
+  "version": "0.11.0",
+  "timeout_multiplier": 1.0,
+  "harness": {
+    "claude-sonnet-5-5": {
+      "agent": "claude-code",
+      "version": "2.1.312"
+    },
+    "claude-opus-5-5": {
+      "agent": "claude-code",
+      "version": "2.1.312"
+    },
+    "claude-fable-5-1": {
+      "agent": "claude-code",
+      "version": "2.1.312"
+    },
+    "claude-fable-5-2": {
+      "agent": "claude-code",
+      "version": "2.1.312"
+    }
+  },
+  "web": false,
+  "metric": "skill: total PnL over the hidden set / the reference bot's, mean over attempts, 90% bootstrap interval",
+  "commit": "603ffb4541d1e169bfb8efb27f425fb97c816f37",
+  "notes": [
+    "Fable 5.1 and Fable 5.2 ran on mtx-bench-1 (EPYC 9555P, 128 threads), 10 trials at a time, on this batch's secret; Sonnet 5.5 and Opus 5.5 on the Mac mini, 3 at a time. Merged here by hand."
+  ]
+}
