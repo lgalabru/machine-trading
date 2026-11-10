@@ -491,7 +491,7 @@ impl ChainClient for RpcChainClient {
     }
 
     /// One `sendTransaction`, base64-encoded, with the node's pre-flight
-    /// simulation skipped: [`chain::submit`](crate::chain::submit) simulates
+    /// simulation skipped: [`chain::fire_and_forget`](crate::chain::fire_and_forget) simulates
     /// before signing when asked to.
     async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
         let config = RpcSendTransactionConfig {

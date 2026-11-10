@@ -416,7 +416,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        chain::{SubmitOptions, mock::MockChainClient},
+        chain::{FireAndForgetOptions, mock::MockChainClient},
         protocols::openbook_v2::{
             PROGRAM_ID,
             state::testing::{book_side_bytes, market_bytes},
@@ -532,8 +532,9 @@ mod tests {
     async fn reads_the_book_and_submits() {
         let chain = Arc::new(MockChainClient::new());
         let signer = Keypair::new();
-        let t = trader(chain.clone(), signer.pubkey())
-            .with_send_mode(SendMode::Submit(SubmitOptions { simulate: false }));
+        let t = trader(chain.clone(), signer.pubkey()).with_send_mode(SendMode::FireAndForget(
+            FireAndForgetOptions { simulate: false },
+        ));
         let book = t.order_book(0).await.unwrap();
         assert_eq!(book.bids.len(), 1);
         assert_eq!(book.bids[0].price, dec!(150));
