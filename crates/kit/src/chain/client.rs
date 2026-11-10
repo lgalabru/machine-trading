@@ -138,6 +138,15 @@ pub trait ChainClient: Send + Sync {
         filters: Vec<RpcFilterType>,
     ) -> Result<Vec<(Pubkey, Account)>, ChainError>;
 
+    /// Every SPL token account `owner` holds for `mint`, its associated
+    /// account or not: an enforcer counts them all, or a balance moved out
+    /// of the associated account would go unseen.
+    async fn get_token_accounts_by_owner(
+        &self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+    ) -> Result<Vec<(Pubkey, Account)>, ChainError>;
+
     /// Lamport balance of an account (zero if it does not exist).
     async fn get_balance(&self, pubkey: &Pubkey) -> Result<u64, ChainError>;
 
@@ -418,6 +427,43 @@ impl ChainClient for RpcChainClient {
                     .map(|account| (key, account))
                     .ok_or(ChainError::Decode {
                         what: "program account",
+                        detail: format!("{key}: data is not binary"),
+                    })
+            })
+            .collect()
+    }
+
+    async fn get_token_accounts_by_owner(
+        &self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+    ) -> Result<Vec<(Pubkey, Account)>, ChainError> {
+        let response: solana_rpc_client_api::response::Response<
+            Vec<solana_rpc_client_api::response::RpcKeyedAccount>,
+        > = self
+            .rpc
+            .send(
+                solana_rpc_client_api::request::RpcRequest::GetTokenAccountsByOwner,
+                serde_json::json!([
+                    owner.to_string(),
+                    { "mint": mint.to_string() },
+                    { "encoding": "base64", "commitment": "confirmed" },
+                ]),
+            )
+            .await
+            .map_err(|e| self.rpc_err(e))?;
+        response
+            .value
+            .into_iter()
+            .map(|keyed| {
+                let key: Pubkey = keyed.pubkey.parse().map_err(|_| ChainError::Decode {
+                    what: "token account",
+                    detail: format!("{} is not a pubkey", keyed.pubkey),
+                })?;
+                ui_to_account(&keyed.account)
+                    .map(|account| (key, account))
+                    .ok_or(ChainError::Decode {
+                        what: "token account",
                         detail: format!("{key}: data is not binary"),
                     })
             })

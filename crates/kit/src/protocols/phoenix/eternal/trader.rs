@@ -422,7 +422,7 @@ mod tests {
 
     fn order(order_type: OrderType, tif: TimeInForce, price: Option<Decimal>) -> Order {
         let mut o = Order::market(
-            InstrumentId::new("phoenix:SOL"),
+            InstrumentId::new("phoenix:perp:SOL"),
             VenueId::new("phoenix"),
             Side::Buy,
             dec!(1.5),

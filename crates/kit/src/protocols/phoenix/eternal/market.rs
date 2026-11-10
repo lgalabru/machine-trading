@@ -122,7 +122,7 @@ impl PhoenixMarket {
         )
         .map_err(|_| invalid("base lots decimals", base_lots_decimals.to_string()))?;
         let instrument = Instrument::new(
-            InstrumentId::new(format!("{VENUE}:{symbol}")),
+            InstrumentId::new(format!("{VENUE}:perp:{symbol}")),
             VenueId::new(VENUE),
             symbol,
             InstrumentKind::Perpetual,
@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(m.instrument.tick_size, dec!(0.01));
         assert_eq!(m.instrument.lot_size, dec!(0.01));
         assert_eq!(m.instrument.kind, InstrumentKind::Perpetual);
-        assert_eq!(m.id().0, "phoenix:SOL");
+        assert_eq!(m.id().0, "phoenix:perp:SOL");
         assert_eq!(m.instrument.base.decimals, 2);
         assert_eq!(m.instrument.quote.symbol, "USDC");
         assert_eq!(m.ticks_to_price(15_025), dec!(150.25));
