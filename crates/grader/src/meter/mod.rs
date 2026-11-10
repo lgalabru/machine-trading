@@ -9,7 +9,6 @@
 
 mod phoenix_perp;
 pub mod phoenix_spot;
-pub mod pyth;
 
 use mtx_core::{Decimal, MeterError};
 pub use phoenix_perp::PhoenixPerpMeter;

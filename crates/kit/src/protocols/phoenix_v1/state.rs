@@ -484,4 +484,43 @@ mod tests {
         assert!(o.is_live(10, 99));
         assert!(!o.is_live(11, 99));
     }
+
+    /// Mainnet's SOL-USDC market, `4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg`,
+    /// as read at slot 467582217: set `MTX_PHOENIX_V1_MARKET` to a dump of
+    /// its account data (1,723,488 bytes). The expected values were read
+    /// from the same dump by an independent decoder.
+    #[test]
+    #[ignore = "needs a dump of the mainnet market account"]
+    fn decodes_mainnets_sol_usdc_market() {
+        let data = std::fs::read(std::env::var("MTX_PHOENIX_V1_MARKET").unwrap()).unwrap();
+        let m = MarketState::decode(&data).unwrap();
+        let h = &m.header;
+        assert_eq!((h.bids_size, h.asks_size, h.num_seats), (4096, 4096, 8321));
+        assert_eq!((h.base_decimals, h.quote_decimals), (9, 6));
+        assert_eq!((h.base_lot_size, h.quote_lot_size), (1_000_000, 1));
+        assert_eq!(m.seats.len(), 6982);
+        assert_eq!((m.bids.len(), m.asks.len()), (1278, 301));
+        let (bid, ask) = (&m.bids[0], &m.asks[0]);
+        assert_eq!(
+            (bid.price_in_ticks, bid.trader_index, bid.base_lots),
+            (70535, 650, 19850)
+        );
+        assert_eq!(
+            (ask.price_in_ticks, ask.trader_index, ask.base_lots),
+            (129000, 3352, 800)
+        );
+        let maker: Pubkey = "AR166mgnJ15pVzjXCB56mHeuz52ER49Cqqg7fiTdwi1i"
+            .parse()
+            .unwrap();
+        let seat = m.seat(&maker).unwrap();
+        assert_eq!(
+            (
+                seat.quote_lots_locked,
+                seat.quote_lots_free,
+                seat.base_lots_locked,
+                seat.base_lots_free
+            ),
+            (7_886_545_246, 0, 510, 0)
+        );
+    }
 }
