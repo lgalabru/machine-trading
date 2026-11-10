@@ -360,6 +360,136 @@ pub async fn execute(
     Ok(receipts)
 }
 
+/// Knobs for [`submit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubmitOptions {
+    /// Simulate each step against current state before signing it, and
+    /// refuse to sign one that would fail. Turn it off only where current
+    /// state is not the state the transaction will meet: in a lockstep world
+    /// whose next block lands it after other traders have moved, a failed
+    /// simulation says nothing about the landing.
+    pub simulate: bool,
+}
+
+impl Default for SubmitOptions {
+    fn default() -> Self {
+        Self { simulate: true }
+    }
+}
+
+/// How a plan reaches the chain: [`execute`] or [`submit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendMode {
+    /// Simulate, sign, send and wait for each transaction to land.
+    Confirm(ExecuteOptions),
+    /// Send and return without waiting: for worlds that land a transaction
+    /// after the sender's turn.
+    Submit(SubmitOptions),
+}
+
+impl Default for SendMode {
+    fn default() -> Self {
+        Self::Confirm(ExecuteOptions::without_receipts())
+    }
+}
+
+impl SendMode {
+    /// Sends `plan` this way. Returns each step's signature, in order.
+    pub async fn send(
+        self,
+        plan: &ExecutionPlan,
+        signer: &dyn TransactionSigner,
+        client: &dyn ChainClient,
+    ) -> Result<Vec<Signature>, ChainError> {
+        match self {
+            Self::Confirm(options) => Ok(execute(plan, signer, client, &[], options)
+                .await?
+                .into_iter()
+                .map(|r| r.signature)
+                .collect()),
+            Self::Submit(options) => submit(plan, signer, client, options).await,
+        }
+    }
+}
+
+/// Sends a plan step by step without waiting for any step to land: fetch a
+/// blockhash, simulate (unless [`SubmitOptions::simulate`] is off), sign,
+/// send. Returns each step's signature, in order.
+///
+/// The counterpart of [`execute`] for worlds that land transactions after
+/// the sender's turn (see [`ChainClient::send`]). Steps are not confirmed,
+/// so a later step cannot rely on an earlier one having landed: put
+/// dependent instructions in one [`InstructionGroup`]. Stops at the first
+/// step the node refuses; earlier steps are already sent.
+pub async fn submit(
+    plan: &ExecutionPlan,
+    signer: &dyn TransactionSigner,
+    client: &dyn ChainClient,
+    options: SubmitOptions,
+) -> Result<Vec<Signature>, ChainError> {
+    if signer.address() != plan.payer {
+        return Err(ChainError::PayerMismatch {
+            expected: plan.payer,
+            actual: signer.address(),
+        });
+    }
+    if plan.is_empty() {
+        return Err(PlanError::Empty.into());
+    }
+    let mut signatures = Vec::with_capacity(plan.steps.len());
+    for step in &plan.steps {
+        let blockhash = client.get_latest_blockhash().await?;
+        let signature = submit_step(step, &plan.payer, blockhash, signer, client, options).await?;
+        signatures.push(signature);
+    }
+    Ok(signatures)
+}
+
+/// Sends one transaction of a plan on `blockhash` without waiting for it:
+/// simulate (unless [`SubmitOptions::simulate`] is off), sign, send.
+///
+/// For callers that manage blockhashes themselves, such as a bot that
+/// rebuilds a transaction on a fresh blockhash when the node no longer knows
+/// the one it signed with.
+pub async fn submit_step(
+    step: &TransactionPlan,
+    payer: &Pubkey,
+    blockhash: Hash,
+    signer: &dyn TransactionSigner,
+    client: &dyn ChainClient,
+    options: SubmitOptions,
+) -> Result<Signature, ChainError> {
+    let label = step.label();
+    let mut tx = VersionedTransaction::from(step.transaction(payer, blockhash));
+    if options.simulate {
+        let simulation = client.simulate(&tx, &[]).await?;
+        if let Some(error) = simulation.error {
+            return Err(ChainError::Simulation {
+                label,
+                error,
+                logs: simulation.logs,
+            });
+        }
+    }
+    signer.sign_transaction(&mut tx).await?;
+    if !is_fully_signed(&tx) {
+        let required = usize::from(tx.message.header().num_required_signatures);
+        let present = tx
+            .signatures
+            .iter()
+            .filter(|s| **s != Signature::default())
+            .count();
+        return Err(SignerError::Incomplete {
+            missing: required.saturating_sub(present),
+            required,
+        }
+        .into());
+    }
+    let signature = client.send(&tx).await?;
+    tracing::info!(%signature, label, "transaction sent");
+    Ok(signature)
+}
+
 async fn fetch_receipt(
     client: &dyn ChainClient,
     signature: &Signature,
@@ -507,6 +637,58 @@ mod tests {
             );
             assert_eq!(tx.message.static_account_keys()[0], payer);
         }
+    }
+
+    #[tokio::test]
+    async fn submit_signs_and_sends_without_waiting() {
+        let signer = Keypair::new();
+        let payer = signer.pubkey();
+        let client = MockChainClient::new();
+        let plan = pack(
+            &payer,
+            &[group("a", &payer, 12), group("b", &payer, 12)],
+            DEFAULT_COMPUTE_UNIT_LIMIT,
+        )
+        .unwrap();
+        let signatures = submit(&plan, &signer, &client, SubmitOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(signatures.len(), 2);
+        assert_eq!(client.simulated().len(), 2, "simulated before signing");
+        let sent = client.sent();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0].signatures[0], signatures[0]);
+        assert!(sent.iter().all(|tx| tx.verify_and_hash_message().is_ok()));
+        assert_eq!(client.receipt_requests(), 0, "nothing waits for a landing");
+    }
+
+    #[tokio::test]
+    async fn submit_can_skip_the_simulation_and_refuses_a_failing_one() {
+        let signer = Keypair::new();
+        let payer = signer.pubkey();
+        let client = MockChainClient::new();
+        let plan = pack(&payer, &[group("a", &payer, 1)], DEFAULT_COMPUTE_UNIT_LIMIT).unwrap();
+        submit(&plan, &signer, &client, SubmitOptions { simulate: false })
+            .await
+            .unwrap();
+        assert!(client.simulated().is_empty());
+        assert_eq!(client.sent().len(), 1);
+
+        client.push_simulation(SimulationOutcome {
+            error: Some(TransactionError::AccountNotFound),
+            ..Default::default()
+        });
+        let err = submit(&plan, &signer, &client, SubmitOptions::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ChainError::Simulation { .. }));
+        assert_eq!(client.sent().len(), 1, "a failing step is never sent");
+
+        let other = Keypair::new();
+        let err = submit(&plan, &other, &client, SubmitOptions::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ChainError::PayerMismatch { .. }));
     }
 
     #[tokio::test]
