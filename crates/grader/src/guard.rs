@@ -26,6 +26,13 @@
 //! [`Guard::internal`] serves the grader's own clients the same way, with no
 //! allowlist and no turns.
 //!
+//! A session may also give the guard a [`SendHook`]: it runs before and
+//! after each of the bot's transactions is forwarded, for participants who
+//! act on the bot's orders as they arrive (see [`crate::actors`]). While a
+//! hooked send runs, the bot's other calls wait for it, and a batch's other
+//! calls are answered first: nothing the bot reads sees the market between
+//! the two halves. Sessions without a hook forward as before.
+//!
 //! The bot's guard also keeps a [`CallLog`]: every method it was asked for,
 //! and each send and refusal with the turn it came in, for the session's
 //! review.
@@ -165,6 +172,14 @@ pub struct CallRecord {
     pub method: String,
 }
 
+/// Something that acts around each of the bot's transactions: `before`
+/// runs once the guard has accepted a send and before it is forwarded,
+/// `after` once the surfnet has answered it.
+pub trait SendHook: Send + Sync {
+    fn before(&self) -> futures::future::BoxFuture<'_, ()>;
+    fn after(&self) -> futures::future::BoxFuture<'_, ()>;
+}
+
 pub struct Guard {
     url: String,
     state: Arc<GuardState>,
@@ -184,6 +199,10 @@ struct GuardState {
     /// The bot's current turn, or [`NO_STEP`].
     step: AtomicU64,
     log: Mutex<CallLog>,
+    /// Set by [`Guard::set_send_hook`]; with it, `calls` orders the bot's
+    /// calls around hooked sends.
+    hook: Mutex<Option<Arc<dyn SendHook>>>,
+    calls: tokio::sync::RwLock<()>,
 }
 
 impl GuardState {
@@ -223,6 +242,8 @@ impl Guard {
             late_sends: AtomicUsize::new(0),
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
+            hook: Mutex::default(),
+            calls: tokio::sync::RwLock::new(()),
         });
         let app = Router::new()
             .route("/", post(handle))
@@ -260,6 +281,11 @@ impl Guard {
     /// The turn calls count toward from now on, in the [`CallLog`].
     pub fn set_step(&self, k: u64) {
         self.state.step.store(k, Ordering::SeqCst);
+    }
+
+    /// Run `hook` around each of the bot's transactions from now on.
+    pub fn set_send_hook(&self, hook: Arc<dyn SendHook>) {
+        *self.state.hook.lock().expect("guard lock") = Some(hook);
     }
 
     /// What the bot asked for so far.
@@ -314,6 +340,56 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
         };
     }
 
+    let hook = state.hook.lock().expect("guard lock").clone();
+    let Some(hook) = hook else {
+        return forward(&state, request).await;
+    };
+    if !calls.iter().any(|c| is_send(c)) {
+        let _reading = state.calls.read().await;
+        return forward(&state, request).await;
+    }
+    // A hooked send: nothing else the bot asks runs until both halves have.
+    let _sending = state.calls.write().await;
+    match request {
+        Value::Array(calls) => {
+            let (sends, others): (Vec<Value>, Vec<Value>) = calls.into_iter().partition(is_send);
+            let mut replies = Vec::new();
+            if !others.is_empty() {
+                replies.extend(batch_replies(forward(&state, Value::Array(others)).await).await);
+            }
+            hook.before().await;
+            let sent = batch_replies(forward(&state, Value::Array(sends)).await).await;
+            hook.after().await;
+            replies.extend(sent);
+            reply(Value::Array(replies))
+        }
+        call => {
+            hook.before().await;
+            let response = forward(&state, call).await;
+            hook.after().await;
+            response
+        }
+    }
+}
+
+fn is_send(call: &Value) -> bool {
+    call["method"].as_str() == Some("sendTransaction")
+}
+
+/// The members of a forwarded batch's reply.
+async fn batch_replies(response: axum::response::Response) -> Vec<Value> {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    match serde_json::from_slice(&bytes) {
+        Ok(Value::Array(replies)) => replies,
+        Ok(reply) => vec![reply],
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Forward an accepted request upstream and answer it.
+async fn forward(state: &GuardState, request: Value) -> axum::response::Response {
     let mut request = request;
     let statuses = match &mut request {
         Value::Array(calls) => calls.iter_mut().map(at_processed).collect(),
@@ -332,7 +408,7 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
                 StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let bytes = response.bytes().await;
             if let Ok(bytes) = &bytes {
-                record_sends(&state, &request, bytes);
+                record_sends(state, &request, bytes);
             }
             match bytes {
                 Ok(bytes) if statuses.iter().any(|s| *s) => {
@@ -344,11 +420,11 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
                                         if let Some(call) =
                                             calls.iter().find(|c| c["id"] == reply["id"])
                                         {
-                                            fill_statuses(&state, call, reply).await;
+                                            fill_statuses(state, call, reply).await;
                                         }
                                     }
                                 }
-                                (call, reply) => fill_statuses(&state, call, reply).await,
+                                (call, reply) => fill_statuses(state, call, reply).await,
                             }
                             executed_is_final(&mut reply);
                             (status, axum::Json(reply)).into_response()
@@ -577,6 +653,8 @@ mod tests {
             late_sends: AtomicUsize::new(0),
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
+            hook: Mutex::default(),
+            calls: tokio::sync::RwLock::new(()),
         }
     }
 
@@ -683,6 +761,98 @@ mod tests {
         assert!(
             reply["result"]["value"][1].is_null(),
             "unknown stays unknown"
+        );
+    }
+
+    /// An upstream that notes each method it's asked for, in order.
+    async fn upstream(seen: Arc<Mutex<Vec<String>>>) -> String {
+        async fn answer(
+            State(seen): State<Arc<Mutex<Vec<String>>>>,
+            body: Bytes,
+        ) -> axum::response::Response {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            let one = |call: &Value| {
+                seen.lock()
+                    .unwrap()
+                    .push(call["method"].as_str().unwrap().to_string());
+                json!({ "jsonrpc": "2.0", "id": call["id"], "result": null })
+            };
+            reply(match &request {
+                Value::Array(calls) => Value::Array(calls.iter().map(one).collect()),
+                call => one(call),
+            })
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route("/", post(answer)).with_state(seen);
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        url
+    }
+
+    struct Noting(Arc<Mutex<Vec<String>>>);
+
+    impl SendHook for Noting {
+        fn before(&self) -> futures::future::BoxFuture<'_, ()> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push("before".into());
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            })
+        }
+        fn after(&self) -> futures::future::BoxFuture<'_, ()> {
+            Box::pin(async move { self.0.lock().unwrap().push("after".into()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hooked_send_runs_alone_between_its_halves() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let guard = Guard::start(upstream(seen.clone()).await).await.unwrap();
+        let client = reqwest::Client::new();
+        let call = |id: u64, method: &str| json!({ "jsonrpc": "2.0", "id": id, "method": method });
+        let post = |body: Value| client.post(guard.url()).json(&body).send();
+
+        // Without a hook, a batch goes up as it came.
+        post(json!([call(1, "getSlot"), call(2, "sendTransaction")]))
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), ["getSlot", "sendTransaction"]);
+        seen.lock().unwrap().clear();
+
+        guard.set_send_hook(Arc::new(Noting(seen.clone())));
+        let batch = json!([
+            call(1, "getSlot"),
+            call(2, "sendTransaction"),
+            call(3, "getBalance")
+        ]);
+        let replies: Value = post(batch).await.unwrap().json().await.unwrap();
+        let ids: Vec<u64> = replies
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, [1, 3, 2]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                "getSlot",
+                "getBalance",
+                "before",
+                "sendTransaction",
+                "after"
+            ],
+            "the batch's reads are answered first"
+        );
+        seen.lock().unwrap().clear();
+
+        // A read that comes in while a hooked send runs waits for it.
+        let send = tokio::spawn(post(call(4, "sendTransaction")));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        post(call(5, "getSlot")).await.unwrap();
+        send.await.unwrap().unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["before", "sendTransaction", "after", "getSlot"]
         );
     }
 }
