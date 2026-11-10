@@ -8,11 +8,9 @@
 //! [`chain`](crate::chain).
 
 #[cfg(feature = "openbook-v2")]
-pub mod openbook_v2;
-#[cfg(feature = "phoenix")]
+pub mod openbook;
+#[cfg(any(feature = "phoenix", feature = "phoenix-v1"))]
 pub mod phoenix;
-#[cfg(feature = "phoenix-v1")]
-pub mod phoenix_v1;
 #[cfg(feature = "pyth")]
 pub mod pyth;
 

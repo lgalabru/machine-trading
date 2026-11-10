@@ -16,7 +16,7 @@ use mtx_kit::{
         core::PhoenixHawkeyeClient, ix::hawkeye::ViewAssetReturn,
         types::exchange::ExchangeMarketConfig,
     },
-    protocols::phoenix::PhoenixMarket,
+    protocols::phoenix::eternal::PhoenixMarket,
 };
 use serde_json::json;
 use solana_pubkey::Pubkey;

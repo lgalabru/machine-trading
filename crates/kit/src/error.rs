@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{chain::ChainError, protocols::phoenix::PhoenixError};
+use crate::{chain::ChainError, protocols::phoenix::eternal::PhoenixError};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -9,13 +9,17 @@ pub enum Error {
     #[error("rpc: {0}")]
     Rpc(#[from] Box<solana_rpc_client_api::client_error::Error>),
     #[error("phoenix api: {0}")]
-    PhoenixApi(#[from] crate::protocols::phoenix::phoenix_rise::api::PhoenixHttpError),
+    PhoenixApi(#[from] crate::protocols::phoenix::eternal::phoenix_rise::api::PhoenixHttpError),
     #[error("phoenix instruction: {0}")]
-    Ix(#[from] crate::protocols::phoenix::phoenix_rise::ix::PhoenixIxError),
+    Ix(#[from] crate::protocols::phoenix::eternal::phoenix_rise::ix::PhoenixIxError),
     #[error("phoenix tx builder: {0}")]
-    TxBuilder(#[from] crate::protocols::phoenix::phoenix_rise::core::PhoenixTxBuilderError),
+    TxBuilder(
+        #[from] crate::protocols::phoenix::eternal::phoenix_rise::core::PhoenixTxBuilderError,
+    ),
     #[error("hawkeye: {0}")]
-    Hawkeye(#[from] crate::protocols::phoenix::phoenix_rise::core::PhoenixHawkeyeClientError),
+    Hawkeye(
+        #[from] crate::protocols::phoenix::eternal::phoenix_rise::core::PhoenixHawkeyeClientError,
+    ),
     #[error("{}: {source}", path.display())]
     Io {
         path: PathBuf,

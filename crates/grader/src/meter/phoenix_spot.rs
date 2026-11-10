@@ -5,7 +5,7 @@
 //! The account on a market is the owner's seat, a `TraderState` in the
 //! market account, with the owner's wallet token accounts for the market's
 //! two mints. The kit decodes the market
-//! ([`MarketState`](mtx_kit::protocols::phoenix_v1::state::MarketState)) and
+//! ([`MarketState`](mtx_kit::protocols::phoenix::v1::state::MarketState)) and
 //! the Pyth price the base is valued at
 //! ([`PriceUpdate`](mtx_kit::protocols::pyth::PriceUpdate)); the meter reads
 //! them with the grader's own client, never the bot's.
@@ -17,7 +17,7 @@ use mtx_core::{
     RecordedFill,
 };
 use mtx_kit::protocols::{
-    phoenix_v1::state::{MarketState, TraderState},
+    phoenix::v1::state::{MarketState, TraderState},
     pyth,
 };
 use solana_pubkey::{Pubkey, pubkey};

@@ -1,36 +1,21 @@
-//! Phoenix Eternal perpetuals on Solana (feature `phoenix`).
+//! Phoenix, the venue (`specs/venues/phoenix.md`): two programs, one venue.
 //!
-//! | Phoenix | Core |
-//! |---------|------|
-//! | `/exchange` metadata | [`PhoenixExchange`] |
-//! | a perp market | [`PhoenixMarket`] → [`Instrument`](crate::core::Instrument) (perpetual, base = the asset, quote = USDC) |
-//! | ticks, base lots, quote lots | exact [`Decimal`](rust_decimal::Decimal) conversions on [`PhoenixMarket`] |
-//! | Hawkeye BBO view | [`OrderBook`](crate::core::OrderBook) (top of book, prices only) |
-//! | Hawkeye margin view | [`Position`](crate::core::Position) |
-//! | limit / market order, cancel all | [`PhoenixTrader`] plans, [`chain::execute`](crate::chain::execute) sends |
-//! | order flow | [`PhoenixDriver`] → [`ExecutionDriver`](crate::core::ExecutionDriver) |
+//! | Program | Markets | Module | Feature |
+//! |---------|---------|--------|---------|
+//! | Phoenix Eternal | perpetuals, cross-margin trader accounts | [`eternal`] | `phoenix` |
+//! | Phoenix v1 | spot order books, one seat per trader per market | [`v1`] | `phoenix-v1` |
 //!
-//! The trader account is the authority's cross-margin account (PDA index 0,
-//! subaccount 0). Phoenix's own SDK, `phoenix-rise`, is re-exported as
-//! [`phoenix_rise`] for anything not wrapped here.
+//! Both trade through an [`ExecutionDriver`](crate::core::ExecutionDriver)
+//! and name their instruments `phoenix:<kind>:<SYMBOL>`, on the same
+//! [`VENUE`]: `phoenix:perp:SOL` is Eternal's, `phoenix:spot:SOL-USDC` is
+//! v1's. What an account holds differs: a perp
+//! [`Position`](crate::core::Position) on Eternal,
+//! [`SpotBalances`](crate::core::SpotBalances) on v1.
 
-mod driver;
-mod error;
-mod exchange;
-mod market;
-mod trader;
+#[cfg(feature = "phoenix")]
+pub mod eternal;
+#[cfg(feature = "phoenix-v1")]
+pub mod v1;
 
-pub use driver::PhoenixDriver;
-pub use error::PhoenixError;
-pub use exchange::{PhoenixExchange, load_exchange};
-pub use market::{DEFAULT_QUOTE_LOT_DECIMALS, PhoenixMarket};
-/// Phoenix's SDK, re-exported so dependents do not have to pin it.
-pub use phoenix_rise;
-pub use trader::{PhoenixOrder, PhoenixTrader};
-
-/// The venue identifier of every Phoenix instrument.
+/// The venue every Phoenix instrument trades on, perpetual or spot.
 pub const VENUE: &str = "phoenix";
-
-/// Compute-unit limit for Phoenix transactions, which routinely exceed the
-/// 200k default.
-pub const COMPUTE_UNIT_LIMIT: u32 = 1_400_000;

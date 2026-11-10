@@ -354,7 +354,7 @@ mod tests {
     use super::*;
     use crate::{
         chain::{FireAndForgetOptions, mock::MockChainClient},
-        protocols::phoenix_v1::{
+        protocols::phoenix::v1::{
             PROGRAM_ID,
             state::testing::{MarketSpec, market_bytes},
         },
