@@ -208,3 +208,19 @@ cap check reads `Holding::position()`.
 - An id drops the kind, so one venue can't list a perp and a spot market
   under the same symbol. Phoenix names them differently, `SOL` and
   `SOL-USDC`; a venue that doesn't would need the kind in its ids.
+- 2026-11-10: step 4, first half. `PhoenixSpotMeter`
+  (`crates/core/src/meter/phoenix_spot.rs`) measures Phoenix v1 spot seats
+  as `specs/venues/phoenix.md` defines them. It reads the seat's
+  `TraderState`, the wallet's base and quote token accounts, and the Pyth
+  SOL/USD price (`meter/pyth.rs`). Phoenix's own `phoenix-v1` crate pins
+  Solana 1.14, which this workspace can't build beside Solana 3 and 4. So
+  the meter decodes the few fields it needs from the account layout, and
+  refuses any account whose size doesn't match the tree sizes in its
+  header. Checked against mainnet's SOL-USDC market at slot 467582217: all
+  6,982 seats were found by searching the tree, and one live seat with
+  resting bids and asks valued to the cent. Fills are `Unsupported` until
+  it decodes the audit log's `Fill` events. A seat counts against the
+  universe when it has orders resting, base or quote locked. Holdings
+  count wherever they sit, since a spot position belongs to the asset.
+  `PhoenixPerpMeter` moved to `meter/phoenix_perp.rs`. No session uses
+  the spot meter yet, and the mandate reader still refuses `spot`.
