@@ -108,6 +108,7 @@ mtx scenario play scenario.json                               # replays a saved 
 just ladder <family>                   # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
 just leak-audit                        # the agent's image holds no answer
+just keypair-probe                     # a bot can't read the grader's keypairs
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
 
