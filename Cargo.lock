@@ -4654,6 +4654,7 @@ dependencies = [
 name = "mtx-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "borsh 1.8.1",
  "bs58",

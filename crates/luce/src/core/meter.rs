@@ -8,14 +8,19 @@
 //! records rather than from the bot. They are what each venue profile in
 //! `specs/venues/` lists under Measurements:
 //!
-//! - the account's [`Holding`] in each instrument;
-//! - the instruments it has open orders in, for the universe rule;
+//! - the account's [`Holding`] in each instrument, its value in USD at the
+//!   profile's reference prices, and how many markets it holds outside the
+//!   mandate's universe, read together as one [`Measurement`];
 //! - the fills the venue recorded, for the sides and limit-price rules;
-//! - the account's value in USD, at the profile's reference prices;
-//! - the health of each borrowing position, where the venue lends.
+//! - whether the account can be liquidated, and the health of each
+//!   borrowing position, where the venue lends.
 //!
 //! A grader holds one meter per venue in a mandate's universe and audits
 //! what they report; see `docs/rfd/0001-instrument-traits.md`.
+//!
+//! Holdings, value and the universe count come from one call because they
+//! must agree: a bot trading between separate reads would show a position in
+//! one that the value in another doesn't price.
 
 use rust_decimal::Decimal;
 use thiserror::Error;
@@ -30,6 +35,32 @@ pub struct RecordedFill {
     pub slot: u64,
     /// The fill.
     pub fill: Fill,
+}
+
+/// What a venue holds for the account at one moment, read together.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measurement {
+    /// The account's holding in each instrument the meter measures, flat
+    /// ones included.
+    pub holdings: Vec<(InstrumentId, Holding)>,
+    /// The account's value on this venue, in USD, at the profile's reference
+    /// prices: holdings, plus perpetuals' unrealized PnL, minus what it owes.
+    /// Wallet balances other venues also count are the grader's to count
+    /// once.
+    pub value_usd: Decimal,
+    /// Markets on this venue the account holds a position or orders in that
+    /// are not in the universe.
+    pub outside_universe: u32,
+}
+
+impl Measurement {
+    /// The account's holding in `instrument`, if the meter measures it.
+    pub fn holding(&self, instrument: &InstrumentId) -> Option<&Holding> {
+        self.holdings
+            .iter()
+            .find(|(id, _)| id == instrument)
+            .map(|(_, holding)| holding)
+    }
 }
 
 /// Errors from measuring an account.
@@ -55,23 +86,20 @@ pub enum MeterError {
 /// them. Everything is read from the venue, never from the trading bot.
 #[async_trait::async_trait]
 pub trait AccountMeter: Send + Sync {
-    /// The account's holding in each instrument it holds anything in, on this
-    /// venue.
-    async fn holdings(&self) -> Result<Vec<(InstrumentId, Holding)>, MeterError>;
-
-    /// The instruments the account has open orders in.
-    async fn open_orders(&self) -> Result<Vec<InstrumentId>, MeterError>;
+    /// The account's holdings, value and markets held outside `universe`,
+    /// as one measurement.
+    async fn measure(&self, universe: &[InstrumentId]) -> Result<Measurement, MeterError>;
 
     /// Every fill the venue recorded for the account in slots after
     /// `after_slot`, in order, including a maker's fills the venue hasn't
     /// settled into its account yet.
     async fn fills(&self, after_slot: u64) -> Result<Vec<RecordedFill>, MeterError>;
 
-    /// The account's value on this venue, in USD, at the profile's reference
-    /// prices: holdings, plus perpetuals' unrealized PnL, minus what it owes.
-    /// Wallet balances other venues also count are the grader's to count
-    /// once.
-    async fn value_usd(&self) -> Result<Decimal, MeterError>;
+    /// Whether the venue would liquidate the account now. False on venues
+    /// that neither margin nor lend.
+    async fn liquidatable(&self) -> Result<bool, MeterError> {
+        Ok(false)
+    }
 
     /// The health of each of the account's borrowing positions, as the venue
     /// profile defines it: 1 or below is liquidatable. Empty on venues that
