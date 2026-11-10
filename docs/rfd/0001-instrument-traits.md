@@ -191,3 +191,20 @@ cap check reads `Holding::position()`.
   same double as before. So does the value, unless the bot moved USDC back
   to its wallet. Then the old sum rounded twice and the new one rounds once,
   which can differ by one ulp.
+- 2026-11-10: step 3. `Observed` already listed positions per instrument,
+  but only as a peak, and the session filled it with one number. It now
+  holds a `PositionRange` per instrument, the lowest and highest signed
+  position. The session records one for every holding a meter reports,
+  under the mandate's name for it: `InstrumentRef::of_holding` takes the
+  kind from the `Holding`, and `InstrumentRef::id` gives the `luce` id
+  back, `<venue>:<symbol>`. The universe a meter counts against is now the
+  mandate's, not the scenario's market. The audit still bounds the peak,
+  long or short, by `max_position`, since this reader has no
+  `min_position`. Keeping the low end is what lets it add `min_position`,
+  as `specs/mandate.md` already defines it, without touching the session.
+  `SessionReport` gains `positions`. It keeps `peak_position`, which
+  `mtx bench review` shows. Grades and step records are unchanged on the
+  practice sets.
+- An id drops the kind, so one venue can't list a perp and a spot market
+  under the same symbol. Phoenix names them differently, `SOL` and
+  `SOL-USDC`; a venue that doesn't would need the kind in its ids.
