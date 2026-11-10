@@ -6,6 +6,7 @@
 //! | Producing signatures | [`TransactionSigner`] | [`Keypair`](solana_keypair::Keypair) |
 //! | Building transactions | [`InstructionGroup`] → [`pack`] → [`ExecutionPlan`] | |
 //! | Running them | [`preview`], [`execute`] | simulate before every signature |
+//! | Sending without waiting | [`submit`], [`submit_step`] | for worlds that land a transaction after the sender's turn |
 //! | Tokens | [`token`] | ATAs, SOL wrapping, balances |
 //!
 //! # Async
@@ -33,5 +34,6 @@ pub use error::{ChainError, PlanError, SignerError};
 pub use signer::{TransactionSigner, is_fully_signed, read_keypair_file};
 pub use tx::{
     DEFAULT_COMPUTE_UNIT_LIMIT, ExecuteOptions, ExecutionPlan, ExecutionReceipt, InstructionGroup,
-    MAX_TRANSACTION_SIZE, StepPreview, TransactionPlan, execute, pack, preview,
+    MAX_TRANSACTION_SIZE, SendMode, StepPreview, SubmitOptions, TransactionPlan, execute, pack,
+    preview, submit, submit_step,
 };

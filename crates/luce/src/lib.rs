@@ -4,7 +4,8 @@
 //!
 //! ```text
 //!  protocols   phoenix (feature "phoenix"): a Phoenix perp as an Instrument,
-//!     │        exact tick/lot math, a trader that plans orders, an ExecutionDriver
+//!     │        exact tick/lot math, a trader that plans orders, an ExecutionDriver;
+//!     │        phoenix_v1, openbook_v2 (spot books, the same pieces), pyth (prices)
 //!     ▼
 //!  chain       ChainClient · TransactionSigner · InstructionGroup → pack →
 //!     │        preview → execute (simulate before every signature) · tokens
@@ -28,7 +29,8 @@
 //!   Adapters never see a key.
 //! - **Simulate before signing.** [`chain::execute`] simulates every
 //!   transaction right before signing it and refuses to sign one that would
-//!   fail.
+//!   fail. [`chain::submit`], for worlds that land a transaction after the
+//!   sender's turn, does too unless the caller turns it off.
 //! - **One risk vocabulary.** Trading limits ([`core::RiskLimits`]) and
 //!   lending checks ([`lending::risk`]) both report
 //!   [`Pass / Warn / Reject`](core::RiskCheckResult); any rejection blocks.
@@ -40,6 +42,9 @@
 //! | Feature | Adds |
 //! |---------|------|
 //! | `phoenix` | [`protocols::phoenix`]: Phoenix Eternal perpetuals |
+//! | `phoenix-v1` | [`protocols::phoenix_v1`]: Phoenix v1 spot order books |
+//! | `openbook-v2` | [`protocols::openbook_v2`]: OpenBook v2 spot order books |
+//! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
 pub mod chain;
@@ -48,3 +53,7 @@ pub mod lending;
 pub mod protocols;
 
 pub use rust_decimal::{self, Decimal};
+/// The Solana types luce's signatures use, so callers need not pin matching
+/// versions of the Solana crates themselves.
+pub use solana_pubkey::Pubkey;
+pub use solana_transaction::{Hash, Instruction, Signature};
