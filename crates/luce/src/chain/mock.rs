@@ -80,7 +80,8 @@ impl MockChainClient {
         self
     }
 
-    /// Queues a send failure for the next [`ChainClient::send_and_confirm`].
+    /// Queues a send failure for the next [`ChainClient::send_and_confirm`]
+    /// or [`ChainClient::send`].
     pub fn push_send_failure(&self, error: TransactionError) -> &Self {
         self.state().send_failures.push_back(error);
         self
@@ -185,6 +186,15 @@ impl ChainClient for MockChainClient {
                 signature: transaction.signatures[0],
                 error,
             });
+        }
+        s.sent.push(transaction.clone());
+        Ok(transaction.signatures[0])
+    }
+
+    async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
+        let mut s = self.state();
+        if let Some(error) = s.send_failures.pop_front() {
+            return Err(ChainError::Rpc(format!("send refused: {error}")));
         }
         s.sent.push(transaction.clone());
         Ok(transaction.signatures[0])

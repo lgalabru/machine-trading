@@ -17,8 +17,8 @@ use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::{
     client_error::Error as ClientError,
     config::{
-        RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSimulateTransactionAccountsConfig,
-        RpcSimulateTransactionConfig, RpcTransactionConfig,
+        RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig,
+        RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig, RpcTransactionConfig,
     },
     filter::RpcFilterType,
 };
@@ -160,6 +160,18 @@ pub trait ChainClient: Send + Sync {
         &self,
         transaction: &VersionedTransaction,
     ) -> Result<Signature, ChainError>;
+
+    /// Sends a signed transaction and returns as soon as the node accepts
+    /// it, without waiting for it to land.
+    ///
+    /// For worlds where a transaction lands after the sender's turn, such as
+    /// a lockstep simulator that executes what a bot sent in its next block:
+    /// waiting there would wait out the turn. The default waits
+    /// ([`send_and_confirm`](Self::send_and_confirm)); clients that can hand a
+    /// transaction over without waiting override it.
+    async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
+        self.send_and_confirm(transaction).await
+    }
 
     /// Fetches a confirmed transaction's balance effects. `Ok(None)` if the
     /// node does not have it yet.
@@ -474,6 +486,21 @@ impl ChainClient for RpcChainClient {
     ) -> Result<Signature, ChainError> {
         self.rpc
             .send_and_confirm_transaction(transaction)
+            .await
+            .map_err(|e| self.rpc_err(e))
+    }
+
+    /// One `sendTransaction`, base64-encoded, with the node's pre-flight
+    /// simulation skipped: [`chain::submit`](crate::chain::submit) simulates
+    /// before signing when asked to.
+    async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
+        let config = RpcSendTransactionConfig {
+            skip_preflight: true,
+            encoding: Some(UiTransactionEncoding::Base64),
+            ..RpcSendTransactionConfig::default()
+        };
+        self.rpc
+            .send_transaction_with_config(transaction, config)
             .await
             .map_err(|e| self.rpc_err(e))
     }

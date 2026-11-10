@@ -23,9 +23,11 @@ fmt:
 
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy -p luce --all-features --all-targets -- -D warnings
 
 test:
     cargo test --workspace
+    cargo test -p luce --all-features
 
 # Run mtx from source, like `cargo run --release --`. Arguments keep their
 # quoting, and a leading `mtx` is optional: `just run mtx scenario play "..."`.
