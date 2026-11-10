@@ -234,6 +234,9 @@
   .crumb.brand .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 10px rgba(162,239,91,.6); }
   .crumb .caret { color: var(--text-4); font-size: 10px; }
   .crumb-sep { color: var(--text-4); font-size: 14px; padding: 0 1px; user-select: none; }
+  a.gh-badge { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px 0 10px; border-radius: 99px; background: #fff; color: #000; font: 600 12.5px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; text-decoration: none; transition: background .15s, box-shadow .15s; }
+  a.gh-badge:hover { background: #e9e9ec; box-shadow: 0 0 0 3px rgba(255,255,255,.12); }
+  a.gh-badge svg { width: 16px; height: 16px; fill: currentColor; }
   .crumb-menu { position: relative; }
   .crumb-menu > summary { list-style: none; cursor: pointer; }
   .crumb-menu > summary::-webkit-details-marker { display: none; }
@@ -493,6 +496,7 @@
     .tip { max-width: min(420px, 92vw); }
     /* Touch: tap targets a finger can hit. */
     .crumb { height: 36px; }
+    a.gh-badge { padding: 0 8px; } a.gh-badge span { display: none; }
     .evb { width: 34px; height: 32px; }
     .peek-x { width: 36px; height: 34px; }
   }
@@ -613,6 +617,8 @@ const cache = new Map();
 // answer is a file beside the page, and the big ones are gzipped for the
 // browser to inflate.
 const STATIC = !!window.MTX_STATIC;
+// The repository, at the far right of the top bar.
+const GITHUB_BADGE = `<a class="gh-badge" href="https://github.com/lgalabru/machine-trading" target="_blank" rel="noopener" aria-label="machine-trading on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>GitHub</span></a>`;
 function staticUrl(path) {
   const p = path.replace(/^\/api\//, "");
   if (p.startsWith("session/")) return { url: `api/${p}.json.gz`, gz: true };
@@ -989,6 +995,7 @@ function setCrumbs(state = {}) {
   }
   if (state.session) out.push(sep, `<a class="crumb here" href="${link({ task: state.task, run: state.run, session: state.session })}">${esc(state.session)}</a>`);
   if (state.extra) out.push(sep, `<span class="crumb here">${esc(state.extra)}</span>`);
+  out.push(GITHUB_BADGE);
   document.getElementById("crumbbar").innerHTML = out.join("");
   // One menu open at a time; a click elsewhere closes it.
   document.querySelectorAll(".crumb-menu").forEach((d) => d.addEventListener("toggle", () => { if (d.open) document.querySelectorAll(".crumb-menu").forEach((o) => { if (o !== d) o.open = false; }); }));
