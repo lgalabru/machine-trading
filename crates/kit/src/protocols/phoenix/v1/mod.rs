@@ -26,12 +26,14 @@ mod driver;
 mod error;
 pub mod ix;
 mod market;
+mod meter;
 pub mod state;
 mod trader;
 
 pub use driver::PhoenixV1Driver;
 pub use error::PhoenixV1Error;
 pub use market::{OwnedOrder, PhoenixV1Market};
+pub use meter::{PhoenixV1Meter, balances};
 use solana_pubkey::Pubkey;
 pub use state::{BookSide, MarketHeader, MarketState, RestingOrder, TraderState};
 pub use trader::{PhoenixV1Order, PhoenixV1Trader};

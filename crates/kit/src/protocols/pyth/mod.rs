@@ -40,6 +40,28 @@ pub fn feed_account(shard: u16, feed_id: &[u8; 32]) -> Pubkey {
 }
 
 /// The Anchor discriminator of a `PriceUpdateV2` account.
+/// The feed the spot venue profiles value `mint` at, for the mints they
+/// name: SOL/USD for wrapped SOL. USDC is valued at $1 and has none.
+pub fn feed_for_mint(mint: &Pubkey) -> Option<[u8; 32]> {
+    (mint == &solana_pubkey::pubkey!("So11111111111111111111111111111111111111112"))
+        .then_some(SOL_USD_FEED_ID)
+}
+
+/// `feed_id`'s latest price, read from its shard-0 account.
+pub async fn read_price(
+    chain: &dyn crate::chain::ChainClient,
+    feed_id: &[u8; 32],
+) -> Result<Decimal, ChainError> {
+    let address = feed_account(0, feed_id);
+    let account = chain
+        .get_account(&address)
+        .await?
+        .ok_or(ChainError::AccountNotFound(address))?;
+    PriceUpdate::decode_feed(&account.data, feed_id)?
+        .price()
+        .ok_or_else(|| decode_error("the price doesn't fit a decimal"))
+}
+
 pub const PRICE_UPDATE_V2_DISCRIMINATOR: [u8; 8] = [34, 241, 35, 99, 157, 126, 244, 205];
 
 /// How much of the Wormhole guardian set signed the update.
