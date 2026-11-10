@@ -45,7 +45,7 @@ pub mod venue;
 pub use asset::{Asset, AssetError, AssetId};
 pub use error::{Error, Result};
 pub use fill::{Fill, FillId, FillQuality};
-pub use holding::{Holding, Holdings, LendingBalance};
+pub use holding::{Holding, Holdings, LendingBalance, SpotBalances};
 pub use instrument::{Instrument, InstrumentError, InstrumentId, InstrumentKind, Rounding};
 pub use mandate::Mandate;
 pub use meter::{AccountMeter, Measurement, MeterError, RecordedFill};

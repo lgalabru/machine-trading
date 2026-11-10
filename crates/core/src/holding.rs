@@ -44,21 +44,23 @@ impl Holding {
     }
 }
 
-/// A spot market's base asset, as the spot profile counts it: in the wallet,
+/// One asset of a spot market, as the spot profile counts it: in the wallet,
 /// free on the venue, and locked behind the account's open orders. A venue
 /// with several accounts per owner (OpenBook's open orders accounts) sums
-/// them into `free` and `locked`.
+/// them into `free` and `locked`. In a [`Holding::Spot`] it is the market's
+/// base; [`SpotBalances`] holds the quote the same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Holdings {
-    /// The base asset.
+    /// The asset held: the market's base, or in [`SpotBalances::quote`] its
+    /// quote.
     pub base: Asset,
     /// In the owner's wallet, in base units. For SOL, wrapped SOL only: the
     /// profiles leave native SOL out, since it pays fees.
     pub wallet: Decimal,
     /// On the venue and free to withdraw, in base units.
     pub free: Decimal,
-    /// On the venue, locked behind the account's resting asks, in base
-    /// units.
+    /// On the venue, locked behind the account's resting orders, in base
+    /// units: asks lock the base, bids the quote.
     pub locked: Decimal,
 }
 
@@ -76,6 +78,26 @@ impl Holdings {
     /// Everything held, wherever: the spot position.
     pub fn total(&self) -> Decimal {
         self.wallet + self.free + self.locked
+    }
+}
+
+/// Both assets of an account on a spot market: the base, whose total is the
+/// position, and the quote, which the account's value counts too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpotBalances {
+    pub base: Holdings,
+    pub quote: Holdings,
+}
+
+impl SpotBalances {
+    /// The market's holding, as the mandate measures it: the base.
+    pub fn holding(&self) -> Holding {
+        Holding::Spot(self.base.clone())
+    }
+
+    /// Whether orders rest in the market: an ask locks base, a bid quote.
+    pub fn has_orders(&self) -> bool {
+        self.base.locked > Decimal::ZERO || self.quote.locked > Decimal::ZERO
     }
 }
 

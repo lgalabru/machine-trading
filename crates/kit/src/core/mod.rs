@@ -66,7 +66,7 @@ pub use book::{OrderBook, PriceLevel, Spread};
 pub use command::{CommandOutcome, ExecutionCommand, MeasuredSubmit, SubmitOrder};
 pub use execution::{ExecutionDriver, ExecutionError, ExecutionReport};
 pub use fill::{Fill, FillId, FillQuality};
-pub use holding::{Holding, Holdings, LendingBalance};
+pub use holding::{Holding, Holdings, LendingBalance, SpotBalances};
 pub use instrument::{Instrument, InstrumentError, InstrumentId, InstrumentKind, Rounding};
 pub use meter::{AccountMeter, Measurement, MeterError, RecordedFill};
 pub use order::{Order, OrderId, OrderStatus, OrderType, Side, TimeInForce};
