@@ -453,6 +453,7 @@ impl MakingFamily {
             funding: None,
             tape: Vec::new(),
             reference_pnl_usd: None,
+            fair_path: None,
         };
         (scenario, informed)
     }
