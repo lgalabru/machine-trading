@@ -44,12 +44,12 @@ mtx bench review 0.10.0
 
 You need Rust and `mtx` (above); no Docker. A bot is a Rust program that
 trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
-You write a strategy, and [`mtx-botkit`](crates/botkit)'s run loop does
+You write a strategy, and [`mtx-kit`](crates/kit)'s run loop does
 the rest: it answers the grader, reads the market before every step, and
 sends your orders inside the mandate.
 
 ```rust
-use mtx_botkit::prelude::*;
+use mtx_kit::prelude::*;
 
 #[derive(Default)]
 struct FadeTheDip { peak: f64 }
@@ -67,7 +67,7 @@ impl Strategy for FadeTheDip {
 }
 
 fn main() -> BotResult {
-    mtx_botkit::run(FadeTheDip::default())
+    mtx_kit::run(FadeTheDip::default())
 }
 ```
 
@@ -120,14 +120,14 @@ the score. The details are in the [dataset README](bench/tasks/README.md).
 | | | |
 | --- | --- | --- |
 | 📊 **Bench** | Harbor tasks: each one is both an eval and an RL environment | Shipping |
-| 🛠️ **Harness** | An agent harness for trading on Solana, over [`luce`](crates/luce) | Next |
+| 🛠️ **Harness** | An agent harness for trading on Solana, over [`mtx-kit`](crates/kit) | Next |
 | 🧠 **Models** | Trading models trained on the bench's rewards and trajectories | Later |
 
 ## Repository
 
 ```
 bench/      📊 tasks (the Harbor dataset), checks, images, published results
-crates/     🦀 mtx (grader and CLI), mtx-core, luce (trading library), mtx-botkit (bot SDK)
+crates/     🦀 mtx (CLI), mtx-grader, mtx-kit (trading and the bot SDK), mtx-core (shared types and the mandate)
 bots/       🤖 starter, reference and baseline bots
 snapshots/  📸 pinned mainnet state
 specs/      📜 the mandate: what an agent may trade, and its limits

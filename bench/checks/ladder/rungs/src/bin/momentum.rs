@@ -3,7 +3,7 @@
 //! ones that revert: the reference's opposite bet.
 
 use anyhow::Result;
-use mtx_botkit::{BotEnv, Trader, Turns};
+use mtx_kit::{BotEnv, Trader, Turns};
 use mtx_ladder_rungs::{init_logs, toward};
 
 const TRIGGER_PCT: f64 = 4.0;

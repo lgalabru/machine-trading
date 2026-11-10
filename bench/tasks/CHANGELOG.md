@@ -4,6 +4,14 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **Unreleased.**
+  - **The SDK is `mtx-kit`.** `luce` and `mtx-botkit` are one crate,
+    `mtx-kit` (`/opt/mtx/sdk/crates/kit`), on `mtx-core`
+    (`/opt/mtx/sdk/crates/core`: the mandate, the turn protocol and the
+    types they share). Bots write `mtx_kit::` for `mtx_botkit::` and
+    `mtx_botkit::luce::`; `Trader::luce` is `Trader::inner`, and
+    `Phoenix::luce_market` is `Phoenix::exact_market`. Nothing a bot sees at
+    run time changes, and grades are unchanged.
 - **0.11.0.** Three leaks closed, tasks named for their skill, and OpenAI
   models. Design and evidence: [bench/design/0.11.0.md](../design/0.11.0.md).
   - **Renamed:** `phoenix-flash-crash` is now `flash-crash-spcx` and

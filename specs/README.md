@@ -41,7 +41,7 @@ the reference implementation by `cargo test`.
 | [Kamino](venues/kamino.md) | v0 | Draft |
 
 v0 is a draft. It specifies perpetuals, spot and money markets, on one venue
-or several. The reference implementation is `mtx_botkit::mandate`, which
+or several. The reference implementation is `mtx_core::mandate`, which
 bots read and the grader audits with; it implements the part the
 benchmark's tasks enforce today, one perpetual on one venue with a position
 cap and a drawdown limit, and rejects the rest.
