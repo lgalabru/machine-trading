@@ -588,6 +588,7 @@
   .empty { color: var(--text-3); padding: 30px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
   .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
   .loading { color: var(--text-3); padding: 40px 0; }
+  .lb .ci { font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -664,10 +665,23 @@ const SLOT_MS = 250;
 const clock = (slots) => { const s = Math.round(slots * SLOT_MS / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 const span = (a, b) => { const t = Date.parse(a?.finished_at ?? b) - Date.parse(a?.started_at ?? a); return isNum(t) ? t : null; };
 const dur = (ms) => { if (!isNum(ms)) return "–"; const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : m >= 1 ? `${m}m` : `${Math.round(ms / 1000)}s`; };
-const shortModel = (m) => String(m ?? "?").replace(/^anthropic\//, "").replace(/^claude-/, "");
+const shortModel = (m) => String(m ?? "?").replace(/^[\w-]+\//, "").replace(/^claude-/, "");
 const shortTask = (t) => String(t ?? "?").replace(/^solana-foundation\//, "");
 const ansi = (s) => String(s).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 const mean = (xs) => { const v = xs.filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+// A 90% interval for the mean of a model's attempts: a percentile bootstrap
+// over its attempts, seeded so the page reads the same every time. Attempts
+// vary far more than sessions do, so this is the uncertainty that matters;
+// with fewer than three it says nothing, and there's none.
+const ci90 = (xs) => {
+  const v = xs.filter(isNum);
+  if (v.length < 3) return null;
+  let seed = 0x9e3779b9;
+  const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+  const draws = Array.from({ length: 2000 }, () => { let sum = 0; for (let i = 0; i < v.length; i++) sum += v[Math.floor(rand() * v.length)]; return sum / v.length; }).sort((a, b) => a - b);
+  return [draws[100], draws[1899]];
+};
+const ciText = (ci) => ci ? `${fix(ci[0], 1)}–${fix(ci[1], 1)}×` : "";
 const sum = (xs) => xs.filter(isNum).reduce((a, b) => a + b, 0);
 
 // ---------- tooltip ----------
@@ -1151,6 +1165,7 @@ function equity(taskName) {
       model: m, trials: all.length, graded: mine.length,
       running: all.filter((t) => t.status === "pending").length,
       skill: mean(mine.map((t) => t.skill)),
+      ci: ci90(mine.map((t) => t.skill)),
       cost: mean(all.map((t) => t.cost_usd)),
       curve: mine.length ? curve(mine, "pnls") : null,
     };
@@ -1203,7 +1218,7 @@ function renderHero() {
         return `<div class="row ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to add or remove">
           <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · cost ${usd(m.cost, 0)}` : m.running ? `${m.running} running` : "not graded"}</div></div>
           ${sparkline(m.curve)}
-          ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's">${times(m.skill)}</div>`
+          ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's, mean of ${m.graded} attempt${m.graded > 1 ? "s" : ""}${m.ci ? `; 90% interval ${ciText(m.ci)}` : ""}">${times(m.skill)}</div>`
             : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
         </div>`;
       }).join("") || `<div class="muted">No trials yet.</div>`}
@@ -1331,10 +1346,18 @@ const releaseOrder = (rs) => [...rs.filter((r) => !r.published), ...rs.filter((r
 
 // ---------- tiles ----------
 // The venue a task trades, as a tile's badge: phoenix-… is PHX.
+// Tasks are named <skill>-<instrument> (flash-crash-spcx): the badge is the
+// instrument, the title the skill. Releases before 0.11.0 named them
+// <venue>-<skill> (phoenix-flash-crash), shown the same way.
 const VENUES = { phoenix: "PHX", kamino: "KMN", pump: "PUMP", oracle: "ORCL", spot: "SPOT" };
-const taskBadge = (short) => VENUES[short.split("-")[0]] || short.slice(0, 3).toUpperCase();
-// "phoenix-flash-crash" reads as "Flash crash".
-const taskTitle = (short) => { const words = short.split("-"); if (VENUES[words[0]] && words.length > 1) words.shift(); const t = words.join(" "); return t.charAt(0).toUpperCase() + t.slice(1); };
+const taskParts = (short) => {
+  const words = String(short).split("-");
+  if (VENUES[words[0]] && words.length > 1) return { badge: VENUES[words[0]], skill: words.slice(1) };
+  if (words.length > 2) return { badge: words.at(-1).toUpperCase(), skill: words.slice(0, -1) };
+  return { badge: String(short).slice(0, 3).toUpperCase(), skill: words };
+};
+const taskBadge = (short) => taskParts(short).badge;
+const taskTitle = (short) => { const t = taskParts(short).skill.join(" "); return t.charAt(0).toUpperCase() + t.slice(1); };
 let onCompare = false;
 const TILE_COLORS = ["#FF375F", "#0A84FF", "#E5B800", "#22B648", "#FF9F0A", "#BF5AF2", "#2AAEC6"];
 function renderSide() {
@@ -1388,13 +1411,14 @@ function renderOverview() {
     card("Agent time", dur(agentMs), `${dur(trials.length ? agentMs / trials.length : null)} a trial`),
   ].join(""), "ov-stats");
   // The leaderboard: mean skill by model and task.
-  section("Leaderboard", "mean skill: PnL over the reference's on the same scenarios; the reference scores 1×");
+  section("Leaderboard", "mean skill: PnL over the reference's on the same scenarios, the reference scoring 1×; under it, a 90% interval over attempts");
   const rows = modelOrder.map((m) => {
-    const per = index.tasks.map((t) => mean(index.trials.filter((x) => x.task === t.name && x.model === m && x.graded).map((x) => x.skill)));
-    return { model: m, per, mean: mean(per) };
+    const skills = index.tasks.map((t) => index.trials.filter((x) => x.task === t.name && x.model === m && x.graded).map((x) => x.skill));
+    const per = skills.map(mean);
+    return { model: m, per, cis: skills.map(ci90), mean: mean(per) };
   }).sort((x, y) => (y.mean ?? -Infinity) - (x.mean ?? -Infinity));
-  const chipFor = (v) => isNum(v) ? `<span class="delta ${Math.round(v * 100) >= 100 ? "up" : "down"}">${times(v)}</span>` : `<span class="muted">–</span>`;
-  div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v)}</td>`).join("")}<td class="num">${chipFor(r.mean)}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
+  const chipFor = (v, ci) => isNum(v) ? `<span class="delta ${Math.round(v * 100) >= 100 ? "up" : "down"}">${times(v)}</span>${ci ? `<div class="muted ci">${ciText(ci)}</div>` : ""}` : `<span class="muted">–</span>`;
+  div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v, r.cis[i])}</td>`).join("")}<td class="num">${chipFor(r.mean)}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
   app.querySelectorAll("td.cell").forEach((td) => td.addEventListener("click", () => { location.hash = taskHref(td.dataset.task); }));
   // Cost against skill, per task: which models are worth what they cost.
   section("Skill for the money", "each model's mean skill against its mean agent cost per run; the line is the frontier: no model is both cheaper and better");

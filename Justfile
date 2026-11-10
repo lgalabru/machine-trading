@@ -5,12 +5,15 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.10.0"
+tag := "0.11.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "phoenix-flash-crash=reference phoenix-market-making=maker"
-# The Claude Code version `just bench` runs, pinned so results compare.
+references := "flash-crash-spcx=reference market-making-spcx=maker"
+# The harness versions `just bench` runs, pinned so results compare: each
+# provider's own coding agent, Claude Code for Anthropic models and Codex for
+# OpenAI's.
 claude_code := "2.1.312"
+codex := "0.166.0"
 
 default:
     @just --list
@@ -53,7 +56,6 @@ snapshot-verify dir=("snapshots/" + snapshot):
 # Build the bots' bin/bot.
 bots:
     bots/starter/build.sh
-    bots/strategy/build.sh
     bots/reference/build.sh
     bots/maker/build.sh
     bots/dip-buyer/build.sh
@@ -151,17 +153,27 @@ release: check-solution
 
 # Benchmark agents on the published dataset, on an idle machine: other load
 # slows the surfnets' clocks, and the grader fails sessions it can't run on
-# time. Reads ANTHROPIC_API_KEY from .env or ~/.machine-trading.env. Results go
-# to jobs/bench/; read them with `harbor view jobs/bench`. Arguments are
-# positional: just bench "claude-sonnet-5-5 claude-opus-5-5" 3 3 0.3.0
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" version="" limit="1":
+# time. Models are `provider/model`, `anthropic/` when there's no provider:
+# Anthropic models run in Claude Code, OpenAI models in Codex. Reads
+# ANTHROPIC_API_KEY and OPENAI_API_KEY (for the providers it runs) from .env
+# or ~/.machine-trading.env. Results go to jobs/bench/; read them with
+# `mtx bench review`. Arguments are positional:
+# just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
     [ -f .env ] && . ./.env
     [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
-    [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set"; exit 1; }
+    for model in {{models}}; do
+      case "$model" in
+        openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
+        */*) [ "${model%%/*}" = anthropic ] || { echo "$model: only anthropic/ and openai/ models have a pinned harness"; exit 1; }
+          [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set, for $model"; exit 1; } ;;
+        *) [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set, for $model"; exit 1; } ;;
+      esac
+    done
     version="{{version}}"
     dataset="solana-foundation/machine-trading${version:+@$version}"
     batch="jobs/bench/$(date +%Y%m%d-%H%M%S)-x{{limit}}"
@@ -174,18 +186,34 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="3" n="3" ve
     fi
     export MTX_EVAL_SEED
     (umask 077 && printf '%s' "$MTX_EVAL_SEED" > "$batch/.seed")
-    # The plan, for `mtx bench review`: trials not started yet show as queued.
-    python3 -I -c 'import json, sys; out, m, k, n, v, x = sys.argv[1:]; json.dump({"models": m.split(), "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x)}, open(out, "w"), indent=2)' \
-      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}"
+    # The plan, written before the first trial starts: what runs (models,
+    # harnesses and their versions, attempts, time), what's measured and on
+    # which commit. `mtx bench review` shows trials not started yet as queued.
+    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, commit = sys.argv[1:]
+    models = m.split()
+    harness = lambda m: {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
+    json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x),
+               "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
+               "commit": commit}, open(out, "w"), indent=2)' \
+      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     for model in {{models}}; do
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
-      # The harness is pinned, so numbers compare across releases: the
-      # Claude Code version, no web and no memory across trials.
-      harbor run -y -d "$dataset" -a claude-code -m "anthropic/$model" -k {{k}} -n {{n}} -o "$batch" \
-        --agent-timeout-multiplier {{limit}} \
-        --ak version={{claude_code}} \
-        --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
-        --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+      # Each harness is pinned, so numbers compare across releases, with no
+      # web and no memory across trials.
+      case "$model" in
+        openai/*)
+          harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} \
+            --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
+          ;;
+        *)
+          harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} \
+            --ak version={{claude_code}} \
+            --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
+            --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+          ;;
+      esac
     done
     if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
@@ -226,7 +254,7 @@ check-solution:
 
 # The checks every task change should pass: oracle ~1, and nop, cheater and
 # sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
-harbor-checks task="phoenix-flash-crash" surfpool="": (image surfpool) check-solution
+harbor-checks task="flash-crash-spcx" surfpool="": (image surfpool) check-solution
     #!/usr/bin/env bash
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to

@@ -24,18 +24,18 @@ use crate::Family;
 pub enum Base {
     /// Directional: the market moves along a scripted path (crashes,
     /// squeezes, halts…) and the bot trades it. Starts from
-    /// phoenix-flash-crash.
+    /// flash-crash-spcx.
     Shocks,
     /// Quoting: the grader runs counterparties (takers, competing makers)
-    /// that trade with the bot. Starts from phoenix-market-making.
+    /// that trade with the bot. Starts from market-making-spcx.
     Making,
 }
 
 impl Base {
     fn task(self) -> &'static str {
         match self {
-            Base::Shocks => "phoenix-flash-crash",
-            Base::Making => "phoenix-market-making",
+            Base::Shocks => "flash-crash-spcx",
+            Base::Making => "market-making-spcx",
         }
     }
     fn bot(self) -> &'static str {
@@ -53,7 +53,7 @@ impl Base {
 #[serde(default)]
 pub struct TaskSpec {
     #[schemars(
-        description = "The task's id: lowercase words joined by hyphens, starting with the venue, as in `phoenix-funding-squeeze`. It names the directory bench/tasks/<name>, the Harbor task solana-foundation/<name>, and (without the venue) the scenario family."
+        description = "The task's id: lowercase words joined by hyphens: the skill, then the instrument, as in `funding-squeeze-spcx`. It names the directory bench/tasks/<name>, the Harbor task solana-foundation/<name>, and (without the instrument) the scenario family."
     )]
     pub name: String,
     #[schemars(description = "A short human title, as in `Funding squeeze`.")]
@@ -63,7 +63,7 @@ pub struct TaskSpec {
     )]
     pub summary: String,
     #[schemars(
-        description = "The closest existing task to start from: `shocks` (the market moves along a scripted path and the bot trades it; from phoenix-flash-crash) or `making` (the grader runs counterparties the bot trades with; from phoenix-market-making)."
+        description = "The closest existing task to start from: `shocks` (the market moves along a scripted path and the bot trades it; from flash-crash-spcx) or `making` (the grader runs counterparties the bot trades with; from market-making-spcx)."
     )]
     pub base: Option<Base>,
     #[schemars(
@@ -96,7 +96,7 @@ pub struct TaskSpec {
 
 /// Fields the interview asks, with the question it puts to the author.
 pub const QUESTIONS: &[(&str, &str)] = &[
-    ("name", "The task's id, as in `phoenix-funding-squeeze`"),
+    ("name", "The task's id, as in `funding-squeeze-spcx`"),
     ("title", "A short title, as in `Funding squeeze`"),
     (
         "summary",
@@ -163,7 +163,7 @@ impl TaskSpec {
             });
             if !ok || !name.contains('-') {
                 out.push(format!(
-                    "`name` is `{name}`: it must be lowercase words joined by hyphens, venue first, as in `phoenix-funding-squeeze`."
+                    "`name` is `{name}`: it must be lowercase words joined by hyphens, the skill then the instrument, as in `funding-squeeze-spcx`."
                 ));
             } else if root.join("bench/tasks").join(name).exists() {
                 out.push(format!("`name` is `{name}`, but bench/tasks/{name} already exists: pick another, or run task_status on it."));
@@ -197,11 +197,12 @@ impl TaskSpec {
     }
 }
 
-/// A task's scenario family: its name without the venue
-/// (`phoenix-flash-crash` draws `flash-crash`).
+/// A task's scenario family: its name without the instrument it trades
+/// (`flash-crash-spcx` draws `flash-crash`). Tasks are named for the skill
+/// and the instrument; the venue is a means to an end.
 pub fn family_of(task: &str) -> String {
-    task.split_once('-')
-        .map_or(task, |(_, rest)| rest)
+    task.rsplit_once('-')
+        .map_or(task, |(skill, _)| skill)
         .to_string()
 }
 
@@ -828,7 +829,7 @@ mod tests {
 
     fn spec() -> TaskSpec {
         TaskSpec {
-            name: "phoenix-funding-squeeze".into(),
+            name: "funding-squeeze-spcx".into(),
             title: "Funding squeeze".into(),
             summary: "Write a bot that trades Phoenix SPCX perps through funding spikes.".into(),
             base: Some(Base::Shocks),
@@ -853,7 +854,7 @@ mod tests {
         let problems = bad.problems(&root);
         assert_eq!(problems.len(), 2, "{problems:?}");
         let mut taken = spec();
-        taken.name = "phoenix-flash-crash".into();
+        taken.name = "flash-crash-spcx".into();
         assert!(taken.problems(&root)[0].contains("already exists"));
         assert!(spec().problems(&root).is_empty());
     }
@@ -863,7 +864,7 @@ mod tests {
         let real = repo_root();
         let root =
             std::env::temp_dir().join(format!("mtx-author-{}", uuid::Uuid::new_v4().simple()));
-        for dir in ["bench/tasks/phoenix-flash-crash", "bots/reference"] {
+        for dir in ["bench/tasks/flash-crash-spcx", "bots/reference"] {
             copy_dir(
                 &real.join(dir),
                 &root.join(dir),
@@ -873,10 +874,10 @@ mod tests {
         }
         std::fs::copy(real.join("Justfile"), root.join("Justfile")).unwrap();
         let out = scaffold(&root, &spec()).unwrap();
-        let task = root.join("bench/tasks/phoenix-funding-squeeze");
+        let task = root.join("bench/tasks/funding-squeeze-spcx");
         assert!(
             read(&task.join("task.toml"))
-                .contains("name = \"solana-foundation/phoenix-funding-squeeze\"")
+                .contains("name = \"solana-foundation/funding-squeeze-spcx\"")
         );
         assert!(read(&task.join("task.toml")).contains("version = \"0.1.0\""));
         assert!(read(&task.join("instruction.md")).contains("## The bot contract"));
@@ -884,7 +885,7 @@ mod tests {
         assert!(
             read(&root.join("bots/funding-squeeze/Cargo.toml")).contains("mtx-bot-funding-squeeze")
         );
-        assert!(read(&root.join("Justfile")).contains("phoenix-funding-squeeze=funding-squeeze"));
+        assert!(read(&root.join("Justfile")).contains("funding-squeeze-spcx=funding-squeeze"));
         let steps = out["status"].as_array().unwrap();
         let state = |id: &str| {
             steps.iter().find(|s| s["id"] == id).unwrap()["state"]

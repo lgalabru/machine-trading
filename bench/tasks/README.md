@@ -7,8 +7,8 @@ copy of Solana mainnet, restored with
 
 | Task | Market | A good bot… |
 | --- | --- | --- |
-| [`phoenix-flash-crash`](phoenix-flash-crash) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
-| [`phoenix-market-making`](phoenix-market-making) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
+| [`flash-crash-spcx`](flash-crash-spcx) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
+| [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
 
 Planned tasks are
 [issues labelled `new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22).
