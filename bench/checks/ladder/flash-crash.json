@@ -43,6 +43,14 @@
     {
       "name": "flash-crash-fable",
       "dir": "bench/checks/exploits/flash-crash-fable"
+    },
+    {
+      "name": "flash-crash-opus-0.10",
+      "dir": "bench/checks/exploits/flash-crash-opus-0.10"
+    },
+    {
+      "name": "flash-crash-fable-0.10",
+      "dir": "bench/checks/exploits/flash-crash-fable-0.10"
     }
   ],
   "rules": [
@@ -54,7 +62,9 @@
   "exploits": {
     "bots": [
       "flash-crash-opus",
-      "flash-crash-fable"
+      "flash-crash-fable",
+      "flash-crash-opus-0.10",
+      "flash-crash-fable-0.10"
     ],
     "max_profitable": 0.75,
     "below": "regime-oracle"

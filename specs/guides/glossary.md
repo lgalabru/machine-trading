@@ -493,7 +493,7 @@ bull tosses its horns up while a bear swipes down.
 Also: flash crashes
 
 A sharp fall in price within minutes, followed by a fast recovery. The
-benchmark's `phoenix-flash-crash` task replays such sessions.
+benchmark's `flash-crash-spcx` task replays such sessions.
 
 :::history The Flash Crash
 On 6 May 2010 the Dow Jones fell nearly 1,000 points, about 9%, in minutes,

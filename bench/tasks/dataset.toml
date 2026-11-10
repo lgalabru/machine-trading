@@ -4,7 +4,7 @@
 
 [dataset]
 name = "solana-foundation/machine-trading"
-version = "0.10.1"
+version = "0.11.0"
 description = "Trading tasks for agents on Solana: bots trade DeFi markets replayed on offline mainnet snapshots with Surfpool."
 keywords = [ "solana", "trading", "defi", "perpetuals", "surfpool",]
 [[dataset.authors]]
@@ -13,10 +13,10 @@ email = "ludo.galabru@solana.org"
 
 
 [[tasks]]
-name = "solana-foundation/phoenix-flash-crash"
+name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:632911dfaaf054af880596600b3d3e48e07be7f1386d53b511089a6b2c982cc9"
 
 [[tasks]]
-name = "solana-foundation/phoenix-market-making"
+name = "solana-foundation/market-making-spcx"
 digest = "sha256:b4a8d7f903a1ff73b8e0987d76131baaccd9d59a48c65d04dac93ab688c51d32"
 
