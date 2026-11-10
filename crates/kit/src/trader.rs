@@ -9,7 +9,7 @@ use solana_transaction::Signature;
 use crate::{
     BotEnv, Decimal, Error, Phoenix, Result,
     core::{Rounding, Side as CoreSide},
-    protocols::phoenix::{PhoenixTrader, phoenix_rise::math::Side},
+    protocols::phoenix::eternal::{PhoenixTrader, phoenix_rise::math::Side},
     rpc_client,
 };
 
@@ -99,7 +99,7 @@ impl Trader {
     /// with the order book, so quotes, including the bot's own, can push
     /// the mark when the book is thin. They can't push this.
     pub async fn oracle_usd(&self) -> Result<f64> {
-        use crate::protocols::phoenix::phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
+        use crate::protocols::phoenix::eternal::phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
         let address = self.phoenix.perp_asset_map()?;
         let account = self.rpc.get_account(&address)?;
         let invalid = |reason: String| Error::Account {
@@ -224,14 +224,14 @@ impl Trader {
 
     /// This trader as an [`ExecutionDriver`](crate::core::ExecutionDriver),
     /// signing with a copy of the bot's keypair.
-    pub fn driver(&self) -> Result<crate::protocols::phoenix::PhoenixDriver<Keypair>> {
+    pub fn driver(&self) -> Result<crate::protocols::phoenix::eternal::PhoenixDriver<Keypair>> {
         let trader = PhoenixTrader::new(
             self.phoenix.exchange().clone(),
             &self.env.symbol,
             self.authority(),
             &self.env.rpc_url,
         )?;
-        Ok(crate::protocols::phoenix::PhoenixDriver::new(
+        Ok(crate::protocols::phoenix::eternal::PhoenixDriver::new(
             trader,
             self.keypair.insecure_clone(),
         ))

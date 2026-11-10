@@ -12,7 +12,7 @@
 //! | the two `BookSide` accounts | [`LeafOrder`]s with owners and placement times; [`OrderBook`](crate::core::OrderBook) with sizes |
 //! | an `OpenOrdersAccount` | [`OpenOrdersPosition`] (free and locked funds, maker volume) |
 //! | the account (wallet token accounts and every open orders account the `OpenOrdersIndexer` lists) | [`SpotBalances`](crate::core::SpotBalances) from `holdings()`; its base's total is the profile's position |
-//! | take-only (`place_take_order`), post-only and limit orders, cancel all, settle | [`OpenBookV2Trader`] plans, [`chain::execute`](crate::chain::execute) or [`chain::submit`](crate::chain::submit) sends |
+//! | take-only (`place_take_order`), post-only and limit orders, cancel all, settle | [`OpenBookV2Trader`] plans, [`chain::execute`](crate::chain::execute) or [`chain::fire_and_forget`](crate::chain::fire_and_forget) sends |
 //! | order flow | [`OpenBookV2Driver`] → [`ExecutionDriver`](crate::core::ExecutionDriver) |
 //!
 //! Instructions follow the program's IDL ([`ix`]). A maker's fills settle
@@ -33,15 +33,12 @@ use solana_pubkey::Pubkey;
 pub use state::{LeafOrder, MarketAccount, OpenOrdersIndexer, OpenOrdersPosition};
 pub use trader::{ACCOUNT_NUMBER, Book, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader};
 
-use super::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};
+pub use super::VENUE;
+use crate::protocols::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};
 
 /// The OpenBook v2 program.
 pub const PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("opnb2LAfJYbRMAHHvqjCwQxanZn7ReEHp1k81EohpZb");
-
-/// The venue every OpenBook v2 instrument trades on, as the venue profile
-/// names it.
-pub const VENUE: &str = "openbook";
 
 /// The markets the OpenBook venue profile names.
 pub const MARKETS: &[NamedMarket] = &[NamedMarket {

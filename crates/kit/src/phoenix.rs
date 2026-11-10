@@ -15,7 +15,7 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     Result,
-    protocols::phoenix::{
+    protocols::phoenix::eternal::{
         PhoenixExchange, PhoenixMarket,
         phoenix_rise::{
             core::{PhoenixHawkeyeClient, PhoenixMetadata, PhoenixTxBuilder},
@@ -28,7 +28,7 @@ use crate::{
 pub const QUOTE_LOTS_PER_USD: f64 = 1e6;
 
 pub fn load_exchange(path: &Path) -> Result<ExchangeResponse> {
-    Ok(crate::protocols::phoenix::load_exchange(path)?)
+    Ok(crate::protocols::phoenix::eternal::load_exchange(path)?)
 }
 
 pub struct Phoenix {
