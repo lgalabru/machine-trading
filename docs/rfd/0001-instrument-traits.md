@@ -232,3 +232,14 @@ cap check reads `Holding::position()`.
   called `mtx-core` until now, is `mtx-grader` (`crates/grader`); the
   meters are in `crates/grader/src/meter/`. Paths in the entries above
   are as they were when written.
+- 2026-11-10: #19 joined the kit (stacked in #20). Its Phoenix v1 and
+  OpenBook traders report `holdings()` as core's `SpotBalances`, the base
+  and the quote as `Holdings`. Its two `Holdings` structs in atoms are
+  gone, as step 1 proposed. The grader's `PhoenixSpotMeter` reads with
+  #19's `phoenix_v1::state::MarketState` and `pyth::PriceUpdate`, and its
+  own copies are deleted. Both decoders are checked against mainnet
+  accounts. The programs' own crates can't replace them: `phoenix-v1`
+  0.2.4 and `phoenix-sdk` 0.8 need Solana below 1.19, and `openbook-v2`
+  0.1.0 needs `anchor-lang` 0.27. `pyth-solana-receiver-sdk` 2.0 would
+  build, but on `solana-pubkey` 3 beside our 4, with all of Anchor, to
+  decode 134 bytes.
