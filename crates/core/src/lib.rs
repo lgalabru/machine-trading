@@ -7,6 +7,7 @@ pub mod flow;
 pub mod grade;
 pub mod guard;
 pub mod making;
+pub mod meter;
 pub mod phoenix;
 pub mod scenario;
 pub mod session;
