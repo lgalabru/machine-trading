@@ -23,12 +23,14 @@ mod driver;
 mod error;
 pub mod ix;
 mod market;
+mod meter;
 pub mod state;
 mod trader;
 
 pub use driver::OpenBookV2Driver;
 pub use error::OpenBookV2Error;
 pub use market::{MarketKeys, OpenBookV2Market};
+pub use meter::{OpenBookV2Meter, balances};
 use solana_pubkey::Pubkey;
 pub use state::{LeafOrder, MarketAccount, OpenOrdersIndexer, OpenOrdersPosition};
 pub use trader::{ACCOUNT_NUMBER, Book, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader};

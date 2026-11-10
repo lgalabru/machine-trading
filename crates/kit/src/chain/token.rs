@@ -113,6 +113,25 @@ pub fn transfer_checked(
     .expect("static program id and accounts are valid")
 }
 
+/// What `owner` holds of `mint`, in atoms, across every token account it
+/// owns for the mint: what an enforcer counts as its wallet.
+pub async fn owned_amount(
+    chain: &dyn crate::chain::ChainClient,
+    owner: &Pubkey,
+    mint: &Pubkey,
+) -> Result<u64, ChainError> {
+    let mut atoms = 0u64;
+    for (_, account) in chain.get_token_accounts_by_owner(owner, mint).await? {
+        atoms = atoms
+            .checked_add(token_account(&account)?.amount)
+            .ok_or_else(|| ChainError::Decode {
+                what: "token account",
+                detail: "balances overflow u64".into(),
+            })?;
+    }
+    Ok(atoms)
+}
+
 /// Parses an SPL token account's balance from raw account data.
 pub fn token_balance(account: &Account) -> Result<u64, ChainError> {
     Ok(token_account(account)?.amount)

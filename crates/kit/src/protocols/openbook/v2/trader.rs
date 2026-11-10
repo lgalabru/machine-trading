@@ -16,15 +16,14 @@ use solana_transaction::{Instruction, Signature};
 use super::{
     COMPUTE_UNIT_LIMIT, OpenBookV2Error, OpenBookV2Market,
     ix::{self, NO_QUOTE_LIMIT, OrderSide, PlaceOrderArgs, PlaceOrderType, SelfTradeBehavior},
-    state::{LeafOrder, OpenOrdersIndexer, OpenOrdersPosition, book_side_orders},
+    state::{LeafOrder, OpenOrdersPosition, book_side_orders},
 };
 use crate::{
     chain::{
         self, ChainClient, ChainError, ExecutionPlan, InstructionGroup, RpcChainClient, SendMode,
-        TransactionSigner, token,
+        TransactionSigner,
     },
     core::{OrderBook, Side, SpotBalances},
-    protocols::holdings_from_atoms,
 };
 
 /// The open orders account this adapter trades from: the trader's first.
@@ -192,63 +191,10 @@ impl OpenBookV2Trader {
         }
     }
 
-    /// What the trader holds on the market: its wallet's token accounts and
-    /// every open orders account its indexer lists on this market.
     /// What the trader holds on this market, as the OpenBook venue profile
-    /// measures it: its wallet's token accounts for the market's two mints,
-    /// and every open orders account it owns on the market, summed. Free is
-    /// what the accounts may settle; locked is what their resting orders
-    /// hold, asks the base and bids the quote with their maker fees. For SOL,
-    /// the wallet's holding is its wrapped-SOL token account. A maker's
-    /// fills count once `consume_events` has settled them.
+    /// measures it (see [`balances`](super::meter::balances)).
     pub async fn holdings(&self) -> Result<SpotBalances, OpenBookV2Error> {
-        let k = &self.market.keys;
-        let indexer = ix::open_orders_indexer(&self.authority);
-        let wallets = [
-            token::ata(&self.authority, &k.base_mint),
-            token::ata(&self.authority, &k.quote_mint),
-            indexer,
-        ];
-        let accounts = self.chain.get_multiple_accounts(&wallets).await?;
-        let balance = |a: &Option<solana_account::Account>| -> Result<u64, ChainError> {
-            a.as_ref().map_or(Ok(0), token::token_balance)
-        };
-        let listed = match &accounts[2] {
-            Some(account) => OpenOrdersIndexer::decode(&account.data)?.addresses,
-            None => Vec::new(),
-        };
-        let open_orders = if listed.is_empty() {
-            Vec::new()
-        } else {
-            self.chain.get_multiple_accounts(&listed).await?
-        };
-        let a = &self.market.account;
-        let (mut base_free, mut base_locked, mut quote_free, mut quote_locked) = (0, 0, 0, 0);
-        for account in open_orders.into_iter().flatten() {
-            let p = OpenOrdersPosition::decode(&account.data)?;
-            if p.market == k.market && p.owner == self.authority {
-                base_free += i128::from(p.base_free_native);
-                base_locked += i128::from(p.asks_base_lots) * i128::from(a.base_lot_size);
-                quote_free += i128::from(p.quote_free_native);
-                quote_locked += i128::from(p.bids_quote_lots) * i128::from(a.quote_lot_size)
-                    + i128::from(p.locked_maker_fees);
-            }
-        }
-        let i = &self.market.instrument;
-        Ok(SpotBalances {
-            base: holdings_from_atoms(
-                &i.base,
-                balance(&accounts[0])?.into(),
-                base_free,
-                base_locked,
-            )?,
-            quote: holdings_from_atoms(
-                &i.quote,
-                balance(&accounts[1])?.into(),
-                quote_free,
-                quote_locked,
-            )?,
-        })
+        Ok(super::meter::balances(self.chain.as_ref(), &self.market, &self.authority).await?)
     }
 
     fn lots(&self, quantity: Decimal) -> Result<i64, OpenBookV2Error> {
@@ -416,7 +362,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        chain::{FireAndForgetOptions, mock::MockChainClient},
+        chain::{FireAndForgetOptions, mock::MockChainClient, token},
         protocols::openbook::v2::{
             PROGRAM_ID,
             state::testing::{book_side_bytes, market_bytes},
