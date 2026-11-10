@@ -26,8 +26,10 @@ use crate::{asset::Asset, venue::VenueId};
 
 /// Unique identifier for a tradeable instrument.
 ///
-/// The convention is `"{venue}:{symbol}"`, e.g. `"phoenix:SOL-PERP"`, which
-/// keeps identifiers unique across venues.
+/// The convention is the mandate's instrument reference,
+/// `"{venue}:{kind}:{symbol}"` (`specs/mandate.md`), e.g. `"phoenix:perp:SOL"`
+/// or `"phoenix:spot:SOL-USDC"`: unique across venues, and across a venue's
+/// programs, whose symbols may collide.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct InstrumentId(pub String);
 

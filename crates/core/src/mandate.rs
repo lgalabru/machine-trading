@@ -277,25 +277,25 @@ impl InstrumentRef {
     /// The instrument's [`InstrumentId`], `<venue>:<symbol>`: what a meter
     /// reports holdings under.
     pub fn id(&self) -> InstrumentId {
-        InstrumentId::new(format!("{}:{}", self.venue, self.symbol))
+        InstrumentId::new(self.to_string())
     }
 
-    /// The mandate's name for a holding a meter reported under `id`: the
-    /// kind is the holding's.
+    /// The mandate's name for a holding a meter reported under `id`, which
+    /// is the reference itself. The holding must be of the kind the
+    /// reference names.
     pub fn of_holding(id: &InstrumentId, holding: &Holding) -> std::result::Result<Self, String> {
-        let Some((venue, symbol)) = id.0.split_once(':') else {
-            return Err(format!("instrument id {id} is not <venue>:<symbol>"));
+        let held = match holding {
+            Holding::Perp(_) => "perp",
+            Holding::Spot(_) => "spot",
+            Holding::MoneyMarket(_) => "money-market",
         };
-        let kind = match holding {
-            Holding::Perp(_) => Kind::Perp,
-            Holding::Spot(_) => "spot".parse()?,
-            Holding::MoneyMarket(_) => "money-market".parse()?,
-        };
-        Ok(Self {
-            venue: venue.into(),
-            kind,
-            symbol: symbol.into(),
-        })
+        match id.0.split(':').nth(1) {
+            Some(kind) if kind == held => id.0.parse(),
+            Some(kind) => Err(format!(
+                "{id} names a {kind}, but the meter reports a {held} holding"
+            )),
+            None => Err(format!("{id} is not <venue>:<kind>:<symbol>")),
+        }
     }
 }
 
@@ -492,14 +492,17 @@ mod tests {
         use crate::{Asset, Holdings, Position, VenueId};
 
         let id = spcx().id();
-        assert_eq!(id.0, "phoenix:SPCX");
+        assert_eq!(id.0, "phoenix:perp:SPCX");
         let perp = Holding::Perp(Position::flat(id.clone(), VenueId::new("phoenix")));
         assert_eq!(InstrumentRef::of_holding(&id, &perp).unwrap(), spcx());
 
         let usdc = Asset::new("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "USDC", 6).unwrap();
         let spot = Holding::Spot(Holdings::empty(usdc));
-        let reserved = InstrumentRef::of_holding(&InstrumentId::new("openbook:SOL-USDC"), &spot);
+        let reserved =
+            InstrumentRef::of_holding(&InstrumentId::new("openbook:spot:SOL-USDC"), &spot);
         assert!(reserved.unwrap_err().contains("reserved"));
         assert!(InstrumentRef::of_holding(&InstrumentId::new("SPCX"), &perp).is_err());
+        let mislabelled = InstrumentRef::of_holding(&InstrumentId::new("phoenix:spot:SPCX"), &perp);
+        assert!(mislabelled.unwrap_err().contains("names a spot"));
     }
 }
