@@ -8,6 +8,7 @@
 
 use std::{fmt, path::Path, str::FromStr};
 
+use luce::core::{Holding, InstrumentId};
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result, error::io_error};
@@ -140,15 +141,18 @@ impl Mandate {
                 positions: observed.positions_outside_universe,
             });
         }
-        for (instrument, held) in &observed.peak_positions {
-            let Some(allowance) = self.allowance(instrument) else {
+        for range in &observed.positions {
+            let Some(allowance) = self.allowance(&range.instrument) else {
                 return Some(Breach::OutsideUniverse { positions: 1 });
             };
+            // This reader has no `min_position`: `max_position` bounds a
+            // short as much as a long.
+            let held = range.peak();
             // Lots convert to base units in floating point.
-            if *held > allowance.max_position * (1.0 + 1e-9) {
+            if held > allowance.max_position * (1.0 + 1e-9) {
                 return Some(Breach::Position {
-                    instrument: instrument.clone(),
-                    held: *held,
+                    instrument: range.instrument.clone(),
+                    held,
                     cap: allowance.max_position,
                 });
             }
@@ -174,13 +178,59 @@ fn positive(name: &str, value: f64) -> std::result::Result<(), String> {
 /// What an enforcer measured over a session, for [`Mandate::audit`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Observed {
-    /// The largest position, long or short, held in each instrument measured.
-    pub peak_positions: Vec<(InstrumentRef, f64)>,
+    /// The range of positions held in each instrument measured, in the order
+    /// first seen.
+    pub positions: Vec<PositionRange>,
     /// The most positions or orders held at once in instruments outside the
     /// universe.
     pub positions_outside_universe: u32,
     /// The deepest the account's value fell below its running peak, in USD.
     pub max_drawdown_usd: f64,
+}
+
+impl Observed {
+    /// Counts a position seen in `instrument`, in base units.
+    pub fn record(&mut self, instrument: &InstrumentRef, position: f64) {
+        match self
+            .positions
+            .iter_mut()
+            .find(|range| &range.instrument == instrument)
+        {
+            Some(range) => {
+                range.lowest = range.lowest.min(position);
+                range.highest = range.highest.max(position);
+            }
+            None => self.positions.push(PositionRange {
+                instrument: instrument.clone(),
+                lowest: position.min(0.0),
+                highest: position.max(0.0),
+            }),
+        }
+    }
+
+    /// The range seen in `instrument`, if it was measured.
+    pub fn range(&self, instrument: &InstrumentRef) -> Option<&PositionRange> {
+        self.positions
+            .iter()
+            .find(|range| &range.instrument == instrument)
+    }
+}
+
+/// The lowest and highest position an account held in one instrument, in
+/// base units, signed as its instrument profile signs it: short or borrowed
+/// below zero. Both include flat, where every session starts.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PositionRange {
+    pub instrument: InstrumentRef,
+    pub lowest: f64,
+    pub highest: f64,
+}
+
+impl PositionRange {
+    /// The largest position, long or short.
+    pub fn peak(&self) -> f64 {
+        self.highest.max(-self.lowest)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -221,6 +271,32 @@ impl fmt::Display for Breach {
                 )
             }
         }
+    }
+}
+
+impl InstrumentRef {
+    /// The instrument's `luce` identifier, `<venue>:<symbol>`: what a meter
+    /// reports holdings under.
+    pub fn id(&self) -> InstrumentId {
+        InstrumentId::new(format!("{}:{}", self.venue, self.symbol))
+    }
+
+    /// The mandate's name for a holding a meter reported under `id`: the
+    /// kind is the holding's.
+    pub fn of_holding(id: &InstrumentId, holding: &Holding) -> std::result::Result<Self, String> {
+        let Some((venue, symbol)) = id.0.split_once(':') else {
+            return Err(format!("instrument id {id} is not <venue>:<symbol>"));
+        };
+        let kind = match holding {
+            Holding::Perp(_) => Kind::Perp,
+            Holding::Spot(_) => "spot".parse()?,
+            Holding::MoneyMarket(_) => "money-market".parse()?,
+        };
+        Ok(Self {
+            venue: venue.into(),
+            kind,
+            symbol: symbol.into(),
+        })
     }
 }
 
@@ -296,11 +372,12 @@ mod tests {
     }
 
     fn observed(held: f64, drawdown: f64) -> Observed {
-        Observed {
-            peak_positions: vec![(spcx(), held)],
-            positions_outside_universe: 0,
+        let mut observed = Observed {
             max_drawdown_usd: drawdown,
-        }
+            ..Observed::default()
+        };
+        observed.record(&spcx(), held);
+        observed
     }
 
     #[test]
@@ -384,13 +461,46 @@ mod tests {
             Some(Breach::OutsideUniverse { positions: 1 })
         ));
 
-        let sol = Observed {
-            peak_positions: vec![("phoenix:perp:SOL".parse().unwrap(), 1.0)],
-            ..Observed::default()
-        };
+        let mut sol = Observed::default();
+        sol.record(&"phoenix:perp:SOL".parse().unwrap(), 1.0);
         assert!(matches!(
             mandate.audit(&sol),
             Some(Breach::OutsideUniverse { .. })
         ));
+    }
+
+    #[test]
+    fn a_short_counts_against_the_cap_like_a_long() {
+        let mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        let mut observed = observed(40.0, 0.0);
+        observed.record(&spcx(), -12.0);
+        assert_eq!(mandate.audit(&observed), None);
+        observed.record(&spcx(), -71.0);
+        observed.record(&spcx(), 3.0);
+        let range = observed.range(&spcx()).unwrap();
+        assert_eq!(
+            (range.lowest, range.highest, range.peak()),
+            (-71.0, 40.0, 71.0)
+        );
+        assert!(matches!(
+            mandate.audit(&observed),
+            Some(Breach::Position { held: 71.0, .. })
+        ));
+    }
+
+    #[test]
+    fn holdings_are_named_as_the_mandate_names_them() {
+        use luce::core::{Asset, Holdings, Position, VenueId};
+
+        let id = spcx().id();
+        assert_eq!(id.0, "phoenix:SPCX");
+        let perp = Holding::Perp(Position::flat(id.clone(), VenueId::new("phoenix")));
+        assert_eq!(InstrumentRef::of_holding(&id, &perp).unwrap(), spcx());
+
+        let usdc = Asset::new("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "USDC", 6).unwrap();
+        let spot = Holding::Spot(Holdings::empty(usdc));
+        let reserved = InstrumentRef::of_holding(&InstrumentId::new("openbook:SOL-USDC"), &spot);
+        assert!(reserved.unwrap_err().contains("reserved"));
+        assert!(InstrumentRef::of_holding(&InstrumentId::new("SPCX"), &perp).is_err());
     }
 }

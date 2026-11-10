@@ -26,8 +26,8 @@ use std::{
 
 use mtx_botkit::{
     BotEnv, Decimal,
-    luce::core::{AccountMeter, InstrumentId, Measurement},
-    mandate::{InstrumentRef, Mandate, Observed, Term},
+    luce::core::{AccountMeter, InstrumentId, Measurement, MeterError},
+    mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
     turns::{self, Hello, Message, Step},
 };
 use serde::Serialize;
@@ -125,6 +125,9 @@ pub struct SessionReport {
     /// base units, the bot held in it while it ran.
     pub instrument: InstrumentRef,
     pub peak_position: f64,
+    /// The lowest and highest position the bot held in each instrument the
+    /// meter reported, what [`SessionReport::observed`] audits.
+    pub positions: Vec<PositionRange>,
     /// The most positions or orders the bot held at once in other markets.
     pub positions_outside_universe: u32,
     /// The deepest the account's value fell below its running peak while the
@@ -249,7 +252,7 @@ impl SessionReport {
     /// What the session measured, in the terms [`Mandate::audit`] checks.
     pub fn observed(&self) -> Observed {
         Observed {
-            peak_positions: vec![(self.instrument.clone(), self.peak_position)],
+            positions: self.positions.clone(),
             positions_outside_universe: self.positions_outside_universe,
             max_drawdown_usd: self.max_drawdown_usd,
         }
@@ -280,7 +283,13 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
     let meter = PhoenixPerpMeter::new(&rpc, &phoenix, bot.pubkey(), trader, market)?;
-    let universe = [meter.instrument().clone()];
+    let universe: Vec<InstrumentId> = scenario
+        .mandate
+        .universe
+        .iter()
+        .map(|allowance| allowance.instrument.id())
+        .collect();
+    let market_id = scenario.instrument().id();
     let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
     // Market making: the takers and the widened makers, set up while
     // cheatcodes still work.
@@ -427,7 +436,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut bot_exit = None;
     // Sampled every step: a fill persists until the bot trades out of it, so
     // a position over the cap is caught.
-    let mut peak_position: f64 = 0.0;
+    let mut observed = Observed::default();
     // The account's value, sampled at the same cadence: its running peak, and
     // the deepest it has fallen below it.
     let mut peak_value_usd = start_value_usd;
@@ -475,8 +484,8 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         }
 
         let now = meter.measure(&universe).await?;
-        let position = position_in(&now, meter.instrument());
-        peak_position = peak_position.max(position.abs());
+        record(&mut observed, &now)?;
+        let position = position_in(&now, &market_id);
         positions_outside_universe = positions_outside_universe.max(now.outside_universe);
         let value_usd = value(grader_f64(now.value_usd), position, slot, base_slot).await?;
         peak_value_usd = peak_value_usd.max(value_usd);
@@ -569,7 +578,8 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     };
 
     let end = meter.measure(&universe).await?;
-    let end_position = position_in(&end, meter.instrument());
+    record(&mut observed, &end)?;
+    let end_position = position_in(&end, &market_id);
     let end_value_usd = value(grader_f64(end.value_usd), end_position, end_slot, base_slot).await?;
     let positions_outside_universe = positions_outside_universe.max(end.outside_universe);
     let liquidatable = meter.liquidatable().await?;
@@ -593,8 +603,9 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         bot_exit,
         late_slots,
         mandate,
+        peak_position: observed.range(&instrument).map_or(0.0, PositionRange::peak),
         instrument,
-        peak_position: peak_position.max(end_position.abs()),
+        positions: observed.positions,
         positions_outside_universe,
         max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
         valuation: if scenario.making.is_some() {
@@ -846,6 +857,16 @@ fn grader_f64(amount: Decimal) -> f64 {
         .to_string()
         .parse()
         .expect("a decimal's digits parse as f64")
+}
+
+/// Counts every holding in `measurement` toward the session's position
+/// ranges, under the mandate's names for them.
+fn record(observed: &mut Observed, measurement: &Measurement) -> Result<()> {
+    for (id, holding) in &measurement.holdings {
+        let instrument = InstrumentRef::of_holding(id, holding).map_err(MeterError::Unsupported)?;
+        observed.record(&instrument, grader_f64(holding.position()));
+    }
+    Ok(())
 }
 
 /// The account's position in `instrument`, in base units; flat if the meter
