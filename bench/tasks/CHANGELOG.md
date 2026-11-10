@@ -4,6 +4,48 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.11.0.** Three leaks closed, tasks named for their skill, and OpenAI
+  models. Design and evidence: [bench/design/0.11.0.md](../design/0.11.0.md).
+  - **Renamed:** `phoenix-flash-crash` is now `flash-crash-spcx` and
+    `phoenix-market-making` is `market-making-spcx`: the skill, then the
+    instrument. `mtx bench review` and `compare` line a task up across the
+    rename.
+  - **flash-crash: big moves land in unequal parts.** Phoenix moves its
+    price at most 4% a step, and 0.10.0 cut a bigger at-once move into
+    equal steps, so the first step said how many followed. 0.10.0's best
+    bots went full size after it. Such a move now lands in parts of unequal,
+    random sizes on consecutive steps.
+  - **flash-crash: fizzles give back 40% to 100% of their move**, drawn
+    uniformly, not all of it to the exact level they left. Fading fizzles
+    was most of 0.10.0's best bots' edge (about $9k of Opus's $15k gross on
+    a ladder set), and nearly riskless.
+  - **market-making: informed orders look like noise.** In 0.10.0 they ran
+    2–4× noise sizes and limits, so each one stood out as it traded, and the
+    best bots took the position cap with every burst (14–20× the
+    reference). Each informed order now draws its size, limit and account
+    as a noise order does; only its side and timing differ (6 to 14 orders,
+    6 to 30 slots ahead of the jump). Fake-outs are drawn exactly like
+    informed bursts, zero to two a session.
+  - **The 0.10.0 winners join the exploit checks** (`*-0.10`), and the
+    ladder grades them on fresh sets of the new families.
+  - **The starter is a strategy on a run loop.** `/app/bot` is a
+    `Strategy` on `mtx_botkit::run`, which answers the grader, reads the
+    market before every step, and sends the step's order sheet cut to the
+    position cap; the instructions show it instead of the hand-written
+    `Turns` loop, which `mtx-botkit` still has. `step_offline` tests a
+    strategy without a chain. Agents get the same trading primitives as
+    before, with less plumbing to write, so scores may not compare with
+    0.10.0's on this alone.
+  - **`mtx-practice` runs three sessions at a time** (`MTX_JOBS` to
+    change); grades are the same however many run. Practice sets are redrawn
+    from the new families and recalibrated.
+  - **Benchmarking:** `just bench` takes `provider/model` and runs OpenAI
+    models in Codex (pinned, no web), five attempts per model by default,
+    and writes the batch's plan (harnesses and versions, attempts, time,
+    metric, commit) before the first trial. The review shows a 90% interval
+    over attempts.
+  - Image `0.11.0`: `mtx` with the new families, `mtx-practice`.
+
 - **0.10.1.** Agents know their time budget. In 0.10.0, 11 of 18 runs
   used their whole hour, most of them waiting on a parameter sweep of
   practice grades when they were stopped: Claude Code doesn't know its

@@ -31,6 +31,14 @@
     {
       "name": "market-making-fable",
       "dir": "bench/checks/exploits/market-making-fable"
+    },
+    {
+      "name": "market-making-opus-0.10",
+      "dir": "bench/checks/exploits/market-making-opus-0.10"
+    },
+    {
+      "name": "market-making-fable-0.10",
+      "dir": "bench/checks/exploits/market-making-fable-0.10"
     }
   ],
   "rules": [
@@ -40,7 +48,9 @@
   "exploits": {
     "bots": [
       "market-making-opus",
-      "market-making-fable"
+      "market-making-fable",
+      "market-making-opus-0.10",
+      "market-making-fable-0.10"
     ],
     "max_profitable": 0.9,
     "below": "flow-oracle"

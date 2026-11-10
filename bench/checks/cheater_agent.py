@@ -1,9 +1,9 @@
 """Harbor agents for the anti-cheat checks: each installs a bot from bench/checks/
 as /app/bot, without building anything.
 
-    PYTHONPATH=bench harbor run -p bench/tasks/phoenix-flash-crash -o jobs \
+    PYTHONPATH=bench harbor run -p bench/tasks/flash-crash-spcx -o jobs \
         -a checks.cheater_agent:CheaterAgent
-    PYTHONPATH=bench harbor run -p bench/tasks/phoenix-flash-crash -o jobs \
+    PYTHONPATH=bench harbor run -p bench/tasks/flash-crash-spcx -o jobs \
         -a checks.cheater_agent:SneakyAgent
 
 Run from the repository root. A sound task scores both 0: the cheater is

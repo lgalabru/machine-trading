@@ -38,7 +38,7 @@ struct Server {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Basics {
     #[schemars(
-        description = "Task id: venue first, words joined by hyphens, as in phoenix-funding-squeeze"
+        description = "Task id: the skill then the instrument, words joined by hyphens, as in funding-squeeze-spcx"
     )]
     name: String,
     #[schemars(description = "Short title, as in Funding squeeze")]
@@ -47,7 +47,7 @@ struct Basics {
     summary: String,
     // Forms take a plain list of strings, not a described enum.
     #[schemars(
-        description = "Start from: shocks (the market moves along a scripted path; from phoenix-flash-crash) or making (the grader runs counterparties the bot trades with; from phoenix-market-making)",
+        description = "Start from: shocks (the market moves along a scripted path; from flash-crash-spcx) or making (the grader runs counterparties the bot trades with; from market-making-spcx)",
         extend("enum" = ["shocks", "making"])
     )]
     base: String,
@@ -80,7 +80,7 @@ rmcp::elicit_safe!(Basics, Skill, Mandate);
 #[derive(Debug, Deserialize, JsonSchema)]
 struct TaskParams {
     #[schemars(
-        description = "The task's id, a directory in bench/tasks, as in phoenix-market-making. task_list lists them."
+        description = "The task's id, a directory in bench/tasks, as in market-making-spcx. task_list lists them."
     )]
     task: String,
 }
