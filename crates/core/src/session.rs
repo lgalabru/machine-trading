@@ -25,14 +25,14 @@ use std::{
 };
 
 use mtx_botkit::{
-    BotEnv, QUOTE_LOTS_PER_USD,
+    BotEnv, Decimal,
+    luce::core::{AccountMeter, InstrumentId, Measurement},
     mandate::{InstrumentRef, Mandate, Observed, Term},
     turns::{self, Hello, Message, Step},
 };
 use serde::Serialize;
 use serde_json::json;
 use solana_keypair::Keypair;
-use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use surfpool_sdk::{BlockProductionMode, CheatcodeFilter, SimnetCommand};
@@ -50,7 +50,8 @@ use crate::{
     flow::{FlowReport, TakerRecord, Takers},
     guard::{CallLog, Guard},
     making::level_at,
-    phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS, USDC_MINT},
+    meter::PhoenixPerpMeter,
+    phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS},
     scenario::Scenario,
     snapshot,
 };
@@ -277,9 +278,10 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         .value
         .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
-    let start_value_usd = account(&rpc, &phoenix, &bot.pubkey(), trader)
-        .await?
-        .value_usd;
+    // The account, as an enforcer reads it: from Phoenix, never from the bot.
+    let meter = PhoenixPerpMeter::new(&rpc, &phoenix, bot.pubkey(), trader, market)?;
+    let universe = [meter.instrument().clone()];
+    let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
     // Market making: the takers and the widened makers, set up while
     // cheatcodes still work.
     let (takers, competitor) = match &scenario.making {
@@ -302,7 +304,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     // What a market-making account's position is worth: the scenario's own
     // oracle level at `slot`, which quoting can't push the way it can push
     // Phoenix's mark. Otherwise the mark, as Phoenix reports it.
-    let value = async |value_usd: f64, base_lots: i64, slot: u64, base_slot: u64| -> Result<f64> {
+    let value = async |value_usd: f64, units: f64, slot: u64, base_slot: u64| -> Result<f64> {
         if scenario.making.is_none() {
             return Ok(value_usd);
         }
@@ -313,7 +315,6 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             .mark_price_ticks;
         let oracle = start_mark_usd
             * (1.0 + level_at(&scenario.path, slot.saturating_sub(base_slot)) / 100.0);
-        let units = phoenix.lots_to_base_units(market, base_lots);
         Ok(value_usd + units * (oracle - phoenix.ticks_to_usd(market, mark)))
     };
 
@@ -473,19 +474,11 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
                 .await;
         }
 
-        let asset = hawkeye
-            .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
-            .await?
-            .value;
-        peak_position =
-            peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs());
-        let now = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-        let outside = match now.positions_outside(asset.has_position_or_orders) {
-            0 => 0,
-            seen => seen.min(outside_again(&rpc, &phoenix, &hawkeye, &bot, trader, market).await?),
-        };
-        positions_outside_universe = positions_outside_universe.max(outside);
-        let value_usd = value(now.value_usd, asset.base_lots, slot, base_slot).await?;
+        let now = meter.measure(&universe).await?;
+        let position = position_in(&now, meter.instrument());
+        peak_position = peak_position.max(position.abs());
+        positions_outside_universe = positions_outside_universe.max(now.outside_universe);
+        let value_usd = value(grader_f64(now.value_usd), position, slot, base_slot).await?;
         peak_value_usd = peak_value_usd.max(value_usd);
         max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
         let bbo = hawkeye.view_bbo(&scenario.symbol).await?.value;
@@ -498,7 +491,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
             level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
-            position: phoenix.lots_to_base_units(market, asset.base_lots),
+            position,
             value_usd,
             pnl_usd: value_usd - start_value_usd,
             turn_ms: None,
@@ -575,18 +568,11 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         _ => None,
     };
 
-    let end = account(&rpc, &phoenix, &bot.pubkey(), trader).await?;
-    let asset = hawkeye
-        .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
-        .await?
-        .value;
-    let end_value_usd = value(end.value_usd, asset.base_lots, end_slot, base_slot).await?;
-    let outside = match end.positions_outside(asset.has_position_or_orders) {
-        0 => 0,
-        seen => seen.min(outside_again(&rpc, &phoenix, &hawkeye, &bot, trader, market).await?),
-    };
-    let positions_outside_universe = positions_outside_universe.max(outside);
-    let margin = hawkeye.view_margin(bot.pubkey(), 0, 0).await?.value;
+    let end = meter.measure(&universe).await?;
+    let end_position = position_in(&end, meter.instrument());
+    let end_value_usd = value(grader_f64(end.value_usd), end_position, end_slot, base_slot).await?;
+    let positions_outside_universe = positions_outside_universe.max(end.outside_universe);
+    let liquidatable = meter.liquidatable().await?;
     let report = SessionReport {
         scenario: scenario.name.clone(),
         start_mark_usd,
@@ -601,14 +587,14 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         start_value_usd,
         end_value_usd,
         pnl_usd: end_value_usd - start_value_usd,
-        end_position: phoenix.lots_to_base_units(market, asset.base_lots),
-        liquidatable: margin.is_liquidatable != 0,
+        end_position,
+        liquidatable,
         refused_calls: guard.refused(),
         bot_exit,
         late_slots,
         mandate,
         instrument,
-        peak_position: peak_position.max(phoenix.lots_to_base_units(market, asset.base_lots).abs()),
+        peak_position: peak_position.max(end_position.abs()),
         positions_outside_universe,
         max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
         valuation: if scenario.making.is_some() {
@@ -853,82 +839,21 @@ async fn next_message(
     }
 }
 
-/// Markets held other than the scenario's, read again. The market's view and
-/// the account's are two reads: an order the bot places or cancels between
-/// them shows up in one and not the other, which looks like a position
-/// elsewhere. A position that really is elsewhere shows up on every read, so
-/// a count is only kept if a second pair of reads agrees.
-async fn outside_again(
-    rpc: &RpcClient,
-    phoenix: &Phoenix,
-    hawkeye: &phoenix_rise::core::PhoenixHawkeyeClient<'_>,
-    bot: &Keypair,
-    trader: Pubkey,
-    market: &phoenix_rise::types::exchange::ExchangeMarketConfig,
-) -> Result<u32> {
-    let asset = hawkeye
-        .view_margin_for_asset(bot.pubkey(), 0, 0, market.asset_id)
-        .await?
-        .value;
-    let now = account(rpc, phoenix, &bot.pubkey(), trader).await?;
-    Ok(now.positions_outside(asset.has_position_or_orders))
+/// A meter's amount as the grader's `f64`: the nearest double to the exact
+/// decimal, which is what dividing Phoenix's integer lots in `f64` gave.
+fn grader_f64(amount: Decimal) -> f64 {
+    amount
+        .to_string()
+        .parse()
+        .expect("a decimal's digits parse as f64")
 }
 
-/// The trader account, from one margin view.
-struct Account {
-    /// What the account is worth at mark: Phoenix collateral plus unrealized
-    /// PnL, plus any USDC withdrawn back to the wallet.
-    value_usd: f64,
-    /// Markets the trader holds a position or orders in.
-    position_count: u16,
-}
-
-impl Account {
-    /// Markets held other than the scenario's, given whether the scenario's
-    /// market is one of them.
-    fn positions_outside(&self, held_in_market: u8) -> u32 {
-        u32::from(
-            self.position_count
-                .saturating_sub(u16::from(held_in_market != 0)),
-        )
-    }
-}
-
-async fn account(
-    rpc: &RpcClient,
-    phoenix: &Phoenix,
-    owner: &Pubkey,
-    trader: Pubkey,
-) -> Result<Account> {
-    let margin = phoenix
-        .hawkeye(*owner)
-        .view_margin_for_trader(trader)
-        .await?
-        .value;
-    let phoenix_quote_lots = margin.collateral_quote_lots + margin.unrealized_pnl_quote_lots;
-    Ok(Account {
-        value_usd: phoenix_quote_lots as f64 / QUOTE_LOTS_PER_USD + wallet_usdc(rpc, owner)?,
-        position_count: margin.position_count,
-    })
-}
-
-fn wallet_usdc(rpc: &RpcClient, owner: &Pubkey) -> Result<f64> {
-    let accounts = chain::call(
-        rpc,
-        "getTokenAccountsByOwner",
-        json!([owner.to_string(), { "mint": USDC_MINT.to_string() }, { "encoding": "jsonParsed" }]),
-    )?;
-    Ok(accounts["value"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|account| {
-            account["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmountString"]
-                .as_str()?
-                .parse::<f64>()
-                .ok()
-        })
-        .sum())
+/// The account's position in `instrument`, in base units; flat if the meter
+/// doesn't report it.
+fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
+    measurement
+        .holding(instrument)
+        .map_or(0.0, |holding| grader_f64(holding.position()))
 }
 
 /// A private directory for the bot: its keypair and its `HOME`.

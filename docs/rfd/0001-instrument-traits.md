@@ -85,17 +85,23 @@ What an enforcer reads, whatever the venue trades. It is the list each
 venue profile in `specs/venues/` already spells out:
 
 ```rust
-pub trait AccountMeter: Send + Sync {
-    /// The account's holding in each instrument it holds anything in.
-    async fn holdings(&self) -> Result<Vec<(InstrumentRef, Holding)>, MeterError>;
-    /// Instruments with open orders, for the universe rule.
-    async fn open_orders(&self) -> Result<Vec<InstrumentRef>, MeterError>;
-    /// Fills since `after`, for the sides and limit-price rules.
-    async fn fills(&self, after: Slot) -> Result<Vec<RecordedFill>, MeterError>;
+pub struct Measurement {
+    pub holdings: Vec<(InstrumentId, Holding)>,
     /// The account's value, in USD, at the profile's reference prices.
-    async fn value_usd(&self) -> Result<Decimal, MeterError>;
+    pub value_usd: Decimal,
+    /// Markets held, or with orders, outside the mandate's universe.
+    pub outside_universe: u32,
+}
+
+pub trait AccountMeter: Send + Sync {
+    /// Holdings, value and the universe count, read together.
+    async fn measure(&self, universe: &[InstrumentId]) -> Result<Measurement, MeterError>;
+    /// Fills since `after_slot`, for the sides and limit-price rules.
+    async fn fills(&self, after_slot: u64) -> Result<Vec<RecordedFill>, MeterError>;
+    /// Whether the venue would liquidate the account now.
+    async fn liquidatable(&self) -> Result<bool, MeterError> { Ok(false) }
     /// Health of each borrowing position, where the venue has one.
-    async fn health(&self) -> Result<Vec<(InstrumentRef, Decimal)>, MeterError> {
+    async fn health(&self) -> Result<Vec<(InstrumentId, Decimal)>, MeterError> {
         Ok(vec![])
     }
 }
@@ -167,3 +173,21 @@ cap check reads `Holding::position()`.
   defaulting to `Unsupported`, and `LendPosition::balance()` turns a
   deposit into a `LendingBalance`. Nothing uses them yet: the grader still
   measures in `session.rs`, which is step 2.
+- 2026-11-10: step 2. Writing `PhoenixPerpMeter` (`crates/core/src/meter.rs`)
+  changed the trait. Separate `holdings`, `open_orders` and `value_usd`
+  calls don't work for an enforcer: a bot trading between two of them shows
+  a position one call has and the other doesn't price. `session.rs` already
+  read the market and the account as a pair, and read them again before it
+  counted a market outside the universe. So the trait now has one
+  `measure(universe)` that returns holdings, value and the count together.
+  The universe rule needs a count, not a list of instruments with orders:
+  Phoenix reports how many markets an account is in, not which ones.
+  Liquidation at the end of a session is a venue measurement too, so the
+  trait gained `liquidatable()`, false by default. Phoenix perp `fills` is
+  `Unsupported`: no task's mandate has a fill rule yet. The meter lives in
+  `mtx-core` because it reads with the grader's own clients.
+  Values are `Decimal`, and the session turns them into its `f64`s by
+  parsing the exact decimal. A position, `base_lots / 10^d`, comes out the
+  same double as before. So does the value, unless the bot moved USDC back
+  to its wallet. Then the old sum rounded twice and the new one rounds once,
+  which can differ by one ulp.

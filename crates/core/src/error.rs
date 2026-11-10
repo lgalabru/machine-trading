@@ -18,6 +18,8 @@ pub enum Error {
     TxBuilder(#[from] phoenix_rise::core::PhoenixTxBuilderError),
     #[error("hawkeye: {0}")]
     Hawkeye(#[from] phoenix_rise::core::PhoenixHawkeyeClientError),
+    #[error("meter: {0}")]
+    Meter(#[from] mtx_botkit::luce::core::MeterError),
     #[error("{}: {source}", path.display())]
     Io {
         path: PathBuf,

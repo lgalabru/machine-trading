@@ -10,7 +10,7 @@
 //! - **Holding and measuring**: what an account holds differs by instrument,
 //!   not by how it trades: a [`Holding`] is a perp's [`Position`], a spot
 //!   market's [`Holdings`] or a money market's [`LendingBalance`]. An
-//!   [`AccountMeter`] reads them, with open orders, fills, value and health,
+//!   [`AccountMeter`] reads them, with value, fills and health,
 //!   from a venue's own records, for an enforcer.
 //! - **Capital**: where money sits when it is not in a trade.
 //!   [`Strategy`], [`performance`] and [`rates`] measure yield-bearing
@@ -69,7 +69,7 @@ pub use execution::{ExecutionDriver, ExecutionError, ExecutionReport};
 pub use fill::{Fill, FillId, FillQuality};
 pub use holding::{Holding, Holdings, LendingBalance};
 pub use instrument::{Instrument, InstrumentError, InstrumentId, InstrumentKind, Rounding};
-pub use meter::{AccountMeter, MeterError, RecordedFill};
+pub use meter::{AccountMeter, Measurement, MeterError, RecordedFill};
 pub use order::{Order, OrderId, OrderStatus, OrderType, Side, TimeInForce};
 pub use performance::{CashFlow, Performance};
 pub use portfolio::Portfolio;
