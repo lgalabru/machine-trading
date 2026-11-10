@@ -95,7 +95,7 @@ pub trait AccountMeter: Send + Sync {
     /// The account's value, in USD, at the profile's reference prices.
     async fn value_usd(&self) -> Result<Decimal, MeterError>;
     /// Health of each borrowing position, where the venue has one.
-    async fn health(&self) -> Result<Vec<(InstrumentRef, f64)>, MeterError> {
+    async fn health(&self) -> Result<Vec<(InstrumentRef, Decimal)>, MeterError> {
         Ok(vec![])
     }
 }
@@ -159,3 +159,11 @@ cap check reads `Holding::position()`.
 
 - 2026-11-10: started from PR #19's review. Its drivers fit
   `ExecutionDriver` unchanged; its holdings didn't fit anything.
+- 2026-11-10: step 1 landed, agreed with #19's author first. `luce::core`
+  has `Holding`, `Holdings` and `LendingBalance` (`core/holding.rs`), and
+  the `AccountMeter` trait with `RecordedFill` and `MeterError`
+  (`core/meter.rs`). Health is a `Decimal`, like every other amount in
+  `luce`. `LendingProvider` gained `plan_borrow` and `plan_repay`,
+  defaulting to `Unsupported`, and `LendPosition::balance()` turns a
+  deposit into a `LendingBalance`. Nothing uses them yet: the grader still
+  measures in `session.rs`, which is step 2.
