@@ -18,10 +18,9 @@ use super::{
 use crate::{
     chain::{
         self, ChainClient, ChainError, ExecutionPlan, InstructionGroup, RpcChainClient, SendMode,
-        TransactionSigner, token,
+        TransactionSigner,
     },
     core::{OrderBook, Side, SpotBalances},
-    protocols::holdings_from_atoms,
 };
 
 /// An order in the form Phoenix v1 takes it, in decimal units.
@@ -159,42 +158,14 @@ impl PhoenixV1Trader {
         Ok(self.market.order_book(&self.state().await?, slot, 0))
     }
 
-    /// What the trader holds in the market's two assets: its wallet's
-    /// associated token accounts and its seat.
     /// What the trader holds on this market, as the Phoenix venue profile
-    /// measures it: its wallet's token accounts for the market's two mints,
-    /// and its seat, free and locked. For SOL, the wallet's holding is its
-    /// wrapped-SOL token account; the wallet's native SOL pays fees and is
-    /// not counted.
+    /// measures it (see [`balances`](super::meter::balances)).
     pub async fn holdings(&self) -> Result<SpotBalances, PhoenixV1Error> {
-        let k = &self.market.keys;
-        let wallets = [
-            token::ata(&self.authority, &k.base_mint),
-            token::ata(&self.authority, &k.quote_mint),
-        ];
-        let accounts = self.chain.get_multiple_accounts(&wallets).await?;
-        let balance = |a: &Option<solana_account::Account>| -> Result<u64, ChainError> {
-            a.as_ref().map_or(Ok(0), token::token_balance)
-        };
         let state = self.state().await?;
-        let h = &state.header;
-        let seat = state.seat(&self.authority).copied().unwrap_or_default();
-        let atoms = |lots: u64, lot_size: u64| i128::from(lots) * i128::from(lot_size);
-        let i = &self.market.instrument;
-        Ok(SpotBalances {
-            base: holdings_from_atoms(
-                &i.base,
-                balance(&accounts[0])?.into(),
-                atoms(seat.base_lots_free, h.base_lot_size),
-                atoms(seat.base_lots_locked, h.base_lot_size),
-            )?,
-            quote: holdings_from_atoms(
-                &i.quote,
-                balance(&accounts[1])?.into(),
-                atoms(seat.quote_lots_free, h.quote_lot_size),
-                atoms(seat.quote_lots_locked, h.quote_lot_size),
-            )?,
-        })
+        Ok(
+            super::meter::balances(self.chain.as_ref(), &self.market, &state, &self.authority)
+                .await?,
+        )
     }
 
     fn lots(&self, quantity: Decimal) -> Result<u64, PhoenixV1Error> {

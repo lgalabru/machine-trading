@@ -31,7 +31,7 @@ pub const MAX_DECIMALS: u8 = 18;
 ///
 /// On Solana this is the token mint address, base58-encoded. The convention
 /// matters only for persistence and display; this crate never interprets it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct AssetId(pub String);
 
 impl std::fmt::Display for AssetId {

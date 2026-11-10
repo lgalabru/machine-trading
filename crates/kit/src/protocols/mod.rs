@@ -13,6 +13,8 @@ pub mod openbook;
 pub mod phoenix;
 #[cfg(feature = "pyth")]
 pub mod pyth;
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
+pub mod spot;
 
 /// A spot market a venue profile in the repository's `specs/venues/` names
 /// by symbol, such as `SOL-USDC`. Any other market on the venue is named by
