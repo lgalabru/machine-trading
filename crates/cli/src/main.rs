@@ -51,7 +51,8 @@ pub(crate) enum Family {
     /// flash-crash-spcx: shocks that crash or squeeze, then revert or not.
     FlashCrash,
     /// market-making-spcx: a walking, trending, jumping market, competing
-    /// makers, and taker flow, some of it informed.
+    /// makers, and taker flow: noise, fake-out bursts, and informed orders
+    /// ahead of most jumps.
     MarketMaking,
 }
 
@@ -204,6 +205,12 @@ struct Sessions {
     /// that can't keep up fails the run on late slots rather than skewing it.
     #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
     jobs: usize,
+    /// The first bot user (0-3) sessions run their bots as, when run as
+    /// root; they use `--jobs` of them from there. Graders running at once
+    /// on one machine need ranges that don't overlap: a session's end kills
+    /// every process of its bot user.
+    #[arg(long, default_value_t = 0)]
+    first_bot_user: usize,
     /// Scenario files, run in order.
     scenarios: Vec<PathBuf>,
 }
@@ -335,10 +342,10 @@ enum BenchCommand {
 
 #[derive(Subcommand)]
 enum ScenarioCommand {
-    /// Draw shock scenarios (crashes and squeezes) from the SPCX family, one
-    /// file per scenario.
-    /// Sets are stratified: each direction and aftermath appears in
-    /// proportion to its odds.
+    /// Draw scenarios from a task's family (`--family`), one file per
+    /// scenario.
+    /// Sets are stratified: each kind of session (a shock's direction and
+    /// aftermath, a market's regime) appears in proportion to its odds.
     Generate {
         #[arg(long)]
         out: PathBuf,
@@ -886,6 +893,7 @@ async fn run() -> Result<()> {
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
                 jobs: sessions.jobs,
+                first_bot_user: sessions.first_bot_user,
                 reference_dir: reference.as_deref(),
                 anchor_jobs,
                 regimes: regimes.as_deref(),
@@ -963,6 +971,7 @@ async fn run() -> Result<()> {
                 &sessions.bot,
                 &mut scenarios,
                 &sessions.logs,
+                sessions.first_bot_user,
                 sessions.jobs,
             )
             .await?;

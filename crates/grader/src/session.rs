@@ -263,7 +263,18 @@ impl SessionReport {
     }
 }
 
+/// Run one session. An error before the bot starts comes back as
+/// [`Error::Setup`]: the bot hasn't seen anything of the session yet, so
+/// the grader may run it again from scratch.
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
+    let mut bot_started = false;
+    match run_session(opts, &mut bot_started).await {
+        Err(error) if !bot_started => Err(Error::Setup(Box::new(error))),
+        done => done,
+    }
+}
+
+async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result<SessionReport> {
     let began = Instant::now();
     let scenario = opts.scenario;
     let world = snapshot::start_offline(opts.snapshot_dir, snapshot::Access::Private).await?;
@@ -399,6 +410,7 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
 
     let late_before = surfnet.coalesced_slots();
     let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+    *bot_started = true;
     let mut child = spawn_bot(
         opts.bot_dir,
         &env,

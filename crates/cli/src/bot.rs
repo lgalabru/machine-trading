@@ -356,6 +356,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         scenarios: &scenarios,
         log_dir: &logs,
         jobs: options.jobs,
+        first_bot_user: 0,
         reference_dir: None,
         anchor_jobs: 1,
         regimes: None,

@@ -305,11 +305,18 @@ leak-audit:
     [ "$found" = 0 ] && echo "no leaks in $image"
     exit "$found"
 
+# Fail if a bot can read the grader's own keypairs (takers', competitor's):
+# one market-making session in the runtime image `image` built, with a probe
+# bot that looks for them.
+keypair-probe:
+    bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
+
 # The skill ladder (bench/checks/ladder): fixed bots, from doing nothing to
 # the regime oracle and the frozen exploit bots, graded on `sets` fresh
 # hidden sets, each drawn from a secret of its own. Fails unless the order
 # rule holds on every set and the exploit bots stay within their limits.
-# Run it before benchmarking any scenario change.
+# Run it before benchmarking any scenario change. `parallel` rungs are
+# graded at once, `jobs` sessions each: four in all at most, one bot user each.
 ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     #!/usr/bin/env bash
     set -euo pipefail

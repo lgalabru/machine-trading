@@ -22,6 +22,7 @@
 use std::{collections::BTreeMap, path::Path};
 
 use futures::StreamExt;
+use mtx_core::MeterError;
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -191,6 +192,11 @@ pub struct GradeOptions<'a> {
     pub log_dir: &'a Path,
     /// How many sessions to run at once.
     pub jobs: usize,
+    /// The first of [`session::BOT_USERS`] this grade's bots run as; it
+    /// uses `jobs` of them from there. Graders running at once on one
+    /// machine need ranges that don't overlap: a session's end kills every
+    /// process of its bot user.
+    pub first_bot_user: usize,
     /// A reference bot to run on the same scenarios first, as the baseline,
     /// with `anchor_jobs` sessions at once (it's trusted: it can share the
     /// machine with itself). Its PnL replaces whatever the scenarios carry.
@@ -264,7 +270,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             reference,
             &scenarios,
             &opts.log_dir.join("reference"),
-            opts.anchor_jobs,
+            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
             None,
             false,
         )
@@ -285,7 +291,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.bot_dir,
         &scenarios,
         opts.log_dir,
-        opts.jobs,
+        opts.first_bot_user..opts.first_bot_user + opts.jobs,
         opts.regimes,
         opts.stop_on_disqualify,
     )
@@ -312,6 +318,38 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         "graded"
     );
     Ok(report)
+}
+
+/// Lift this process's soft limit on open files to its hard limit. Every
+/// session's surfnet, RPC guards and clients live in this one process: with
+/// several sessions at once, a container's default soft limit of 1,024 can
+/// run out, and a request that can't open its socket fails the grade.
+fn raise_open_file_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit only writes the struct given.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return;
+    }
+    // macOS refuses a soft limit above OPEN_MAX, and its hard limit is
+    // usually unlimited.
+    #[cfg(target_os = "macos")]
+    let target = limit.rlim_max.min(10_240);
+    #[cfg(not(target_os = "macos"))]
+    let target = limit.rlim_max;
+    if limit.rlim_cur >= target {
+        return;
+    }
+    let raised = libc::rlimit {
+        rlim_cur: target,
+        ..limit
+    };
+    // SAFETY: setrlimit only reads the struct given.
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } != 0 {
+        warn!(soft = limit.rlim_cur, "couldn't raise the open-file limit");
+    }
 }
 
 /// Score sessions against their scenarios' hindsight bounds.
@@ -446,10 +484,20 @@ pub async fn calibrate(
     bot_dir: &Path,
     scenarios: &mut [(std::path::PathBuf, Scenario)],
     log_dir: &Path,
+    first_bot_user: usize,
     jobs: usize,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
-    let sessions = run_sessions(snapshot_dir, bot_dir, &list, log_dir, jobs, None, false).await?;
+    let sessions = run_sessions(
+        snapshot_dir,
+        bot_dir,
+        &list,
+        log_dir,
+        first_bot_user..first_bot_user + jobs,
+        None,
+        false,
+    )
+    .await?;
     // A reference recorded on a loaded machine would skew every score after it.
     check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
@@ -469,26 +517,37 @@ pub async fn calibrate(
     Ok(sessions)
 }
 
-/// Run every scenario, up to `jobs` at a time, reports in scenario order.
+/// Run every scenario, one per bot user in `bot_users` at a time, reports in
+/// scenario order.
 ///
 /// Concurrent sessions each get their own surfnet, and run their bots as
 /// different users (see [`session::BOT_USERS`]). Sessions are kept in an
-/// ordered window of `jobs`, so the ones running at once always have
-/// distinct `index % jobs` slots. A machine too loaded for `jobs` shows up as
-/// late slots, which fail the grade rather than skew it.
+/// ordered window of `jobs` (the range's length), so the ones running at
+/// once always have distinct `bot_users.start + index % jobs` slots. A
+/// machine too loaded for `jobs` shows up as late slots, which fail the
+/// grade rather than skew it.
 async fn run_sessions(
     snapshot_dir: &Path,
     bot_dir: &Path,
     scenarios: &[Scenario],
     log_dir: &Path,
-    jobs: usize,
+    bot_users: std::ops::Range<usize>,
     regimes: Option<&[String]>,
     stop_on_disqualify: bool,
 ) -> Result<Vec<SessionReport>> {
+    let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
     if !(1..=session::BOT_USERS.len()).contains(&jobs) {
         return Err(Error::Jobs(jobs, session::BOT_USERS.len()));
     }
+    if bot_users.end > session::BOT_USERS.len() {
+        return Err(Error::BotUsers {
+            first: first_bot_user,
+            jobs,
+            users: session::BOT_USERS.len(),
+        });
+    }
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
+    raise_open_file_limit();
     let sessions = futures::stream::iter(scenarios.iter().enumerate())
         .map(|(index, scenario)| async move {
             // Stagger the first sessions so their surfnets don't race for
@@ -497,15 +556,27 @@ async fn run_sessions(
                 tokio::time::sleep(STAGGER * index as u32).await;
             }
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
-            session::run(SessionOptions {
-                snapshot_dir,
-                scenario,
-                bot_dir,
-                bot_log: &bot_log,
-                slot: index % jobs,
-                regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
-            })
-            .await
+            let run = || {
+                session::run(SessionOptions {
+                    snapshot_dir,
+                    scenario,
+                    bot_dir,
+                    bot_log: &bot_log,
+                    slot: first_bot_user + index % jobs,
+                    regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
+                })
+            };
+            // A session whose setup fails on the machine (a request to its
+            // own surfnet that can't get through on a loaded host) runs once
+            // more, from a fresh surfnet. Its bot hadn't started, so it sees
+            // the session once either way. A second failure fails the grade.
+            match run().await {
+                Err(Error::Setup(error)) if is_transient(&error) => {
+                    warn!(scenario = scenario.name, %error, "session setup failed on the machine; running it again");
+                    run().await
+                }
+                done => done,
+            }
         })
         .buffered(jobs);
     let mut sessions = std::pin::pin!(sessions);
@@ -527,6 +598,22 @@ async fn run_sessions(
 }
 
 const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Errors from the grader's own machinery talking to its surfnet, as
+/// opposed to a missing bot, an invalid scenario or a loaded machine
+/// ([`Error::Degraded`]): worth one more try.
+fn is_transient(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Hawkeye(_)
+            | Error::Rpc(_)
+            | Error::Kit(_)
+            | Error::Surfnet(_)
+            | Error::Timeout(_)
+            | Error::Transaction { .. }
+            | Error::Meter(MeterError::Read(_))
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -731,5 +818,81 @@ mod tests {
         let mut tolerable = session(10.0);
         tolerable.late_slots = MAX_LATE_SLOTS;
         assert!(check_timing(&[tolerable]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn bot_user_ranges_stay_within_the_users() {
+        let logs = std::env::temp_dir().join(format!("mtx-logs-{}", uuid::Uuid::new_v4()));
+        let run = |first: usize, jobs: usize| {
+            run_sessions(
+                Path::new("."),
+                Path::new("."),
+                &[],
+                &logs,
+                first..first + jobs,
+                None,
+                false,
+            )
+        };
+        assert!(matches!(
+            run(2, 4).await,
+            Err(Error::BotUsers {
+                first: 2,
+                jobs: 4,
+                users: 4
+            })
+        ));
+        assert!(matches!(run(4, 1).await, Err(Error::BotUsers { .. })));
+        assert!(run(2, 2).await.unwrap().is_empty());
+        assert!(run(0, 4).await.unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&logs);
+    }
+
+    #[test]
+    fn only_the_machines_failures_are_retried() {
+        assert!(is_transient(&Error::Timeout("slot 9".into())));
+        assert!(is_transient(&Error::Transaction {
+            label: "onboard".into(),
+            reason: "Blockhash not found".into(),
+        }));
+        assert!(is_transient(&Error::Meter(MeterError::Read(
+            "connection refused".into()
+        ))));
+        assert!(!is_transient(&Error::Meter(MeterError::Decode {
+            what: "margin",
+            detail: "short".into(),
+        })));
+        assert!(!is_transient(&Error::MissingBot("bot".into())));
+        assert!(!is_transient(&Error::Degraded("late slots".into())));
+        assert!(!is_transient(&Error::UnknownMarket("XYZ".into())));
+    }
+
+    #[test]
+    fn a_setup_failure_reads_as_its_cause() {
+        let error = Error::Setup(Box::new(Error::Timeout("slot 9".into())));
+        assert_eq!(error.to_string(), "timed out waiting for slot 9");
+    }
+
+    #[test]
+    fn the_open_file_limit_never_drops() {
+        let limit = || {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: getrlimit only writes the struct given.
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+                0
+            );
+            limit
+        };
+        let before = limit();
+        raise_open_file_limit();
+        let after = limit();
+        assert!(after.rlim_cur >= before.rlim_cur);
+        // Linux takes any soft limit up to the hard one.
+        #[cfg(target_os = "linux")]
+        assert_eq!(after.rlim_cur, after.rlim_max);
     }
 }
