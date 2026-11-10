@@ -70,39 +70,16 @@ pub fn close_token_account(owner: &Pubkey, account: &Pubkey) -> Instruction {
         .expect("static program id and accounts are valid")
 }
 
-/// An SPL token account's state, as the token program keeps it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TokenAccount {
-    /// The mint it holds.
-    pub mint: Pubkey,
-    /// The wallet that controls it.
-    pub owner: Pubkey,
-    /// Its balance, in native units.
-    pub amount: u64,
-    /// A delegate and what it may still move, if any.
-    pub delegate: Option<(Pubkey, u64)>,
-    /// For a wrapped-SOL account, the rent-exempt reserve that is not part
-    /// of the balance.
-    pub native_reserve: Option<u64>,
-    /// Whether the account is frozen.
-    pub frozen: bool,
-}
+/// An SPL token account's state, as the token program keeps it: mint,
+/// owner, amount, delegate and delegated amount, state, and `is_native`'s
+/// rent-exempt reserve for wrapped SOL.
+pub use spl_token_interface::state::Account as TokenAccount;
 
-/// Parses an SPL token account's state from raw account data.
+/// Decodes an SPL token account.
 pub fn token_account(account: &Account) -> Result<TokenAccount, ChainError> {
-    let state = spl_token_interface::state::Account::unpack(&account.data).map_err(|e| {
-        ChainError::Decode {
-            what: "token account",
-            detail: e.to_string(),
-        }
-    })?;
-    Ok(TokenAccount {
-        mint: state.mint,
-        owner: state.owner,
-        amount: state.amount,
-        delegate: Option::from(state.delegate).map(|d| (d, state.delegated_amount)),
-        native_reserve: Option::from(state.is_native),
-        frozen: state.state == spl_token_interface::state::AccountState::Frozen,
+    TokenAccount::unpack(&account.data).map_err(|e| ChainError::Decode {
+        what: "token account",
+        detail: e.to_string(),
     })
 }
 
@@ -138,12 +115,7 @@ pub fn transfer_checked(
 
 /// Parses an SPL token account's balance from raw account data.
 pub fn token_balance(account: &Account) -> Result<u64, ChainError> {
-    spl_token_interface::state::Account::unpack(&account.data)
-        .map(|state| state.amount)
-        .map_err(|e| ChainError::Decode {
-            what: "token account",
-            detail: e.to_string(),
-        })
+    Ok(token_account(account)?.amount)
 }
 
 #[cfg(test)]
@@ -215,9 +187,9 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.owner, owner);
         assert_eq!(parsed.amount, 7);
-        assert_eq!(parsed.native_reserve, Some(2_039_280));
-        assert_eq!(parsed.delegate, None);
-        assert!(!parsed.frozen);
+        assert_eq!(Option::<u64>::from(parsed.is_native), Some(2_039_280));
+        assert!(parsed.delegate.is_none());
+        assert!(!parsed.is_frozen());
 
         let ix = transfer_checked(
             &Pubkey::new_unique(),
