@@ -18,12 +18,18 @@ over the reference's. Then it checks:
   `may_breach` (the blind bets at the full cap break the drawdown limit).
 
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
-       [--sets 4] [--count N] [--jobs 4] [--out DIR]
+       [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
+
+`--parallel N` grades N rungs at once. Each grade's bots run as its own
+range of the grader's bot users (`--first-bot-user`): a session's end kills
+every process of its user, so rungs sharing users would kill each other's
+bots. There are four, so `parallel × jobs` can't exceed 4.
 """
 
 import argparse
 import json
 import os
+import queue
 import random
 import re
 import secrets
@@ -34,15 +40,28 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "../../.."))
 BOOTSTRAP_DRAWS = 2000
+# The grader's bot users (session::BOT_USERS).
+BOT_USERS = 4
 
 
-def grade(mtx, snapshot, family, count, jobs, rung, secret, out):
+def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users):
     report = os.path.join(out, f"{rung['name']}.json")
     if os.path.exists(report):
         with open(report) as f:
             return json.load(f)
+    # A range of bot users no other grade is using; back when this one ends.
+    first_bot_user = users.get()
+    try:
+        return run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report,
+                         first_bot_user)
+    finally:
+        users.put(first_bot_user)
+
+
+def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, first_bot_user):
     command = [
         mtx, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
+        "--first-bot-user", str(first_bot_user),
         "--snapshot", snapshot, "--bot", os.path.join(ROOT, rung["dir"]),
         "--logs", os.path.join(out, "logs", rung["name"]), "--report", report,
     ]
@@ -119,6 +138,12 @@ def main():
     parser.add_argument("--parallel", type=int, default=1, help="rungs graded at once")
     parser.add_argument("--out", default=os.path.join(ROOT, "target", "ladder"))
     args = parser.parse_args()
+    if args.parallel < 1 or args.parallel * args.jobs > BOT_USERS:
+        parser.error(f"--parallel × --jobs must be between 1 and {BOT_USERS}, one bot user each")
+    # One range of bot users per rung graded at once.
+    users = queue.Queue()
+    for k in range(args.parallel):
+        users.put(k * args.jobs)
     with open(os.path.join(HERE, f"{args.task}.json")) as f:
         config = json.load(f)
     count = args.count or config["count"]
@@ -142,7 +167,7 @@ def main():
             futures = {
                 rung["name"]: pool.submit(
                     grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
-                    rung, secret, set_dir,
+                    rung, secret, set_dir, users,
                 )
                 for rung in config["rungs"]
             }
