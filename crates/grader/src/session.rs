@@ -21,6 +21,7 @@ use std::{
     os::{fd::AsRawFd, unix::net::UnixStream as StdUnixStream},
     path::{Path, PathBuf},
     process::Stdio,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -29,7 +30,11 @@ use mtx_core::{
     mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
     turns::{self, Hello, Message, Step},
 };
-use mtx_kit::BotEnv;
+use mtx_kit::{
+    BotEnv,
+    chain::RpcChainClient,
+    protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
+};
 use serde::Serialize;
 use serde_json::json;
 use solana_keypair::Keypair;
@@ -50,7 +55,6 @@ use crate::{
     flow::{FlowReport, TakerRecord, Takers},
     guard::{CallLog, Guard},
     making::level_at,
-    meter::PhoenixPerpMeter,
     phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS},
     scenario::Scenario,
     snapshot,
@@ -282,7 +286,20 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
-    let meter = PhoenixPerpMeter::new(&rpc, &phoenix, bot.pubkey(), trader, market)?;
+    let meter = PhoenixEternalMeter::new(
+        Arc::new(PhoenixExchange::new(world.exchange.clone())),
+        internal.url(),
+        Arc::new(RpcChainClient::new(internal.url())),
+        bot.pubkey(),
+        &scenario.symbol,
+    )
+    .map_err(mtx_kit::Error::from)?;
+    if meter.trader() != trader {
+        return Err(Error::InvalidExchangeKey(format!(
+            "the meter would read trader account {}, but the bot was onboarded at {trader}",
+            meter.trader()
+        )));
+    }
     let universe: Vec<InstrumentId> = scenario
         .mandate
         .universe

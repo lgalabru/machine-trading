@@ -12,8 +12,7 @@ bs58 = "0.5"
 flate2 = "1"
 libc.workspace = true
 mtx-core.workspace = true
-# Phoenix v1 and Pyth readers, for the spot meter.
-mtx-kit = { workspace = true, features = ["phoenix-v1", "pyth"] }
+mtx-kit.workspace = true
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
