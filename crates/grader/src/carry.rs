@@ -505,6 +505,7 @@ impl CarryFamily {
             funding: Some(funding),
             tape,
             reference_pnl_usd: None,
+            fair_path: None,
         };
         let shape = Shape {
             informed_share,
