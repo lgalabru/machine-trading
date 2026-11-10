@@ -186,7 +186,7 @@ specification can state.
 
 ## Implementation status
 
-The reference implementation, `mtx_botkit::mandate`, reads and enforces the
+The reference implementation, `mtx_core::mandate`, reads and enforces the
 part of this specification the benchmark's tasks use today: `perp`
 instruments on one venue, `max_position`, and `max_drawdown_usd`. It rejects
 documents that use anything else, so the examples of spot and money-market

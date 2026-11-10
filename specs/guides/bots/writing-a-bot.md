@@ -4,7 +4,7 @@ Status: guide
 
 A bot is a Rust program that trades one session of a task: a scripted
 market, replayed on an offline copy of Solana mainnet. You write the
-strategy; `mtx-botkit`'s run loop does everything else: it talks to the
+strategy; `mtx-kit`'s run loop does everything else: it talks to the
 grader, reads the market before every step, and sends your orders without
 breaking the [mandate](../../mandate.md). This guide builds a first bot,
 explains what the run loop hands you and what it does with your orders,
@@ -13,8 +13,8 @@ bot runs under.
 
 It uses the guides' example: SPCX trades at **$100**, on Phoenix, and the
 mandate caps the position at **70 SPCX**. The rules at the end are what
-`mtx grade` enforces, from its source (`crates/core/src/session.rs`,
-`guard.rs`) and `mtx-botkit` (`crates/botkit`).
+`mtx grade` enforces, from its source (`crates/grader/src/session.rs`,
+`guard.rs`) and `mtx-kit` (`crates/kit`).
 
 :::glance
 - **You write:** a `Strategy`: what to do at each step
@@ -54,7 +54,7 @@ The starter doesn't trade, so it scores 0. The rest is yours.
 A strategy that buys a dip and sells at the next high:
 
 ```rust
-use mtx_botkit::prelude::*;
+use mtx_kit::prelude::*;
 
 #[derive(Default)]
 struct FadeTheDip {
@@ -74,7 +74,7 @@ impl Strategy for FadeTheDip {
 }
 
 fn main() -> BotResult {
-    mtx_botkit::run(FadeTheDip::default())
+    mtx_kit::run(FadeTheDip::default())
 }
 ```
 
@@ -95,7 +95,7 @@ of `Execution`, which you can change.
 
 ## What the run loop does
 
-`mtx_botkit::run(strategy)` is the whole bot. Over one session:
+`mtx_kit::run(strategy)` is the whole bot. Over one session:
 
 | When | The run loop | Your hook |
 | --- | --- | --- |

@@ -86,7 +86,7 @@ task ships) and grades the reference on it first. Then, for each session:
    thinks, so grades replay exactly.
 5. After the last step, it stops the bot and values its account on-chain.
 
-The agent's own environment has a Rust toolchain, the `mtx-botkit` SDK, a
+The agent's own environment has a Rust toolchain, the `mtx-kit` SDK, a
 starter bot that builds but never trades, practice scenarios, the scenario
 generator, and `mtx-practice`. `mtx-practice` grades a bot exactly as the
 verifier does.

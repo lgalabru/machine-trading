@@ -23,7 +23,7 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
-use mtx_botkit::{BotEnv, Side, Trader, Turns};
+use mtx_kit::{BotEnv, Side, Trader, Turns};
 use mtx_ladder_rungs::init_logs;
 use serde::Deserialize;
 use tracing::{info, warn};
