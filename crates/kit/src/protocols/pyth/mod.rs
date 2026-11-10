@@ -275,4 +275,23 @@ mod tests {
         data[40] = 7;
         assert!(PriceUpdate::decode(&data).is_err());
     }
+
+    /// Mainnet's SOL/USD update, read at slot 467582217.
+    #[test]
+    fn decodes_mainnets_sol_usd_update() {
+        let hex = include_str!("testdata/pyth_sol_usd.hex").trim();
+        let data: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let update = PriceUpdate::decode_feed(&data, &SOL_USD_FEED_ID).unwrap();
+        assert_eq!(update.verification_level, VerificationLevel::Full);
+        assert_eq!(update.price(), Some(dec!(85.83462200)));
+        assert_eq!(update.posted_slot, 467582158);
+        assert_eq!(
+            feed_account(0, &SOL_USD_FEED_ID).to_string(),
+            "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE"
+        );
+        assert!(PriceUpdate::decode_feed(&data, &[0; 32]).is_err());
+    }
 }
