@@ -97,7 +97,7 @@ rungs is the value of reading it at all.
 
 ## Fairness
 
-- Every correct path runs through standard RPC and `mtx-botkit`: the
+- Every correct path runs through standard RPC and `mtx-kit`: the
   reference does.
 - The instruction's formulas are the grader's: the bound (cap × start mark ×
   total variation), the reward clamp, the valuation at the mark, the cap and

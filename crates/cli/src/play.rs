@@ -24,7 +24,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::StreamExt;
-use mtx_core::{
+use mtx_grader::{
     chain,
     phoenix::Phoenix,
     snapshot::{self, OfflineWorld},
@@ -311,7 +311,7 @@ impl AppState {
                 if live.stopped { "stopped" } else { "resetting" }
             );
         }
-        Ok(mtx_botkit::rpc_client(live.rpc_url.clone()))
+        Ok(mtx_kit::rpc_client(live.rpc_url.clone()))
     }
 
     /// Start the scenario: register it at the current slot the first time,
@@ -631,7 +631,7 @@ async fn sample(
     payer: Pubkey,
     symbols: Vec<String>,
 ) {
-    let rpc = mtx_botkit::rpc_client(rpc_url);
+    let rpc = mtx_kit::rpc_client(rpc_url);
     let mut last = None;
     loop {
         let result: Result<()> = async {

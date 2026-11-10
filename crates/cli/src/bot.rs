@@ -14,7 +14,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use mtx_core::{
+use mtx_grader::{
     grade::{self, GradeOptions, GradeReport},
     scenario::Scenario,
 };
@@ -151,19 +151,19 @@ fn write_executable(path: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
-/// `mtx bot new`: a strategy on `mtx-botkit`'s run loop that watches the
+/// `mtx bot new`: a strategy on `mtx-kit`'s run loop that watches the
 /// market and never trades (bots/starter), ready to build and practise.
 pub fn new(dir: &Path, git: bool, given_repo: Option<&Path>) -> Result<String> {
     if dir.exists() && dir.read_dir()?.next().is_some() {
         bail!("{} exists and isn't empty", dir.display());
     }
-    let botkit = if git {
+    let kit = if git {
         let rev = BUILT_COMMIT
             .context("this mtx wasn't built from a git checkout, so it can't pin the SDK by commit: leave out --git")?;
-        format!(r#"mtx-botkit = {{ git = "{REPO_URL}", rev = "{rev}" }}"#)
+        format!(r#"mtx-kit = {{ git = "{REPO_URL}", rev = "{rev}" }}"#)
     } else {
-        let sdk = repo(given_repo)?.join("crates/botkit");
-        format!(r#"mtx-botkit = {{ path = "{}" }}"#, sdk.display())
+        let sdk = repo(given_repo)?.join("crates/kit");
+        format!(r#"mtx-kit = {{ path = "{}" }}"#, sdk.display())
     };
     // Refuse before making anything: the checkout's workspace would claim it.
     let absolute = std::path::absolute(dir)?;
@@ -191,7 +191,7 @@ name = "bot"
 path = "src/main.rs"
 
 [dependencies]
-{botkit}
+{kit}
 tracing = "0.1"
 
 # Its own workspace, wherever it's created.
@@ -497,10 +497,10 @@ pub fn pack(
     let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
     if manifest
         .lines()
-        .any(|line| line.trim_start().starts_with("mtx-botkit") && line.contains("path ="))
+        .any(|line| line.trim_start().starts_with("mtx-kit") && line.contains("path ="))
     {
         report.push_str(
-            "\nnote: Cargo.toml depends on mtx-botkit by a local path, so this archive builds only on this machine: depend on it by git (`mtx bot new --git` writes one) to build it elsewhere",
+            "\nnote: Cargo.toml depends on mtx-kit by a local path, so this archive builds only on this machine: depend on it by git (`mtx bot new --git` writes one) to build it elsewhere",
         );
     }
     Ok(report)

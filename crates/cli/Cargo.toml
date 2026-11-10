@@ -17,8 +17,9 @@ flate2 = "1"
 # 144 sessions grows past its memory limit.
 mimalloc = { version = "0.1", default-features = false }
 futures.workspace = true
-mtx-botkit.workspace = true
+mtx-kit.workspace = true
 mtx-core.workspace = true
+mtx-grader.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io", "elicitation"] }

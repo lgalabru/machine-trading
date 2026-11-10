@@ -95,7 +95,7 @@ See [references/design-record.md](references/design-record.md).
 ### 2. Design the scenario family
 
 A family is a generator: `(seed) → scenario`. Parameterize what varies and
-pin what doesn't. In this repo, see `ShockFamily` in `crates/core/src/scenario.rs`.
+pin what doesn't. In this repo, see `ShockFamily` in `crates/grader/src/scenario.rs`.
 
 - **Vary the dimensions that test the thesis:** timing, depth, number of legs, recovery fraction, duration.
 - **Include adversarial draws:**
