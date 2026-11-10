@@ -626,10 +626,19 @@ async function inflate(response) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).text();
 }
+// A published trial's reference sessions may be another trial's files
+// (`mtx bench publish` keeps each once): the export lists them.
+let aliases = null;
+async function staticAlias(path) {
+  aliases ??= fetch("api/session-aliases.json").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+  const p = path.replace(/^\/api\//, "");
+  return (await aliases)[p] ? `/api/${(await aliases)[p]}` : path;
+}
 async function api(path, text = false) {
   const key = (text ? "t:" : "j:") + path;
   if (STATIC && !cache.has(key)) {
-    const { url, gz } = staticUrl(path);
+    const resolved = path.includes("/reference/") ? await staticAlias(path) : path;
+    const { url, gz } = staticUrl(resolved);
     cache.set(key, fetch(url).then(async (r) => {
       if (!r.ok) throw new Error(`${path}: not in this export`);
       const body = gz ? await inflate(r) : await r.text();

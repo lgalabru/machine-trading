@@ -342,6 +342,14 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
     }
     write("releases.json", &json(&releases_json(&state)))?;
     let mut files = 0usize;
+    // Reference sessions a published trial shares with another: the page
+    // fetches the owner's file (`session-aliases.json`).
+    let index_of_dir: HashMap<PathBuf, usize> = all
+        .iter()
+        .enumerate()
+        .filter_map(|(n, (_, dir))| Some((dir.canonicalize().ok()?, n)))
+        .collect();
+    let mut aliases = serde_json::Map::new();
     for (n, (_, dir)) in all.iter().enumerate() {
         let trial = trial_json(&state, n).map_err(err)?;
         write(&format!("trial/{n}.json"), &json(&trial))?;
@@ -368,6 +376,20 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
                     .join("verifier/sessions")
                     .join(role)
                     .join(format!("{name}.json.gz"));
+                if role == "reference" && !src.is_file() {
+                    let owner = shared_references(dir).remove(name).and_then(|file| {
+                        // <owner>/verifier/sessions/reference/<name>.json.gz
+                        let owner = file.ancestors().nth(4)?.to_path_buf();
+                        index_of_dir.get(&owner).copied()
+                    });
+                    if let Some(owner) = owner {
+                        aliases.insert(
+                            format!("session/{n}/{role}/{name}"),
+                            json!(format!("session/{owner}/{role}/{name}")),
+                        );
+                    }
+                    continue;
+                }
                 if let Ok(bytes) = std::fs::read(&src) {
                     write(&format!("session/{n}/{role}/{name}.json.gz"), &bytes)?;
                     files += 1;
@@ -407,6 +429,7 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
             }
         }
     }
+    write("session-aliases.json", &json(&Value::Object(aliases)))?;
     Ok(
         json!({ "out": out, "releases": state.roots.iter().map(|r| r.label.clone()).collect::<Vec<_>>(), "runs": all.len(), "files": files }),
     )
@@ -848,7 +871,11 @@ fn trial_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
                 name.strip_suffix(".json.gz").map(str::to_string)
             })
             .collect();
+        if role == "reference" {
+            names.extend(shared_references(&dir).into_keys());
+        }
         names.sort_by_key(|name| natural_key(name));
+        names.dedup();
         names
     };
     let mut files = Vec::new();
@@ -976,12 +1003,42 @@ async fn get_session(
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response())
 }
 
-/// A session's detail file (`<name>.json.gz`) as JSON bytes.
+/// The reference sessions a published trial leaves to another trial of its
+/// release (`mtx bench publish`): each name, with the file that has it.
+/// Only files inside the release, the trial's grandparent, are followed.
+fn shared_references(dir: &FsPath) -> std::collections::BTreeMap<String, PathBuf> {
+    let Some(release) = dir.parent().and_then(FsPath::parent) else {
+        return Default::default();
+    };
+    let Some(release) = release.canonicalize().ok() else {
+        return Default::default();
+    };
+    read_json(&dir.join(crate::publish::SHARED_REFERENCES))
+        .and_then(|v| v.as_object().cloned())
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, rel)| {
+            let path = release.join(rel.as_str()?).canonicalize().ok()?;
+            (path.starts_with(&release) && path.to_string_lossy().ends_with(".json.gz"))
+                .then_some((name, path))
+        })
+        .collect()
+}
+
+/// A session's detail file (`<name>.json.gz`) as JSON bytes: the trial's
+/// own, or for a reference session the copy another trial of its release
+/// keeps.
 fn read_session(dir: &FsPath, role: &str, name: &str) -> Result<Vec<u8>, ApiError> {
-    let gz = dir
+    let mut gz = dir
         .join("verifier/sessions")
         .join(role)
         .join(format!("{name}.json.gz"));
+    if !gz.is_file()
+        && role == "reference"
+        && let Some(shared) = shared_references(dir).remove(name)
+    {
+        gz = shared;
+    }
     let file = std::fs::File::open(&gz).map_err(|_| ApiError::NotFound)?;
     let mut json = Vec::new();
     flate2::read::GzDecoder::new(file)

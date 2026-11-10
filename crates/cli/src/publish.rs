@@ -6,8 +6,14 @@
 //! doesn't need:
 //! - `result.json`, `config.json`, the verifier's report and reward, and the
 //!   per-session detail files;
-//! - the bot's per-session logs and the verifier's stdout, gzipped (the
-//!   reference's logs are left out: the page never shows them);
+//! - the bot's per-session logs, each cut to its first 16 KiB and last
+//!   48 KiB, and the verifier's stdout, gzipped (the reference's logs are
+//!   left out: the page never shows them);
+//! - each of the reference bot's session files once per task: the trials of
+//!   a batch are graded on one hidden set, so the reference plays the same
+//!   sessions in each. A trial whose copy matches one already kept, but for
+//!   wall-clock fields ([`VOLATILE`]), points to it in
+//!   `verifier/sessions/reference-shared.json` instead;
 //! - the bot's source, without build output;
 //! - the agent's trajectory, gzipped.
 //!
@@ -30,6 +36,22 @@ const MAX_FILE_BYTES: u64 = 1 << 20;
 /// What a trial's verifier left that a release keeps as is (besides
 /// `sessions/`); its text logs are gzipped instead.
 const VERIFIER_FILES: &[&str] = &["report.json", "reward.json"];
+/// How much of a bot's session log a release keeps: its start and its end,
+/// where a bot says what it is and how it failed.
+const LOG_HEAD_BYTES: usize = 16 << 10;
+const LOG_TAIL_BYTES: usize = 48 << 10;
+/// Fields that differ between two runs of the same session by wall clock or
+/// chance alone: turn times, compute units (keypairs are random) and
+/// signatures. Two reference sessions equal but for these are one.
+pub(crate) const VOLATILE: &[&str] = &[
+    "turn_ms",
+    "wall_ms",
+    "compute_units",
+    "signature",
+    "signatures",
+];
+/// Where a published trial lists the reference sessions another trial keeps.
+pub(crate) const SHARED_REFERENCES: &str = "verifier/sessions/reference-shared.json";
 
 /// `bench/results` in this checkout: found from the working directory up,
 /// else from where this binary was built.
@@ -276,6 +298,7 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
             }
         }
     }
+    let shared = share_references(out)?;
     copy_file(
         &batch.join("batch.json"),
         &out.join("batch.json"),
@@ -288,6 +311,7 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
         "ran_at": started.first(),
         "trials": trials.len(),
         "tasks": tasks,
+        "shared_reference_sessions": shared,
         "skipped": skipped,
     });
     std::fs::write(
@@ -352,10 +376,143 @@ fn gzip_logs(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<()> {
             && name.ends_with(".log")
             && !name.starts_with('.');
         if is_log {
-            gzip_small(&entry.path(), &to.join(format!("{name}.gz")), skipped)?;
+            let bytes = std::fs::read(entry.path())?;
+            let out = to.join(format!("{name}.gz"));
+            write_gz(&out, &cut_log(&bytes))?;
+            if std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0) > MAX_FILE_BYTES {
+                std::fs::remove_file(&out)?;
+                skipped.push(format!(
+                    "{} (over the limit gzipped)",
+                    entry.path().display()
+                ));
+            }
         }
     }
     Ok(())
+}
+
+/// A log cut to its first [`LOG_HEAD_BYTES`] and last [`LOG_TAIL_BYTES`],
+/// with a line saying how much was left out.
+fn cut_log(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() <= LOG_HEAD_BYTES + LOG_TAIL_BYTES {
+        return bytes.to_vec();
+    }
+    let tail = bytes.len() - LOG_TAIL_BYTES;
+    let mut out = bytes[..LOG_HEAD_BYTES].to_vec();
+    out.extend_from_slice(
+        format!(
+            "\n[… {} bytes left out of the published log …]\n",
+            tail - LOG_HEAD_BYTES
+        )
+        .as_bytes(),
+    );
+    out.extend_from_slice(&bytes[tail..]);
+    out
+}
+
+fn write_gz(to: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut encoder =
+        flate2::write::GzEncoder::new(std::fs::File::create(to)?, flate2::Compression::best());
+    encoder.write_all(bytes)?;
+    encoder.finish()?.flush()?;
+    Ok(())
+}
+
+/// Keeps each reference session once per task across a release's trials:
+/// a trial whose copy matches one kept (see [`VOLATILE`]) drops it and
+/// points to the kept one in [`SHARED_REFERENCES`]. Returns how many it
+/// dropped.
+fn share_references(out: &Path) -> Result<usize> {
+    let mut trials: Vec<PathBuf> = review::discover(out)
+        .into_iter()
+        .filter(|t| t.join("verifier/sessions/reference").is_dir())
+        .collect();
+    trials.sort();
+    let mut kept: std::collections::HashMap<(String, String, String), PathBuf> =
+        std::collections::HashMap::new();
+    let mut dropped = 0;
+    for trial in &trials {
+        let task = trial
+            .file_name()
+            .map(|n| {
+                n.to_string_lossy()
+                    .split("__")
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let dir = trial.join("verifier/sessions/reference");
+        let mut names: Vec<String> = std::fs::read_dir(&dir)?
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .strip_suffix(".json.gz")
+                    .map(str::to_string)
+            })
+            .collect();
+        names.sort();
+        let mut pointers = serde_json::Map::new();
+        for name in names {
+            let file = dir.join(format!("{name}.json.gz"));
+            let Some(key) = session_key(&file) else {
+                continue;
+            };
+            match kept.entry((task.clone(), name.clone(), key)) {
+                std::collections::hash_map::Entry::Occupied(owner) => {
+                    let owner = owner.get().strip_prefix(out)?;
+                    pointers.insert(
+                        name.clone(),
+                        json!(format!(
+                            "{}/verifier/sessions/reference/{name}.json.gz",
+                            owner.display()
+                        )),
+                    );
+                    std::fs::remove_file(&file)?;
+                    dropped += 1;
+                }
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(trial.clone());
+                }
+            }
+        }
+        if !pointers.is_empty() {
+            std::fs::write(
+                trial.join(SHARED_REFERENCES),
+                serde_json::to_string_pretty(&Value::Object(pointers))? + "\n",
+            )?;
+        }
+    }
+    Ok(dropped)
+}
+
+/// A session file's content with its [`VOLATILE`] fields taken out, as a
+/// string to compare by: `None` if it doesn't read.
+fn session_key(file: &Path) -> Option<String> {
+    let mut json = Vec::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(file).ok()?)
+        .read_to_end(&mut json)
+        .ok()?;
+    let mut value: Value = serde_json::from_slice(&json).ok()?;
+    strip_volatile(&mut value);
+    serde_json::to_string(&value).ok()
+}
+
+fn strip_volatile(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for key in VOLATILE {
+                map.remove(*key);
+            }
+            map.values_mut().for_each(strip_volatile);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_volatile),
+        _ => {}
+    }
 }
 
 /// Gzip a file, unless even compressed it's over the release's limit.
@@ -641,5 +798,65 @@ mod tests {
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    fn session(dir: &Path, name: &str, pnl: f64, turn_ms: u64) {
+        std::fs::create_dir_all(dir).unwrap();
+        let body = json!({ "report": { "pnl_usd": pnl }, "timeline": { "steps": [{ "k": 0, "turn_ms": turn_ms }] } });
+        write_gz(
+            &dir.join(format!("{name}.json.gz")),
+            body.to_string().as_bytes(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_release_keeps_each_reference_session_once() {
+        let out = std::env::temp_dir().join(format!("mtx-share-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        let trial = |name: &str| {
+            let dir = out.join("job").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("result.json"),
+                json!({ "trial_name": name }).to_string(),
+            )
+            .unwrap();
+            dir
+        };
+        let (a, b, c) = (trial("mm__a"), trial("mm__b"), trial("fc__c"));
+        let refs = |t: &Path| t.join("verifier/sessions/reference");
+        // b plays hidden-1 like a, but for its turn times; hidden-2 differs.
+        session(&refs(&a), "hidden-1", 10.0, 3);
+        session(&refs(&b), "hidden-1", 10.0, 9);
+        session(&refs(&a), "hidden-2", 5.0, 1);
+        session(&refs(&b), "hidden-2", 6.0, 1);
+        // Another task's session of the same name is its own.
+        session(&refs(&c), "hidden-1", 10.0, 3);
+
+        assert_eq!(share_references(&out).unwrap(), 1);
+        assert!(refs(&a).join("hidden-1.json.gz").is_file());
+        assert!(!refs(&b).join("hidden-1.json.gz").exists());
+        assert!(refs(&b).join("hidden-2.json.gz").is_file());
+        assert!(refs(&c).join("hidden-1.json.gz").is_file());
+        let pointers = review::read_json(&b.join(SHARED_REFERENCES)).unwrap();
+        assert_eq!(
+            pointers["hidden-1"],
+            "job/mm__a/verifier/sessions/reference/hidden-1.json.gz"
+        );
+        assert!(!c.join(SHARED_REFERENCES).exists());
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn a_long_log_keeps_its_start_and_end() {
+        assert_eq!(cut_log(b"short"), b"short");
+        let mut log = vec![b'a'; LOG_HEAD_BYTES];
+        log.extend(vec![b'b'; 100_000]);
+        log.extend(vec![b'c'; LOG_TAIL_BYTES]);
+        let cut = String::from_utf8(cut_log(&log)).unwrap();
+        assert!(cut.starts_with('a') && cut.ends_with('c'));
+        assert!(cut.contains("[… 100000 bytes left out of the published log …]"));
+        assert!(!cut.contains("bb"));
     }
 }
