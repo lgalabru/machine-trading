@@ -12,7 +12,7 @@ name = "mtx-starter"
 path = "src/main.rs"
 
 [dependencies]
-mtx-botkit = { path = "../../crates/botkit" }
+mtx-kit = { path = "../../crates/kit" }
 tracing = "0.1"
 # Not used by the starter: the tasks' oracle solutions (`solution/solve.sh`)
 # are built in this crate, and use these, as the starter did before 0.11.0.

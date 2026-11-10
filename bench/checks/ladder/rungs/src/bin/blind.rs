@@ -4,7 +4,7 @@
 //! pays a guess about direction.
 
 use anyhow::Result;
-use mtx_botkit::{BotEnv, Trader, Turns};
+use mtx_kit::{BotEnv, Trader, Turns};
 use mtx_ladder_rungs::{init_logs, toward};
 
 #[tokio::main]

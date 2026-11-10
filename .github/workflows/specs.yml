@@ -10,9 +10,9 @@ name: Specs
 on:
   push:
     branches: [main]
-    paths: ["specs/**", "bench/results/**", "crates/cli/**", "crates/core/**", "Cargo.lock", ".github/workflows/specs.yml"]
+    paths: ["specs/**", "bench/results/**", "crates/**", "Cargo.lock", ".github/workflows/specs.yml"]
   pull_request:
-    paths: ["specs/**", "bench/results/**", "crates/cli/**", "crates/core/**", "Cargo.lock", ".github/workflows/specs.yml"]
+    paths: ["specs/**", "bench/results/**", "crates/**", "Cargo.lock", ".github/workflows/specs.yml"]
   workflow_dispatch:
 
 permissions:

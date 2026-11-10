@@ -97,8 +97,8 @@ COPY snapshots/ /opt/mtx/snapshots/
 # the grader was tested with.
 COPY bench/image/sdk-workspace.toml /opt/mtx/sdk/Cargo.toml
 COPY Cargo.lock /opt/mtx/sdk/Cargo.lock
-COPY crates/luce /opt/mtx/sdk/crates/luce
-COPY crates/botkit /opt/mtx/sdk/crates/botkit
+COPY crates/core /opt/mtx/sdk/crates/core
+COPY crates/kit /opt/mtx/sdk/crates/kit
 COPY bots/starter /opt/mtx/sdk/bots/starter
 ENV CARGO_HOME=/home/agent/.cargo
 # One target dir for every build, so the agent's bot reuses the SDK's
@@ -110,7 +110,7 @@ ENV CARGO_TARGET_DIR=/opt/mtx/target
 # sources, so trimming it makes every agent build re-fetch from crates.io.
 USER agent
 RUN cp -r /opt/mtx/sdk/bots/starter /app/bot \
-    && sed -i 's|path = "../../crates/botkit"|path = "/opt/mtx/sdk/crates/botkit"|; s|^name = "mtx-bot-starter"|name = "bot"|; s|^name = "mtx-starter"|name = "bot"|' /app/bot/Cargo.toml \
+    && sed -i 's|path = "../../crates/kit"|path = "/opt/mtx/sdk/crates/kit"|; s|^name = "mtx-bot-starter"|name = "bot"|; s|^name = "mtx-starter"|name = "bot"|' /app/bot/Cargo.toml \
     && sed -i 's|--bin mtx-starter|--bin bot|' /app/bot/build.sh \
     && cp /opt/mtx/sdk/Cargo.lock /app/bot/Cargo.lock \
     && /app/bot/build.sh \

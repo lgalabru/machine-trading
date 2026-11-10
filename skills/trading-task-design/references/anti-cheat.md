@@ -19,7 +19,7 @@ METR's recommendation applies here: **fix the scorer, don't scold the model.**
 
 | Path | Example | Mitigation |
 | --- | --- | --- |
-| Chain cheatcodes | `surfnet_setTokenAccount` to mint USDC, `surfnet_setAccount` to rewrite positions | RPC guard **allowlist** (`crates/core/src/guard.rs`); any refused call scores 0 |
+| Chain cheatcodes | `surfnet_setTokenAccount` to mint USDC, `surfnet_setAccount` to rewrite positions | RPC guard **allowlist** (`crates/grader/src/guard.rs`); any refused call scores 0 |
 | Faucets | `requestAirdrop` | Not on the allowlist |
 | Time travel | Clock or slot warps to jump past the crash, or to reach the rebound early | Time cheatcodes refused; the grader drives time |
 | Price manipulation | Pushing the oracle's source market, or self-trading to move the mark used for valuation | Value at the mark the grader reads; decide whether moving the price counts as skill or as a violation, and say so |

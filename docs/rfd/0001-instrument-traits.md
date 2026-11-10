@@ -224,3 +224,11 @@ cap check reads `Holding::position()`.
   count wherever they sit, since a spot position belongs to the asset.
   `PhoenixPerpMeter` moved to `meter/phoenix_perp.rs`. No session uses
   the spot meter yet, and the mandate reader still refuses `spot`.
+- 2026-11-10: the crates split by role. `mtx-core` (`crates/core`) is the
+  vocabulary, with no chain code: asset, venue, instrument, order, fill,
+  position, `Holding`, `AccountMeter`, the mandate and the turn protocol.
+  `luce` and `mtx-botkit` merged into `mtx-kit` (`crates/kit`), which
+  re-exports core's types under `mtx_kit::core`. The grader, which this RFD
+  called `mtx-core` until now, is `mtx-grader` (`crates/grader`); the
+  meters are in `crates/grader/src/meter/`. Paths in the entries above
+  are as they were when written.

@@ -7,7 +7,7 @@
 //! `orders.quote(bid, ask, size)` to make a market, and `orders.trader()`
 //! for anything else.
 
-use mtx_botkit::prelude::*;
+use mtx_kit::prelude::*;
 use tracing::info;
 
 #[derive(Default)]
@@ -37,5 +37,5 @@ impl Strategy for Watcher {
 }
 
 fn main() -> BotResult {
-    mtx_botkit::run(Watcher)
+    mtx_kit::run(Watcher)
 }

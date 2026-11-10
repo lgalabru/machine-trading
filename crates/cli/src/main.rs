@@ -2,7 +2,7 @@ use std::{io::IsTerminal, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use mtx_core::{
+use mtx_grader::{
     grade::{self, GradeOptions},
     making::MakingFamily,
     phoenix,

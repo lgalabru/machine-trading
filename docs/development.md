@@ -39,10 +39,10 @@ mtx bot check ~/my-bot                     # run.sh, an executable bin/bot, not 
 mtx bot pack ~/my-bot -o my-bot.tar.gz     # the source and a manifest, no builds
 ```
 
-- `new` starts from `bots/starter`, a `Strategy` on `mtx-botkit`'s run
-  loop (`mtx_botkit::run`): the same starter the task images hand to
+- `new` starts from `bots/starter`, a `Strategy` on `mtx-kit`'s run
+  loop (`mtx_kit::run`): the same starter the task images hand to
   agents. It depends on
-  `mtx-botkit` by path to the checkout `mtx` was built
+  `mtx-kit` by path to the checkout `mtx` was built
   from, or with `--git` by git at the commit it was built from, and copies
   the workspace's `Cargo.lock`. A bot inside this checkout is refused: the
   workspace's `bots/*` would claim it.
