@@ -24,7 +24,7 @@ jobs:
       - name: Each oracle is its task's reference bot
         # Mirrors `references` in the Justfile.
         run: |
-          for pair in phoenix-flash-crash=reference phoenix-market-making=maker; do
+          for pair in flash-crash-spcx=reference market-making-spcx=maker; do
             diff -u "bots/${pair#*=}/src/main.rs" "bench/tasks/${pair%%=*}/solution/src/main.rs"
           done
       - name: Lint every task
@@ -96,7 +96,7 @@ jobs:
         # itself) scores skill 1 exactly.
         run: |
           export MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
-          harbor run -p bench/tasks/phoenix-flash-crash -a oracle -o jobs
+          harbor run -p bench/tasks/flash-crash-spcx -a oracle -o jobs
           skill=$(jq '.skill' "$(find jobs -name reward.json | head -1)")
           echo "oracle skill: $skill"
           jq -en "$skill > 0.999 and $skill < 1.001" > /dev/null

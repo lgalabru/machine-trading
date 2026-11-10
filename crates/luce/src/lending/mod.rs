@@ -231,6 +231,18 @@ pub struct LendPosition {
     pub value: Decimal,
 }
 
+impl LendPosition {
+    /// As a [`LendingBalance`](crate::core::LendingBalance): a deposit, with
+    /// nothing borrowed.
+    pub fn balance(&self) -> crate::core::LendingBalance {
+        crate::core::LendingBalance {
+            asset: self.asset.clone(),
+            supplied: self.value,
+            borrowed: Decimal::ZERO,
+        }
+    }
+}
+
 /// How much to withdraw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WithdrawAmount {
@@ -293,6 +305,33 @@ pub trait LendingProvider: Send + Sync {
         reserve: &Pubkey,
         amount: WithdrawAmount,
     ) -> Result<ExecutionPlan, LendingError>;
+
+    /// Plan to borrow `amount_native` of the reserve's asset for `owner`,
+    /// against what `owner` supplied as collateral in the same market.
+    async fn plan_borrow(
+        &self,
+        owner: &Pubkey,
+        reserve: &Pubkey,
+        amount_native: u64,
+    ) -> Result<ExecutionPlan, LendingError> {
+        let _ = (owner, amount_native);
+        Err(LendingError::Unsupported(format!(
+            "borrowing from reserve {reserve}"
+        )))
+    }
+
+    /// Plan to repay `amount_native` of `owner`'s borrow from `reserve`.
+    async fn plan_repay(
+        &self,
+        owner: &Pubkey,
+        reserve: &Pubkey,
+        amount_native: u64,
+    ) -> Result<ExecutionPlan, LendingError> {
+        let _ = (owner, amount_native);
+        Err(LendingError::Unsupported(format!(
+            "repaying reserve {reserve}"
+        )))
+    }
 
     /// Human-readable meaning of a custom program error code, if known.
     fn explain_error(&self, code: u32) -> Option<String>;

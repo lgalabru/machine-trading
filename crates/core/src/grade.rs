@@ -530,7 +530,7 @@ const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {
-    use mtx_botkit::Mandate;
+    use mtx_botkit::{Mandate, mandate::PositionRange};
 
     use super::*;
     use crate::scenario::{VENUE, Waypoint};
@@ -551,6 +551,7 @@ mod tests {
             mandate: Mandate::perp(VENUE, "SPCX", 100.0, 1_000.0),
             instrument: "phoenix:perp:SPCX".parse().unwrap(),
             peak_position: 0.0,
+            positions: vec![],
             positions_outside_universe: 0,
             max_drawdown_usd: 0.0,
             valuation: "mark",
@@ -640,6 +641,11 @@ mod tests {
 
         let mut big = session(900.0);
         big.peak_position = 119.0;
+        big.positions = vec![PositionRange {
+            instrument: big.instrument.clone(),
+            lowest: -119.0,
+            highest: 4.0,
+        }];
         let report = score(vec![(big, &s)]);
         assert_eq!(report.reward, 0.0);
         assert!(

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
+async-trait = "0.1"
 borsh = "1"
 bs58 = "0.5"
 flate2 = "1"
