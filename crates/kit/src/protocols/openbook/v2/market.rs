@@ -259,7 +259,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use super::*;
-    use crate::protocols::openbook_v2::state::testing::{book_side_bytes, market_bytes};
+    use crate::protocols::openbook::v2::state::testing::{book_side_bytes, market_bytes};
 
     fn market() -> OpenBookV2Market {
         let keys: [Pubkey; 8] = std::array::from_fn(|i| Pubkey::new_from_array([i as u8 + 1; 32]));
@@ -292,7 +292,7 @@ mod tests {
         let m = market();
         let owner = Pubkey::new_unique();
         let side = |leaves: &[_]| {
-            crate::protocols::openbook_v2::state::book_side_orders(&book_side_bytes(leaves))
+            crate::protocols::openbook::v2::state::book_side_orders(&book_side_bytes(leaves))
                 .unwrap()
         };
         let bids = side(&[

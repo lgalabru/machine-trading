@@ -23,7 +23,7 @@
 //! ```text
 //!  protocols   phoenix (feature "phoenix"): a Phoenix perp as an Instrument,
 //!     │        exact tick/lot math, a trader that plans orders, an ExecutionDriver;
-//!     │        phoenix_v1, openbook_v2 (spot books, the same pieces), pyth (prices)
+//!     │        phoenix::v1, openbook::v2 (spot books, the same pieces), pyth (prices)
 //!     ▼
 //!  chain       ChainClient · TransactionSigner · InstructionGroup → pack →
 //!     │        preview → execute (simulate before every signature) · tokens
@@ -60,8 +60,8 @@
 //! | Feature | Adds |
 //! |---------|------|
 //! | `phoenix` (default) | [`protocols::phoenix`]: Phoenix Eternal perpetuals; and the bot plumbing on them |
-//! | `phoenix-v1` | [`protocols::phoenix_v1`]: Phoenix v1 spot order books |
-//! | `openbook-v2` | [`protocols::openbook_v2`]: OpenBook v2 spot order books |
+//! | `phoenix-v1` | [`protocols::phoenix::v1`]: Phoenix v1 spot order books |
+//! | `openbook-v2` | [`protocols::openbook::v2`]: OpenBook v2 spot order books |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
@@ -110,7 +110,7 @@ mod bot {
         env::BotEnv,
         error::{Error, Result},
         phoenix::{Phoenix, QUOTE_LOTS_PER_USD, load_exchange},
-        protocols::phoenix::{
+        protocols::phoenix::eternal::{
             PhoenixDriver, PhoenixExchange, PhoenixMarket, PhoenixOrder, PhoenixTrader,
             phoenix_rise::{self, math::Side},
         },

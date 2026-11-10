@@ -8,7 +8,7 @@ use tracing::info;
 use crate::{
     Error, Result,
     chain::{InstructionGroup, TransactionPlan},
-    protocols::phoenix::COMPUTE_UNIT_LIMIT,
+    protocols::phoenix::eternal::COMPUTE_UNIT_LIMIT,
 };
 
 /// An RPC client that waits for `confirmed`, not the default `finalized`,

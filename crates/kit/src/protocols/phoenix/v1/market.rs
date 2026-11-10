@@ -233,7 +233,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     use super::*;
-    use crate::protocols::phoenix_v1::state::testing::{MarketSpec, market_bytes};
+    use crate::protocols::phoenix::v1::state::testing::{MarketSpec, market_bytes};
 
     #[test]
     fn units_are_exact() {

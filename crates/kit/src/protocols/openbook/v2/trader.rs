@@ -417,7 +417,7 @@ mod tests {
     use super::*;
     use crate::{
         chain::{FireAndForgetOptions, mock::MockChainClient},
-        protocols::openbook_v2::{
+        protocols::openbook::v2::{
             PROGRAM_ID,
             state::testing::{book_side_bytes, market_bytes},
         },
@@ -556,7 +556,7 @@ mod tests {
         use solana_program_pack::Pack;
         use spl_token_interface::state::{Account as TokenState, AccountState};
 
-        use crate::protocols::openbook_v2::state::testing::{indexer_bytes, open_orders_bytes};
+        use crate::protocols::openbook::v2::state::testing::{indexer_bytes, open_orders_bytes};
 
         let chain = Arc::new(MockChainClient::new());
         let authority = Pubkey::new_unique();

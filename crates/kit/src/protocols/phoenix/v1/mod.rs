@@ -4,7 +4,7 @@
 //! Phoenix v1 is a central limit order book for spot tokens: one account
 //! per market holds its parameters, both books and every trader's seat
 //! (its `TraderState`). It is a different program from Phoenix Eternal
-//! ([`super::phoenix`]), on the same venue: instruments are
+//! ([`super::eternal`]), on the same venue: instruments are
 //! `phoenix:spot:<SYMBOL>`, with the symbols in [`MARKETS`], or the
 //! market's address for any other.
 //!
@@ -15,7 +15,7 @@
 //! | the account (wallet token accounts and seat) | [`SpotBalances`](crate::core::SpotBalances) from `holdings()`; its base's total is the profile's position |
 //! | ticks, base lots, quote lots | exact [`Decimal`](rust_decimal::Decimal) conversions on [`PhoenixV1Market`] |
 //! | the book | [`OrderBook`](crate::core::OrderBook) with sizes; [`OwnedOrder`]s with their traders |
-//! | `Swap`, post-only and limit orders, cancel all | [`PhoenixV1Trader`] plans, [`chain::execute`](crate::chain::execute) or [`chain::submit`](crate::chain::submit) sends |
+//! | `Swap`, post-only and limit orders, cancel all | [`PhoenixV1Trader`] plans, [`chain::execute`](crate::chain::execute) or [`chain::fire_and_forget`](crate::chain::fire_and_forget) sends |
 //! | order flow | [`PhoenixV1Driver`] → [`ExecutionDriver`](crate::core::ExecutionDriver) |
 //!
 //! Swaps settle from and to the trader's associated token accounts and need
@@ -36,7 +36,8 @@ use solana_pubkey::Pubkey;
 pub use state::{BookSide, MarketHeader, MarketState, RestingOrder, TraderState};
 pub use trader::{PhoenixV1Order, PhoenixV1Trader};
 
-use super::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};
+pub use super::VENUE;
+use crate::protocols::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};
 
 /// The Phoenix v1 program.
 pub const PROGRAM_ID: Pubkey =
@@ -45,10 +46,6 @@ pub const PROGRAM_ID: Pubkey =
 /// The Phoenix seat manager, which grants seats to any trader.
 pub const SEAT_MANAGER_ID: Pubkey =
     solana_pubkey::pubkey!("PSMxQbAoDWDbvd9ezQJgARyq6R9L5kJAasaLDVcZwf1");
-
-/// The venue every Phoenix v1 instrument trades on: Phoenix, as the venue
-/// profile names it, shared with Phoenix Eternal's perpetuals.
-pub const VENUE: &str = "phoenix";
 
 /// The spot markets the Phoenix venue profile names.
 pub const MARKETS: &[NamedMarket] = &[NamedMarket {

@@ -8,7 +8,7 @@ use crate::{
     error::io_error,
     mandate::{Mandate, Term},
     phoenix::load_exchange,
-    protocols::phoenix::phoenix_rise::types::exchange::ExchangeResponse,
+    protocols::phoenix::eternal::phoenix_rise::types::exchange::ExchangeResponse,
 };
 
 /// What the grader hands a bot, through environment variables.
