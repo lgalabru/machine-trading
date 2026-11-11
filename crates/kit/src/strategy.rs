@@ -268,6 +268,13 @@ pub struct Market {
     /// The highest `pnl` so far, and how far `pnl` is below it.
     pub peak_pnl: f64,
     pub drawdown: f64,
+    /// The step's turn data, when the scenario reports it (spot sessions):
+    /// every trade since the previous step on every venue, the top of each
+    /// book, and the world's clock in Unix seconds. A component gets none
+    /// yet: no task that runs one reports it.
+    pub tape: Vec<mtx_core::turns::Trade>,
+    pub depth: Vec<mtx_core::turns::BookLevels>,
+    pub unix_timestamp: Option<i64>,
 }
 
 impl Market {

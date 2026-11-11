@@ -441,6 +441,7 @@ impl WasmBot {
             pnl: self.pnl,
             peak_pnl: self.peak_pnl,
             drawdown: self.peak_pnl - self.pnl,
+            ..mtx_kit::Market::default()
         };
         let market = Market {
             k,

@@ -68,6 +68,9 @@ pub fn market(m: wit::Market) -> Market {
         pnl: m.pnl,
         peak_pnl: m.peak_pnl,
         drawdown: m.drawdown,
+        tape: Vec::new(),
+        depth: Vec::new(),
+        unix_timestamp: None,
     }
 }
 
