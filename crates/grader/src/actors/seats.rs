@@ -8,20 +8,33 @@
 //! Spot seats sign from memory; a perp seat's keypair sits in a directory
 //! only root can read, which goes with the last seat.
 
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    path::PathBuf,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 
 use mtx_core::{Decimal, Side, instrument::Rounding};
 use mtx_kit::{
     BotEnv, Trader,
-    chain::{self, ChainClient, ExecutionPlan, InstructionGroup, RpcChainClient, SendMode},
+    chain::{
+        self, ChainClient, ExecutionPlan, InstructionGroup, RpcChainClient, SendMode,
+        TransactionPlan,
+    },
     protocols::{
         openbook::v2::{
             self as openbook_v2, OpenBookV2Order, OpenBookV2Trader,
             ix::{NO_QUOTE_LIMIT, OrderSide, PlaceOrderArgs, PlaceOrderType, SelfTradeBehavior},
         },
-        phoenix::v1::{
-            self as phoenix_v1, BookSide, PhoenixV1Order, PhoenixV1Trader,
-            ix::{OrderPacket, SelfTrade},
+        phoenix::{
+            eternal::PhoenixOrder,
+            v1::{
+                self as phoenix_v1, BookSide, PhoenixV1Order, PhoenixV1Trader,
+                ix::{OrderPacket, SelfTrade},
+            },
         },
     },
 };
@@ -65,6 +78,16 @@ pub struct Rested {
     pub error: Option<Error>,
 }
 
+/// The compute-unit limit of a perp seat's take, as the kit's own sends ask.
+const PERP_COMPUTE_UNIT_LIMIT: u32 = mtx_kit::protocols::phoenix::eternal::COMPUTE_UNIT_LIMIT;
+
+/// Make a transaction unique among a seat's sends by its `n`th send: its
+/// compute-unit limit goes down by 1 to 1,024 units. A limit changes no
+/// fee and no outcome; it only makes the signed bytes differ.
+pub fn nonced(step: &mut TransactionPlan, n: u32) {
+    step.compute_unit_limit = step.compute_unit_limit.saturating_sub(1 + n % 1024);
+}
+
 /// One actor's account on one venue.
 pub struct Seat {
     /// The venue, as the mandate names it.
@@ -73,6 +96,8 @@ pub struct Seat {
     chain: Arc<dyn ChainClient>,
     kind: Kind,
     _dir: Option<Arc<SeatDir>>,
+    /// Transactions sent so far: each one's nonce.
+    sends: AtomicU32,
 }
 
 enum Kind {
@@ -177,6 +202,7 @@ impl Seat {
             chain,
             kind,
             _dir: None,
+            sends: AtomicU32::new(0),
         })
     }
 
@@ -210,6 +236,7 @@ impl Seat {
             chain: Arc::new(RpcChainClient::new(rpc_url)),
             kind: Kind::Perp(Box::new(trader)),
             _dir: Some(dir.clone()),
+            sends: AtomicU32::new(0),
         })
     }
 
@@ -234,9 +261,16 @@ impl Seat {
         }
     }
 
+    /// Send `plan`, every transaction of it made unique (see [`nonced`]):
+    /// the same action twice in a slot would otherwise be the same signed
+    /// transaction, which the chain runs only once.
     async fn send(&self, plan: &ExecutionPlan, what: &'static str) -> Result<()> {
+        let mut plan = plan.clone();
+        for step in &mut plan.steps {
+            nonced(step, self.sends.fetch_add(1, Ordering::Relaxed));
+        }
         SendMode::default()
-            .send(plan, &self.keypair, self.chain.as_ref())
+            .send(&plan, &self.keypair, self.chain.as_ref())
             .await
             .map(|_| ())
             .map_err(failed(what))
@@ -254,7 +288,10 @@ impl Seat {
                 let plan = t.plan_cancel_all().map_err(failed("cancel"))?;
                 self.send(&plan, "cancel").await
             }
-            Kind::Perp(t) => t.cancel_all().map(|_| ()).map_err(Error::from),
+            Kind::Perp(t) => {
+                let plan = t.inner.plan_cancel_all().map_err(failed("cancel"))?;
+                self.send(&plan, "cancel").await
+            }
         }
     }
 
@@ -374,14 +411,20 @@ impl Seat {
             Kind::Perp(t) => {
                 let mut rested = Rested::default();
                 for &(side, price, base) in orders {
-                    let side = match side {
-                        Side::Buy => mtx_kit::Side::Bid,
-                        Side::Sell => mtx_kit::Side::Ask,
-                    };
                     rested.sent += 1;
-                    if let Err(error) = t.place_limit(side, price, base).await {
+                    let sent = async {
+                        let instrument = &t.inner.market().instrument;
+                        let order = PhoenixOrder::Limit {
+                            side,
+                            price: instrument.round_price(decimal(price), rounding(side)),
+                            quantity: instrument.lots_to_quantity(t.lots(base)?),
+                        };
+                        let plan = t.inner.plan(&order).await.map_err(failed("rest"))?;
+                        self.send(&plan, "rest").await
+                    };
+                    if let Err(error) = sent.await {
                         rested.failed += 1;
-                        rested.error = Some(Error::from(error));
+                        rested.error = Some(error);
                     }
                 }
                 rested
@@ -463,10 +506,8 @@ impl Seat {
                 // A take-only order trades from the wallet, never with the
                 // seat's resting orders, which belong to its open orders
                 // account.
-                t.submit(&order, &self.keypair)
-                    .await
-                    .map(|_| ())
-                    .map_err(failed("take"))
+                let plan = t.plan(&order).map_err(failed("take"))?;
+                self.send(&plan, "take").await
             }
             Kind::Perp(t) => {
                 let lots = t.lots(base)?;
@@ -492,9 +533,13 @@ impl Seat {
                     .place_market_order(ticket)
                     .await
                     .map_err(failed("take"))?;
-                mtx_kit::send(&t.rpc, &t.keypair, ixs, "take")
-                    .map(|_| ())
-                    .map_err(Error::from)
+                let plan = chain::pack(
+                    &t.authority(),
+                    &[InstructionGroup::new("take", ixs)],
+                    PERP_COMPUTE_UNIT_LIMIT,
+                )
+                .map_err(failed("take"))?;
+                self.send(&plan, "take").await
             }
         }
     }
@@ -587,5 +632,44 @@ impl Seat {
             sent?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_same_action_twice_is_two_transactions() {
+        let payer = Pubkey::new_unique();
+        let ix = mtx_kit::Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: Vec::new(),
+            data: vec![6],
+        };
+        let plan = chain::pack(
+            &payer,
+            &[InstructionGroup::new("cancel", vec![ix])],
+            400_000,
+        )
+        .unwrap();
+        let blockhash = mtx_kit::Hash::new_unique();
+        let sent = |n| {
+            let mut step = plan.steps[0].clone();
+            nonced(&mut step, n);
+            step.message(&payer, blockhash)
+        };
+        // Same instructions, same blockhash: different messages, so different
+        // signatures, and both run.
+        assert_ne!(sent(0), sent(1));
+        assert_eq!(
+            sent(0),
+            sent(1024),
+            "a nonce repeats only every 1,024 sends"
+        );
+        let mut step = plan.steps[0].clone();
+        nonced(&mut step, 1023);
+        assert_eq!(step.compute_unit_limit, 400_000 - 1024);
+        assert_eq!(step.instructions, plan.steps[0].instructions);
     }
 }
