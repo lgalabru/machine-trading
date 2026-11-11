@@ -112,6 +112,14 @@ pub struct Market {
     /// The mandate's position cap and drawdown limit.
     pub cap: f64,
     pub max_drawdown: f64,
+    /// The bids and asks the run loop has resting, in base units: every one
+    /// it placed since its last cancel, filled or not. An upper bound, so
+    /// that [`plan`] can keep the position within the cap even if they all
+    /// fill: a fill already in `position` is counted again until the next
+    /// cancel, which only makes the sheet cut sooner. Orders sent through
+    /// [`Orders::trader`] aren't counted.
+    pub resting_bids: f64,
+    pub resting_asks: f64,
     /// The account's PnL since the first step, marked to market: the
     /// position held times each step's move in the mark. An estimate: it
     /// leaves out fees, funding and slippage, which the grader counts.
@@ -124,14 +132,27 @@ pub struct Market {
 }
 
 impl Market {
-    /// How much more the bot may buy before its position reaches the cap.
+    /// How much more the bot may buy before its position could reach the
+    /// cap: counting its resting bids as filled.
     pub fn room_to_buy(&self) -> f64 {
-        (self.cap - self.position.size).max(0.0)
+        self.room().0
     }
 
-    /// How much more it may sell before its position reaches minus the cap.
+    /// How much more it may sell before its position could reach minus the
+    /// cap: counting its resting asks as filled.
     pub fn room_to_sell(&self) -> f64 {
-        (self.cap + self.position.size).max(0.0)
+        self.room().1
+    }
+
+    /// `(room to buy, room to sell)`, by the mandate's own rule
+    /// ([`mtx_core::mandate::position_room`]).
+    fn room(&self) -> (f64, f64) {
+        mtx_core::mandate::position_room(
+            self.cap,
+            self.position.size,
+            self.resting_bids,
+            self.resting_asks,
+        )
     }
 
     /// How much further the account may draw down before the mandate's limit,
@@ -302,18 +323,25 @@ pub enum Action {
     CancelAll,
 }
 
-/// Turn a sheet's intentions into orders, in order, for a market: targets
-/// and market orders are cut so the position, counting every earlier order
-/// as filled, stays within the cap, and resting orders so that filling them
-/// would too. Returns the orders, and a note for each one it cut or dropped.
+/// Turn a sheet's intentions into orders, in order, for a market. Every order
+/// is cut so that the position stays within the cap even if every order
+/// resting fills: the market's [`Market::resting_bids`] and
+/// [`Market::resting_asks`], and every resting order the sheet adds.
+/// Market orders and targets count as filled. A cancel, or a quote, which
+/// cancels first, clears what was resting. Returns the orders, and a note for
+/// each one it cut or dropped.
 pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
     let cap = market.cap;
     let mut position = market.position.size;
+    let (mut bids, mut asks) = (market.resting_bids, market.resting_asks);
     let mut actions = Vec::new();
     let mut notes = Vec::new();
-    let room = |position: f64, side: Side| match side {
-        Side::Bid => (cap - position).max(0.0),
-        Side::Ask => (cap + position).max(0.0),
+    let room = |position: f64, bids: f64, asks: f64, side: Side| {
+        let (buy, sell) = mtx_core::mandate::position_room(cap, position, bids, asks);
+        match side {
+            Side::Bid => buy,
+            Side::Ask => sell,
+        }
     };
     for intent in intents {
         match *intent {
@@ -333,6 +361,17 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
                 }
                 let mut missing =
                     (wanted - position).clamp(-execution.max_per_step, execution.max_per_step);
+                // Resting orders could fill too: trade only what keeps the
+                // position within the cap if they do.
+                let side = if missing > 0.0 { Side::Bid } else { Side::Ask };
+                let room = room(position, bids, asks, side);
+                if missing.abs() > room {
+                    notes.push(format!(
+                        "target {target} would leave the position past the cap if the resting orders filled: trading {room} of {}",
+                        missing.abs()
+                    ));
+                    missing = missing.signum() * room;
+                }
                 while missing.abs() >= execution.min_trade {
                     let size = (missing.abs() / execution.min_trade).floor() * execution.min_trade;
                     let size = size.min(execution.slice);
@@ -351,28 +390,54 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
                 }
             }
             Intent::Market { side, size, limit } => {
-                let size = cut(size, room(position, side), "market order", &mut notes);
+                let size = cut(
+                    size,
+                    room(position, bids, asks, side),
+                    "market order",
+                    &mut notes,
+                );
                 if size > 0.0 {
                     actions.push(Action::Market { side, size, limit });
                     position += signed(side, size);
                 }
             }
             Intent::Limit { side, price, size } => {
-                let size = cut(size, room(position, side), "resting order", &mut notes);
+                let size = cut(
+                    size,
+                    room(position, bids, asks, side),
+                    "resting order",
+                    &mut notes,
+                );
                 if size > 0.0 {
                     actions.push(Action::Limit { side, price, size });
+                    match side {
+                        Side::Bid => bids += size,
+                        Side::Ask => asks += size,
+                    }
                 }
             }
             Intent::Quote { bid, ask, size } => {
                 actions.push(Action::CancelAll);
-                let bid_size = cut(size, room(position, Side::Bid), "bid", &mut notes);
-                let ask_size = cut(size, room(position, Side::Ask), "ask", &mut notes);
+                (bids, asks) = (0.0, 0.0);
+                let bid_size = cut(
+                    size,
+                    room(position, bids, asks, Side::Bid),
+                    "bid",
+                    &mut notes,
+                );
+                let ask_size = cut(
+                    size,
+                    room(position, bids, asks, Side::Ask),
+                    "ask",
+                    &mut notes,
+                );
                 if bid_size > 0.0 {
                     actions.push(Action::Limit {
                         side: Side::Bid,
                         price: bid,
                         size: bid_size,
                     });
+                    bids += bid_size;
                 }
                 if ask_size > 0.0 {
                     actions.push(Action::Limit {
@@ -380,12 +445,37 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
                         price: ask,
                         size: ask_size,
                     });
+                    asks += ask_size;
                 }
             }
-            Intent::CancelAll => actions.push(Action::CancelAll),
+            Intent::CancelAll => {
+                actions.push(Action::CancelAll);
+                (bids, asks) = (0.0, 0.0);
+            }
         }
     }
     (actions, notes)
+}
+
+/// What is resting after `actions` are sent on top of `bids` and `asks`, in
+/// base units: a cancel clears it, a resting order adds to its side.
+pub fn resting_after(bids: f64, asks: f64, actions: &[Action]) -> (f64, f64) {
+    actions
+        .iter()
+        .fold((bids, asks), |(bids, asks), action| match *action {
+            Action::CancelAll => (0.0, 0.0),
+            Action::Limit {
+                side: Side::Bid,
+                size,
+                ..
+            } => (bids + size, asks),
+            Action::Limit {
+                side: Side::Ask,
+                size,
+                ..
+            } => (bids, asks + size),
+            Action::Market { .. } => (bids, asks),
+        })
 }
 
 fn signed(side: Side, size: f64) -> f64 {
@@ -453,6 +543,8 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     let mut used = Duration::ZERO;
     let (mut pnl, mut peak_pnl, mut last_mark): (f64, f64, Option<f64>) = (0.0, 0.0, None);
     let mut last_market: Option<Market> = None;
+    // What the loop has resting: see [`Market::resting_bids`].
+    let (mut resting_bids, mut resting_asks) = (0.0, 0.0);
     while let Some(step) = turns.next()? {
         let started = Instant::now();
         let (mark, oracle, position) = match (
@@ -483,6 +575,8 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             position,
             cap,
             max_drawdown,
+            resting_bids,
+            resting_asks,
             pnl,
             peak_pnl,
             drawdown: peak_pnl - pnl,
@@ -496,6 +590,9 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
                     warn!(step = step.k, "{note}");
                 }
                 send(&session.trader, &actions).await;
+                // A resting order that failed to send counts anyway: the
+                // ledger only ever over-counts.
+                (resting_bids, resting_asks) = resting_after(resting_bids, resting_asks, &actions);
             }
             Err(error) => warn!(step = step.k, %error, "the strategy failed; no orders this step"),
         }
@@ -708,5 +805,146 @@ mod tests {
         orders.cancel_all().buy(3.0, 101.0);
         assert_eq!(orders.intents().len(), 2);
         assert!(orders.trader().is_none());
+    }
+
+    fn limit(side: Side, size: f64) -> Intent {
+        Intent::Limit {
+            side,
+            price: 100.0,
+            size,
+        }
+    }
+
+    fn resting_sizes(actions: &[Action]) -> Vec<f64> {
+        actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::Limit { size, .. } => Some(*size),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resting_orders_on_one_sheet_count_together() {
+        // Two bids of 50 under a cap of 70: both filling would hold 100.
+        let (actions, notes) = plan(
+            &[limit(Side::Bid, 50.0), limit(Side::Bid, 50.0)],
+            &market(0.0),
+        );
+        assert_eq!(resting_sizes(&actions), [50.0, 20.0]);
+        assert_eq!(notes.len(), 1);
+        // A market buy after them has no room left.
+        let (actions, _) = plan(
+            &[
+                limit(Side::Bid, 70.0),
+                Intent::Market {
+                    side: Side::Bid,
+                    size: 5.0,
+                    limit: 101.0,
+                },
+            ],
+            &market(0.0),
+        );
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn orders_resting_from_earlier_steps_count() {
+        let resting = Market {
+            resting_bids: 40.0,
+            resting_asks: 10.0,
+            ..market(20.0)
+        };
+        assert_eq!(
+            (resting.room_to_buy(), resting.room_to_sell()),
+            (10.0, 80.0)
+        );
+        // A bid, a market buy and a target are each cut to the room left.
+        let (actions, _) = plan(&[limit(Side::Bid, 30.0)], &resting);
+        assert_eq!(resting_sizes(&actions), [10.0]);
+        let (actions, _) = plan(
+            &[Intent::Market {
+                side: Side::Bid,
+                size: 30.0,
+                limit: 101.0,
+            }],
+            &resting,
+        );
+        assert_eq!(
+            actions,
+            [Action::Market {
+                side: Side::Bid,
+                size: 10.0,
+                limit: 101.0
+            }]
+        );
+        let (actions, notes) = plan(
+            &[Intent::Target {
+                position: 70.0,
+                execution: Execution::default(),
+            }],
+            &resting,
+        );
+        let bought: f64 = actions
+            .iter()
+            .map(|a| match a {
+                Action::Market { size, .. } => *size,
+                _ => 0.0,
+            })
+            .sum();
+        assert_eq!(bought, 10.0);
+        assert!(notes[0].contains("resting orders"), "{notes:?}");
+    }
+
+    #[test]
+    fn a_cancel_or_a_quote_clears_what_rests() {
+        let resting = Market {
+            resting_bids: 70.0,
+            ..market(0.0)
+        };
+        assert_eq!(resting.room_to_buy(), 0.0);
+        let (actions, _) = plan(&[Intent::CancelAll, limit(Side::Bid, 50.0)], &resting);
+        assert_eq!(resting_sizes(&actions), [50.0]);
+        let (actions, _) = plan(
+            &[Intent::Quote {
+                bid: 99.0,
+                ask: 101.0,
+                size: 30.0,
+            }],
+            &resting,
+        );
+        assert_eq!(actions[0], Action::CancelAll);
+        assert_eq!(resting_sizes(&actions), [30.0, 30.0]);
+    }
+
+    #[test]
+    fn the_ledger_follows_what_was_sent() {
+        let quoted = [
+            Action::CancelAll,
+            Action::Limit {
+                side: Side::Bid,
+                price: 99.0,
+                size: 30.0,
+            },
+            Action::Limit {
+                side: Side::Ask,
+                price: 101.0,
+                size: 20.0,
+            },
+        ];
+        assert_eq!(resting_after(5.0, 5.0, &quoted), (30.0, 20.0));
+        let more = [Action::Limit {
+            side: Side::Bid,
+            price: 98.0,
+            size: 10.0,
+        }];
+        assert_eq!(resting_after(30.0, 20.0, &more), (40.0, 20.0));
+        let taken = [Action::Market {
+            side: Side::Bid,
+            size: 3.0,
+            limit: 101.0,
+        }];
+        assert_eq!(resting_after(40.0, 20.0, &taken), (40.0, 20.0));
     }
 }
