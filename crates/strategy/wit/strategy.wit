@@ -1,0 +1,98 @@
+/// A trading strategy as a component the grader calls: `docs/rfd/0002-wasm-strategies.md`.
+///
+/// The grader calls `start` once, `step` once per step of the session, and
+/// `end` after the last. The world is paused while a call runs: what the
+/// strategy reads through `rpc` is the chain as it is at that step.
+package mtx:strategy@0.1.0;
+
+interface types {
+  /// The session, as `start` sees it.
+  record session {
+    /// Steps in the session, and slots per step.
+    steps: u64,
+    slots-per-step: u64,
+    /// The slots the session starts and ends at.
+    start-slot: u64,
+    end-slot: u64,
+    /// The market traded, as the venue names it (`SPCX`).
+    symbol: string,
+    /// The mark when the session starts.
+    start-mark: f64,
+    /// The mandate's position cap, in base units, and its drawdown limit,
+    /// in USD.
+    cap: f64,
+    max-drawdown: f64,
+    /// The mandate, as `specs/mandate.md` writes it.
+    mandate: string,
+    /// A seed, for a strategy that wants randomness: the same in every run
+    /// of the session.
+    seed: u64,
+  }
+
+  /// The position: signed, in base units, and its average entry.
+  record position {
+    size: f64,
+    entry-usd: f64,
+  }
+
+  /// The market at one step, as `mtx_kit::Market` has it.
+  record market {
+    k: u64,
+    slot: u64,
+    last: bool,
+    steps-left: u64,
+    slots-left: u64,
+    mark: f64,
+    oracle: f64,
+    position: position,
+    cap: f64,
+    max-drawdown: f64,
+    /// What the strategy has resting, as far as the grader knows: every
+    /// bid and ask it placed since its last cancel, filled or not.
+    resting-bids: f64,
+    resting-asks: f64,
+    /// The account's PnL since the first step, marked to market, its peak,
+    /// and how far below the peak it is.
+    pnl: f64,
+    peak-pnl: f64,
+    drawdown: f64,
+  }
+
+  enum side { bid, ask }
+
+  /// How a target is worked, as `mtx_kit::Execution`.
+  record execution {
+    max-per-step: f64,
+    slice: f64,
+    slippage-bps: f64,
+    min-trade: f64,
+  }
+
+  /// One line of the order sheet, as `mtx_kit::Intent`.
+  variant intent {
+    /// Market orders toward a position.
+    target(tuple<f64, execution>),
+    /// Cancel what rests, then rest a bid and an ask: `(bid, ask, size)`.
+    quote(tuple<f64, f64, f64>),
+    /// A market order: `(side, size, worst price)`.
+    market(tuple<side, f64, f64>),
+    /// A resting order: `(side, price, size)`.
+    limit(tuple<side, f64, f64>),
+    /// Cancel every resting order.
+    cancel-all,
+  }
+}
+
+world strategy {
+  use types.{session, market, intent};
+
+  /// A line in the strategy's log.
+  import log: func(line: string);
+  /// A read-only JSON-RPC call against the session's chain, answered by the
+  /// grader before it returns: `params` and the result are JSON.
+  import rpc: func(method: string, params: string) -> result<string, string>;
+
+  export start: func(session: session) -> result<_, string>;
+  export step: func(market: market) -> result<list<intent>, string>;
+  export end: func(last: option<market>);
+}

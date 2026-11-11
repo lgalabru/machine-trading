@@ -218,3 +218,20 @@ defend, no bot users, no keypair files.
   a call cap. The observation interface shrinks from a requirement to a set
   of conveniences, and the RPC guard becomes the import's allowlist.
 
+- 2026-11-11: step 1, the spike. `crates/strategy` (`mtx-strategy`) holds
+  the WIT world (`wit/strategy.wit`), a synchronous `Strategy` trait and
+  `export!`; `bots/reference-wasm` is the flash-crash reference ported to
+  it, a 71 KB component built for `wasm32-wasip2` with no extra tools. The
+  grader's `crate::wasm` loads a bot directory's `bot.wasm` with `wasmtime`
+  50 and runs it in place of the process: the same guarded endpoint, the
+  bot's key in the grader's `mtx_kit::Trader`, the run loop's `Market`,
+  `plan()` and ledger, orders sent in order until one fails. WASI is linked
+  with no files, environment or network, stopped clocks and seeded
+  randomness (Rust's std imports them on wasip2), and each call has a fuel
+  budget (10^10, uncalibrated). On flash-crash's six practice scenarios the
+  component earns the process reference's PnL to the cent, with every one
+  of 1,538 steps equal in position, value and mark, and a second run equal
+  to the first. A turn takes about as long as the process's (2.7 ms
+  against 2.1 ms): the reads, not the strategy, are the cost. `rpc` is
+  implemented, an allowlist forwarded to the guarded endpoint, but nothing
+  calls it yet: that is step 2, with the maker.

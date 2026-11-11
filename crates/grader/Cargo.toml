@@ -31,3 +31,8 @@ tokio.workspace = true
 futures.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+# Strategies built as wasm components (docs/rfd/0002-wasm-strategies.md).
+wasmtime = "50.0.1"
+wasmtime-wasi = "50.0.1"
+# Seeds the strategies' WASI randomness.
+rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }

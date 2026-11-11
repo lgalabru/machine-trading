@@ -89,6 +89,15 @@ jobs:
         run: |
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
+      - name: A strategy component
+        # bots/reference-wasm builds for wasm32-wasip2 only, outside the
+        # workspace: build it, and load it in the grader's wasm host.
+        run: |
+          rustup target add wasm32-wasip2
+          cargo +nightly fmt --manifest-path bots/reference-wasm/Cargo.toml -- --check
+          cargo clippy --manifest-path bots/reference-wasm/Cargo.toml --target wasm32-wasip2 -- -D warnings
+          bots/reference-wasm/build.sh
+          MTX_TEST_WASM="$PWD/bots/reference-wasm/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.

@@ -14,6 +14,7 @@ pub mod phoenix;
 pub mod scenario;
 pub mod session;
 pub mod snapshot;
+pub mod wasm;
 pub mod weekend;
 
 pub use error::{Error, Result};
