@@ -1,6 +1,6 @@
 {
   "name": "smoke-buy-order",
-  "description": "Buy 5 SOL by the end; the bot buys 2 and the broker buys the remainder at the close plus the haircut",
+  "description": "Buy 5 SOL by the end from a wallet with no SOL; the bot buys, and the broker buys the remainder at the close plus the haircut",
   "symbol": "SOL-USDC",
   "duration_slots": 40,
   "mandate": {
@@ -29,7 +29,7 @@
       "phoenix",
       "openbook"
     ],
-    "base": 0.01,
+    "base": 0.0,
     "quote": 2000.0
   },
   "turn_data": {

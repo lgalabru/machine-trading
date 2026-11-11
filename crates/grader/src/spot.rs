@@ -554,6 +554,7 @@ impl Ledger {
             .iter()
             .map(|s| Traded {
                 venue: venue_of(&s.fill),
+                price: grader_f64(s.fill.price),
                 slot: s.fill.slot.saturating_sub(base_slot),
                 base: grader_f64(s.fill.quantity),
                 own: s.own.is_some(),
@@ -625,8 +626,17 @@ fn venue_error<E: std::fmt::Display>(what: &'static str) -> impl Fn(E) -> Error 
 
 /// Give `owner` `base` wrapped SOL and `quote` USDC, and SOL for fees. Setup
 /// only: USDC comes from a cheatcode; the SOL is wrapped by an ordinary
-/// transaction, so its token account is a real native one.
-pub fn fund(surfnet: &Surfnet, owner: &Keypair, base: f64, quote: f64) -> Result<()> {
+/// transaction, so its token account is a real native one. With `accounts`
+/// the wallet has both token accounts even when it starts with none of an
+/// asset, as a bot trading toward an order needs (it buys into the wSOL
+/// account, or sells into the USDC one).
+pub fn fund(
+    surfnet: &Surfnet,
+    owner: &Keypair,
+    base: f64,
+    quote: f64,
+    accounts: bool,
+) -> Result<()> {
     let cheats = surfnet.cheatcodes();
     let wrapped = (base * 1e9).round() as u64;
     let fees = (FEE_SOL * 1e9) as u64;
@@ -637,8 +647,14 @@ pub fn fund(surfnet: &Surfnet, owner: &Keypair, base: f64, quote: f64) -> Result
         (quote * 1e6).round() as u64,
         None,
     )?;
-    if wrapped > 0 {
-        let (_, instructions) = token::wrap_sol(&owner.pubkey(), wrapped, true);
+    if wrapped > 0 || accounts {
+        let (_, mut instructions) = token::wrap_sol(&owner.pubkey(), wrapped, true);
+        if accounts {
+            instructions.insert(
+                0,
+                token::create_ata_idempotent(&owner.pubkey(), &owner.pubkey(), &USDC_MINT),
+            );
+        }
         mtx_kit::send(&chain::rpc_client(surfnet), owner, instructions, "wrap SOL")?;
     }
     Ok(())
@@ -757,7 +773,13 @@ pub(crate) async fn run_session(
     let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(internal.url()));
 
     let bot = Keypair::new();
-    fund(&surfnet, &bot, spot.base, spot.quote)?;
+    fund(
+        &surfnet,
+        &bot,
+        spot.base,
+        spot.quote,
+        scenario.order.is_some(),
+    )?;
     let venues = Venues::connect(chain, &spot.venues, bot.pubkey()).await?;
     let start = venues.read().await?;
     let instruments = spot.instruments();
@@ -1010,13 +1032,10 @@ pub(crate) async fn run_session(
             &own,
         )
     });
-    let participation = scenario.participation.as_ref().map(|p| {
-        p.report(
-            &ledger.traded(base_slot),
-            &spot.venues,
-            end.wallet.price_usd,
-        )
-    });
+    let participation = scenario
+        .participation
+        .as_ref()
+        .map(|p| p.report(&ledger.traded(base_slot), &spot.venues));
     let pnl_usd = order
         .as_ref()
         .map_or(end_value_usd - start_value_usd, |o| o.pnl_usd())
