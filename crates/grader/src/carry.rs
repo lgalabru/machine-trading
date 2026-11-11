@@ -506,6 +506,7 @@ impl CarryFamily {
             tape,
             faults: None,
             reference_pnl_usd: None,
+            fair_path: None,
         };
         let shape = Shape {
             informed_share,

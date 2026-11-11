@@ -424,6 +424,7 @@ impl WeekendFamily {
             tape: Vec::new(),
             faults: None,
             reference_pnl_usd: None,
+            fair_path: None,
         };
         (scenario, shape)
     }
