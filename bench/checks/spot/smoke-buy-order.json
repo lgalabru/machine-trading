@@ -1,0 +1,46 @@
+{
+  "name": "smoke-buy-order",
+  "description": "Buy 5 SOL by the end; the bot buys 2 and the broker buys the remainder at the close plus the haircut",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "buy"
+        ]
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "buy"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "spot": {
+    "venues": [
+      "phoenix",
+      "openbook"
+    ],
+    "base": 0.01,
+    "quote": 2000.0
+  },
+  "turn_data": {
+    "tape": true,
+    "depth_levels": 3,
+    "timestamps": true,
+    "parties": true
+  },
+  "order": {
+    "side": "buy",
+    "quantity": 5.0,
+    "haircut_bps": 100.0
+  }
+}
