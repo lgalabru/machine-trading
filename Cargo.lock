@@ -4941,6 +4941,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-spot-smoke"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mtx-bot-starter"
 version = "0.1.0"
 dependencies = [
@@ -5050,6 +5061,8 @@ name = "mtx-kit"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "bs58",
  "chrono",
  "mtx-core",
  "phoenix-rise",

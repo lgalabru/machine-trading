@@ -484,6 +484,21 @@ enum SnapshotCommand {
         #[arg(long, default_value = "SPCX")]
         symbol: String,
     },
+    /// Fork mainnet, warm up Phoenix v1's and OpenBook v2's SOL/USDC markets
+    /// and the Pyth SOL/USD feed, and export them: a snapshot for spot
+    /// sessions.
+    PrepareSpot {
+        /// Output directory, e.g. snapshots/sol-usdc-spot-2026-11-11.
+        #[arg(long)]
+        out: PathBuf,
+        /// Datasource to fork. May embed an API key; only its host is recorded.
+        #[arg(
+            long,
+            env = "MTX_FORK_RPC_URL",
+            default_value = "https://api.mainnet-beta.solana.com"
+        )]
+        fork_rpc: String,
+    },
     /// Restart offline from a snapshot and trade through a scripted crash.
     Verify {
         #[arg(long)]
@@ -705,6 +720,9 @@ async fn run() -> Result<()> {
             })
             .await?;
             serde_json::to_string_pretty(&manifest)?
+        }
+        Command::Snapshot(SnapshotCommand::PrepareSpot { out, fork_rpc }) => {
+            serde_json::to_string_pretty(&snapshot::prepare_spot(&out, &fork_rpc).await?)?
         }
         Command::Snapshot(SnapshotCommand::VerifyFork {
             fork_rpc,

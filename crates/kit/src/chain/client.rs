@@ -13,7 +13,9 @@ use solana_account::Account;
 use solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding};
 use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
-use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+use solana_rpc_client::{
+    nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+};
 use solana_rpc_client_api::{
     client_error::Error as ClientError,
     config::{
@@ -24,8 +26,8 @@ use solana_rpc_client_api::{
 };
 use solana_transaction::{Hash, Signature, TransactionError, versioned::VersionedTransaction};
 use solana_transaction_status_client_types::{
-    EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding, UiTransactionTokenBalance,
-    option_serializer::OptionSerializer,
+    EncodedConfirmedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
+    UiTransactionTokenBalance, option_serializer::OptionSerializer,
 };
 
 use crate::chain::error::ChainError;
@@ -92,6 +94,20 @@ pub struct TransactionSummary {
     pub post_balances: Vec<u64>,
     /// Token balance changes.
     pub token_balance_changes: Vec<TokenBalanceChange>,
+    /// Instructions programs invoked, in execution order, such as the log
+    /// instructions programs call on themselves to record events.
+    pub inner_instructions: Vec<InnerInstruction>,
+}
+
+/// One instruction a program invoked while the transaction ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InnerInstruction {
+    /// The index of the transaction's instruction that invoked it.
+    pub outer: u8,
+    /// The invoked program.
+    pub program: Pubkey,
+    /// Its data.
+    pub data: Vec<u8>,
 }
 
 impl TransactionSummary {
@@ -188,6 +204,21 @@ pub trait ChainClient: Send + Sync {
         &self,
         signature: &Signature,
     ) -> Result<Option<TransactionSummary>, ChainError>;
+
+    /// The confirmed transactions that touched `address` in slots after
+    /// `after_slot`, oldest first, with the slot each landed in: how an
+    /// enforcer finds every fill a market recorded. The default refuses, so
+    /// clients that can't list them still compile.
+    async fn signatures_for_address(
+        &self,
+        address: &Pubkey,
+        after_slot: u64,
+    ) -> Result<Vec<(Signature, u64)>, ChainError> {
+        let _ = (address, after_slot);
+        Err(ChainError::Rpc(
+            "this client can't list an address's transactions".into(),
+        ))
+    }
 }
 
 /// [`ChainClient`] over JSON-RPC at `confirmed` commitment.
@@ -286,6 +317,35 @@ pub(crate) fn summarize(
     let post_token: Vec<UiTransactionTokenBalance> =
         Option::from(meta.post_token_balances).unwrap_or_default();
     let token_balance_changes = merge_token_balances(&account_keys, &pre_token, &post_token)?;
+    let mut inner_instructions = Vec::new();
+    for group in Option::from(meta.inner_instructions).unwrap_or_else(Vec::new) {
+        for instruction in group.instructions {
+            let UiInstruction::Compiled(ix) = instruction else {
+                return Err(ChainError::Decode {
+                    what: "inner instruction",
+                    detail: "not in compiled form".into(),
+                });
+            };
+            let program =
+                *account_keys
+                    .get(usize::from(ix.program_id_index))
+                    .ok_or(ChainError::Decode {
+                        what: "inner instruction",
+                        detail: format!("program index {} out of range", ix.program_id_index),
+                    })?;
+            let data = bs58::decode(&ix.data)
+                .into_vec()
+                .map_err(|e| ChainError::Decode {
+                    what: "inner instruction",
+                    detail: e.to_string(),
+                })?;
+            inner_instructions.push(InnerInstruction {
+                outer: group.index,
+                program,
+                data,
+            });
+        }
+    }
 
     Ok(TransactionSummary {
         signature,
@@ -300,6 +360,7 @@ pub(crate) fn summarize(
         pre_balances: meta.pre_balances,
         post_balances: meta.post_balances,
         token_balance_changes,
+        inner_instructions,
     })
 }
 
@@ -578,6 +639,53 @@ impl ChainClient for RpcChainClient {
             }
         }
     }
+
+    async fn signatures_for_address(
+        &self,
+        address: &Pubkey,
+        after_slot: u64,
+    ) -> Result<Vec<(Signature, u64)>, ChainError> {
+        // Newest first, a page at a time, until a page reaches back to
+        // `after_slot`.
+        let mut found = Vec::new();
+        let mut before = None;
+        loop {
+            let config = GetConfirmedSignaturesForAddress2Config {
+                before,
+                until: None,
+                limit: Some(1_000),
+                commitment: Some(CommitmentConfig::confirmed()),
+            };
+            let page = self
+                .rpc
+                .get_signatures_for_address_with_config(address, config)
+                .await
+                .map_err(|e| self.rpc_err(e))?;
+            let full = page.len() == 1_000;
+            let mut reached = false;
+            for entry in &page {
+                if entry.slot <= after_slot {
+                    reached = true;
+                    break;
+                }
+                let signature =
+                    entry
+                        .signature
+                        .parse::<Signature>()
+                        .map_err(|e| ChainError::Decode {
+                            what: "signature",
+                            detail: e.to_string(),
+                        })?;
+                found.push((signature, entry.slot));
+            }
+            match page.last() {
+                Some(last) if full && !reached => before = last.signature.parse().ok(),
+                _ => break,
+            }
+        }
+        found.reverse();
+        Ok(found)
+    }
 }
 
 #[cfg(test)]
@@ -653,6 +761,7 @@ mod tests {
         );
 
         let summary = TransactionSummary {
+            inner_instructions: Vec::new(),
             signature: Signature::default(),
             slot: 1,
             block_time: None,

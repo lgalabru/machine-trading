@@ -97,7 +97,26 @@ such as the authority's USDC, are counted once, as the
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
 
-No benchmark task enforces the spot markets yet.
+It audits spot sessions on the spot market this profile names, alone or
+with OpenBook's:
+
+- It measures the account at every step of the session, every two slots,
+  and once more after the bot's last turn. The position is the SOL held, in
+  the wallet and on each venue in the universe; the value is both assets at
+  the Pyth SOL/USD price and USDC at $1, each counted once, for the
+  drawdown limit when the mandate sets one.
+- A side has an open order when the account's resting orders lock base
+  (asks) or quote (bids) on it.
+- At the end of the term it reads every fill the market recorded for the
+  account, as a taker or a maker, from the `Fill` events in the audit logs
+  of the term's transactions, and audits them against the allowances'
+  sides and limit prices.
+- It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
+  set to the session's last slot, and disqualifies the session on any
+  breach.
+
+No benchmark task enforces the spot markets yet; `just spot-smoke` runs a
+session end to end.
 
 Separately, the benchmark gates the RPC methods a bot may call. That is a
 rule of the benchmark's sandbox, not part of the mandate.

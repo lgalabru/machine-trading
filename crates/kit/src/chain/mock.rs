@@ -30,6 +30,7 @@ struct State {
     simulations: VecDeque<SimulationOutcome>,
     receipts: HashMap<Signature, TransactionSummary>,
     receipt_requests: usize,
+    signatures: HashMap<Pubkey, Vec<(Signature, u64)>>,
     send_failures: VecDeque<TransactionError>,
 }
 
@@ -90,6 +91,21 @@ impl MockChainClient {
     /// Registers the receipt returned for a signature.
     pub fn set_receipt(&self, summary: TransactionSummary) -> &Self {
         self.state().receipts.insert(summary.signature, summary);
+        self
+    }
+
+    /// Registers a receipt and lists it among the transactions that touched
+    /// each of `addresses`, at its slot.
+    pub fn record_transaction(&self, summary: TransactionSummary, addresses: &[Pubkey]) -> &Self {
+        let mut s = self.state();
+        for address in addresses {
+            s.signatures
+                .entry(*address)
+                .or_default()
+                .push((summary.signature, summary.slot));
+        }
+        s.receipts.insert(summary.signature, summary);
+        drop(s);
         self
     }
 
@@ -225,5 +241,23 @@ impl ChainClient for MockChainClient {
         let mut s = self.state();
         s.receipt_requests += 1;
         Ok(s.receipts.get(signature).cloned())
+    }
+
+    async fn signatures_for_address(
+        &self,
+        address: &Pubkey,
+        after_slot: u64,
+    ) -> Result<Vec<(Signature, u64)>, ChainError> {
+        let mut found: Vec<(Signature, u64)> = self
+            .state()
+            .signatures
+            .get(address)
+            .into_iter()
+            .flatten()
+            .filter(|(_, slot)| *slot > after_slot)
+            .copied()
+            .collect();
+        found.sort_by_key(|(_, slot)| *slot);
+        Ok(found)
     }
 }

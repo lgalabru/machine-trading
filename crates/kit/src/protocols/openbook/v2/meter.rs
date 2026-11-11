@@ -6,7 +6,9 @@ use std::sync::Arc;
 use solana_pubkey::Pubkey;
 
 use super::{
-    OpenBookV2Market, ix,
+    OpenBookV2Market,
+    fills::{heap_fills, logged_fills},
+    ix,
     state::{OpenOrdersIndexer, OpenOrdersPosition},
 };
 use crate::{
@@ -14,7 +16,7 @@ use crate::{
     core::{AccountMeter, InstrumentId, Measurement, MeterError, RecordedFill, SpotBalances},
     protocols::{
         NamedMarket, holdings_from_atoms,
-        spot::{meter_error, value_usd},
+        spot::{MarketFill, meter_error, recorded_for, value_usd},
     },
 };
 
@@ -91,6 +93,71 @@ impl OpenBookV2Meter {
         }
     }
 
+    /// The owner the meter measures.
+    pub fn owner(&self) -> Pubkey {
+        self.owner
+    }
+
+    /// Who the owner is in a fill: itself (the taker of a take-only order)
+    /// and every open orders account its indexer lists.
+    pub async fn fill_ids(&self) -> Result<Vec<Pubkey>, MeterError> {
+        let mut ids = vec![self.owner];
+        if let Some(account) = self
+            .chain
+            .get_account(&ix::open_orders_indexer(&self.owner))
+            .await
+            .map_err(meter_error)?
+        {
+            ids.extend(
+                OpenOrdersIndexer::decode(&account.data)
+                    .map_err(meter_error)?
+                    .addresses,
+            );
+        }
+        Ok(ids)
+    }
+
+    /// Every fill the watched markets recorded, between any accounts,
+    /// oldest first: the `FillLog`s of transactions that touched each market
+    /// in slots after `after_slot`, then the `FillEvent`s still in its event
+    /// heap, which no transaction has logged yet, dated the slot they were
+    /// read at. A fill stays in the heap, and in every read, until
+    /// `consume_events` takes it out: count each `sequence` once.
+    pub async fn market_fills(&self, after_slot: u64) -> Result<Vec<MarketFill>, MeterError> {
+        let chain = self.chain.as_ref();
+        let mut fills = Vec::new();
+        for named in &self.markets {
+            let market = self.market(named).await.map_err(meter_error)?;
+            let signatures = chain
+                .signatures_for_address(&named.address, after_slot)
+                .await
+                .map_err(meter_error)?;
+            let mut logged = Vec::new();
+            for (signature, _) in signatures {
+                let summary = chain
+                    .get_transaction(&signature)
+                    .await
+                    .map_err(meter_error)?
+                    .ok_or_else(|| {
+                        MeterError::Read(format!("transaction {signature} is listed but not found"))
+                    })?;
+                logged.extend(logged_fills(&summary, &market));
+            }
+            let slot = chain.get_slot().await.map_err(meter_error)?;
+            let heap = chain
+                .get_account(&market.keys.event_heap)
+                .await
+                .map_err(meter_error)?
+                .ok_or_else(|| meter_error(ChainError::AccountNotFound(market.keys.event_heap)))?;
+            let waiting = heap_fills(&heap.data, &market, slot).map_err(meter_error)?;
+            let seen: Vec<u128> = logged.iter().map(|fill| fill.sequence).collect();
+            fills.extend(logged);
+            fills.extend(waiting.into_iter().filter(|f| !seen.contains(&f.sequence)));
+        }
+        fills.sort_by_key(|fill| (fill.slot, fill.sequence));
+        Ok(fills)
+    }
+
     async fn market(&self, named: &NamedMarket) -> Result<OpenBookV2Market, ChainError> {
         let account = self
             .chain
@@ -138,10 +205,11 @@ impl AccountMeter for OpenBookV2Meter {
         })
     }
 
-    async fn fills(&self, _after_slot: u64) -> Result<Vec<RecordedFill>, MeterError> {
-        Err(MeterError::Unsupported(
-            "OpenBook v2 fills: FillLog and the event heap aren't decoded yet".into(),
-        ))
+    /// The owner's fills, as a taker or a maker, settled or still in the
+    /// event heap (see [`OpenBookV2Meter::market_fills`]).
+    async fn fills(&self, after_slot: u64) -> Result<Vec<RecordedFill>, MeterError> {
+        let fills = self.market_fills(after_slot).await?;
+        Ok(recorded_for(&fills, &self.fill_ids().await?))
     }
 }
 
@@ -152,11 +220,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        chain::mock::MockChainClient,
+        chain::{TransactionSummary, mock::MockChainClient},
+        core::Side,
         protocols::{
             USDC_MINT, WRAPPED_SOL_MINT,
             openbook::v2::{
                 PROGRAM_ID,
+                fills::testing::{EventSpec, fill_log_line, heap},
                 state::testing::{indexer_bytes, market_bytes, open_orders_bytes},
             },
             spot::testing::{sol_usd, token_account},
@@ -219,5 +289,86 @@ mod tests {
         // 3.5 SOL at $80, and 5 USDC.
         assert_eq!(m.value_usd, dec!(285));
         assert_eq!(m.outside_universe, 1);
+    }
+
+    #[tokio::test]
+    async fn fills_come_from_the_event_heap_and_the_fill_logs_once_each() {
+        let chain = Arc::new(MockChainClient::new());
+        chain.set_slot(50);
+        let owner = Pubkey::new_unique();
+        let open_orders = Pubkey::new_unique();
+        let other = Pubkey::new_unique();
+        let mut keys: [Pubkey; 8] =
+            std::array::from_fn(|i| Pubkey::new_from_array([i as u8 + 1; 32]));
+        (keys[4], keys[5]) = (WRAPPED_SOL_MINT, USDC_MINT);
+        let named = crate::protocols::openbook::v2::MARKETS[0];
+        let program = |data| Account {
+            lamports: 1,
+            data,
+            owner: PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        };
+        chain.set_account(named.address, program(market_bytes(&keys)));
+        chain.set_account(
+            ix::open_orders_indexer(&owner),
+            program(indexer_bytes(&[open_orders])),
+        );
+        // The owner sold 2 lots as a take-only taker (seq 1, logged and still
+        // in the heap); another taker bought from the owner's ask (seq 2,
+        // only in the heap); two others traded (seq 3).
+        let sold = EventSpec {
+            taker_side: 1,
+            seq_num: 1,
+            maker: other,
+            taker: owner,
+            price_lots: 150,
+            base_lots: 2,
+        };
+        let lifted = EventSpec {
+            taker_side: 0,
+            seq_num: 2,
+            maker: open_orders,
+            taker: other,
+            price_lots: 151,
+            base_lots: 3,
+        };
+        let theirs = EventSpec {
+            taker_side: 0,
+            seq_num: 3,
+            maker: other,
+            taker: Pubkey::new_unique(),
+            price_lots: 152,
+            base_lots: 1,
+        };
+        let line = fill_log_line(&named.address, &sold);
+        chain.set_account(keys[3], program(heap(&[sold, lifted, theirs])));
+        chain.record_transaction(
+            TransactionSummary {
+                signature: solana_transaction::Signature::from([1; 64]),
+                slot: 40,
+                block_time: None,
+                fee_lamports: 5_000,
+                error: None,
+                logs: vec!["Program log: Instruction: PlaceTakeOrder".into(), line],
+                account_keys: Vec::new(),
+                pre_balances: Vec::new(),
+                post_balances: Vec::new(),
+                token_balance_changes: Vec::new(),
+                inner_instructions: Vec::new(),
+            },
+            &[named.address],
+        );
+
+        let meter = OpenBookV2Meter::new(chain, owner, &[named]);
+        let all = meter.market_fills(0).await.unwrap();
+        let seen: Vec<(u64, u128)> = all.iter().map(|f| (f.slot, f.sequence)).collect();
+        assert_eq!(seen, vec![(40, 1), (50, 2), (50, 3)]);
+        assert_eq!(all[0].price, dec!(0.15));
+        assert_eq!(all[0].quantity, dec!(0.002));
+
+        let mine = meter.fills(0).await.unwrap();
+        let sides: Vec<Side> = mine.iter().map(|f| f.fill.side).collect();
+        assert_eq!(sides, vec![Side::Sell, Side::Sell]);
     }
 }
