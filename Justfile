@@ -79,13 +79,13 @@ spot-smoke:
 
 # Spot sessions with scenario actors: makers that clear the snapshot's stale
 # orders, thin out under a seller and refill; a level and Pyth on a path; a
-# heavy tape; a counterparty that buys ahead of a buyer. Checks the detail files.
+# heavy tape; a counterparty that front-runs a buyer. Checks the detail files.
 actors-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
     bots/spot-smoke/build.sh
     rm -rf target/actors-smoke
-    for run in actors-seller=steady-seller actors-path=steady-seller actors-tape=steady-seller actors-buyer=steady-buyer actors-buyer-ahead=steady-buyer; do
+    for run in actors-seller=steady-seller actors-path=steady-seller actors-tape=steady-seller actors-buyer=steady-buyer actors-buyer-front-run=steady-buyer; do
       name=${run%%=*}
       cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/${run#*=} \
         --logs target/actors-smoke/logs/$name --details target/actors-smoke/$name bench/checks/spot/$name.json

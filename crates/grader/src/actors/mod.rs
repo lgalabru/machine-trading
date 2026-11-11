@@ -18,10 +18,10 @@
 //!
 //! Three actors come with the engine: [`makers`], a ladder of quotes per
 //! venue that refills, leans with inventory and moves with the flow it
-//! absorbs; [`ahead`], a trader that trades the bot's way before it; and
-//! [`tape`], a spot scenario's listed taker orders. A family sets their
-//! parameters, and may add actors of its own ([`Cast::add`]) on seats it
-//! onboards ([`Seat::spot`], [`Cast::add_seat`]).
+//! absorbs; [`front_run`], a trader that front-runs the bot, trading its way
+//! before its next turn; and [`tape`], a spot scenario's listed taker
+//! orders. A family sets their parameters, and may add actors of its own
+//! ([`Cast::add`]) on seats it onboards ([`Seat::spot`], [`Cast::add_seat`]).
 //!
 //! Every actor follows the same rules:
 //!
@@ -37,16 +37,16 @@
 //!   than [`MAX_FAILED_SHARE`] of them failed didn't see the market its
 //!   scenario describes, and the grade fails as infrastructure.
 
-pub mod ahead;
 pub mod family;
+pub mod front_run;
 pub mod makers;
 pub mod seats;
 pub mod tape;
 
 use std::{future::Future, sync::Arc};
 
-pub use ahead::{Ahead, Counterparty, CounterpartyReport};
 pub use family::{FamilyPlan, FamilySetup};
+pub use front_run::{Counterparty, CounterpartyReport, FrontRunner};
 use futures::future::BoxFuture;
 pub use makers::{ImpactSource, MakerModel, MakerReport, Makers};
 use mtx_core::Side;
@@ -394,7 +394,9 @@ impl Cast {
             .counterparties
             .iter()
             .zip(groups)
-            .map(|(c, group)| Box::new(Ahead::new(c.clone(), group, half_spread)) as Box<dyn Actor>)
+            .map(|(c, group)| {
+                Box::new(FrontRunner::new(c.clone(), group, half_spread)) as Box<dyn Actor>
+            })
             .collect();
         if !tape.is_empty() {
             others.push(Box::new(Tape::new(tape.to_vec(), venues, tape_seats)));
@@ -630,16 +632,16 @@ mod tests {
 
     #[test]
     fn counterparties_need_makers() {
-        let ahead = ahead::tests::counterparty();
+        let front_run = front_run::tests::counterparty();
         let alone = Actors {
             makers: None,
-            counterparties: vec![ahead.clone()],
+            counterparties: vec![front_run.clone()],
             ..Actors::default()
         };
         assert!(alone.validate().unwrap_err().contains("makers"));
         let both = Actors {
             makers: Some(makers::tests::model()),
-            counterparties: vec![ahead],
+            counterparties: vec![front_run],
             ..Actors::default()
         };
         let mut lagging = both.clone();
