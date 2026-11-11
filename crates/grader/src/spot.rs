@@ -198,20 +198,27 @@ impl Spot {
             }
             after = order.slot;
         }
-        // The actors' level steps to each waypoint at its slot.
-        let mut after = None;
-        for (i, waypoint) in scenario.path.iter().enumerate() {
-            if after.is_some_and(|slot| waypoint.slot <= slot)
-                || waypoint.slot >= scenario.duration_slots
-                || !(waypoint.level_pct.is_finite() && waypoint.level_pct > -100.0)
-                || waypoint.premium_pct != 0.0
-            {
-                return Err(format!(
-                    "spot: waypoint {i} must come after the last, inside the session, above \
-                     -100% and with no premium"
-                ));
+        // The actors' level, and Pyth's on its own path, step to each
+        // waypoint at its slot.
+        let oracle_path = scenario
+            .actors
+            .as_ref()
+            .map_or(&[][..], |a| &a.oracle_path[..]);
+        for (name, path) in [("waypoint", &scenario.path[..]), ("oracle waypoint", oracle_path)] {
+            let mut after = None;
+            for (i, waypoint) in path.iter().enumerate() {
+                if after.is_some_and(|slot| waypoint.slot <= slot)
+                    || waypoint.slot >= scenario.duration_slots
+                    || !(waypoint.level_pct.is_finite() && waypoint.level_pct > -100.0)
+                    || waypoint.premium_pct != 0.0
+                {
+                    return Err(format!(
+                        "spot: {name} {i} must come after the last, inside the session, above \
+                         -100% and with no premium"
+                    ));
+                }
+                after = Some(waypoint.slot);
             }
-            after = Some(waypoint.slot);
         }
         if scenario.duration_slots == 0 {
             return Err("spot: the session has no slots".into());
@@ -674,18 +681,25 @@ pub(crate) async fn run_session(
             first_slot, "setup ran past the session's first slot: this session won't replay"
         );
     }
-    // Pyth follows the path: each waypoint's level lands on its slot.
-    if scenario.actors.as_ref().is_some_and(|a| a.oracle) && !scenario.path.is_empty() {
+    // Pyth follows the path, or its own: each waypoint's level lands on its
+    // slot.
+    let no_path = Vec::new();
+    let oracle_path = match &scenario.actors {
+        Some(actors) if actors.oracle && !actors.oracle_path.is_empty() => &actors.oracle_path,
+        Some(actors) if actors.oracle => &scenario.path,
+        _ => &no_path,
+    };
+    if !oracle_path.is_empty() {
         let feed = pyth::feed_account(0, &pyth::SOL_USD_FEED_ID);
         let account = rpc.get_account(&feed)?;
         let update = pyth::PriceUpdate::decode_feed(&account.data, &pyth::SOL_USD_FEED_ID)
             .map_err(venue_error("pyth SOL/USD"))?;
         let scale = 10f64.powi(update.exponent);
-        let overrides = scenario
-            .path
+        let overrides = oracle_path
             .iter()
             .map(|waypoint| {
-                let raw = (level(waypoint.slot) / scale).round() as i64;
+                let usd = start_level_usd * (1.0 + waypoint.level_pct / 100.0);
+                let raw = (usd / scale).round() as i64;
                 chain::Override {
                     template_id: "pyth-price-feed-v2",
                     account: feed,
@@ -1049,6 +1063,13 @@ mod tests {
         let mut back = moving.clone();
         back.path.push(crate::scenario::Waypoint::at(2, 1.0));
         assert!(back.validate().unwrap_err().contains("waypoint 1"));
+        let mut oracle = moving.clone();
+        let actors = oracle.actors.as_mut().unwrap();
+        actors.oracle = true;
+        actors.oracle_path = vec![crate::scenario::Waypoint::at(6, -1.0)];
+        assert_eq!(oracle.validate(), Ok(()));
+        oracle.actors.as_mut().unwrap().oracle_path[0].slot = 40;
+        assert!(oracle.validate().unwrap_err().contains("oracle waypoint 0"));
         let mut elsewhere = moving;
         elsewhere.spot.as_mut().unwrap().venues = vec!["phoenix".into()];
         elsewhere.mandate.universe.truncate(1);

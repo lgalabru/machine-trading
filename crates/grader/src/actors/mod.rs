@@ -73,10 +73,17 @@ pub struct Actors {
     /// scenario's level.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub oracle: bool,
+    /// With `oracle`, Pyth's own path instead of the scenario's: an oracle
+    /// that trails or lags the level the makers quote around.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oracle_path: Vec<crate::scenario::Waypoint>,
 }
 
 impl Actors {
     pub fn validate(&self) -> std::result::Result<(), String> {
+        if !self.oracle_path.is_empty() && !self.oracle {
+            return Err("actors: an oracle_path needs oracle".into());
+        }
         if let Some(makers) = &self.makers {
             makers.validate()?;
         } else if !self.counterparties.is_empty() {
@@ -588,14 +595,19 @@ mod tests {
         let alone = Actors {
             makers: None,
             counterparties: vec![ahead.clone()],
-            oracle: false,
+            ..Actors::default()
         };
         assert!(alone.validate().unwrap_err().contains("makers"));
         let both = Actors {
             makers: Some(makers::tests::model()),
             counterparties: vec![ahead],
-            oracle: false,
+            ..Actors::default()
         };
+        let mut lagging = both.clone();
+        lagging.oracle_path = vec![crate::scenario::Waypoint::at(8, -1.0)];
+        assert!(lagging.validate().unwrap_err().contains("needs oracle"));
+        lagging.oracle = true;
+        assert_eq!(lagging.validate(), Ok(()));
         assert_eq!(both.validate(), Ok(()));
         assert_eq!(
             Actors::default().validate(),
