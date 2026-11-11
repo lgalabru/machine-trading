@@ -1,0 +1,11 @@
+# No workspace inheritance: like mtx-kit, this crate ships in the task image,
+# where bots build against it outside this workspace.
+[package]
+name = "mtx-strategy"
+description = "A trading strategy as a WebAssembly component the mtx grader calls: the WIT world, a synchronous Strategy trait, and the export macro."
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies]
+wit-bindgen = "0.63"

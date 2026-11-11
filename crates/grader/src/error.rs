@@ -20,6 +20,8 @@ pub enum Error {
     TxBuilder(#[from] phoenix_rise::core::PhoenixTxBuilderError),
     #[error("hawkeye: {0}")]
     Hawkeye(#[from] phoenix_rise::core::PhoenixHawkeyeClientError),
+    #[error("wasm strategy {0}")]
+    Wasm(String),
     #[error("meter: {0}")]
     Meter(#[from] mtx_core::MeterError),
     #[error("{}: {source}", path.display())]
@@ -44,7 +46,7 @@ pub enum Error {
     Setup(Box<Error>),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
-    #[error("no bot at {}: a bot is a directory with a run.sh", .0.display())]
+    #[error("no bot at {}: a bot is a directory with a run.sh, or with a bot.wasm", .0.display())]
     MissingBot(PathBuf),
     #[error("--jobs must be between 1 and {1}, one per bot user; got {0}")]
     Jobs(usize, usize),
