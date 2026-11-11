@@ -118,6 +118,12 @@ pub struct Trade {
     pub base: f64,
     /// The slot it landed in, or was first seen in.
     pub slot: u64,
+    /// Who took and who made, as the venue names them (a trader on Phoenix,
+    /// an open orders account on OpenBook), when the scenario reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maker: Option<String>,
     /// Which side of it the bot was, when it was one of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own: Option<Role>,
@@ -383,6 +389,8 @@ mod tests {
             price: 150.25,
             base: 2.0,
             slot: 101,
+            taker: Some("T".into()),
+            maker: None,
             own: Some(Role::Maker),
         };
         let book = BookLevels {
@@ -401,7 +409,9 @@ mod tests {
         };
         for step in [first.clone(), Step::new(1, 104, true)] {
             let k = step.k;
-            grader.write_all(line(&Message::Step(step)).as_bytes()).unwrap();
+            grader
+                .write_all(line(&Message::Step(step)).as_bytes())
+                .unwrap();
             let mut done = String::new();
             grader_reader.read_line(&mut done).unwrap();
             assert_eq!(
@@ -411,10 +421,7 @@ mod tests {
         }
         grader.write_all(line(&Message::End).as_bytes()).unwrap();
         let seen = bot.join().unwrap();
-        assert_eq!(
-            seen[0],
-            (0, vec![trade], vec![book], Some(1_700_000_000))
-        );
+        assert_eq!(seen[0], (0, vec![trade], vec![book], Some(1_700_000_000)));
         assert_eq!(seen[1], (1, vec![], vec![], None));
         let json = serde_json::to_string(&first).unwrap();
         assert_eq!(serde_json::from_str::<Step>(&json).unwrap(), first);
