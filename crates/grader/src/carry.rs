@@ -506,6 +506,7 @@ impl CarryFamily {
             tape,
             spot: None,
             actors: None,
+            family_actors: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {

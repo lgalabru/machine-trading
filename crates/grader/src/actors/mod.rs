@@ -38,6 +38,7 @@
 //!   scenario describes, and the grade fails as infrastructure.
 
 pub mod ahead;
+pub mod family;
 pub mod makers;
 pub mod seats;
 pub mod tape;
@@ -45,6 +46,7 @@ pub mod tape;
 use std::{future::Future, sync::Arc};
 
 pub use ahead::{Ahead, Counterparty, CounterpartyReport};
+pub use family::{FamilyPlan, FamilySetup};
 use futures::future::BoxFuture;
 pub use makers::{MakerModel, MakerReport, Makers};
 use mtx_core::Side;

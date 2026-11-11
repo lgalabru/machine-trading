@@ -64,7 +64,7 @@ use tracing::{info, warn};
 
 use crate::{
     Error, Result,
-    actors::{Cast, Seat, StepFlow, VenueFlow},
+    actors::{Actors, Cast, FamilySetup, Seat, StepFlow, VenueFlow, family},
     chain,
     error::io_error,
     guard::Guard,
@@ -170,7 +170,7 @@ impl Spot {
         if scenario.mandate.term.is_some() {
             return Err("mandate: a scenario's mandate has no term; the session sets it".into());
         }
-        let actors = scenario.actors.is_some();
+        let actors = scenario.actors.is_some() || scenario.family_actors.is_some();
         if ((!scenario.path.is_empty() || !scenario.tape.is_empty()) && !actors)
             || scenario.making.is_some()
             || scenario.offhours.is_some()
@@ -647,28 +647,43 @@ pub(crate) async fn run_session(
     // makers quote around the level before the bot starts.
     let start_level_usd = start.wallet.price_usd;
     let level = |at: u64| start_level_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
-    let mut cast = match &scenario.actors {
-        Some(actors) => {
-            let rpc_url = internal.url().to_string();
-            let surfnet = &surfnet;
-            Some(
-                Cast::prepare(
-                    actors,
-                    &spot.venues,
-                    &scenario.tape,
-                    |venue| {
-                        let rpc_url = rpc_url.clone();
-                        async move { Seat::spot(surfnet, &venue, &rpc_url, None).await }
-                    },
-                    level(0),
-                )
-                .await?,
-            )
+    // A family's own actors join them, from the family's plan.
+    let mut hook = None;
+    let mut cast = if scenario.actors.is_some() || scenario.family_actors.is_some() {
+        let rpc_url = internal.url().to_string();
+        let surfnet = &surfnet;
+        let mut cast = Cast::prepare(
+            scenario.actors.as_ref().unwrap_or(&Actors::default()),
+            &spot.venues,
+            &scenario.tape,
+            |venue| {
+                let rpc_url = rpc_url.clone();
+                async move { Seat::spot(surfnet, &venue, &rpc_url, None).await }
+            },
+            level(0),
+        )
+        .await?;
+        if let Some(family) = &scenario.family_actors {
+            let build = family::builder(&family.family)?;
+            hook = build(FamilySetup {
+                surfnet,
+                rpc_url: &rpc_url,
+                scenario,
+                plan: &family.plan,
+                reference_usd: level(0),
+                cast: &mut cast,
+            })
+            .await?;
         }
-        None => None,
+        Some(cast)
+    } else {
+        None
     };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
+    if let Some(hook) = hook {
+        guard.set_send_hook(hook);
+    }
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
     surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
         BlockProductionMode::Manual,
@@ -1022,6 +1037,7 @@ mod tests {
                 bound_usd: None,
             }),
             actors: None,
+            family_actors: None,
             reference_pnl_usd: None,
         }
     }
