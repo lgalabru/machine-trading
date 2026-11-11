@@ -28,6 +28,12 @@ interface types {
     /// The venue's metadata, as it publishes it: for Phoenix, its
     /// `/exchange` response.
     venue: string,
+    /// The bot's authority: the key its orders are signed with, and its
+    /// trader account's owner.
+    authority: string,
+    /// The task's variables for the session, as a process bot gets them in
+    /// its environment (`MTX_REOPEN_SLOT`).
+    vars: list<tuple<string, string>>,
     /// A seed, for a strategy that wants randomness: the same in every run
     /// of the session.
     seed: u64,
@@ -48,6 +54,10 @@ interface types {
     slots-left: u64,
     mark: f64,
     oracle: f64,
+    /// Phoenix's index price, and the book's best bid and ask, if any.
+    index: f64,
+    best-bid: option<f64>,
+    best-ask: option<f64>,
     position: position,
     cap: f64,
     max-drawdown: f64,

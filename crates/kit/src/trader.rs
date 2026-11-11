@@ -13,6 +13,15 @@ use crate::{
     rpc_client,
 };
 
+/// The top of a market, in USD: [`Trader::top`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Top {
+    pub mark: f64,
+    pub index: f64,
+    pub best_bid: Option<f64>,
+    pub best_ask: Option<f64>,
+}
+
 /// A bot's handle on its Phoenix account in one market.
 ///
 /// The `f64` methods are the original bot interface. Underneath, orders
@@ -82,9 +91,21 @@ impl Trader {
     }
 
     pub async fn mark_usd(&self) -> Result<f64> {
+        Ok(self.top().await?.mark)
+    }
+
+    /// The mark, the index and the best bid and ask, in USD, from one read
+    /// of Phoenix's view of the market.
+    pub async fn top(&self) -> Result<Top> {
         let market = self.phoenix.market(&self.env.symbol)?;
         let bbo = self.inner.bbo().await?;
-        Ok(self.phoenix.ticks_to_usd(market, bbo.mark_price_ticks))
+        let usd = |ticks| self.phoenix.ticks_to_usd(market, ticks);
+        Ok(Top {
+            mark: usd(bbo.mark_price_ticks),
+            index: usd(bbo.index_price_ticks),
+            best_bid: bbo.best_bid_ticks().map(usd),
+            best_ask: bbo.best_ask_ticks().map(usd),
+        })
     }
 
     /// The market's oracle price, in USD: the median of the latest prices

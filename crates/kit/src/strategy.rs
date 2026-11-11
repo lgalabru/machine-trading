@@ -88,9 +88,31 @@ pub struct Session {
     /// `/exchange` response, the file `MTX_EXCHANGE` names (read it with
     /// `mtx_kit::venue::PhoenixVenue`, feature `venue`).
     pub venue: String,
+    /// The bot's authority: the key its orders are signed with, and its
+    /// trader account's owner, base58.
+    pub authority: String,
+    /// The task's variables for the session, as a process bot gets them in
+    /// its environment: one of [`SESSION_VARS`]. Read them with
+    /// [`Session::var`].
+    pub vars: Vec<(String, String)>,
     /// A seed, for a strategy that wants randomness: the same in every run
     /// of the session.
     pub seed: u64,
+}
+
+/// The variables a task may set for a session, beyond the bot's contract:
+/// the slot an off-hours market reopens at, and the session's regime, which
+/// only the benchmark's ladder hands a bot.
+pub const SESSION_VARS: &[&str] = &["MTX_REOPEN_SLOT", "MTX_REGIME"];
+
+impl Session {
+    /// A task variable for the session ([`SESSION_VARS`]), if it set one.
+    pub fn var(&self, name: &str) -> Option<&str> {
+        self.vars
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// An order's side.
@@ -136,6 +158,15 @@ pub fn rpc(method: &str, params: &str) -> Result<String, String> {
         return Err(format!("{method} is not a read a strategy may make"));
     }
     rpc_backend(method, params)
+}
+
+/// A line in the strategy's log, which the grader keeps beside the session:
+/// through the grader in a component, on standard error in a process.
+pub fn log(line: &str) {
+    #[cfg(all(feature = "component", target_arch = "wasm32"))]
+    crate::component::bindings::log(line);
+    #[cfg(not(all(feature = "component", target_arch = "wasm32")))]
+    eprintln!("{line}");
 }
 
 /// The data of the account at `address` (base58), read through [`rpc`]:
@@ -213,6 +244,11 @@ pub struct Market {
     /// The venue's mark price, which values the account, and its oracle.
     pub mark: f64,
     pub oracle: f64,
+    /// The venue's index price, and the book's best bid and ask, if any: the
+    /// same read as the mark.
+    pub index: f64,
+    pub best_bid: Option<f64>,
+    pub best_ask: Option<f64>,
     /// The position, in base units (positive is long), and its entry.
     pub position: Position,
     /// The mandate's position cap and drawdown limit.

@@ -108,6 +108,11 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         max_drawdown: env.max_drawdown_usd,
         mandate,
         venue: std::fs::read_to_string(&env.exchange_path)?,
+        authority: trader.authority().to_string(),
+        vars: crate::SESSION_VARS
+            .iter()
+            .filter_map(|name| Some((name.to_string(), std::env::var(name).ok()?)))
+            .collect(),
         seed: hello.start_slot,
     };
     strategy.start(&session)?;
@@ -118,17 +123,18 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     // What the loop has resting: see [`Market::resting_bids`].
     let (mut resting_bids, mut resting_asks) = (0.0, 0.0);
     while let Some(step) = turns.next()? {
-        let (mark, oracle, position) = match (
-            trader.mark_usd().await,
+        let (top, oracle, position) = match (
+            trader.top().await,
             trader.oracle_usd().await,
             trader.position().await,
         ) {
-            (Ok(mark), Ok(oracle), Ok(position)) => (mark, oracle, position),
-            (mark, oracle, position) => {
-                warn!(step = step.k, mark = ?mark.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
+            (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
+            (top, oracle, position) => {
+                warn!(step = step.k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
                 continue;
             }
         };
+        let mark = top.mark;
         if let Some(last) = last_mark {
             pnl += position.size * (mark - last);
         }
@@ -142,6 +148,9 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             slots_left: session.end_slot.saturating_sub(step.slot),
             mark,
             oracle,
+            index: top.index,
+            best_bid: top.best_bid,
+            best_ask: top.best_ask,
             position,
             cap: session.cap,
             max_drawdown: session.max_drawdown,

@@ -547,6 +547,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
                     scenario: &scenario.name,
+                    vars: opts
+                        .regime
+                        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+                        .into_iter()
+                        .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
+                        .collect(),
                 },
                 Box::new(log),
             )
