@@ -1,0 +1,35 @@
+{
+  "name": "smoke-reduce-only",
+  "description": "A reduce-only sell order; the buyer bot buys, which is a breach",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "spot": {
+    "venues": [
+      "phoenix",
+      "openbook"
+    ],
+    "base": 10.0,
+    "quote": 1000.0
+  },
+  "order": {
+    "side": "sell",
+    "quantity": 10.0,
+    "haircut_bps": 100.0,
+    "reduce_only": true
+  }
+}
