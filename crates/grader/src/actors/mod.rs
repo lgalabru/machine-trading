@@ -48,7 +48,7 @@ use std::{future::Future, sync::Arc};
 pub use ahead::{Ahead, Counterparty, CounterpartyReport};
 pub use family::{FamilyPlan, FamilySetup};
 use futures::future::BoxFuture;
-pub use makers::{MakerModel, MakerReport, Makers};
+pub use makers::{ImpactSource, MakerModel, MakerReport, Makers};
 use mtx_core::Side;
 pub use seats::Seat;
 use serde::{Deserialize, Serialize};
@@ -261,16 +261,33 @@ impl Impact {
     }
 }
 
-/// The flow a step's resting liquidity absorbed, as net base bought: each
-/// impact seat's at its factor, and the bot's own passive fills at
-/// `passive`.
-pub fn absorbed(seats: &[(usize, f64)], passive: f64, flow: &StepFlow) -> f64 {
+/// The flow that moves the reference in a step, as net base sold to the
+/// market's liquidity: each impact seat's net buying at its factor, the
+/// bot's own passive fills at `passive`, and with
+/// [`ImpactSource::BotOnly`] the bot's aggressive fills at 1 instead of the
+/// makers' seats (`makers`), whose flow then counts only if a family set it.
+pub fn absorbed(
+    seats: &[(usize, f64)],
+    makers: &[usize],
+    passive: f64,
+    source: ImpactSource,
+    flow: &StepFlow,
+) -> f64 {
+    let net = |flows: &[VenueFlow]| flows.iter().map(|f| f.bought - f.sold).sum::<f64>();
+    let counted = |n: usize| source == ImpactSource::Absorbed || !makers.contains(&n);
     let held: f64 = seats
         .iter()
+        .filter(|(n, _)| counted(*n))
         .filter_map(|&(n, factor)| flow.seats.get(n).map(|f| factor * (f.bought - f.sold)))
         .sum();
-    let bot: f64 = flow.bot_passive.iter().map(|f| f.bought - f.sold).sum();
-    held + passive * bot
+    let passive_net = net(&flow.bot_passive);
+    let taken = match source {
+        // What the bot took is already in the makers' fills.
+        ImpactSource::Absorbed => 0.0,
+        // Sold at the market is sold to its liquidity.
+        ImpactSource::BotOnly => -(net(&flow.bot) - passive_net),
+    };
+    held + passive * passive_net + taken
 }
 
 /// A session's actors and the reference they share.
@@ -284,6 +301,8 @@ pub struct Cast {
     /// The seats whose net buying moves the reference, each with the share
     /// of the usual impact it carries: the makers' at 1.
     impact_seats: Vec<(usize, f64)>,
+    /// The makers' seats among them, until a family sets one explicitly.
+    maker_seats: Vec<usize>,
     references: Vec<f64>,
     /// A seat on OpenBook, if any, which cranks its market after each
     /// step's blocks.
@@ -305,7 +324,8 @@ impl Cast {
             .unwrap_or_default()
             .into_iter()
             .map(|n| (n, 1.0))
-            .collect();
+            .collect::<Vec<_>>();
+        let maker_seats = impact_seats.iter().map(|(n, _)| *n).collect();
         if let Some(makers) = makers {
             actors.insert(0, Box::new(makers));
         }
@@ -316,6 +336,7 @@ impl Cast {
             unit,
             impact: Impact::default(),
             impact_seats,
+            maker_seats,
             references: Vec::new(),
             cranker: seats.iter().find(|s| s.venue == "openbook").cloned(),
             cranks: Actions::default(),
@@ -403,6 +424,7 @@ impl Cast {
     pub fn set_seat_impact(&mut self, seat: usize, factor: f64) {
         self.impact_seats.retain(|(n, _)| *n != seat);
         self.impact_seats.push((seat, factor));
+        self.maker_seats.retain(|n| *n != seat);
     }
 
     /// Add a family's own actor: it acts after the engine's at each point.
@@ -481,7 +503,13 @@ impl Cast {
         if let Some(model) = &self.model {
             self.impact.step(
                 model,
-                absorbed(&self.impact_seats, model.passive_impact, flow),
+                absorbed(
+                    &self.impact_seats,
+                    &self.maker_seats,
+                    model.passive_impact,
+                    model.impact_source,
+                    flow,
+                ),
                 self.unit,
             );
         }
@@ -548,10 +576,19 @@ mod tests {
             ],
             bot_passive: vec![flow("phoenix", 1.0, 0.0)],
         };
+        let all = ImpactSource::Absorbed;
         // Today's default: the makers' seat alone.
-        assert_eq!(absorbed(&[(0, 1.0)], 0.0, &step), 4.0);
+        assert_eq!(absorbed(&[(0, 1.0)], &[0], 0.0, all, &step), 4.0);
         // A wall's seat at 0.3, and the bot's resting bid at half.
-        assert!((absorbed(&[(0, 1.0), (1, 0.3)], 0.5, &step) - 5.1).abs() < 1e-12);
+        let both = [(0, 1.0), (1, 0.3)];
+        assert!((absorbed(&both, &[0], 0.5, all, &step) - 5.1).abs() < 1e-12);
+        // The bot's flow only: 6 sold at the market, its resting bid's 1 at
+        // half, the wall's seat as set; the makers' fills (the tape's) not.
+        let bot = ImpactSource::BotOnly;
+        assert!((absorbed(&both, &[0], 0.5, bot, &step) - 7.1).abs() < 1e-12);
+        assert_eq!(absorbed(&[(0, 1.0)], &[0], 0.0, bot, &step), 6.0);
+        // A maker seat a family set explicitly counts again.
+        assert_eq!(absorbed(&[(0, 1.0)], &[], 0.0, bot, &step), 10.0);
     }
 
     /// Notes when it acts, under its name.
