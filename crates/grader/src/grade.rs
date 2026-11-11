@@ -23,6 +23,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use futures::StreamExt;
 use mtx_core::MeterError;
+use mtx_kit::core::{Decomposition, MarkoutMeter, MarkoutSample};
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -41,6 +42,10 @@ pub struct ScenarioResult {
     pub bound_pnl_usd: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// The session's PnL split into markout, luck and a residual, for a
+    /// scenario that reports a fair value (see [`Scenario::fair_path`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markout: Option<Decomposition>,
     #[serde(flatten)]
     pub session: SessionReport,
 }
@@ -69,6 +74,11 @@ pub struct GradeReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eval_seed_sha256: Option<String>,
     pub risk: Risk,
+    /// The sessions' markout, luck and residual, summed, when every scenario
+    /// reports a fair value. Reported, not scored: `reward` and `skill` are
+    /// PnL's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markout: Option<Decomposition>,
     pub scenarios: Vec<ScenarioResult>,
 }
 
@@ -173,6 +183,11 @@ impl GradeReport {
         }
         if let Some(skill) = self.skill {
             rewards.insert("skill".to_string(), skill);
+        }
+        if let Some(markout) = &self.markout {
+            rewards.insert("markout_usd".to_string(), markout.markout_usd);
+            rewards.insert("luck_usd".to_string(), markout.luck_usd);
+            rewards.insert("edge_usd".to_string(), markout.edge_usd());
         }
         for result in &self.scenarios {
             rewards.insert(
@@ -360,6 +375,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
             disqualified: disqualification(&session),
             bound_pnl_usd: scenario.bound_usd(session.start_mark_usd),
             reference_pnl_usd: scenario.reference_pnl_usd,
+            markout: markout(&session, scenario),
             session,
         })
         .collect();
@@ -386,8 +402,74 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         tampered: None,
         eval_seed_sha256: None,
         risk: Risk::of(&scenarios),
+        markout: total_markout(&scenarios),
         scenarios,
     }
+}
+
+/// A session's PnL split against its scenario's fair value, if the scenario
+/// reports one at every step. The position is valued as the session valued
+/// it: at the mark, the scenario's oracle level (market making) or its book
+/// level.
+fn markout(session: &SessionReport, scenario: &Scenario) -> Option<Decomposition> {
+    let timeline = &session.timeline;
+    let start = scenario.fair_value_usd(session.start_mark_usd, 0)?;
+    let mut meter = MarkoutMeter::open(MarkoutSample {
+        fair: start,
+        price: session.start_mark_usd,
+        position: 0.0,
+        value: session.start_value_usd,
+    });
+    let valuation = scenario.valuation();
+    for step in &timeline.steps {
+        meter.record(MarkoutSample {
+            fair: step.fair_usd?,
+            price: match valuation {
+                "oracle" => step.level_usd,
+                "book" => step.book_usd?,
+                _ => step.mark_usd,
+            },
+            position: step.position,
+            value: step.value_usd,
+        });
+    }
+    let at = timeline.end_slot.saturating_sub(timeline.start_slot);
+    let start_mark = session.start_mark_usd;
+    meter.record(MarkoutSample {
+        fair: scenario.fair_value_usd(start_mark, at)?,
+        price: match valuation {
+            "oracle" => start_mark * (1.0 + crate::making::level_at(&scenario.path, at) / 100.0),
+            "book" => start_mark * (1.0 + crate::making::book_at(&scenario.path, at) / 100.0),
+            _ => session.end_mark_usd,
+        },
+        position: session.end_position,
+        value: session.end_value_usd,
+    });
+    Some(meter.decomposition())
+}
+
+/// The sessions' decompositions added up, if every session has one.
+fn total_markout(sessions: &[ScenarioResult]) -> Option<Decomposition> {
+    if sessions.is_empty() {
+        return None;
+    }
+    sessions.iter().map(|s| s.markout).try_fold(
+        Decomposition {
+            pnl_usd: 0.0,
+            markout_usd: 0.0,
+            luck_usd: 0.0,
+            residual_usd: 0.0,
+        },
+        |total, next| {
+            let next = next?;
+            Some(Decomposition {
+                pnl_usd: total.pnl_usd + next.pnl_usd,
+                markout_usd: total.markout_usd + next.markout_usd,
+                luck_usd: total.luck_usd + next.luck_usd,
+                residual_usd: total.residual_usd + next.residual_usd,
+            })
+        },
+    )
 }
 
 /// Sessions whose clock fell behind by more than this many slots (2 seconds
@@ -654,6 +736,7 @@ mod tests {
             flow: None,
             competitor: None,
             spot: None,
+            faults: None,
             actors: None,
             turns: Default::default(),
             wall_ms: 0,
@@ -705,9 +788,11 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            faults: None,
             actors: None,
             family_actors: None,
             reference_pnl_usd,
+            fair_path: None,
         }
     }
 
@@ -725,6 +810,80 @@ mod tests {
             score(vec![(session(10.0), &scenario(None))]).reference_ratio,
             None
         );
+    }
+
+    /// A session that buys 10 units at step 1 for $0.40 under fair value and
+    /// sells them at step 2, with fair value 1% higher by then.
+    fn traded_session() -> SessionReport {
+        let step = |k: u64, mark: f64, fair: f64, position: f64, value: f64| session::StepRecord {
+            k,
+            at: k * 10,
+            mark_usd: mark,
+            index_usd: mark,
+            level_usd: mark,
+            book_usd: None,
+            fair_usd: Some(fair),
+            best_bid_usd: None,
+            best_ask_usd: None,
+            position,
+            value_usd: value,
+            pnl_usd: value - 10_100.0,
+            turn_ms: None,
+            answered: None,
+        };
+        let mut report = session(0.0);
+        // Bought 10 at 99.60 (fair 100), held while fair rose to 101, sold
+        // 10 at 100.90 (fair 101).
+        report.end_mark_usd = 101.0;
+        report.end_value_usd = 10_100.0 + 10.0 * (100.90 - 99.60);
+        report.pnl_usd = report.end_value_usd - report.start_value_usd;
+        report.timeline.start_slot = 1_000;
+        report.timeline.end_slot = 1_020;
+        report.timeline.steps = vec![
+            step(0, 100.0, 100.0, 0.0, 10_100.0),
+            step(1, 100.0, 100.0, 10.0, 10_100.0 + 10.0 * (100.0 - 99.60)),
+            step(2, 101.0, 101.0, 0.0, report.end_value_usd),
+        ];
+        report
+    }
+
+    #[test]
+    fn a_scenario_without_a_fair_value_grades_as_before() {
+        let s = scenario(Some(200.0));
+        let report = score(vec![(traded_session(), &s)]);
+        assert!(report.markout.is_none());
+        assert!(report.scenarios[0].markout.is_none());
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("markout") && !json.contains("fair"));
+        assert!(!report.rewards().contains_key("edge_usd"));
+    }
+
+    #[test]
+    fn a_scenario_with_a_fair_value_reports_where_its_pnl_came_from() {
+        let mut s = scenario(Some(200.0));
+        s.fair_path = Some(vec![Waypoint {
+            slot: 15,
+            level_pct: 1.0,
+            premium_pct: 0.0,
+        }]);
+        let marked = score(vec![(traded_session(), &s)]);
+        // The scenario's reward and ratios are PnL's, marked or not.
+        s.fair_path = None;
+        let plain = score(vec![(traded_session(), &s)]);
+        assert_eq!(marked.reward, plain.reward);
+        assert_eq!(marked.skill, plain.skill);
+        assert_eq!(marked.reference_ratio, plain.reference_ratio);
+
+        let m = marked.markout.unwrap();
+        assert!((m.pnl_usd - 13.0).abs() < 1e-9);
+        // Bought 10 at $0.40 under fair value (+4), sold at $0.10 under (-1).
+        assert!((m.markout_usd - 3.0).abs() < 1e-9, "{m:?}");
+        assert!((m.luck_usd - 10.0).abs() < 1e-9, "{m:?}");
+        assert!(m.residual_usd.abs() < 1e-9);
+        assert!((m.markout_usd + m.luck_usd + m.residual_usd - m.pnl_usd).abs() < 1e-9);
+        let rewards = marked.rewards();
+        assert!((rewards["edge_usd"] - 3.0).abs() < 1e-9);
+        assert!((rewards["luck_usd"] - 10.0).abs() < 1e-9);
     }
 
     #[test]

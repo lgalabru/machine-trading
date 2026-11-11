@@ -4,7 +4,9 @@
 //! A scenario with a [`Spot`] runs here instead of on Phoenix's perpetuals.
 //! The session is the same as a perp session's (see [`crate::session`]):
 //! a fresh offline world from a spot snapshot, the RPC guard, the bot's turns
-//! in steps of [`SLOTS_PER_STEP`] slots. What differs is the account:
+//! in steps of [`SLOTS_PER_STEP`] slots. A scenario's
+//! execution faults (see [`crate::faults`]) apply here as they do there,
+//! opt-in. What differs is the account:
 //!
 //! 1. The bot's wallet starts with the scenario's wrapped SOL and USDC, and
 //!    SOL for fees. It claims its own Phoenix seat or OpenBook open orders
@@ -175,10 +177,11 @@ impl Spot {
             || scenario.making.is_some()
             || scenario.offhours.is_some()
             || scenario.funding.is_some()
+            || scenario.fair_path.is_some()
         {
             return Err(
-                "spot: a spot scenario has no market making, off-hours or funding, and a path or \
-                 a tape only with actors"
+                "spot: a spot scenario has no fair path, market making, off-hours or funding, \
+                 and a path or a tape only with actors"
                     .into(),
             );
         }
@@ -749,6 +752,7 @@ pub(crate) async fn run_session(
             .await?;
     }
     let start_slot = base_slot;
+    guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
     let end_slot = start_slot + scenario.duration_slots;
     let mandate = Mandate {
         term: Some(Term {
@@ -855,6 +859,8 @@ pub(crate) async fn run_session(
             slot = session::wait_for_slot(&rpc, slot + 1).await?;
         }
         let at = slot - base_slot;
+        // The bot's held sends land in this step's blocks.
+        guard.release(k).await;
         let mut level_usd = None;
         if let Some(cast) = &mut cast {
             cast.crank().await;
@@ -886,6 +892,7 @@ pub(crate) async fn run_session(
             pnl_usd: value_usd - start_value_usd,
             turn_ms: None,
             answered: None,
+            fair_usd: None,
         });
         if bot_exit.is_none()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
@@ -960,6 +967,7 @@ pub(crate) async fn run_session(
         valuation: "pyth",
         flow: None,
         competitor: None,
+        faults: guard.faults_report(),
         spot: Some(SpotReport {
             start: start.wallet,
             end: end.wallet,
@@ -1033,6 +1041,8 @@ mod tests {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            faults: None,
+            fair_path: None,
             spot: Some(Spot {
                 venues: vec!["phoenix".into(), "openbook".into()],
                 base: 10.0,
@@ -1094,6 +1104,10 @@ mod tests {
         elsewhere.mandate.universe.truncate(1);
         assert!(elsewhere.validate().unwrap_err().contains("tape order 0"));
 
+        let mut marked = scenario();
+        marked.fair_path = Some(vec![crate::scenario::Waypoint::at(4, -1.0)]);
+        assert!(marked.validate().unwrap_err().contains("fair path"));
+
         let mut other = scenario();
         other.symbol = "SOL".into();
         assert!(other.validate().is_err());
@@ -1101,6 +1115,23 @@ mod tests {
         let mut negative = scenario();
         negative.spot.as_mut().unwrap().quote = -1.0;
         assert!(negative.validate().is_err());
+
+        // Faults are opt-in for a spot session too, and checked the same way.
+        let mut faulted = scenario();
+        faulted.faults = Some(crate::faults::Faults {
+            seed: 1,
+            latency: None,
+            congestion: None,
+            blockhash_expiry: None,
+            drop: Some(crate::faults::SendNumbers { sends: vec![1] }),
+            lost_confirmation: None,
+            rpc_unavailable: None,
+        });
+        assert_eq!(faulted.validate(), Ok(()));
+        let json = serde_json::to_string(&faulted).unwrap();
+        assert_eq!(serde_json::from_str::<Scenario>(&json).unwrap(), faulted);
+        faulted.faults.as_mut().unwrap().drop = Some(crate::faults::SendNumbers { sends: vec![0] });
+        assert!(faulted.validate().unwrap_err().contains("faults"));
 
         // A spot mandate needs no drawdown limit; a perp scenario still does.
         let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);

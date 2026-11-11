@@ -146,6 +146,9 @@ pub struct SessionReport {
     /// A spot session: the wallet at the start and the end, and every fill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<crate::spot::SpotReport>,
+    /// Execution faults: the plan, and what fired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub faults: Option<crate::faults::FaultsReport>,
     /// What the scenario's actors did (see [`crate::actors`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actors: Option<crate::actors::ActorsReport>,
@@ -196,6 +199,10 @@ pub struct StepRecord {
     /// premium over the level.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub book_usd: Option<f64>,
+    /// The scenario's fair value, for a scenario that reports one (see
+    /// [`Scenario::fair_path`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fair_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_bid_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -511,6 +518,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let start_slot = base_slot;
+    guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
     let end_slot = start_slot + scenario.duration_slots;
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
@@ -643,6 +651,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         let at = slot - base_slot;
         flow_due = Some(at);
+        // The bot's held sends land in this step's blocks.
+        guard.release(k).await;
         if let (Some(quoting), Some(competitor), Some(making)) = (
             quoting.as_mut(),
             competitor.as_ref(),
@@ -678,6 +688,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
             book_usd: (scenario.valuation() == "book")
                 .then(|| start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0)),
+            fair_usd: scenario.fair_value_usd(start_mark_usd, at),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
             position,
@@ -787,6 +798,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         flow,
         competitor,
         spot: None,
+        faults: guard.faults_report(),
         actors,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
@@ -1107,13 +1119,26 @@ pub(crate) struct SessionDir {
 impl SessionDir {
     pub(crate) fn create(bot: &Keypair, user: &str) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("mtx-session-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&path).map_err(io_error(&path))?;
+        // Only the bot's own user may enter: sessions graded at once run
+        // their bots as different users in one container, and a bot must not
+        // read another's keypair or mandate.
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&path)
+            .map_err(io_error(&path))?;
         let dir = Self {
             path,
             bot_user: bot_user(user),
         };
         let keypair = serde_json::to_string(&bot.to_bytes().to_vec())?;
-        std::fs::write(dir.keypair_path(), keypair).map_err(io_error(dir.keypair_path()))?;
+        let mut file = std::fs::OpenOptions::new();
+        std::os::unix::fs::OpenOptionsExt::mode(file.write(true).create_new(true), 0o600);
+        std::io::Write::write_all(
+            &mut file
+                .open(dir.keypair_path())
+                .map_err(io_error(dir.keypair_path()))?,
+            keypair.as_bytes(),
+        )
+        .map_err(io_error(dir.keypair_path()))?;
         if let Some((uid, gid)) = dir.bot_user {
             for path in [dir.path.clone(), dir.keypair_path()] {
                 std::os::unix::fs::chown(&path, Some(uid), Some(gid)).map_err(io_error(&path))?;
@@ -1252,5 +1277,27 @@ pub(crate) async fn stop_bot(child: &mut Child, bot_user: Option<&str>) {
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-u", user])
             .status();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn session_dir_and_its_files_are_private() {
+        let dir = SessionDir::create(&Keypair::new(), "mtx-bot-none").unwrap();
+        assert_eq!(mode(&dir.path), 0o700);
+        assert_eq!(mode(&dir.keypair_path()), 0o600);
+        let mandate = dir
+            .write_mandate(&Mandate::perp("phoenix", "SOL-PERP", 1.0, 1.0))
+            .unwrap();
+        assert_eq!(mode(mandate.parent().unwrap()), 0o700);
     }
 }

@@ -9,3 +9,4 @@ and never reuse a number. Decisions themselves live in [`../adr/`](../adr/).
 | # | Title | State |
 | --- | --- | --- |
 | [0001](0001-instrument-traits.md) | Traits split by trading mechanism, state typed by instrument | Discussion |
+| [0002](0002-wasm-strategies.md) | Strategies compiled to wasm, called by the grader | Discussion |
