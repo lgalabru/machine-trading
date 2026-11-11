@@ -257,6 +257,7 @@ impl SessionReport {
             positions: self.positions.clone(),
             positions_outside_universe: self.positions_outside_universe,
             max_drawdown_usd: self.max_drawdown_usd,
+            ..Observed::default()
         }
     }
 }
@@ -484,7 +485,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         symbol: scenario.symbol.clone(),
         end_slot,
         max_position: scenario.max_position(),
-        max_drawdown_usd: mandate.limits.max_drawdown_usd,
+        max_drawdown_usd: mandate
+            .limits
+            .max_drawdown_usd
+            .expect("a perp scenario's mandate has a drawdown limit"),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
 
