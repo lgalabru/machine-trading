@@ -512,12 +512,18 @@ struct Seen {
 struct Ledger {
     seen: HashSet<(String, u128)>,
     fills: Vec<Seen>,
+    /// How many entries were there before the session began: matches the
+    /// event heap still held from the snapshot. They are not the session's.
+    before: usize,
 }
 
 impl Ledger {
     /// The bot's own fills, oldest first.
     fn own(&self, base_slot: u64) -> Result<Vec<SpotFill>> {
-        let mut own: Vec<&Seen> = self.fills.iter().filter(|s| s.own.is_some()).collect();
+        let mut own: Vec<&Seen> = self.fills[self.before..]
+            .iter()
+            .filter(|s| s.own.is_some())
+            .collect();
         own.sort_by_key(|s| (s.fill.slot, s.fill.instrument.0.clone(), s.fill.sequence));
         own.into_iter()
             .map(|Seen { fill, own }| {
@@ -544,7 +550,7 @@ impl Ledger {
 
     /// Every match as a trade for the participation charge.
     fn traded(&self, base_slot: u64) -> Vec<Traded> {
-        self.fills
+        self.fills[self.before..]
             .iter()
             .map(|s| Traded {
                 venue: venue_of(&s.fill),
@@ -561,7 +567,10 @@ impl Ledger {
             .iter()
             .map(|venue| {
                 let mut per_step = vec![0.0; steps as usize];
-                for seen in self.fills.iter().filter(|s| &venue_of(&s.fill) == venue) {
+                for seen in self.fills[self.before..]
+                    .iter()
+                    .filter(|s| &venue_of(&s.fill) == venue)
+                {
                     let at = seen.fill.slot.saturating_sub(base_slot);
                     let step = (at.saturating_sub(1) / SLOTS_PER_STEP).min(steps.saturating_sub(1));
                     per_step[step as usize] += grader_f64(seen.fill.quantity);
@@ -871,6 +880,12 @@ pub(crate) async fn run_session(
         || scenario.participation.is_some();
     let mut ledger = Ledger::default();
     let mut last_scan = base_slot;
+    if tracking || scenario.turn_data.is_some() {
+        venues
+            .scan(&mut ledger, base_slot.saturating_sub(1))
+            .await?;
+        ledger.before = ledger.fills.len();
+    }
     let mut bot_exit = None;
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     for k in 0..steps {
@@ -1153,6 +1168,63 @@ mod tests {
         let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);
         perp.mandate.limits.max_drawdown_usd = None;
         assert!(perp.validate().unwrap_err().contains("drawdown"));
+    }
+
+    #[test]
+    fn turn_data_orders_and_participation_are_checked_and_round_trip() {
+        use crate::orders::{ExecutionOrder, Participation};
+
+        let mut full = scenario();
+        full.turn_data = Some(TurnData {
+            tape: true,
+            depth_levels: 5,
+            timestamps: true,
+            parties: true,
+        });
+        full.order = Some(ExecutionOrder {
+            side: Side::Sell,
+            quantity: 10.0,
+            haircut_bps: 50.0,
+            reduce_only: false,
+        });
+        full.participation = Some(Participation {
+            max_share: 0.2,
+            window_slots: 8,
+            price_bps: 5.0,
+        });
+        assert_eq!(full.validate(), Ok(()));
+        let json = serde_json::to_string(&full).unwrap();
+        assert_eq!(serde_json::from_str::<Scenario>(&json).unwrap(), full);
+        // A scenario without them writes none of them.
+        let plain = serde_json::to_string(&scenario()).unwrap();
+        assert!(!plain.contains("turn_data") && !plain.contains("order"));
+        assert!(!plain.contains("participation"));
+
+        let mut empty = full.clone();
+        empty.turn_data = Some(TurnData::default());
+        assert!(empty.validate().unwrap_err().contains("asks for nothing"));
+        let mut parties = full.clone();
+        parties.turn_data = Some(TurnData {
+            tape: false,
+            depth_levels: 2,
+            timestamps: false,
+            parties: true,
+        });
+        assert!(parties.validate().is_err());
+        let mut deep = full.clone();
+        deep.turn_data.as_mut().unwrap().depth_levels = MAX_DEPTH_LEVELS + 1;
+        assert!(deep.validate().unwrap_err().contains("depth_levels"));
+        let mut short = full.clone();
+        short.order.as_mut().unwrap().quantity = 11.0;
+        assert!(short.validate().unwrap_err().contains("selling 11"));
+        let mut share = full.clone();
+        share.participation.as_mut().unwrap().max_share = 0.0;
+        assert!(share.validate().is_err());
+
+        // They are for spot scenarios.
+        let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        perp.order = full.order.clone();
+        assert!(perp.validate().unwrap_err().contains("spot scenarios"));
     }
 
     #[test]
