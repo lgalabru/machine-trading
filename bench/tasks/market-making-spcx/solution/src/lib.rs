@@ -1,18 +1,38 @@
-//! The market-making reference (`bots/maker`) as a wasm strategy: quote one
-//! tick inside the competing makers, skew against inventory, and trade with
-//! the flow when it turns toxic. The same rules and constants; see
-//! `bots/maker/src/main.rs` for why each is there.
+//! Reference: quote one tick inside the competing makers, skew against
+//! inventory, and trade with the flow when it turns toxic.
 //!
-//! Two differences come from the order sheet. The competitors' half-spread
-//! is read through [`rpc_account`] from their spline account, against the
-//! session's starting oracle. And the bot no longer reads its position right
-//! after a lean, to count what its own market order added: it counts the
-//! whole lean as filled.
+//! The competitors' half-spread is read once, from their spline account; the
+//! quotes sit that far less one tick either side of a reservation price:
+//! the oracle, shifted against what the bot holds, so a long inventory lowers
+//! both quotes and sheds itself (Avellaneda-Stoikov's idea, with a linear
+//! skew). Holding a quarter of the cap, it stops quoting the side that would
+//! add to it. Fills that pile up one way in a few slots look like informed
+//! flow ahead of a jump: it buys (or sells) a few units the burst's way, pulls
+//! the quote the burst was hitting for a while, and lets the skew unwind the
+//! position after. Only fills that grow the inventory count toward a burst:
+//! the skew unwinding a lean is a run of one-sided fills too, and a maker
+//! that took it for one would lean back and forth on its own. And it leans
+//! with the drift: the further the oracle runs from its recent average, the
+//! further the reservation price follows, so it sells into a falling market
+//! rather than buying all the way down.
+//!
+//! It prices off the oracle, not Phoenix's mark: the mark blends in the
+//! book, and the bot's own best bid or ask pulls it along, so a maker that
+//! quotes around the mark chases its own quotes.
+//!
+//! Its PnL is a published baseline, not the reward's scale (that's the
+//! spread bound plus the hindsight bound). It reacts to its own fills only:
+//! it doesn't read the tape, doesn't tell a fake-out from a real burst, and
+//! leans the same few units whatever the burst's size.
+//!
+//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
+//! solution), and a process (`src/main.rs`), the anchor hidden sets are
+//! scored against.
 
 use std::collections::VecDeque;
 
 use mtx_kit::{
-    component::log,
+    log,
     prelude::*,
     rpc_account,
     venue::{PhoenixVenue, phoenix_rise::accounts::spline_collection::SplineCollection},
@@ -31,8 +51,9 @@ const TOXIC_SLOTS: u64 = 24;
 const REQUOTE_BPS: f64 = 1.5;
 const REQUOTE_SLOTS: u64 = 12;
 
+/// The strategy.
 #[derive(Default)]
-struct Maker {
+pub struct Maker {
     cap: f64,
     half_spread_bps: f64,
     /// (slot, position, position from its quotes' fills) at each step.
@@ -178,4 +199,5 @@ fn round_cents(usd: f64) -> f64 {
     (usd * 100.0).round() / 100.0
 }
 
+#[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Maker);

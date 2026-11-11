@@ -9,7 +9,7 @@ image := "machine-trading"
 tag := "0.12.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "flash-crash-spcx=reference-wasm market-making-spcx=maker-wasm funding-carry-spcx=carry-wasm weekend-gap-spcx=weekend-wasm"
+references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend"
 # The harness versions `just bench` runs, pinned so results compare: each
 # provider's own coding agent, Claude Code for Anthropic models and Codex for
 # OpenAI's.
@@ -60,7 +60,7 @@ snapshot-verify dir=("snapshots/" + snapshot):
 bots:
     #!/usr/bin/env bash
     set -euo pipefail
-    for bot in starter reference maker dip-buyer carry carry-gbm weekend reference-wasm maker-wasm carry-wasm weekend-wasm; do
+    for bot in starter reference maker dip-buyer carry carry-gbm weekend; do
       just --justfile "bots/$bot/Justfile" build
     done
 
@@ -256,16 +256,18 @@ publish batch version:
 compare range:
     cargo run --release -q -- bench compare {{range}} --open
 
-# Copy the reference bot into the task's solution: its sources, and the
-# model it reads, if any (a `model/` directory, or `model.*` files beside
-# its Cargo.toml).
+# Copy the reference bot's strategy into the task's solution: its sources
+# but the process's `main.rs`, and the model it reads, if any (a `model/`
+# directory, or `model.*` files beside its Cargo.toml).
 solution:
     #!/usr/bin/env bash
     set -euo pipefail
     for pair in {{references}}; do
       bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
       mkdir -p "$solution/src"
-      cp "$bot"/src/*.rs "$solution/src/"
+      for src in "$bot"/src/*.rs; do
+        if [ "$(basename "$src")" != main.rs ]; then cp "$src" "$solution/src/"; fi
+      done
       if [ -d "$bot/model" ]; then
         mkdir -p "$solution/model"
         cp "$bot"/model/*.json "$solution/model/"
@@ -281,7 +283,7 @@ check-solution:
     set -euo pipefail
     for pair in {{references}}; do
       bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
-      diff -ru "$bot/src" "$solution/src"
+      diff -ru -x main.rs "$bot/src" "$solution/src"
       if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
       for model in "$bot"/model.*; do
         if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi

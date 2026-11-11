@@ -1,7 +1,33 @@
-//! The flash-crash reference (`bots/reference`) as a wasm strategy: ride each
-//! move while it runs, then fade it once it stops. The same rules and
-//! constants; the grader reads the mark and the position and sends the
-//! orders, instead of the bot.
+//! Reference: ride each move while it runs, then fade it once it stops.
+//!
+//! The family's shocks come in legs, among fizzles that give their move
+//! back; most moves land at once, the rest ramp in uneven steps, and once a
+//! shock has held, most of the time it reverts. The reference reads one
+//! thing, the mark each step, against a running mean of the calm before:
+//!
+//! - **Calm.** A displacement of 1.14% from the calm mean, or a single step
+//!   of 1.36%, starts a move.
+//! - **Moving.** The full cap with the move while it makes new extremes. Three
+//!   steps without one, or a retrace of 1.41% from the extreme, and the move
+//!   has stopped.
+//! - **Holding.** It fades what the move did: 76% of the cap against it, held
+//!   until the mark has given back all but 11% of the move. A new extreme by
+//!   another 1.14% is another leg: back to riding it. Moves under 1.03% aren't
+//!   worth fading.
+//!
+//! It never carries a session past a $519 drawdown: past that it closes and
+//! stops. Each step it moves the position toward its target by up to 35
+//! shares, in market orders of 10 (one order that crosses much of the book
+//! doesn't fit a transaction's compute budget).
+//!
+//! Tuned offline on 400 draws from the 0.9.0 family and checked on 200
+//! others ($66 a session, profitable in 64%, no drawdown breach). It doesn't
+//! know a fizzle from a leg, a stall from a reversion, or how far a shock
+//! will go: the ladder's regime oracle, told those, makes several times more.
+//!
+//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
+//! solution), and a process (`src/main.rs`), the anchor hidden sets are
+//! scored against.
 
 use std::collections::VecDeque;
 
@@ -29,8 +55,9 @@ enum State {
     Holding,
 }
 
+/// The strategy.
 #[derive(Default)]
-struct Reference {
+pub struct Reference {
     cap: f64,
     start_mark: f64,
     calm: VecDeque<f64>,
@@ -63,7 +90,7 @@ impl Strategy for Reference {
         self.last_mark = mark;
         self.peak_value = self.peak_value.max(self.value);
         if !self.halted && self.peak_value - self.value > HALT_DRAWDOWN_USD {
-            mtx_kit::component::log("drawdown past the halt; closing and stopping");
+            mtx_kit::log("drawdown past the halt; closing and stopping");
             self.halted = true;
         }
 
@@ -138,4 +165,5 @@ fn round_cents(usd: f64) -> f64 {
     (usd * 100.0).round() / 100.0
 }
 
+#[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Reference);

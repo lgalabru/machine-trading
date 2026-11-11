@@ -292,3 +292,10 @@ defend, no bot users, no keypair files.
   and the session grades to completion with a reward of 0. A process bot
   under `--components-only` isn't graded: the reward is 0 and
   `not_graded` is 1, so the old cheaters check that.
+- 2026-11-11: one crate per reference. The `bots/*-wasm` ports are folded
+  back into `bots/reference`, `maker`, `carry` and `weekend`: the strategy
+  is `src/lib.rs`, a component on wasm32 (`export!`), and `src/main.rs` is
+  `mtx_kit::run(strategy)`, the anchor and the ladder's rungs, which read
+  `MTX_RUNG` and `MTX_REGIME` through `Session::var` (both are session
+  variables in a process). `just build` builds both. The old process code,
+  which read and sent through `Trader` itself, is gone.
