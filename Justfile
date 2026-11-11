@@ -2,6 +2,7 @@
 set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
+spot_snapshot := "sol-usdc-spot-2026-11-11"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
@@ -64,6 +65,17 @@ bots:
     bots/carry/build.sh
     bots/carry-gbm/build.sh
     bots/weekend/build.sh
+
+# Fork mainnet and write a spot snapshot (Phoenix v1, OpenBook v2, Pyth SOL/USD).
+snapshot-prepare-spot out:
+    cargo run --release -- snapshot prepare-spot --out {{out}}
+
+# A spot session end to end: a bot sells on both SOL/USDC books and passes
+# its sell-only mandate; the same bot buying too is disqualified.
+spot-smoke:
+    bots/spot-smoke/build.sh
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke bench/checks/spot/smoke.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
