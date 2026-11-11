@@ -10,26 +10,61 @@ license = "MIT"
 
 [features]
 default = ["phoenix"]
+# The chain: the Solana client, transactions and tokens, lending, and the
+# protocol adapters. Off, the kit is the strategy and the trading model,
+# which build for wasm32-wasip2 (with `component`).
+chain = [
+    "dep:tokio",
+    "dep:solana-account",
+    "dep:solana-account-decoder-client-types",
+    "dep:solana-commitment-config",
+    "dep:solana-compute-budget-interface",
+    "dep:solana-keypair",
+    "dep:solana-program-pack",
+    "dep:solana-pubkey",
+    "dep:solana-rpc-client",
+    "dep:solana-rpc-client-api",
+    "dep:solana-signer",
+    "dep:solana-system-interface",
+    "dep:solana-transaction",
+    "dep:solana-transaction-status-client-types",
+    "dep:spl-associated-token-account-interface",
+    "dep:spl-token-interface",
+]
+# A strategy as a WebAssembly component the grader calls: the WIT world
+# (wit/strategy.wit) and `export!`. Build for wasm32-wasip2.
+component = ["dep:wit-bindgen"]
 # Phoenix Eternal perpetuals: market metadata, exact tick/lot conversions, a
 # trader, and an ExecutionDriver; and the bot plumbing, which trades on them.
-phoenix = ["dep:phoenix-rise", "dep:tracing-subscriber"]
+phoenix = [
+    "chain",
+    "venue",
+    "phoenix-rise/api",
+    "phoenix-rise/tx-builder",
+    "dep:tracing-subscriber",
+]
+# What a strategy reads of Phoenix without the chain: the market metadata a
+# session hands it (Session::venue), tick and lot conversions, account
+# addresses, and Phoenix's account decoding. Builds for wasm32-wasip2.
+venue = ["dep:phoenix-rise", "phoenix-rise/sdk", "dep:solana-pubkey", "solana-pubkey/curve25519"]
 # Phoenix v1 spot order books, as the Phoenix venue profile's spot markets:
 # market and seat decoding, exact tick/lot conversions, the trader's
 # instructions, its holdings, a trader and an ExecutionDriver.
-phoenix-v1 = ["pyth"]
+phoenix-v1 = ["chain", "pyth"]
 # OpenBook v2 spot order books, as the OpenBook venue profile defines them:
 # market, book side, open orders and indexer decoding, exact lot
 # conversions, the trader's instructions, its holdings, a trader and an
 # ExecutionDriver.
-openbook-v2 = ["pyth"]
+openbook-v2 = ["chain", "pyth"]
 # Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses;
 # the spot venues value their base assets at them.
-pyth = []
+pyth = ["chain"]
 # The deterministic in-memory chain client, for tests in dependent crates.
-test-util = []
+test-util = ["chain"]
 
 [dependencies]
 mtx-core = { path = "../core" }
+wit-bindgen = { version = "0.63", optional = true }
 async-trait = "0.1"
 base64 = "0.22"
 bs58 = "0.5"
@@ -38,28 +73,28 @@ rust_decimal = { version = "1.39", features = ["serde-with-str", "maths"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 
-solana-account = "4"
-solana-account-decoder-client-types = "4.3"
-solana-commitment-config = "3"
-solana-compute-budget-interface = "3"
-solana-keypair = "3"
-solana-program-pack = "3"
-solana-pubkey = "4"
-solana-rpc-client = "4.3"
-solana-rpc-client-api = "4.3"
-solana-signer = "3"
-solana-system-interface = { version = "3", features = ["wincode"] }
-solana-transaction = { version = "4.3", features = ["wincode"] }
-solana-transaction-status-client-types = "4.3"
-spl-associated-token-account-interface = "2"
-spl-token-interface = "3"
+solana-account = { version = "4", optional = true }
+solana-account-decoder-client-types = { version = "4.3", optional = true }
+solana-commitment-config = { version = "3", optional = true }
+solana-compute-budget-interface = { version = "3", optional = true }
+solana-keypair = { version = "3", optional = true }
+solana-program-pack = { version = "3", optional = true }
+solana-pubkey = { version = "4", optional = true }
+solana-rpc-client = { version = "4.3", optional = true }
+solana-rpc-client-api = { version = "4.3", optional = true }
+solana-signer = { version = "3", optional = true }
+solana-system-interface = { version = "3", features = ["wincode"], optional = true }
+solana-transaction = { version = "4.3", features = ["wincode"], optional = true }
+solana-transaction-status-client-types = { version = "4.3", optional = true }
+spl-associated-token-account-interface = { version = "2", optional = true }
+spl-token-interface = { version = "3", optional = true }
 
-phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"], optional = true }
+phoenix-rise = { version = "=0.6.15", default-features = false, features = ["serde"], optional = true }
 
 [dev-dependencies]
 rust_decimal_macros = "1.39"

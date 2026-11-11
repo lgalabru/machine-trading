@@ -3,7 +3,8 @@
 //! 1. Restore the snapshot offline and put the RPC guard in front of it.
 //! 2. Onboard a fresh trader with [`DEPOSIT_USDC`] of collateral.
 //! 3. Stop the clock, register the scenario and lock the cheatcodes, then
-//!    start the bot (`run.sh` in its directory) with the [`BotEnv`] contract.
+//!    start the bot (`just run`, from the `Justfile` in its directory) with
+//!    the [`BotEnv`] contract.
 //! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
 //!    give the bot its turn (see [`mtx_core::turns`]): each step produces
 //!    its blocks, which land the scenario's move; then the grader's own
@@ -267,6 +268,16 @@ pub struct TurnReport {
     pub wall_ms: u64,
     /// Sends refused because they came while the world moved.
     pub late_sends: usize,
+    /// A component's fuel: what the session spent, and the most one call
+    /// spent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuel_used: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuel_max_call: Option<u64>,
+    /// Why a component played no more of the session, if it stopped: it
+    /// didn't load, or it trapped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<String>,
 }
 
 impl SessionReport {
@@ -527,7 +538,6 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     };
 
     let late_before = surfnet.coalesced_slots();
-    let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
     // Off hours: the slot the external market reopens at, from the venue's
     // calendar, as `MTX_REOPEN_SLOT`.
     let reopen_slot = scenario
@@ -535,45 +545,81 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .as_ref()
         .map(|off| start_slot + off.reopen_slot);
     *bot_started = true;
-    let mut child = spawn_bot(
-        opts.bot_dir,
-        &env,
-        &workdir,
-        opts.bot_log,
-        theirs,
-        opts.regime,
-        reopen_slot,
-    )?;
-    ours.set_nonblocking(true)
-        .map_err(io_error("turn socket"))?;
-    let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
-    let (reader, mut writer) = socket.into_split();
-    let mut reader = BufReader::new(reader).lines();
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
-    info!(
-        scenario = scenario.name,
-        start_slot, end_slot, steps, "bot started"
-    );
-
-    let hello = Hello {
-        protocol: turns::PROTOCOL.into(),
-        steps,
-        slots_per_step: SLOTS_PER_STEP,
-        start_slot,
-        end_slot,
-        turn_wall_ms: TURN_WALL.as_millis() as u64,
-    };
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
     };
-    let legacy = !(send(&mut writer, &Message::Hello(hello)).await
-        && matches!(
-            tokio::time::timeout(HELLO_WALL, next_message(&mut reader)).await,
-            Ok(Some(Message::Ready))
-        ));
-    if legacy {
-        info!("the bot didn't answer the hello: the world moves at the slot time");
+    // A bot is a process speaking the turn protocol, or a component the
+    // grader calls (`crate::wasm`, RFD 0002).
+    let mut process = None;
+    let mut wasm_bot = None;
+    let legacy;
+    if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
+        let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
+        wasm_bot = Some(
+            crate::wasm::WasmBot::start(
+                &component,
+                &env,
+                &mandate,
+                crate::wasm::Clock {
+                    steps,
+                    slots_per_step: SLOTS_PER_STEP,
+                    start_slot,
+                    scenario: &scenario.name,
+                    vars: opts
+                        .regime
+                        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+                        .into_iter()
+                        .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
+                        .collect(),
+                },
+                Box::new(log),
+            )
+            .await?,
+        );
+        legacy = false;
+        info!(
+            scenario = scenario.name,
+            start_slot, end_slot, steps, "strategy component loaded"
+        );
+    } else {
+        let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+        let child = spawn_bot(
+            opts.bot_dir,
+            &env,
+            &workdir,
+            opts.bot_log,
+            theirs,
+            opts.regime,
+            reopen_slot,
+        )?;
+        ours.set_nonblocking(true)
+            .map_err(io_error("turn socket"))?;
+        let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
+        let (reader, mut writer) = socket.into_split();
+        let mut reader = BufReader::new(reader).lines();
+        info!(
+            scenario = scenario.name,
+            start_slot, end_slot, steps, "bot started"
+        );
+        let hello = Hello {
+            protocol: turns::PROTOCOL.into(),
+            steps,
+            slots_per_step: SLOTS_PER_STEP,
+            start_slot,
+            end_slot,
+            turn_wall_ms: TURN_WALL.as_millis() as u64,
+        };
+        legacy = !(send(&mut writer, &Message::Hello(hello)).await
+            && matches!(
+                tokio::time::timeout(HELLO_WALL, next_message(&mut reader)).await,
+                Ok(Some(Message::Ready))
+            ));
+        if legacy {
+            info!("the bot didn't answer the hello: the world moves at the slot time");
+        }
+        process = Some((child, writer, reader));
     }
     turns.legacy = legacy;
     let budget = TURN_BUDGET_PER_STEP * steps as u32;
@@ -668,6 +714,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             answered: None,
         });
         if bot_exit.is_none()
+            && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
             if status.success() {
@@ -684,6 +731,23 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // The bot's turn.
         guard.set_step(k);
         guard.set_turn(true);
+        if let Some(bot) = wasm_bot.as_mut() {
+            let started = Instant::now();
+            let answered = bot.turn(k, slot, k + 1 == steps).await;
+            let took = started.elapsed();
+            if !answered {
+                turns.overran += 1;
+            }
+            turns.wall_ms += took.as_millis() as u64;
+            if let Some(record) = steps_seen.last_mut() {
+                record.turn_ms = Some(took.as_millis() as u64);
+                record.answered = Some(answered);
+            }
+            continue;
+        }
+        let Some((_, writer, reader)) = process.as_mut() else {
+            continue;
+        };
         if legacy {
             tokio::time::sleep(TURN_BUDGET_PER_STEP).await;
             continue;
@@ -691,7 +755,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         let started = Instant::now();
         let step = Step::new(k, slot, k + 1 == steps);
         let wall = TURN_WALL.min(budget.saturating_sub(spent));
-        let answered = take_turn(&mut writer, &mut reader, step, wall).await;
+        let answered = take_turn(writer, reader, step, wall).await;
         let took = started.elapsed();
         spent += took;
         if !answered {
@@ -705,8 +769,17 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     guard.set_turn(false);
     send_flow(&mut flow, flow_due.take()).await;
-    let _ = send(&mut writer, &Message::End).await;
-    stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    if let Some((mut child, mut writer, _)) = process {
+        let _ = send(&mut writer, &Message::End).await;
+        stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    }
+    if let Some(bot) = wasm_bot.as_mut() {
+        bot.end().await;
+        let (used, max_call) = bot.fuel();
+        turns.fuel_used = Some(used);
+        turns.fuel_max_call = Some(max_call);
+        turns.stopped = bot.stopped.clone();
+    }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
     let (flow, taker_orders) = match flow {
@@ -1154,6 +1227,34 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
     }
 }
 
+/// How a process bot starts: `just run` from its `Justfile`, or `bash
+/// run.sh` (the bots kept from earlier releases, under `bench/checks`).
+fn entry_point(bot_dir: &Path) -> Result<Command> {
+    if let Some(justfile) = ["Justfile", "justfile"]
+        .iter()
+        .map(|name| bot_dir.join(name))
+        .find(|path| path.is_file())
+    {
+        // The bot's PATH is the grader's fixed one: find `just` on ours.
+        let just = std::env::var_os("PATH")
+            .iter()
+            .flat_map(std::env::split_paths)
+            .map(|dir| dir.join("just"))
+            .find(|path| path.is_file())
+            .ok_or(Error::NoJust)?;
+        let mut command = Command::new(just);
+        command.arg("--justfile").arg(justfile).arg("run");
+        return Ok(command);
+    }
+    let run_sh = bot_dir.join("run.sh");
+    if !run_sh.is_file() {
+        return Err(Error::MissingBot(bot_dir.to_path_buf()));
+    }
+    let mut command = Command::new("bash");
+    command.arg(run_sh);
+    Ok(command)
+}
+
 /// Start the bot, with `turns` as its file descriptor [`turns::TURN_FD`].
 pub(crate) fn spawn_bot(
     bot_dir: &Path,
@@ -1164,18 +1265,14 @@ pub(crate) fn spawn_bot(
     regime: Option<&str>,
     reopen_slot: Option<u64>,
 ) -> Result<Child> {
-    let run_sh = bot_dir.join("run.sh");
-    if !run_sh.is_file() {
-        return Err(Error::MissingBot(run_sh));
-    }
     // The bot runs from its own directory, so a relative path would resolve twice.
-    let bot_dir = bot_dir.canonicalize().map_err(io_error(bot_dir))?;
-    let run_sh = bot_dir.join("run.sh");
+    let bot_dir = bot_dir
+        .canonicalize()
+        .map_err(|_| Error::MissingBot(bot_dir.to_path_buf()))?;
     let stdout = std::fs::File::create(log).map_err(io_error(log))?;
     let stderr = stdout.try_clone().map_err(io_error(log))?;
-    let mut command = Command::new("bash");
+    let mut command = entry_point(&bot_dir)?;
     command
-        .arg(&run_sh)
         .current_dir(&bot_dir)
         .env_clear()
         .envs(env.vars())
@@ -1206,7 +1303,7 @@ pub(crate) fn spawn_bot(
     }
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at
-    // TURN_FD has no close-on-exec flag, so it survives into run.sh; the
+    // TURN_FD has no close-on-exec flag, so it survives into the bot; the
     // original (close-on-exec, as Rust opens it) doesn't.
     unsafe {
         command.pre_exec(move || {
@@ -1216,7 +1313,7 @@ pub(crate) fn spawn_bot(
             Ok(())
         });
     }
-    let child = command.spawn().map_err(io_error(&run_sh));
+    let child = command.spawn().map_err(io_error(&bot_dir));
     drop(turns);
     child
 }

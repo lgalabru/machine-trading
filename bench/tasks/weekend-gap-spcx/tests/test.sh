@@ -32,6 +32,7 @@ mtx grade \
   --anchor-jobs 4 \
   --jobs 1 \
   --stop-on-disqualify \
+  --components-only \
   --snapshot "$MTX_SNAPSHOT" \
   --bot /app/bot \
   --logs /logs/verifier/bot \

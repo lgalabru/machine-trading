@@ -32,7 +32,7 @@ Make these choices without asking unless the user says otherwise:
 
 | Decision | Default | Why |
 | --- | --- | --- |
-| Deliverable | A bot directory (`/app/bot`, `run.sh`), not trades made by the agent itself | The agent's trades would be one sample; a bot can be replayed on many hidden markets |
+| Deliverable | A bot directory (`/app/bot`, its `bot.wasm`), not trades made by the agent itself | The agent's trades would be one sample; a bot can be replayed on many hidden markets |
 | Environment | Offline Surfpool snapshot pinned to a slot, replayed deterministically | Reproducible; real program logic, real fees and liquidity |
 | Market paths | Procedurally generated from a **family** with seeded parameters | Unlimited fresh scenarios; no memorized history |
 | Scored set | Hidden scenarios in `tests/`, never in the agent image. Better: drawn inside the verifier from a per-batch secret seed (32 random bytes the agent never sees; reports carry only its hash), checked absent from every job file | Iterating on scored scenarios is overfitting, and a set that ships with the task is public the day it's published |

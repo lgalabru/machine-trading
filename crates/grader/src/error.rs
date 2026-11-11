@@ -20,6 +20,8 @@ pub enum Error {
     TxBuilder(#[from] phoenix_rise::core::PhoenixTxBuilderError),
     #[error("hawkeye: {0}")]
     Hawkeye(#[from] phoenix_rise::core::PhoenixHawkeyeClientError),
+    #[error("wasm strategy {0}")]
+    Wasm(String),
     #[error("meter: {0}")]
     Meter(#[from] mtx_core::MeterError),
     #[error("{}: {source}", path.display())]
@@ -44,8 +46,12 @@ pub enum Error {
     Setup(Box<Error>),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
-    #[error("no bot at {}: a bot is a directory with a run.sh", .0.display())]
+    #[error("no bot at {}: a bot is a directory with a bot.wasm, or a Justfile whose `run` starts it", .0.display())]
     MissingBot(PathBuf),
+    #[error("no bot.wasm in {}: this grade takes strategy components only, built into bot.wasm (`just build`)", .0.display())]
+    NotAComponent(PathBuf),
+    #[error("the bot has a Justfile, and `just` isn't on the grader's PATH")]
+    NoJust,
     #[error("--jobs must be between 1 and {1}, one per bot user; got {0}")]
     Jobs(usize, usize),
     #[error(

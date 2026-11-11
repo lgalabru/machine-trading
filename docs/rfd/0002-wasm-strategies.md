@@ -218,3 +218,84 @@ defend, no bot users, no keypair files.
   a call cap. The observation interface shrinks from a requirement to a set
   of conveniences, and the RPC guard becomes the import's allowlist.
 
+- 2026-11-11: step 1, the spike. `crates/strategy` (`mtx-strategy`) holds
+  the WIT world (`wit/strategy.wit`), a synchronous `Strategy` trait and
+  `export!`; `bots/reference-wasm` is the flash-crash reference ported to
+  it, a 71 KB component built for `wasm32-wasip2` with no extra tools. The
+  grader's `crate::wasm` loads a bot directory's `bot.wasm` with `wasmtime`
+  50 and runs it in place of the process: the same guarded endpoint, the
+  bot's key in the grader's `mtx_kit::Trader`, the run loop's `Market`,
+  `plan()` and ledger, orders sent in order until one fails. WASI is linked
+  with no files, environment or network, stopped clocks and seeded
+  randomness (Rust's std imports them on wasip2), and each call has a fuel
+  budget (10^10, uncalibrated). On flash-crash's six practice scenarios the
+  component earns the process reference's PnL to the cent, with every one
+  of 1,538 steps equal in position, value and mark, and a second run equal
+  to the first. A turn takes about as long as the process's (2.7 ms
+  against 2.1 ms): the reads, not the strategy, are the cost. `rpc` is
+  implemented, an allowlist forwarded to the guarded endpoint, but nothing
+  calls it yet: that is step 2, with the maker.
+- 2026-11-11: one trait. `mtx-strategy` is folded into `mtx-kit`: the
+  strategy (`Strategy`, `Session`, `Market`, `Orders`, `plan()`, `rpc()`)
+  builds everywhere; the Solana client, protocols and process plumbing are
+  behind a default `chain` feature; `export!` and the WIT world
+  (`crates/kit/wit`) behind `component`. The kit without `chain` builds for
+  `wasm32-wasip2`; `mtx-core`'s turn client is Unix only. `rpc()` answers in
+  a process too, a blocking call to the session's endpoint, and both sides
+  check `RPC_METHODS`. Writing it showed reads that named no commitment
+  were served at the node's default, 31 slots behind the step: the guard
+  now adds `processed`, for process bots as well. The process and component
+  references still earn the same PnL, and the reference and maker the same
+  as before the guard change.
+- 2026-11-11: the tasks move to components. The maker, the carry desk and
+  the weekend reference are ported (`bots/maker-wasm`, `bots/carry-wasm`,
+  `bots/weekend-wasm`; the last two link the process bots' models rather
+  than copying them). Each earns its process reference's PnL to the cent
+  on its task's practice set. Porting them named what a component lacked:
+  the venue's metadata (`Session::venue`, read without the chain by the
+  kit's `venue` feature), its own key (`Session::authority`, for its trader
+  account and to tell its own orders on the tape), the task's variables
+  (`Session::var("MTX_REOPEN_SLOT")`), and the top of the book: Hawkeye's
+  view is a simulated transaction a component can't build, so `Market`
+  carries the index and best bid and ask from the read the mark already
+  comes from. Two process habits had no counterpart and didn't matter:
+  the maker read its position after a lean to count its own fill, and the
+  carry desk read it after every slice; counting the order as filled gives
+  the same sessions. The starter is now a component, the verifier and
+  `mtx-practice` grade with `--components-only`, and the oracle solutions
+  are the ported bots. The ladder's anchors and rungs stay processes.
+- 2026-11-11: a trap ends a component's session. A probe that panics at
+  step 3 is never entered again: Wasmtime answers every later call with
+  "cannot enter component instance". The grader now stops calling a
+  strategy after its first trap, and the instructions say so; an error
+  returned from `step` only skips the step. Re-instantiating after a trap
+  would lose the strategy's state silently, so we don't.
+- 2026-11-11: step 3, fuel. A loop that spins every step spends 2.1
+  billion units in about 108 ms on an M-series core: about 20 billion a
+  second. On one practice session each, the references spend at most 75
+  million a step (funding-carry, 40.6 billion over 536 steps; the maker
+  11.7 million in all, the weekend reference 473 million, flash-crash's
+  334 thousand). A call may spend 10 billion, and a session two billion a
+  step in all (`FUEL_PER_STEP`): about 0.1 s a step, which bounds a
+  72-session hidden set's computing near an hour on a slower core, below
+  the verifier's timeout, where the process bots' 0.5 s a step allowed
+  three. The spinner runs out at step 134 of 280 and plays no more. Memory
+  is capped at 1 GiB. A `bot.wasm` that doesn't load (random bytes, in the
+  check) plays the session without trading instead of failing the grade,
+  and each session's report carries its fuel and why a component stopped.
+- 2026-11-11: the checks. `bench/checks/cheater-wasm` tries, from inside
+  the sandbox, the chain's cheatcodes (straight to the host import, past
+  the kit's check), the hidden files and the reward file, the environment,
+  sockets to the surfnet and the internet, the clock, and memory past the
+  cap: every attempt fails (no such file, permission denied, an empty
+  environment, a clock that stands still, allocation stops at 768 MiB),
+  and the session grades to completion with a reward of 0. A process bot
+  under `--components-only` isn't graded: the reward is 0 and
+  `not_graded` is 1, so the old cheaters check that.
+- 2026-11-11: one crate per reference. The `bots/*-wasm` ports are folded
+  back into `bots/reference`, `maker`, `carry` and `weekend`: the strategy
+  is `src/lib.rs`, a component on wasm32 (`export!`), and `src/main.rs` is
+  `mtx_kit::run(strategy)`, the anchor and the ladder's rungs, which read
+  `MTX_RUNG` and `MTX_REGIME` through `Session::var` (both are session
+  variables in a process). `just build` builds both. The old process code,
+  which read and sent through `Trader` itself, is gone.
