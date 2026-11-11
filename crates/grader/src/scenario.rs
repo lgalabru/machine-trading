@@ -58,6 +58,11 @@ pub struct Scenario {
     /// They keep Phoenix's book price, and with it a book-priced mark, fresh.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tape: Vec<crate::making::TakerOrder>,
+    /// Execution faults on the bot's sends and reads, planned from the
+    /// faults' own seed (see [`crate::faults`]). Without them the guard
+    /// forwards at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faults: Option<crate::faults::Faults>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -281,6 +286,11 @@ impl Scenario {
                     "a market-making scenario's takers are its making's, not a tape".into(),
                 );
             }
+        }
+        if let Some(faults) = &self.faults {
+            faults
+                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                .map_err(|reason| format!("faults: {reason}"))?;
         }
         let mut last = 0;
         for (i, order) in self.tape.iter().enumerate() {
@@ -835,6 +845,7 @@ impl ShockFamily {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            faults: None,
             reference_pnl_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
@@ -1541,6 +1552,7 @@ mod tests {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            faults: None,
             reference_pnl_usd: None,
             fair_path: None,
         };
@@ -1599,6 +1611,7 @@ mod tests {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            faults: None,
             reference_pnl_usd: None,
             fair_path: None,
         }

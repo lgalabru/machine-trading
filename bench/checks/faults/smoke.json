@@ -1,0 +1,63 @@
+{
+  "name": "faults-smoke",
+  "description": "SPCX holds still while a bot's sends meet a drop, an expired blockhash, a delay, a lost confirmation, a congestion window and two 429s",
+  "symbol": "SPCX",
+  "duration_slots": 60,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 11,
+      "level_pct": 0.076
+    }
+  ],
+  "faults": {
+    "seed": 7,
+    "latency": {
+      "slots": [
+        2,
+        2
+      ]
+    },
+    "congestion": {
+      "from_step": 6,
+      "to_step": 10,
+      "floor_micro_lamports": [
+        1000,
+        3000
+      ]
+    },
+    "blockhash_expiry": {
+      "sends": [
+        2
+      ]
+    },
+    "drop": {
+      "sends": [
+        1
+      ]
+    },
+    "lost_confirmation": {
+      "landings": [
+        1
+      ],
+      "hide_steps": 2
+    },
+    "rpc_unavailable": {
+      "reads": [
+        30
+      ],
+      "count": 2
+    }
+  }
+}

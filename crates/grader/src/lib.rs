@@ -4,6 +4,7 @@ pub mod carry;
 pub mod chain;
 pub mod compete;
 mod error;
+pub mod faults;
 pub mod flow;
 pub mod grade;
 pub mod guard;
