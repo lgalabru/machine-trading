@@ -230,6 +230,9 @@ The grader clears the environment, then sets exactly:
 | `PATH` | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`. |
 | `RUST_LOG` | The log level, `info` by default. |
 
+An off-hours scenario, whose underlying's market is closed, also sets
+`MTX_REOPEN_SLOT`: the slot that market reopens at.
+
 What the account holds at the start is the task's: on `flash-crash-spcx`,
 SOL for fees and 10,000 USDC of collateral.
 

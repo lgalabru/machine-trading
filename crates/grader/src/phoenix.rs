@@ -67,23 +67,7 @@ pub async fn onboard_trader(
     let register = phoenix.tx().build_register_trader(owner, 0, 0)?;
     mtx_kit::send(&rpc, authority, register, "register trader")?;
 
-    let capabilities: serde_json::Map<_, _> = TRADER_CAPABILITIES
-        .iter()
-        .map(|name| (name.to_string(), json!("true")))
-        .collect();
-    let enable = || {
-        chain::register_scenario(
-            &rpc,
-            "enable trader",
-            vec![Override {
-                template_id: "phoenix-trader-capabilities",
-                account: trader,
-                values: capabilities.clone().into(),
-                slot: 1,
-                label: "enable trader".into(),
-            }],
-        )
-    };
+    let enable = || chain::register_scenario(&rpc, "enable trader", vec![enable_trader(trader, 1)]);
     enable()?;
     // Capabilities land a slot after registration. Under load (a session
     // onboards the bot, eight takers and a competitor at once) that slot can
@@ -109,6 +93,24 @@ pub async fn onboard_trader(
     }
     info!(%owner, %trader, deposit_usdc, "trader onboarded");
     Ok(trader)
+}
+
+/// An override that gives `trader` the capabilities a fresh account needs,
+/// `slot` slots after it's registered. Playing it again changes nothing on
+/// the trader; like every Phoenix override, surfpool first restamps the
+/// markets' oracle readings with the slot it plays at.
+pub fn enable_trader(trader: Pubkey, slot: u64) -> Override {
+    let capabilities: serde_json::Map<_, _> = TRADER_CAPABILITIES
+        .iter()
+        .map(|name| (name.to_string(), json!("true")))
+        .collect();
+    Override {
+        template_id: "phoenix-trader-capabilities",
+        account: trader,
+        values: capabilities.into(),
+        slot,
+        label: "enable trader".into(),
+    }
 }
 
 /// Phoenix rejects an oracle update more than 5% away from the oracle median,
@@ -150,6 +152,19 @@ pub fn market_move(
         label: "uncross".into(),
     });
     (overrides, slot)
+}
+
+/// An override that moves only `symbol`'s oracle reports to `ticks`, at
+/// `slot`: the makers and resting orders stay where they are, and Phoenix
+/// recomputes the mark from the new reports.
+pub fn oracle_move(perp_asset_map: Pubkey, symbol: &str, ticks: u64, slot: u64) -> Override {
+    Override {
+        template_id: "phoenix-oracle-price",
+        account: perp_asset_map,
+        values: json!({ "symbol": symbol, "target_ticks": ticks.to_string() }),
+        slot,
+        label: format!("{symbol} index"),
+    }
 }
 
 /// Byte layout of a spline collection: a header, then fixed-size splines,
@@ -217,6 +232,113 @@ pub fn widen_makers(
         .set_account(&address, account.lamports, &data, &account.owner)?;
     info!(symbol, inner, add, "makers widened");
     Ok(add)
+}
+
+/// How Phoenix prices one market's mark: the weights of the three prices it
+/// blends (the spot oracles with the book's EMA gap, the other venues' perp
+/// prices the oracles report, and its own book's trades) and the EMA gap
+/// itself, in ticks.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkConfig {
+    pub spot_weight: u64,
+    pub perp_weight: u64,
+    pub book_weight: u64,
+    pub ema_ticks: i64,
+}
+
+/// Set `symbol`'s mark configuration in the PerpAssetMap. Setup only: it
+/// writes the account with a cheatcode. Returns the configuration it found.
+pub fn set_mark(
+    surfnet: &Surfnet,
+    phoenix: &Phoenix,
+    symbol: &str,
+    config: &MarkConfig,
+) -> Result<MarkConfig> {
+    use phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
+    let address = phoenix.perp_asset_map()?;
+    let rpc = chain::rpc_client(surfnet);
+    let account = rpc.get_account(&address)?;
+    let invalid = |reason: String| Error::Splines {
+        account: address.to_string(),
+        reason,
+    };
+    let map =
+        PerpAssetMap::try_from_account_bytes(&account.data).map_err(|e| invalid(e.to_string()))?;
+    let entry = map
+        .find_by_symbol(symbol)
+        .map_err(|e| invalid(e.to_string()))?
+        .ok_or_else(|| invalid(format!("no market {symbol}")))?;
+    let metadata = entry.metadata.as_bytes();
+    // The metadata's own bytes, found once: it holds the market's own
+    // account, so it occurs once in the map.
+    let offset = account
+        .data
+        .windows(metadata.len())
+        .position(|window| window == metadata)
+        .ok_or_else(|| invalid(format!("{symbol}'s metadata not found in the map")))?;
+    // The PriceComponent is the metadata's first field.
+    let mut price = *entry.metadata.oracle_price();
+    let mark = &mut price.mark_price;
+    let found = MarkConfig {
+        spot_weight: mark.spot_price_component.weight,
+        perp_weight: mark.perp_price_component.weight,
+        book_weight: mark.book_price_component.weight,
+        ema_ticks: mark.spot_price_component.mid_spot_diff_ema_ticks.as_inner(),
+    };
+    mark.spot_price_component.weight = config.spot_weight;
+    mark.perp_price_component.weight = config.perp_weight;
+    mark.book_price_component.weight = config.book_weight;
+    mark.spot_price_component.mid_spot_diff_ema_ticks =
+        phoenix_rise::math::SignedTicks::new(config.ema_ticks);
+    let bytes = bytemuck::bytes_of(&price);
+    let mut data = account.data.clone();
+    data[offset..offset + bytes.len()].copy_from_slice(bytes);
+    surfnet
+        .cheatcodes()
+        .set_account(&address, account.lamports, &data, &account.owner)?;
+    info!(symbol, ?found, ?config, "mark configured");
+    Ok(found)
+}
+
+/// Fail unless `symbol`'s funding parameters on chain are `funding`'s: a
+/// session must not start on parameters its scenario didn't set.
+pub fn check_funding(
+    rpc: &solana_rpc_client::rpc_client::RpcClient,
+    phoenix: &Phoenix,
+    symbol: &str,
+    funding: &crate::scenario::Funding,
+) -> Result<()> {
+    use phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
+    let address = phoenix.perp_asset_map()?;
+    let account = rpc.get_account(&address)?;
+    let invalid = |reason: String| Error::Splines {
+        account: address.to_string(),
+        reason,
+    };
+    let map =
+        PerpAssetMap::try_from_account_bytes(&account.data).map_err(|e| invalid(e.to_string()))?;
+    let entry = map
+        .find_by_symbol(symbol)
+        .map_err(|e| invalid(e.to_string()))?
+        .ok_or_else(|| invalid(format!("no market {symbol}")))?;
+    let on_chain = entry.metadata.funding_accumulator();
+    let found = (
+        on_chain.funding_interval_seconds.as_inner(),
+        on_chain.funding_period_seconds.as_inner(),
+        on_chain.max_funding_rate.as_inner(),
+    );
+    let wanted = (
+        funding.interval_seconds,
+        funding.period_seconds,
+        funding.max_rate,
+    );
+    if found != wanted {
+        return Err(Error::Timeout(format!(
+            "{symbol}'s funding parameters didn't land: {found:?} on chain, {wanted:?} wanted"
+        )));
+    }
+    Ok(())
 }
 
 /// The closest any enabled maker quotes to its mid, in ticks.

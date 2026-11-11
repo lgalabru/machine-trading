@@ -9,6 +9,8 @@ copy of Solana mainnet, restored with
 | --- | --- | --- |
 | [`flash-crash-spcx`](flash-crash-spcx) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
 | [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
+| [`funding-carry-spcx`](funding-carry-spcx) | Phoenix SPCX perp | earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise |
+| [`weekend-gap-spcx`](weekend-gap-spcx) | Phoenix SPCX perp | reads which weekend flow knows where SPCX will open, and holds that gap into the reopen |
 
 Planned tasks are
 [issues labelled `new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22).
@@ -90,6 +92,13 @@ The agent's own environment has a Rust toolchain, the `mtx-kit` SDK, a
 starter bot that builds but never trades, practice scenarios, the scenario
 generator, and `mtx-practice`. `mtx-practice` grades a bot exactly as the
 verifier does.
+
+A task can give the agent a clock: `time-left` prints how much of the
+agent's time limit is left. It's on every agent's PATH, and a task opts in by
+setting `MTX_AGENT_TIMEOUT_SEC` (its `[agent] timeout_sec`) and
+`MTX_AGENT_TIMEOUT_MULTIPLIER = "${MTX_AGENT_TIMEOUT_MULTIPLIER:-1}"` in its
+`[environment.env]`; `just bench` exports the multiplier. The time starts
+with the agent's harness, the oldest process of the agent's user.
 
 **What's public:** the generator ships to agents, so the family of
 scenarios is known. Each batch's draws aren't, and reports carry only the
