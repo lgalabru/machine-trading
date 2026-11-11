@@ -1,6 +1,6 @@
 {
-  "name": "actors-buyer-ahead",
-  "description": "The same buyer, with a counterparty that buys ahead of it",
+  "name": "actors-buyer-front-run",
+  "description": "The same buyer, with a counterparty that front-runs it",
   "symbol": "SOL-USDC",
   "duration_slots": 40,
   "mandate": {
@@ -51,7 +51,7 @@
     },
     "counterparties": [
       {
-        "kind": "ahead",
+        "kind": "front_run",
         "side": "buy",
         "share": 1.0,
         "window": 3,

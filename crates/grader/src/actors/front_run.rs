@@ -1,4 +1,4 @@
-//! A counterparty that trades ahead of the bot.
+//! A counterparty that front-runs the bot.
 //!
 //! It watches the bot's fills on its `side` and keeps their average per
 //! step over the last `window` steps. At the start of each step, before the
@@ -21,8 +21,8 @@ use super::{Actions, Actor, ActorsReport, Moment, StepFlow, seats::Seat};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CounterpartyKind {
-    /// Trades the bot's way before its next turn.
-    Ahead,
+    /// Front-runs the bot: trades its way before its next turn.
+    FrontRun,
 }
 
 fn default_window() -> u64 {
@@ -111,7 +111,7 @@ impl Watch {
 
 /// One of its takes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct AheadTrade {
+pub struct FrontRunTrade {
     pub at: u64,
     pub venue: String,
     /// What it sent, in base units.
@@ -123,7 +123,7 @@ pub struct AheadTrade {
 pub struct CounterpartyReport {
     pub kind: CounterpartyKind,
     pub side: Side,
-    pub trades: Vec<AheadTrade>,
+    pub trades: Vec<FrontRunTrade>,
     /// What it bought and sold, in base units, from the venues' fills.
     pub bought: f64,
     pub sold: f64,
@@ -131,7 +131,7 @@ pub struct CounterpartyReport {
 }
 
 /// A counterparty at run time: a seat on each venue.
-pub struct Ahead {
+pub struct FrontRunner {
     counterparty: Counterparty,
     seats: Vec<(usize, Arc<Seat>)>,
     /// The makers' half-spread, as a fraction of the reference.
@@ -140,7 +140,7 @@ pub struct Ahead {
     report: CounterpartyReport,
 }
 
-impl Ahead {
+impl FrontRunner {
     pub fn new(
         counterparty: Counterparty,
         seats: Vec<(usize, Arc<Seat>)>,
@@ -163,7 +163,7 @@ impl Ahead {
     }
 }
 
-impl Actor for Ahead {
+impl Actor for FrontRunner {
     fn before_flow<'a>(&'a mut self, now: &'a Moment) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let side = self.counterparty.side;
@@ -178,7 +178,7 @@ impl Actor for Ahead {
                     continue;
                 };
                 self.report.actions.took += 1;
-                self.report.trades.push(AheadTrade {
+                self.report.trades.push(FrontRunTrade {
                     at: now.at,
                     venue,
                     base,
@@ -225,7 +225,7 @@ pub(crate) mod tests {
 
     pub(crate) fn counterparty() -> Counterparty {
         Counterparty {
-            kind: CounterpartyKind::Ahead,
+            kind: CounterpartyKind::FrontRun,
             side: Side::Sell,
             share: 0.5,
             window: 3,
@@ -277,7 +277,7 @@ pub(crate) mod tests {
         bad.stand_down = 0;
         assert!(bad.validate().is_err());
         let parsed: Counterparty =
-            serde_json::from_str(r#"{"kind":"ahead","side":"buy","share":1,"stand_down":3}"#)
+            serde_json::from_str(r#"{"kind":"front_run","side":"buy","share":1,"stand_down":3}"#)
                 .unwrap();
         assert_eq!(parsed.window, 5);
         assert_eq!(parsed.side, Side::Buy);

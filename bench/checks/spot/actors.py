@@ -3,7 +3,7 @@
     python3 bench/checks/spot/actors.py DETAILS_DIR
 
 DETAILS_DIR holds one detail directory per scenario (actors-seller,
-actors-path, actors-tape, actors-buyer, actors-buyer-ahead), as `mtx grade --details` writes them.
+actors-path, actors-tape, actors-buyer, actors-buyer-front-run), as `mtx grade --details` writes them.
 """
 
 import gzip
@@ -85,22 +85,22 @@ def main(details):
     good &= check(acts["failed"] < 0.01 * total, "under 1% of the actors' actions failed")
 
     alone = report(details, "actors-buyer")
-    ahead = report(details, "actors-buyer-ahead")
-    bought_alone, bought_ahead = fills(alone, "buy"), fills(ahead, "buy")
-    them = ahead["actors"]["counterparties"][0]
+    front_run = report(details, "actors-buyer-front-run")
+    bought_alone, bought_front_run = fills(alone, "buy"), fills(front_run, "buy")
+    them = front_run["actors"]["counterparties"][0]
     print(f"buyer alone: {sum(f['base'] for f in bought_alone):.2f} SOL at {average(bought_alone):.4f}; "
-          f"with a counterparty ahead: {sum(f['base'] for f in bought_ahead):.2f} SOL at {average(bought_ahead):.4f}")
+          f"front-run: {sum(f['base'] for f in bought_front_run):.2f} SOL at {average(bought_front_run):.4f}")
     print(f"  counterparty: {len(them['trades'])} takes, bought {them['bought']:.2f}; "
           "at " + ", ".join(f"{t['at']}:{t['base']:.2f}" for t in them["trades"]))
-    good &= check(ahead["actors"]["actions"]["failed"] == 0 and alone["actors"]["actions"]["failed"] == 0,
+    good &= check(front_run["actors"]["actions"]["failed"] == 0 and alone["actors"]["actions"]["failed"] == 0,
                   "no actor action failed")
     good &= check(not alone["actors"].get("counterparties"), "alone, no counterparty")
-    good &= check(them["bought"] > 0 and them["trades"][0]["at"] > bought_ahead[0]["at"] - 4,
+    good &= check(them["bought"] > 0 and them["trades"][0]["at"] > bought_front_run[0]["at"] - 4,
                   "the counterparty starts buying after the bot's first fill")
-    good &= check(them["trades"][-1]["at"] <= bought_ahead[-1]["at"] + 2 * 2 + 2,
+    good &= check(them["trades"][-1]["at"] <= bought_front_run[-1]["at"] + 2 * 2 + 2,
                   "and stands down once the bot stops")
-    good &= check(average(bought_ahead) > average(bought_alone),
-                  "the bot pays more with the counterparty ahead of it")
+    good &= check(average(bought_front_run) > average(bought_alone),
+                  "the bot pays more when front-run")
     print("ACTORS_SMOKE " + ("PASS" if good else "FAIL"))
     return 0 if good else 1
 
