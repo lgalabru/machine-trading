@@ -141,6 +141,9 @@ pub struct SessionReport {
     /// Market making: what the grader's own maker did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub competitor: Option<CompeteReport>,
+    /// Execution faults: the plan, and what fired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub faults: Option<crate::faults::FaultsReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -467,6 +470,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let start_slot = base_slot;
+    guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
     let end_slot = start_slot + scenario.duration_slots;
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
@@ -591,6 +595,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         let at = slot - base_slot;
         flow_due = Some(at);
+        // The bot's held sends land in this step's blocks.
+        guard.release(k).await;
         if let (Some(quoting), Some(competitor), Some(making)) = (
             quoting.as_mut(),
             competitor.as_ref(),
@@ -731,6 +737,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         valuation: scenario.valuation(),
         flow,
         competitor,
+        faults: guard.faults_report(),
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {
