@@ -5,10 +5,10 @@ snapshot := "phoenix-spcx-2026-10-29"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.11.0"
+tag := "0.12.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "flash-crash-spcx=reference market-making-spcx=maker"
+references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend"
 # The harness versions `just bench` runs, pinned so results compare: each
 # provider's own coding agent, Claude Code for Anthropic models and Codex for
 # OpenAI's.
@@ -61,6 +61,9 @@ bots:
     bots/reference/build.sh
     bots/maker/build.sh
     bots/dip-buyer/build.sh
+    bots/carry/build.sh
+    bots/carry-gbm/build.sh
+    bots/weekend/build.sh
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
@@ -187,6 +190,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
       MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
     fi
     export MTX_EVAL_SEED
+    # For `time-left` in tasks that opt in: their limit scales with the agent's.
+    export MTX_AGENT_TIMEOUT_MULTIPLIER={{limit}}
     (umask 077 && printf '%s' "$MTX_EVAL_SEED" > "$batch/.seed")
     # The plan, written before the first trial starts: what runs (models,
     # harnesses and their versions, attempts, time), what's measured and on
@@ -237,13 +242,23 @@ publish batch version:
 compare range:
     cargo run --release -q -- bench compare {{range}} --open
 
-# Copy the reference bot into the task's solution.
+# Copy the reference bot into the task's solution: its sources, and the
+# model it reads, if any (a `model/` directory, or `model.*` files beside
+# its Cargo.toml).
 solution:
     #!/usr/bin/env bash
     set -euo pipefail
     for pair in {{references}}; do
-      mkdir -p "{{tasks}}/${pair%%=*}/solution/src"
-      cp "bots/${pair#*=}/src/main.rs" "{{tasks}}/${pair%%=*}/solution/src/main.rs"
+      bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
+      mkdir -p "$solution/src"
+      cp "$bot"/src/*.rs "$solution/src/"
+      if [ -d "$bot/model" ]; then
+        mkdir -p "$solution/model"
+        cp "$bot"/model/*.json "$solution/model/"
+      fi
+      for model in "$bot"/model.*; do
+        if [ -e "$model" ]; then cp "$model" "$solution/"; fi
+      done
     done
 
 # Fail if a task's solution drifted from its reference bot.
@@ -251,7 +266,12 @@ check-solution:
     #!/usr/bin/env bash
     set -euo pipefail
     for pair in {{references}}; do
-      diff -u "bots/${pair#*=}/src/main.rs" "{{tasks}}/${pair%%=*}/solution/src/main.rs"
+      bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
+      diff -ru "$bot/src" "$solution/src"
+      if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
+      for model in "$bot"/model.*; do
+        if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
+      done
     done
 
 # The checks every task change should pass: oracle ~1, and nop, cheater and
@@ -283,6 +303,8 @@ leak-audit:
       "then fade it once it stops"
       "one tick inside the competitor"
       "backs off after one-sided fills"
+      "fading the premiums the crowd's positioning opened"
+      "hold the gap into the reopen"
       "mtx-ladder-rungs"
     )
     image="{{registry}}/{{image}}:{{tag}}"
@@ -290,7 +312,7 @@ leak-audit:
     docker image inspect "$image" > /dev/null 2>&1 \
       || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
     found=0
-    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker; do
+    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker /opt/mtx/sdk/bots/carry /opt/mtx/sdk/bots/weekend; do
       if docker run --rm --entrypoint test "$image" -e "$path"; then
         echo "LEAK: $image holds $path"; found=1
       fi
@@ -310,6 +332,11 @@ leak-audit:
 # bot that looks for them.
 keypair-probe:
     bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
+
+# The clock check for a task that opts in to `time-left` (bench/checks/clock):
+# its agent reads half the limit at 0.5x and the clock runs down in step.
+clock-probe task:
+    bench/checks/clock/probe.sh {{tasks}}/{{task}}
 
 # The skill ladder (bench/checks/ladder): fixed bots, from doing nothing to
 # the regime oracle and the frozen exploit bots, graded on `sets` fresh

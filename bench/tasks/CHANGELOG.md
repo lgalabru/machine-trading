@@ -4,6 +4,19 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.12.0.** New tasks on new scenario hooks in the engine (book
+  premiums, a taker tape, per-session funding, off-hours markets; each
+  opt-in, so flash-crash's and market-making's sessions are unchanged).
+  - **`funding-carry-spcx`.** The SPCX book trades at a premium or a
+    discount to its index, and Phoenix's funding pays the side against
+    it. A good bot fades the premiums the crowd's positioning opened,
+    follows the ones the index follows, and learns from the session's own
+    earlier premiums which kind of day it is.
+  - **`weekend-gap-spcx`.** SpaceX's own market is closed for the
+    weekend, so Phoenix prices the SPCX index from its own book until the
+    market reopens. A good bot reads which weekend flow knows where SPCX
+    will open, and holds that gap into the reopen within its loss limit.
+
 - **0.11.0.** Three leaks closed, tasks named for their skill, and OpenAI
   models. Design and evidence: [bench/design/0.11.0.md](../design/0.11.0.md).
   - **The SDK is `mtx-kit`.** `luce` and `mtx-botkit` are one crate,

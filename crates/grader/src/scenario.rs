@@ -17,7 +17,8 @@ use crate::{
     chain::Override,
     error::io_error,
     making::Making,
-    phoenix::{SLOTS_BETWEEN_STEPS, market_move},
+    offhours::OffHours,
+    phoenix::{SLOTS_BETWEEN_STEPS, market_move, oracle_move},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -43,6 +44,20 @@ pub struct Scenario {
     /// flow the grader sends. Without it, nobody trades but the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub making: Option<Making>,
+    /// For a scenario where the underlying's own market is closed: the
+    /// closed period before it reopens, Phoenix's index through it, and the
+    /// taker flow the grader sends (see [`crate::offhours`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offhours: Option<OffHours>,
+    /// Phoenix's funding parameters for the session's market, set when the
+    /// session starts. Without it, the snapshot's own apply (hourly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<Funding>,
+    /// Outside market making: taker orders the grader sends from its own
+    /// accounts, priced off the book, as anyone trading the market would.
+    /// They keep Phoenix's book price, and with it a book-priced mark, fresh.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tape: Vec<crate::making::TakerOrder>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,11 +72,64 @@ pub struct Waypoint {
     /// Target mark relative to the session's starting mark, in percent:
     /// `-8.0` is 8% below it, `0.0` is back to where it started.
     pub level_pct: f64,
+    /// The order book's premium over the level, in percent of the level:
+    /// the oracle (Phoenix's index) goes to the level, and the makers
+    /// re-centre their quotes `premium_pct` above it (below, when negative).
+    /// Zero moves both to the level, as every waypoint did before premiums.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub premium_pct: f64,
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
+}
+
+impl Waypoint {
+    /// A waypoint that moves the oracle and the book together.
+    pub fn at(slot: u64, level_pct: f64) -> Self {
+        Self {
+            slot,
+            level_pct,
+            premium_pct: 0.0,
+        }
+    }
+
+    /// Where the book's makers centre, relative to the session's starting
+    /// mark, in percent.
+    pub fn book_pct(&self) -> f64 {
+        if self.premium_pct == 0.0 {
+            return self.level_pct;
+        }
+        ((1.0 + self.level_pct / 100.0) * (1.0 + self.premium_pct / 100.0) - 1.0) * 100.0
+    }
+}
+
+/// Phoenix's funding parameters for one market, as the
+/// `phoenix-market-funding` template sets them: funding accrues on the gap
+/// between Phoenix's mark and its index, and settles every interval at that
+/// gap's average over the interval times `interval / period`, capped at
+/// `max_rate` per interval.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Funding {
+    pub interval_seconds: u64,
+    pub period_seconds: u64,
+    /// The cap on one interval's funding, in quote lots per base lot (the
+    /// template's unit).
+    pub max_rate: i64,
+    /// How Phoenix prices the market's mark in the session, written at
+    /// setup; without it, the snapshot's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<crate::phoenix::MarkConfig>,
 }
 
 /// Lowest level a waypoint may target. Past this, Phoenix's risk checks and
 /// the market's resting liquidity stop behaving like a real market.
 const MIN_LEVEL_PCT: f64 = -40.0;
+
+/// Market time per slot in a session: the surfnet's clock, which Phoenix's
+/// funding reads.
+pub const SLOT_SECONDS: f64 = 0.25;
 
 /// The venue every scenario trades on.
 pub const VENUE: &str = "phoenix";
@@ -118,7 +186,7 @@ impl Scenario {
         if self.mandate.term.is_some() {
             return Err("mandate: a scenario's mandate has no term; the session sets it".into());
         }
-        let mut level = 0.0;
+        let mut book = 0.0;
         let mut free_from = 0;
         for (i, waypoint) in self.path.iter().enumerate() {
             if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
@@ -133,13 +201,72 @@ impl Scenario {
                     waypoint.slot
                 ));
             }
-            free_from = waypoint.slot + move_slots(level, waypoint.level_pct) + 1;
-            level = waypoint.level_pct;
+            if !(-MAX_PREMIUM_PCT..=MAX_PREMIUM_PCT).contains(&waypoint.premium_pct) {
+                return Err(format!(
+                    "waypoint {i}: premium {}% is outside [-{MAX_PREMIUM_PCT}, {MAX_PREMIUM_PCT}]",
+                    waypoint.premium_pct
+                ));
+            }
+            // An off-hours reopen lands at once, in one slot, however many
+            // of Phoenix's steps it takes.
+            free_from = match &self.offhours {
+                Some(off) if waypoint.slot == off.reopen_slot => {
+                    waypoint.slot + SLOTS_BETWEEN_STEPS + 1
+                }
+                _ => waypoint.slot + move_slots(book, waypoint.book_pct()) + 1,
+            };
+            book = waypoint.book_pct();
+        }
+        if let Some(funding) = &self.funding
+            && (funding.interval_seconds == 0
+                || funding.period_seconds < funding.interval_seconds
+                || funding.max_rate <= 0)
+        {
+            return Err(format!(
+                "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
+            ));
+        }
+        if let Some(off) = &self.offhours {
+            if self.making.is_some() {
+                return Err("a scenario has either making or offhours, not both".into());
+            }
+            if !self.tape.is_empty() {
+                return Err("an off-hours scenario's takers are its offhours', not a tape".into());
+            }
+            if self.path.iter().any(|w| w.premium_pct != 0.0) {
+                return Err("an off-hours scenario's waypoints carry no premium".into());
+            }
+            off.validate(&self.path, self.duration_slots)
+                .map_err(|reason| format!("offhours: {reason}"))?;
+            if !self.path.iter().any(|w| w.slot == off.reopen_slot) {
+                return Err("offhours: the path has no waypoint at the reopen".into());
+            }
         }
         if let Some(making) = &self.making {
             making
                 .validate(self.duration_slots)
                 .map_err(|reason| format!("making: {reason}"))?;
+            if !self.tape.is_empty() {
+                return Err(
+                    "a market-making scenario's takers are its making's, not a tape".into(),
+                );
+            }
+        }
+        let mut last = 0;
+        for (i, order) in self.tape.iter().enumerate() {
+            if order.slot < last || order.slot >= self.duration_slots {
+                return Err(format!(
+                    "tape order {i} at slot {} is out of order or past the session",
+                    order.slot
+                ));
+            }
+            if !(order.size.is_finite() && order.size > 0.0)
+                || !(order.limit_bps.is_finite() && order.limit_bps > 0.0)
+                || order.account >= crate::making::TAKER_ACCOUNTS
+            {
+                return Err(format!("tape order {i} is malformed: {order:?}"));
+            }
+            last = order.slot;
         }
         if free_from > self.duration_slots {
             return Err(format!(
@@ -152,12 +279,13 @@ impl Scenario {
 
     /// Total variation of the path, in percent: the sum of every move's size,
     /// from the starting mark through each waypoint.
+    /// With premiums, the path is the book's: the price a bot trades at.
     pub fn total_variation_pct(&self) -> f64 {
         let mut level = 0.0;
         let mut total = 0.0;
         for waypoint in &self.path {
-            total += (waypoint.level_pct - level).abs();
-            level = waypoint.level_pct;
+            total += (waypoint.book_pct() - level).abs();
+            level = waypoint.book_pct();
         }
         total
     }
@@ -179,7 +307,38 @@ impl Scenario {
         let spread = self.making.as_ref().map_or(0.0, |making| {
             making.spread_bound_usd(&self.path, start_mark_usd)
         });
-        spread + self.hindsight_bound_usd(start_mark_usd)
+        spread + self.hindsight_bound_usd(start_mark_usd) + self.funding_bound_usd(start_mark_usd)
+    }
+
+    /// The most funding the cap could collect: held against every premium
+    /// for as long as the path keeps it open, each at most the funding cap,
+    /// at Phoenix's rate of the premium times the time over the funding
+    /// period.
+    pub fn funding_bound_usd(&self, start_mark_usd: f64) -> f64 {
+        let Some(funding) = &self.funding else {
+            return 0.0;
+        };
+        let cap_pct = funding.max_rate as f64 / 1_000.0 / start_mark_usd
+            * 100.0
+            * funding.period_seconds as f64
+            / funding.interval_seconds as f64;
+        let ends = self
+            .path
+            .iter()
+            .skip(1)
+            .map(|w| w.slot)
+            .chain(std::iter::once(self.duration_slots));
+        let premium_seconds: f64 = self
+            .path
+            .iter()
+            .zip(ends)
+            .map(|(w, end)| {
+                w.premium_pct.abs().min(cap_pct) * end.saturating_sub(w.slot) as f64 * SLOT_SECONDS
+            })
+            .sum();
+        self.max_position() * start_mark_usd * premium_seconds
+            / 100.0
+            / funding.period_seconds as f64
     }
 
     /// Surfpool overrides for the whole path, with slots relative to when
@@ -187,17 +346,178 @@ impl Scenario {
     pub fn overrides(&self, perp_asset_map: Pubkey, start_mark_ticks: u64) -> Vec<Override> {
         let ticks_at =
             |level_pct: f64| (start_mark_ticks as f64 * (1.0 + level_pct / 100.0)).round() as u64;
+        if let Some(off) = &self.offhours {
+            return self.offhours_overrides(off, perp_asset_map, start_mark_ticks);
+        }
         let mut from = start_mark_ticks;
         let mut overrides = Vec::new();
         for waypoint in &self.path {
-            let to = ticks_at(waypoint.level_pct);
-            let (moves, _) = market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+            let to = ticks_at(waypoint.book_pct());
+            let (mut moves, at) =
+                market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+            // The makers stay at the book's level; the oracles go back to
+            // the index in the slot of the last step, before the uncross.
+            if waypoint.premium_pct != 0.0 {
+                let uncross = moves.pop().expect("a move ends with its uncross");
+                moves.push(oracle_move(
+                    perp_asset_map,
+                    &self.symbol,
+                    ticks_at(waypoint.level_pct),
+                    at - SLOTS_BETWEEN_STEPS,
+                ));
+                moves.push(uncross);
+            }
             overrides.extend(moves);
             from = to;
         }
         overrides
     }
 }
+
+/// The largest premium a waypoint may give the book, in percent: Phoenix
+/// refuses oracle reports more than 5% from its median, and a move steps the
+/// oracles from the index to the book.
+const MAX_PREMIUM_PCT: f64 = 3.0;
+
+/// Set the market's funding parameters, `slot` slots after the override is
+/// registered. The session plays it in setup, before the bot starts (see
+/// [`crate::session`]).
+pub fn funding_override(
+    perp_asset_map: Pubkey,
+    symbol: &str,
+    funding: &Funding,
+    slot: u64,
+) -> Override {
+    Override {
+        template_id: "phoenix-market-funding",
+        account: perp_asset_map,
+        values: serde_json::json!({
+            "symbol": symbol,
+            "fundingIntervalSeconds": funding.interval_seconds.to_string(),
+            "fundingPeriodSeconds": funding.period_seconds.to_string(),
+            "maxFundingRate": funding.max_rate.to_string(),
+        }),
+        slot,
+        label: "funding".into(),
+    }
+}
+
+impl Scenario {
+    /// The price an open position is valued at, at the end and for the
+    /// drawdown: `mark` (Phoenix's), `oracle` (the scenario's level, for
+    /// market making, where a bot's quotes move the mark) or `book` (the
+    /// scenario's book level, where the book trades at a premium: what the
+    /// position would close at, which Phoenix's mark, a blend of the book
+    /// and the index, is not).
+    pub fn valuation(&self) -> &'static str {
+        if self.making.is_some() {
+            "oracle"
+        } else if self.path.iter().any(|w| w.premium_pct != 0.0) || self.funding.is_some() {
+            "book"
+        } else {
+            "mark"
+        }
+    }
+
+    /// Slots the session's setup gets before the bot's first slot: setup
+    /// must end inside them for the session to replay (state that depends
+    /// on the slot, Phoenix's funding and the oracle's age, starts from the
+    /// same slot every time). Onboarding takers takes longer, and longer
+    /// still under load.
+    pub fn setup_slots(&self) -> u64 {
+        if !self.tape.is_empty() {
+            TAPE_SETUP_SLOTS
+        } else if self.offhours.is_some() {
+            OFFHOURS_SETUP_SLOTS
+        } else {
+            SETUP_SLOTS
+        }
+    }
+
+    /// An off-hours path: through the closed period, each move of the perp
+    /// lands as Phoenix moves a market (oracle reports and makers), and in
+    /// the same slot the oracle reports go back to the closed period's
+    /// index, which only the reports carry: the makers stay on the perp's
+    /// price. Between moves the index updates on its own. At the reopen the
+    /// market moves from the index to the open, oracle and makers together,
+    /// as on any weekday.
+    fn offhours_overrides(
+        &self,
+        off: &OffHours,
+        perp_asset_map: Pubkey,
+        start_mark_ticks: u64,
+    ) -> Vec<Override> {
+        let ticks_at =
+            |level_pct: f64| (start_mark_ticks as f64 * (1.0 + level_pct / 100.0)).round() as u64;
+        // (slot, order within the slot, override): a move, then the index,
+        // then the uncross.
+        let mut timed: Vec<(u64, u8, Override)> = Vec::new();
+        let mut from = start_mark_ticks;
+        let mut moved_at = std::collections::BTreeSet::new();
+        for waypoint in &self.path {
+            let to = ticks_at(waypoint.level_pct);
+            if waypoint.slot < off.reopen_slot {
+                let (moves, _) = market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+                for o in moves {
+                    let order = if o.template_id == "phoenix-market-uncross" {
+                        2
+                    } else {
+                        0
+                    };
+                    timed.push((o.slot, order, o));
+                }
+                let index = ticks_at(off.index_at(&self.path, waypoint.slot));
+                timed.push((
+                    waypoint.slot,
+                    1,
+                    oracle_move(perp_asset_map, &self.symbol, index, waypoint.slot),
+                ));
+                moved_at.insert(waypoint.slot);
+            } else {
+                // The reopen: from wherever the index is, to the open, in
+                // Phoenix's steps but all in one slot: the index snaps, as
+                // Phoenix's does, and nobody trades between the steps.
+                let atomic = waypoint.slot == off.reopen_slot;
+                if atomic {
+                    from = ticks_at(off.index_at(&self.path, off.reopen_slot - 1));
+                }
+                let (moves, _) = market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+                for mut o in moves {
+                    let order = if o.template_id == "phoenix-market-uncross" {
+                        2
+                    } else {
+                        0
+                    };
+                    if atomic {
+                        o.slot = waypoint.slot;
+                    }
+                    timed.push((o.slot, order, o));
+                }
+            }
+            from = to;
+        }
+        for w in &off.index {
+            if !moved_at.contains(&w.slot) {
+                timed.push((
+                    w.slot,
+                    1,
+                    oracle_move(perp_asset_map, &self.symbol, ticks_at(w.level_pct), w.slot),
+                ));
+            }
+        }
+        timed.sort_by_key(|(slot, order, _)| (*slot, *order));
+        timed.into_iter().map(|(_, _, o)| o).collect()
+    }
+}
+
+/// Setup slots for most sessions (see [`Scenario::setup_slots`]).
+pub const SETUP_SLOTS: u64 = 60;
+/// An off-hours session onboards eight takers before the bot: under load (a
+/// verifier grades the reference four sessions at a time) that runs past
+/// 60 slots.
+pub const OFFHOURS_SETUP_SLOTS: u64 = 240;
+/// A session that also onboards a taker tape.
+pub const TAPE_SETUP_SLOTS: u64 = 600;
 
 /// The largest part of an at-once move, in percent of the level it starts
 /// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
@@ -206,7 +526,7 @@ const JUMP_PART_PCT: f64 = 3.8;
 
 /// Slots a move between two levels spans, uncross included. Mirrors
 /// [`market_move`]'s stepping.
-fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
+pub(crate) fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
     let ratio = (1.0 + to_pct / 100.0) / (1.0 + from_pct / 100.0);
     let steps = (((ratio - 1.0).abs() * 100.0 / 4.0).ceil() as u64).max(1);
     steps * SLOTS_BETWEEN_STEPS
@@ -459,6 +779,9 @@ impl ShockFamily {
             ),
             path: path.waypoints,
             making: None,
+            offhours: None,
+            funding: None,
+            tape: Vec::new(),
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -588,10 +911,7 @@ impl<'a> PathBuilder<'a> {
     }
 
     fn push(&mut self, level_pct: f64, gap: u64) {
-        self.waypoints.push(Waypoint {
-            slot: self.slot,
-            level_pct,
-        });
+        self.waypoints.push(Waypoint::at(self.slot, level_pct));
         self.level = level_pct;
         self.slot += gap;
     }
@@ -1090,17 +1410,11 @@ mod tests {
             symbol: "SPCX".into(),
             duration_slots: 400,
             mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
-            path: vec![
-                Waypoint {
-                    slot: 10,
-                    level_pct: -12.0,
-                },
-                Waypoint {
-                    slot: 12,
-                    level_pct: 0.0,
-                },
-            ],
+            path: vec![Waypoint::at(10, -12.0), Waypoint::at(12, 0.0)],
             making: None,
+            offhours: None,
+            funding: None,
+            tape: Vec::new(),
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1143,5 +1457,185 @@ mod tests {
             overrides.last().unwrap().template_id,
             "phoenix-market-uncross"
         );
+    }
+
+    /// A scenario with one move and none of the opt-in hooks.
+    fn plain() -> Scenario {
+        Scenario {
+            name: "plain".into(),
+            description: String::new(),
+            symbol: "SPCX".into(),
+            duration_slots: 400,
+            mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
+            path: vec![Waypoint::at(10, -2.0)],
+            making: None,
+            offhours: None,
+            funding: None,
+            tape: Vec::new(),
+            reference_pnl_usd: None,
+        }
+    }
+
+    #[test]
+    fn a_scenario_without_premiums_or_a_tape_is_as_before() {
+        let plain = plain();
+        assert!(plain.validate().is_ok());
+        let json = serde_json::to_value(&plain).unwrap();
+        assert!(json.get("tape").is_none());
+        assert!(json["path"][0].get("premium_pct").is_none());
+        assert_eq!(plain.valuation(), "mark");
+        assert_eq!(plain.setup_slots(), SETUP_SLOTS);
+        assert_eq!(plain.path[0].book_pct(), plain.path[0].level_pct);
+    }
+
+    #[test]
+    fn a_premium_moves_the_book_and_returns_the_oracle_to_the_index() {
+        let waypoint = Waypoint {
+            premium_pct: 1.0,
+            ..Waypoint::at(10, -2.0)
+        };
+        assert!((waypoint.book_pct() - -1.02).abs() < 1e-9);
+        let premium = Scenario {
+            path: vec![waypoint],
+            ..plain()
+        };
+        assert!(premium.validate().is_ok());
+        assert_eq!(premium.valuation(), "book");
+        let overrides = premium.overrides(Pubkey::new_unique(), 10_000);
+        let [.., index, uncross] = overrides.as_slice() else {
+            panic!("a move and its uncross");
+        };
+        assert_eq!(index.template_id, "phoenix-oracle-price");
+        assert_eq!(index.values["target_ticks"], "9800");
+        assert_eq!(uncross.template_id, "phoenix-market-uncross");
+
+        let too_far = Scenario {
+            path: vec![Waypoint {
+                premium_pct: 3.5,
+                ..waypoint
+            }],
+            ..plain()
+        };
+        assert!(too_far.validate().unwrap_err().contains("premium"));
+    }
+
+    #[test]
+    fn a_tape_is_checked_and_set_up_longer() {
+        let order = |slot| crate::making::TakerOrder {
+            slot,
+            side: crate::making::TakerSide::Buy,
+            size: 1.0,
+            limit_bps: 20.0,
+            account: 0,
+        };
+        let tape = Scenario {
+            tape: vec![order(5), order(9)],
+            ..plain()
+        };
+        assert!(tape.validate().is_ok());
+        assert_eq!(tape.setup_slots(), TAPE_SETUP_SLOTS);
+        let unordered = Scenario {
+            tape: vec![order(9), order(5)],
+            ..plain()
+        };
+        assert!(unordered.validate().unwrap_err().contains("tape order 1"));
+        let late = Scenario {
+            tape: vec![order(400)],
+            ..plain()
+        };
+        assert!(late.validate().is_err());
+    }
+
+    #[test]
+    fn funding_is_opt_in_and_checked() {
+        assert_eq!(plain().funding_bound_usd(100.0), 0.0);
+        let funding = Funding {
+            interval_seconds: 4,
+            period_seconds: 20,
+            max_rate: 1_000,
+            mark: None,
+        };
+        let funded = Scenario {
+            funding: Some(funding),
+            path: vec![Waypoint {
+                premium_pct: 1.0,
+                ..Waypoint::at(10, 0.0)
+            }],
+            ..plain()
+        };
+        assert!(funded.validate().is_ok());
+        assert_eq!(funded.valuation(), "book");
+        assert!(funded.funding_bound_usd(100.0) > 0.0);
+        let json = serde_json::to_value(&funded).unwrap();
+        assert_eq!(json["funding"]["interval_seconds"], 4);
+        assert!(json["funding"].get("mark").is_none());
+
+        let no_interval = Scenario {
+            funding: Some(Funding {
+                interval_seconds: 0,
+                ..funding
+            }),
+            ..plain()
+        };
+        assert!(no_interval.validate().unwrap_err().contains("funding"));
+        let short_period = Scenario {
+            funding: Some(Funding {
+                period_seconds: 2,
+                ..funding
+            }),
+            ..plain()
+        };
+        assert!(short_period.validate().is_err());
+    }
+
+    #[test]
+    fn off_hours_move_the_index_apart_and_reopen_at_once() {
+        let off = OffHours {
+            reopen_slot: 200,
+            band_pct: 5.0,
+            half_spread_bps: 10.0,
+            index: vec![Waypoint::at(20, 1.0)],
+            takers: Vec::new(),
+        };
+        let weekend = Scenario {
+            path: vec![Waypoint::at(20, 1.5), Waypoint::at(200, 3.0)],
+            offhours: Some(off.clone()),
+            ..plain()
+        };
+        assert!(weekend.validate().is_ok());
+        assert_eq!(weekend.setup_slots(), OFFHOURS_SETUP_SLOTS);
+        assert_eq!(plain().setup_slots(), SETUP_SLOTS);
+        let overrides = weekend.overrides(Pubkey::new_unique(), 10_000);
+        let index = overrides
+            .iter()
+            .find(|o| o.template_id == "phoenix-oracle-price")
+            .unwrap();
+        assert_eq!(
+            (index.slot, index.values["target_ticks"].as_str()),
+            (20, Some("10100"))
+        );
+        assert!(
+            overrides
+                .iter()
+                .filter(|o| o.slot >= 200)
+                .all(|o| o.slot == 200),
+            "the reopen lands in one slot"
+        );
+
+        let outside = Scenario {
+            path: vec![Waypoint::at(20, 6.0), Waypoint::at(200, 3.0)],
+            ..weekend.clone()
+        };
+        assert!(outside.validate().unwrap_err().contains("band"));
+        let no_reopen = Scenario {
+            path: vec![Waypoint::at(20, 1.5)],
+            ..weekend.clone()
+        };
+        assert!(no_reopen.validate().unwrap_err().contains("reopen"));
+        let also_making = Scenario {
+            making: crate::making::MakingFamily::spcx().sample("m", 1).making,
+            ..weekend
+        };
+        assert!(also_making.validate().is_err());
     }
 }

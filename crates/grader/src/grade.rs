@@ -688,11 +688,11 @@ mod tests {
             symbol: "SPCX".into(),
             duration_slots: 400,
             mandate: Mandate::perp(VENUE, "SPCX", 100.0, 1_000.0),
-            path: vec![Waypoint {
-                slot: 10,
-                level_pct: -10.0,
-            }],
+            path: vec![Waypoint::at(10, -10.0)],
             making: None,
+            offhours: None,
+            funding: None,
+            tape: Vec::new(),
             reference_pnl_usd,
         }
     }
