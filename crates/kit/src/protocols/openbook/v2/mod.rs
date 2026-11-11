@@ -17,7 +17,8 @@
 //!
 //! Instructions follow the program's IDL ([`ix`]). A maker's fills settle
 //! into its open orders account when `consume_events` processes the event
-//! heap, which this adapter does not run.
+//! heap: [`ix::consume_given_events`] builds that crank, which the trader never
+//! sends.
 
 mod driver;
 mod error;

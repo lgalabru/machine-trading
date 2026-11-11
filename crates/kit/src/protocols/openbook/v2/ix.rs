@@ -18,6 +18,7 @@ const CANCEL_ALL_ORDERS: [u8; 8] = [0xc4, 0x53, 0xf3, 0xab, 0x11, 0x64, 0xa0, 0x
 const SETTLE_FUNDS: [u8; 8] = [0xee, 0x40, 0xa3, 0x60, 0x4b, 0xab, 0x10, 0x21];
 const CREATE_OPEN_ORDERS_INDEXER: [u8; 8] = [0x40, 0x40, 0x99, 0xff, 0xd9, 0x47, 0xf9, 0x85];
 const CREATE_OPEN_ORDERS_ACCOUNT: [u8; 8] = [0xcc, 0xb5, 0xaf, 0xde, 0x28, 0x7d, 0xbc, 0x47];
+const CONSUME_GIVEN_EVENTS: [u8; 8] = [0xd1, 0xe3, 0x36, 0x04, 0x6d, 0xac, 0x29, 0x47];
 
 /// The PDA that signs for a market's vaults.
 pub fn market_authority(market: &Pubkey) -> Pubkey {
@@ -309,6 +310,26 @@ pub fn create_open_orders_account(
     }
 }
 
+/// ConsumeGivenEvents: the crank, for the events at `slots` of the market's
+/// heap: the program takes the first eight and leaves the rest. Each settles into the open orders account it names, which `owners`
+/// must list; one whose account isn't listed stays in the heap. Unlike
+/// ConsumeEvents, which walks the heap from its oldest event, events no one
+/// can settle (their accounts gone) never hold up the rest. Permissionless
+/// on a market without a consume-events admin.
+pub fn consume_given_events(m: &MarketKeys, owners: &[Pubkey], slots: &[u64]) -> Instruction {
+    let mut accounts = vec![ro(PROGRAM_ID), rw(m.market), rw(m.event_heap)];
+    accounts.extend(owners.iter().copied().map(rw));
+    let mut body = (slots.len() as u32).to_le_bytes().to_vec();
+    for slot in slots {
+        body.extend_from_slice(&slot.to_le_bytes());
+    }
+    Instruction {
+        program_id: PROGRAM_ID,
+        accounts,
+        data: data(CONSUME_GIVEN_EVENTS, &body),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,5 +409,14 @@ mod tests {
             create_open_orders_indexer(&owner).accounts[2].pubkey,
             open_orders_indexer(&owner)
         );
+        let crank = consume_given_events(&keys(), &[owner], &[3, 7]);
+        assert_eq!(crank.data[..8], CONSUME_GIVEN_EVENTS);
+        assert_eq!(
+            crank.data[8..],
+            [2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(crank.accounts[0].pubkey, PROGRAM_ID, "no admin");
+        assert_eq!(crank.accounts[2].pubkey, keys().event_heap);
+        assert!(crank.accounts[3].is_writable);
     }
 }

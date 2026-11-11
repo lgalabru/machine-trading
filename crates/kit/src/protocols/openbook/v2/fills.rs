@@ -95,6 +95,30 @@ pub fn heap_fills(
     Ok(fills)
 }
 
+/// The events waiting in a market's heap, oldest first: each one's slot in
+/// the heap and the open orders account it settles into (a fill's maker, an
+/// out event's owner). What a crank passes to
+/// [`consume_given_events`](super::ix::consume_given_events).
+pub fn heap_events(data: &[u8]) -> Result<Vec<(u64, Pubkey)>, ChainError> {
+    if data.len() < HEAP_NODES + MAX_EVENTS * NODE_LEN {
+        return Err(decode_error(format!("{} bytes", data.len())));
+    }
+    let used_head = usize::from(u16_at(data, HEAP_HEADER + 2));
+    let count = usize::from(u16_at(data, HEAP_HEADER + 4));
+    let mut events = Vec::new();
+    let mut node = used_head;
+    for _ in 0..count {
+        if node >= MAX_EVENTS {
+            return Err(decode_error(format!("node index {node}")));
+        }
+        let o = HEAP_NODES + node * NODE_LEN;
+        // Both event types keep the account at the same offset.
+        events.push((node as u64, key_at(data, o + 8 + 24)));
+        node = usize::from(u16_at(data, o));
+    }
+    Ok(events)
+}
+
 /// A `FillLog` event's bytes, discriminator first, on `market`, at `slot`.
 pub fn fill_log(data: &[u8], market: &OpenBookV2Market, slot: u64) -> Option<MarketFill> {
     if data.len() < FILL_LOG_LEN || data[..8] != FILL_LOG || key_at(data, 8) != market.keys.market {
@@ -210,5 +234,30 @@ pub(crate) mod testing {
             "Program data: {}",
             base64::engine::general_purpose::STANDARD.encode(d)
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{testing::*, *};
+
+    #[test]
+    fn a_crank_finds_each_event_and_its_account() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let fill = |maker| EventSpec {
+            taker_side: 0,
+            seq_num: 1,
+            maker,
+            taker: Pubkey::new_unique(),
+            price_lots: 1,
+            base_lots: 1,
+        };
+        let heap = heap(&[fill(a), fill(b), fill(a)]);
+        // The out event the test heap puts second names the zero key.
+        assert_eq!(
+            heap_events(&heap).unwrap(),
+            [(5, a), (42, Pubkey::default()), (79, b), (116, a)]
+        );
+        assert!(heap_events(&heap[..100]).is_err());
     }
 }
