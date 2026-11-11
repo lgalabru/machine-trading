@@ -159,6 +159,9 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             pnl,
             peak_pnl,
             drawdown: peak_pnl - pnl,
+            tape: step.tape,
+            depth: step.depth,
+            unix_timestamp: step.unix_timestamp,
         };
         let mut orders = Orders::new();
         match strategy.step(&market, &mut orders) {
