@@ -34,7 +34,8 @@ way with no chain. What keeps a bot a process is the escape hatch around it:
 `Orders::trader()`, `Session::env`, and the RPC endpoint any bot can call.
 
 The question: should a strategy be a WebAssembly component the grader calls,
-with no access to anything but what the grader hands it?
+with no access to anything but what the grader hands it, and a synchronous,
+read-only RPC the grader answers?
 
 ## Sketch
 
@@ -67,6 +68,9 @@ interface types {
 world strategy {
   use types.{session, market, intent};
   import log: func(line: string);
+  /// A read-only JSON-RPC call against the session's chain, answered by the
+  /// grader before the call returns: `params` and the result are JSON.
+  import rpc: func(method: string, params: string) -> result<string, string>;
   export start: func(session: session) -> result<_, string>;
   export step: func(market: market) -> result<list<intent>, string>;
   export end: func(last: option<market>);
@@ -76,13 +80,45 @@ world strategy {
 No WASI clocks, network, filesystem or randomness are linked. A strategy
 that wants randomness gets a seed in `session`.
 
+### RPC, synchronous
+
+Strategies keep the chain: today's best market-making bots read every
+block's taker orders, and the maker reads the competitor's quotes from
+Phoenix's spline accounts. `rpc` is a host call that blocks the strategy
+until the grader answers it, from its own in-process client against the
+session's surfnet (with `wasmtime`'s async support, the host does real I/O
+while the guest sees a plain call).
+
+- **Deterministic.** The world is paused for the whole step: the grader
+  holds the clock. Two runs of a step see the same chain, so every read
+  answers the same.
+- **Read-only.** An allowlist of reads: accounts, blocks, transactions,
+  signatures, `simulateTransaction` (which Hawkeye's views use). No
+  `sendTransaction`, no `surfnet_*` cheatcodes, nothing that depends on wall
+  time or the node's own state (`getRecentPerformanceSamples`, `getHealth`).
+  Writes are intents, or, if a strategy needs raw instructions, an `import
+  send: func(instructions) -> result` the grader signs: the bot's key never
+  enters the sandbox.
+- **Bounded.** Each call costs fuel (a fixed charge, and more per KB
+  returned), and a step has a cap on calls: a strategy can't stall the world
+  with thousands of reads.
+
+In `mtx-kit`, a synchronous `Chain` client (`get_account`,
+`get_multiple_accounts`, `get_block`, `get_transaction`,
+`get_signatures_for_address`, `simulate`) is backed by the import in wasm and
+by a blocking `RpcClient` natively, so the same strategy runs under `mtx bot
+practice`. Phoenix's decoding (`phoenix_rise`) is pure code and compiles
+into the component. A bot reads what it reads today, without `.await`.
+
 ### The kit
 
 `mtx-kit` keeps one `Strategy` trait, made synchronous: its async only
 served RPC. `mtx_kit::export!(MyBot)` generates the component's exports
 with `wit-bindgen`. The same code builds natively, for `mtx bot practice`
 and unit tests over `step_offline`, and for `wasm32-wasip2`, which the
-grader runs. `Orders::trader()` and `Session::env` go away. A model's
+grader runs. `Orders::trader()` and `Session::env` give way to the
+synchronous `Chain` client, and `Market` carries the session's keys
+(market, trader account) a strategy needs to read the chain. A model's
 weights ship inside the component with `include_bytes!`.
 
 ### The grader
@@ -107,7 +143,9 @@ run in parallel.
 The task's instruction says the bot is a component built with `mtx bot
 build` (`cargo build --target wasm32-wasip2`). `mtx bot practice` grades it
 the way the verifier does. The agent's image keeps its RPC endpoint for
-exploring, but grading never gives the strategy one.
+exploring; while graded, the strategy reads the chain only through `rpc`.
+The RPC guard stays as that import's allowlist, in process: no port to
+defend, no bot users, no keypair files.
 
 ### Order of work
 
@@ -116,10 +154,11 @@ exploring, but grading never gives the strategy one.
    session on the practice set. It needs only `mark`, `position` and
    `market` intents. Check: the same PnL as the process-graded reference on
    every practice scenario, run twice.
-2. **The observation interface.** The book, the tape and the fills, and
-   what the market-making tasks' `making` worlds put on the tape. Port
-   `bots/maker`, which today reads the competitor's quotes from Phoenix's
-   spline accounts over RPC: it needs `book`.
+2. **RPC.** The `rpc` import, its allowlist and its fuel, and the
+   synchronous `Chain` client. Port `bots/maker`, which reads the
+   competitor's quotes from Phoenix's spline accounts, and one 0.11.0
+   market-making winner, which reads blocks: both should grade as they do
+   today.
 3. **Fuel.** Calibrate the step budget against the reference bots and the
    0.11.0 winners' logic, so a reasonable strategy never runs out.
 4. **A task version on it**, with the ladder and the harness checks rerun,
@@ -128,12 +167,16 @@ exploring, but grading never gives the strategy one.
 
 ## Open questions
 
-- **What does the strategy see?** The 0.11.0 market-making winners (Fable
-  5.2 at 12×, the #28 GPT runs at 16–24×) read every block's taker orders
-  over RPC and trade on one-sided bursts. A tape in `Market` hands them that
-  directly: is that the skill the task measures, or does the tape have to be
-  delayed, aggregated or noisy? The ladder answers it: rerun the flow oracle
-  and the reference against each candidate interface.
+- **What goes in `Market` beyond the step's prices and account?** With
+  `rpc`, a strategy can read what it reads today, so a book, a tape of taker
+  trades and its own fills are conveniences, not requirements. Each one
+  saves agents parsing blocks, and makes the tells the 0.11.0
+  market-making winners found (Fable 5.2 at 12×, the #28 GPT runs at
+  16–24×) easier to see. The ladder answers whether a convenience changes
+  the task: rerun the flow oracle and the reference with and without it.
+- **Which reads cost what?** A `getBlock` returns tens of KB, an account
+  read a few hundred bytes. The fuel charge per call and per KB, and the
+  call cap, need calibrating on the bots that read the most today.
 - **Is fuel a fair budget?** Fuel counts wasm instructions, not time, so a
   strategy that's slow because it's careless is bounded the same as one
   that's slow because it thinks. We'd find out by measuring the 0.11.0
@@ -152,8 +195,9 @@ exploring, but grading never gives the strategy one.
 
 ## Risks
 
-- **The interface becomes the task.** What the host puts in `Market`
-  decides what skill is measured, and a mistake there is a leak by design.
+- **The interface becomes the task.** What the host puts in `Market`, and
+  which RPC methods it answers, decide what skill is measured; a mistake
+  there is a leak by design.
   The ladder has to be rerun against every interface change, as it is for
   scenario changes today.
 - **Results stop comparing.** A wasm task is a new version: 0.11.0's bots
@@ -167,3 +211,10 @@ exploring, but grading never gives the strategy one.
   memory limit has to allow it.
 
 ## What we learned
+
+- 2026-11-11: strategies keep RPC (Ludo). It is a synchronous host import,
+  answered while the world is paused, so it stays deterministic; read-only,
+  with writes as intents or grader-signed instructions; bounded by fuel and
+  a call cap. The observation interface shrinks from a requirement to a set
+  of conveniences, and the RPC guard becomes the import's allowlist.
+
