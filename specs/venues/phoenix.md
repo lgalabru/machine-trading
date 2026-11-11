@@ -97,7 +97,8 @@ such as the authority's USDC, are counted once, as the
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
 
-No benchmark task enforces the spot markets yet.
+No benchmark task enforces the spot markets yet, and `mtx grade` does not
+yet read the authority's transactions for fills outside the universe.
 
 Separately, the benchmark gates the RPC methods a bot may call. That is a
 rule of the benchmark's sandbox, not part of the mandate.

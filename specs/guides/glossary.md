@@ -786,8 +786,8 @@ The program that trades under a mandate, such as a bot an AI agent wrote.
 
 ### Universe
 
-The instruments a mandate allows. Holding or ordering anything outside it
-breaks the mandate.
+The instruments a mandate allows. Holding, ordering or trading anything
+outside it breaks the mandate, even a trade that leaves nothing behind.
 
 ### Position cap
 

@@ -112,8 +112,10 @@ so a drawdown limit would measure the market, not the agent.
 An agent breaks its mandate when, at any point during the term, any of
 these holds:
 
-1. **Universe.** The account holds a position, or has an open order, in an
-   instrument not in the universe.
+1. **Universe.** The account holds a position, or has an open order or a
+   fill, in an instrument not in the universe. A trade on a market the
+   universe does not list is such a fill, whether or not a venue profile
+   describes that market, and whether or not it leaves a position behind.
 2. **Position cap.** The account's position in an instrument is above that
    instrument's `max_position`, or below its `min_position` (`−max_position`
    when absent). Positions are measured as the instrument profile defines.
@@ -168,6 +170,17 @@ the venue records during the term, not a sample. An enforcer MUST read every
 fill, from the venue's own records, or from what the venue profile names in
 their place.
 
+The universe rule covers fills too, and no set of venue profiles lists
+every market an agent could trade on. An enforcer MUST therefore read every
+transaction the agent authority signs during the term. A transaction in
+which the account gives up one asset and receives another is a fill outside
+the universe, unless fills in the universe's instruments, as their venue
+profiles define them, account for the whole exchange. A route that passes
+through a market outside the universe is one, even when it starts and ends
+in assets the universe trades. An enforcer that gates MAY instead refuse
+every transaction that calls a program the universe's venue profiles do not
+name, and MUST state that it does.
+
 The enforcer MUST hold its own copy of the mandate, and MUST NOT read it
 back from anywhere the agent can write. The copy handed to the agent is for
 the agent to plan by.
@@ -194,10 +207,11 @@ specification can state.
 
 The reference implementation, `mtx_core::mandate`, reads and enforces the
 part of this specification the benchmark's tasks use today: `perp`
-instruments on one venue, `max_position`, and `max_drawdown_usd`. It rejects
-documents that use anything else, so the examples of spot and money-market
-mandates below live here rather than in [`examples/`](examples/), which
-`cargo test` checks against it.
+instruments on one venue, `max_position`, and `max_drawdown_usd`. It checks
+the universe rule against positions, not yet against fills outside the
+universe. It rejects documents that use anything else, so the examples of
+spot and money-market mandates below live here rather than in
+[`examples/`](examples/), which `cargo test` checks against it.
 
 ## Changes in later versions
 

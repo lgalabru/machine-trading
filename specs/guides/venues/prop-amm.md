@@ -396,9 +396,13 @@ of the profiles, such as `bisonfi:spot:SOL-USDC`. The profile says where the
 account's tokens are and how a swap is read as a fill. No benchmark task
 enforces either profile yet.
 
-The spot rules apply as they do on a book, with three differences worth
-knowing:
+The spot rules apply as they do on a book, with four things worth knowing:
 
+- **The universe covers swaps.** A swap leaves no order and no balance on
+  the venue, but it is a fill, and a fill on a market the mandate doesn't
+  list breaks the universe rule. That includes one hop of an aggregator's
+  route: if the route passes through a prop AMM outside your universe, you
+  traded there.
 - **The position is in your wallet.** There are no resting orders and no
   balance left on the venue, so the base asset you hold is the base asset in
   your wallet. It is still the same position as on any other spot venue: 10
@@ -517,10 +521,10 @@ The book. The limit applies to every fill: the swap is one fill at $99.79,
 and the book's fills go down to $98.50.
 :::
 
-:::check Does a mandate need a new instrument kind to allow a prop AMM?
-No. What you hold after a swap is the base asset, which is spot. The mandate
-names the venue and the market, such as `bisonfi:spot:SOL-USDC`, and the
-venue's profile says how its swaps are read as fills.
+:::check Your universe is one order book, with a `min_sell_price` of $99.50. A prop AMM the mandate doesn't list is paying $99.98, more than the book. You swap your 10 SPCX there. Have you broken the mandate?
+Yes. The price is above the floor, but the swap is a fill in an instrument
+outside the universe. It breaks the universe rule even though it leaves no
+position and no order on that venue.
 :::
 
 ## Glossary
