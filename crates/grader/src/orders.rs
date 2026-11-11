@@ -319,6 +319,105 @@ impl Participation {
     }
 }
 
+/// Two-sided scoring for a bot that starts with inventory and trades both
+/// ways (an arbitrageur): its PnL is the account's value change less what
+/// the starting holding gained from the price moving, so doing nothing
+/// scores 0 whatever the price does, and nothing about the sides is a rule.
+/// Two optional charges are priced into it, not enforced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NetScoring {
+    /// A charge on ending away from where it started: this many basis
+    /// points of the value, at the close, of the change in base held.
+    #[serde(default)]
+    pub inventory_bps: f64,
+    /// A charge on the base bought net on one venue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue_position: Option<VenuePosition>,
+}
+
+/// What a venue's net purchases cost beyond a limit.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VenuePosition {
+    /// Base units a venue's net purchases are free up to.
+    pub limit: f64,
+    /// The charge on each unit over it, in basis points of the closing price.
+    pub price_bps: f64,
+}
+
+impl NetScoring {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let ok = |x: f64| x.is_finite() && x >= 0.0;
+        if !ok(self.inventory_bps) {
+            return Err(format!(
+                "net: inventory_bps {} must be at least 0",
+                self.inventory_bps
+            ));
+        }
+        if let Some(v) = &self.venue_position
+            && !(ok(v.limit) && ok(v.price_bps))
+        {
+            return Err("net: venue_position needs a limit and price_bps of at least 0".into());
+        }
+        Ok(())
+    }
+
+    /// Score a session, with the (start, close) prices; `fills` are the bot's
+    /// own (venue, side, base units).
+    pub fn report(
+        &self,
+        start_base: f64,
+        end_base: f64,
+        (start_usd, close_usd): (f64, f64),
+        value_change_usd: f64,
+        fills: &[(String, Side, f64)],
+        venues: &[String],
+    ) -> NetReport {
+        let drift_usd = start_base * (close_usd - start_usd);
+        let inventory_charge_usd =
+            (end_base - start_base).abs() * close_usd * self.inventory_bps / 10_000.0;
+        let mut venue_net = Vec::new();
+        let mut venue_charge_usd = 0.0;
+        for venue in venues {
+            let net: f64 = fills
+                .iter()
+                .filter(|(v, _, _)| v == venue)
+                .map(|(_, side, base)| if *side == Side::Buy { *base } else { -*base })
+                .sum();
+            if let Some(v) = &self.venue_position {
+                venue_charge_usd += (net - v.limit).max(0.0) * close_usd * v.price_bps / 10_000.0;
+            }
+            venue_net.push((venue.clone(), net));
+        }
+        NetReport {
+            value_change_usd,
+            drift_usd,
+            inventory_charge_usd,
+            venue_charge_usd,
+            venue_net,
+        }
+    }
+}
+
+/// A net-scored session's account of its PnL.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct NetReport {
+    pub value_change_usd: f64,
+    /// What the starting holding gained from the price moving.
+    pub drift_usd: f64,
+    pub inventory_charge_usd: f64,
+    pub venue_charge_usd: f64,
+    /// Base units bought net on each venue.
+    pub venue_net: Vec<(String, f64)>,
+}
+
+impl NetReport {
+    pub fn pnl_usd(&self) -> f64 {
+        self.value_change_usd - self.drift_usd - self.inventory_charge_usd - self.venue_charge_usd
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,5 +655,60 @@ mod tests {
         assert_eq!(report.venues[0].excess_base, 2.5);
         assert_eq!(report.venues[1].own_base, 1.0);
         assert_eq!(report.venues[1].excess_base, 0.0);
+    }
+
+    #[test]
+    fn net_scoring_gives_nop_zero_and_pays_a_round_trip() {
+        let venues = vec!["phoenix".to_string(), "openbook".to_string()];
+        let net = NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        };
+        // 2500 held, price 100 -> 96: the account lost 10000, nop scores 0.
+        let nop = net.report(2500.0, 2500.0, (100.0, 96.0), -10_000.0, &[], &venues);
+        assert_eq!(nop.drift_usd, -10_000.0);
+        assert_eq!(nop.pnl_usd(), 0.0);
+        // Buy 10 at 95 on one venue, sell 10 at 97 on the other, close 96:
+        // the account gains 20 on top of the drift.
+        let fills = vec![
+            ("openbook".to_string(), Side::Buy, 10.0),
+            ("phoenix".to_string(), Side::Sell, 10.0),
+        ];
+        let trip = net.report(
+            2500.0,
+            2500.0,
+            (100.0, 96.0),
+            -10_000.0 + 20.0,
+            &fills,
+            &venues,
+        );
+        assert!((trip.pnl_usd() - 20.0).abs() < 1e-9);
+        assert_eq!(trip.venue_net[0], ("phoenix".to_string(), -10.0));
+    }
+
+    #[test]
+    fn net_scoring_prices_inventory_and_venue_positions() {
+        let venues = vec!["phoenix".to_string(), "openbook".to_string()];
+        let net = NetScoring {
+            inventory_bps: 50.0,
+            venue_position: Some(VenuePosition {
+                limit: 5.0,
+                price_bps: 100.0,
+            }),
+        };
+        let fills = vec![("phoenix".to_string(), Side::Buy, 8.0)];
+        let r = net.report(100.0, 108.0, (100.0, 100.0), 0.0, &fills, &venues);
+        // 8 units off the start at 100, 50 bps: 4. Phoenix 3 over the limit, 100 bps: 3.
+        assert!((r.inventory_charge_usd - 4.0).abs() < 1e-9);
+        assert!((r.venue_charge_usd - 3.0).abs() < 1e-9);
+        assert!((r.pnl_usd() + 7.0).abs() < 1e-9);
+        assert!(
+            NetScoring {
+                inventory_bps: -1.0,
+                venue_position: None
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

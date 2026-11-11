@@ -150,6 +150,9 @@ pub struct SessionReport {
     /// A spot session that prices participation: what the charge came to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub participation: Option<crate::orders::ParticipationReport>,
+    /// A spot session scored net of the starting holding's drift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net: Option<crate::orders::NetReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -748,6 +751,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         spot: None,
         order: None,
         participation: None,
+        net: None,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {

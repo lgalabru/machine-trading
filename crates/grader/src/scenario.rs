@@ -77,6 +77,12 @@ pub struct Scenario {
     /// volume (see [`crate::orders::Participation`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub participation: Option<crate::orders::Participation>,
+    /// For a spot session where the bot starts with inventory and trades
+    /// both ways: score the PnL net of the starting holding's price drift,
+    /// with optional priced charges (see [`crate::orders::NetScoring`]).
+    /// Not with an `order`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<crate::orders::NetScoring>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,8 +214,12 @@ impl Scenario {
         if let Some(spot) = &self.spot {
             return spot.validate(self);
         }
-        if self.turn_data.is_some() || self.order.is_some() || self.participation.is_some() {
-            return Err("turn_data, order and participation are for spot scenarios".into());
+        if self.turn_data.is_some()
+            || self.order.is_some()
+            || self.participation.is_some()
+            || self.net.is_some()
+        {
+            return Err("turn_data, order, participation and net are for spot scenarios".into());
         }
         if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
         {
@@ -827,6 +837,7 @@ impl ShockFamily {
             turn_data: None,
             order: None,
             participation: None,
+            net: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -1464,6 +1475,7 @@ mod tests {
             turn_data: None,
             order: None,
             participation: None,
+            net: None,
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1525,6 +1537,7 @@ mod tests {
             turn_data: None,
             order: None,
             participation: None,
+            net: None,
             reference_pnl_usd: None,
         }
     }

@@ -226,6 +226,12 @@ impl Spot {
         if let Some(participation) = &scenario.participation {
             participation.validate()?;
         }
+        if let Some(net) = &scenario.net {
+            net.validate()?;
+            if scenario.order.is_some() {
+                return Err("net: a net-scored session has no order".into());
+            }
+        }
         Ok(())
     }
 }
@@ -1036,10 +1042,27 @@ pub(crate) async fn run_session(
         .participation
         .as_ref()
         .map(|p| p.report(&ledger.traded(base_slot), &spot.venues));
-    let pnl_usd = order
-        .as_ref()
-        .map_or(end_value_usd - start_value_usd, |o| o.pnl_usd())
-        - participation.as_ref().map_or(0.0, |p| p.charge_usd);
+    let net = scenario.net.as_ref().map(|n| {
+        let own: Vec<(String, Side, f64)> = fills
+            .iter()
+            .map(|f| (f.instrument.venue.clone(), f.side, f.base))
+            .collect();
+        n.report(
+            start.wallet.base,
+            end.wallet.base,
+            (start_price_usd, end.wallet.price_usd),
+            end_value_usd - start_value_usd,
+            &own,
+            &spot.venues,
+        )
+    });
+    let pnl_usd = order.as_ref().map_or_else(
+        || {
+            net.as_ref()
+                .map_or(end_value_usd - start_value_usd, |n| n.pnl_usd())
+        },
+        |o| o.pnl_usd(),
+    ) - participation.as_ref().map_or(0.0, |p| p.charge_usd);
     let volume = if tracking || scenario.turn_data.is_some() {
         ledger.volume(&spot.venues, base_slot, steps)
     } else {
@@ -1076,6 +1099,7 @@ pub(crate) async fn run_session(
         }),
         order,
         participation,
+        net,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {
@@ -1145,6 +1169,7 @@ mod tests {
             turn_data: None,
             order: None,
             participation: None,
+            net: None,
             spot: Some(Spot {
                 venues: vec!["phoenix".into(), "openbook".into()],
                 base: 10.0,
