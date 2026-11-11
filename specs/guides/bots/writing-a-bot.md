@@ -119,12 +119,15 @@ the session's log, at the level `RUST_LOG` sets.
 | `mark`, `oracle` | Phoenix's mark price for SPCX, which values your account, and its oracle price. |
 | `position` | Your position (`size` in SPCX, positive long, and `entry_usd`). |
 | `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
+| `resting_bids`, `resting_asks` | What you have resting, in SPCX: every bid and ask the run loop placed since your last cancel or quote, filled or not. |
 | `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
 | `budget_left` | What's left of the session's turn budget, 500 ms a step in total. |
 
 And three helpers: `room_to_buy()` and `room_to_sell()`, how much more you
-can trade each way before the cap, and `drawdown_room()`, how far you are
-from the drawdown limit on the estimate.
+can trade each way before the cap if your resting orders all fill, and
+`drawdown_room()`, how far you are from the drawdown limit on the estimate.
+The room is the grader's own rule (`Allowance::room` in `mtx-core`): what it
+allows, the audit accepts.
 
 ## The order sheet
 
@@ -140,14 +143,18 @@ returns, in order:
 | `bid(price, size)`, `ask(price, size)` | A resting order. |
 | `cancel_all()` | Cancels every resting order. |
 
-**The cap is kept for you.** Before anything is sent, the run loop cuts it so
-that no fill can take your position past the mandate's cap, counting every
-earlier order on the sheet as filled:
+**The cap is kept for you.** Before anything is sent, the run loop cuts the
+sheet so that no fill can take your position past the mandate's cap: it
+counts every order you have resting, and every earlier order on the sheet,
+as filled. A cancel, or a quote, which cancels first, clears what was
+resting:
 
 | You're at | You ask for | What goes out |
 | --- | --- | --- |
 | 0 SPCX | `target_position(500)` | buys up to 70, and a warning in the log |
 | +60 SPCX | `quote(99.0, 101.0, 20)` | a bid of 10 (60 + 10 = 70) and an ask of 20 |
+| 0 SPCX | `bid(99.0, 50)` and `bid(98.0, 50)` | bids of 50 and 20 |
+| 0 SPCX, bids of 40 resting | `buy(50, 101.0)` | a market buy of 30 |
 | 0 SPCX | `buy(50, …)`, then `buy(50, …)` | 50, then 20 |
 
 Resting orders from earlier steps still count once they fill, so keep track

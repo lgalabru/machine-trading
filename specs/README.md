@@ -43,8 +43,10 @@ the reference implementation by `cargo test`.
 v0 is a draft. It specifies perpetuals, spot and money markets, on one venue
 or several. The reference implementation is `mtx_core::mandate`, which
 bots read and the grader audits with; it implements the part the
-benchmark's tasks enforce today, one perpetual on one venue with a position
-cap and a drawdown limit, and rejects the rest.
+benchmark's grader enforces today: perpetual and spot instruments, on one
+venue or several, with position bounds, sides, limit prices and a drawdown
+limit. It rejects the rest; see the mandate's
+[implementation status](mandate.md#implementation-status).
 
 These specs live in this repository until a second venue or a consumer
 outside the benchmark needs them.
