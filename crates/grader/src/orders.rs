@@ -6,8 +6,9 @@
 //! it (a treasury building one). Whatever it hasn't traded by then, a broker
 //! trades for it at the session's closing price, worse by the order's
 //! haircut. The session's PnL is the bot's against doing nothing, so a bot
-//! that never trades scores 0, and each unit it trades is worth the haircut
-//! it saved: `PnL = value change + haircut × close × done`.
+//! that never trades scores 0 even when the price moves, and each unit it
+//! trades is worth the haircut it saved:
+//! `PnL = value change - start base × (close - start price) + haircut × close × done`.
 //!
 //! Trading the other way is a breach, and so is, for a `reduce_only` order,
 //! any fill that grows the position. Neither is in the mandate, which has no
@@ -65,13 +66,15 @@ impl ExecutionOrder {
     }
 
     /// How the session went against the order: `start_base` and `end_base`
-    /// are the base units the wallet held, `value_change_usd` the account's
-    /// change in value at the close, and `fills` the bot's own fills
-    /// (side, base units), oldest first.
+    /// are the base units the wallet held, `start_usd` and `close_usd` the
+    /// price they were valued at, `value_change_usd` the account's change in
+    /// value, and `fills` the bot's own fills (side, base units), oldest
+    /// first.
     pub fn report(
         &self,
         start_base: f64,
         end_base: f64,
+        start_usd: f64,
         close_usd: f64,
         value_change_usd: f64,
         fills: &[(Side, f64)],
@@ -97,9 +100,11 @@ impl ExecutionOrder {
             side: self.side,
             quantity: self.quantity,
             done: moved.clamp(0.0, self.quantity),
+            start_usd,
             close_usd,
             broker_usd: self.broker_usd(close_usd),
             value_change_usd,
+            drift_usd: start_base * (close_usd - start_usd),
             against,
             grown: if self.reduce_only { grown } else { 0.0 },
         }
@@ -114,13 +119,18 @@ pub struct OrderReport {
     pub quantity: f64,
     /// Base units traded toward the order by the end, at most the quantity.
     pub done: f64,
-    /// The session's closing price, in USD, and the broker's price for the
-    /// remainder.
+    /// The price the account was valued at at the start and the close, in
+    /// USD, and the broker's price for the remainder.
+    pub start_usd: f64,
     pub close_usd: f64,
     pub broker_usd: f64,
     /// What the account's value changed by over the session, valued at the
-    /// close; the PnL adds the haircut on each unit done.
+    /// close; the PnL takes off the drift and adds the haircut on each unit
+    /// done.
     pub value_change_usd: f64,
+    /// What the starting holding gained from the price moving, which doing
+    /// nothing would have kept.
+    pub drift_usd: f64,
     /// Base units the bot traded the other way, over the session.
     pub against: f64,
     /// Base units by which its fills grew the position (reduce-only orders).
@@ -128,10 +138,12 @@ pub struct OrderReport {
 }
 
 impl OrderReport {
-    /// The PnL against the broker: each unit done is worth what the broker
-    /// would have taken off it.
+    /// The PnL against the broker: what the bot's trades earned beyond the
+    /// price drift on what it started with, and each unit done is worth
+    /// what the broker would have taken off it.
     pub fn pnl_usd(&self) -> f64 {
-        self.value_change_usd + self.done * (self.broker_usd - self.close_usd).abs()
+        self.value_change_usd - self.drift_usd
+            + self.done * (self.broker_usd - self.close_usd).abs()
     }
 
     /// Why the session breaks the order's rules, if it does.
@@ -327,18 +339,53 @@ mod tests {
     #[test]
     fn doing_nothing_scores_zero_and_each_unit_done_earns_the_haircut() {
         let sell = order(Side::Sell);
-        let nothing = sell.report(10.0, 10.0, 100.0, 0.0, &[]);
+        let nothing = sell.report(10.0, 10.0, 100.0, 100.0, 0.0, &[]);
         assert_eq!(nothing.done, 0.0);
         assert_eq!(nothing.pnl_usd(), 0.0);
         assert_eq!(nothing.breach(), None);
         // Sold 4 at 100.5: 402 in, 400 out at the close, 1% off the close
         // the broker takes: 4 units save 4.
-        let sold = sell.report(10.0, 6.0, 100.0, 4.0 * 100.5 - 400.0, &[(Side::Sell, 4.0)]);
+        let sold = sell.report(
+            10.0,
+            6.0,
+            100.0,
+            100.0,
+            4.0 * 100.5 - 400.0,
+            &[(Side::Sell, 4.0)],
+        );
         assert_eq!(sold.done, 4.0);
         assert!((sold.pnl_usd() - (2.0 + 4.0)).abs() < 1e-9);
         assert_eq!(sold.broker_usd, 99.0);
         // Selling past the quantity counts the quantity.
-        assert_eq!(sell.report(20.0, 0.0, 100.0, 0.0, &[]).done, 10.0);
+        assert_eq!(sell.report(20.0, 0.0, 100.0, 100.0, 0.0, &[]).done, 10.0);
+    }
+
+    #[test]
+    fn doing_nothing_scores_zero_when_the_price_moves() {
+        // 10 held at 100 and valued at 90 at the close: the account lost 100,
+        // which doing nothing would have lost too.
+        let mut reduce = order(Side::Sell);
+        reduce.reduce_only = true;
+        for o in [order(Side::Sell), reduce] {
+            let nop = o.report(10.0, 10.0, 100.0, 90.0, -100.0, &[]);
+            assert_eq!(nop.drift_usd, -100.0);
+            assert_eq!(nop.pnl_usd(), 0.0);
+        }
+        // A buyer starting with 2 units and a close above its start.
+        let nop = order(Side::Buy).report(2.0, 2.0, 100.0, 110.0, 20.0, &[]);
+        assert_eq!(nop.pnl_usd(), 0.0);
+        // Sold 4 at 95 with the close at 90: the broker would have paid 89.1
+        // for them, so each unit is 5.9 better; 4 units, 23.6.
+        let value_change = 6.0 * 90.0 + 4.0 * 95.0 - 10.0 * 100.0;
+        let sold =
+            order(Side::Sell).report(10.0, 6.0, 100.0, 90.0, value_change, &[(Side::Sell, 4.0)]);
+        assert!((sold.pnl_usd() - 4.0 * (95.0 - 89.1)).abs() < 1e-9);
+        assert!(sold.pnl_usd() > 0.0);
+        // Bought 4 at 105 against a close of 110: the broker charges 111.1.
+        let value_change = 6.0 * 110.0 + 4.0 * 110.0 - 6.0 * 100.0 - 4.0 * 105.0 + 0.0;
+        let bought =
+            order(Side::Buy).report(6.0, 10.0, 100.0, 110.0, value_change, &[(Side::Buy, 4.0)]);
+        assert!((bought.pnl_usd() - 4.0 * (111.1 - 105.0)).abs() < 1e-9);
     }
 
     #[test]
@@ -347,19 +394,19 @@ mod tests {
         assert_eq!(buy.broker_usd(100.0), 101.0);
         // Bought 4 at 99.5: 398 out, worth 400 at the close; the broker
         // would have charged 404 for them.
-        let report = buy.report(0.0, 4.0, 100.0, 400.0 - 398.0, &[(Side::Buy, 4.0)]);
+        let report = buy.report(0.0, 4.0, 100.0, 100.0, 400.0 - 398.0, &[(Side::Buy, 4.0)]);
         assert_eq!(report.done, 4.0);
         assert!((report.pnl_usd() - 6.0).abs() < 1e-9);
-        assert_eq!(buy.report(0.0, 0.0, 100.0, 0.0, &[]).pnl_usd(), 0.0);
+        assert_eq!(buy.report(0.0, 0.0, 100.0, 100.0, 0.0, &[]).pnl_usd(), 0.0);
         // Selling what it holds is the wrong way for a buy.
-        let sold = buy.report(5.0, 4.0, 100.0, 0.0, &[(Side::Sell, 1.0)]);
+        let sold = buy.report(5.0, 4.0, 100.0, 100.0, 0.0, &[(Side::Sell, 1.0)]);
         assert!(sold.breach().unwrap().contains("only buys"));
     }
 
     #[test]
     fn trading_the_other_way_is_a_breach_even_if_it_nets_out() {
         let fills = [(Side::Sell, 3.0), (Side::Buy, 0.5), (Side::Sell, 3.0)];
-        let report = order(Side::Sell).report(10.0, 3.5, 100.0, 0.0, &fills);
+        let report = order(Side::Sell).report(10.0, 3.5, 100.0, 100.0, 0.0, &fills);
         assert_eq!(report.against, 0.5);
         assert!(report.breach().unwrap().contains("only sells"));
     }
@@ -370,13 +417,13 @@ mod tests {
         sell.reduce_only = true;
         // Long 2 and selling 5 flips it short 3: the position grew past
         // flat by 1.
-        let flipped = sell.report(2.0, -3.0, 100.0, 0.0, &[(Side::Sell, 5.0)]);
+        let flipped = sell.report(2.0, -3.0, 100.0, 100.0, 0.0, &[(Side::Sell, 5.0)]);
         assert_eq!(flipped.grown, 3.0 - 2.0);
         assert!(flipped.breach().unwrap().contains("reduce-only"));
-        let reduced = sell.report(5.0, 1.0, 100.0, 0.0, &[(Side::Sell, 4.0)]);
+        let reduced = sell.report(5.0, 1.0, 100.0, 100.0, 0.0, &[(Side::Sell, 4.0)]);
         assert_eq!(reduced.breach(), None);
         // Not asked for: not reported.
-        let plain = order(Side::Sell).report(2.0, -3.0, 100.0, 0.0, &[(Side::Sell, 5.0)]);
+        let plain = order(Side::Sell).report(2.0, -3.0, 100.0, 100.0, 0.0, &[(Side::Sell, 5.0)]);
         assert_eq!(plain.grown, 0.0);
         let mut buy = order(Side::Buy);
         buy.reduce_only = true;

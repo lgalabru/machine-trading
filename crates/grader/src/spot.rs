@@ -1004,6 +1004,7 @@ pub(crate) async fn run_session(
         order.report(
             start.wallet.base,
             end.wallet.base,
+            start_price_usd,
             end.wallet.price_usd,
             end_value_usd - start_value_usd,
             &own,
