@@ -1,0 +1,5 @@
+# Buys 1 SOL on each spot market in its mandate, once. The grader starts it with `just run`;
+# `just build` in bots/spot-smoke builds the binary.
+
+run:
+    @exec ../bin/bot accumulate

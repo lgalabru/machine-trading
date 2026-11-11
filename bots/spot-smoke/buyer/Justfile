@@ -1,0 +1,5 @@
+# The same bot, which also buys: under a sell-only mandate, a breach. The grader starts it with `just run`;
+# `just build` in bots/spot-smoke builds the binary.
+
+run:
+    @exec ../bin/bot buy

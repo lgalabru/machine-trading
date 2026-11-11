@@ -28,7 +28,8 @@ mandate caps the position at **70 SPCX**. The rules at the end are what
 ## Quick start
 
 You need Rust with the `wasm32-wasip2` target (`rustup target add
-wasm32-wasip2`) and `mtx` (`just install mtx` in the repository); no Docker.
+wasm32-wasip2`), [`just`](https://just.systems), and `mtx` (`just install
+mtx` in the repository); no Docker.
 
 ```sh
 mtx bot new ~/my-bot          # a strategy that watches the market and never trades
@@ -36,9 +37,10 @@ cd ~/my-bot
 mtx bot practice              # build it, and grade it on a task's practice scenarios
 ```
 
-The strategy is in `src/lib.rs`, and `build.sh` builds it into `bot.wasm`. `mtx bot practice` builds it with
-`build.sh`, runs the same grader the benchmark uses on the task's practice
-scenarios, and prints one line a session, then the grade:
+The strategy is in `src/lib.rs`, and `just build` (the bot's `Justfile`)
+builds it into `bot.wasm`. `mtx bot practice` builds it, runs the same
+grader the benchmark uses on the task's practice scenarios, and prints one
+line a session, then the grade:
 
 ```
 scenario                     your PnL    reference        bound
@@ -260,13 +262,24 @@ language.
 
 ### The bot directory
 
-The grader runs `bash run.sh`, from the bot's directory.
+The grader runs `just run`, from the bot's `Justfile`, in the bot's
+directory; `just build` builds it. The bots in `bots/` all look like this:
 
-- `run.sh` must start the bot without building or downloading anything: the
+```just
+build:
+    cargo build --release --bin mtx-maker   # then copies the binary to bin/bot
+
+run:
+    @exec ./bin/bot
+```
+
+- `run` must start the bot without building or downloading anything: the
   grader has no network, and builds nothing.
 - The bot must run on Debian bookworm (slim) with nothing but its own
-  directory: libc, bash and coreutils, no compiler, interpreter or SDK. A
-  native `bin/bot`, built by its `build.sh`, meets this.
+  directory: libc, bash, coreutils and `just`, no compiler, interpreter or
+  SDK. A native `bin/bot` meets this.
+- A directory without a `Justfile` may have a `run.sh` instead, which the
+  grader runs with `bash`: the bots kept from earlier releases do.
 - The benchmark's grader receives the directory read-only, without its
   `target/`.
 

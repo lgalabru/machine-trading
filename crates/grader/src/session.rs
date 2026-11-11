@@ -3,7 +3,8 @@
 //! 1. Restore the snapshot offline and put the RPC guard in front of it.
 //! 2. Onboard a fresh trader with [`DEPOSIT_USDC`] of collateral.
 //! 3. Stop the clock, register the scenario and lock the cheatcodes, then
-//!    start the bot (`run.sh` in its directory) with the [`BotEnv`] contract.
+//!    start the bot (`just run`, from the `Justfile` in its directory) with
+//!    the [`BotEnv`] contract.
 //! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
 //!    give the bot its turn (see [`mtx_core::turns`]): each step produces
 //!    its blocks, which land the scenario's move; then the grader's own
@@ -1226,6 +1227,34 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
     }
 }
 
+/// How a process bot starts: `just run` from its `Justfile`, or `bash
+/// run.sh` (the bots kept from earlier releases, under `bench/checks`).
+fn entry_point(bot_dir: &Path) -> Result<Command> {
+    if let Some(justfile) = ["Justfile", "justfile"]
+        .iter()
+        .map(|name| bot_dir.join(name))
+        .find(|path| path.is_file())
+    {
+        // The bot's PATH is the grader's fixed one: find `just` on ours.
+        let just = std::env::var_os("PATH")
+            .iter()
+            .flat_map(std::env::split_paths)
+            .map(|dir| dir.join("just"))
+            .find(|path| path.is_file())
+            .ok_or(Error::NoJust)?;
+        let mut command = Command::new(just);
+        command.arg("--justfile").arg(justfile).arg("run");
+        return Ok(command);
+    }
+    let run_sh = bot_dir.join("run.sh");
+    if !run_sh.is_file() {
+        return Err(Error::MissingBot(bot_dir.to_path_buf()));
+    }
+    let mut command = Command::new("bash");
+    command.arg(run_sh);
+    Ok(command)
+}
+
 /// Start the bot, with `turns` as its file descriptor [`turns::TURN_FD`].
 pub(crate) fn spawn_bot(
     bot_dir: &Path,
@@ -1236,18 +1265,14 @@ pub(crate) fn spawn_bot(
     regime: Option<&str>,
     reopen_slot: Option<u64>,
 ) -> Result<Child> {
-    let run_sh = bot_dir.join("run.sh");
-    if !run_sh.is_file() {
-        return Err(Error::MissingBot(run_sh));
-    }
     // The bot runs from its own directory, so a relative path would resolve twice.
-    let bot_dir = bot_dir.canonicalize().map_err(io_error(bot_dir))?;
-    let run_sh = bot_dir.join("run.sh");
+    let bot_dir = bot_dir
+        .canonicalize()
+        .map_err(|_| Error::MissingBot(bot_dir.to_path_buf()))?;
     let stdout = std::fs::File::create(log).map_err(io_error(log))?;
     let stderr = stdout.try_clone().map_err(io_error(log))?;
-    let mut command = Command::new("bash");
+    let mut command = entry_point(&bot_dir)?;
     command
-        .arg(&run_sh)
         .current_dir(&bot_dir)
         .env_clear()
         .envs(env.vars())
@@ -1278,7 +1303,7 @@ pub(crate) fn spawn_bot(
     }
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at
-    // TURN_FD has no close-on-exec flag, so it survives into run.sh; the
+    // TURN_FD has no close-on-exec flag, so it survives into the bot; the
     // original (close-on-exec, as Rust opens it) doesn't.
     unsafe {
         command.pre_exec(move || {
@@ -1288,7 +1313,7 @@ pub(crate) fn spawn_bot(
             Ok(())
         });
     }
-    let child = command.spawn().map_err(io_error(&run_sh));
+    let child = command.spawn().map_err(io_error(&bot_dir));
     drop(turns);
     child
 }

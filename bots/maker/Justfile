@@ -1,0 +1,17 @@
+# A process bot: `just build` builds it into bin/bot, and the grader starts
+# it with `just run`, without building or downloading anything (it has no
+# network). Build before grading.
+
+# Build the bot into bin/bot.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exe="$(cargo build --release --bin mtx-maker --message-format=json-render-diagnostics \
+      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
+    mkdir -p bin
+    cp "$exe" bin/bot
+    echo "built bin/bot from $exe"
+
+# Start the bot: what the grader runs.
+run:
+    @exec ./bin/bot

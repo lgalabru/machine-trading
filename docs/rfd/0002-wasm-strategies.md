@@ -283,3 +283,12 @@ defend, no bot users, no keypair files.
   is capped at 1 GiB. A `bot.wasm` that doesn't load (random bytes, in the
   check) plays the session without trading instead of failing the grade,
   and each session's report carries its fuel and why a component stopped.
+- 2026-11-11: the checks. `bench/checks/cheater-wasm` tries, from inside
+  the sandbox, the chain's cheatcodes (straight to the host import, past
+  the kit's check), the hidden files and the reward file, the environment,
+  sockets to the surfnet and the internet, the clock, and memory past the
+  cap: every attempt fails (no such file, permission denied, an empty
+  environment, a clock that stands still, allocation stops at 768 MiB),
+  and the session grades to completion with a reward of 0. A process bot
+  under `--components-only` isn't graded: the reward is 0 and
+  `not_graded` is 1, so the old cheaters check that.
