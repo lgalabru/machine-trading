@@ -163,7 +163,7 @@ impl Seat {
     ) -> Result<Self> {
         let keypair = Keypair::new();
         let (base, quote) = deposit.unwrap_or((SPOT_BASE, SPOT_QUOTE));
-        crate::spot::fund(surfnet, &keypair, base, quote)?;
+        crate::spot::fund(surfnet, &keypair, base, quote, false)?;
         let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(rpc_url));
         let owner = keypair.pubkey();
         let kind = match venue {

@@ -152,6 +152,15 @@ pub struct SessionReport {
     /// What the scenario's actors did (see [`crate::actors`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actors: Option<crate::actors::ActorsReport>,
+    /// A spot session with an execution order: how the bot did against it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<crate::orders::OrderReport>,
+    /// A spot session that prices participation: what the charge came to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub participation: Option<crate::orders::ParticipationReport>,
+    /// A spot session scored net of the starting holding's drift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net: Option<crate::orders::NetReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -719,11 +728,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             continue;
         }
         let started = Instant::now();
-        let step = Step {
-            k,
-            slot,
-            last: k + 1 == steps,
-        };
+        let step = Step::new(k, slot, k + 1 == steps);
         let wall = TURN_WALL.min(budget.saturating_sub(spent));
         let answered = take_turn(&mut writer, &mut reader, step, wall).await;
         let took = started.elapsed();
@@ -800,6 +805,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         spot: None,
         faults: guard.faults_report(),
         actors,
+        order: None,
+        participation: None,
+        net: None,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {

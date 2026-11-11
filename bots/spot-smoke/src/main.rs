@@ -1,9 +1,11 @@
 //! The spot session smoke bot: on its first turn it sells 1 SOL at any
 //! price on each spot market its mandate lists, then waits out the session.
 //! Run with `buy`, it also buys 0.1 SOL on the first of them, which a
-//! sell-only mandate forbids. Run as `steady <buy|sell> <size> <turns>`, it
-//! instead takes `size` SOL on Phoenix each turn, for its first `turns`
-//! turns: the steady trader the actors smoke watches.
+//! sell-only mandate forbids. Run with `accumulate`, it buys 1 SOL on each
+//! instead of selling. Every step it logs the turn data it was sent. Run as
+//! `steady <buy|sell> <size> <turns>`, it instead takes `size` SOL on Phoenix
+//! each turn, for its first `turns` turns: the steady trader the actors smoke
+//! watches.
 
 use std::sync::Arc;
 
@@ -28,6 +30,7 @@ async fn main() -> Result<()> {
         .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let buy = args.first().map(String::as_str) == Some("buy");
+    let accumulate = args.first().map(String::as_str) == Some("accumulate");
     let env = BotEnv::from_env()?;
     let mandate = env.mandate()?;
     let keypair = env.keypair()?;
@@ -69,6 +72,13 @@ async fn main() -> Result<()> {
     }
     let mut first = true;
     while let Some(step) = turns.next()? {
+        info!(
+            step = step.k,
+            unix_timestamp = ?turns.unix_timestamp(),
+            tape = ?turns.tape(),
+            depth = ?turns.depth(),
+            "turn data"
+        );
         if !first {
             continue;
         }
@@ -95,7 +105,7 @@ async fn main() -> Result<()> {
                     )
                     .await?
                     .with_send_mode(mode);
-                    let mut orders = vec![(Side::Sell, one)];
+                    let mut orders = vec![(if accumulate { Side::Buy } else { Side::Sell }, one)];
                     if buy && i == 0 {
                         orders.push((Side::Buy, Decimal::new(1, 1)));
                     }
@@ -122,7 +132,11 @@ async fn main() -> Result<()> {
                     .await?
                     .with_send_mode(mode);
                     let tick = trader.market().instrument.tick_size;
-                    let mut orders = vec![(Side::Sell, one, tick)];
+                    let mut orders = vec![if accumulate {
+                        (Side::Buy, one, tick * Decimal::from(1_000_000))
+                    } else {
+                        (Side::Sell, one, tick)
+                    }];
                     if buy && i == 0 {
                         orders.push((
                             Side::Buy,
