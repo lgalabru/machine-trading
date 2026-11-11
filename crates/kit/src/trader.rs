@@ -7,11 +7,20 @@ use solana_signer::Signer;
 use solana_transaction::Signature;
 
 use crate::{
-    BotEnv, Decimal, Error, Phoenix, Result,
+    BotEnv, Decimal, Error, Phoenix, Position, Result, Side,
     core::{Rounding, Side as CoreSide},
-    protocols::phoenix::eternal::{PhoenixTrader, phoenix_rise::math::Side},
+    protocols::phoenix::eternal::PhoenixTrader,
     rpc_client,
 };
+
+/// The top of a market, in USD: [`Trader::top`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Top {
+    pub mark: f64,
+    pub index: f64,
+    pub best_bid: Option<f64>,
+    pub best_ask: Option<f64>,
+}
 
 /// A bot's handle on its Phoenix account in one market.
 ///
@@ -31,13 +40,6 @@ pub struct Trader {
     /// The exact-decimal Phoenix trader underneath, for this account and
     /// market.
     pub inner: PhoenixTrader,
-}
-
-/// A position in base units (positive is long) and its average entry in USD.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Position {
-    pub size: f64,
-    pub entry_usd: f64,
 }
 
 fn core_side(side: Side) -> CoreSide {
@@ -89,9 +91,21 @@ impl Trader {
     }
 
     pub async fn mark_usd(&self) -> Result<f64> {
+        Ok(self.top().await?.mark)
+    }
+
+    /// The mark, the index and the best bid and ask, in USD, from one read
+    /// of Phoenix's view of the market.
+    pub async fn top(&self) -> Result<Top> {
         let market = self.phoenix.market(&self.env.symbol)?;
         let bbo = self.inner.bbo().await?;
-        Ok(self.phoenix.ticks_to_usd(market, bbo.mark_price_ticks))
+        let usd = |ticks| self.phoenix.ticks_to_usd(market, ticks);
+        Ok(Top {
+            mark: usd(bbo.mark_price_ticks),
+            index: usd(bbo.index_price_ticks),
+            best_bid: bbo.best_bid_ticks().map(usd),
+            best_ask: bbo.best_ask_ticks().map(usd),
+        })
     }
 
     /// The market's oracle price, in USD: the median of the latest prices
@@ -235,6 +249,25 @@ impl Trader {
             trader,
             self.keypair.insecure_clone(),
         ))
+    }
+}
+
+/// The order sheet's side, for Phoenix's own builders (`.side(side.into())`).
+impl From<Side> for crate::phoenix_rise::math::Side {
+    fn from(side: Side) -> Self {
+        match side {
+            Side::Bid => Self::Bid,
+            Side::Ask => Self::Ask,
+        }
+    }
+}
+
+impl From<crate::phoenix_rise::math::Side> for Side {
+    fn from(side: crate::phoenix_rise::math::Side) -> Self {
+        match side {
+            crate::phoenix_rise::math::Side::Bid => Self::Bid,
+            crate::phoenix_rise::math::Side::Ask => Self::Ask,
+        }
     }
 }
 

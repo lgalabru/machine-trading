@@ -3,13 +3,14 @@
 # The Machine Trading images, shared by every task. Build with `just image`.
 #
 #   runtime  ghcr.io/solana-foundation/machine-trading:<tag>-runtime
-#            Verifiers start from it: the `mtx` grader, every chain snapshot
+#            Verifiers start from it: the `mtx` grader and `just`, every chain snapshot
 #            under /opt/mtx/snapshots, and the bot users. Debian slim, no
 #            toolchain: a verifier runs bots, it never builds them.
 #   dev      ghcr.io/solana-foundation/machine-trading:<tag>
 #            Agents start from it: everything in runtime, a Rust toolchain,
-#            the bot SDK at /opt/mtx/sdk with its dependencies compiled, and a
-#            built starter bot at /app/bot.
+#            `just`, the wasm32-wasip2 target, the bot SDK at /opt/mtx/sdk with its
+#            dependencies compiled for it, and the starter strategy built at
+#            /app/bot/bot.wasm.
 #
 # Tasks add what is theirs: the snapshot they trade on (MTX_SNAPSHOT) and
 # their practice scenarios (/opt/mtx/practice) in environment/. Hidden sets
@@ -29,6 +30,10 @@ ARG TARGETPLATFORM
 # The Docker VM's memory, not its CPUs, bounds a Solana build.
 ARG CARGO_BUILD_JOBS=6
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
+# `just`: bots build with `just build`, and the grader starts a process bot
+# (the anchors) with `just run`. Its own layer, so it builds once.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo install --locked --root /opt/just just@1.49.0
 WORKDIR /src/mtx
 COPY Cargo.toml Cargo.lock rust-toolchain ./
 COPY crates crates
@@ -50,7 +55,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && for anchor in flash-crash:reference market-making:maker funding-carry:carry weekend-gap:weekend; do \
       family="${anchor%%:*}"; bot="${anchor##*:}"; \
       mkdir -p "/opt/mtx/anchors/$family/bin"; \
-      cp "bots/$bot/run.sh" "/opt/mtx/anchors/$family/run.sh"; \
+      cp "bots/$bot/Justfile" "/opt/mtx/anchors/$family/Justfile"; \
       cp "target/release/mtx-$bot" "/opt/mtx/anchors/$family/bin/bot"; \
     done
 
@@ -68,6 +73,7 @@ RUN apt-get update \
     done \
     && mkdir -p /app
 COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
+COPY --from=build /opt/just/bin/just /usr/local/bin/just
 # The reference bots, as the anchors hidden sets are scored against: the
 # verifier runs them on the same freshly drawn sessions as the agent's bot.
 # Verifier only: the agent's image never holds them.
@@ -85,11 +91,13 @@ ARG CARGO_BUILD_JOBS=6
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 RUN apt-get update \
     && apt-get install -y --no-install-recommends procps jq \
+    && rustup target add wasm32-wasip2 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash agent \
     && mkdir -p /app /opt/mtx/target /opt/mtx/practice \
     && chown agent:agent /app /opt/mtx/target
 COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
+COPY --from=build /opt/just/bin/just /usr/local/bin/just
 COPY bench/image/mtx-practice /usr/local/bin/mtx-practice
 COPY bench/image/time-left /usr/local/bin/time-left
 COPY snapshots/ /opt/mtx/snapshots/
@@ -106,15 +114,14 @@ ENV CARGO_HOME=/home/agent/.cargo
 # compiled dependencies instead of rebuilding Solana from scratch.
 ENV CARGO_TARGET_DIR=/opt/mtx/target
 
-# The agent's bot starts as a copy of the starter, built. The crate cache
+# The agent's bot starts as a copy of the starter, built into bot.wasm. The crate cache
 # stays whole: Cargo wants the downloaded tarballs, not only the extracted
 # sources, so trimming it makes every agent build re-fetch from crates.io.
 USER agent
 RUN cp -r /opt/mtx/sdk/bots/starter /app/bot \
-    && sed -i 's|path = "../../crates/kit"|path = "/opt/mtx/sdk/crates/kit"|; s|^name = "mtx-bot-starter"|name = "bot"|; s|^name = "mtx-starter"|name = "bot"|' /app/bot/Cargo.toml \
-    && sed -i 's|--bin mtx-starter|--bin bot|' /app/bot/build.sh \
+    && sed -i 's|path = "../../crates/kit"|path = "/opt/mtx/sdk/crates/kit"|; s|^name = "mtx-bot-starter"|name = "bot"|' /app/bot/Cargo.toml \
     && cp /opt/mtx/sdk/Cargo.lock /app/bot/Cargo.lock \
-    && /app/bot/build.sh \
+    && just --justfile /app/bot/Justfile build \
     && rm -rf /app/bot/target
 
 USER root

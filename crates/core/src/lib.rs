@@ -52,5 +52,7 @@ pub use meter::{AccountMeter, Measurement, MeterError, RecordedFill};
 pub use order::{Order, OrderId, OrderStatus, OrderType, Side, TimeInForce};
 pub use position::{FillEffect, Position, PositionError};
 pub use rust_decimal::{self, Decimal};
-pub use turns::{Step, Turns};
+pub use turns::Step;
+#[cfg(unix)]
+pub use turns::Turns;
 pub use venue::{FeeSchedule, Liquidity, VenueId, VenueMetadata};

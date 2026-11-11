@@ -621,13 +621,60 @@ fn record_sends(state: &GuardState, request: &Value, reply: &[u8]) {
     }
 }
 
+/// Where each read's config object goes in its params, for the reads that
+/// take a commitment: a call that leaves it out is served at `processed`
+/// too, not at the node's default, which trails the world.
+const CONFIG_AT: &[(&str, usize)] = &[
+    ("getAccountInfo", 1),
+    ("getBalance", 1),
+    ("getBlockHeight", 0),
+    ("getEpochInfo", 0),
+    ("getFeeForMessage", 1),
+    ("getLatestBlockhash", 0),
+    ("getMinimumBalanceForRentExemption", 1),
+    ("getMultipleAccounts", 1),
+    ("getProgramAccounts", 1),
+    ("getSlot", 0),
+    ("getTokenAccountBalance", 1),
+    ("getTokenAccountsByDelegate", 2),
+    ("getTokenAccountsByOwner", 2),
+    ("getTokenSupply", 1),
+    ("simulateTransaction", 1),
+];
+
 /// Serve `call` at `processed`; whether it reads transaction statuses.
 fn at_processed(call: &mut Value) -> bool {
     let method = call["method"].as_str().unwrap_or_default().to_string();
     if !KEEP_COMMITMENT.contains(&method.as_str()) {
         processed(&mut call["params"]);
+        if let Some(&(_, at)) = CONFIG_AT.iter().find(|(m, _)| *m == method) {
+            add_processed(&mut call["params"], at);
+        }
     }
     method == "getSignatureStatuses"
+}
+
+/// Give a call that names no commitment one: `processed`, in its config
+/// object at `at` (made, if the call has none and stops just before it).
+fn add_processed(params: &mut Value, at: usize) {
+    if params.is_null() {
+        *params = json!([]);
+    }
+    let Some(params) = params.as_array_mut() else {
+        return;
+    };
+    if params.len() == at {
+        params.push(json!({}));
+    }
+    match params.get_mut(at) {
+        Some(config @ Value::Null) => *config = json!({ "commitment": "processed" }),
+        Some(Value::Object(config)) => {
+            config
+                .entry("commitment")
+                .or_insert_with(|| json!("processed"));
+        }
+        _ => {}
+    }
 }
 
 fn processed(value: &mut Value) {
@@ -871,6 +918,17 @@ mod tests {
         });
         assert!(!at_processed(&mut call));
         assert_eq!(call["params"][1]["commitment"], "processed");
+        // A read that names no commitment is served at processed too.
+        let mut bare = json!({ "method": "getSlot", "params": [] });
+        at_processed(&mut bare);
+        assert_eq!(bare["params"][0]["commitment"], "processed");
+        let mut unnamed =
+            json!({ "method": "getAccountInfo", "params": ["x", { "encoding": "base64" }] });
+        at_processed(&mut unnamed);
+        assert_eq!(unnamed["params"][1]["commitment"], "processed");
+        let mut no_params = json!({ "method": "getSlot" });
+        at_processed(&mut no_params);
+        assert_eq!(no_params["params"][0]["commitment"], "processed");
         let mut kept =
             json!({ "method": "getTransaction", "params": ["s", { "commitment": "confirmed" }] });
         at_processed(&mut kept);

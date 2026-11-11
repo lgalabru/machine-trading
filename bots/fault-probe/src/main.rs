@@ -8,7 +8,7 @@
 //! finding is logged as a `probe:` line, which the smoke checks.
 
 use mtx_kit::{
-    Keypair, RpcClient, Signature, Signer,
+    BotEnv, Keypair, RpcClient, Signature, Signer,
     chain::{InstructionGroup, TransactionPlan},
     prelude::*,
     rpc_client,
@@ -61,13 +61,16 @@ impl Probe {
 }
 
 impl Strategy for Probe {
-    async fn start(&mut self, session: &Session) -> BotResult {
-        self.rpc = Some(rpc_client(&session.env.rpc_url));
-        self.payer = Some(session.env.keypair()?);
+    fn start(&mut self, session: &Session) -> BotResult {
+        // A process-only bot: it sends its own transactions.
+        let _ = session;
+        let env = BotEnv::from_env()?;
+        self.rpc = Some(rpc_client(&env.rpc_url));
+        self.payer = Some(env.keypair()?);
         Ok(())
     }
 
-    async fn step(&mut self, market: &Market, _orders: &mut Orders<'_>) -> BotResult {
+    fn step(&mut self, market: &Market, _orders: &mut Orders) -> BotResult {
         let k = market.k;
         match std::mem::replace(&mut self.phase, Phase::Done) {
             Phase::Fresh => {

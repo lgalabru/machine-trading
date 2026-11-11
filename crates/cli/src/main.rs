@@ -112,6 +112,10 @@ enum Command {
         /// whatever the rest do); the report covers the sessions up to it.
         #[arg(long)]
         stop_on_disqualify: bool,
+        /// Grade the bot only if it is a strategy component (a bot.wasm): the
+        /// verifier's rule. The reference can still be a process.
+        #[arg(long)]
+        components_only: bool,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -146,7 +150,7 @@ enum BotCommand {
         #[arg(long, env = "MTX_REPO")]
         repo: Option<PathBuf>,
     },
-    /// Build a bot with its build.sh, then grade it on a task's practice
+    /// Build a bot with `just build`, then grade it on a task's practice
     /// scenarios, exactly as the verifier grades the hidden ones.
     Practice {
         /// The bot directory.
@@ -156,7 +160,7 @@ enum BotCommand {
         /// flash-crash task).
         #[arg(long)]
         task: Option<String>,
-        /// Grade bin/bot as it is, without running build.sh.
+        /// Grade the bot as it is, without running `just build`.
         #[arg(long)]
         no_build: bool,
         /// Sessions to run at once, each on its own surfnet (1-4).
@@ -173,8 +177,8 @@ enum BotCommand {
         /// such as ones `mtx scenario generate` drew.
         scenarios: Vec<PathBuf>,
     },
-    /// Check a bot directory against the bot contract's shape: run.sh, an
-    /// executable bin/bot, built from the current source.
+    /// Check a bot directory against the bot contract's shape: a bot.wasm
+    /// that is a component, built from the current source.
     Check {
         #[arg(default_value = ".")]
         dir: PathBuf,
@@ -203,7 +207,8 @@ struct Sessions {
     /// Snapshot directory the sessions start from.
     #[arg(long)]
     snapshot: PathBuf,
-    /// Bot directory: `run.sh` is its entry point.
+    /// Bot directory: its `bot.wasm`, or for a process bot its `Justfile`'s
+    /// `run`.
     #[arg(long)]
     bot: PathBuf,
     /// Bot output goes to `<logs>/<scenario>.log`.
@@ -831,6 +836,7 @@ async fn run() -> Result<()> {
             anchor_jobs,
             tell_regime,
             stop_on_disqualify,
+            components_only,
             reward,
             report,
             details,
@@ -925,6 +931,7 @@ async fn run() -> Result<()> {
                 stop_on_disqualify,
                 detail_dir: details.as_deref(),
                 annotations: annotations.as_deref(),
+                components_only,
             })
             .await?;
             graded.eval_seed_sha256 = eval_seed_sha256;

@@ -42,11 +42,11 @@ mtx bench review 0.10.0
 
 ## Write your own bot
 
-You need Rust and `mtx` (above); no Docker. A bot is a Rust program that
-trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
-You write a strategy, and [`mtx-kit`](crates/kit)'s run loop does
-the rest: it answers the grader, reads the market before every step, and
-sends your orders inside the mandate.
+You need Rust with the `wasm32-wasip2` target, [`just`](https://just.systems)
+and `mtx` (above); no Docker. A bot is a strategy that trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
+You write it on [`mtx-kit`](crates/kit) and build it into a WebAssembly
+component, and the grader does the rest: it reads the market before every
+step, calls your strategy, and sends its orders inside the mandate.
 
 ```rust
 use mtx_kit::prelude::*;
@@ -55,7 +55,7 @@ use mtx_kit::prelude::*;
 struct FadeTheDip { peak: f64 }
 
 impl Strategy for FadeTheDip {
-    async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         self.peak = self.peak.max(market.mark);
         if market.mark < self.peak * 0.97 {
             orders.target_position(market.cap);    // cut to the position cap for you
@@ -66,9 +66,7 @@ impl Strategy for FadeTheDip {
     }
 }
 
-fn main() -> BotResult {
-    mtx_kit::run(FadeTheDip::default())
-}
+mtx_kit::export!(FadeTheDip);
 ```
 
 ```sh
@@ -77,15 +75,17 @@ cd ~/my-bot
 mtx bot practice              # build it, and grade it on a task's practice scenarios
 ```
 
-`Market` is a plain value (the step, mark and oracle, position, estimated
-PnL and drawdown, the mandate's room, the turn budget left), and `Orders`
+`Market` is a plain value (the step, mark, oracle, index and best bid and
+ask, position, estimated PnL and drawdown, the mandate's room), and `Orders`
 records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
-`orders.trader()` reaches the venue for anything else.
+`mtx_kit::rpc` reads anything else from the chain.
 `mtx bot practice --task <name>` practises another task in `bench/tasks`,
 and scenarios `mtx scenario generate` draws can be graded too:
 `mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check
-a bot directory and package its source.
+a bot directory and package its source. The strategy is `src/lib.rs`, and
+`just build` builds it into `bot.wasm`, the one file the grader loads: no
+files, network or clock inside, and the same result on any machine.
 
 The rest (the bench's own bots, grading, publishing and comparing releases)
 is in [docs/development.md](docs/development.md).

@@ -20,7 +20,7 @@ trading-specific.
 
 - [ ] Everything the grader checks is in `instruction.md`: env vars, allowlist, refusal penalty, valuation formula, stop signal and grace period, liquidation rule, "the grader does not build".
 - [ ] Everything `instruction.md` claims is true of the image: paths, tools, timings, versions.
-- [ ] Deliverable path is absolute and explicit (`/app/bot/run.sh`).
+- [ ] Deliverable path is absolute and explicit (`/app/bot/bot.wasm`, a strategy component).
 - [ ] No typos in paths, env vars, or commands.
 - [ ] Scoring formula stated exactly, including clamping and aggregation.
 - [ ] Realism limits stated (static replay, no MEV, no funding…).
