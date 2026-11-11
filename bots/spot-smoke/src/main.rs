@@ -1,7 +1,9 @@
 //! The spot session smoke bot: on its first turn it sells 1 SOL at any
 //! price on each spot market its mandate lists, then waits out the session.
 //! Run with `buy`, it also buys 0.1 SOL on the first of them, which a
-//! sell-only mandate forbids.
+//! sell-only mandate forbids. Run as `steady <buy|sell> <size> <turns>`, it
+//! instead takes `size` SOL on Phoenix each turn, for its first `turns`
+//! turns: the steady trader the actors smoke watches.
 
 use std::sync::Arc;
 
@@ -24,7 +26,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let buy = std::env::args().nth(1).as_deref() == Some("buy");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let buy = args.first().map(String::as_str) == Some("buy");
     let env = BotEnv::from_env()?;
     let mandate = env.mandate()?;
     let keypair = env.keypair()?;
@@ -34,6 +37,36 @@ async fn main() -> Result<()> {
     let mode = SendMode::FireAndForget(FireAndForgetOptions { simulate: false });
     let one = Decimal::ONE;
     let mut turns = Turns::connect()?;
+    if args.first().map(String::as_str) == Some("steady") {
+        let side = match args.get(1).map(String::as_str) {
+            Some("buy") => Side::Buy,
+            _ => Side::Sell,
+        };
+        let size: Decimal = args.get(2).context("a size")?.parse()?;
+        let count: u64 = args.get(3).context("a number of turns")?.parse()?;
+        let named = NamedMarket::find(phoenix_v1::MARKETS, "SOL-USDC")
+            .copied()
+            .context("no Phoenix market")?;
+        let trader = PhoenixV1Trader::connect(chain, named.address, "SOL", "USDC", owner)
+            .await?
+            .with_send_mode(mode);
+        while let Some(step) = turns.next()? {
+            if step.k >= count {
+                continue;
+            }
+            let order = PhoenixV1Order::ImmediateOrCancel {
+                side,
+                quantity: size,
+                worst_price: None,
+                all_or_none: false,
+            };
+            match trader.submit(&order, &keypair).await {
+                Ok(_) => info!(step = step.k, ?side, %size, "sent"),
+                Err(error) => warn!(step = step.k, %error, "didn't send"),
+            }
+        }
+        return Ok(());
+    }
     let mut first = true;
     while let Some(step) = turns.next()? {
         if !first {
