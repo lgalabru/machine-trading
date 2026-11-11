@@ -115,8 +115,8 @@ mod bot {
             phoenix_rise::{self, math::Side},
         },
         run::{
-            Action, BotResult, Execution, Intent, Market, Orders, Session, Strategy, plan, run,
-            step_offline,
+            Action, BotResult, Execution, Intent, Market, Orders, Session, Strategy, plan,
+            resting_after, run, step_offline,
         },
         trader::{Position, Trader},
         tx::{rpc_client, send},
