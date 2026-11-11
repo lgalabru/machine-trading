@@ -13,6 +13,8 @@ use std::{path::Path, sync::Arc};
 
 use solana_pubkey::Pubkey;
 
+/// Phoenix accounts collateral in quote lots of 1e-6 USDC.
+pub use crate::venue::QUOTE_LOTS_PER_USD;
 use crate::{
     Result,
     protocols::phoenix::eternal::{
@@ -23,9 +25,6 @@ use crate::{
         },
     },
 };
-
-/// Phoenix accounts collateral in quote lots of 1e-6 USDC.
-pub const QUOTE_LOTS_PER_USD: f64 = 1e6;
 
 pub fn load_exchange(path: &Path) -> Result<ExchangeResponse> {
     Ok(crate::protocols::phoenix::eternal::load_exchange(path)?)
@@ -83,11 +82,11 @@ impl Phoenix {
 
     /// USD per base unit for a price in ticks.
     pub fn ticks_to_usd(&self, market: &ExchangeMarketConfig, ticks: u64) -> f64 {
-        ticks as f64 * market.tick_size as f64 * 10f64.powi(market.base_lots_decimals as i32 - 6)
+        crate::venue::ticks_to_usd(market, ticks)
     }
 
     pub fn base_units_to_lots(&self, market: &ExchangeMarketConfig, units: f64) -> u64 {
-        (units * 10f64.powi(market.base_lots_decimals as i32)).round() as u64
+        crate::venue::base_units_to_lots(market, units)
     }
 
     /// USD per base unit for Phoenix's entry-price unit (quote lots per base lot).
@@ -96,11 +95,10 @@ impl Phoenix {
         market: &ExchangeMarketConfig,
         quote_lots_per_base_lot: u64,
     ) -> f64 {
-        quote_lots_per_base_lot as f64 * 10f64.powi(market.base_lots_decimals as i32)
-            / QUOTE_LOTS_PER_USD
+        crate::venue::entry_price_to_usd(market, quote_lots_per_base_lot)
     }
 
     pub fn lots_to_base_units(&self, market: &ExchangeMarketConfig, lots: i64) -> f64 {
-        lots as f64 / 10f64.powi(market.base_lots_decimals as i32)
+        crate::venue::lots_to_base_units(market, lots)
     }
 }

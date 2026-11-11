@@ -32,9 +32,11 @@ pub fn session(s: wit::Session) -> Result<Session, String> {
         end_slot: s.end_slot,
         symbol: s.symbol,
         start_mark: s.start_mark,
+        start_oracle: s.start_oracle,
         cap: s.cap,
         max_drawdown: s.max_drawdown,
         mandate: serde_json::from_str(&s.mandate).map_err(|e| format!("the mandate: {e}"))?,
+        venue: s.venue,
         seed: s.seed,
     })
 }

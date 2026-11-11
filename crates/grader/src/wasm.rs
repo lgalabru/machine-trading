@@ -271,6 +271,7 @@ impl WasmBot {
         } = clock;
         let trader = mtx_kit::Trader::connect(env)?;
         let start_mark = trader.mark_usd().await?;
+        let start_oracle = trader.oracle_usd().await?;
         let seed = seed_of(scenario);
         let mut strategy = WasmStrategy::load(path, &env.rpc_url, log, seed).await?;
         let session = Session {
@@ -280,9 +281,12 @@ impl WasmBot {
             end_slot: env.end_slot,
             symbol: env.symbol.clone(),
             start_mark,
+            start_oracle,
             cap: env.max_position,
             max_drawdown: env.max_drawdown_usd,
             mandate: serde_json::to_string(mandate)?,
+            venue: std::fs::read_to_string(&env.exchange_path)
+                .map_err(crate::error::io_error(&env.exchange_path))?,
             seed,
         };
         match strategy.start(&session).await {
@@ -514,12 +518,14 @@ mod tests {
             end_slot: 300,
             symbol: "SPCX".into(),
             start_mark: 100.0,
+            start_oracle: 100.0,
             cap: 70.0,
             max_drawdown: 1_000.0,
             mandate: serde_json::to_string(&mtx_core::Mandate::perp(
                 "phoenix", "SPCX", 70.0, 1_000.0,
             ))
             .unwrap(),
+            venue: "{}".into(),
             seed: 7,
         };
         assert!(matches!(strategy.start(&session).await, Outcome::Done(())));
