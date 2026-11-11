@@ -6,8 +6,10 @@
 //! The component gets no files, no environment and no network. Its WASI
 //! clocks are fixed and its randomness is seeded, so a step's result depends
 //! only on what the grader hands it and what `rpc` reads, which is the
-//! paused chain. Each call runs on a fuel budget: a strategy that runs out
-//! traps, and the step sends nothing.
+//! paused chain. Each call runs on a fuel budget, and the session on another:
+//! a strategy that runs out of either traps, and Wasmtime won't enter it
+//! again, so it plays no more of the session. Its memory is capped. A
+//! component that doesn't load plays the session without trading.
 
 use std::{
     io::Write,
@@ -17,7 +19,7 @@ use std::{
 
 use rand::SeedableRng;
 use wasmtime::{
-    Config, Engine, Store,
+    Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
     component::{Component, HasSelf, Linker, ResourceTable},
 };
 use wasmtime_wasi::{
@@ -38,9 +40,18 @@ pub use mtx::strategy::types::{Execution, Position, Side};
 /// The file a bot directory holds when its bot is a component.
 pub const BOT_WASM: &str = "bot.wasm";
 
-/// Fuel for one call: far more than a strategy should need. To calibrate on
-/// the reference bots (RFD 0002, step 3).
-const FUEL_PER_CALL: u64 = 10_000_000_000;
+/// Fuel for one call to `start`, `step` or `end`: Wasmtime spends about one
+/// unit per instruction.
+pub const FUEL_PER_CALL: u64 = 10_000_000_000;
+
+/// Fuel for a session, per step: a session may spend `steps + 2` times this
+/// in all, whatever it spends in each call. About 0.1 s of strategy a step
+/// on an M-series core (20 billion units a second), against the 75 million
+/// the funding-carry reference spends, the most of the references.
+pub const FUEL_PER_STEP: u64 = 2_000_000_000;
+
+/// The most linear memory a strategy may grow to, in bytes.
+pub const MEMORY_BYTES: usize = 1 << 30;
 
 /// The most `rpc` calls one step may make.
 const RPC_CALLS_PER_STEP: u32 = 256;
@@ -63,6 +74,7 @@ struct Host {
     rpc_url: String,
     http: reqwest::Client,
     rpc_calls: u32,
+    limits: StoreLimits,
 }
 
 impl WasiView for Host {
@@ -154,16 +166,24 @@ pub enum Outcome<T> {
 pub struct WasmStrategy {
     store: Store<Host>,
     strategy: Strategy,
+    /// The session's fuel left, what the call in progress was given, what
+    /// the session has spent, and the most one call spent.
+    fuel_left: u64,
+    fuel_given: u64,
+    pub fuel_used: u64,
+    pub fuel_max_call: u64,
 }
 
 impl WasmStrategy {
     /// Instantiates the component at `path`. `rpc_url` answers its `rpc`
-    /// calls, its log lines go to `log`, and `seed` seeds its randomness.
+    /// calls, its log lines go to `log`, `seed` seeds its randomness, and
+    /// `session_fuel` is all it may spend.
     pub async fn load(
         path: &Path,
         rpc_url: &str,
         log: Box<dyn Write + Send>,
         seed: u64,
+        session_fuel: u64,
     ) -> crate::Result<Self> {
         let wasm_error = |e: wasmtime::Error| Error::Wasm(format!("{}: {e:#}", path.display()));
         let mut config = Config::new();
@@ -190,23 +210,59 @@ impl WasmStrategy {
             rpc_url: rpc_url.to_string(),
             http: reqwest::Client::new(),
             rpc_calls: 0,
+            limits: StoreLimitsBuilder::new()
+                .memory_size(MEMORY_BYTES)
+                .trap_on_grow_failure(true)
+                .build(),
         };
         let mut store = Store::new(&engine, host);
-        store.set_fuel(FUEL_PER_CALL).map_err(wasm_error)?;
+        store.limiter(|host| &mut host.limits);
+        // Instantiating runs no strategy code worth metering apart: it comes
+        // out of the session's fuel like a call.
+        let mut this_fuel = session_fuel.min(FUEL_PER_CALL);
+        store.set_fuel(this_fuel).map_err(wasm_error)?;
         let strategy = Strategy::instantiate_async(&mut store, &component, &linker)
             .await
             .map_err(wasm_error)?;
-        Ok(Self { store, strategy })
+        let used = this_fuel - store.get_fuel().unwrap_or(0);
+        this_fuel = session_fuel.saturating_sub(used);
+        Ok(Self {
+            store,
+            strategy,
+            fuel_left: this_fuel,
+            fuel_given: 0,
+            fuel_used: used,
+            fuel_max_call: used,
+        })
     }
 
-    fn refuel(&mut self) {
-        let _ = self.store.set_fuel(FUEL_PER_CALL);
+    /// Fuel for the next call, from what the session has left: `false` if
+    /// none is left.
+    fn refuel(&mut self) -> bool {
         self.store.data_mut().rpc_calls = 0;
+        self.fuel_given = self.fuel_left.min(FUEL_PER_CALL);
+        self.fuel_given > 0 && self.store.set_fuel(self.fuel_given).is_ok()
+    }
+
+    /// What the last call spent, out of the session's fuel.
+    fn charge(&mut self) {
+        let used = self.fuel_given - self.store.get_fuel().unwrap_or(0).min(self.fuel_given);
+        self.fuel_left -= used;
+        self.fuel_used += used;
+        self.fuel_max_call = self.fuel_max_call.max(used);
+    }
+
+    fn spent() -> String {
+        "the session's fuel is spent".to_string()
     }
 
     pub async fn start(&mut self, session: &Session) -> Outcome<()> {
-        self.refuel();
-        match self.strategy.call_start(&mut self.store, session).await {
+        if !self.refuel() {
+            return Outcome::Trapped(Self::spent());
+        }
+        let result = self.strategy.call_start(&mut self.store, session).await;
+        self.charge();
+        match result {
             Ok(Ok(())) => Outcome::Done(()),
             Ok(Err(e)) => Outcome::Failed(e),
             Err(trap) => Outcome::Trapped(format!("{trap:#}")),
@@ -214,8 +270,12 @@ impl WasmStrategy {
     }
 
     pub async fn step(&mut self, market: &Market) -> Outcome<Vec<Intent>> {
-        self.refuel();
-        match self.strategy.call_step(&mut self.store, *market).await {
+        if !self.refuel() {
+            return Outcome::Trapped(Self::spent());
+        }
+        let result = self.strategy.call_step(&mut self.store, *market).await;
+        self.charge();
+        match result {
             Ok(Ok(intents)) => Outcome::Done(intents),
             Ok(Err(e)) => Outcome::Failed(e),
             Err(trap) => Outcome::Trapped(format!("{trap:#}")),
@@ -223,8 +283,12 @@ impl WasmStrategy {
     }
 
     pub async fn end(&mut self, last: Option<&Market>) -> Outcome<()> {
-        self.refuel();
-        match self.strategy.call_end(&mut self.store, last.copied()).await {
+        if !self.refuel() {
+            return Outcome::Trapped(Self::spent());
+        }
+        let result = self.strategy.call_end(&mut self.store, last.copied()).await;
+        self.charge();
+        match result {
             Ok(()) => Outcome::Done(()),
             Err(trap) => Outcome::Trapped(format!("{trap:#}")),
         }
@@ -245,7 +309,8 @@ pub struct Clock<'a> {
 /// trades for it, with the bot's key, through the bot's guarded endpoint.
 /// Reads and sends as `mtx_kit::run` does for a process bot.
 pub struct WasmBot {
-    strategy: WasmStrategy,
+    /// `None` if the component didn't load: the session plays without it.
+    strategy: Option<WasmStrategy>,
     trader: mtx_kit::Trader,
     session: Session,
     pnl: f64,
@@ -253,9 +318,9 @@ pub struct WasmBot {
     last_mark: Option<f64>,
     resting: (f64, f64),
     last: Option<Market>,
-    /// The strategy trapped: Wasmtime won't enter its instance again, so it
-    /// plays no more of the session.
-    trapped: bool,
+    /// Why the strategy plays no more of the session, if it doesn't: it
+    /// didn't load, or it trapped (Wasmtime won't enter its instance again).
+    pub stopped: Option<String>,
 }
 
 impl WasmBot {
@@ -279,7 +344,18 @@ impl WasmBot {
         let start_mark = trader.mark_usd().await?;
         let start_oracle = trader.oracle_usd().await?;
         let seed = seed_of(scenario);
-        let mut strategy = WasmStrategy::load(path, &env.rpc_url, log, seed).await?;
+        let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
+        let mut stopped = None;
+        let mut strategy = match WasmStrategy::load(path, &env.rpc_url, log, seed, session_fuel)
+            .await
+        {
+            Ok(strategy) => Some(strategy),
+            Err(error) => {
+                tracing::warn!(%error, "the component didn't load; the session plays without it");
+                stopped = Some(format!("didn't load: {error}"));
+                None
+            }
+        };
         let session = Session {
             steps,
             slots_per_step,
@@ -297,15 +373,16 @@ impl WasmBot {
             vars,
             seed,
         };
-        let mut trapped = false;
-        match strategy.start(&session).await {
-            Outcome::Done(()) => {}
-            Outcome::Failed(e) => {
-                tracing::warn!(error = %e, "the strategy's start failed; it plays on");
-            }
-            Outcome::Trapped(e) => {
-                tracing::warn!(error = %e, "the strategy's start trapped; it plays no more of the session");
-                trapped = true;
+        if let Some(strategy) = strategy.as_mut() {
+            match strategy.start(&session).await {
+                Outcome::Done(()) => {}
+                Outcome::Failed(e) => {
+                    tracing::warn!(error = %e, "the strategy's start failed; it plays on");
+                }
+                Outcome::Trapped(e) => {
+                    tracing::warn!(error = %e, "the strategy's start trapped; it plays no more of the session");
+                    stopped = Some(format!("trapped in start: {e}"));
+                }
             }
         }
         Ok(Self {
@@ -317,7 +394,7 @@ impl WasmBot {
             last_mark: None,
             resting: (0.0, 0.0),
             last: None,
-            trapped,
+            stopped,
         })
     }
 
@@ -325,7 +402,7 @@ impl WasmBot {
     /// the sheet to the mandate's cap and send it, in order, stopping at the
     /// first order that fails. Returns whether the strategy answered.
     pub async fn turn(&mut self, k: u64, slot: u64, last: bool) -> bool {
-        if self.trapped {
+        if self.stopped.is_some() {
             return false;
         }
         let (top, oracle, position) = match (
@@ -389,7 +466,10 @@ impl WasmBot {
             drawdown: kit.drawdown,
         };
         self.last = Some(market);
-        let intents = match self.strategy.step(&market).await {
+        let Some(strategy) = self.strategy.as_mut() else {
+            return false;
+        };
+        let intents = match strategy.step(&market).await {
             Outcome::Done(intents) => intents,
             Outcome::Failed(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy failed; no orders this step");
@@ -397,7 +477,7 @@ impl WasmBot {
             }
             Outcome::Trapped(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy trapped; it plays no more of the session");
-                self.trapped = true;
+                self.stopped = Some(format!("trapped at step {k}: {e}"));
                 return false;
             }
         };
@@ -436,13 +516,22 @@ impl WasmBot {
 
     /// The session is over: the strategy's `end`.
     pub async fn end(&mut self) {
-        if self.trapped {
+        let last = self.last;
+        if self.stopped.is_some() {
             return;
         }
-        let last = self.last;
-        if let Outcome::Trapped(e) = self.strategy.end(last.as_ref()).await {
+        if let Some(strategy) = self.strategy.as_mut()
+            && let Outcome::Trapped(e) = strategy.end(last.as_ref()).await
+        {
             tracing::warn!(error = %e, "the strategy's end trapped");
         }
+    }
+
+    /// The fuel the session spent, and the most one call spent.
+    pub fn fuel(&self) -> (u64, u64) {
+        self.strategy
+            .as_ref()
+            .map_or((0, 0), |s| (s.fuel_used, s.fuel_max_call))
     }
 }
 
@@ -539,6 +628,7 @@ mod tests {
             "http://127.0.0.1:1",
             Box::new(Shared(log.clone())),
             7,
+            100 * FUEL_PER_CALL,
         )
         .await
         .unwrap();
