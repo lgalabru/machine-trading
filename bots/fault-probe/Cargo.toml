@@ -1,0 +1,17 @@
+# No workspace inheritance: bots build outside this workspace too.
+[package]
+name = "mtx-bot-fault-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-fault-probe"
+path = "src/main.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit" }
+solana-compute-budget-interface = "3"
+solana-system-interface = { version = "3", features = ["wincode"] }
+tracing = "0.1"
