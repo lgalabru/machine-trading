@@ -68,6 +68,10 @@ pub struct MakerModel {
     /// reference, as a share of what the same flow into the makers would.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub passive_impact: f64,
+    /// Whose flow moves the reference: by default everything the makers
+    /// absorb (the tape's included); `bot_only`, the bot's own fills alone.
+    #[serde(default, skip_serializing_if = "ImpactSource::is_absorbed")]
+    pub impact_source: ImpactSource,
     /// Stretches of the session where the makers quote differently: thin
     /// books, wide spreads, makers away, a lean.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -84,6 +88,25 @@ fn one() -> f64 {
 
 fn is_one(x: &f64) -> bool {
     *x == 1.0
+}
+
+/// Whose flow moves the makers' reference.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImpactSource {
+    /// Every fill against the makers' quotes, whoever took it; the bot's
+    /// own resting orders at `passive_impact`; and the seats a family set.
+    #[default]
+    Absorbed,
+    /// The bot's fills alone: what it takes at 1, its resting orders at
+    /// `passive_impact`; and the seats a family set.
+    BotOnly,
+}
+
+impl ImpactSource {
+    fn is_absorbed(&self) -> bool {
+        *self == Self::Absorbed
+    }
 }
 
 /// From `from_slot` to just before `to_slot` (slots into the session), on
@@ -539,6 +562,7 @@ pub(crate) mod tests {
             impact_unit: None,
             clear_stale: true,
             passive_impact: 0.0,
+            impact_source: ImpactSource::Absorbed,
             schedule: Vec::new(),
         }
     }
@@ -687,6 +711,14 @@ pub(crate) mod tests {
         assert!(bad.validate().is_err());
         let json = serde_json::to_value(model()).unwrap();
         assert!(json.get("impact_unit").is_none());
+        assert!(
+            json.get("impact_source").is_none(),
+            "the default isn't written"
+        );
+        let mut bot = json.clone();
+        bot["impact_source"] = "bot_only".into();
+        let bot: MakerModel = serde_json::from_value(bot).unwrap();
+        assert_eq!(bot.impact_source, ImpactSource::BotOnly);
         let mut quiet = model();
         quiet.clear_stale = false;
         assert!(
