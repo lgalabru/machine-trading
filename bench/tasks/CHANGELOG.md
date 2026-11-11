@@ -4,7 +4,19 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
-- **Unreleased.**
+- **0.12.0.** Bots are strategy components, and two new tasks on new
+  scenario hooks in the engine (book premiums, a taker tape, per-session
+  funding, off-hours markets; each opt-in, so flash-crash's and
+  market-making's sessions are unchanged).
+  - **`funding-carry-spcx`.** The SPCX book trades at a premium or a
+    discount to its index, and Phoenix's funding pays the side against
+    it. A good bot fades the premiums the crowd's positioning opened,
+    follows the ones the index follows, and learns from the session's own
+    earlier premiums which kind of day it is.
+  - **`weekend-gap-spcx`.** SpaceX's own market is closed for the
+    weekend, so Phoenix prices the SPCX index from its own book until the
+    market reopens. A good bot reads which weekend flow knows where SPCX
+    will open, and holds that gap into the reopen within its loss limit.
   - **Bots are strategy components.** The verifier grades `/app/bot/bot.wasm`,
     a WebAssembly component the grader loads and calls (RFD 0002), and
     nothing else (`mtx grade --components-only`, in `test.sh` and
@@ -46,18 +58,6 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     on the sheet, as filled. `room_to_buy()` and `room_to_sell()` count them
     too, by the mandate's own rule (`Allowance::room` in `mtx-core`), which
     the grader's audit now shares.
-- **0.12.0.** New tasks on new scenario hooks in the engine (book
-  premiums, a taker tape, per-session funding, off-hours markets; each
-  opt-in, so flash-crash's and market-making's sessions are unchanged).
-  - **`funding-carry-spcx`.** The SPCX book trades at a premium or a
-    discount to its index, and Phoenix's funding pays the side against
-    it. A good bot fades the premiums the crowd's positioning opened,
-    follows the ones the index follows, and learns from the session's own
-    earlier premiums which kind of day it is.
-  - **`weekend-gap-spcx`.** SpaceX's own market is closed for the
-    weekend, so Phoenix prices the SPCX index from its own book until the
-    market reopens. A good bot reads which weekend flow knows where SPCX
-    will open, and holds that gap into the reopen within its loss limit.
 
 - **0.11.0.** Three leaks closed, tasks named for their skill, and OpenAI
   models. Design and evidence: [bench/design/0.11.0.md](../design/0.11.0.md).

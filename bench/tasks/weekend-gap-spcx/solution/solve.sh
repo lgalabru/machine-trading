@@ -17,4 +17,4 @@ borsh "=1.8.1"
 bs58 "=0.5.1"
 serde_json "=1.0.154"
 DEPS
-/app/bot/build.sh
+just --justfile /app/bot/Justfile build

@@ -1,7 +1,7 @@
 //! `mtx bot`: start a bot, practise it, and package it, without the bench.
 //!
 //! Everything here runs what the bench runs. `practice` builds the bot with
-//! its own `build.sh` and grades it with the same [`grade::grade`] the
+//! its own `Justfile` (`just build`) and grades it with the same [`grade::grade`] the
 //! verifier uses, on a task's practice scenarios and snapshot. What this adds
 //! is the developer's side of it: a starter to begin from, a short report
 //! instead of the verifier's JSON, and a check of the bot directory against
@@ -27,7 +27,7 @@ const REPO_URL: &str = "https://github.com/lgalabru/machine-trading";
 /// checkout (see `build.rs`).
 const BUILT_COMMIT: Option<&str> = option_env!("MTX_GIT_COMMIT");
 const STARTER_LIB: &str = include_str!("../../../bots/starter/src/lib.rs");
-const STARTER_BUILD: &str = include_str!("../../../bots/starter/build.sh");
+const STARTER_JUSTFILE: &str = include_str!("../../../bots/starter/Justfile");
 /// The kit's features a strategy component builds with.
 const KIT_FEATURES: &str = r#"default-features = false, features = ["component", "venue"]"#;
 /// The workspace's lockfile, so a new bot builds against the versions the
@@ -143,16 +143,6 @@ fn practice_scenarios(root: &Path, task: &str) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn write_executable(path: &Path, contents: &str) -> Result<()> {
-    std::fs::write(path, contents).with_context(|| path.display().to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    }
-    Ok(())
-}
-
 /// `mtx bot new`: a strategy component that watches the market and never
 /// trades (bots/starter), ready to build and practise.
 pub fn new(dir: &Path, git: bool, given_repo: Option<&Path>) -> Result<String> {
@@ -191,7 +181,7 @@ edition = "2024"
 version = "0.1.0"
 publish = false
 
-# A strategy component: build.sh builds it for wasm32-wasip2 into bot.wasm.
+# A strategy component: `just build` builds it for wasm32-wasip2 into bot.wasm.
 [lib]
 crate-type = ["cdylib"]
 path = "src/lib.rs"
@@ -206,7 +196,7 @@ path = "src/lib.rs"
     std::fs::write(dir.join("Cargo.toml"), cargo)?;
     std::fs::write(dir.join("Cargo.lock"), LOCKFILE)?;
     std::fs::write(dir.join("src/lib.rs"), STARTER_LIB)?;
-    write_executable(&dir.join("build.sh"), STARTER_BUILD)?;
+    std::fs::write(dir.join("Justfile"), STARTER_JUSTFILE)?;
     std::fs::write(dir.join(".gitignore"), "/target\n/bot.wasm\n")?;
     Ok(format!(
         "made a bot in {}\n\n  rustup target add wasm32-wasip2   # once: the bot builds into a wasm component\n  cd {}\n  mtx bot practice                  # build it, and grade it on the practice scenarios\n\nThe strategy goes in src/lib.rs. How to write it, and the rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
@@ -224,7 +214,8 @@ pub struct Checked {
 
 /// `mtx bot check`: the bot directory against the contract's shape. A bot
 /// is a strategy component, `bot.wasm`; a directory without one is a
-/// process bot (`run.sh` and `bin/bot`), which only practice runs.
+/// process bot (a `Justfile` whose `run` starts `bin/bot`), which only
+/// practice runs.
 pub fn check(dir: &Path) -> Checked {
     let mut problems = Vec::new();
     let mut notes = Vec::new();
@@ -236,23 +227,26 @@ pub fn check(dir: &Path) -> Checked {
             // module (version 1, layer 0) isn't one.
             Ok(bytes) if bytes.get(..8) == Some(b"\0asm\x0d\0\x01\0") => {}
             Ok(bytes) if bytes.starts_with(b"\0asm") => problems.push(
-                "bot.wasm is a core wasm module, not a component: build it for wasm32-wasip2 (`./build.sh`)".into(),
+                "bot.wasm is a core wasm module, not a component: build it for wasm32-wasip2 (`just build`)".into(),
             ),
             Ok(_) => problems.push("bot.wasm isn't wasm".into()),
         }
         stale(&wasm, dir, "bot.wasm", &mut notes);
         return Checked { problems, notes };
     }
-    if !dir.join("run.sh").is_file() {
-        problems.push("no bot.wasm: build the strategy first (`./build.sh`)".into());
+    if !["Justfile", "justfile", "run.sh"]
+        .iter()
+        .any(|name| dir.join(name).is_file())
+    {
+        problems.push("no bot.wasm: build the strategy first (`just build`)".into());
         return Checked { problems, notes };
     }
     notes.push(
-        "a process bot (run.sh, no bot.wasm): practice runs it, but the bench grades strategy components only".into(),
+        "a process bot (no bot.wasm): practice runs it, but the bench grades strategy components only".into(),
     );
     let bin = dir.join("bin/bot");
     match std::fs::read(&bin) {
-        Err(_) => problems.push("no bin/bot: build the bot first (`./build.sh`)".into()),
+        Err(_) => problems.push("no bin/bot: build the bot first (`just build`)".into()),
         Ok(bytes) => {
             #[cfg(unix)]
             {
@@ -289,7 +283,7 @@ fn stale(built: &Path, dir: &Path, name: &str, notes: &mut Vec<String>) {
     ) && newest > built
     {
         notes.push(format!(
-            "src/ changed since {name} was built: run ./build.sh"
+            "src/ changed since {name} was built: run `just build`"
         ));
     }
 }
@@ -326,19 +320,22 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         .canonicalize()
         .with_context(|| format!("no bot at {}", options.dir.display()))?;
     if options.build {
-        let build = dir.join("build.sh");
-        if !build.is_file() {
+        if !["Justfile", "justfile"]
+            .iter()
+            .any(|name| dir.join(name).is_file())
+        {
             bail!(
-                "no build.sh in {}: build the bot yourself and pass --no-build",
+                "no Justfile in {}: build the bot yourself and pass --no-build",
                 dir.display()
             );
         }
-        let status = Command::new("bash")
-            .arg(&build)
+        let status = Command::new("just")
+            .arg("build")
             .current_dir(&dir)
-            .status()?;
+            .status()
+            .context("running `just build` (is just installed? https://just.systems)")?;
         if !status.success() {
-            bail!("build.sh failed");
+            bail!("`just build` failed");
         }
     }
     let checked = check(&dir);
@@ -475,10 +472,10 @@ pub fn pack(
     let dir = dir
         .canonicalize()
         .with_context(|| format!("no bot at {}", dir.display()))?;
-    for file in ["Cargo.toml", "build.sh"] {
+    for file in ["Cargo.toml", "Justfile"] {
         if !dir.join(file).is_file() {
             bail!(
-                "no {file} in {}: a packed bot is its source, built by build.sh",
+                "no {file} in {}: a packed bot is its source, built by `just build`",
                 dir.display()
             );
         }
@@ -579,7 +576,7 @@ mod tests {
         for file in [
             "Cargo.toml",
             "Cargo.lock",
-            "build.sh",
+            "Justfile",
             "src/lib.rs",
             ".gitignore",
         ] {

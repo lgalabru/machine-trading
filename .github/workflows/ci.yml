@@ -77,6 +77,7 @@ jobs:
           rustup component add clippy
           rustup toolchain install nightly --profile minimal --component rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
       - name: Format
         run: cargo +nightly fmt --all -- --check
       - name: Clippy
@@ -89,14 +90,19 @@ jobs:
         run: |
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
-      - name: A strategy component
-        # bots/reference-wasm builds for wasm32-wasip2 only, outside the
-        # workspace: build it, and load it in the grader's wasm host.
+      - name: Strategy components
+        # The starter and the references as components: each builds for
+        # wasm32-wasip2 (the references in their own workspaces), and the
+        # flash-crash one loads in the grader's wasm host.
         run: |
           rustup target add wasm32-wasip2
-          cargo +nightly fmt --manifest-path bots/reference-wasm/Cargo.toml -- --check
-          cargo clippy --manifest-path bots/reference-wasm/Cargo.toml --target wasm32-wasip2 -- -D warnings
-          bots/reference-wasm/build.sh
+          cargo clippy -p mtx-bot-starter --target wasm32-wasip2 -- -D warnings
+          just --justfile bots/starter/Justfile build
+          for bot in reference-wasm maker-wasm carry-wasm weekend-wasm; do
+            cargo +nightly fmt --manifest-path "bots/$bot/Cargo.toml" -- --check
+            cargo clippy --manifest-path "bots/$bot/Cargo.toml" --target wasm32-wasip2 -- -D warnings
+            just --justfile "bots/$bot/Justfile" build
+          done
           MTX_TEST_WASM="$PWD/bots/reference-wasm/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
 
   # The expensive end-to-end check: build the task image from this commit and

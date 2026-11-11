@@ -42,8 +42,8 @@ mtx bench review 0.10.0
 
 ## Write your own bot
 
-You need Rust with the `wasm32-wasip2` target and `mtx` (above); no
-Docker. A bot is a strategy that trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
+You need Rust with the `wasm32-wasip2` target, [`just`](https://just.systems)
+and `mtx` (above); no Docker. A bot is a strategy that trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
 You write it on [`mtx-kit`](crates/kit) and build it into a WebAssembly
 component, and the grader does the rest: it reads the market before every
 step, calls your strategy, and sends its orders inside the mandate.
@@ -83,7 +83,9 @@ records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `mtx bot practice --task <name>` practises another task in `bench/tasks`,
 and scenarios `mtx scenario generate` draws can be graded too:
 `mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check
-a bot directory and package its source.
+a bot directory and package its source. The strategy is `src/lib.rs`, and
+`just build` builds it into `bot.wasm`, the one file the grader loads: no
+files, network or clock inside, and the same result on any machine.
 
 The rest (the bench's own bots, grading, publishing and comparing releases)
 is in [docs/development.md](docs/development.md).

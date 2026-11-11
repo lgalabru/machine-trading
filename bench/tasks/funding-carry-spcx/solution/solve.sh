@@ -5,4 +5,4 @@
 set -euo pipefail
 cp /solution/src/*.rs /app/bot/src/
 cp /solution/model.bin /app/bot/
-/app/bot/build.sh
+just --justfile /app/bot/Justfile build

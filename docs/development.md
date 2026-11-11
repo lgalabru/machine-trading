@@ -33,9 +33,9 @@ slows the grade.
 
 ```sh
 mtx bot new ~/my-bot                       # from bots/starter, outside this checkout
-mtx bot practice --bot ~/my-bot            # build.sh, then mtx grade on the practice set
+mtx bot practice --bot ~/my-bot            # just build, then mtx grade on the practice set
 mtx bot practice --task <name> --bot ~/my-bot   # another task in bench/tasks
-mtx bot check ~/my-bot                     # run.sh, an executable bin/bot, not stale
+mtx bot check ~/my-bot                     # a bot.wasm that is a component, not stale
 mtx bot pack ~/my-bot -o my-bot.tar.gz     # the source and a manifest, no builds
 ```
 
