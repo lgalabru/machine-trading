@@ -468,6 +468,8 @@ fn disqualification(session: &SessionReport) -> Option<String> {
         ))
     } else if let Some(breach) = session.mandate.audit(&session.observed()) {
         Some(breach.to_string())
+    } else if let Some(breach) = session.order.as_ref().and_then(|order| order.breach()) {
+        Some(breach)
     } else if session.liquidatable {
         Some("ended the session liquidatable".to_string())
     } else {
@@ -645,6 +647,8 @@ mod tests {
             flow: None,
             competitor: None,
             spot: None,
+            order: None,
+            participation: None,
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -695,6 +699,9 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            turn_data: None,
+            order: None,
+            participation: None,
             reference_pnl_usd,
         }
     }

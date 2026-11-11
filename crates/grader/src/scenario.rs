@@ -64,6 +64,19 @@ pub struct Scenario {
     /// those markets and `symbol` their pair, such as `SOL-USDC`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot: Option<Spot>,
+    /// For a spot session: what each step message carries beyond the clock
+    /// (see [`crate::spot::TurnData`]). Without it, none of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_data: Option<crate::spot::TurnData>,
+    /// For a spot session: a quantity the bot has to trade by the end, and
+    /// what a broker would charge to do it for the bot (see
+    /// [`crate::orders::ExecutionOrder`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<crate::orders::ExecutionOrder>,
+    /// For a spot session: a charge on the bot's share of a venue's traded
+    /// volume (see [`crate::orders::Participation`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub participation: Option<crate::orders::Participation>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +207,9 @@ impl Scenario {
             .map_err(|reason| format!("mandate: {reason}"))?;
         if let Some(spot) = &self.spot {
             return spot.validate(self);
+        }
+        if self.turn_data.is_some() || self.order.is_some() || self.participation.is_some() {
+            return Err("turn_data, order and participation are for spot scenarios".into());
         }
         if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
         {
@@ -808,6 +824,9 @@ impl ShockFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            turn_data: None,
+            order: None,
+            participation: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -1442,6 +1461,9 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            turn_data: None,
+            order: None,
+            participation: None,
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1500,6 +1522,9 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            turn_data: None,
+            order: None,
+            participation: None,
             reference_pnl_usd: None,
         }
     }
