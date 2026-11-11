@@ -67,8 +67,30 @@ pub struct TakerOrder {
     /// The worst price it takes, in basis points from the market's level:
     /// it fills only against quotes at least this close.
     pub limit_bps: f64,
-    /// Which of the [`TAKER_ACCOUNTS`] sends it.
+    /// Which of the [`TAKER_ACCOUNTS`] sends it; in a spot session's tape,
+    /// which of the tape's own seats.
     pub account: u8,
+    /// A spot session's tape: the venue it trades on. Without it, the
+    /// session's first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue: Option<TakerVenue>,
+}
+
+/// A spot venue a tape order trades on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TakerVenue {
+    Phoenix,
+    Openbook,
+}
+
+impl TakerVenue {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Phoenix => "phoenix",
+            Self::Openbook => "openbook",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -453,6 +475,7 @@ impl MakingFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            actors: None,
             reference_pnl_usd: None,
         };
         (scenario, informed)
@@ -541,6 +564,7 @@ impl MakingFamily {
             size,
             limit_bps: round2(limit_bps),
             account: rng.range_u64((0, TAKER_ACCOUNTS as u64 - 1)) as u8,
+            venue: None,
         }
     }
 }
@@ -683,6 +707,7 @@ mod tests {
                     size: 2.0,
                     limit_bps: 25.0,
                     account: 0,
+                    venue: None,
                 },
                 TakerOrder {
                     slot: 10,
@@ -690,6 +715,7 @@ mod tests {
                     size: 1.0,
                     limit_bps: 4.0,
                     account: 1,
+                    venue: None,
                 },
             ],
         };

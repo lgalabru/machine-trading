@@ -49,14 +49,16 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    Error, Result, chain,
+    Error, Result,
+    actors::{Cast, Seat},
+    chain,
     compete::{CompeteReport, Competitor},
     error::io_error,
     flow::{FlowReport, TakerRecord, Takers},
     guard::{CallLog, Guard},
     making::{book_at, level_at},
     phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS},
-    scenario::Scenario,
+    scenario::{Scenario, VENUE},
     snapshot,
 };
 
@@ -144,6 +146,9 @@ pub struct SessionReport {
     /// A spot session: the wallet at the start and the end, and every fill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<crate::spot::SpotReport>,
+    /// What the scenario's actors did (see [`crate::actors`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actors: Option<crate::actors::ActorsReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -380,6 +385,27 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         ),
         (None, None) => (None, None),
     };
+    // The actors' seats, on the scenario's market; the makers quote around
+    // the level before the bot starts.
+    // A perp scenario's tape is the takers'.
+    let mut cast = match &scenario.actors {
+        Some(actors) => {
+            let dir = crate::actors::seats::SeatDir::create()?;
+            let (world, phoenix, dir) = (&world, &phoenix, &dir);
+            Some(
+                Cast::prepare(
+                    actors,
+                    &[VENUE.to_string()],
+                    &[],
+                    |_| Seat::perp(world, phoenix, scenario, internal.url(), dir),
+                    start_mark_usd,
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
+    let mut bot_position = 0.0;
     // The orders the takers send, whichever kind of scenario lists them.
     let orders: &[crate::making::TakerOrder] = match (&scenario.making, &scenario.offhours) {
         (Some(making), _) => &making.takers,
@@ -604,6 +630,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // would pick off every quote: a sniper the task doesn't describe.
         // Here the toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
+        let level = |at: u64| start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
+        if let Some(cast) = &mut cast {
+            let at = slot - base_slot;
+            cast.before_flow(at, level(at)).await;
+        }
         send_flow(&mut flow, flow_due.take()).await;
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
@@ -620,6 +651,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             quoting
                 .step(competitor, scenario, making, start_mark_usd, at)
                 .await;
+        }
+        if let Some(cast) = &mut cast {
+            // A perp market's fills, as the actors read them: what each
+            // position moved by.
+            let held = position_in(&meter.measure(&universe).await?, &market_id);
+            let step_flow = cast.flow_from_positions(VENUE, held - bot_position).await;
+            bot_position = held;
+            cast.after_blocks(at, level(at), &step_flow).await;
         }
 
         let now = meter.measure(&universe).await?;
@@ -701,6 +740,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         None => (None, Vec::new()),
     };
     let calls = guard.call_log();
+    let actors = match &cast {
+        Some(cast) => Some(cast.report().await),
+        None => None,
+    };
     let transactions = transactions(&rpc, &calls, base_slot, &|ix, keys| {
         decode_instruction(ix, keys, &phoenix, market)
     });
@@ -744,6 +787,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         flow,
         competitor,
         spot: None,
+        actors,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {

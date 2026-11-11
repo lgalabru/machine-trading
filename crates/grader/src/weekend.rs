@@ -423,6 +423,7 @@ impl WeekendFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            actors: None,
             reference_pnl_usd: None,
         };
         (scenario, shape)
@@ -516,6 +517,7 @@ fn order(slot: u64, side: f64, size: f64, limit_bps: f64, account: u8) -> TakerO
         size,
         limit_bps: round2(limit_bps),
         account,
+        venue: None,
     }
 }
 

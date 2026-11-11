@@ -409,6 +409,15 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
             if s.late_slots > MAX_LATE_SLOTS {
                 return Some(format!("{} ({} slots late)", s.scenario, s.late_slots));
             }
+            // Nor did one whose actors failed to act.
+            if let Some(actors) = s.actors.as_ref().filter(|a| a.degraded()) {
+                return Some(format!(
+                    "{} ({} of {} actor actions failed)",
+                    s.scenario,
+                    actors.actions.failed,
+                    actors.actions.total()
+                ));
+            }
             // A market-making session whose takers didn't trade as listed
             // didn't see the flow its scenario describes.
             let flow = s.flow.as_ref()?;
@@ -645,6 +654,7 @@ mod tests {
             flow: None,
             competitor: None,
             spot: None,
+            actors: None,
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -695,6 +705,7 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            actors: None,
             reference_pnl_usd,
         }
     }
@@ -808,6 +819,22 @@ mod tests {
         });
         assert!(check_timing(&[session(1.0), thin.clone()]).is_err());
         thin.flow.as_mut().unwrap().failed = 10;
+        assert!(check_timing(&[thin]).is_ok());
+    }
+
+    #[test]
+    fn sessions_whose_actors_failed_fail_the_grade() {
+        let mut thin = session(10.0);
+        thin.actors = Some(crate::actors::ActorsReport {
+            actions: crate::actors::Actions {
+                placed: 100,
+                failed: 11,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(check_timing(&[session(1.0), thin.clone()]).is_err());
+        thin.actors.as_mut().unwrap().actions.failed = 10;
         assert!(check_timing(&[thin]).is_ok());
     }
 
