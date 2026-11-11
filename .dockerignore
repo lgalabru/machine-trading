@@ -1,5 +1,7 @@
 **/target
 **/bin
+# Built components: the image builds its own.
+**/bot.wasm
 .git
 .env
 .surfpool
