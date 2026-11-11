@@ -83,10 +83,14 @@ impl Allowance {
     /// `(buy, sell)` in base units, if every order resting now fills: its
     /// `resting_bids` can only take the position up and its `resting_asks`
     /// down. The rule [`Mandate::audit`] checks, asked before a trade
-    /// instead of after a session. It reads only `max_position`,
-    /// which bounds a short as much as a long.
+    /// instead of after a session. Selling stops at `min_position`, or at
+    /// minus `max_position` without one.
     pub fn room(&self, position: f64, resting_bids: f64, resting_asks: f64) -> (f64, f64) {
-        position_room(self.max_position, position, resting_bids, resting_asks)
+        let (buy, sell) = position_room(self.max_position, position, resting_bids, resting_asks);
+        match self.min_position {
+            None => (buy, sell),
+            Some(min) => (buy, (position - resting_asks - min).max(0.0)),
+        }
     }
 
     /// The breach, if holding anywhere from `lowest` to `highest` breaks
@@ -921,5 +925,18 @@ mod tests {
         assert_eq!(allowance.breach(20.0 - 10.0, 20.0 + 30.0 + buy), None);
         assert!(allowance.breach(0.0, 70.5).is_some());
         assert!(allowance.breach(-70.5, 0.0).is_some());
+    }
+
+    #[test]
+    fn room_stops_selling_at_the_floor() {
+        let mut mandate = Mandate::spot(&["phoenix"], "SOL-USDC", 100.0);
+        let allowance = &mut mandate.universe[0];
+        allowance.min_position = Some(10.0);
+        // Holding 60 with asks of 20 resting: 30 more to sell, 40 to buy.
+        assert_eq!(allowance.room(60.0, 0.0, 20.0), (40.0, 30.0));
+        assert_eq!(allowance.room(15.0, 0.0, 20.0), (85.0, 0.0));
+        let (_, sell) = allowance.room(60.0, 0.0, 20.0);
+        assert_eq!(allowance.breach(60.0 - 20.0 - sell, 60.0), None);
+        assert!(allowance.breach(9.5, 60.0).is_some());
     }
 }
