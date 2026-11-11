@@ -54,13 +54,53 @@ mtx bot pack ~/my-bot -o my-bot.tar.gz     # the source and a manifest, no build
 
 ## Run, review and publish a bench
 
+A bench runs a released dataset version: `just bench` pulls the tasks from
+Harbor's registry, not from this checkout. Release the version first
+([Release](#release)); `harbor dataset download
+solana-foundation/machine-trading@<version>` says whether it is there.
+
 ```sh
-just bench                                   # a batch, in jobs/bench/<batch>/
-mtx bench review jobs/bench/<batch>          # browse it (or `just review …`)
-mtx bench publish jobs/bench/<batch> 0.9.0   # keep it, in bench/results/0.9.0/
-mtx bench review 0.9.0                       # browse a published release
-mtx bench compare 0.9.0...0.8.0 [--open]     # skill by task and model, and the change
+just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0   # models, attempts, at a time, version
+just review jobs/bench/<batch>                          # browse it
+just publish jobs/bench/<batch> 0.11.0                  # keep it, in bench/results/0.11.0/
+git add bench/results/0.11.0 && git commit && git push  # the push publishes the website
 ```
+
+1. **Run.** `just bench` writes `jobs/bench/<batch>/`: the plan
+   (`batch.json`: models, harnesses and versions, attempts, the commit),
+   the batch's secret (`.seed`, owner-only), and one Harbor job per model.
+   Every trial of a batch is graded on the same hidden set, drawn from the
+   secret inside the verifier. At the end it checks the secret is in no job
+   file, then prints the report (`bench/report.py`): skill by model and task,
+   with 90% intervals.
+   - **Machine:** an idle one. Load slows the surfnets' clocks, and the
+     grader fails sessions it can't run on time. A trial takes about 8 CPUs
+     while it grades; market-making's verifier alone runs about an hour.
+   - **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for the providers
+     it runs, from `.env` or `~/.machine-trading.env`.
+   - **Several machines:** give each the same secret, so every trial sees
+     the same hidden set: `MTX_EVAL_SEED="$(cat <batch>/.seed)" just bench
+     …`. Then copy each machine's Harbor job directories
+     (`jobs/bench/<batch>/<job>/`) into the first batch, note it in
+     `batch.json`, and run `python3 -I bench/report.py <batch>`. Start runs
+     on one machine a minute apart: two at once can race on Harbor's task
+     cache.
+   - **A void trial:** rerun it on the same set with the batch's secret.
+2. **Review.** Look at what stands out before you publish: read a winning
+   run's bot, and check its report for refused calls and late slots. A score
+   far above the others is a leak until it isn't.
+3. **Publish.** `just publish <batch> <version>` writes
+   `bench/results/<version>/` and refuses if any file holds the batch's
+   secret or an API key. `--force` replaces a release. See
+   [bench/results](../bench/results/README.md) for what a release keeps.
+4. **Commit and push.** The Pages workflow (`.github/workflows/specs.yml`)
+   rebuilds the website whenever `bench/results` changes, so pushing the
+   release publishes it. A deploy that times out is rerun with
+   `gh run rerun <id> --failed`.
+
+`mtx bench review <version>` browses a published release, and
+`mtx bench compare 0.11.0...0.10.0 [--open]` compares skill by task and
+model between two.
 
 - **Review page:** a breadcrumb (`mtx › release › task › run › scenario`),
   the tasks as a column of tiles, and an overview: a leaderboard of skill
@@ -75,14 +115,12 @@ mtx bench compare 0.9.0...0.8.0 [--open]     # skill by task and model, and the 
   `mtx grade --details`.
 - **The website:** every published release is on GitHub Pages at
   `/bench/`, as the same page with its data written out as files
-  (`mtx bench export <dir>`; the browser inflates the gzipped ones). The
-  Pages workflow rebuilds it whenever `bench/results` changes, so
-  committing a release publishes it.
-- **Published releases:** small enough to commit, at a few hundred KB a
-  trial. A release holds the results, reports, session detail files, the
-  bot's source and the trajectory, gzipped. Publishing refuses any release
-  that would hold the batch's `.seed` or an API key. The review page lets
-  you switch between releases and compare them.
+  (`mtx bench export <dir>`; the browser inflates the gzipped ones).
+- **Published releases:** about 7 MB a trial, most of it the bot's
+  sessions step by step, which the review page draws. 0.11.0, 40 trials,
+  is 293 MB in the repository and about 450 MB on the website with 0.10.0.
+  GitHub Pages serves at most 1 GB, so the session files will have to move
+  out of the repository within a release or two.
 
 ## Author and play scenarios
 
