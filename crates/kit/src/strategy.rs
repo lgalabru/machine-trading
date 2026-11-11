@@ -101,9 +101,10 @@ pub struct Session {
 }
 
 /// The variables a task may set for a session, beyond the bot's contract:
-/// the slot an off-hours market reopens at, and the session's regime, which
-/// only the benchmark's ladder hands a bot.
-pub const SESSION_VARS: &[&str] = &["MTX_REOPEN_SLOT", "MTX_REGIME"];
+/// the slot an off-hours market reopens at; and the session's regime and
+/// the rung a reference plays, which only the benchmark's ladder hands a
+/// process bot.
+pub const SESSION_VARS: &[&str] = &["MTX_REOPEN_SLOT", "MTX_REGIME", "MTX_RUNG"];
 
 impl Session {
     /// A task variable for the session ([`SESSION_VARS`]), if it set one.

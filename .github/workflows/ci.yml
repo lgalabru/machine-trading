@@ -25,9 +25,9 @@ jobs:
         # Mirrors `references` and `check-solution` in the Justfile: every
         # source file, and the model the bot reads, if any.
         run: |
-          for pair in flash-crash-spcx=reference-wasm market-making-spcx=maker-wasm funding-carry-spcx=carry-wasm weekend-gap-spcx=weekend-wasm; do
+          for pair in flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend; do
             bot="bots/${pair#*=}"; solution="bench/tasks/${pair%%=*}/solution"
-            diff -ru "$bot/src" "$solution/src"
+            diff -ru -x main.rs "$bot/src" "$solution/src"
             if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
             for model in "$bot"/model.*; do
               if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
@@ -91,19 +91,16 @@ jobs:
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
       - name: Strategy components
-        # The starter and the references as components: each builds for
-        # wasm32-wasip2 (the references in their own workspaces), and the
-        # flash-crash one loads in the grader's wasm host.
+        # The starter and the references build for wasm32-wasip2 too, and
+        # the flash-crash reference's component loads in the grader's host.
         run: |
           rustup target add wasm32-wasip2
-          cargo clippy -p mtx-bot-starter --target wasm32-wasip2 -- -D warnings
-          just --justfile bots/starter/Justfile build
-          for bot in reference-wasm maker-wasm carry-wasm weekend-wasm; do
-            cargo +nightly fmt --manifest-path "bots/$bot/Cargo.toml" -- --check
-            cargo clippy --manifest-path "bots/$bot/Cargo.toml" --target wasm32-wasip2 -- -D warnings
-            just --justfile "bots/$bot/Justfile" build
+          for bot in starter reference maker carry weekend; do
+            cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
-          MTX_TEST_WASM="$PWD/bots/reference-wasm/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
+          just --justfile bots/starter/Justfile build
+          just --justfile bots/reference/Justfile build
+          MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.

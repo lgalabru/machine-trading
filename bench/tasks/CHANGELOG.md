@@ -26,10 +26,11 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     no files, environment, network or clock, ten billion instructions a
     call and two billion a step over the session, 1 GiB of memory, 256
     reads a step, no turn deadline, and a trap ends the strategy
-    for the session. The oracle solutions are
-    the reference bots ported to components (`bots/*-wasm`): on each task's
-    practice set, each earns its process reference's PnL to the cent. The
-    references the hidden sets are scored against stay processes.
+    for the session. The reference bots are
+    strategies now, built both ways: as components they are the oracle
+    solutions, and as processes (`mtx_kit::run`) the anchors hidden sets are
+    scored against and the ladder's rungs. On each task's practice set, both
+    earn the old process reference's PnL to the cent.
   - **What a component reads.** `Session` gains the venue's metadata
     (`venue`, read with `mtx_kit::venue::PhoenixVenue`, feature `venue`),
     the starting oracle, the trading key's public key (`authority`) and the

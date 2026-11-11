@@ -4879,10 +4879,8 @@ dependencies = [
 name = "mtx-bot-carry"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "mtx-kit",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -4922,22 +4920,14 @@ dependencies = [
 name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "mtx-kit",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
 name = "mtx-bot-reference"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "mtx-kit",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -4962,15 +4952,10 @@ dependencies = [
 name = "mtx-bot-weekend"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "borsh 1.8.1",
  "bs58",
  "mtx-kit",
  "serde_json",
- "solana-rpc-client-api",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

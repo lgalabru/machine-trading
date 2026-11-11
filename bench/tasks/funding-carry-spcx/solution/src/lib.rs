@@ -1,16 +1,40 @@
-//! The funding-carry reference (`bots/carry`) as a wasm strategy: the same
-//! reads, features, trees and targets; see `bots/carry/src/main.rs` for the
-//! strategy. The trees are `bots/carry`'s own: `src/model.rs`, which embeds
-//! `model.bin`, both linked from there.
+//! Reference: a carry desk fitted to the family, fading the premiums the
+//! crowd's positioning opened and following the ones the index follows,
+//! with what fading or following earns over the next seconds after funding
+//! forecast by trees trained on generated sessions.
 //!
-//! Two differences come from the order sheet. The process reads its position
-//! after every slice and stops slicing when one doesn't fill; the component
-//! counts each slice as filled, so it sends the slices that reach the target
-//! and the grader stops at the first that fails. And it has no `told` rung:
-//! the ladder's anchors stay processes.
+//! This is the best of g0's three GPT-6.1 Sol screen bots, frozen (see the
+//! task's DESIGN.md, "Generations"): on g1's hidden sessions it made 1.7x the
+//! gradient-boosted reference g1 started with, and more than that bot told
+//! each episode's kind. Each turn it reads the PerpAssetMap (the index, from
+//! the spot oracles' median, and the session's funding parameters), the
+//! makers' spline collection (the book's centre, which its own fills don't
+//! move) and its trader account, in one `getMultipleAccounts`. It tracks the
+//! current premium episode and the session's history (how many episodes the
+//! index followed), and an ensemble of four tree models (embedded in
+//! `model.bin`: four-second returns after funding, and position values with
+//! switching costs) forecasts the return of being long. It holds the usable
+//! cap long past +10 bp, short past -10 bp, keeps its side inside the band,
+//! and sizes the cap down as the drawdown grows (flat for the session past
+//! 62% of the limit). It trades in market orders of up to 20 shares,
+//! checking its position after each in the process it began as; as a
+//! strategy it counts each slice as filled.
+//!
+//! Changed from the frozen bot: a turn no longer stops slicing after 1.2 s
+//! of wall time (a session must replay the same under any load), and the
+//! ladder's `told` rung (`MTX_RUNG=told`) reads each episode's kind from
+//! `MTX_REGIME` and corrects the reference's own target with it: never
+//! fade an informed premium before the index catches up, follow it with the
+//! cap once the index has started to; fade a crowded one with the cap while
+//! it lasts, never follow it.
+
+//!
+//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
+//! solution), and a process (`src/main.rs`), the anchor hidden sets are
+//! scored against, which the ladder also runs as its `told` rung.
 
 use mtx_kit::{
-    component::log,
+    log,
     prelude::*,
     rpc_accounts,
     venue::{
@@ -38,8 +62,11 @@ struct Setup {
     cap: f64,
 }
 
-struct Carry {
+/// The carry desk, as a [`Strategy`].
+pub struct Carry {
     setup: Option<Setup>,
+    told: Option<Told>,
+    start_slot: u64,
     model: model::Model,
     features: model::Features,
     peak: f64,
@@ -50,6 +77,8 @@ impl Default for Carry {
     fn default() -> Self {
         Self {
             setup: None,
+            told: None,
+            start_slot: 0,
             model: model::Model::load(),
             features: model::Features::new(),
             peak: 10100.0,
@@ -78,6 +107,8 @@ impl Strategy for Carry {
             market.spline_pubkey.clone(),
             venue.trader_account(&authority).to_string(),
         ];
+        self.told = Told::from_session(session)?;
+        self.start_slot = session.start_slot;
         self.setup = Some(Setup {
             venue,
             market,
@@ -205,6 +236,14 @@ impl Strategy for Carry {
         } else {
             0.0
         };
+        if let Some(told) = &self.told {
+            target = told.target(
+                step.slot as f64 - self.start_slot as f64,
+                target,
+                usable_cap,
+                book / index - 1.0,
+            );
+        }
         if self.stopped {
             target = 0.0;
         }
@@ -233,4 +272,61 @@ impl Strategy for Carry {
     }
 }
 
+/// The ladder's told rung: each episode's kind and timing, in slots from the
+/// session's start, from `MTX_REGIME`, for the process only.
+struct Told {
+    /// Informed, start, follow (the slot the index starts to follow), close,
+    /// end, and the premium's side.
+    episodes: Vec<(bool, f64, f64, f64, f64, f64)>,
+}
+
+impl Told {
+    fn from_session(session: &Session) -> BotResult<Option<Self>> {
+        if session.var("MTX_RUNG") != Some("told") {
+            return Ok(None);
+        }
+        let regime = session.var("MTX_REGIME").ok_or("told needs MTX_REGIME")?;
+        let shape: serde_json::Value = serde_json::from_str(regime)?;
+        let episodes = shape["episodes"]
+            .as_array()
+            .ok_or("no episodes")?
+            .iter()
+            .map(|e| {
+                let n = |k: &str| e[k].as_f64();
+                (
+                    e["kind"] == "informed",
+                    n("start").unwrap_or(0.0),
+                    n("follow").unwrap_or(f64::MAX),
+                    n("close").unwrap_or(0.0),
+                    n("end").unwrap_or(0.0),
+                    n("premium_pct").unwrap_or(0.0).signum(),
+                )
+            })
+            .collect();
+        Ok(Some(Self { episodes }))
+    }
+
+    /// The reference's own target, corrected by what it's told. An informed
+    /// premium: never fade it before the index has caught up, and follow it
+    /// with the cap once the index has started to follow. A crowded one:
+    /// fade it with the cap while it's more than 8 bp, never follow it.
+    /// Elsewhere, the reference's target.
+    fn target(&self, at: f64, target: f64, cap: f64, gap: f64) -> f64 {
+        for &(informed, start, follow, close, end, side) in &self.episodes {
+            if !(start..end).contains(&at) {
+                continue;
+            }
+            return match informed {
+                true if at >= follow && at < close => cap * side,
+                true if at < close && target * side < 0.0 => 0.0,
+                false if gap * side > 0.0008 => -cap * side,
+                false if target * side > 0.0 => 0.0,
+                _ => target,
+            };
+        }
+        target
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Carry);
