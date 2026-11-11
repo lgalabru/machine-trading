@@ -232,6 +232,9 @@ pub struct GradeOptions<'a> {
     /// What each scenario was drawn as (a shock's shape, which taker orders
     /// were informed), recorded in its detail file. Never handed to a bot.
     pub annotations: Option<&'a [serde_json::Value]>,
+    /// Grade the bot only if it is a strategy component (a `bot.wasm`): the
+    /// verifier's rule. The reference can still be a process.
+    pub components_only: bool,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -277,6 +280,9 @@ fn write_details(
 }
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
+    if opts.components_only && crate::wasm::component_in(opts.bot_dir).is_none() {
+        return Err(Error::NotAComponent(opts.bot_dir.to_path_buf()));
+    }
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
     if let Some(reference) = opts.reference_dir {

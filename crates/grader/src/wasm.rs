@@ -237,6 +237,8 @@ pub struct Clock<'a> {
     pub slots_per_step: u64,
     pub start_slot: u64,
     pub scenario: &'a str,
+    /// The task's variables for the session ([`mtx_kit::SESSION_VARS`]).
+    pub vars: Vec<(String, String)>,
 }
 
 /// A component playing one session: the strategy, and the venue the grader
@@ -251,6 +253,9 @@ pub struct WasmBot {
     last_mark: Option<f64>,
     resting: (f64, f64),
     last: Option<Market>,
+    /// The strategy trapped: Wasmtime won't enter its instance again, so it
+    /// plays no more of the session.
+    trapped: bool,
 }
 
 impl WasmBot {
@@ -268,6 +273,7 @@ impl WasmBot {
             slots_per_step,
             start_slot,
             scenario,
+            vars,
         } = clock;
         let trader = mtx_kit::Trader::connect(env)?;
         let start_mark = trader.mark_usd().await?;
@@ -287,12 +293,19 @@ impl WasmBot {
             mandate: serde_json::to_string(mandate)?,
             venue: std::fs::read_to_string(&env.exchange_path)
                 .map_err(crate::error::io_error(&env.exchange_path))?,
+            authority: trader.authority().to_string(),
+            vars,
             seed,
         };
+        let mut trapped = false;
         match strategy.start(&session).await {
             Outcome::Done(()) => {}
-            Outcome::Failed(e) | Outcome::Trapped(e) => {
+            Outcome::Failed(e) => {
                 tracing::warn!(error = %e, "the strategy's start failed; it plays on");
+            }
+            Outcome::Trapped(e) => {
+                tracing::warn!(error = %e, "the strategy's start trapped; it plays no more of the session");
+                trapped = true;
             }
         }
         Ok(Self {
@@ -304,6 +317,7 @@ impl WasmBot {
             last_mark: None,
             resting: (0.0, 0.0),
             last: None,
+            trapped,
         })
     }
 
@@ -311,17 +325,21 @@ impl WasmBot {
     /// the sheet to the mandate's cap and send it, in order, stopping at the
     /// first order that fails. Returns whether the strategy answered.
     pub async fn turn(&mut self, k: u64, slot: u64, last: bool) -> bool {
-        let (mark, oracle, position) = match (
-            self.trader.mark_usd().await,
+        if self.trapped {
+            return false;
+        }
+        let (top, oracle, position) = match (
+            self.trader.top().await,
             self.trader.oracle_usd().await,
             self.trader.position().await,
         ) {
-            (Ok(mark), Ok(oracle), Ok(position)) => (mark, oracle, position),
-            (mark, oracle, position) => {
-                tracing::warn!(step = k, mark = ?mark.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
+            (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
+            (top, oracle, position) => {
+                tracing::warn!(step = k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
                 return false;
             }
         };
+        let mark = top.mark;
         if let Some(previous) = self.last_mark {
             self.pnl += position.size * (mark - previous);
         }
@@ -335,6 +353,9 @@ impl WasmBot {
             slots_left: self.session.end_slot.saturating_sub(slot),
             mark,
             oracle,
+            index: top.index,
+            best_bid: top.best_bid,
+            best_ask: top.best_ask,
             position,
             cap: self.session.cap,
             max_drawdown: self.session.max_drawdown,
@@ -352,6 +373,9 @@ impl WasmBot {
             slots_left: kit.slots_left,
             mark,
             oracle,
+            index: top.index,
+            best_bid: top.best_bid,
+            best_ask: top.best_ask,
             position: Position {
                 size: position.size,
                 entry_usd: position.entry_usd,
@@ -372,7 +396,8 @@ impl WasmBot {
                 return true;
             }
             Outcome::Trapped(e) => {
-                tracing::warn!(step = k, error = %e, "the strategy trapped; no orders this step");
+                tracing::warn!(step = k, error = %e, "the strategy trapped; it plays no more of the session");
+                self.trapped = true;
                 return false;
             }
         };
@@ -411,6 +436,9 @@ impl WasmBot {
 
     /// The session is over: the strategy's `end`.
     pub async fn end(&mut self) {
+        if self.trapped {
+            return;
+        }
         let last = self.last;
         if let Outcome::Trapped(e) = self.strategy.end(last.as_ref()).await {
             tracing::warn!(error = %e, "the strategy's end trapped");
@@ -472,6 +500,9 @@ mod tests {
             slots_left: 200 - 2 * k,
             mark,
             oracle: mark,
+            index: mark,
+            best_bid: None,
+            best_ask: None,
             position: Position {
                 size,
                 entry_usd: 100.0,
@@ -526,6 +557,8 @@ mod tests {
             ))
             .unwrap(),
             venue: "{}".into(),
+            authority: String::new(),
+            vars: Vec::new(),
             seed: 7,
         };
         assert!(matches!(strategy.start(&session).await, Outcome::Done(())));

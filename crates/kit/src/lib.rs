@@ -107,8 +107,9 @@ pub use solana_pubkey::Pubkey;
 #[cfg(feature = "chain")]
 pub use solana_transaction::{Hash, Instruction, Signature};
 pub use strategy::{
-    Action, BotResult, Execution, Intent, Market, Orders, Position, RPC_METHODS, Session, Side,
-    Strategy, plan, resting_after, rpc, rpc_account, rpc_accounts, step_offline,
+    Action, BotResult, Execution, Intent, Market, Orders, Position, RPC_METHODS, SESSION_VARS,
+    Session, Side, Strategy, log, plan, resting_after, rpc, rpc_account, rpc_accounts,
+    step_offline,
 };
 
 #[cfg(feature = "phoenix")]
@@ -131,7 +132,7 @@ mod bot {
             phoenix_rise,
         },
         run::run,
-        trader::Trader,
+        trader::{Top, Trader},
         tx::{rpc_client, send},
     };
 }

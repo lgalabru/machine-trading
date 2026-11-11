@@ -37,6 +37,8 @@ pub fn session(s: wit::Session) -> Result<Session, String> {
         max_drawdown: s.max_drawdown,
         mandate: serde_json::from_str(&s.mandate).map_err(|e| format!("the mandate: {e}"))?,
         venue: s.venue,
+        authority: s.authority,
+        vars: s.vars,
         seed: s.seed,
     })
 }
@@ -52,6 +54,9 @@ pub fn market(m: wit::Market) -> Market {
         slots_left: m.slots_left,
         mark: m.mark,
         oracle: m.oracle,
+        index: m.index,
+        best_bid: m.best_bid,
+        best_ask: m.best_ask,
         position: Position {
             size: m.position.size,
             entry_usd: m.position.entry_usd,
@@ -110,10 +115,7 @@ pub fn intent(intent: Intent) -> wit::Intent {
     }
 }
 
-/// A line in the strategy's log, which the grader keeps beside the session.
-pub fn log(line: &str) {
-    bindings::log(line);
-}
+pub use crate::log;
 
 /// Exports a [`Strategy`](crate::Strategy) that is `Default` as the
 /// component's `start`, `step` and `end`.

@@ -112,6 +112,10 @@ enum Command {
         /// whatever the rest do); the report covers the sessions up to it.
         #[arg(long)]
         stop_on_disqualify: bool,
+        /// Grade the bot only if it is a strategy component (a bot.wasm): the
+        /// verifier's rule. The reference can still be a process.
+        #[arg(long)]
+        components_only: bool,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -831,6 +835,7 @@ async fn run() -> Result<()> {
             anchor_jobs,
             tell_regime,
             stop_on_disqualify,
+            components_only,
             reward,
             report,
             details,
@@ -925,6 +930,7 @@ async fn run() -> Result<()> {
                 stop_on_disqualify,
                 detail_dir: details.as_deref(),
                 annotations: annotations.as_deref(),
+                components_only,
             })
             .await?;
             graded.eval_seed_sha256 = eval_seed_sha256;

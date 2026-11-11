@@ -48,6 +48,8 @@ pub enum Error {
     InvalidScenario { path: PathBuf, reason: String },
     #[error("no bot at {}: a bot is a directory with a run.sh, or with a bot.wasm", .0.display())]
     MissingBot(PathBuf),
+    #[error("no bot.wasm in {}: this grade takes strategy components only, built into bot.wasm (./build.sh)", .0.display())]
+    NotAComponent(PathBuf),
     #[error("--jobs must be between 1 and {1}, one per bot user; got {0}")]
     Jobs(usize, usize),
     #[error(
