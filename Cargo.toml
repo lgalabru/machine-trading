@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "bots/*"]
 # Built for wasm32-wasip2 only: its own workspace.
-exclude = ["bots/reference-wasm"]
+exclude = ["bots/carry-wasm", "bots/maker-wasm", "bots/reference-wasm", "bots/weekend-wasm"]
 default-members = ["crates/cli"]
 resolver = "3"
 
