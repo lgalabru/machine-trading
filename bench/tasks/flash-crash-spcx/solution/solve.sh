@@ -1,6 +1,6 @@
 #!/bin/bash
-# Reference solution: the ladder-bid strategy from bots/reference in the mtx
-# repository, built into the starter's place.
+# Reference solution: the flash-crash reference from bots/reference in
+# the mtx repository, a strategy component built into the starter's place.
 set -euo pipefail
-cp /solution/src/main.rs /app/bot/src/main.rs
-/app/bot/build.sh
+cp /solution/src/lib.rs /app/bot/src/lib.rs
+just --justfile /app/bot/Justfile build

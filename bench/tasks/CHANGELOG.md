@@ -4,18 +4,10 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
-- **Unreleased.**
-  - **The order sheet counts resting orders.** `plan()` cut each resting
-    order against the position alone, so two bids of 50 under a cap of 70
-    both went out, and filling both broke the mandate. It now counts every
-    order resting, from earlier steps (`Market::resting_bids` and
-    `resting_asks`, the run loop's ledger since its last cancel) and earlier
-    on the sheet, as filled. `room_to_buy()` and `room_to_sell()` count them
-    too, by the mandate's own rule (`Allowance::room` in `mtx-core`), which
-    the grader's audit now shares.
-- **0.12.0.** New tasks on new scenario hooks in the engine (book
-  premiums, a taker tape, per-session funding, off-hours markets; each
-  opt-in, so flash-crash's and market-making's sessions are unchanged).
+- **0.12.0.** Bots are strategy components, and two new tasks on new
+  scenario hooks in the engine (book premiums, a taker tape, per-session
+  funding, off-hours markets; each opt-in, so flash-crash's and
+  market-making's sessions are unchanged).
   - **`funding-carry-spcx`.** The SPCX book trades at a premium or a
     discount to its index, and Phoenix's funding pays the side against
     it. A good bot fades the premiums the crowd's positioning opened,
@@ -25,6 +17,48 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     weekend, so Phoenix prices the SPCX index from its own book until the
     market reopens. A good bot reads which weekend flow knows where SPCX
     will open, and holds that gap into the reopen within its loss limit.
+  - **Bots are strategy components.** The verifier grades `/app/bot/bot.wasm`,
+    a WebAssembly component the grader loads and calls (RFD 0002), and
+    nothing else (`mtx grade --components-only`, in `test.sh` and
+    `mtx-practice`). The starter is one (`src/lib.rs`; `build.sh` builds it
+    for `wasm32-wasip2`, which the image now carries), and each task's
+    instructions give the component's contract instead of the process's:
+    no files, environment, network or clock, ten billion instructions a
+    call and two billion a step over the session, 1 GiB of memory, 256
+    reads a step, no turn deadline, and a trap ends the strategy
+    for the session. The reference bots are
+    strategies now, built both ways: as components they are the oracle
+    solutions, and as processes (`mtx_kit::run`) the anchors hidden sets are
+    scored against and the ladder's rungs. On each task's practice set, both
+    earn the old process reference's PnL to the cent.
+  - **What a component reads.** `Session` gains the venue's metadata
+    (`venue`, read with `mtx_kit::venue::PhoenixVenue`, feature `venue`),
+    the starting oracle, the trading key's public key (`authority`) and the
+    task's variables (`var("MTX_REOPEN_SLOT")`). `Market` gains Phoenix's
+    index and the book's best bid and ask, from the read the mark comes
+    from. `rpc_account` and `rpc_accounts` return accounts' data, and
+    `mtx_kit::log` writes the strategy's log, in a component or a process.
+  - **One `Strategy`, synchronous.** `mtx_kit::Strategy`'s `start`,
+    `step` and `end` are plain functions, and `step` takes `&mut Orders`.
+    The same strategy runs as a process (`mtx_kit::run`) and as a
+    WebAssembly component the grader calls (`mtx_kit::export!`, feature
+    `component`; RFD 0002). `Orders::trader()` and `Session::env` are gone:
+    `mtx_kit::rpc(method, params)` reads the chain, synchronously, at the
+    step, for the reads in `mtx_kit::RPC_METHODS`. `Session` is plain data
+    (steps, slots, symbol, start mark, cap, drawdown limit, mandate, seed),
+    `Market::budget_left` is gone, and `mtx_kit::Side` is the kit's own,
+    with `.into()` for Phoenix's builders.
+  - **Reads are at the step.** The guard served a read at `processed` only
+    when it named a commitment; one that named none got the node's
+    default, 31 slots behind the world. Every read is now at `processed`.
+  - **The order sheet counts resting orders.** `plan()` cut each resting
+    order against the position alone, so two bids of 50 under a cap of 70
+    both went out, and filling both broke the mandate. It now counts every
+    order resting, from earlier steps (`Market::resting_bids` and
+    `resting_asks`, the run loop's ledger since its last cancel) and earlier
+    on the sheet, as filled. `room_to_buy()` and `room_to_sell()` count them
+    too, by the mandate's own rule (`Allowance::room` in `mtx-core`), which
+    the grader's audit now shares.
 
 - **0.11.0.** Three leaks closed, tasks named for their skill, and OpenAI
   models. Design and evidence: [bench/design/0.11.0.md](../design/0.11.0.md).

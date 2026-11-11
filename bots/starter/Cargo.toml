@@ -7,15 +7,11 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-[[bin]]
-name = "mtx-starter"
-path = "src/main.rs"
+# A strategy component: build.sh builds it for wasm32-wasip2 into bot.wasm,
+# which the grader loads and calls (docs/rfd/0002-wasm-strategies.md).
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
 
 [dependencies]
-mtx-kit = { path = "../../crates/kit" }
-tracing = "0.1"
-# Not used by the starter: the tasks' oracle solutions (`solution/solve.sh`)
-# are built in this crate, and use these, as the starter did before 0.11.0.
-anyhow = "1"
-tokio = { version = "1", features = ["full"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component", "venue"] }

@@ -309,9 +309,9 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         )
         .replace(&format!("\"{old_bin}\""), &format!("\"{new_bin}\""));
     std::fs::write(bot_to.join("Cargo.toml"), cargo)?;
-    let build = std::fs::read_to_string(bot_to.join("build.sh"))?
+    let justfile = std::fs::read_to_string(bot_to.join("Justfile"))?
         .replace(&format!("--bin {old_bin}"), &format!("--bin {new_bin}"));
-    std::fs::write(bot_to.join("build.sh"), build)?;
+    std::fs::write(bot_to.join("Justfile"), justfile)?;
     std::fs::copy(bot_to.join("src/main.rs"), to.join("solution/src/main.rs"))?;
     written.push(format!(
         "bots/{family}/ (from bots/{}, package mtx-bot-{family})",

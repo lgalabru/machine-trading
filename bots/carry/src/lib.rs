@@ -17,7 +17,8 @@
 //! cap long past +10 bp, short past -10 bp, keeps its side inside the band,
 //! and sizes the cap down as the drawdown grows (flat for the session past
 //! 62% of the limit). It trades in market orders of up to 20 shares,
-//! checking its position after each.
+//! checking its position after each in the process it began as; as a
+//! strategy it counts each slice as filled.
 //!
 //! Changed from the frozen bot: a turn no longer stops slicing after 1.2 s
 //! of wall time (a session must replay the same under any load), and the
@@ -27,89 +28,128 @@
 //! cap once the index has started to; fade a crowded one with the cap while
 //! it lasts, never follow it.
 
-use std::str::FromStr;
+//!
+//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
+//! solution), and a process (`src/main.rs`), the anchor hidden sets are
+//! scored against, which the ladder also runs as its `told` rung.
 
-use anyhow::{Result, anyhow};
 use mtx_kit::{
-    BotEnv, Pubkey, Side, Trader, Turns,
-    phoenix_rise::accounts::{
-        perp_asset_map::PerpAssetMap, spline_collection::SplineCollection,
-        trader::Trader as RawTrader,
+    log,
+    prelude::*,
+    rpc_accounts,
+    venue::{
+        PhoenixVenue,
+        phoenix_rise::{
+            accounts::{
+                perp_asset_map::PerpAssetMap, spline_collection::SplineCollection,
+                trader::Trader as RawTrader,
+            },
+            types::exchange::ExchangeMarketConfig,
+        },
     },
 };
+
 mod model;
 
-fn position(trader: &Trader, base_decimals: i8) -> Result<f64> {
-    let data = trader.rpc.get_account_data(&trader.account)?;
-    let raw = RawTrader::try_from_account_bytes(&data)?;
-    Ok(raw
-        .positions()
-        .find(|p| p.0 == trader.inner.market().asset_id as u64)
-        .map(|p| p.1.base_lot_position().as_inner() as f64 / 10f64.powi(base_decimals as i32))
-        .unwrap_or(0.0))
+/// What `start` reads of the session.
+struct Setup {
+    venue: PhoenixVenue,
+    market: ExchangeMarketConfig,
+    symbol: String,
+    /// The perp asset map, the makers' splines and the bot's trader account.
+    addresses: [String; 3],
+    max_drawdown: f64,
+    cap: f64,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Acknowledge the turn protocol before doing any account or metadata work.
-    let mut turns = Turns::connect()?;
-    let env = BotEnv::from_env()?;
-    // Fail closed if the supplied mandate and instrument disagree.
-    let mandate = env.mandate()?;
-    let allowance = mandate
-        .universe
-        .iter()
-        .find(|a| a.instrument.to_string() == "phoenix:perp:SPCX")
-        .ok_or_else(|| anyhow!("SPCX is outside the mandate"))?;
-    let max_position = env.max_position.min(allowance.max_position);
-    let max_drawdown = mandate
-        .limits
-        .max_drawdown_usd
-        .map_or(env.max_drawdown_usd, |limit| {
-            env.max_drawdown_usd.min(limit)
-        });
-    if env.symbol != "SPCX" {
-        return Err(anyhow!("SPCX mandate required"));
+/// The carry desk, as a [`Strategy`].
+pub struct Carry {
+    setup: Option<Setup>,
+    told: Option<Told>,
+    start_slot: u64,
+    model: model::Model,
+    features: model::Features,
+    peak: f64,
+    stopped: bool,
+}
+
+impl Default for Carry {
+    fn default() -> Self {
+        Self {
+            setup: None,
+            told: None,
+            start_slot: 0,
+            model: model::Model::load(),
+            features: model::Features::new(),
+            peak: 10100.0,
+            stopped: false,
+        }
     }
-    let trader = Trader::connect(&env)?;
-    let market = trader.phoenix.market(&env.symbol)?;
-    let spline_addr = Pubkey::from_str(&market.spline_pubkey)?;
-    let map_addr = trader.phoenix.perp_asset_map()?;
-    let addrs = [map_addr, spline_addr, trader.account];
-    let model = model::Model::load();
-    let mut features = model::Features::new();
-    let cap = (max_position - 0.1).clamp(0.0, 69.9);
-    let mut peak = 10100.0f64;
-    let mut stopped = false;
-    let told = Told::from_env()?;
-    let start_slot = turns.hello().start_slot as f64;
-    while let Some(step) = turns.next()? {
-        // One standard RPC request gives a consistent view while the world waits.
-        let accounts = match trader.rpc.get_multiple_accounts(&addrs) {
+}
+
+impl Strategy for Carry {
+    fn start(&mut self, session: &Session) -> BotResult {
+        let allowance = session
+            .mandate
+            .universe
+            .iter()
+            .find(|a| a.instrument.to_string() == "phoenix:perp:SPCX")
+            .ok_or("SPCX is outside the mandate")?;
+        if session.symbol != "SPCX" {
+            return Err("SPCX mandate required".into());
+        }
+        let max_position = session.cap.min(allowance.max_position);
+        let venue = PhoenixVenue::from_json(&session.venue)?;
+        let market = venue.market(&session.symbol)?.clone();
+        let authority = mtx_kit::venue::key(&session.authority)?;
+        let addresses = [
+            venue.perp_asset_map()?.to_string(),
+            market.spline_pubkey.clone(),
+            venue.trader_account(&authority).to_string(),
+        ];
+        self.told = Told::from_session(session)?;
+        self.start_slot = session.start_slot;
+        self.setup = Some(Setup {
+            venue,
+            market,
+            symbol: session.symbol.clone(),
+            addresses,
+            max_drawdown: session
+                .mandate
+                .limits
+                .max_drawdown_usd
+                .map_or(session.max_drawdown, |limit| {
+                    session.max_drawdown.min(limit)
+                }),
+            cap: (max_position - 0.1).clamp(0.0, 69.9),
+        });
+        Ok(())
+    }
+
+    fn step(&mut self, step: &Market, orders: &mut Orders) -> BotResult {
+        let setup = self.setup.as_ref().ok_or("no session")?;
+        let (venue, market) = (&setup.venue, &setup.market);
+        let addresses: Vec<&str> = setup.addresses.iter().map(String::as_str).collect();
+        let accounts = match rpc_accounts(&addresses) {
             Ok(a) => a,
             Err(e) => {
-                eprintln!("read: {e}");
-                continue;
+                log(&format!("read: {e}"));
+                return Ok(());
             }
         };
-        let Some(map_account) = &accounts[0] else {
-            continue;
+        let [Some(map_data), Some(spline_data), Some(trader_data)] = &accounts[..] else {
+            return Ok(());
         };
-        let Some(spline_account) = &accounts[1] else {
-            continue;
-        };
-        let Some(trader_account) = &accounts[2] else {
-            continue;
-        };
-        let map = PerpAssetMap::try_from_account_bytes(&map_account.data)?;
+        let map = PerpAssetMap::try_from_account_bytes(map_data).map_err(|e| e.to_string())?;
         let entry = map
-            .find_by_symbol(&env.symbol)?
-            .ok_or_else(|| anyhow!("market missing"))?;
+            .find_by_symbol(&setup.symbol)
+            .map_err(|e| e.to_string())?
+            .ok_or("market missing")?;
         let f = entry.metadata.funding_accumulator();
         let period = f.funding_period_seconds.as_inner() as f64;
         let interval = f.funding_interval_seconds.as_inner() as f64;
         if period < 1.0 || interval < 1.0 {
-            continue;
+            return Ok(());
         }
         let reports = &entry.metadata.oracle_price().mark_price;
         let mut ticks: Vec<u64> = reports
@@ -129,12 +169,12 @@ async fn main() -> Result<()> {
                 .collect();
         }
         if ticks.is_empty() {
-            continue;
+            return Ok(());
         }
         ticks.sort_unstable();
-        let index = trader.phoenix.ticks_to_usd(market, ticks[ticks.len() / 2]);
-        // Maker quote centres remain observable after our own taker orders move the BBO.
-        let splines = SplineCollection::try_from_account_bytes(&spline_account.data)?;
+        let index = venue.ticks_to_usd(market, ticks[ticks.len() / 2]);
+        let splines =
+            SplineCollection::try_from_account_bytes(spline_data).map_err(|e| e.to_string())?;
         let mids: Vec<_> = splines
             .iter()
             .flatten()
@@ -142,43 +182,39 @@ async fn main() -> Result<()> {
             .map(|s| (s.user_update_slot(), s.mid_price().as_inner()))
             .collect();
         let Some(newest) = mids.iter().map(|s| s.0).max() else {
-            continue;
+            return Ok(());
         };
         let mut prices: Vec<u64> = mids.iter().filter(|s| s.0 == newest).map(|s| s.1).collect();
         prices.sort_unstable();
-        let book = trader
-            .phoenix
-            .ticks_to_usd(market, prices[prices.len() / 2]);
-        let raw = RawTrader::try_from_account_bytes(&trader_account.data)?;
+        let book = venue.ticks_to_usd(market, prices[prices.len() / 2]);
+        let raw = RawTrader::try_from_account_bytes(trader_data).map_err(|e| e.to_string())?;
         let mut pos = 0.0;
         let mut virtual_quote = 0.0;
         let mut unsettled = 0.0;
         if let Some((_, p)) = raw.positions().find(|p| p.0 == market.asset_id as u64) {
             let lots = p.base_lot_position().as_inner();
-            pos = trader.phoenix.lots_to_base_units(market, lots);
+            pos = venue.lots_to_base_units(market, lots);
             virtual_quote = p.virtual_quote_lot_position().as_inner() as f64 / 1e6;
             unsettled = -(f.cumulative_funding_rate.as_inner()
                 - p.cumulative_funding_snapshot().as_inner()) as f64
                 * lots as f64
                 / 1e6;
         }
-        // Value collateral, the open position at the maker centre, and unsettled funding.
         let equity = 100.0
             + raw.header.trader_state.quote_lot_collateral.as_inner() as f64 / 1e6
             + pos * book
             + virtual_quote
             + unsettled;
-        peak = peak.max(equity);
-        let drawdown = peak - equity;
-        if drawdown > max_drawdown * 0.62 {
-            stopped = true;
+        self.peak = self.peak.max(equity);
+        let drawdown = self.peak - equity;
+        if drawdown > setup.max_drawdown * 0.62 {
+            self.stopped = true;
         }
-        // Reserve room for a large book move, an interval's funding, and execution.
-        // At ordinary prices and drawdowns this leaves the full desk position cap.
         let funding_cap_usd = f.max_funding_rate.as_inner().abs() as f64
             * 10f64.powi(market.base_lots_decimals as i32 - 6);
-        let risk_cap =
-            ((max_drawdown - drawdown - 75.0).max(0.0) / (book * 0.04 + funding_cap_usd)).min(cap);
+        let risk_cap = ((setup.max_drawdown - drawdown - 75.0).max(0.0)
+            / (book * 0.04 + funding_cap_usd))
+            .min(setup.cap);
         let lots_per_share = 10f64.powi(market.base_lots_decimals as i32);
         let usable_cap = (risk_cap * lots_per_share).floor() / lots_per_share;
         let cap_per_second = f.max_funding_rate.as_inner() as f64
@@ -186,11 +222,9 @@ async fn main() -> Result<()> {
             / interval
             / 143.11
             * 10000.0;
-        let (x, sign) = features.update(index, book, period, cap_per_second);
-        let alpha = model.predict(&x) * sign;
-        // A switching band covers fees and impact; keep existing exposure inside it.
-        let entry_threshold = 10.0;
-        let exit_threshold = -10.0;
+        let (x, sign) = self.features.update(index, book, period, cap_per_second);
+        let alpha = self.model.predict(&x) * sign;
+        let (entry_threshold, exit_threshold) = (10.0, -10.0);
         let mut target = if alpha > entry_threshold {
             usable_cap
         } else if alpha < -entry_threshold {
@@ -202,62 +236,44 @@ async fn main() -> Result<()> {
         } else {
             0.0
         };
-        if let Some(told) = &told {
+        if let Some(told) = &self.told {
             target = told.target(
-                step.slot as f64 - start_slot,
+                step.slot as f64 - self.start_slot as f64,
                 target,
                 usable_cap,
                 book / index - 1.0,
             );
         }
-        if stopped {
+        if self.stopped {
             target = 0.0;
         }
-        eprintln!(
-            "s={} book={:.5} index={:.5} pos={:.2} target={:.2} alpha={:.3} eq={:.3} dd={:.2}",
+        log(&format!(
+            "s={} book={book:.5} index={index:.5} pos={pos:.2} target={target:.2} alpha={alpha:.3} eq={equity:.3} dd={:.2}",
             step.k,
-            book,
-            index,
-            pos,
-            target,
-            alpha,
-            equity,
-            peak - equity
-        );
+            self.peak - equity
+        ));
         if step.last {
-            continue;
+            return Ok(());
         }
-        // Slice reversals and confirm the actual position after every executed slice.
         for _ in 0..8 {
             let delta = target - pos;
             if delta.abs() < 0.15 {
                 break;
             }
             let qty = delta.abs().min(20.0);
-            let side = if delta > 0.0 { Side::Bid } else { Side::Ask };
-            let limit = book * if delta > 0.0 { 1.004 } else { 0.996 };
-            if let Err(e) = trader.place_market(side, qty, limit).await {
-                eprintln!("order: {e}");
-                break;
+            if delta > 0.0 {
+                orders.buy(qty, book * 1.004);
+            } else {
+                orders.sell(qty, book * 0.996);
             }
-            let previous = pos;
-            match position(&trader, market.base_lots_decimals) {
-                Ok(p) => pos = p,
-                Err(e) => {
-                    eprintln!("position: {e}");
-                    break;
-                }
-            }
-            if (pos - previous).abs() < 0.001 {
-                break;
-            }
+            pos += qty.copysign(delta);
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// The ladder's told rung: each episode's kind and timing, in slots from the
-/// session's start, from `MTX_REGIME`.
+/// session's start, from `MTX_REGIME`, for the process only.
 struct Told {
     /// Informed, start, follow (the slot the index starts to follow), close,
     /// end, and the premium's side.
@@ -265,15 +281,15 @@ struct Told {
 }
 
 impl Told {
-    fn from_env() -> Result<Option<Self>> {
-        if std::env::var("MTX_RUNG").as_deref() != Ok("told") {
+    fn from_session(session: &Session) -> BotResult<Option<Self>> {
+        if session.var("MTX_RUNG") != Some("told") {
             return Ok(None);
         }
-        let regime = std::env::var("MTX_REGIME").map_err(|_| anyhow!("told needs MTX_REGIME"))?;
-        let shape: serde_json::Value = serde_json::from_str(&regime)?;
+        let regime = session.var("MTX_REGIME").ok_or("told needs MTX_REGIME")?;
+        let shape: serde_json::Value = serde_json::from_str(regime)?;
         let episodes = shape["episodes"]
             .as_array()
-            .ok_or_else(|| anyhow!("no episodes"))?
+            .ok_or("no episodes")?
             .iter()
             .map(|e| {
                 let n = |k: &str| e[k].as_f64();
@@ -311,3 +327,6 @@ impl Told {
         target
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+mtx_kit::export!(Carry);

@@ -56,15 +56,13 @@ snapshot-prepare out:
 snapshot-verify dir=("snapshots/" + snapshot):
     cargo run --release -- snapshot verify --dir {{dir}}
 
-# Build the bots' bin/bot.
+# Build the bots: the process bots' bin/bot, the components' bot.wasm.
 bots:
-    bots/starter/build.sh
-    bots/reference/build.sh
-    bots/maker/build.sh
-    bots/dip-buyer/build.sh
-    bots/carry/build.sh
-    bots/carry-gbm/build.sh
-    bots/weekend/build.sh
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for bot in starter reference maker dip-buyer carry carry-gbm weekend; do
+      just --justfile "bots/$bot/Justfile" build
+    done
 
 # Fork mainnet and write a spot snapshot (Phoenix v1, OpenBook v2, Pyth SOL/USD).
 snapshot-prepare-spot out:
@@ -73,7 +71,7 @@ snapshot-prepare-spot out:
 # A spot session end to end: a bot sells on both SOL/USDC books and passes
 # its sell-only mandate; the same bot buying too is disqualified.
 spot-smoke:
-    bots/spot-smoke/build.sh
+    just --justfile bots/spot-smoke/Justfile build
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke bench/checks/spot/smoke.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-sell-order bench/checks/spot/smoke-sell-order.json
@@ -258,16 +256,18 @@ publish batch version:
 compare range:
     cargo run --release -q -- bench compare {{range}} --open
 
-# Copy the reference bot into the task's solution: its sources, and the
-# model it reads, if any (a `model/` directory, or `model.*` files beside
-# its Cargo.toml).
+# Copy the reference bot's strategy into the task's solution: its sources
+# but the process's `main.rs`, and the model it reads, if any (a `model/`
+# directory, or `model.*` files beside its Cargo.toml).
 solution:
     #!/usr/bin/env bash
     set -euo pipefail
     for pair in {{references}}; do
       bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
       mkdir -p "$solution/src"
-      cp "$bot"/src/*.rs "$solution/src/"
+      for src in "$bot"/src/*.rs; do
+        if [ "$(basename "$src")" != main.rs ]; then cp "$src" "$solution/src/"; fi
+      done
       if [ -d "$bot/model" ]; then
         mkdir -p "$solution/model"
         cp "$bot"/model/*.json "$solution/model/"
@@ -283,15 +283,16 @@ check-solution:
     set -euo pipefail
     for pair in {{references}}; do
       bot="bots/${pair#*=}"; solution="{{tasks}}/${pair%%=*}/solution"
-      diff -ru "$bot/src" "$solution/src"
+      diff -ru -x main.rs "$bot/src" "$solution/src"
       if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
       for model in "$bot"/model.*; do
         if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
       done
     done
 
-# The checks every task change should pass: oracle ~1, and nop, cheater and
-# sneaky 0. Cheater must be disqualified; sneaky must grade without errors.
+# The checks every task change should pass: oracle ~1, and nop and every
+# cheater 0, each grade completing. The component cheater's log must show
+# every attempt refused; the process cheaters aren't graded (not_graded 1).
 harbor-checks task="flash-crash-spcx" surfpool="": (image surfpool) check-solution
     #!/usr/bin/env bash
     set -euo pipefail
@@ -304,6 +305,7 @@ harbor-checks task="flash-crash-spcx" surfpool="": (image surfpool) check-soluti
     export MTX_EVAL_SEED="${MTX_EVAL_SEED:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
     harbor run -y -p {{tasks}}/{{task}} -a oracle -o jobs
     harbor run -y -p {{tasks}}/{{task}} -a nop -o jobs
+    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:ComponentCheaterAgent -o jobs
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs
 

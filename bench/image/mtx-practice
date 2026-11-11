@@ -8,4 +8,4 @@ fi
 # Three sessions at a time (MTX_JOBS to change): the world waits for the bot
 # each step, so a session grades the same however many run beside it, and
 # a sweep of practice grades fits in an agent's hour. One CPU stays free.
-exec mtx grade --jobs "${MTX_JOBS:-3}" --snapshot "$MTX_SNAPSHOT" --bot "${MTX_BOT:-/app/bot}" --logs /tmp/mtx-practice-logs "$@"
+exec mtx grade --jobs "${MTX_JOBS:-3}" --snapshot "$MTX_SNAPSHOT" --bot "${MTX_BOT:-/app/bot}" --components-only --logs /tmp/mtx-practice-logs "$@"
