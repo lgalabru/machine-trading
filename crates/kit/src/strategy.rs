@@ -76,13 +76,18 @@ pub struct Session {
     pub end_slot: u64,
     /// The market traded, as the venue names it (`SPCX`).
     pub symbol: String,
-    /// The mark when the session starts.
+    /// The mark and the oracle when the session starts.
     pub start_mark: f64,
+    pub start_oracle: f64,
     /// The mandate's position cap, in base units, and its drawdown limit.
     pub cap: f64,
     pub max_drawdown: f64,
     /// The mandate, as the grader audits it.
     pub mandate: Mandate,
+    /// The venue's metadata, as it publishes it: for Phoenix, its
+    /// `/exchange` response, the file `MTX_EXCHANGE` names (read it with
+    /// `mtx_kit::venue::PhoenixVenue`, feature `venue`).
+    pub venue: String,
     /// A seed, for a strategy that wants randomness: the same in every run
     /// of the session.
     pub seed: u64,
@@ -131,6 +136,47 @@ pub fn rpc(method: &str, params: &str) -> Result<String, String> {
         return Err(format!("{method} is not a read a strategy may make"));
     }
     rpc_backend(method, params)
+}
+
+/// The data of the account at `address` (base58), read through [`rpc`]:
+/// `None` if there is no such account.
+pub fn rpc_account(address: &str) -> Result<Option<Vec<u8>>, String> {
+    let answer = rpc(
+        "getAccountInfo",
+        &serde_json::json!([address, { "encoding": "base64" }]).to_string(),
+    )?;
+    let answer: serde_json::Value = serde_json::from_str(&answer).map_err(|e| e.to_string())?;
+    account_data(&answer["value"])
+}
+
+/// [`rpc_account`] for several accounts in one call, in order.
+pub fn rpc_accounts(addresses: &[&str]) -> Result<Vec<Option<Vec<u8>>>, String> {
+    let answer = rpc(
+        "getMultipleAccounts",
+        &serde_json::json!([addresses, { "encoding": "base64" }]).to_string(),
+    )?;
+    let answer: serde_json::Value = serde_json::from_str(&answer).map_err(|e| e.to_string())?;
+    answer["value"]
+        .as_array()
+        .ok_or("getMultipleAccounts answered no list")?
+        .iter()
+        .map(account_data)
+        .collect()
+}
+
+/// An account's data from an RPC answer's `value`, base64.
+fn account_data(value: &serde_json::Value) -> Result<Option<Vec<u8>>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let encoded = value["data"][0]
+        .as_str()
+        .ok_or("an account without base64 data")?;
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map(Some)
+        .map_err(|e| format!("account data: {e}"))
 }
 
 #[cfg(all(feature = "component", target_arch = "wasm32"))]

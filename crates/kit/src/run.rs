@@ -95,6 +95,7 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     let trader = Trader::connect(&env)?;
     let _ = RPC_URL.set(env.rpc_url.clone());
     let start_mark = trader.mark_usd().await?;
+    let start_oracle = trader.oracle_usd().await?;
     let session = Session {
         steps: hello.steps,
         slots_per_step: hello.slots_per_step,
@@ -102,9 +103,11 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         end_slot: hello.end_slot,
         symbol: env.symbol.clone(),
         start_mark,
+        start_oracle,
         cap: env.max_position,
         max_drawdown: env.max_drawdown_usd,
         mandate,
+        venue: std::fs::read_to_string(&env.exchange_path)?,
         seed: hello.start_slot,
     };
     strategy.start(&session)?;

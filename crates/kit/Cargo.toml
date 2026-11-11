@@ -36,7 +36,17 @@ chain = [
 component = ["dep:wit-bindgen"]
 # Phoenix Eternal perpetuals: market metadata, exact tick/lot conversions, a
 # trader, and an ExecutionDriver; and the bot plumbing, which trades on them.
-phoenix = ["chain", "dep:phoenix-rise", "dep:tracing-subscriber"]
+phoenix = [
+    "chain",
+    "venue",
+    "phoenix-rise/api",
+    "phoenix-rise/tx-builder",
+    "dep:tracing-subscriber",
+]
+# What a strategy reads of Phoenix without the chain: the market metadata a
+# session hands it (Session::venue), tick and lot conversions, account
+# addresses, and Phoenix's account decoding. Builds for wasm32-wasip2.
+venue = ["dep:phoenix-rise", "phoenix-rise/sdk", "dep:solana-pubkey", "solana-pubkey/curve25519"]
 # Phoenix v1 spot order books, as the Phoenix venue profile's spot markets:
 # market and seat decoding, exact tick/lot conversions, the trader's
 # instructions, its holdings, a trader and an ExecutionDriver.
@@ -84,7 +94,7 @@ solana-transaction-status-client-types = { version = "4.3", optional = true }
 spl-associated-token-account-interface = { version = "2", optional = true }
 spl-token-interface = { version = "3", optional = true }
 
-phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"], optional = true }
+phoenix-rise = { version = "=0.6.15", default-features = false, features = ["serde"], optional = true }
 
 [dev-dependencies]
 rust_decimal_macros = "1.39"

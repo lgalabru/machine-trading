@@ -16,14 +16,18 @@ interface types {
     end-slot: u64,
     /// The market traded, as the venue names it (`SPCX`).
     symbol: string,
-    /// The mark when the session starts.
+    /// The mark and the oracle when the session starts.
     start-mark: f64,
+    start-oracle: f64,
     /// The mandate's position cap, in base units, and its drawdown limit,
     /// in USD.
     cap: f64,
     max-drawdown: f64,
     /// The mandate, as `specs/mandate.md` writes it.
     mandate: string,
+    /// The venue's metadata, as it publishes it: for Phoenix, its
+    /// `/exchange` response.
+    venue: string,
     /// A seed, for a strategy that wants randomness: the same in every run
     /// of the session.
     seed: u64,

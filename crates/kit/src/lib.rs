@@ -73,6 +73,8 @@ pub mod lending;
 #[cfg(feature = "chain")]
 pub mod protocols;
 mod strategy;
+#[cfg(feature = "venue")]
+pub mod venue;
 
 #[cfg(feature = "component")]
 pub mod component;
@@ -106,7 +108,7 @@ pub use solana_pubkey::Pubkey;
 pub use solana_transaction::{Hash, Instruction, Signature};
 pub use strategy::{
     Action, BotResult, Execution, Intent, Market, Orders, Position, RPC_METHODS, Session, Side,
-    Strategy, plan, resting_after, rpc, step_offline,
+    Strategy, plan, resting_after, rpc, rpc_account, rpc_accounts, step_offline,
 };
 
 #[cfg(feature = "phoenix")]
