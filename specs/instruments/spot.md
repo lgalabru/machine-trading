@@ -24,7 +24,9 @@ base asset wherever the account holds it:
 
 - in the agent authority's wallet;
 - on each venue in the universe, in the accounts its venue profile names,
-  whether free to withdraw or locked behind the account's open orders.
+  whether free to withdraw or locked behind the account's open orders. A
+  venue that trades by swap holds nothing for the account between trades,
+  and adds nothing here.
 
 A spot position therefore belongs to the asset, not to one venue. Two
 allowances on the same base asset, such as `openbook:spot:SOL-USDC` and
@@ -51,6 +53,11 @@ A fill's price is the quote asset paid or received per base unit, before
 fees, as the venue records it. `min_sell_price` and `max_buy_price` are in
 the same units: for `SOL-USDC`, USDC per SOL.
 
+A venue that trades by swap records no price. There a fill's price is the
+quote asset paid or received divided by the base asset received or paid, as
+the venue profile reads them. It includes whatever the venue charged, and a
+swap is one fill however large it is.
+
 ## Value
 
 A spot instrument contributes the account's holdings of both its assets to
@@ -60,7 +67,8 @@ the account's value:
 - the quote asset's holdings, at the quote asset's reference price.
 
 The venue profile defines both reference prices. A venue's own order book
-is not a reference price: the account's own orders can move it.
+is not a reference price: the account's own orders can move it. Nor is a
+proprietary market maker's quote: the firm that publishes it can move it.
 
 Each asset is counted once in the account's value, however many spot
 instruments or venues hold it.

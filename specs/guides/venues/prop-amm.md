@@ -7,8 +7,10 @@ book: who is on the other side, where the price comes from, what a big trade
 costs, and the ways a trade can fail that an order book doesn't have. A prop
 AMM is not a new instrument. What you trade on it is [spot](../instruments/spot.md),
 and the [spot profile](../../instruments/spot.md) is the normative text for
-what you hold afterwards. No venue profile describes a prop AMM yet, so
-nothing here is a rule.
+what you hold afterwards. Two venue profiles,
+[BisonFi](../../venues/bisonfi.md) and [HumidiFi](../../venues/humidifi.md),
+say how an enforcer reads those venues. Where this guide and a profile
+disagree, the profile is right.
 
 It builds on the [spot guide](../instruments/spot.md)'s example: you have
 **$1,000**, and SPCX trades at **$100**. The `SPCX-USDC` market is
@@ -336,8 +338,8 @@ What a swap on a prop AMM depends on, and who decides each:
 | What a stale swap does | The venue's program | Fail, or succeed and move nothing. |
 | Size | You | How much to swap. It picks the tier, and the share of the vault you take. |
 | Minimum output | You | The least you'd accept. Below it, the swap fails. |
-| Instrument reference, `max_position`, `sides`, limit prices | The mandate | As for any [spot](../instruments/spot.md#parameters) instrument, once a venue profile names the venue. |
-| Markets, accounts, reference prices | The venue profile | Not written yet for any prop AMM. |
+| Instrument reference, `max_position`, `sides`, limit prices | The mandate | As for any [spot](../instruments/spot.md#parameters) instrument: `bisonfi:spot:SOL-USDC`, or a market's address. |
+| Markets, what a fill is, reference prices | The venue profile | Which account a reference names, how a swap is read as a fill, and the price feed holdings are valued at. |
 
 ## Risks
 
@@ -388,15 +390,14 @@ one trade and the next, and nothing is published first.
 
 ## Prop AMMs under a mandate
 
-A [mandate](../../mandate.md) names its instruments as `<venue>:<kind>:<symbol>`,
-and the venue has to be one a venue profile describes. There is no venue
-profile for a prop AMM in v0, so no mandate can allow one yet. Nothing in
-the [later versions](../../mandate.md#changes-in-later-versions) list is
-needed for it: the instrument is spot, and what's missing is a profile that
-says where the account's tokens are and how its fills are read.
+A [mandate](../../mandate.md) names its instruments as `<venue>:<kind>:<symbol>`.
+A prop AMM needs no new kind: the instrument is `spot`, and the venue is one
+of the profiles, such as `bisonfi:spot:SOL-USDC`. The profile says where the
+account's tokens are and how a swap is read as a fill. No benchmark task
+enforces either profile yet.
 
-When a profile exists, the spot rules would apply as they do on a book,
-with three differences worth knowing:
+The spot rules apply as they do on a book, with three differences worth
+knowing:
 
 - **The position is in your wallet.** There are no resting orders and no
   balance left on the venue, so the base asset you hold is the base asset in
@@ -418,8 +419,8 @@ floor written into the swap itself: under it, the swap fails instead.
 
 You hold SPCX and sell it under a `min_sell_price`. You can swap on the prop
 AMM or send a market order to the spot guide's book. The lab plays the sale
-through four states of the firm. It treats the prop AMM as if it had a venue
-profile, to show what the spot rules would make of it.
+through four states of the firm. Both venues are in the mandate's universe,
+with the same floor.
 
 ```lab
 {
@@ -516,9 +517,10 @@ The book. The limit applies to every fill: the swap is one fill at $99.79,
 and the book's fills go down to $98.50.
 :::
 
-:::check Can a mandate allow a prop AMM today?
-No. An instrument reference needs a venue with a venue profile, and v0 has
-none for a prop AMM. The instrument kind is already there: it is spot.
+:::check Does a mandate need a new instrument kind to allow a prop AMM?
+No. What you hold after a swap is the base asset, which is spot. The mandate
+names the venue and the market, such as `bisonfi:spot:SOL-USDC`, and the
+venue's profile says how its swaps are read as fills.
 :::
 
 ## Glossary

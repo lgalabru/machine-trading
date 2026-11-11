@@ -23,7 +23,7 @@ on each rail:
 | Core | The mandate document, its rules, and how they are enforced | [`mandate.md`](mandate.md) |
 | Instruments | What a position is for each kind of instrument, and how its limits apply | [`instruments/`](instruments/) |
 | Venues | How each venue's accounts are measured against a mandate | [`venues/`](venues/) |
-| Guides | Guides that teach instruments and strategies to people, with interactive figures. Not normative | [`guides/`](guides/instruments/) |
+| Guides | Guides that teach instruments, strategies and kinds of venue to people, with interactive figures. Not normative | [`guides/`](guides/instruments/) |
 
 Examples live in [`examples/`](examples/). Every example is checked against
 the reference implementation by `cargo test`.
@@ -39,6 +39,8 @@ the reference implementation by `cargo test`.
 | [Phoenix](venues/phoenix.md) | v0 | Draft |
 | [OpenBook](venues/openbook.md) | v0 | Draft |
 | [Kamino](venues/kamino.md) | v0 | Draft |
+| [BisonFi](venues/bisonfi.md) | v0 | Draft |
+| [HumidiFi](venues/humidifi.md) | v0 | Draft |
 
 v0 is a draft. It specifies perpetuals, spot and money markets, on one venue
 or several. The reference implementation is `mtx_core::mandate`, which

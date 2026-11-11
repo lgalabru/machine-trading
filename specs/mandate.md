@@ -34,7 +34,9 @@ only when, they appear in all capitals.
 - **Term**: the span the mandate covers.
 - **Fill**: a trade the venue records against the account, as a taker or as
   a maker. A **buy** fill increases the account's position in the
-  instrument; a **sell** fill decreases it.
+  instrument; a **sell** fill decreases it. Where a venue keeps no record of
+  its trades, its venue profile defines what a fill is read from, such as
+  the token transfers of a swap.
 
 ## The document
 
@@ -70,6 +72,8 @@ An instrument is referenced as `<venue>:<kind>:<symbol>`, for example
 `phoenix:perp:SPCX` or `openbook:spot:SOL-USDC`:
 
 - `venue` names a [venue profile](venues/), such as `phoenix` or `openbook`.
+  A venue need not be an order book: `bisonfi` and `humidifi` trade spot by
+  swap.
 - `kind` names an [instrument profile](instruments/). This specification
   defines `perp`, `spot` and `money-market`. `future` and `option` are
   reserved for later, and a reader MUST reject them.
@@ -122,7 +126,8 @@ these holds:
    allowance does not list in `sides`.
 5. **Limit prices.** The account has a sell fill below the instrument's
    `min_sell_price`, or a buy fill above its `max_buy_price`. A fill's price
-   is the price the venue records for it, before fees. Resting orders at any
+   is the price the venue records for it, before fees, or the price its
+   venue profile defines where the venue records none. Resting orders at any
    price are allowed; only fills are checked.
 6. **Health.** When the mandate sets `min_health`, the health of any of the
    account's borrowing positions, measured as the venue profile defines, is
@@ -160,7 +165,8 @@ measured.
 
 The rules on fills (sides and limit prices) are checked against every fill
 the venue records during the term, not a sample. An enforcer MUST read every
-fill, from the venue's own records.
+fill, from the venue's own records, or from what the venue profile names in
+their place.
 
 The enforcer MUST hold its own copy of the mandate, and MUST NOT read it
 back from anywhere the agent can write. The copy handed to the agent is for
