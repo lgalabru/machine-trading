@@ -62,7 +62,12 @@ async fn main() -> Result<()> {
         .find(|a| a.instrument.to_string() == "phoenix:perp:SPCX")
         .ok_or_else(|| anyhow!("SPCX is outside the mandate"))?;
     let max_position = env.max_position.min(allowance.max_position);
-    let max_drawdown = env.max_drawdown_usd.min(mandate.limits.max_drawdown_usd);
+    let max_drawdown = mandate
+        .limits
+        .max_drawdown_usd
+        .map_or(env.max_drawdown_usd, |limit| {
+            env.max_drawdown_usd.min(limit)
+        });
     if env.symbol != "SPCX" {
         return Err(anyhow!("SPCX mandate required"));
     }

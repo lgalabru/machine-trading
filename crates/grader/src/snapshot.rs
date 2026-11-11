@@ -55,6 +55,10 @@ pub struct Manifest {
     pub accounts: usize,
     pub symbol: String,
     pub mark_price_usd: f64,
+    /// `spot` for a spot snapshot (see [`prepare_spot`]), which has no
+    /// `exchange.json`; absent for Phoenix Eternal's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 pub struct PrepareOptions {
@@ -148,9 +152,51 @@ pub async fn prepare(opts: PrepareOptions) -> Result<Manifest> {
         accounts: accounts.len(),
         symbol: opts.symbol,
         mark_price_usd,
+        kind: None,
     };
     write_json(&opts.out_dir.join(MANIFEST_FILE), &manifest)?;
     info!(accounts = manifest.accounts, dir = %opts.out_dir.display(), "snapshot written");
+    Ok(manifest)
+}
+
+/// Fork mainnet and write a spot snapshot: Phoenix v1 and OpenBook v2 with
+/// their SOL/USDC markets (books, event heap, vaults, the seat manager), the
+/// Pyth SOL/USD feed and the mints. A throwaway trader exercises every path a
+/// spot session takes (funding, a seat, an open orders account, a resting
+/// order and its cancel, a small take on each venue), so the accounts behind
+/// them are exported.
+pub async fn prepare_spot(out_dir: &Path, fork_rpc_url: &str) -> Result<Manifest> {
+    let surfnet = Surfnet::builder()
+        .remote_rpc_url(fork_rpc_url)
+        .block_production_mode(BlockProductionMode::Clock)
+        .slot_time_ms(SLOT_TIME_MS)
+        .start()
+        .await?;
+    chain::forward_surfnet_logs(&surfnet);
+    let rpc = chain::rpc_client(&surfnet);
+    let warmup = Keypair::new();
+    crate::spot::fund(&surfnet, &warmup, 10.0, 2_000.0)?;
+    let price = crate::spot::exercise(surfnet.rpc_url(), &warmup).await?;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let fork_slot = rpc.get_slot()?;
+    let accounts = chain::export_snapshot(&rpc)?;
+    std::fs::create_dir_all(out_dir).map_err(io_error(out_dir))?;
+    write_gz(&out_dir.join(SURFNET_GZ), &accounts)?;
+    let manifest = Manifest {
+        created_at_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default(),
+        fork_host: host_of(fork_rpc_url),
+        fork_slot,
+        accounts: accounts.len(),
+        symbol: "SOL-USDC".into(),
+        mark_price_usd: price,
+        kind: Some("spot".into()),
+    };
+    write_json(&out_dir.join(MANIFEST_FILE), &manifest)?;
+    info!(accounts = manifest.accounts, dir = %out_dir.display(), "spot snapshot written");
     Ok(manifest)
 }
 
@@ -214,9 +260,21 @@ async fn start_surfnet(build: impl Fn() -> SurfnetBuilder) -> Result<Surfnet> {
 pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
     // Absolute, because bots get `exchange_path` and run from their own directory.
     let dir = &dir.canonicalize().map_err(io_error(dir))?;
-    let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
     let exchange_path = dir.join(EXCHANGE_FILE);
     let exchange = phoenix::load_exchange(&exchange_path)?;
+    let (surfnet, manifest) = start_snapshot(dir, access).await?;
+    Ok(OfflineWorld {
+        surfnet,
+        manifest,
+        exchange,
+        exchange_path,
+    })
+}
+
+/// Restore the snapshot in `dir` offline, of any kind: its surfnet, at the
+/// snapshot's slot and time.
+pub async fn start_snapshot(dir: &Path, access: Access) -> Result<(Surfnet, Manifest)> {
+    let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
     let accounts_file = surfnet_file(dir, &manifest)?;
     let surfnet = start_surfnet(|| {
         let builder = Surfnet::builder().offline(true);
@@ -248,12 +306,7 @@ pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
     surfnet
         .cheatcodes()
         .time_travel_to_slot_at(manifest.fork_slot, manifest.created_at_unix * 1_000)?;
-    Ok(OfflineWorld {
-        surfnet,
-        manifest,
-        exchange,
-        exchange_path,
-    })
+    Ok((surfnet, manifest))
 }
 
 /// Start offline from the snapshot, rest a bid below the market, crash the
@@ -441,6 +494,7 @@ mod tests {
             accounts: 1,
             symbol: "SPCX".into(),
             mark_price_usd: 1.0,
+            kind: None,
         };
         write_gz(&dir.join(SURFNET_GZ), &json!({ "a": { "lamports": 1 } })).unwrap();
         let first = surfnet_file(&dir, &manifest).unwrap();

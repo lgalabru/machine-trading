@@ -1,0 +1,19 @@
+# No workspace inheritance, as the other bots: it builds against the SDK's
+# layout in the task image too.
+[package]
+name = "mtx-bot-spot-smoke"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-spot-smoke"
+path = "src/main.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", features = ["phoenix-v1", "openbook-v2"] }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

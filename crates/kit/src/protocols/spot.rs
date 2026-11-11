@@ -8,9 +8,88 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     chain::{ChainClient, ChainError},
-    core::{AssetId, MeterError, SpotBalances},
+    core::{
+        AssetId, Fill, FillId, InstrumentId, MeterError, OrderId, RecordedFill, Side, SpotBalances,
+        VenueId,
+    },
     protocols::{USDC_MINT, pyth},
 };
+
+/// A match a spot market recorded, between any two accounts: what an
+/// enforcer counts for the sides and limit-price rules, and what makes a
+/// market's tape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarketFill {
+    /// The slot it landed in; for a fill still waiting in a market's event
+    /// queue, the slot it was read at.
+    pub slot: u64,
+    /// The market, as the mandate names it.
+    pub instrument: InstrumentId,
+    /// The venue's own order for its fills: a sequence that never repeats
+    /// on the market, to count each fill once.
+    pub sequence: u128,
+    /// The taker and the maker, as the venue names them: on Phoenix the
+    /// traders, on OpenBook the open orders accounts (the signer for a
+    /// take-only order).
+    pub taker: Pubkey,
+    pub maker: Pubkey,
+    /// The taker's side.
+    pub taker_side: Side,
+    /// Price, in quote units per base unit, before fees.
+    pub price: Decimal,
+    /// Size, in base units.
+    pub quantity: Decimal,
+    /// When the venue says it happened, in Unix seconds.
+    pub unix_timestamp: i64,
+}
+
+impl MarketFill {
+    /// The side this fill traded for the account `ids` name, if either
+    /// party is one of them: the taker's side as the taker, the other as
+    /// the maker.
+    pub fn side_for(&self, ids: &[Pubkey]) -> Option<Side> {
+        if ids.contains(&self.taker) {
+            Some(self.taker_side)
+        } else if ids.contains(&self.maker) {
+            Some(match self.taker_side {
+                Side::Buy => Side::Sell,
+                Side::Sell => Side::Buy,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// The fill as the account traded it, on `side`.
+    pub fn recorded(&self, side: Side) -> RecordedFill {
+        let venue = self.instrument.0.split(':').next().unwrap_or_default();
+        RecordedFill {
+            slot: self.slot,
+            fill: Fill {
+                id: FillId::new(),
+                order_id: OrderId::new(),
+                instrument: self.instrument.clone(),
+                venue: VenueId::new(venue),
+                side,
+                price: self.price,
+                quantity: self.quantity,
+                fees: Decimal::ZERO,
+                timestamp: chrono::DateTime::from_timestamp(self.unix_timestamp, 0)
+                    .unwrap_or_default(),
+                latency: None,
+                strategy: None,
+            },
+        }
+    }
+}
+
+/// The fills of `fills` the account `ids` name traded, each on its side.
+pub fn recorded_for(fills: &[MarketFill], ids: &[Pubkey]) -> Vec<RecordedFill> {
+    fills
+        .iter()
+        .filter_map(|fill| fill.side_for(ids).map(|side| fill.recorded(side)))
+        .collect()
+}
 
 /// What `balances`, one per market, are worth in USD. Each asset counts
 /// once: its wallet once, however many markets trade it, plus what each
