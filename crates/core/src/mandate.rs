@@ -10,7 +10,7 @@ use std::{fmt, path::Path, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Holding, InstrumentId, Result, error::io_error};
+use crate::{Error, Holding, InstrumentId, Result, error::io_error, order::Side};
 
 /// The only version this crate reads.
 pub const VERSION: &str = "v0";
@@ -41,15 +41,33 @@ pub struct Term {
 #[serde(deny_unknown_fields)]
 pub struct Allowance {
     pub instrument: InstrumentRef,
-    /// The largest position, long or short, in base units.
+    /// The largest position, in base units. Without `min_position`, it
+    /// bounds a short too.
     pub max_position: f64,
+    /// The smallest position allowed, in base units: `-max_position` when
+    /// absent. `0` forbids a negative position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_position: Option<f64>,
+    /// The sides the account may trade, as a taker or a maker: both when
+    /// absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sides: Option<Vec<Side>>,
+    /// The lowest price a sell may fill at, in quote units per base unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_sell_price: Option<f64>,
+    /// The highest price a buy may fill at, in the same units.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_buy_price: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
-    /// The most, in USD, the account's value may fall below its running peak.
-    pub max_drawdown_usd: f64,
+    /// The most, in USD, the account's value may fall below its running
+    /// peak. Absent, the mandate has no drawdown limit: a mandate to sell a
+    /// holding, whose value falls with the market whatever the agent does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_drawdown_usd: Option<f64>,
 }
 
 /// An instrument on a venue, written `<venue>:<kind>:<symbol>`, e.g.
@@ -62,12 +80,16 @@ pub struct InstrumentRef {
     pub symbol: String,
 }
 
-/// Instrument kinds this version defines. `specs/instruments/` reserves the
-/// others (spot, future, option, money market) for later versions.
+/// Instrument kinds this reader enforces. `specs/instruments/` defines
+/// money markets too, and reserves futures and options; this reader refuses
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     /// A perpetual future: no expiry, held near spot by funding payments.
     Perp,
+    /// A spot market, where the base asset changes hands. The position is
+    /// the account's holdings of the base asset, wherever they sit.
+    Spot,
 }
 
 impl Mandate {
@@ -83,8 +105,40 @@ impl Mandate {
                     symbol: symbol.into(),
                 },
                 max_position,
+                min_position: None,
+                sides: None,
+                min_sell_price: None,
+                max_buy_price: None,
             }],
-            limits: Limits { max_drawdown_usd },
+            limits: Limits {
+                max_drawdown_usd: Some(max_drawdown_usd),
+            },
+        }
+    }
+
+    /// A mandate for one spot pair on each of `venues`, all bounding the
+    /// same base asset, with no limits. Narrow it with the allowances' sides
+    /// and limit prices.
+    pub fn spot(venues: &[&str], symbol: &str, max_position: f64) -> Self {
+        Self {
+            version: VERSION.into(),
+            term: None,
+            universe: venues
+                .iter()
+                .map(|venue| Allowance {
+                    instrument: InstrumentRef {
+                        venue: (*venue).into(),
+                        kind: Kind::Spot,
+                        symbol: symbol.into(),
+                    },
+                    max_position,
+                    min_position: None,
+                    sides: None,
+                    min_sell_price: None,
+                    max_buy_price: None,
+                })
+                .collect(),
+            limits: Limits::default(),
         }
     }
 
@@ -121,12 +175,35 @@ impl Mandate {
             {
                 return Err(format!("{} is listed twice", allowance.instrument));
             }
-            positive(
-                &format!("{} max_position", allowance.instrument),
-                allowance.max_position,
-            )?;
+            let name = |member: &str| format!("{} {member}", allowance.instrument);
+            positive(&name("max_position"), allowance.max_position)?;
+            if let Some(min) = allowance.min_position
+                && !(min.is_finite() && min <= allowance.max_position)
+            {
+                return Err(format!(
+                    "{} must be a number no greater than max_position, not {min}",
+                    name("min_position")
+                ));
+            }
+            if let Some(sides) = &allowance.sides {
+                if sides.is_empty() {
+                    return Err(format!("{} is empty", name("sides")));
+                }
+                if sides.len() == 2 && sides[0] == sides[1] {
+                    return Err(format!("{} repeats a side", name("sides")));
+                }
+            }
+            if let Some(price) = allowance.min_sell_price {
+                positive(&name("min_sell_price"), price)?;
+            }
+            if let Some(price) = allowance.max_buy_price {
+                positive(&name("max_buy_price"), price)?;
+            }
         }
-        positive("max_drawdown_usd", self.limits.max_drawdown_usd)
+        match self.limits.max_drawdown_usd {
+            Some(limit) => positive("max_drawdown_usd", limit),
+            None => Ok(()),
+        }
     }
 
     pub fn allowance(&self, instrument: &InstrumentRef) -> Option<&Allowance> {
@@ -144,23 +221,83 @@ impl Mandate {
             let Some(allowance) = self.allowance(&range.instrument) else {
                 return Some(Breach::OutsideUniverse { positions: 1 });
             };
-            // This reader has no `min_position`: `max_position` bounds a
-            // short as much as a long.
-            let held = range.peak();
             // Lots convert to base units in floating point.
-            if held > allowance.max_position * (1.0 + 1e-9) {
-                return Some(Breach::Position {
-                    instrument: range.instrument.clone(),
-                    held,
-                    cap: allowance.max_position,
+            let slack = |bound: f64| bound.abs() * 1e-9;
+            match allowance.min_position {
+                // Without `min_position`, `max_position` bounds a short as
+                // much as a long.
+                None => {
+                    let held = range.peak();
+                    if held > allowance.max_position + slack(allowance.max_position) {
+                        return Some(Breach::Position {
+                            instrument: range.instrument.clone(),
+                            held,
+                            cap: allowance.max_position,
+                        });
+                    }
+                }
+                Some(min) => {
+                    if range.highest > allowance.max_position + slack(allowance.max_position) {
+                        return Some(Breach::Position {
+                            instrument: range.instrument.clone(),
+                            held: range.highest,
+                            cap: allowance.max_position,
+                        });
+                    }
+                    if range.lowest < min - slack(min) {
+                        return Some(Breach::Floor {
+                            instrument: range.instrument.clone(),
+                            held: range.lowest,
+                            floor: min,
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(limit) = self.limits.max_drawdown_usd
+            && observed.max_drawdown_usd > limit
+        {
+            return Some(Breach::Drawdown {
+                drawn: observed.max_drawdown_usd,
+                limit,
+            });
+        }
+        for (instrument, side) in observed
+            .fills
+            .iter()
+            .map(|fill| (&fill.instrument, fill.side))
+            .chain(observed.open_orders.iter().map(|(i, side)| (i, *side)))
+        {
+            let allowed = self
+                .allowance(instrument)
+                .is_none_or(|a| a.sides.as_ref().is_none_or(|sides| sides.contains(&side)));
+            if !allowed {
+                return Some(Breach::Side {
+                    instrument: instrument.clone(),
+                    side,
                 });
             }
         }
-        if observed.max_drawdown_usd > self.limits.max_drawdown_usd {
-            return Some(Breach::Drawdown {
-                drawn: observed.max_drawdown_usd,
-                limit: self.limits.max_drawdown_usd,
-            });
+        for fill in &observed.fills {
+            let Some(allowance) = self.allowance(&fill.instrument) else {
+                continue;
+            };
+            let limit = match fill.side {
+                Side::Sell => allowance
+                    .min_sell_price
+                    .filter(|floor| fill.price < floor - floor * 1e-9),
+                Side::Buy => allowance
+                    .max_buy_price
+                    .filter(|cap| fill.price > cap + cap * 1e-9),
+            };
+            if let Some(limit) = limit {
+                return Some(Breach::Price {
+                    instrument: fill.instrument.clone(),
+                    side: fill.side,
+                    price: fill.price,
+                    limit,
+                });
+            }
         }
         None
     }
@@ -185,6 +322,21 @@ pub struct Observed {
     pub positions_outside_universe: u32,
     /// The deepest the account's value fell below its running peak, in USD.
     pub max_drawdown_usd: f64,
+    /// Every fill the venues recorded for the account during the term, for
+    /// the sides and limit-price rules.
+    pub fills: Vec<ObservedFill>,
+    /// Each side the account was seen with an order resting on, per
+    /// instrument.
+    pub open_orders: Vec<(InstrumentRef, Side)>,
+}
+
+/// A fill as the audit reads it: where, which way for the account, and at
+/// what price, in quote units per base unit, before fees.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ObservedFill {
+    pub instrument: InstrumentRef,
+    pub side: Side,
+    pub price: f64,
 }
 
 impl Observed {
@@ -204,6 +356,30 @@ impl Observed {
                 lowest: position.min(0.0),
                 highest: position.max(0.0),
             }),
+        }
+    }
+
+    /// Starts the range of `instrument` at `position`, for an account that
+    /// doesn't start the term flat, such as one holding a spot asset. Call
+    /// it before the first [`Observed::record`].
+    pub fn begin(&mut self, instrument: &InstrumentRef, position: f64) {
+        self.positions
+            .retain(|range| &range.instrument != instrument);
+        self.positions.push(PositionRange {
+            instrument: instrument.clone(),
+            lowest: position,
+            highest: position,
+        });
+    }
+
+    /// Counts an order seen resting on `side` of `instrument`.
+    pub fn record_open_order(&mut self, instrument: &InstrumentRef, side: Side) {
+        if !self
+            .open_orders
+            .iter()
+            .any(|(i, s)| i == instrument && *s == side)
+        {
+            self.open_orders.push((instrument.clone(), side));
         }
     }
 
@@ -246,6 +422,24 @@ pub enum Breach {
         drawn: f64,
         limit: f64,
     },
+    /// Below an allowance's `min_position`.
+    Floor {
+        instrument: InstrumentRef,
+        held: f64,
+        floor: f64,
+    },
+    /// A fill or a resting order on a side the allowance doesn't list.
+    Side {
+        instrument: InstrumentRef,
+        side: Side,
+    },
+    /// A sell below `min_sell_price`, or a buy above `max_buy_price`.
+    Price {
+        instrument: InstrumentRef,
+        side: Side,
+        price: f64,
+        limit: f64,
+    },
 }
 
 impl fmt::Display for Breach {
@@ -269,6 +463,40 @@ impl fmt::Display for Breach {
                     "drew down ${drawn:.2} from its peak, over the ${limit} limit"
                 )
             }
+            Self::Floor {
+                instrument,
+                held,
+                floor,
+            } => write!(
+                f,
+                "held {held:.2} {instrument}, under the minimum position of {floor}"
+            ),
+            Self::Side { instrument, side } => write!(
+                f,
+                "{} {instrument}, a side its mandate doesn't allow",
+                match side {
+                    Side::Buy => "bought or bid for",
+                    Side::Sell => "sold or offered",
+                }
+            ),
+            Self::Price {
+                instrument,
+                side: Side::Sell,
+                price,
+                limit,
+            } => write!(
+                f,
+                "sold {instrument} at {price:.4}, under the minimum sell price of {limit}"
+            ),
+            Self::Price {
+                instrument,
+                side: Side::Buy,
+                price,
+                limit,
+            } => write!(
+                f,
+                "bought {instrument} at {price:.4}, over the maximum buy price of {limit}"
+            ),
         }
     }
 }
@@ -344,6 +572,7 @@ impl fmt::Display for Kind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Perp => "perp",
+            Self::Spot => "spot",
         })
     }
 }
@@ -354,8 +583,9 @@ impl FromStr for Kind {
     fn from_str(s: &str) -> std::result::Result<Self, String> {
         match s {
             "perp" => Ok(Self::Perp),
-            "spot" | "future" | "option" | "money-market" => Err(format!(
-                "instrument kind {s:?} is reserved; {VERSION} defines perp only"
+            "spot" => Ok(Self::Spot),
+            "future" | "option" | "money-market" => Err(format!(
+                "instrument kind {s:?} is reserved; this reader enforces perp and spot only"
             )),
             _ => Err(format!("unknown instrument kind {s:?}")),
         }
@@ -498,11 +728,153 @@ mod tests {
 
         let usdc = Asset::new("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "USDC", 6).unwrap();
         let spot = Holding::Spot(Holdings::empty(usdc));
-        let reserved =
-            InstrumentRef::of_holding(&InstrumentId::new("openbook:spot:SOL-USDC"), &spot);
-        assert!(reserved.unwrap_err().contains("reserved"));
+        let sol = InstrumentRef::of_holding(&InstrumentId::new("openbook:spot:SOL-USDC"), &spot);
+        assert_eq!(sol.unwrap().kind, Kind::Spot);
+        let lending = InstrumentRef::of_holding(&InstrumentId::new("kamino:spot:USDC"), &perp);
+        assert!(lending.unwrap_err().contains("names a spot"));
         assert!(InstrumentRef::of_holding(&InstrumentId::new("SPCX"), &perp).is_err());
         let mislabelled = InstrumentRef::of_holding(&InstrumentId::new("phoenix:spot:SPCX"), &perp);
         assert!(mislabelled.unwrap_err().contains("names a spot"));
+    }
+
+    fn sale() -> Mandate {
+        let mut mandate = Mandate::spot(&["openbook", "phoenix"], "SOL-USDC", 30_000.0);
+        for allowance in &mut mandate.universe {
+            allowance.sides = Some(vec![Side::Sell]);
+            allowance.min_sell_price = Some(94.0);
+        }
+        mandate
+    }
+
+    fn fill(venue: &str, side: Side, price: f64) -> ObservedFill {
+        ObservedFill {
+            instrument: format!("{venue}:spot:SOL-USDC").parse().unwrap(),
+            side,
+            price,
+        }
+    }
+
+    #[test]
+    fn the_specs_sale_example_reads_as_written() {
+        let json = r#"{
+          "version": "v0",
+          "term": { "until_slot": 412600 },
+          "universe": [
+            { "instrument": "openbook:spot:SOL-USDC", "max_position": 30000, "sides": ["sell"], "min_sell_price": 94.0 },
+            { "instrument": "phoenix:spot:SOL-USDC", "max_position": 30000, "sides": ["sell"], "min_sell_price": 94.0 }
+          ],
+          "limits": {}
+        }"#;
+        let mandate: Mandate = serde_json::from_str(json).unwrap();
+        assert_eq!(mandate.validate(), Ok(()));
+        assert_eq!(
+            mandate,
+            Mandate {
+                term: Some(Term {
+                    until_slot: 412_600
+                }),
+                ..sale()
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(mandate.limits).unwrap(),
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn a_perp_mandate_serializes_as_before() {
+        let json = serde_json::to_string(&Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0)).unwrap();
+        assert_eq!(
+            json,
+            r#"{"version":"v0","universe":[{"instrument":"phoenix:perp:SPCX","max_position":70.0}],"limits":{"max_drawdown_usd":1000.0}}"#
+        );
+    }
+
+    #[test]
+    fn new_members_are_validated() {
+        let check = |edit: &dyn Fn(&mut Allowance)| {
+            let mut mandate = sale();
+            edit(&mut mandate.universe[0]);
+            mandate.validate()
+        };
+        assert!(check(&|a| a.sides = Some(vec![])).is_err());
+        assert!(check(&|a| a.sides = Some(vec![Side::Buy, Side::Buy])).is_err());
+        assert!(check(&|a| a.sides = Some(vec![Side::Buy, Side::Sell])).is_ok());
+        assert!(check(&|a| a.min_sell_price = Some(0.0)).is_err());
+        assert!(check(&|a| a.max_buy_price = Some(f64::NAN)).is_err());
+        assert!(check(&|a| a.min_position = Some(30_001.0)).is_err());
+        assert!(check(&|a| a.min_position = Some(0.0)).is_ok());
+        let mut limited = sale();
+        limited.limits.max_drawdown_usd = Some(-1.0);
+        assert!(limited.validate().is_err());
+        let unknown = r#"{"instrument":"phoenix:spot:SOL-USDC","max_position":1,"sides":["hold"]}"#;
+        assert!(serde_json::from_str::<Allowance>(unknown).is_err());
+    }
+
+    #[test]
+    fn fills_on_a_forbidden_side_or_past_a_limit_price_breach() {
+        let mandate = sale();
+        let mut observed = Observed::default();
+        observed.begin(&"phoenix:spot:SOL-USDC".parse().unwrap(), 30_000.0);
+        observed.fills.push(fill("phoenix", Side::Sell, 94.0));
+        observed.fills.push(fill("openbook", Side::Sell, 120.0));
+        assert_eq!(mandate.audit(&observed), None);
+
+        let mut bought = observed.clone();
+        bought.fills.push(fill("openbook", Side::Buy, 100.0));
+        let breach = mandate.audit(&bought).unwrap();
+        assert!(matches!(
+            breach,
+            Breach::Side {
+                side: Side::Buy,
+                ..
+            }
+        ));
+        assert!(breach.to_string().contains("bought"), "{breach}");
+
+        let mut resting = observed.clone();
+        resting.record_open_order(&"openbook:spot:SOL-USDC".parse().unwrap(), Side::Buy);
+        assert!(matches!(mandate.audit(&resting), Some(Breach::Side { .. })));
+
+        let mut cheap = observed.clone();
+        cheap.fills.push(fill("phoenix", Side::Sell, 93.99));
+        let breach = mandate.audit(&cheap).unwrap();
+        assert!(matches!(breach, Breach::Price { limit: 94.0, .. }));
+        assert!(breach.to_string().contains("under the minimum"), "{breach}");
+
+        let mut capped = Mandate::spot(&["phoenix"], "SOL-USDC", 100.0);
+        capped.universe[0].max_buy_price = Some(150.0);
+        let mut dear = Observed::default();
+        dear.fills.push(fill("phoenix", Side::Buy, 150.5));
+        assert!(matches!(
+            capped.audit(&dear),
+            Some(Breach::Price {
+                side: Side::Buy,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn min_position_replaces_the_symmetric_bound() {
+        let sol: InstrumentRef = "phoenix:spot:SOL-USDC".parse().unwrap();
+        let mut mandate = Mandate::spot(&["phoenix"], "SOL-USDC", 100.0);
+        mandate.universe[0].min_position = Some(10.0);
+        let mut observed = Observed::default();
+        observed.begin(&sol, 100.0);
+        observed.record(&sol, 10.0);
+        assert_eq!(mandate.audit(&observed), None);
+        observed.record(&sol, 9.0);
+        assert!(matches!(
+            mandate.audit(&observed),
+            Some(Breach::Floor { floor: 10.0, .. })
+        ));
+        // Without a drawdown limit, any drawdown is allowed.
+        let deep = Observed {
+            max_drawdown_usd: 1e9,
+            ..Observed::default()
+        };
+        assert_eq!(mandate.audit(&deep), None);
     }
 }

@@ -186,6 +186,9 @@ impl Scenario {
         if self.mandate.term.is_some() {
             return Err("mandate: a scenario's mandate has no term; the session sets it".into());
         }
+        if self.mandate.limits.max_drawdown_usd.is_none() {
+            return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
+        }
         let mut book = 0.0;
         let mut free_from = 0;
         for (i, waypoint) in self.path.iter().enumerate() {
