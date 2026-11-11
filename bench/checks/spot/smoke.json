@@ -1,0 +1,35 @@
+{
+  "name": "spot-smoke",
+  "description": "A sell-only SOL-USDC session on Phoenix v1 and OpenBook v2: nothing moves but the bot",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "spot": {
+    "venues": [
+      "phoenix",
+      "openbook"
+    ],
+    "base": 10.0,
+    "quote": 1000.0
+  }
+}

@@ -75,6 +75,25 @@ From them:
 
 ## The benchmark's enforcer
 
-No benchmark task enforces this profile yet. The first is planned to be a
-treasury sale of SOL on OpenBook and Phoenix, under a sell-only mandate with
-a price floor.
+`mtx grade` audits spot sessions on this profile's SOL-USDC market, alone
+or with Phoenix's:
+
+- It measures the account at every step of the session, every two slots,
+  and once more after the bot's last turn. The position is the SOL held, in
+  the wallet and on each venue in the universe; the value is both assets at
+  the Pyth SOL/USD price and USDC at $1, each counted once, for the
+  drawdown limit when the mandate sets one.
+- A side has an open order when the account's resting orders lock base
+  (asks) or quote (bids) on it.
+- At the end of the term it reads every fill the market recorded for the
+  account, as a taker or a maker: the `FillLog`s of the term's
+  transactions and the `FillEvent`s still in the event heap, each
+  `seq_num` once. It audits them against the allowances' sides and limit
+  prices.
+- It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
+  set to the session's last slot, and disqualifies the session on any
+  breach.
+
+No benchmark task enforces this profile yet; `just spot-smoke` runs a
+session end to end. The first task is planned to be a treasury sale of SOL
+on OpenBook and Phoenix, under a sell-only mandate with a price floor.
