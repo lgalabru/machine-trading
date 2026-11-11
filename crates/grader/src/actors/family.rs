@@ -109,7 +109,8 @@ mod tests {
         let plan: FamilyPlan =
             serde_json::from_str(r#"{"family":"quiet","plan":{"walls":2,"any":[1,"x"]}}"#).unwrap();
         assert_eq!(plan.plan["any"][1], "x");
-        let back: FamilyPlan = serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
+        let back: FamilyPlan =
+            serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
         assert_eq!(back, plan);
     }
 
@@ -118,6 +119,9 @@ mod tests {
         register("quiet-test", quiet);
         assert!(builder("quiet-test").is_ok());
         let missing = builder("nobody").err().unwrap().to_string();
-        assert!(missing.contains("no family registered as \"nobody\""), "{missing}");
+        assert!(
+            missing.contains("no family registered as \"nobody\""),
+            "{missing}"
+        );
     }
 }
