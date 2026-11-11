@@ -1,0 +1,1888 @@
+{
+  "name": "actors-tape",
+  "description": "Twelve-level makers on both books, requoting every step under a heavy two-way tape: filled OpenBook orders have to be cranked out, and each requote has to fit its compute",
+  "symbol": "SOL-USDC",
+  "duration_slots": 120,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 100.0,
+        "sides": [
+          "sell"
+        ]
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 100.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "spot": {
+    "venues": [
+      "phoenix",
+      "openbook"
+    ],
+    "base": 20.0,
+    "quote": 5000.0
+  },
+  "actors": {
+    "makers": {
+      "half_spread_bps": 4.0,
+      "spacing_bps": 3.0,
+      "sizes": [
+        1.0,
+        1.0,
+        1.5,
+        1.5,
+        2.0,
+        2.0,
+        2.5,
+        2.5,
+        3.0,
+        3.0,
+        4.0,
+        4.0
+      ],
+      "refill": 0.2,
+      "skew_bps": 20.0,
+      "hedge": 0.1,
+      "permanent_bps": 20.0,
+      "transient_bps": 20.0,
+      "transient_decay": 0.3,
+      "clear_stale": true
+    }
+  },
+  "tape": [
+    {
+      "slot": 2,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 2,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 2,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 2,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 4,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 4,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 4,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 4,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 6,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 6,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 6,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 6,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 8,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 8,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 8,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 8,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 10,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 10,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 10,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 10,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 12,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 12,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 12,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 12,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 14,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 14,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 14,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 14,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 16,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 16,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 16,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 16,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 18,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 18,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 18,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 18,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 20,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 20,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 20,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 20,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 22,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 22,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 22,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 22,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 24,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 24,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 24,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 24,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 26,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 26,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 26,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 26,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 28,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 28,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 28,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 28,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 30,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 30,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 30,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 30,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 32,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 32,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 32,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 32,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 34,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 34,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 34,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 34,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 36,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 36,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 36,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 36,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 38,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 38,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 38,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 38,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 40,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 40,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 40,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 40,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 42,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 42,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 42,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 42,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 44,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 44,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 44,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 44,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 46,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 46,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 46,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 46,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 48,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 48,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 48,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 48,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 50,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 50,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 50,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 50,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 52,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 52,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 52,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 52,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 54,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 54,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 54,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 54,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 56,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 56,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 56,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 56,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 58,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 58,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 58,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 58,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 60,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 60,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 60,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 60,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 62,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 62,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 62,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 62,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 64,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 64,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 64,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 64,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 66,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 66,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 66,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 66,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 68,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 68,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 68,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 68,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 70,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 70,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 70,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 70,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 72,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 72,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 72,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 72,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 74,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 74,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 74,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 74,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 76,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 76,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 76,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 76,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 78,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 78,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 78,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 78,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 80,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 80,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 80,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 80,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 82,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 82,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 82,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 82,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 84,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 84,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 84,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 84,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 86,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 86,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 86,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 86,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 88,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 88,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 88,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 88,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 90,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 90,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 90,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 90,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 92,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 92,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 92,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 92,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 94,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 94,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 94,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 94,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 96,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 96,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 96,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 96,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 98,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 98,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 98,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 98,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 100,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 100,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 100,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 100,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 102,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 102,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 102,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 102,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 104,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 104,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 104,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "openbook"
+    },
+    {
+      "slot": 104,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 106,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 106,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 106,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "openbook"
+    },
+    {
+      "slot": 106,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 108,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 108,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 108,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "openbook"
+    },
+    {
+      "slot": 108,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 110,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 110,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 110,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 7,
+      "venue": "openbook"
+    },
+    {
+      "slot": 110,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 112,
+      "side": "buy",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 0,
+      "venue": "openbook"
+    },
+    {
+      "slot": 112,
+      "side": "sell",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 1,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 112,
+      "side": "buy",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 2,
+      "venue": "openbook"
+    },
+    {
+      "slot": 112,
+      "side": "sell",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 114,
+      "side": "sell",
+      "size": 6.0,
+      "limit_bps": 60.0,
+      "account": 3,
+      "venue": "openbook"
+    },
+    {
+      "slot": 114,
+      "side": "buy",
+      "size": 9.0,
+      "limit_bps": 60.0,
+      "account": 4,
+      "venue": "phoenix"
+    },
+    {
+      "slot": 114,
+      "side": "sell",
+      "size": 4.0,
+      "limit_bps": 60.0,
+      "account": 5,
+      "venue": "openbook"
+    },
+    {
+      "slot": 114,
+      "side": "buy",
+      "size": 7.0,
+      "limit_bps": 60.0,
+      "account": 6,
+      "venue": "phoenix"
+    }
+  ]
+}

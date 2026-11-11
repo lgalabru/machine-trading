@@ -77,6 +77,21 @@ spot-smoke:
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke bench/checks/spot/smoke.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
 
+# Spot sessions with scenario actors: makers that clear the snapshot's stale
+# orders, thin out under a seller and refill; a level and Pyth on a path; a
+# heavy tape; a counterparty that buys ahead of a buyer. Checks the detail files.
+actors-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bots/spot-smoke/build.sh
+    rm -rf target/actors-smoke
+    for run in actors-seller=steady-seller actors-path=steady-seller actors-tape=steady-seller actors-buyer=steady-buyer actors-buyer-ahead=steady-buyer; do
+      name=${run%%=*}
+      cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/${run#*=} \
+        --logs target/actors-smoke/logs/$name --details target/actors-smoke/$name bench/checks/spot/$name.json
+    done
+    python3 bench/checks/spot/actors.py target/actors-smoke
+
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
