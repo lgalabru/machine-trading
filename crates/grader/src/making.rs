@@ -452,6 +452,7 @@ impl MakingFamily {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            spot: None,
             reference_pnl_usd: None,
         };
         (scenario, informed)

@@ -644,6 +644,7 @@ mod tests {
             valuation: "mark",
             flow: None,
             competitor: None,
+            spot: None,
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -693,6 +694,7 @@ mod tests {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            spot: None,
             reference_pnl_usd,
         }
     }

@@ -19,6 +19,7 @@ use crate::{
     making::Making,
     offhours::OffHours,
     phoenix::{SLOTS_BETWEEN_STEPS, market_move, oracle_move},
+    spot::Spot,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -58,6 +59,11 @@ pub struct Scenario {
     /// They keep Phoenix's book price, and with it a book-priced mark, fresh.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tape: Vec<crate::making::TakerOrder>,
+    /// For a spot session: the spot markets the bot trades and what its
+    /// wallet starts with (see [`crate::spot`]). The mandate's universe is
+    /// those markets and `symbol` their pair, such as `SOL-USDC`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spot: Option<Spot>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -161,8 +167,18 @@ impl Scenario {
         }
     }
 
-    /// The mandate's position cap on the scenario's market.
+    /// The mandate's position cap on the scenario's market. In a spot
+    /// session, the largest of the spot markets' caps: they all bound the
+    /// same base asset.
     pub fn max_position(&self) -> f64 {
+        if self.spot.is_some() {
+            return self
+                .mandate
+                .universe
+                .iter()
+                .map(|a| a.max_position)
+                .fold(0.0, f64::max);
+        }
         self.mandate
             .allowance(&self.instrument())
             .map_or(0.0, |a| a.max_position)
@@ -176,6 +192,9 @@ impl Scenario {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(spot) = &self.spot {
+            return spot.validate(self);
+        }
         if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
         {
             return Err(format!(
@@ -307,6 +326,9 @@ impl Scenario {
     /// every taker order, and the moves it trades or leans into, so a bound
     /// on the spread alone is one a bot can pass.
     pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
+        if let Some(spot) = &self.spot {
+            return spot.bound_usd.unwrap_or(0.0);
+        }
         let spread = self.making.as_ref().map_or(0.0, |making| {
             making.spread_bound_usd(&self.path, start_mark_usd)
         });
@@ -785,6 +807,7 @@ impl ShockFamily {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            spot: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -1418,6 +1441,7 @@ mod tests {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            spot: None,
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1475,6 +1499,7 @@ mod tests {
             offhours: None,
             funding: None,
             tape: Vec::new(),
+            spot: None,
             reference_pnl_usd: None,
         }
     }
