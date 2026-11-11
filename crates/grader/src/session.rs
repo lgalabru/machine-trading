@@ -669,11 +669,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             continue;
         }
         let started = Instant::now();
-        let step = Step {
-            k,
-            slot,
-            last: k + 1 == steps,
-        };
+        let step = Step::new(k, slot, k + 1 == steps);
         let wall = TURN_WALL.min(budget.saturating_sub(spent));
         let answered = take_turn(&mut writer, &mut reader, step, wall).await;
         let took = started.elapsed();

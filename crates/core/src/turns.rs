@@ -14,6 +14,10 @@
 //!    on, and sends that arrive while it moves are refused.
 //! 3. Grader to bot: `{"t":"end"}`, then the bot is stopped.
 //!
+//! A scenario that opts in also puts the step's trades, the books' depth and
+//! the world's clock on each [`Step`]; [`Turns::tape`], [`Turns::depth`] and
+//! [`Turns::unix_timestamp`] read them.
+//!
 //! [`Turns`] does the bot's side: [`Turns::next`] answers `done` for the
 //! previous step and waits for the next one.
 //!
@@ -36,7 +40,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{Error, Result, Side};
 
 pub const PROTOCOL: &str = "mtx-turn-1";
 /// The file descriptor the grader passes the turn socket on.
@@ -59,12 +63,80 @@ pub struct Hello {
 }
 
 /// One step: the world has moved to `slot`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+///
+/// A scenario that opts in to turn data adds what a bot can't cheaply read
+/// from the chain itself; a step of any other scenario carries none of the
+/// optional fields, and its line is the same as ever.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Step {
     pub k: u64,
     pub slot: u64,
     /// The session's last step: the account is valued after it.
     pub last: bool,
+    /// The world's clock at this step, in Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unix_timestamp: Option<i64>,
+    /// Every trade since the previous step, on every venue, between any
+    /// accounts, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tape: Vec<Trade>,
+    /// The top of each venue's book at this step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depth: Vec<BookLevels>,
+}
+
+impl Step {
+    /// A step with no turn data.
+    pub fn new(k: u64, slot: u64, last: bool) -> Self {
+        Self {
+            k,
+            slot,
+            last,
+            ..Self::default()
+        }
+    }
+}
+
+/// Which side of a trade the bot was on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    Taker,
+    Maker,
+}
+
+/// One trade on a venue's tape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Trade {
+    /// Where it traded, as the mandate names venues: `phoenix` or `openbook`.
+    pub venue: String,
+    /// The taker's side.
+    pub side: Side,
+    /// Price, quote units per base unit, before fees.
+    pub price: f64,
+    /// Size, base units.
+    pub base: f64,
+    /// The slot it landed in, or was first seen in.
+    pub slot: u64,
+    /// Which side of it the bot was, when it was one of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own: Option<Role>,
+}
+
+/// One price level of a book.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Level {
+    pub price: f64,
+    /// Size resting at the price, base units.
+    pub base: f64,
+}
+
+/// The top levels of one venue's book, best first.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BookLevels {
+    pub venue: String,
+    pub bids: Vec<Level>,
+    pub asks: Vec<Level>,
 }
 
 /// Every message, either way.
@@ -85,6 +157,10 @@ pub struct Turns {
     hello: Hello,
     /// The step the bot is on, answered `done` by the next [`Turns::next`].
     open: Option<u64>,
+    /// The step's turn data, kept for [`Turns::tape`] and its siblings.
+    tape: Vec<Trade>,
+    depth: Vec<BookLevels>,
+    unix_timestamp: Option<i64>,
 }
 
 impl Turns {
@@ -116,6 +192,9 @@ impl Turns {
                 turn_wall_ms: 0,
             },
             open: None,
+            tape: Vec::new(),
+            depth: Vec::new(),
+            unix_timestamp: None,
         };
         match turns.read()? {
             Some(Message::Hello(hello)) if hello.protocol == PROTOCOL => turns.hello = hello,
@@ -132,6 +211,24 @@ impl Turns {
         &self.hello
     }
 
+    /// The current step's trades on every venue since the previous step,
+    /// oldest first: empty unless the scenario reports a tape.
+    pub fn tape(&self) -> &[Trade] {
+        &self.tape
+    }
+
+    /// The top of each venue's book at the current step: empty unless the
+    /// scenario reports depth.
+    pub fn depth(&self) -> &[BookLevels] {
+        &self.depth
+    }
+
+    /// The world's clock at the current step, in Unix seconds, when the
+    /// scenario reports it.
+    pub fn unix_timestamp(&self) -> Option<i64> {
+        self.unix_timestamp
+    }
+
     /// Answer `done` for the step the bot is on, then wait for the next one.
     /// `None` once the session has ended.
     #[allow(clippy::should_implement_trait)] // fallible, unlike Iterator::next
@@ -143,6 +240,9 @@ impl Turns {
             match self.read()? {
                 Some(Message::Step(step)) => {
                     self.open = Some(step.k);
+                    self.tape.clone_from(&step.tape);
+                    self.depth.clone_from(&step.depth);
+                    self.unix_timestamp = step.unix_timestamp;
                     return Ok(Some(step));
                 }
                 Some(Message::End) | None => return Ok(None),
@@ -225,15 +325,98 @@ mod tests {
         for k in 0..2 {
             send(
                 &mut grader,
-                Message::Step(Step {
-                    k,
-                    slot: 102 + 2 * k,
-                    last: k == 1,
-                }),
+                Message::Step(Step::new(k, 102 + 2 * k, k == 1)),
             );
             assert_eq!(recv(), Message::Done { k });
         }
         send(&mut grader, Message::End);
         assert_eq!(bot.join().unwrap(), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_step_without_turn_data_is_the_line_it_always_was() {
+        let line = serde_json::to_string(&Message::Step(Step::new(3, 120, false))).unwrap();
+        assert_eq!(line, r#"{"t":"step","k":3,"slot":120,"last":false}"#);
+        let Message::Step(step) = serde_json::from_str(&line).unwrap() else {
+            panic!("a step");
+        };
+        assert!(step.tape.is_empty() && step.depth.is_empty() && step.unix_timestamp.is_none());
+    }
+
+    #[test]
+    fn turn_data_round_trips_and_is_kept_for_the_bot() {
+        let (bot, grader) = UnixStream::pair().unwrap();
+        let mut grader_reader = BufReader::new(grader.try_clone().unwrap());
+        let mut grader = grader;
+        let hello = Message::Hello(Hello {
+            protocol: PROTOCOL.into(),
+            steps: 2,
+            slots_per_step: 2,
+            start_slot: 100,
+            end_slot: 104,
+            turn_wall_ms: 1_000,
+        });
+        let line = |m: &Message| {
+            let mut line = serde_json::to_string(m).unwrap();
+            line.push('\n');
+            line
+        };
+        grader.write_all(line(&hello).as_bytes()).unwrap();
+        let bot = std::thread::spawn(move || {
+            let mut turns = Turns::over(bot).unwrap();
+            let mut seen = vec![];
+            while let Some(step) = turns.next().unwrap() {
+                seen.push((
+                    step.k,
+                    turns.tape().to_vec(),
+                    turns.depth().to_vec(),
+                    turns.unix_timestamp(),
+                ));
+            }
+            seen
+        });
+        let mut ready = String::new();
+        grader_reader.read_line(&mut ready).unwrap();
+        let trade = Trade {
+            venue: "phoenix".into(),
+            side: Side::Sell,
+            price: 150.25,
+            base: 2.0,
+            slot: 101,
+            own: Some(Role::Maker),
+        };
+        let book = BookLevels {
+            venue: "openbook".into(),
+            bids: vec![Level {
+                price: 150.0,
+                base: 4.0,
+            }],
+            asks: vec![],
+        };
+        let first = Step {
+            tape: vec![trade.clone()],
+            depth: vec![book.clone()],
+            unix_timestamp: Some(1_700_000_000),
+            ..Step::new(0, 102, false)
+        };
+        for step in [first.clone(), Step::new(1, 104, true)] {
+            let k = step.k;
+            grader.write_all(line(&Message::Step(step)).as_bytes()).unwrap();
+            let mut done = String::new();
+            grader_reader.read_line(&mut done).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Message>(&done).unwrap(),
+                Message::Done { k }
+            );
+        }
+        grader.write_all(line(&Message::End).as_bytes()).unwrap();
+        let seen = bot.join().unwrap();
+        assert_eq!(
+            seen[0],
+            (0, vec![trade], vec![book], Some(1_700_000_000))
+        );
+        assert_eq!(seen[1], (1, vec![], vec![], None));
+        let json = serde_json::to_string(&first).unwrap();
+        assert_eq!(serde_json::from_str::<Step>(&json).unwrap(), first);
     }
 }
