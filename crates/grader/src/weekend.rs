@@ -423,6 +423,9 @@ impl WeekendFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            turn_data: None,
+            order: None,
+            participation: None,
             reference_pnl_usd: None,
         };
         (scenario, shape)

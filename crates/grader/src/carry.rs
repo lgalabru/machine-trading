@@ -505,6 +505,9 @@ impl CarryFamily {
             funding: Some(funding),
             tape,
             spot: None,
+            turn_data: None,
+            order: None,
+            participation: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {

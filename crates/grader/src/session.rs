@@ -144,6 +144,12 @@ pub struct SessionReport {
     /// A spot session: the wallet at the start and the end, and every fill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<crate::spot::SpotReport>,
+    /// A spot session with an execution order: how the bot did against it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<crate::orders::OrderReport>,
+    /// A spot session that prices participation: what the charge came to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub participation: Option<crate::orders::ParticipationReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -740,6 +746,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         flow,
         competitor,
         spot: None,
+        order: None,
+        participation: None,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {
