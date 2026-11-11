@@ -31,7 +31,10 @@ pub struct ExecutionOrder {
     /// What the broker's price for the remainder is worse than the close by,
     /// in basis points: lower when it sells, higher when it buys.
     pub haircut_bps: f64,
-    /// Whether any fill that grows the position is a breach.
+    /// Whether any fill that grows the position is a breach. On a spot
+    /// wallet, which can't go short, a sell order already breaks on any buy,
+    /// so this adds nothing there; it is for families on markets where the
+    /// position can flip.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reduce_only: bool,
 }
@@ -174,7 +177,7 @@ impl OrderReport {
 }
 
 /// A limit on the bot's share of a venue's traded volume, priced: base units
-/// over it cost `price_bps` of the mark.
+/// over it cost `price_bps` of the price they traded at.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Participation {
@@ -184,7 +187,7 @@ pub struct Participation {
     /// The window's length, in slots: it ends at each of the bot's fills.
     pub window_slots: u64,
     /// The charge on each base unit over the share, in basis points of the
-    /// mark.
+    /// price it traded at.
     pub price_bps: f64,
 }
 
@@ -247,6 +250,8 @@ impl Participation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Traded {
     pub venue: String,
+    /// The price it traded at, quote units per base unit.
+    pub price: f64,
     /// Slots into the session.
     pub slot: u64,
     pub base: f64,
@@ -275,13 +280,9 @@ pub struct VenueShare {
 }
 
 impl Participation {
-    /// The charge for a session's trades, at `mark_usd`.
-    pub fn report(
-        &self,
-        trades: &[Traded],
-        venues: &[String],
-        mark_usd: f64,
-    ) -> ParticipationReport {
+    /// The charge for a session's trades: each unit over the share costs
+    /// `price_bps` of the price of the trade it was in.
+    pub fn report(&self, trades: &[Traded], venues: &[String]) -> ParticipationReport {
         let excess = self.excess(trades);
         let shares: Vec<VenueShare> = venues
             .iter()
@@ -308,7 +309,11 @@ impl Participation {
         let excess_base: f64 = excess.iter().sum();
         ParticipationReport {
             excess_base,
-            charge_usd: excess_base * mark_usd * self.price_bps / 10_000.0,
+            charge_usd: trades
+                .iter()
+                .zip(&excess)
+                .map(|(t, e)| e * t.price * self.price_bps / 10_000.0)
+                .sum(),
             venues: shares,
         }
     }
@@ -330,6 +335,7 @@ mod tests {
     fn trade(venue: &str, slot: u64, base: f64, own: bool) -> Traded {
         Traded {
             venue: venue.into(),
+            price: 100.0,
             slot,
             base,
             own,
@@ -516,6 +522,20 @@ mod tests {
     }
 
     #[test]
+    fn participation_is_priced_at_the_fill_not_a_mark() {
+        let p = Participation {
+            max_share: 0.25,
+            window_slots: 10,
+            price_bps: 10.0,
+        };
+        let mut dear = trade("phoenix", 5, 4.0, true);
+        dear.price = 120.0;
+        let report = p.report(&[dear], &["phoenix".to_string()]);
+        assert_eq!(report.excess_base, 3.0);
+        assert!((report.charge_usd - 3.0 * 120.0 * 0.001).abs() < 1e-9);
+    }
+
+    #[test]
     fn participation_counts_each_venue_apart_and_prices_the_excess() {
         let p = Participation {
             max_share: 0.5,
@@ -529,9 +549,9 @@ mod tests {
             trade("openbook", 2, 1.0, true),
         ];
         let venues = vec!["phoenix".to_string(), "openbook".to_string()];
-        let report = p.report(&trades, &venues, 150.0);
+        let report = p.report(&trades, &venues);
         assert_eq!(report.excess_base, 2.5);
-        assert!((report.charge_usd - 2.5 * 150.0 * 0.001).abs() < 1e-9);
+        assert!((report.charge_usd - 2.5 * 100.0 * 0.001).abs() < 1e-9);
         assert_eq!(report.venues[0].traded_base, 5.0);
         assert_eq!(report.venues[0].excess_base, 2.5);
         assert_eq!(report.venues[1].own_base, 1.0);
