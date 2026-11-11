@@ -69,6 +69,25 @@ pub struct Scenario {
     /// forwards at once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faults: Option<crate::faults::Faults>,
+    /// For a spot session: what each step message carries beyond the clock
+    /// (see [`crate::spot::TurnData`]). Without it, none of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_data: Option<crate::spot::TurnData>,
+    /// For a spot session: a quantity the bot has to trade by the end, and
+    /// what a broker would charge to do it for the bot (see
+    /// [`crate::orders::ExecutionOrder`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<crate::orders::ExecutionOrder>,
+    /// For a spot session: a charge on the bot's share of a venue's traded
+    /// volume (see [`crate::orders::Participation`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub participation: Option<crate::orders::Participation>,
+    /// For a spot session where the bot starts with inventory and trades
+    /// both ways: score the PnL net of the starting holding's price drift,
+    /// with optional priced charges (see [`crate::orders::NetScoring`]).
+    /// Not with an `order`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<crate::orders::NetScoring>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -216,6 +235,13 @@ impl Scenario {
                     .map_err(|reason| format!("faults: {reason}"))?;
             }
             return spot.validate(self);
+        }
+        if self.turn_data.is_some()
+            || self.order.is_some()
+            || self.participation.is_some()
+            || self.net.is_some()
+        {
+            return Err("turn_data, order, participation and net are for spot scenarios".into());
         }
         if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
         {
@@ -877,6 +903,10 @@ impl ShockFamily {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            turn_data: None,
+            order: None,
+            participation: None,
+            net: None,
             reference_pnl_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
@@ -1585,6 +1615,10 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            turn_data: None,
+            order: None,
+            participation: None,
+            net: None,
             reference_pnl_usd: None,
             fair_path: None,
         };
@@ -1645,6 +1679,10 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            turn_data: None,
+            order: None,
+            participation: None,
+            net: None,
             reference_pnl_usd: None,
             fair_path: None,
         }
