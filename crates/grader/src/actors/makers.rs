@@ -221,9 +221,8 @@ impl MakerModel {
     /// then asks, each (price, size), nearest first.
     pub fn quotes(&self, book: &Book, reference_usd: f64, shape: &Shape) -> (Ladder, Ladder) {
         let lean = (book.inventory / self.ladder()).clamp(-1.0, 1.0);
-        let center = reference_usd
-            * (1.0 + shape.offset_bps / 1e4)
-            * (1.0 - self.skew_bps * lean / 1e4);
+        let center =
+            reference_usd * (1.0 + shape.offset_bps / 1e4) * (1.0 - self.skew_bps * lean / 1e4);
         let levels =
             ((shape.quoting * self.sizes.len() as f64).ceil() as usize).min(self.sizes.len());
         let side = |sign: f64, available: f64, weight: f64| {
@@ -663,7 +662,10 @@ pub(crate) mod tests {
         let (bids, asks) = m.quotes(&Book::default(), 100.0, &phoenix);
         assert!(close(bids[0].0, 100.3 * 0.999) && close(asks[0].0, 100.3 * 1.001));
         let (bids, _) = m.quotes(&Book::default(), 100.0, &m.shape("openbook", 4));
-        assert!(close(bids[0].0, 99.9), "the other venue stays on the reference");
+        assert!(
+            close(bids[0].0, 99.9),
+            "the other venue stays on the reference"
+        );
         m.schedule[0].offset_bps = f64::NAN;
         assert!(m.validate().is_err());
     }

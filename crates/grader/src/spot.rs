@@ -204,7 +204,10 @@ impl Spot {
             .actors
             .as_ref()
             .map_or(&[][..], |a| &a.oracle_path[..]);
-        for (name, path) in [("waypoint", &scenario.path[..]), ("oracle waypoint", oracle_path)] {
+        for (name, path) in [
+            ("waypoint", &scenario.path[..]),
+            ("oracle waypoint", oracle_path),
+        ] {
             let mut after = None;
             for (i, waypoint) in path.iter().enumerate() {
                 if after.is_some_and(|slot| waypoint.slot <= slot)
