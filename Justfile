@@ -76,6 +76,10 @@ spot-smoke:
     bots/spot-smoke/build.sh
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke bench/checks/spot/smoke.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-sell-order bench/checks/spot/smoke-sell-order.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
 
 # Spot sessions with scenario actors: makers that clear the snapshot's stale
 # orders, thin out under a seller and refill; a level and Pyth on a path; a

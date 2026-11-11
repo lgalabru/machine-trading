@@ -85,6 +85,30 @@ pub struct Book {
     pub asks: Vec<LeafOrder>,
 }
 
+/// Both sides of a market's book, in one read, best first. The tree holds
+/// each side in ascending key order, which is worst first for the bids.
+pub async fn read_book(
+    chain: &dyn ChainClient,
+    market: &OpenBookV2Market,
+) -> Result<Book, OpenBookV2Error> {
+    let k = &market.keys;
+    let accounts = chain.get_multiple_accounts(&[k.bids, k.asks]).await?;
+    let side = |i: usize, key: Pubkey| -> Result<Vec<LeafOrder>, OpenBookV2Error> {
+        let account = accounts[i]
+            .as_ref()
+            .ok_or(ChainError::AccountNotFound(key))?;
+        Ok(book_side_orders(&account.data)?)
+    };
+    let mut bids = side(0, k.bids)?;
+    let mut asks = side(1, k.asks)?;
+    // A leaf's key is its price lots, then its sequence number (inverted
+    // on the bid side), so key order is match order on the asks and its
+    // reverse on the bids.
+    bids.sort_by_key(|o| std::cmp::Reverse((o.price_lots, o.sequence_key)));
+    asks.sort_by_key(|o| (o.price_lots, o.sequence_key));
+    Ok(Book { bids, asks })
+}
+
 /// One trader in one OpenBook v2 market.
 pub struct OpenBookV2Trader {
     market: OpenBookV2Market,
@@ -150,25 +174,9 @@ impl OpenBookV2Trader {
         ix::open_orders_account(&self.authority, ACCOUNT_NUMBER)
     }
 
-    /// Both book sides, in one read, best first. The tree holds each side in
-    /// ascending key order, which is worst first for the bids.
+    /// Both book sides, in one read, best first. See [`read_book`].
     pub async fn book(&self) -> Result<Book, OpenBookV2Error> {
-        let k = &self.market.keys;
-        let accounts = self.chain.get_multiple_accounts(&[k.bids, k.asks]).await?;
-        let side = |i: usize, key: Pubkey| -> Result<Vec<LeafOrder>, OpenBookV2Error> {
-            let account = accounts[i]
-                .as_ref()
-                .ok_or(ChainError::AccountNotFound(key))?;
-            Ok(book_side_orders(&account.data)?)
-        };
-        let mut bids = side(0, k.bids)?;
-        let mut asks = side(1, k.asks)?;
-        // A leaf's key is its price lots, then its sequence number (inverted
-        // on the bid side), so key order is match order on the asks and its
-        // reverse on the bids.
-        bids.sort_by_key(|o| std::cmp::Reverse((o.price_lots, o.sequence_key)));
-        asks.sort_by_key(|o| (o.price_lots, o.sequence_key));
-        Ok(Book { bids, asks })
+        read_book(self.chain.as_ref(), &self.market).await
     }
 
     /// The book by price level. Orders expired at `unix_timestamp` are left
