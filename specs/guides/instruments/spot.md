@@ -165,6 +165,10 @@ about $0.70. A big order is different: it uses up the first level and moves
 on to dearer ones, so its average price gets worse the more it buys. That
 difference from the mid is **slippage**.
 
+Not every spot venue is an order book. On a
+[prop AMM](../venues/prop-amm.md) you trade against one firm's own quote
+instead, and what you hold afterwards is the same spot position.
+
 ```lab
 {
   "model": "spot.book",

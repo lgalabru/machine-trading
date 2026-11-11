@@ -26,6 +26,10 @@ guide's own script on the page.
   what a bot has to decide before it trades, and "Under a mandate" saying
   whether the mandate can express it yet. Use the instrument guides' running
   example ($1,000, SPCX at $100) so readers can carry their numbers across.
+- **Venues**, in `specs/guides/venues/<name>.md`: a way a market trades
+  that the instrument guides don't cover, such as a prop AMM. Same outline,
+  with one section per way a trade there can go wrong, and "Under a mandate"
+  saying whether a venue profile exists yet.
 
 ## The outline
 

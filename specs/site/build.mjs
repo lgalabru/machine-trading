@@ -29,6 +29,7 @@ const GUIDE_FOLDERS = [
   { dir: "guides/bots", title: "Bots" },
   { dir: "guides/instruments", title: "Instruments" },
   { dir: "guides/strategies", title: "Strategies" },
+  { dir: "guides/venues", title: "Venues" },
   { dir: "guides", title: "Reference" },
 ];
 const GUIDES_INDEX = "guides/index.html";

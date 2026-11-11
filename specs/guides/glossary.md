@@ -515,6 +515,83 @@ scrambled to buy. In January 2021 GameStop's price rose more than tenfold
 in weeks as retail traders squeezed the funds short of it.
 :::
 
+## Swaps and prop AMMs
+
+### Swap
+
+Also: swaps, swapped, swapping
+Not: perpetual swap, perpetual swaps, from swaps
+
+Trading one token for another in a single transaction: you send one, and
+receive the other, or nothing changes at all. Nothing rests and nothing is
+left to cancel.
+
+### AMM
+
+Also: AMMs, automated market maker, automated market makers
+
+A program that trades from a pool of two tokens at a price a formula sets
+from how much of each it holds. Anyone can add tokens to the pool, and every
+trade moves the price.
+
+### Prop AMM
+
+Also: prop AMMs, proprietary AMM, proprietary AMMs, proprietary market maker, proprietary market makers, PMM
+
+A program through which one trading firm sells and buys from its own tokens,
+at a price the firm publishes and keeps changing. You can swap against it,
+but you can't rest an order on it or add tokens to it. See the
+[guide](venues/prop-amm.md).
+
+### Fair value
+
+Also: fair values
+
+What a market maker thinks an asset is worth right now. It quotes a little
+above it to sell and a little below it to buy.
+
+### Inventory
+
+Also: inventories
+
+The tokens a market maker holds to trade with. It can only pay out what it
+has, and it quotes worse on the side it is running low on.
+
+### Vault
+
+Also: vaults
+
+A token account a program controls. A prop AMM pays its swaps out of its
+vaults, one for each token of the pair.
+
+### Slot
+
+Also: slots
+
+Solana's unit of time: the turn in which one block can be produced, about
+0.4 seconds. Mandates' terms and quotes' ages are counted in slots.
+
+### Stale quote
+
+Also: stale quotes, stale, staleness
+
+A quote its market maker hasn't refreshed in the last few slots. The price
+may have moved since, so a prop AMM stops filling against it.
+
+### Minimum output
+
+Also: minimum outputs, slippage tolerance
+
+The least a swap may pay you, sent with the swap. If the venue would pay
+less, the swap fails and nothing is traded.
+
+### Aggregator
+
+Also: aggregators, router, routers
+
+A program or service that looks at several venues and sends a trade to
+whichever gives the best price, or splits it between them.
+
 ## Money markets
 
 ### Money market
@@ -527,6 +604,7 @@ against collateral. See the [guide](instruments/money-market.md).
 ### Reserve
 
 Also: reserves, pool, pools
+Not: pool of two tokens, pool anyone can add to, what the pool holds, the pool's price, tokens in the pool, tokens to the pool, one more pool
 
 One asset's pool in a lending market: everyone's supply of it, and
 everyone's borrows from it.
