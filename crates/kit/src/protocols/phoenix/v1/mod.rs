@@ -24,6 +24,7 @@
 
 mod driver;
 mod error;
+pub mod fills;
 pub mod ix;
 mod market;
 mod meter;
