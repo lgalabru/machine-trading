@@ -5,6 +5,19 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
 - **Unreleased.**
+  - **One `Strategy`, synchronous.** `mtx_kit::Strategy`'s `start`,
+    `step` and `end` are plain functions, and `step` takes `&mut Orders`.
+    The same strategy runs as a process (`mtx_kit::run`) and as a
+    WebAssembly component the grader calls (`mtx_kit::export!`, feature
+    `component`; RFD 0002). `Orders::trader()` and `Session::env` are gone:
+    `mtx_kit::rpc(method, params)` reads the chain, synchronously, at the
+    step, for the reads in `mtx_kit::RPC_METHODS`. `Session` is plain data
+    (steps, slots, symbol, start mark, cap, drawdown limit, mandate, seed),
+    `Market::budget_left` is gone, and `mtx_kit::Side` is the kit's own,
+    with `.into()` for Phoenix's builders.
+  - **Reads are at the step.** The guard served a read at `processed` only
+    when it named a commitment; one that named none got the node's
+    default, 31 slots behind the world. Every read is now at `processed`.
   - **The order sheet counts resting orders.** `plan()` cut each resting
     order against the position alone, so two bids of 50 under a cap of 70
     both went out, and filling both broke the mandate. It now counts every

@@ -7,9 +7,9 @@ use solana_signer::Signer;
 use solana_transaction::Signature;
 
 use crate::{
-    BotEnv, Decimal, Error, Phoenix, Result,
+    BotEnv, Decimal, Error, Phoenix, Position, Result, Side,
     core::{Rounding, Side as CoreSide},
-    protocols::phoenix::eternal::{PhoenixTrader, phoenix_rise::math::Side},
+    protocols::phoenix::eternal::PhoenixTrader,
     rpc_client,
 };
 
@@ -31,13 +31,6 @@ pub struct Trader {
     /// The exact-decimal Phoenix trader underneath, for this account and
     /// market.
     pub inner: PhoenixTrader,
-}
-
-/// A position in base units (positive is long) and its average entry in USD.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Position {
-    pub size: f64,
-    pub entry_usd: f64,
 }
 
 fn core_side(side: Side) -> CoreSide {
@@ -235,6 +228,25 @@ impl Trader {
             trader,
             self.keypair.insecure_clone(),
         ))
+    }
+}
+
+/// The order sheet's side, for Phoenix's own builders (`.side(side.into())`).
+impl From<Side> for crate::phoenix_rise::math::Side {
+    fn from(side: Side) -> Self {
+        match side {
+            Side::Bid => Self::Bid,
+            Side::Ask => Self::Ask,
+        }
+    }
+}
+
+impl From<crate::phoenix_rise::math::Side> for Side {
+    fn from(side: crate::phoenix_rise::math::Side) -> Self {
+        match side {
+            crate::phoenix_rise::math::Side::Bid => Self::Bid,
+            crate::phoenix_rise::math::Side::Ask => Self::Ask,
+        }
     }
 }
 

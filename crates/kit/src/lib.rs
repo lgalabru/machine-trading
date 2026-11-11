@@ -65,11 +65,17 @@
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
+#[cfg(feature = "chain")]
 pub mod chain;
 pub mod core;
+#[cfg(feature = "chain")]
 pub mod lending;
+#[cfg(feature = "chain")]
 pub mod protocols;
+mod strategy;
 
+#[cfg(feature = "component")]
+pub mod component;
 #[cfg(feature = "phoenix")]
 mod env;
 #[cfg(feature = "phoenix")]
@@ -85,15 +91,23 @@ mod tx;
 
 #[cfg(feature = "phoenix")]
 pub use bot::*;
+#[cfg(unix)]
+pub use mtx_core::Turns;
 pub use mtx_core::{
-    Mandate, Step, Turns, mandate,
+    Mandate, Step, mandate,
     rust_decimal::{self, Decimal},
     turns,
 };
 /// The Solana types the kit's signatures use, so callers need not pin
 /// matching versions of the Solana crates themselves.
+#[cfg(feature = "chain")]
 pub use solana_pubkey::Pubkey;
+#[cfg(feature = "chain")]
 pub use solana_transaction::{Hash, Instruction, Signature};
+pub use strategy::{
+    Action, BotResult, Execution, Intent, Market, Orders, Position, RPC_METHODS, Session, Side,
+    Strategy, plan, resting_after, rpc, step_offline,
+};
 
 #[cfg(feature = "phoenix")]
 mod bot {
@@ -112,22 +126,18 @@ mod bot {
         phoenix::{Phoenix, QUOTE_LOTS_PER_USD, load_exchange},
         protocols::phoenix::eternal::{
             PhoenixDriver, PhoenixExchange, PhoenixMarket, PhoenixOrder, PhoenixTrader,
-            phoenix_rise::{self, math::Side},
+            phoenix_rise,
         },
-        run::{
-            Action, BotResult, Execution, Intent, Market, Orders, Session, Strategy, plan,
-            resting_after, run, step_offline,
-        },
-        trader::{Position, Trader},
+        run::run,
+        trader::Trader,
         tx::{rpc_client, send},
     };
 }
 
 /// What a strategy needs: `use mtx_kit::prelude::*;`.
-#[cfg(feature = "phoenix")]
 pub mod prelude {
     pub use crate::{
         Action, BotResult, Execution, Intent, Market, Orders, Position, Session, Side, Strategy,
-        plan, step_offline,
+        plan, rpc, step_offline,
     };
 }

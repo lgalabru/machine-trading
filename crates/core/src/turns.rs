@@ -29,6 +29,7 @@
 //! # }
 //! ```
 
+#[cfg(unix)]
 use std::{
     io::{BufRead, BufReader, Write},
     os::{fd::FromRawFd, unix::net::UnixStream},
@@ -36,6 +37,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
 use crate::{Error, Result};
 
 pub const PROTOCOL: &str = "mtx-turn-1";
@@ -78,7 +80,9 @@ pub enum Message {
     End,
 }
 
-/// The bot's end of the turn socket.
+/// The bot's end of the turn socket. Unix only: a component has no socket,
+/// the grader calls it.
+#[cfg(unix)]
 pub struct Turns {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
@@ -87,6 +91,7 @@ pub struct Turns {
     open: Option<u64>,
 }
 
+#[cfg(unix)]
 impl Turns {
     /// Take the socket the grader passed, read its [`Hello`] and answer
     /// `ready`.
@@ -171,6 +176,7 @@ impl Turns {
     }
 }
 
+#[cfg(unix)]
 fn io(source: std::io::Error) -> Error {
     Error::Io {
         path: "turn socket".into(),
@@ -178,6 +184,7 @@ fn io(source: std::io::Error) -> Error {
     }
 }
 
+#[cfg(unix)]
 fn turn_error(reason: String) -> Error {
     Error::Env {
         name: TURN_FD_VAR,
@@ -185,7 +192,7 @@ fn turn_error(reason: String) -> Error {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

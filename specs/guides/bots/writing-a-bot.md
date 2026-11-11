@@ -62,7 +62,7 @@ struct FadeTheDip {
 }
 
 impl Strategy for FadeTheDip {
-    async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         self.peak = self.peak.max(market.mark);
         if market.mark < self.peak * 0.97 {
             orders.target_position(market.cap); // be long the whole cap
@@ -121,7 +121,6 @@ the session's log, at the level `RUST_LOG` sets.
 | `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
 | `resting_bids`, `resting_asks` | What you have resting, in SPCX: every bid and ask the run loop placed since your last cancel or quote, filled or not. |
 | `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
-| `budget_left` | What's left of the session's turn budget, 500 ms a step in total. |
 
 And three helpers: `room_to_buy()` and `room_to_sell()`, how much more you
 can trade each way before the cap if your resting orders all fill, and
@@ -157,10 +156,10 @@ resting:
 | 0 SPCX, bids of 40 resting | `buy(50, 101.0)` | a market buy of 30 |
 | 0 SPCX | `buy(50, …)`, then `buy(50, …)` | 50, then 20 |
 
-Resting orders from earlier steps still count once they fill, so keep track
-of them, or use `quote`, which cancels them first. For anything the sheet
-doesn't cover, `orders.trader()` is the Phoenix `Trader`, and what it sends
-goes out at once.
+For what the market doesn't carry, `mtx_kit::rpc(method, params)` reads the
+chain: synchronously, as it is at this step, for any read in
+`mtx_kit::RPC_METHODS` (accounts, blocks, transactions, signatures,
+simulations). It can't send: what you trade goes on the sheet.
 
 ## Testing without a chain
 

@@ -5091,12 +5091,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wincode",
-]
-
-[[package]]
-name = "mtx-strategy"
-version = "0.1.0"
-dependencies = [
  "wit-bindgen 0.63.0",
 ]
 
