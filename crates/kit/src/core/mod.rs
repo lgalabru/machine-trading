@@ -38,6 +38,7 @@
 //! | [`execution`] | The [`ExecutionDriver`] trait |
 //! | [`holding`] | What an account holds in an instrument, by instrument kind |
 //! | [`meter`] | The [`AccountMeter`] trait: what an enforcer reads from a venue |
+//! | [`markout`] | [`MarkoutMeter`]: a session's PnL split into markout, luck and a residual |
 //! | [`sim`] | Simulated execution driver for backtesting |
 //! | [`command`] | Command pattern wrapping execution with measurement |
 //! | [`rates`] | APR/APY conventions and compounding |
@@ -53,6 +54,7 @@ pub mod account;
 pub mod book;
 pub mod command;
 pub mod execution;
+pub mod markout;
 pub mod performance;
 pub mod portfolio;
 pub mod rates;
@@ -68,6 +70,7 @@ pub use execution::{ExecutionDriver, ExecutionError, ExecutionReport};
 pub use fill::{Fill, FillId, FillQuality};
 pub use holding::{Holding, Holdings, LendingBalance, SpotBalances};
 pub use instrument::{Instrument, InstrumentError, InstrumentId, InstrumentKind, Rounding};
+pub use markout::{Decomposition, MarkoutMeter, MarkoutSample};
 pub use meter::{AccountMeter, Measurement, MeterError, RecordedFill};
 pub use order::{Order, OrderId, OrderStatus, OrderType, Side, TimeInForce};
 pub use performance::{CashFlow, Performance};

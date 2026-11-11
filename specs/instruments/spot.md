@@ -14,7 +14,9 @@ no funding, and it cannot hold less than nothing: selling more than the
 account holds would need a loan, which is a `money-market` instrument, not
 spot.
 
-The reference implementation does not read spot instruments yet.
+The reference implementation reads spot instruments, and the benchmark's
+grader audits spot sessions on [Phoenix](../venues/phoenix.md) and
+[OpenBook](../venues/openbook.md), as their profiles describe.
 
 ## Position
 

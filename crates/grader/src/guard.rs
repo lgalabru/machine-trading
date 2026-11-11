@@ -23,6 +23,10 @@
 //!   (Surfpool reports no status at all for a transaction that has executed
 //!   but isn't in a block yet; the guard finds it with `getTransaction`.)
 //!
+//! A scenario with [`Faults`](crate::faults::Faults) adds execution faults to
+//! the bot's guard (see [`Guard::set_faults`]): sends the guard holds, drops or
+//! refuses, statuses it hides, reads it fails with a 429.
+//!
 //! [`Guard::internal`] serves the grader's own clients the same way, with no
 //! allowlist and no turns.
 //!
@@ -47,7 +51,11 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tracing::warn;
 
-use crate::{Result, error::io_error};
+use crate::{
+    Result,
+    error::io_error,
+    faults::{FaultPlan, FaultState, Faults, FaultsReport, SendAction},
+};
 
 pub const ALLOWED_METHODS: &[&str] = &[
     "getAccountInfo",
@@ -184,6 +192,8 @@ struct GuardState {
     /// The bot's current turn, or [`NO_STEP`].
     step: AtomicU64,
     log: Mutex<CallLog>,
+    /// The scenario's execution faults, if it has any.
+    faults: Mutex<Option<FaultState>>,
 }
 
 impl GuardState {
@@ -193,6 +203,10 @@ impl GuardState {
 
     fn log(&self) -> std::sync::MutexGuard<'_, CallLog> {
         self.log.lock().expect("guard lock")
+    }
+
+    fn faults(&self) -> std::sync::MutexGuard<'_, Option<FaultState>> {
+        self.faults.lock().expect("guard lock")
     }
 }
 
@@ -223,6 +237,7 @@ impl Guard {
             late_sends: AtomicUsize::new(0),
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
+            faults: Mutex::default(),
         });
         let app = Router::new()
             .route("/", post(handle))
@@ -265,6 +280,33 @@ impl Guard {
     /// What the bot asked for so far.
     pub fn call_log(&self) -> CallLog {
         self.state.log().clone()
+    }
+
+    /// Put the bot's calls under the scenario's `faults` from now on (a
+    /// session calls this once, with `None` for a scenario without them).
+    /// `base_slot` is the slot the session's steps count from,
+    /// `slots_per_step` their length.
+    pub fn set_faults(&self, faults: Option<&Faults>, base_slot: u64, slots_per_step: u64) {
+        *self.state.faults() =
+            faults.map(|faults| FaultState::new(FaultPlan::new(faults), base_slot, slots_per_step));
+    }
+
+    /// Forward the sends held for the block of `step`, in the order they were
+    /// sent. The session calls it once the step's blocks have landed.
+    pub async fn release(&self, step: u64) {
+        let due = match &mut *self.state.faults() {
+            Some(faults) => faults.take_due(step),
+            None => return,
+        };
+        for held in due {
+            let reply = forward_call(&self.state, held.call, false).await;
+            land(&self.state, &reply, step);
+        }
+    }
+
+    /// What the faults did, if the bot ran under any.
+    pub fn faults_report(&self) -> Option<FaultsReport> {
+        self.state.faults().as_ref().map(FaultState::report)
     }
 }
 
@@ -314,6 +356,22 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
         };
     }
 
+    serve(&state, request).await
+}
+
+/// Serve an accepted request: under the scenario's faults if it has any,
+/// otherwise forward it at once.
+async fn serve(state: &GuardState, request: Value) -> axum::response::Response {
+    if state.faults().is_some() {
+        return faulted(state, request).await;
+    }
+    forward(state, request, true).await
+}
+
+/// Send `request` to the surfnet and give its reply the way the guard serves
+/// it: at `processed`, executed as final. `log_sends` keeps the bot's sends in
+/// the [`CallLog`].
+async fn forward(state: &GuardState, request: Value, log_sends: bool) -> axum::response::Response {
     let mut request = request;
     let statuses = match &mut request {
         Value::Array(calls) => calls.iter_mut().map(at_processed).collect(),
@@ -331,8 +389,10 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
             let status =
                 StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let bytes = response.bytes().await;
-            if let Ok(bytes) = &bytes {
-                record_sends(&state, &request, bytes);
+            if let Ok(bytes) = &bytes
+                && log_sends
+            {
+                record_sends(state, &request, bytes);
             }
             match bytes {
                 Ok(bytes) if statuses.iter().any(|s| *s) => {
@@ -344,11 +404,11 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
                                         if let Some(call) =
                                             calls.iter().find(|c| c["id"] == reply["id"])
                                         {
-                                            fill_statuses(&state, call, reply).await;
+                                            fill_statuses(state, call, reply).await;
                                         }
                                     }
                                 }
-                                (call, reply) => fill_statuses(&state, call, reply).await,
+                                (call, reply) => fill_statuses(state, call, reply).await,
                             }
                             executed_is_final(&mut reply);
                             (status, axum::Json(reply)).into_response()
@@ -365,6 +425,154 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
             }
         }
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
+/// HTTP 429 and the JSON-RPC code clusters answer a rate-limited caller with.
+const TOO_MANY_REQUESTS: i64 = -32429;
+
+/// Serve a request under the scenario's faults: each call on its own, since a
+/// fault can hold, refuse or answer one call of a batch and not the next.
+async fn faulted(state: &GuardState, request: Value) -> axum::response::Response {
+    let step = state.step().unwrap_or(0);
+    let batch = request.is_array();
+    let calls: Vec<Value> = match request {
+        Value::Array(calls) => calls,
+        call => vec![call],
+    };
+    // Every read counts, so none is skipped once one fails.
+    let unavailable: Vec<bool> = {
+        let mut faults = state.faults();
+        let faults = faults.as_mut().expect("faults are on");
+        calls
+            .iter()
+            .filter(|call| !is_send(call))
+            .map(|call| faults.on_read(call["method"].as_str().unwrap_or_default(), step))
+            .collect()
+    };
+    if unavailable.contains(&true) {
+        let body = error_response(Value::Null, TOO_MANY_REQUESTS, "Too many requests");
+        return (StatusCode::TOO_MANY_REQUESTS, axum::Json(body)).into_response();
+    }
+    let mut replies = Vec::with_capacity(calls.len());
+    for call in calls {
+        replies.push(if is_send(&call) {
+            send_under_faults(state, call, step).await
+        } else {
+            read_under_faults(state, call, step).await
+        });
+    }
+    reply(if batch {
+        Value::Array(replies)
+    } else {
+        replies.remove(0)
+    })
+}
+
+fn is_send(call: &Value) -> bool {
+    call["method"].as_str() == Some("sendTransaction")
+}
+
+/// The reply to a send the plan lets through, held or refused.
+async fn send_under_faults(state: &GuardState, call: Value, step: u64) -> Value {
+    let action = state
+        .faults()
+        .as_mut()
+        .expect("faults are on")
+        .on_send(&call, step);
+    let id = call["id"].clone();
+    let mut record = SendRecord {
+        step: Some(step),
+        signature: None,
+        error: None,
+    };
+    let answer = match action {
+        SendAction::Forward => {
+            let reply = forward_call(state, call, true).await;
+            land(state, &reply, step);
+            return reply;
+        }
+        SendAction::Expired => {
+            record.error = Some("Blockhash not found".into());
+            error_response(
+                id,
+                BLOCKHASH_NOT_FOUND,
+                "Transaction simulation failed: Blockhash not found",
+            )
+        }
+        SendAction::Dropped(signature) | SendAction::Held(signature) => {
+            record.signature = Some(signature.clone());
+            json!({ "jsonrpc": "2.0", "id": id, "result": signature })
+        }
+    };
+    push_send(&mut state.log(), record);
+    answer
+}
+
+/// JSON-RPC code of a send whose blockhash the node doesn't know.
+const BLOCKHASH_NOT_FOUND: i64 = -32002;
+
+/// The reply to a read, with the faults' say in it.
+async fn read_under_faults(state: &GuardState, call: Value, step: u64) -> Value {
+    let id = call["id"].clone();
+    let method = call["method"].as_str().unwrap_or_default().to_string();
+    if method == "getRecentPrioritizationFees" {
+        let fees = state
+            .faults()
+            .as_ref()
+            .filter(|faults| faults.plan().congested())
+            .map(|faults| faults.recent_fees(step));
+        if let Some(fees) = fees {
+            return json!({ "jsonrpc": "2.0", "id": id, "result": fees });
+        }
+    }
+    let params = call["params"].clone();
+    let mut reply = forward_call(state, call, true).await;
+    let faults = state.faults();
+    let faults = faults.as_ref().expect("faults are on");
+    match method.as_str() {
+        "getSignatureStatuses" => {
+            let signatures = params[0].as_array().cloned().unwrap_or_default();
+            if let Some(Value::Array(statuses)) = reply.pointer_mut("/result/value") {
+                for (signature, status) in signatures.iter().zip(statuses.iter_mut()) {
+                    if signature.as_str().is_some_and(|s| faults.hides(s, step)) {
+                        *status = Value::Null;
+                    }
+                }
+            }
+        }
+        "getTransaction" if params[0].as_str().is_some_and(|s| faults.hides(s, step)) => {
+            reply["result"] = Value::Null;
+        }
+        _ => {}
+    }
+    reply
+}
+
+/// One call through [`forward`], as a JSON-RPC reply.
+async fn forward_call(state: &GuardState, call: Value, log_sends: bool) -> Value {
+    let id = call["id"].clone();
+    let response = forward(state, call, log_sends).await;
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| error_response(id, -32603, "the surfnet didn't answer"))
+}
+
+/// A send the chain ran (it has a signature): count it, and hide its status
+/// if the plan loses its confirmation.
+fn land(state: &GuardState, reply: &Value, step: u64) {
+    if let (Some(signature), Some(faults)) = (reply["result"].as_str(), &mut *state.faults()) {
+        faults.on_landing(signature, step);
+    }
+}
+
+fn push_send(log: &mut CallLog, record: SendRecord) {
+    if log.sends.len() >= MAX_LOGGED_SENDS {
+        log.sends_dropped += 1;
+    } else {
+        log.sends.push(record);
     }
 }
 
@@ -396,21 +604,20 @@ fn record_sends(state: &GuardState, request: &Value, reply: &[u8]) {
     let step = state.step();
     let mut log = state.log();
     for call in sends {
-        if log.sends.len() >= MAX_LOGGED_SENDS {
-            log.sends_dropped += 1;
-            continue;
-        }
         let answer = answer(call);
-        log.sends.push(SendRecord {
-            step,
-            signature: answer["result"].as_str().map(str::to_string),
-            error: answer.get("error").map(|e| {
-                e["message"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| e.to_string())
-            }),
-        });
+        push_send(
+            &mut log,
+            SendRecord {
+                step,
+                signature: answer["result"].as_str().map(str::to_string),
+                error: answer.get("error").map(|e| {
+                    e["message"]
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| e.to_string())
+                }),
+            },
+        );
     }
 }
 
@@ -577,6 +784,7 @@ mod tests {
             late_sends: AtomicUsize::new(0),
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
+            faults: Mutex::default(),
         }
     }
 
@@ -684,5 +892,219 @@ mod tests {
             reply["result"]["value"][1].is_null(),
             "unknown stays unknown"
         );
+    }
+
+    /// A surfnet that answers every send with the signature in its params
+    /// (as the surfnet does) and knows no statuses; it counts what reached it.
+    async fn upstream() -> (String, Arc<Mutex<Vec<String>>>) {
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        let app = Router::new().route(
+            "/",
+            post(move |body: Bytes| {
+                let log = log.clone();
+                async move {
+                    let call: Value = serde_json::from_slice(&body).unwrap();
+                    let method = call["method"].as_str().unwrap().to_string();
+                    log.lock().unwrap().push(method.clone());
+                    let result = match method.as_str() {
+                        "sendTransaction" => json!(
+                            crate::faults::WireTransaction::parse(&call)
+                                .unwrap()
+                                .signature
+                        ),
+                        "getSignatureStatuses" => json!({ "value": [{
+                            "slot": 1, "confirmations": null, "err": null,
+                            "confirmationStatus": "processed" }] }),
+                        _ => json!(1),
+                    };
+                    axum::Json(json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, seen)
+    }
+
+    async fn call(guard: &Guard, body: Value) -> (StatusCode, Value) {
+        let response = reqwest::Client::new()
+            .post(guard.url())
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        (
+            StatusCode::from_u16(response.status().as_u16()).unwrap(),
+            response.json().await.unwrap_or(Value::Null),
+        )
+    }
+
+    fn faults(f: impl FnOnce(&mut crate::faults::Faults)) -> Faults {
+        let mut faults = crate::faults::Faults {
+            seed: 1,
+            latency: None,
+            congestion: None,
+            blockhash_expiry: None,
+            drop: None,
+            lost_confirmation: None,
+            rpc_unavailable: None,
+        };
+        f(&mut faults);
+        faults
+    }
+
+    #[tokio::test]
+    async fn without_a_plan_the_guard_forwards_everything_at_once() {
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_step(0);
+        let (status, reply) = call(&guard, crate::faults::tests::transaction(None, 1)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(reply["result"].is_string());
+        assert_eq!(seen.lock().unwrap().as_slice(), ["sendTransaction"]);
+        assert!(guard.faults_report().is_none());
+        assert_eq!(guard.call_log().sends.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn drops_expiries_and_holds_follow_the_plan() {
+        use crate::faults::{Latency, SendNumbers};
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.drop = Some(SendNumbers { sends: vec![1] });
+                f.blockhash_expiry = Some(SendNumbers { sends: vec![2] });
+                f.latency = Some(Latency {
+                    slots: (3, 3),
+                    spike: None,
+                });
+            })),
+            100,
+            2,
+        );
+        guard.set_step(0);
+        let (_, dropped) = call(&guard, crate::faults::tests::transaction(None, 1)).await;
+        assert!(dropped["result"].is_string(), "a dropped send is accepted");
+        let (_, expired) = call(&guard, crate::faults::tests::transaction(None, 2)).await;
+        assert_eq!(expired["error"]["code"], BLOCKHASH_NOT_FOUND);
+        assert!(
+            expired["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Blockhash not found")
+        );
+        let (_, held) = call(&guard, crate::faults::tests::transaction(None, 3)).await;
+        let signature = held["result"].as_str().unwrap().to_string();
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "nothing has been forwarded"
+        );
+        // Three slots are two steps; nothing lands before.
+        guard.release(1).await;
+        assert!(seen.lock().unwrap().is_empty());
+        guard.release(2).await;
+        assert_eq!(seen.lock().unwrap().as_slice(), ["sendTransaction"]);
+        guard.release(3).await;
+        assert_eq!(seen.lock().unwrap().len(), 1, "a held send lands once");
+        let report = guard.faults_report().unwrap();
+        assert_eq!(
+            (report.sends, report.landings, report.held_at_end),
+            (3, 1, 0)
+        );
+        let fired: Vec<_> = report.fired.iter().map(|f| f.fault).collect();
+        assert_eq!(fired, ["drop", "blockhash_expiry", "latency"]);
+        // All three are in the log with their turn, the held one once.
+        let sends = guard.call_log().sends;
+        assert_eq!(sends.len(), 3);
+        assert_eq!(sends[2].signature.as_deref(), Some(signature.as_str()));
+        assert!(sends.iter().all(|s| s.step == Some(0)));
+    }
+
+    #[tokio::test]
+    async fn a_lost_confirmation_and_the_429s_reach_the_bot() {
+        use crate::faults::{LostConfirmation, RpcUnavailable};
+        let (url, _) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.lost_confirmation = Some(LostConfirmation {
+                    landings: vec![1],
+                    hide_steps: 2,
+                });
+                f.rpc_unavailable = Some(RpcUnavailable {
+                    reads: vec![3],
+                    count: 2,
+                });
+            })),
+            100,
+            2,
+        );
+        guard.set_step(5);
+        let tx = crate::faults::tests::transaction(None, 1);
+        let (_, sent) = call(&guard, tx).await;
+        let signature = sent["result"].as_str().unwrap().to_string();
+        let statuses = |id| json!({ "jsonrpc": "2.0", "id": id, "method": "getSignatureStatuses", "params": [[signature]] });
+        let (_, hidden) = call(&guard, statuses(1)).await;
+        assert!(
+            hidden["result"]["value"][0].is_null(),
+            "landed, reads unknown"
+        );
+        let (status, _) = call(&guard, statuses(2)).await;
+        assert_eq!(status, StatusCode::OK, "the second read");
+        for id in [3, 4] {
+            let (status, _) = call(&guard, statuses(id)).await;
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "read {id}");
+        }
+        guard.set_step(7);
+        let (status, shown) = call(&guard, statuses(5)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            shown["result"]["value"][0]["confirmationStatus"], "finalized",
+            "back after two steps"
+        );
+    }
+
+    #[tokio::test]
+    async fn congestion_holds_a_cheap_send_and_the_fees_show_the_floor() {
+        use crate::faults::Congestion;
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.congestion = Some(Congestion {
+                    from_step: 2,
+                    to_step: 4,
+                    floor_micro_lamports: (7_000, 7_000),
+                })
+            })),
+            1_000,
+            2,
+        );
+        guard.set_step(1);
+        let (_, cheap) = call(&guard, crate::faults::tests::transaction(Some(6_999), 1)).await;
+        assert!(cheap["result"].is_string());
+        let (_, paid) = call(&guard, crate::faults::tests::transaction(Some(7_000), 2)).await;
+        assert!(paid["result"].is_string());
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "only the one that pays lands"
+        );
+        let fees = json!({ "jsonrpc": "2.0", "id": 9, "method": "getRecentPrioritizationFees", "params": [] });
+        guard.set_step(2);
+        let (_, reply) = call(&guard, fees).await;
+        let fees = reply["result"].as_array().unwrap();
+        assert_eq!(fees.len(), 150);
+        assert!(
+            fees.iter()
+                .any(|f| f["prioritizationFee"].as_u64().unwrap() >= 7_000)
+        );
+        guard.release(3).await;
+        assert_eq!(seen.lock().unwrap().len(), 1, "still congested");
+        guard.release(4).await;
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 }

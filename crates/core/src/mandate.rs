@@ -60,6 +60,68 @@ pub struct Allowance {
     pub max_buy_price: Option<f64>,
 }
 
+/// [`Allowance::room`] for a cap of `max_position`, for callers that hold
+/// the cap without the allowance, such as a bot's run loop.
+pub fn position_room(
+    max_position: f64,
+    position: f64,
+    resting_bids: f64,
+    resting_asks: f64,
+) -> (f64, f64) {
+    (
+        (max_position - position - resting_bids).max(0.0),
+        (max_position + position - resting_asks).max(0.0),
+    )
+}
+
+/// How far past a cap a position may read before it breaks it: positions
+/// convert from lots to base units in floating point.
+const POSITION_TOLERANCE: f64 = 1e-9;
+
+impl Allowance {
+    /// How much more the account may buy and sell in this instrument,
+    /// `(buy, sell)` in base units, if every order resting now fills: its
+    /// `resting_bids` can only take the position up and its `resting_asks`
+    /// down. The rule [`Mandate::audit`] checks, asked before a trade
+    /// instead of after a session. Selling stops at `min_position`, or at
+    /// minus `max_position` without one.
+    pub fn room(&self, position: f64, resting_bids: f64, resting_asks: f64) -> (f64, f64) {
+        let (buy, sell) = position_room(self.max_position, position, resting_bids, resting_asks);
+        match self.min_position {
+            None => (buy, sell),
+            Some(min) => (buy, (position - resting_asks - min).max(0.0)),
+        }
+    }
+
+    /// The breach, if holding anywhere from `lowest` to `highest` breaks
+    /// the allowance's cap or its `min_position` floor.
+    pub fn breach(&self, lowest: f64, highest: f64) -> Option<Breach> {
+        let slack = |bound: f64| bound.abs() * POSITION_TOLERANCE;
+        let Some(min) = self.min_position else {
+            let held = highest.max(-lowest);
+            return (held > self.max_position + slack(self.max_position)).then(|| {
+                Breach::Position {
+                    instrument: self.instrument.clone(),
+                    held,
+                    cap: self.max_position,
+                }
+            });
+        };
+        if highest > self.max_position + slack(self.max_position) {
+            return Some(Breach::Position {
+                instrument: self.instrument.clone(),
+                held: highest,
+                cap: self.max_position,
+            });
+        }
+        (lowest < min - slack(min)).then(|| Breach::Floor {
+            instrument: self.instrument.clone(),
+            held: lowest,
+            floor: min,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
@@ -221,37 +283,8 @@ impl Mandate {
             let Some(allowance) = self.allowance(&range.instrument) else {
                 return Some(Breach::OutsideUniverse { positions: 1 });
             };
-            // Lots convert to base units in floating point.
-            let slack = |bound: f64| bound.abs() * 1e-9;
-            match allowance.min_position {
-                // Without `min_position`, `max_position` bounds a short as
-                // much as a long.
-                None => {
-                    let held = range.peak();
-                    if held > allowance.max_position + slack(allowance.max_position) {
-                        return Some(Breach::Position {
-                            instrument: range.instrument.clone(),
-                            held,
-                            cap: allowance.max_position,
-                        });
-                    }
-                }
-                Some(min) => {
-                    if range.highest > allowance.max_position + slack(allowance.max_position) {
-                        return Some(Breach::Position {
-                            instrument: range.instrument.clone(),
-                            held: range.highest,
-                            cap: allowance.max_position,
-                        });
-                    }
-                    if range.lowest < min - slack(min) {
-                        return Some(Breach::Floor {
-                            instrument: range.instrument.clone(),
-                            held: range.lowest,
-                            floor: min,
-                        });
-                    }
-                }
+            if let Some(breach) = allowance.breach(range.lowest, range.highest) {
+                return Some(breach);
             }
         }
         if let Some(limit) = self.limits.max_drawdown_usd
@@ -876,5 +909,34 @@ mod tests {
             ..Observed::default()
         };
         assert_eq!(mandate.audit(&deep), None);
+    }
+
+    #[test]
+    fn room_counts_resting_orders_as_filled() {
+        let mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        let allowance = &mandate.universe[0];
+        assert_eq!(allowance.room(0.0, 0.0, 0.0), (70.0, 70.0));
+        // Long 20, bids of 30 resting and asks of 10: 20 more to buy, 80 to sell.
+        assert_eq!(allowance.room(20.0, 30.0, 10.0), (20.0, 80.0));
+        // Already over in one direction: no room that way, never negative.
+        assert_eq!(allowance.room(60.0, 30.0, 0.0), (0.0, 130.0));
+        // What room allows, breach accepts; one more lot, it doesn't.
+        let (buy, _) = allowance.room(20.0, 30.0, 10.0);
+        assert_eq!(allowance.breach(20.0 - 10.0, 20.0 + 30.0 + buy), None);
+        assert!(allowance.breach(0.0, 70.5).is_some());
+        assert!(allowance.breach(-70.5, 0.0).is_some());
+    }
+
+    #[test]
+    fn room_stops_selling_at_the_floor() {
+        let mut mandate = Mandate::spot(&["phoenix"], "SOL-USDC", 100.0);
+        let allowance = &mut mandate.universe[0];
+        allowance.min_position = Some(10.0);
+        // Holding 60 with asks of 20 resting: 30 more to sell, 40 to buy.
+        assert_eq!(allowance.room(60.0, 0.0, 20.0), (40.0, 30.0));
+        assert_eq!(allowance.room(15.0, 0.0, 20.0), (85.0, 0.0));
+        let (_, sell) = allowance.room(60.0, 0.0, 20.0);
+        assert_eq!(allowance.breach(60.0 - 20.0 - sell, 60.0), None);
+        assert!(allowance.breach(9.5, 60.0).is_some());
     }
 }
