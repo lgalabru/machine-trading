@@ -17,7 +17,7 @@ use crate::{
     actors::{Actors, FamilyPlan},
     chain::Override,
     error::io_error,
-    making::Making,
+    making::{Making, level_at},
     offhours::OffHours,
     phoenix::{SLOTS_BETWEEN_STEPS, market_move, oracle_move},
     spot::Spot,
@@ -65,6 +65,11 @@ pub struct Scenario {
     /// those markets and `symbol` their pair, such as `SOL-USDC`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot: Option<Spot>,
+    /// Execution faults on the bot's sends and reads, planned from the
+    /// faults' own seed (see [`crate::faults`]). Without them the guard
+    /// forwards at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faults: Option<crate::faults::Faults>,
     /// Participants the grader runs beside the bot: makers quoting each
     /// venue and counterparties that react to the bot (see [`crate::actors`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,6 +83,18 @@ pub struct Scenario {
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// Opt-in: the scenario's fair value, as waypoints in the same terms as
+    /// [`Scenario::path`]. The session records it at every step, and the
+    /// grade reports each session's PnL split by
+    /// [`mtx_kit::core::MarkoutMeter`]
+    /// (markout, luck and a residual). Absent, sessions, grades and rewards
+    /// are exactly what they are without it.
+    ///
+    /// The fair value is what the scenario's author plans, never a forecast
+    /// of the walk's future: a bot has no edge in knowing it only by being
+    /// told. It is not shown to the bot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_path: Option<Vec<Waypoint>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -206,6 +223,11 @@ impl Scenario {
             actors.validate()?;
         }
         if let Some(spot) = &self.spot {
+            if let Some(faults) = &self.faults {
+                faults
+                    .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                    .map_err(|reason| format!("faults: {reason}"))?;
+            }
             return spot.validate(self);
         }
         if self.family_actors.is_some() {
@@ -280,6 +302,24 @@ impl Scenario {
                 return Err("offhours: the path has no waypoint at the reopen".into());
             }
         }
+        if let Some(fair) = &self.fair_path {
+            let mut previous = 0;
+            for (i, waypoint) in fair.iter().enumerate() {
+                if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
+                    return Err(format!(
+                        "fair value waypoint {i}: level {}% is outside [{MIN_LEVEL_PCT}, 100]",
+                        waypoint.level_pct
+                    ));
+                }
+                if waypoint.slot < previous || waypoint.slot > self.duration_slots {
+                    return Err(format!(
+                        "fair value waypoint {i} at slot {} is out of order or past the session end",
+                        waypoint.slot
+                    ));
+                }
+                previous = waypoint.slot;
+            }
+        }
         if let Some(making) = &self.making {
             making
                 .validate(self.duration_slots)
@@ -289,6 +329,11 @@ impl Scenario {
                     "a market-making scenario's takers are its making's, not a tape".into(),
                 );
             }
+        }
+        if let Some(faults) = &self.faults {
+            faults
+                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                .map_err(|reason| format!("faults: {reason}"))?;
         }
         let mut last = 0;
         for (i, order) in self.tape.iter().enumerate() {
@@ -313,6 +358,14 @@ impl Scenario {
             ));
         }
         Ok(())
+    }
+
+    /// The scenario's fair value in USD at `slot`, counted from the session
+    /// start, if it reports one (see [`Scenario::fair_path`]). Before the
+    /// first waypoint it is the starting mark.
+    pub fn fair_value_usd(&self, start_mark_usd: f64, slot: u64) -> Option<f64> {
+        let path = self.fair_path.as_ref()?;
+        Some(start_mark_usd * (1.0 + level_at(path, slot) / 100.0))
     }
 
     /// Total variation of the path, in percent: the sum of every move's size,
@@ -747,6 +800,21 @@ impl ShockFamily {
 
     /// A scenario and the shape it was drawn from.
     pub fn draw(&self, name: &str, seed: u64) -> (Scenario, Shape) {
+        self.draw_with(name, seed, false)
+    }
+
+    /// [`Self::draw`], with the scenario reporting a fair value (see
+    /// [`Scenario::fair_path`]): the level the shock settles at, from the slot
+    /// it starts. The draw is otherwise the same, so the scenario's path and
+    /// shape are those of `draw` for the same seed. Wobble, fizzles and the
+    /// overshoot of a reversion move the mark, not the fair value, so a fill
+    /// is judged by where the market ends up rather than by where it sits
+    /// when the bot trades.
+    pub fn draw_marked(&self, name: &str, seed: u64) -> (Scenario, Shape) {
+        self.draw_with(name, seed, true)
+    }
+
+    fn draw_with(&self, name: &str, seed: u64, marked: bool) -> (Scenario, Shape) {
         let mut rng = SplitMix64(seed);
         // Direction and aftermath come first, so `kind` can read them alone.
         let direction = self.pick_direction(rng.next_f64());
@@ -829,9 +897,17 @@ impl ShockFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            faults: None,
             actors: None,
             family_actors: None,
             reference_pnl_usd: None,
+            fair_path: marked.then(|| {
+                vec![Waypoint {
+                    slot: shock_slot,
+                    level_pct: end,
+                    premium_pct: 0.0,
+                }]
+            }),
         };
         let shape = Shape {
             direction,
@@ -1452,6 +1528,72 @@ mod tests {
     }
 
     #[test]
+    fn a_marked_draw_is_the_same_scenario_with_a_fair_value() {
+        let family = ShockFamily::spcx();
+        for seed in 0..60 {
+            let (plain, shape) = family.draw("s", seed);
+            let (marked, marked_shape) = family.draw_marked("s", seed);
+            assert_eq!(shape, marked_shape);
+            assert!(plain.fair_path.is_none());
+            marked.validate().unwrap();
+            assert_eq!(
+                Scenario {
+                    fair_path: None,
+                    ..marked.clone()
+                },
+                plain
+            );
+            // The fair value is the settled level, from the shock's start.
+            let first = marked.fair_path.as_ref().unwrap()[0];
+            assert_eq!(first.level_pct, shape.end_pct);
+            assert_eq!(marked.fair_value_usd(100.0, 0), Some(100.0));
+            assert_eq!(
+                marked.fair_value_usd(100.0, marked.duration_slots),
+                Some(100.0 * (1.0 + shape.end_pct / 100.0))
+            );
+            assert_eq!(plain.fair_value_usd(100.0, 50), None);
+        }
+    }
+
+    #[test]
+    fn a_scenario_file_without_a_fair_value_is_unchanged() {
+        let scenario = ShockFamily::spcx().sample("s", 9);
+        let json = serde_json::to_string_pretty(&scenario).unwrap();
+        assert!(!json.contains("fair_path"));
+        let back: Scenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, scenario);
+        let (marked, _) = ShockFamily::spcx().draw_marked("s", 9);
+        let back: Scenario =
+            serde_json::from_str(&serde_json::to_string_pretty(&marked).unwrap()).unwrap();
+        assert_eq!(back, marked);
+    }
+
+    #[test]
+    fn fair_value_waypoints_must_be_in_order_and_inside_the_session() {
+        let (mut scenario, _) = ShockFamily::spcx().draw_marked("s", 1);
+        let late = scenario.duration_slots + 1;
+        scenario.fair_path = Some(vec![Waypoint {
+            slot: late,
+            level_pct: 1.0,
+            premium_pct: 0.0,
+        }]);
+        assert!(scenario.validate().unwrap_err().contains("fair value"));
+        scenario.fair_path = Some(vec![
+            Waypoint {
+                slot: 50,
+                level_pct: 1.0,
+                premium_pct: 0.0,
+            },
+            Waypoint {
+                slot: 40,
+                level_pct: 2.0,
+                premium_pct: 0.0,
+            },
+        ]);
+        assert!(scenario.validate().unwrap_err().contains("fair value"));
+    }
+
+    #[test]
     fn overlapping_moves_are_rejected() {
         let scenario = Scenario {
             name: "overlap".into(),
@@ -1465,9 +1607,11 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            faults: None,
             actors: None,
             family_actors: None,
             reference_pnl_usd: None,
+            fair_path: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1525,9 +1669,11 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            faults: None,
             actors: None,
             family_actors: None,
             reference_pnl_usd: None,
+            fair_path: None,
         }
     }
 

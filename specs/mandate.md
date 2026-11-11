@@ -242,7 +242,8 @@ Both allowances bound the same SOL: a spot position is the account's
 holdings of the base asset, wherever it sits (see the
 [spot profile](instruments/spot.md#position)). The agent may only sell, on
 either venue, never below $94, and has no drawdown limit, since the
-holding's value moves with SOL.
+holding's value moves with SOL. See
+[`examples/spot-sol-usdc-sale.json`](examples/spot-sol-usdc-sale.json).
 
 A mandate to borrow USDC against SOL on Kamino, never shorting SOL and
 never borrowing more than $50,000, with a cushion above liquidation:
