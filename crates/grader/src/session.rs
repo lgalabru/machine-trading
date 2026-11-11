@@ -188,6 +188,10 @@ pub struct StepRecord {
     /// premium over the level.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub book_usd: Option<f64>,
+    /// The scenario's fair value, for a scenario that reports one (see
+    /// [`Scenario::fair_path`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fair_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_bid_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -618,6 +622,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
             book_usd: (scenario.valuation() == "book")
                 .then(|| start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0)),
+            fair_usd: scenario.fair_value_usd(start_mark_usd, at),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
             position,
