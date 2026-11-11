@@ -1,0 +1,18 @@
+{
+  "strategy": "shock-forecast-v2",
+  "scenarios": 216,
+  "pnl_usd": 85088.66845899998,
+  "bound_pnl_usd": 291067.4791639999,
+  "reward": 0.29233313423880436,
+  "max_drawdown_usd": 647.8306010000015,
+  "worst_pnl_usd": -391.0943100000004,
+  "profitable_share": 0.7731481481481481,
+  "sharpe": 0.8433769558596543,
+  "disqualified": 0,
+  "turn_overruns": 0,
+  "peak_position": 70.0,
+  "reports": [
+    "validation-72.json",
+    "validation-144.json"
+  ]
+}

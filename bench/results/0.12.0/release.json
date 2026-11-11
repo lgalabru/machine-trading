@@ -1,0 +1,31 @@
+{
+  "ran_at": "2026-11-10T20:17:53.739625",
+  "shared_reference_sessions": 923,
+  "skipped": [
+    "jobs/bench/20261110-201752-x1/2026-11-10__20-18-12_flash-crash-spcx_gpt-6-astra/flash-crash-spcx__czFBU2f/artifacts/app/bot/src/model.bin (1063948 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__20-18-22_market-making-spcx_gpt-6.1-sol/market-making-spcx__AjCEk25/verifier/test-stdout.txt (7128189 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__20-18-42_market-making-spcx_gpt-6-astra/market-making-spcx__tNdeJE6/verifier/test-stdout.txt (7177537 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__20-18-52_flash-crash-spcx_gpt-6.1-sol/flash-crash-spcx__VWCp3cA/artifacts/app/bot/src/forecast.bin (1458568 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__20-19-12_flash-crash-spcx_gpt-6-astra/flash-crash-spcx__jhSccP8/artifacts/app/bot/src/forest.bin (5398368 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__21-26-47_market-making-spcx_gpt-6-astra/market-making-spcx__enVKFka/verifier/test-stdout.txt (7213564 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__21-30-17_market-making-spcx_gpt-6.1-sol/market-making-spcx__TksHyFB/verifier/test-stdout.txt (7226731 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__21-32-25_market-making-spcx_gpt-6-astra/market-making-spcx__FLTzpfq/verifier/test-stdout.txt (7271478 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__21-33-12_market-making-spcx_gpt-6.1-sol/market-making-spcx__dwkD6Fa/verifier/test-stdout.txt (7273437 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__22-14-53_flash-crash-spcx_gpt-6.1-sol/flash-crash-spcx__DJkPjjL/artifacts/app/bot/src/model12.bin (1576808 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__22-14-53_flash-crash-spcx_gpt-6.1-sol/flash-crash-spcx__DJkPjjL/artifacts/app/bot/src/urgent.bin (1401608 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__22-14-53_flash-crash-spcx_gpt-6.1-sol/flash-crash-spcx__DJkPjjL/artifacts/app/bot/src/model6.bin (1576808 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__22-23-14_flash-crash-spcx_gpt-6-astra/flash-crash-spcx__dWneApE/artifacts/app/bot/src/model.rs (6256504 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__23-26-58_market-making-spcx_gpt-6-astra/market-making-spcx__VcQrWVu/verifier/test-stdout.txt (7236666 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__23-27-54_flash-crash-spcx_gpt-6-astra/flash-crash-spcx__MvXqS9o/artifacts/app/bot/models/medium.bin (1970656 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__23-27-54_flash-crash-spcx_gpt-6-astra/flash-crash-spcx__MvXqS9o/artifacts/app/bot/models/model0.bin (1118408 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__23-28-47_market-making-spcx_gpt-6.1-sol/market-making-spcx__dmNzykH/verifier/test-stdout.txt (7261164 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__23-31-45_flash-crash-spcx_gpt-6.1-sol/flash-crash-spcx__nXNtzx3/artifacts/app/bot/src/h1.bin (2170772 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-10__23-32-43_flash-crash-spcx_gpt-6.1-sol/flash-crash-spcx__xqsBKJs/artifacts/app/bot/src/model.bin (1749840 bytes)",
+    "jobs/bench/20261110-201752-x1/2026-11-11__00-41-40_market-making-spcx_gpt-6-astra/market-making-spcx__NGfqpUo/verifier/test-stdout.txt (7227755 bytes gzipped)",
+    "jobs/bench/20261110-201752-x1/2026-11-11__00-47-56_market-making-spcx_gpt-6.1-sol/market-making-spcx__BUBJTH3/verifier/test-stdout.txt (7080030 bytes gzipped)"
+  ],
+  "source": "20261110-201752-x1",
+  "tasks": {},
+  "trials": 20,
+  "version": "0.12.0"
+}

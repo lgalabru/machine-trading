@@ -1,0 +1,13 @@
+{
+  "strategy": "oracle-anchored two-sided SPCX maker",
+  "binary_sha256": "fb72d74128691e8ae62f8a6363c69d137be1d5ea2d04cf00a763e5cd6d709f3a",
+  "source_sha256": {
+    "src/main.rs": "06098abc1314d4aea8843b74abf2a267d6a2a404da49fe410ced8e41b9c1c486",
+    "src/model.rs": "89f0e0b78eeed9cb530eb440829c172828f41a017d35118546d1bfe7311d7785",
+    "src/trend.rs": "7f9620ecfa3671431ba31fc696c5de57daaa1d16266ddc411d51f9aa325c14cb"
+  },
+  "runtime": "native aarch64 Linux; glibc, libm, libgcc_s",
+  "models_embedded": true,
+  "build_command": "bash build.sh",
+  "run_command": "bash run.sh"
+}

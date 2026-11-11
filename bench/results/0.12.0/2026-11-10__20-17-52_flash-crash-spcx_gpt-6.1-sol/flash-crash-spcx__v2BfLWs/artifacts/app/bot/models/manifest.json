@@ -1,0 +1,30 @@
+{
+  "format": "little-endian forest: u32 tree count, then u32 node count and (i32 feature, f64 threshold_or_leaf, u32 left, u32 right) per node",
+  "features": 64,
+  "horizon_steps": 8,
+  "horizon_seconds": 4,
+  "output": "expected oracle return in percent, normalized to the most recent significant move direction",
+  "policy": {
+    "entry_percent": 0.2,
+    "exit_hysteresis_percent": 0.15,
+    "primary_override_percent": 0.2
+  },
+  "components": [
+    {
+      "name": "primary",
+      "generated_training_paths": 3000,
+      "trees": 142,
+      "used_features": 54,
+      "file": "forecast-primary.bin",
+      "sha256": "d343f12a4ffb3bff5632cdd938b18ffa7e78873da389333ccf4e07fcabc82d04"
+    },
+    {
+      "name": "secondary",
+      "generated_training_paths": 10000,
+      "trees": 204,
+      "used_features": 64,
+      "file": "forecast-secondary.bin",
+      "sha256": "ba03bfcdbb01483bbf594186740759e3c1afc3cddb02dbcecae418cbb628778a"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "practice": {
+    "sessions": 6,
+    "pnl_usd": 315.17676258589927,
+    "reward": 0.2193974748015043,
+    "max_drawdown_usd": 20.825277517100403
+  },
+  "fresh_audit": {
+    "sessions": 24,
+    "pnl_usd": 1170.785625538796,
+    "reward": 0.20393164721425636,
+    "profitable_sessions": 18,
+    "max_drawdown_usd": 108.45609332499953,
+    "max_position": 20.0,
+    "average_turn_ms": 29.11885790172643,
+    "violations": []
+  },
+  "stress": {
+    "max_drawdown_usd": 111.60816100000011,
+    "end_position": 0.0,
+    "disqualified": null
+  },
+  "sha256": {
+    "bin/bot": "1d80e7974c29fb8f0939eeb765dbb7aebade2ad2e221a8566efac75b4c0647da",
+    "src/main.rs": "5eb053c7b3646f77f010385466357293da374c43839f199b46b953859b784d3a",
+    "config.json": "872998771954b61c789e48cb3593462c08806c1038cb98f4639ce0dcb671b699",
+    "model.json": "b4dbbabc5c1413772ed488ddeb3d396df29d8edd5ff1514e93061acd656cac5f",
+    "run.sh": "0327df2f1273b05da0eee9b4fbe4c68aeb64aa7d1fbd0c5f476de8db6696e4c5",
+    "build.sh": "7870b1ce847a1216d3cfcfb3ab0871744c3b1de15b109117a42fa3f590f14a8e"
+  },
+  "packaging_check": {
+    "sessions": 3,
+    "passed": true,
+    "violations": []
+  }
+}

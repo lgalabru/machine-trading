@@ -1,0 +1,42 @@
+{
+  "binary_sha256": "bc52805dfe34f90d096172c89d2938ff75f4cc61491fd136f382dac1239607c5",
+  "strategy": "Averaged causal forecasts; two-turn confirmation for weaker quiet-period entries; IOC orders only; independent equity limits",
+  "unit_tests_passed": 4,
+  "direct_chain_sessions_passed": 74,
+  "max_direct_drawdown_usd": 698.3133419999995,
+  "direct_reports": {
+    "final-50.json": {
+      "sessions": 50,
+      "composition": "24 development, 20 selected stress, 6 practice",
+      "pnl_usd": 8714.204433999994,
+      "risk": {
+        "worst_pnl_usd": -667.4636890000002,
+        "tail_pnl_usd": -567.2171581111111,
+        "max_drawdown_usd": 698.3133419999995,
+        "profitable_share": 0.66,
+        "sharpe": 0.31111663063172035
+      },
+      "disqualifications": []
+    },
+    "final-additional-24.json": {
+      "sessions": 24,
+      "composition": "24 additional generated scenarios",
+      "pnl_usd": 12980.300746000004,
+      "reward": 0.4210765048684576,
+      "risk": {
+        "worst_pnl_usd": -116.06713900000068,
+        "tail_pnl_usd": -63.08228125000005,
+        "max_drawdown_usd": 263.32245500000136,
+        "profitable_share": 0.875,
+        "sharpe": 1.0261159769219843
+      },
+      "disqualifications": []
+    }
+  },
+  "earlier_execution_variants": {
+    "baseline-summary.json": "Immediate entries; 222 chain sessions",
+    "comparison-passive-96.json": "Same confirmation rule with temporary limit orders; 96 generated scenarios"
+  },
+  "validation_note": "Final IOC-only confirmation strategy reproduced the temporary-limit variant within $0.70 across its 50 direct comparison sessions.",
+  "read_only_binary_only_runtime_passed": true
+}

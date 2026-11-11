@@ -1,0 +1,20 @@
+{
+  "generated_sessions": 144,
+  "pnl_usd": 55945.58095800002,
+  "hindsight_bound_usd": 194812.10818299995,
+  "fraction_of_hindsight_bound": 0.2871771240494283,
+  "max_drawdown_usd": 700.0194690000008,
+  "peak_position": 70.0,
+  "profitable_sessions": 109,
+  "rule_violations": 0,
+  "late_slots": 0,
+  "overrun_turns": 0,
+  "practice_pnl_usd": 997.468902999999,
+  "practice_reference_ratio": 1.8490136488340176,
+  "unit_tests_passed": 8,
+  "chain_test_seeds": [
+    781569,
+    1927419800
+  ],
+  "binary_sha256": "447d06d52218d76a1bca445bf6e682efe75d16121cd158c262d5da32b54438bf"
+}

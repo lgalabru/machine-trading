@@ -1,0 +1,21 @@
+{
+  "generated_sessions": 144,
+  "generated_pnl_usd": 56206.975894000025,
+  "generated_bound_usd": 187077.44201300002,
+  "generated_reward": 0.3004476397004306,
+  "previous_bot_same_144_pnl_usd": 55045.37145800001,
+  "improvement_usd": 1161.604436000016,
+  "practice_pnl_usd": 794.9844770000018,
+  "practice_reference_pnl_usd": 539.4599999999999,
+  "practice_reference_ratio": 1.4736671430689985,
+  "stress_sessions": 20,
+  "stress_selection": "Worst losses and deepest drawdowns selected from 1000 generated simulations; excluded from the generated-batch aggregate above.",
+  "total_chain_sessions": 170,
+  "disqualifications": 0,
+  "refused_rpc_calls": 0,
+  "overrun_turns": 0,
+  "largest_absolute_position": 70.0,
+  "deepest_drawdown_usd": 749.6640779999998,
+  "unit_tests_passed": 4,
+  "binary_sha256": "36d091d7cc915c96158d12d7171ef0a6366e5411cafc7bf7c892eecc96336335"
+}

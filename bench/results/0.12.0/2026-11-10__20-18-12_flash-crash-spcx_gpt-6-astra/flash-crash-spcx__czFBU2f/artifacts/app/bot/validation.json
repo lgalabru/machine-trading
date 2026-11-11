@@ -1,0 +1,60 @@
+{
+  "version": "shock-model-3",
+  "binary_sha256": "ab6e053dd9b93d8319fa08f79dcb7e8e2d7060f6a4fd0c6eadef7c82df377cb8",
+  "unique_scenarios": 174,
+  "unit_tests_passed": 3,
+  "final_packaging_matched_prior_pnl": true,
+  "campaigns": [
+    {
+      "name": "fresh generated",
+      "sessions": 96,
+      "pnl_usd": 30213.796991000003,
+      "reward": 0.23893353650764132,
+      "risk": {
+        "worst_pnl_usd": -557.0751980000005,
+        "tail_pnl_usd": -279.41705687500007,
+        "max_drawdown_usd": 652.8437730000005,
+        "profitable_share": 0.7395833333333334,
+        "sharpe": 0.63772353644345
+      },
+      "disqualifications": 0,
+      "refused_calls": 0,
+      "late_slots": 0,
+      "overruns": 0
+    },
+    {
+      "name": "selected stress and practice",
+      "sessions": 78,
+      "pnl_usd": 49495.30277300001,
+      "reward": 0.2836229245542134,
+      "risk": {
+        "worst_pnl_usd": -665.4593949999999,
+        "tail_pnl_usd": -544.1302336153846,
+        "max_drawdown_usd": 724.9280909999998,
+        "profitable_share": 0.6025641025641025,
+        "sharpe": 0.6414077284482854
+      },
+      "disqualifications": 0,
+      "refused_calls": 0,
+      "late_slots": 0,
+      "overruns": 0
+    },
+    {
+      "name": "final packaged executable",
+      "sessions": 16,
+      "pnl_usd": 8732.057424999999,
+      "reward": 0.3006501311260362,
+      "risk": {
+        "worst_pnl_usd": -521.0136149999998,
+        "tail_pnl_usd": -295.59297100000003,
+        "max_drawdown_usd": 537.4337009999999,
+        "profitable_share": 0.75,
+        "sharpe": 0.7286324061230444
+      },
+      "disqualifications": 0,
+      "refused_calls": 0,
+      "late_slots": 0,
+      "overruns": 0
+    }
+  ]
+}

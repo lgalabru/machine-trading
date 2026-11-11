@@ -1,0 +1,323 @@
+{
+  "reward": 0.15374382411379636,
+  "pnl_usd": 997.468902999999,
+  "bound_pnl_usd": 6487.863228,
+  "reference_pnl_usd": 539.4599999999999,
+  "reference_ratio": 1.8490136488340176,
+  "skill": 1.8490136488340176,
+  "risk": {
+    "worst_pnl_usd": 104.19383999999991,
+    "tail_pnl_usd": 104.19383999999991,
+    "max_drawdown_usd": 287.218304,
+    "profitable_share": 1.0,
+    "sharpe": 2.099801703049593
+  },
+  "scenarios": [
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1513.9750009999998,
+      "reference_pnl_usd": 531.67,
+      "scenario": "practice-1",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.8,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10303.038273,
+      "pnl_usd": 203.03827300000012,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882905
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 287.218304,
+      "valuation": "mark",
+      "turns": {
+        "legacy": false,
+        "steps": 280,
+        "overran": 0,
+        "wall_ms": 4175,
+        "late_sends": 0
+      },
+      "wall_ms": 13436
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 631.5158080000002,
+      "reference_pnl_usd": -9.7,
+      "scenario": "practice-2",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 141.6,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10250.702114,
+      "pnl_usd": 150.7021139999997,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882702
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 70.74053099999946,
+      "valuation": "mark",
+      "turns": {
+        "legacy": false,
+        "steps": 179,
+        "overran": 0,
+        "wall_ms": 2618,
+        "late_sends": 0
+      },
+      "wall_ms": 9684
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1322.9374619999996,
+      "reference_pnl_usd": 39.09,
+      "scenario": "practice-3",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.61,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10409.240943,
+      "pnl_usd": 309.2409430000007,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882912
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 224.83396100000027,
+      "valuation": "mark",
+      "turns": {
+        "legacy": false,
+        "steps": 284,
+        "overran": 0,
+        "wall_ms": 4514,
+        "late_sends": 0
+      },
+      "wall_ms": 14514
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1124.386648,
+      "reference_pnl_usd": -17.95,
+      "scenario": "practice-4",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.08,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10204.535095,
+      "pnl_usd": 104.53509499999927,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882864
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 225.97558899999967,
+      "valuation": "mark",
+      "turns": {
+        "legacy": false,
+        "steps": 260,
+        "overran": 0,
+        "wall_ms": 4304,
+        "late_sends": 0
+      },
+      "wall_ms": 13524
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 948.776367,
+      "reference_pnl_usd": 171.36,
+      "scenario": "practice-5",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 134.66,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10204.19384,
+      "pnl_usd": 104.19383999999991,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882782
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 224.77597799999967,
+      "valuation": "mark",
+      "turns": {
+        "legacy": false,
+        "steps": 219,
+        "overran": 0,
+        "wall_ms": 3160,
+        "late_sends": 0
+      },
+      "wall_ms": 12319
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 946.2719420000003,
+      "reference_pnl_usd": -175.01,
+      "scenario": "practice-6",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 145.23,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10225.758638,
+      "pnl_usd": 125.75863799999934,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882977
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": 0.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 37.79999999999927,
+      "valuation": "mark",
+      "turns": {
+        "legacy": false,
+        "steps": 316,
+        "overran": 0,
+        "wall_ms": 3000,
+        "late_sends": 0
+      },
+      "wall_ms": 11625
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "strategy": "causal multi-horizon SPCX shock forecasts",
+  "validated_at_utc": "2026-11-10T21:10:29.590658+00:00",
+  "binary_sha256": "2f9ca760849dc2c409fce0bfff5bafadcca4d722c02d2fb8b111f4210dd00b41",
+  "embedded_model_sha256": "356a08d499e267de55a4e129862d1275d03d639e0a13353a60b8b06eca2b8e61",
+  "ordinary_sessions": 222,
+  "stress_sessions": 24,
+  "all_sessions": 246,
+  "ordinary_pnl_usd": 91248.19573400005,
+  "ordinary_bound_pnl_usd": 304827.39117600006,
+  "ordinary_reward": 0.29934382006148363,
+  "maximum_drawdown_all_completed_usd": 786.0083050000012,
+  "largest_absolute_position": 70.0,
+  "disqualifications": 0,
+  "refused_rpc_calls": 0,
+  "outside_universe_sessions": 0,
+  "liquidatable_sessions": 0,
+  "late_slots": 0,
+  "turn_overruns": 0,
+  "parity_test": "540 steps, six forecasts per step, passed",
+  "completed_batches": {
+    "comparison_126": {
+      "sessions": 126,
+      "reward": 0.33296873607655375,
+      "pnl_usd": 59009.361563,
+      "bound_pnl_usd": 177221.92857599998,
+      "risk": {
+        "worst_pnl_usd": -609.2843200000007,
+        "tail_pnl_usd": -241.6876857142857,
+        "max_drawdown_usd": 661.3618400000014,
+        "profitable_share": 0.8174603174603174,
+        "sharpe": 0.8440005047447334
+      }
+    },
+    "stress_24": {
+      "sessions": 24,
+      "reward": 0.17993888411154207,
+      "pnl_usd": 22522.077578999997,
+      "bound_pnl_usd": 125165.15087999999,
+      "risk": {
+        "worst_pnl_usd": -365.46804800000064,
+        "tail_pnl_usd": -346.83517450000045,
+        "max_drawdown_usd": 786.0083050000012,
+        "profitable_share": 0.625,
+        "sharpe": 0.6933840643794362
+      }
+    },
+    "final_holdout_96": {
+      "sessions": 96,
+      "reward": 0.2526446244081091,
+      "pnl_usd": 32238.834170999995,
+      "bound_pnl_usd": 127605.46259999994,
+      "risk": {
+        "worst_pnl_usd": -616.1104630000009,
+        "tail_pnl_usd": -281.83054300000015,
+        "max_drawdown_usd": 619.1070369999998,
+        "profitable_share": 0.7291666666666666,
+        "sharpe": 0.6645412319568559
+      }
+    }
+  }
+}

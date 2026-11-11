@@ -1,0 +1,4 @@
+Instrumented verification on train-4, train-7, and train-23.
+No position change was observed between the turn snapshot and cancellation.
+All three session PnLs exactly matched the deployed trading logic.
+The added diagnostic RPC read is not part of the delivered executable.

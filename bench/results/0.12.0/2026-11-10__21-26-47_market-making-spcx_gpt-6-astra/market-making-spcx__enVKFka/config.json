@@ -1,0 +1,19 @@
+{
+    "task": {
+        "path": "bench/tasks/market-making-spcx"
+    },
+    "trial_name": "market-making-spcx__enVKFka",
+    "trials_dir": "jobs/bench/20261110-201752-x1/2026-11-10__21-26-47_market-making-spcx_gpt-6-astra",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6-astra",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high"
+        }
+    },
+    "job_id": "4538983c-d9bb-4da0-88be-a17ccdc81512"
+}

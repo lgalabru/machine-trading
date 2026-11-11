@@ -1,0 +1,29 @@
+{
+  "training": {
+    "seed": 100193722,
+    "count": 24000,
+    "prefix": "big"
+  },
+  "validation": {
+    "seed": 4516288,
+    "count": 2000,
+    "prefix": "mv"
+  },
+  "horizons_steps": [
+    2,
+    8,
+    16,
+    32
+  ],
+  "lightgbm": {
+    "n_estimators": 400,
+    "num_leaves": 31,
+    "max_depth": 7,
+    "min_child_samples": 4500,
+    "learning_rate": 0.045,
+    "reg_lambda": 150,
+    "n_jobs": 6,
+    "verbosity": -1,
+    "colsample_bytree": 0.9
+  }
+}

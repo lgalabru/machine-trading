@@ -1,0 +1,90 @@
+{
+  "unit_tests": {
+    "passed": 3,
+    "failed": 0
+  },
+  "selected_bot_practice": {
+    "sessions": 6,
+    "pnl_usd": 293.32342838529985,
+    "reward": 0.20418516568243295,
+    "risk": {
+      "worst_pnl_usd": -4.092173983201064,
+      "tail_pnl_usd": -4.092173983201064,
+      "max_drawdown_usd": 15.97824540790134,
+      "profitable_share": 0.6666666666666666,
+      "sharpe": 0.8846020820903853
+    },
+    "disqualifications": [],
+    "refused_calls": 0,
+    "late_slots": 0,
+    "overran_turns": 0,
+    "peak_position": 18.0
+  },
+  "same_flow_model_before_final_quote_adjustment": {
+    "sessions": 18,
+    "pnl_usd": 1052.9756999042966,
+    "reward": 0.22252884522038463,
+    "risk": {
+      "worst_pnl_usd": -11.08093011570054,
+      "tail_pnl_usd": -8.193887191334094,
+      "max_drawdown_usd": 27.789933641699463,
+      "profitable_share": 0.7222222222222222,
+      "sharpe": 1.0801673034420913
+    },
+    "disqualifications": [],
+    "refused_calls": 0,
+    "late_slots": 0,
+    "overran_turns": 0,
+    "peak_position": 18.0
+  },
+  "risk_guard_stress_before_final_quote_adjustment": {
+    "sessions": 1,
+    "pnl_usd": -215.37872799999968,
+    "reward": 0.0,
+    "risk": {
+      "worst_pnl_usd": -215.37872799999968,
+      "tail_pnl_usd": -215.37872799999968,
+      "max_drawdown_usd": 216.2313979999999,
+      "profitable_share": 0.0,
+      "sharpe": 0.0
+    },
+    "disqualifications": [],
+    "refused_calls": 0,
+    "late_slots": 0,
+    "overran_turns": 0,
+    "peak_position": 18.0
+  },
+  "fresh_72_sessions": {
+    "status": "complete",
+    "sessions": 72,
+    "scenario_family": "market-making",
+    "generation_seed": 7319405,
+    "pnl_usd": 2782.1578327804,
+    "bound_pnl_usd": 16540.12782682096,
+    "reward": 0.16820654966577336,
+    "mean_pnl_usd": 38.64108101083889,
+    "profitable_sessions": 55,
+    "worst_pnl_usd": -63.220259121999334,
+    "max_drawdown_usd": 69.35541599279895,
+    "peak_position": 18.0,
+    "disqualifications": [],
+    "refused_calls": 0,
+    "positions_outside_universe": 0,
+    "liquidatable_sessions": 0,
+    "late_slots": 0,
+    "overran_turns": 0,
+    "late_sends": 0,
+    "mean_turn_ms": 47.17217413550505
+  },
+  "binary_sha256": "f626928229283d48a2e41d61825500139819eb778bd8ecd96ea4c4e0dafe8a23",
+  "selected_bot_risk_stress": {
+    "pnl_usd": -211.81941200000074,
+    "max_drawdown_usd": 216.24211800000012,
+    "peak_position": 18.0,
+    "end_position": 0.0,
+    "disqualified": null,
+    "refused_calls": [],
+    "late_slots": 0,
+    "liquidatable": false
+  }
+}

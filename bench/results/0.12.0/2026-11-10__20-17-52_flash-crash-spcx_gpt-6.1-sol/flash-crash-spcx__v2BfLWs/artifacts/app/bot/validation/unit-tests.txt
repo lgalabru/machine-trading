@@ -1,0 +1,12 @@
+   Compiling bot v0.1.0 (/app/bot)
+    Finished `release` profile [optimized] target(s) in 0.51s
+     Running unittests src/lib.rs (/opt/mtx/target/release/deps/bot-773940d48d4c0901)
+
+running 4 tests
+test risk::tests::a_halt_survives_recovery_and_the_peak_is_remembered ... ok
+test risk::tests::a_liquidatable_account_only_reduces_exposure ... ok
+test risk::tests::an_adverse_jump_and_unwind_leave_drawdown_headroom ... ok
+test forecast::tests::embedded_forests_and_policy_match_independent_predictions ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

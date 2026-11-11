@@ -1,0 +1,19 @@
+{
+    "task": {
+        "path": "bench/tasks/flash-crash-spcx"
+    },
+    "trial_name": "flash-crash-spcx__jhSccP8",
+    "trials_dir": "jobs/bench/20261110-201752-x1/2026-11-10__20-19-12_flash-crash-spcx_gpt-6-astra",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6-astra",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high"
+        }
+    },
+    "job_id": "fd9343d5-5637-4db7-b5f3-06d06ff22059"
+}

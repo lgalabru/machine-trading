@@ -1,0 +1,23 @@
+{
+    "job_name": "2026-11-10__20-18-52_flash-crash-spcx_gpt-6.1-sol",
+    "jobs_dir": "jobs/bench/20261110-201752-x1",
+    "agent_timeout_multiplier": 1.0,
+    "n_concurrent_trials": 1,
+    "agents": [
+        {
+            "name": "codex",
+            "model_name": "openai/gpt-6.1-sol",
+            "kwargs": {
+                "version": "0.166.0",
+                "web_search": "disabled",
+                "disable_web_search": true,
+                "reasoning_effort": "high"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "path": "bench/tasks/flash-crash-spcx"
+        }
+    ]
+}

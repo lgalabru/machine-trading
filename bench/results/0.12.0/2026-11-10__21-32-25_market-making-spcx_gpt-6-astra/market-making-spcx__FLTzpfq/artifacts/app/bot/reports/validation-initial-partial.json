@@ -1,0 +1,79 @@
+{
+  "status": "partial; stopped to fit the time budget",
+  "sessions_completed": 12,
+  "pnl_usd": 240.75289454340054,
+  "scenarios": [
+    {
+      "name": "validation-1",
+      "pnl_usd": 107.45689487799973,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-10",
+      "pnl_usd": 10.174391451000702,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-12",
+      "pnl_usd": -52.167780329600646,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-11",
+      "pnl_usd": 3.670355266498518,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-13",
+      "pnl_usd": 56.79938788080108,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-15",
+      "pnl_usd": 97.6511573646003,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-16",
+      "pnl_usd": 3.616967167599796,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-14",
+      "pnl_usd": -9.95141861149932,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-17",
+      "pnl_usd": 34.406454951298656,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-19",
+      "pnl_usd": -7.857764020898685,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-2",
+      "pnl_usd": 11.750067701599619,
+      "refused_calls": 0,
+      "overran": 0
+    },
+    {
+      "name": "validation-18",
+      "pnl_usd": -14.795819155999197,
+      "refused_calls": 0,
+      "overran": 0
+    }
+  ]
+}

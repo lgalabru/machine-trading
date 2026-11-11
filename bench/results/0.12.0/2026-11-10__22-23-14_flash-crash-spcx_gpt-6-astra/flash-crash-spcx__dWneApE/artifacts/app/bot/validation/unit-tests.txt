@@ -1,0 +1,16 @@
+   Compiling spcx-shock-bot v0.1.0 (/app/bot)
+    Finished `release` profile [optimized] target(s) in 2.81s
+     Running unittests src/main.rs (/opt/mtx/target/release/deps/spcx_bot-aa98c72952c5c391)
+
+running 8 tests
+test policy::tests::flat_and_weak_forecasts_do_not_open_positions ... ok
+test parity::online_features_match_training_features ... ok
+test policy::tests::strong_forecasts_are_symmetric_and_capped ... ok
+test risk::shock_tests::repeated_maximum_shocks_stay_inside_the_mandate ... ok
+test risk::tests::cap_and_liquidation_state_override_forecasts ... ok
+test risk::tests::halt_is_permanent_and_symmetric ... ok
+test risk::tests::reserves_room_for_an_adverse_jump ... ok
+test parity::exported_forecasts_match_training_engine ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

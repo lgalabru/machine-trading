@@ -1,0 +1,16 @@
+   Compiling bot v0.1.0 (/app/bot)
+    Finished `release` profile [optimized] target(s) in 2.88s
+     Running unittests src/main.rs (/opt/mtx/target/release/deps/bot-c6cc107108f57921)
+
+running 8 tests
+test risk::tests::emergency_fill_prices_respect_remaining_cash ... ok
+test risk::tests::invalid_prices_and_exhausted_risk_have_zero_room ... ok
+test risk::tests::repeated_maximum_adverse_jumps_leave_the_account_inside_its_limit ... ok
+test signal::tests::flat_market_has_no_signal ... ok
+test signal::tests::features_match_training_paths ... ok
+test tests::final_valuation_turn_does_not_pay_for_an_unnecessary_trade ... ok
+test tests::loss_halt_flattens_and_stays_halted ... ok
+test model::tests::predictions_match_training_export ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

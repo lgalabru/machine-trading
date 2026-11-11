@@ -1,0 +1,11 @@
+   Compiling bot v0.1.0 (/app/bot)
+    Finished `release` profile [optimized] target(s) in 2.10s
+     Running unittests src/main.rs (/opt/mtx/target/release/deps/bot-a82724cf536f3fce)
+
+running 3 tests
+test tests::exported_models_match_training_runtime ... ok
+test tests::reversal_orders_obey_cap_and_oracle_limit ... ok
+test tests::order_flow_is_direction_symmetric_and_respects_jump_cooldown ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

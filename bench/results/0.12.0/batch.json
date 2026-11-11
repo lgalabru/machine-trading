@@ -1,0 +1,27 @@
+{
+  "models": [
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-astra"
+  ],
+  "attempts": 5,
+  "concurrent": 3,
+  "version": "0.11.0",
+  "timeout_multiplier": 1.0,
+  "harness": {
+    "openai/gpt-6.1-sol": {
+      "agent": "codex",
+      "version": "0.166.0"
+    },
+    "openai/gpt-6-astra": {
+      "agent": "codex",
+      "version": "0.166.0"
+    }
+  },
+  "web": false,
+  "metric": "skill: total PnL over the hidden set / the reference bot's, mean over attempts, 90% bootstrap interval",
+  "commit": "09f00dca",
+  "notes": [
+    "GPT-6.1 Sol and GPT-6 Astra ran at high reasoning effort on three machines with one shared secret; the jobs are copied here into one batch folder.",
+    "The trials ran on the 0.11.0 task definitions (commit 09f00dca; flash-crash-spcx and market-making-spcx are unchanged on main since) with a hidden set of their own, not 0.11.0's."
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "training": "Generated SPCX flash-crash family; no runtime scenario access",
+  "training_scenarios": 14000,
+  "model_selection_scenarios": 2000,
+  "additional_offline_validation_scenarios": 8000,
+  "training_generation_seed": 193581,
+  "additional_validation_generation_seed": 430925,
+  "input_schema": "src/features.rs; 73 float32 columns; percentage-point price changes",
+  "models": [
+    {
+      "file": "model0.bin",
+      "sha256": "530b3ad185992f01ae67b9eef7a6be62341f8af59b2d861ab4aebf2943068acd",
+      "trees": 600,
+      "discount_per_half_second": 0.6,
+      "ensemble_weight": 0.5
+    },
+    {
+      "file": "medium.bin",
+      "sha256": "abe21ca2d0dbd54bfdf8afdcc942ac7a321add01a5acc619a1bdbe3817f1e509",
+      "trees": 787,
+      "discount_per_half_second": 0.8,
+      "ensemble_weight": 0.5
+    }
+  ]
+}

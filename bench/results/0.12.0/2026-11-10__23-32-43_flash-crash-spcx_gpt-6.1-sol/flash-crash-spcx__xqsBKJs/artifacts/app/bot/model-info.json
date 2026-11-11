@@ -1,0 +1,31 @@
+{
+  "model": "symmetric shock continuation and switching-cost ensemble",
+  "features": 33,
+  "training_scenarios": 40000,
+  "q_weights": {
+    "first_set_iteration_10": 0.25,
+    "first_set_iteration_24": 0.25,
+    "second_set_iteration_5": 0.5
+  },
+  "entry_forecast": {
+    "switching_value_weight": 0.5,
+    "short_horizon_weight": 0.5
+  },
+  "entry_threshold_pct": 0.09,
+  "switching_threshold_pct": 0.12,
+  "holding_threshold_pct": -0.15,
+  "drawdown_halt_fraction": 0.65,
+  "jump_reserve_fraction": 0.045,
+  "cash_reserve_fraction": 0.14,
+  "source_sha256": {
+    "src/main.rs": "a26e51fef443b7a55c89df8d03699ee5fd8b2c6d067bdfaf1bff7d6d7acf8652",
+    "src/model_fixtures.rs": "dc2be10dc976032992f6a4041e4bae3989e37c8179a5b2fee7a99e290db428d7",
+    "src/signal_fixtures.rs": "6a950b3514cee705b4359be356f1aef7e6cff41fad16990805be1aa7e98b4926",
+    "src/model.rs": "473d40c654ad68e2f7884f64c3563f08a0d4140c50f0b05f789a7c26f93be160",
+    "src/risk.rs": "0fadc2daee235d19d27a84a80c23e9229c83b98a7b9ebcd1ea24e9b8c971bac6",
+    "src/model.bin": "dd8e3b39fd624f6edb68da83df7feadffbc9e2b0890645ebc87b5cc029906134",
+    "src/signal.rs": "b3e77bc46dba4cd46bee90d3e4ab1ddd599c9751b1cee78d4ffb480d4d9a6456"
+  },
+  "binary_sha256": "449da296bdb09076cc8ac580a026eebb88f45d22612531c56508bc4a7737d3ab",
+  "verified_utc": "2026-11-11T00:25:16.257464+00:00"
+}

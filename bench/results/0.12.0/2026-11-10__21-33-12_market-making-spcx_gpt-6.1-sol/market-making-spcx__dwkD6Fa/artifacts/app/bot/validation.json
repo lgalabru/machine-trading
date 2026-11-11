@@ -1,0 +1,37 @@
+{
+  "selected_strategy": "oracle quotes, inventory skew, directional burst detection, sliced exits, equity drawdown stop",
+  "binary_sha256": "d7c3405027eecbf87e6ba6705e56fdaa0ee6386c9b7c14fefcbd89f0aaa5fded",
+  "source_sha256": "4f067fca23eaaedf447e5c78e77938ec20340310ca7e2b969d9a63e05b054156",
+  "unit_tests": {
+    "passed": 2,
+    "failed": 0
+  },
+  "natural_sessions": 78,
+  "pnl_usd": 2700.1824099320093,
+  "bound_pnl_usd": 18938.71437792444,
+  "reward_ratio": 0.14257474694689026,
+  "worst_pnl_usd": -77.4017899008013,
+  "max_drawdown_usd": 128.67241444520005,
+  "peak_position": 19.8,
+  "profitable_share": 0.5897435897435898,
+  "disqualified": [],
+  "refused_calls": 0,
+  "late_slots": 0,
+  "overrun_turns": 0,
+  "late_sends": 0,
+  "mean_turn_ms": 47.897757491565784,
+  "stress": [
+    {
+      "scenario": "stress-adverse-flow",
+      "pnl_usd": -135.32301999999981,
+      "max_drawdown_usd": 135.39985900000102,
+      "end_position": 0.0,
+      "disqualified": null
+    }
+  ],
+  "reports": [
+    "reports/practice.json",
+    "reports/validation24.json",
+    "reports/fresh48.json"
+  ]
+}

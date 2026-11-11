@@ -1,0 +1,20 @@
+{
+  "strategy": "v8",
+  "binary_sha256": "6ca78776d92a9688eb0f5061229b1641c662e7ed597745de3dbb0f249eb1ff3c",
+  "fresh_sessions": 72,
+  "regimes": {
+    "calm": 18,
+    "jumps": 36,
+    "trend": 18
+  },
+  "pnl_usd": 2267.8141555782113,
+  "bound_pnl_usd": 17393.27450834627,
+  "reward": 0.1303845434331521,
+  "disqualifications": [],
+  "max_drawdown_usd": 76.63642580449778,
+  "max_position": 19.0,
+  "worst_session_usd": -50.022766415999286,
+  "profitable_sessions": 38,
+  "turn_overruns": 0,
+  "refused_calls": 0
+}

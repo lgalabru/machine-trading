@@ -1,0 +1,22 @@
+{
+  "strategy": "shock-forecast-v2-urgency",
+  "scenarios": 216,
+  "pnl_usd": 86296.654301,
+  "bound_pnl_usd": 291067.479164,
+  "reward": 0.2964833259588468,
+  "max_drawdown_usd": 647.8306049999992,
+  "worst_pnl_usd": -391.09431100000074,
+  "profitable_share": 0.7592592592592593,
+  "sharpe": 0.8446257107937557,
+  "disqualified": 0,
+  "turn_overruns": 0,
+  "peak_position": 70.0,
+  "reports": [
+    "validation-72.json",
+    "validation-144.json"
+  ],
+  "comparison_baseline_pnl_usd": 85088.66845899998,
+  "binary_sha256": "eb5fb516712544d64ddf0041ad32ac013b50b62835d3d93e2d287a6d68aae0fc",
+  "practice_smoke_scenarios": 6,
+  "practice_smoke_violations": 0
+}

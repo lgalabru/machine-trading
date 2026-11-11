@@ -1,0 +1,55 @@
+{
+  "binary_sha256": "2a16743e4be7a0640599aee13bb9512c40e20d20ebc1ee9e1fb9bde2680a7c80",
+  "strategy": "Averaged price forecasts, immediate IOC execution, independent equity risk limits",
+  "unit_tests_passed": 4,
+  "read_only_binary_only_runtime_passed": true,
+  "chain_sessions_passed": 222,
+  "maximum_drawdown_usd": 736.2443550000007,
+  "reports": {
+    "development": {
+      "sessions": 78,
+      "pnl_usd": 29370.351027,
+      "reward": 0.27462333182348675,
+      "risk": {
+        "worst_pnl_usd": -456.5286639999995,
+        "tail_pnl_usd": -203.46468853846162,
+        "max_drawdown_usd": 484.460661000001,
+        "profitable_share": 0.782051282051282,
+        "sharpe": 0.8120210324736558
+      },
+      "disqualifications": [],
+      "overrun_turns": 0,
+      "max_position": 70.0
+    },
+    "stress": {
+      "sessions": 48,
+      "pnl_usd": 21517.777321,
+      "reward": 0.17065942295392014,
+      "risk": {
+        "worst_pnl_usd": -691.0845879999997,
+        "tail_pnl_usd": -645.038018625,
+        "max_drawdown_usd": 736.2443550000007,
+        "profitable_share": 0.4791666666666667,
+        "sharpe": 0.3902069029042106
+      },
+      "disqualifications": [],
+      "overrun_turns": 0,
+      "max_position": 70.0
+    },
+    "holdout": {
+      "sessions": 96,
+      "pnl_usd": 41527.823476,
+      "reward": 0.3335219932022806,
+      "risk": {
+        "worst_pnl_usd": -672.8567340000009,
+        "tail_pnl_usd": -205.2450194375,
+        "max_drawdown_usd": 672.8567340000009,
+        "profitable_share": 0.8333333333333334,
+        "sharpe": 0.889154901550451
+      },
+      "disqualifications": [],
+      "overrun_turns": 0,
+      "max_position": 70.0
+    }
+  }
+}

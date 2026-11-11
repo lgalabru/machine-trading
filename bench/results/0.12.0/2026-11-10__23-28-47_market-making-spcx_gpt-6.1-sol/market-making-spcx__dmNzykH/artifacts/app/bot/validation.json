@@ -1,0 +1,39 @@
+{
+  "unit_tests_passed": 5,
+  "comparison": {
+    "sessions": 12,
+    "pnl_usd": 376.96349143079533,
+    "previous_pnl_usd": 335.6630810728984,
+    "risk": {
+      "worst_pnl_usd": -169.0310929999996,
+      "tail_pnl_usd": -108.40852465340049,
+      "max_drawdown_usd": 172.5461043999985,
+      "profitable_share": 0.6666666666666666,
+      "sharpe": 0.3023227708497843
+    },
+    "disqualifications": 0,
+    "refused_calls": 0
+  },
+  "fresh_validation": {
+    "sessions": 48,
+    "family": "market-making",
+    "seed": 880143620,
+    "pnl_usd": 1957.995115423906,
+    "bound_pnl_usd": 11666.633238468088,
+    "reward": 0.1678286336256684,
+    "risk": {
+      "worst_pnl_usd": -53.08700073540058,
+      "tail_pnl_usd": -34.20179045153759,
+      "max_drawdown_usd": 111.16781004619952,
+      "profitable_share": 0.6666666666666666,
+      "sharpe": 0.5557702755932539
+    },
+    "peak_absolute_position": 19.99,
+    "disqualifications": 0,
+    "refused_calls": 0,
+    "turn_overruns": 0,
+    "late_sends": 0,
+    "mean_turn_wall_ms": 47.87168911516402
+  },
+  "binary_sha256": "4a61b8acc3838afe272acf90415636a1c7fdbc94e82437d5d331843e2a1b290d"
+}

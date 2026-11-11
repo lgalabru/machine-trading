@@ -1,0 +1,66 @@
+{
+  "binary_sha256": "92fbd708dc3ee1a586f25dd7fac834cff33a2a45db6c06e4a5ddeaddfdd6c143",
+  "strategy": "oracle quotes with inventory skew and exponentially weighted directional-flow hedge",
+  "unit_tests_passed": 5,
+  "practice": {
+    "sessions": 6,
+    "pnl_usd": 261.19183510629955,
+    "reward": 0.18181806485646285,
+    "risk": {
+      "worst_pnl_usd": -11.023574102000566,
+      "tail_pnl_usd": -11.023574102000566,
+      "max_drawdown_usd": 24.758676436598762,
+      "profitable_share": 0.6666666666666666,
+      "sharpe": 0.8084163872531858
+    },
+    "disqualified": 0
+  },
+  "tuning": {
+    "sessions": 24,
+    "pnl_usd": 725.5013071660978,
+    "reward": 0.14339079865676532,
+    "risk": {
+      "worst_pnl_usd": -52.20965320799951,
+      "tail_pnl_usd": -32.7944815042747,
+      "max_drawdown_usd": 101.83796936669933,
+      "profitable_share": 0.6666666666666666,
+      "sharpe": 0.5339215704940905
+    },
+    "disqualified": 0
+  },
+  "independent_validation": {
+    "completed_sessions": 52,
+    "total_pnl_usd": 1526.9445462289968,
+    "complete_batch": {
+      "sessions": 40,
+      "pnl_usd": 1286.1916516855963,
+      "reward": 0.15816597448112374,
+      "risk": {
+        "worst_pnl_usd": -98.11619819679981,
+        "tail_pnl_usd": -36.57391965274265,
+        "max_drawdown_usd": 101.61785388960016,
+        "profitable_share": 0.575,
+        "sharpe": 0.49588738007487776
+      },
+      "peak_position": 19.0,
+      "disqualified": 0,
+      "turn_overruns": 0
+    },
+    "initial_partial_batch": "validation-initial-partial.json"
+  },
+  "adverse_stress_tests": {
+    "sessions": 4,
+    "selection": "four generated scenarios with the largest simulated drawdowns",
+    "pnl_usd": -261.878433997299,
+    "risk": {
+      "worst_pnl_usd": -106.40524954949979,
+      "tail_pnl_usd": -106.40524954949979,
+      "max_drawdown_usd": 153.212926350001,
+      "profitable_share": 0.25,
+      "sharpe": -1.3512482128039844
+    },
+    "disqualified": 0,
+    "peak_position": 19.0
+  },
+  "status": "complete; prebuilt executable validated"
+}

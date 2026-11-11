@@ -1,0 +1,81 @@
+{
+  "reward": 0.012027657174345258,
+  "pnl_usd": 1.0443212583995773,
+  "bound_pnl_usd": 86.82665653516405,
+  "reference_pnl_usd": 1.9,
+  "reference_ratio": 0.549642767578725,
+  "skill": 0.549642767578725,
+  "risk": {
+    "worst_pnl_usd": 1.0443212583995773,
+    "tail_pnl_usd": 1.0443212583995773,
+    "max_drawdown_usd": 1.0209848025006067,
+    "profitable_share": 1.0,
+    "sharpe": 0.0
+  },
+  "scenarios": [
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 86.82665653516405,
+      "reference_pnl_usd": 1.9,
+      "scenario": "practice-6",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.96,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10101.0443212584,
+      "pnl_usd": 1.0443212583995773,
+      "end_position": -0.711,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462882937
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 20.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 250.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 3.748,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -1.895,
+          "highest": 3.748
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 1.0209848025006067,
+      "valuation": "oracle",
+      "flow": {
+        "orders": 140,
+        "sent": 140,
+        "failed": 0,
+        "volume": 106.45399999999998,
+        "makers_widened_ticks": 15
+      },
+      "competitor": {
+        "requotes": 74,
+        "undercuts": 45,
+        "tightest_bps": 3.24,
+        "end_position": -1.854
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 296,
+        "overran": 0,
+        "wall_ms": 8325,
+        "late_sends": 0
+      },
+      "wall_ms": 31042
+    }
+  ]
+}

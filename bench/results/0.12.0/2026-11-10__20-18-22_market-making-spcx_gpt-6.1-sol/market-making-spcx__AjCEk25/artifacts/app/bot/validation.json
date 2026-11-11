@@ -1,0 +1,513 @@
+{
+  "sessions": 60,
+  "pnl_usd": 2018.5604551712004,
+  "bound_pnl_usd": 13344.248185625569,
+  "reward": 0.1512682038802002,
+  "worst_session_pnl_usd": -110.68160898919996,
+  "max_drawdown_usd": 145.48608767439873,
+  "peak_position_shares": 19.8,
+  "profitable_sessions": 35,
+  "disqualified_sessions": 0,
+  "refused_rpc_calls": 0,
+  "positions_outside_spcx": 0,
+  "liquidatable_sessions": 0,
+  "late_slots": 0,
+  "turn_overruns": 0,
+  "late_sends": 0,
+  "comparison": {
+    "sessions": 24,
+    "pnl_usd": 1231.1893248568012,
+    "previous_build_pnl_usd": 1101.5159597065085,
+    "generator_seed": 617483
+  },
+  "fresh_validation": {
+    "sessions": 36,
+    "pnl_usd": 787.3711303143991,
+    "generator_seed": 284916728,
+    "sample": "9 calm, 18 jump, 9 trend sessions selected before testing"
+  },
+  "unit_tests_passed": 5,
+  "binary_sha256": "4dd9eac76ab1706f8975ecb5d47ce6b21ae3e767779fab8af7700d2b20607cbc",
+  "scenarios": [
+    {
+      "scenario": "mm-1",
+      "pnl_usd": -4.952568173599502,
+      "bound_pnl_usd": 145.41602246800258,
+      "max_drawdown_usd": 26.353449752599772,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-10",
+      "pnl_usd": 25.30569257499883,
+      "bound_pnl_usd": 181.78703846854276,
+      "max_drawdown_usd": 5.140428632597832,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-11",
+      "pnl_usd": -3.3005892637993384,
+      "bound_pnl_usd": 258.60499426404203,
+      "max_drawdown_usd": 8.28669032740072,
+      "peak_position": 4.792,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-12",
+      "pnl_usd": 158.74569268740015,
+      "bound_pnl_usd": 410.0609629148486,
+      "max_drawdown_usd": 15.109507360000862,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-13",
+      "pnl_usd": 5.392681049001112,
+      "bound_pnl_usd": 185.3705820567279,
+      "max_drawdown_usd": 0.9812948811995739,
+      "peak_position": 4.848,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-14",
+      "pnl_usd": 63.930234217099496,
+      "bound_pnl_usd": 157.42713142512721,
+      "max_drawdown_usd": 6.696958618802455,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-15",
+      "pnl_usd": -10.785278456598462,
+      "bound_pnl_usd": 127.40767417039325,
+      "max_drawdown_usd": 15.235443635101547,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-16",
+      "pnl_usd": 19.95386710599996,
+      "bound_pnl_usd": 119.01152433123085,
+      "max_drawdown_usd": 0.5289846484993177,
+      "peak_position": 9.334,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-17",
+      "pnl_usd": 200.46913007500007,
+      "bound_pnl_usd": 399.5104396742466,
+      "max_drawdown_usd": 18.288731860999178,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-18",
+      "pnl_usd": 126.23586187500041,
+      "bound_pnl_usd": 303.3857410930057,
+      "max_drawdown_usd": 12.792010358598418,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-19",
+      "pnl_usd": -8.019020818999707,
+      "bound_pnl_usd": 126.77397455612717,
+      "max_drawdown_usd": 13.074207669198586,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-2",
+      "pnl_usd": 116.72503900069933,
+      "bound_pnl_usd": 396.23239457151715,
+      "max_drawdown_usd": 51.614372974401704,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-20",
+      "pnl_usd": -11.6898089988008,
+      "bound_pnl_usd": 196.4236477090194,
+      "max_drawdown_usd": 18.017813290200138,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-21",
+      "pnl_usd": 67.76050160600062,
+      "bound_pnl_usd": 187.5903456344734,
+      "max_drawdown_usd": 9.312671882600625,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-22",
+      "pnl_usd": 214.9832661815999,
+      "bound_pnl_usd": 356.1992108525103,
+      "max_drawdown_usd": 17.742742860602448,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-23",
+      "pnl_usd": -0.08932894200006558,
+      "bound_pnl_usd": 194.53037527559107,
+      "max_drawdown_usd": 3.20168582000224,
+      "peak_position": 6.489,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-24",
+      "pnl_usd": -7.129370025801109,
+      "bound_pnl_usd": 111.01047386206501,
+      "max_drawdown_usd": 9.65206752479935,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-3",
+      "pnl_usd": -23.122625718398922,
+      "bound_pnl_usd": 162.57776948718706,
+      "max_drawdown_usd": 39.22339190650018,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-4",
+      "pnl_usd": 83.20708186750016,
+      "bound_pnl_usd": 203.60042673458315,
+      "max_drawdown_usd": 9.321761942901503,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-5",
+      "pnl_usd": 14.494738192999648,
+      "bound_pnl_usd": 119.77957733980006,
+      "max_drawdown_usd": 0.9712140297979204,
+      "peak_position": 8.574,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-6",
+      "pnl_usd": 11.27268770269984,
+      "bound_pnl_usd": 536.6690158672674,
+      "max_drawdown_usd": 5.702164366301076,
+      "peak_position": 1.978,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-7",
+      "pnl_usd": -8.738049522000438,
+      "bound_pnl_usd": 140.90655526888668,
+      "max_drawdown_usd": 12.73272632860062,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-8",
+      "pnl_usd": 7.680390752799212,
+      "bound_pnl_usd": 122.80413137937119,
+      "max_drawdown_usd": 6.1552727033995325,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "mm-9",
+      "pnl_usd": 192.85909988800086,
+      "bound_pnl_usd": 390.6418597516938,
+      "max_drawdown_usd": 26.7900304183986,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-1",
+      "pnl_usd": 2.8351546002995747,
+      "bound_pnl_usd": 201.07165022605903,
+      "max_drawdown_usd": 13.718469015400842,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-12",
+      "pnl_usd": 32.30947162510165,
+      "bound_pnl_usd": 198.84505789589636,
+      "max_drawdown_usd": 20.106816863999484,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-14",
+      "pnl_usd": -24.459292022400405,
+      "bound_pnl_usd": 147.7967793574851,
+      "max_drawdown_usd": 27.53515613720083,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-16",
+      "pnl_usd": -26.30063743680148,
+      "bound_pnl_usd": 135.88792054773768,
+      "max_drawdown_usd": 37.31836021759955,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-17",
+      "pnl_usd": -0.9905025565003598,
+      "bound_pnl_usd": 406.30827442311056,
+      "max_drawdown_usd": 95.05280651239991,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-18",
+      "pnl_usd": -47.37813306899989,
+      "bound_pnl_usd": 138.50885563873635,
+      "max_drawdown_usd": 48.38176963859951,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-2",
+      "pnl_usd": -11.22321976800049,
+      "bound_pnl_usd": 169.67733276067858,
+      "max_drawdown_usd": 14.505407695500253,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-21",
+      "pnl_usd": -18.224447520000467,
+      "bound_pnl_usd": 102.250361184974,
+      "max_drawdown_usd": 22.77642334540178,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-22",
+      "pnl_usd": 30.669642795999607,
+      "bound_pnl_usd": 221.1993895490407,
+      "max_drawdown_usd": 56.72920678469927,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-23",
+      "pnl_usd": 7.249437142800161,
+      "bound_pnl_usd": 148.0731698668614,
+      "max_drawdown_usd": 0.8636477870004455,
+      "peak_position": 7.021,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-24",
+      "pnl_usd": 2.6687355878002563,
+      "bound_pnl_usd": 125.98050936825804,
+      "max_drawdown_usd": 9.726999926500866,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-25",
+      "pnl_usd": 25.307161904800523,
+      "bound_pnl_usd": 213.95699754694692,
+      "max_drawdown_usd": 32.171549255499485,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-26",
+      "pnl_usd": 53.77215531719958,
+      "bound_pnl_usd": 271.33885587852353,
+      "max_drawdown_usd": 12.022688108001603,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-27",
+      "pnl_usd": 8.544515022400446,
+      "bound_pnl_usd": 199.54387328367648,
+      "max_drawdown_usd": 2.970805703500446,
+      "peak_position": 8.372,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-28",
+      "pnl_usd": 96.71618434159973,
+      "bound_pnl_usd": 221.41470116940656,
+      "max_drawdown_usd": 19.059475304899024,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-29",
+      "pnl_usd": -15.447594889999891,
+      "bound_pnl_usd": 174.87634540302037,
+      "max_drawdown_usd": 24.79397679470094,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-3",
+      "pnl_usd": -8.180159680199722,
+      "bound_pnl_usd": 133.90733649874798,
+      "max_drawdown_usd": 22.216702944000644,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-31",
+      "pnl_usd": 31.74534030399991,
+      "bound_pnl_usd": 305.9964647652066,
+      "max_drawdown_usd": 30.28201139349767,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-32",
+      "pnl_usd": 46.097303240399924,
+      "bound_pnl_usd": 245.03237261278247,
+      "max_drawdown_usd": 35.93307736150018,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-33",
+      "pnl_usd": -24.00259959359937,
+      "bound_pnl_usd": 116.05421489148725,
+      "max_drawdown_usd": 33.58553792279963,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-34",
+      "pnl_usd": 235.8323161260014,
+      "bound_pnl_usd": 367.6833799595762,
+      "max_drawdown_usd": 11.810091667999586,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-35",
+      "pnl_usd": -76.86412676029977,
+      "bound_pnl_usd": 305.8521853254709,
+      "max_drawdown_usd": 86.20685076459995,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-36",
+      "pnl_usd": -3.3531734442003653,
+      "bound_pnl_usd": 149.03393797139285,
+      "max_drawdown_usd": 12.95184892080033,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-37",
+      "pnl_usd": 45.0699387500008,
+      "bound_pnl_usd": 340.3598971966551,
+      "max_drawdown_usd": 5.613408333700136,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-38",
+      "pnl_usd": 6.572025260698865,
+      "bound_pnl_usd": 180.9928756070159,
+      "max_drawdown_usd": 7.405260766399806,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-40",
+      "pnl_usd": 157.2530267625989,
+      "bound_pnl_usd": 354.578517460311,
+      "max_drawdown_usd": 8.856324038000821,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-42",
+      "pnl_usd": 188.37836805970073,
+      "bound_pnl_usd": 410.7647888389644,
+      "max_drawdown_usd": 20.81472239120012,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-44",
+      "pnl_usd": -7.667748763000418,
+      "bound_pnl_usd": 201.4044904442841,
+      "max_drawdown_usd": 18.33445047839996,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-45",
+      "pnl_usd": -110.68160898919996,
+      "bound_pnl_usd": 259.24169145280905,
+      "max_drawdown_usd": 145.48608767439873,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-46",
+      "pnl_usd": 60.87835235999955,
+      "bound_pnl_usd": 227.5391035005867,
+      "max_drawdown_usd": 28.49676721619835,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-47",
+      "pnl_usd": 3.307332402000611,
+      "bound_pnl_usd": 132.353810257531,
+      "max_drawdown_usd": 9.55566076750074,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-48",
+      "pnl_usd": -19.09147834719988,
+      "bound_pnl_usd": 195.29164042017774,
+      "max_drawdown_usd": 22.89340098429966,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-5",
+      "pnl_usd": 105.6765382964004,
+      "bound_pnl_usd": 208.8402289135052,
+      "max_drawdown_usd": 7.733054705000541,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-6",
+      "pnl_usd": -2.7444783451010153,
+      "bound_pnl_usd": 209.602741778681,
+      "max_drawdown_usd": 10.95577366370162,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-7",
+      "pnl_usd": -8.992302597500384,
+      "bound_pnl_usd": 209.07873945884972,
+      "max_drawdown_usd": 13.206579438201516,
+      "peak_position": 19.8,
+      "disqualified": null
+    },
+    {
+      "scenario": "validation-9",
+      "pnl_usd": 52.08963419760039,
+      "bound_pnl_usd": 180.18782501486743,
+      "max_drawdown_usd": 9.880339839000953,
+      "peak_position": 19.8,
+      "disqualified": null
+    }
+  ]
+}

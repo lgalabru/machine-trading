@@ -1,0 +1,5 @@
+	linux-vdso.so.1 (0x0000f83276767000)
+	libgcc_s.so.1 => /app/bot/lib/libgcc_s.so.1 (0x0000f83275d60000)
+	libm.so.6 => /lib/aarch64-linux-gnu/libm.so.6 (0x0000f83275cb0000)
+	libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0000f83275b00000)
+	/lib/ld-linux-aarch64.so.1 (0x0000f83276720000)
