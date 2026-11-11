@@ -34,7 +34,7 @@ pub use market::{MarketKeys, OpenBookV2Market};
 pub use meter::{OpenBookV2Meter, balances};
 use solana_pubkey::Pubkey;
 pub use state::{LeafOrder, MarketAccount, OpenOrdersIndexer, OpenOrdersPosition};
-pub use trader::{ACCOUNT_NUMBER, Book, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader};
+pub use trader::{ACCOUNT_NUMBER, Book, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader, read_book};
 
 pub use super::VENUE;
 use crate::protocols::{NamedMarket, USDC_MINT, WRAPPED_SOL_MINT};

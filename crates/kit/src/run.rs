@@ -48,7 +48,10 @@ use std::{
 
 use tracing::{info, warn};
 
-use crate::{BotEnv, Mandate, Position, Side, Trader, Turns, turns::Hello};
+use crate::{
+    BotEnv, Mandate, Position, Side, Trader, Turns,
+    turns::{BookLevels, Hello, Trade},
+};
 
 /// What a strategy's hooks and [`run`] return: any error, so a strategy can
 /// use `?` on whatever it calls.
@@ -129,6 +132,12 @@ pub struct Market {
     pub drawdown: f64,
     /// What's left of the session's turn budget (500 ms a step, summed).
     pub budget_left: Duration,
+    /// The step's turn data, when the scenario reports it: every trade since
+    /// the previous step on every venue, the top of each book, and the
+    /// world's clock in Unix seconds.
+    pub tape: Vec<Trade>,
+    pub depth: Vec<BookLevels>,
+    pub unix_timestamp: Option<i64>,
 }
 
 impl Market {
@@ -581,6 +590,9 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             peak_pnl,
             drawdown: peak_pnl - pnl,
             budget_left: budget.saturating_sub(used),
+            tape: step.tape,
+            depth: step.depth,
+            unix_timestamp: step.unix_timestamp,
         };
         let mut orders = Orders::sending(&session.trader);
         match strategy.step(&market, &mut orders).await {

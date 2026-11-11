@@ -1,0 +1,46 @@
+{
+  "name": "smoke-sell-order",
+  "description": "Sell 10 SOL by the end; the bot sells 2 and the broker takes the remainder; turn data on",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "spot": {
+    "venues": [
+      "phoenix",
+      "openbook"
+    ],
+    "base": 10.0,
+    "quote": 1000.0
+  },
+  "turn_data": {
+    "tape": true,
+    "depth_levels": 3,
+    "timestamps": true,
+    "parties": true
+  },
+  "order": {
+    "side": "sell",
+    "quantity": 10.0,
+    "haircut_bps": 100.0
+  }
+}

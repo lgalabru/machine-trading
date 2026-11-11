@@ -33,12 +33,12 @@ use std::{
 use mtx_core::{
     Decimal, Side,
     mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange, Term},
-    turns::{self, Hello, Message, Step},
+    turns::{self, BookLevels, Hello, Level, Message, Role, Step, Trade},
 };
 use mtx_kit::{
     BotEnv,
     chain::{ChainClient, RpcChainClient, token},
-    core::SpotBalances,
+    core::{OrderBook, PriceLevel, SpotBalances},
     protocols::{
         USDC_MINT,
         openbook::v2::{self as openbook_v2, OpenBookV2Market, OpenBookV2Meter},
@@ -62,6 +62,7 @@ use crate::{
     Error, Result, chain,
     error::io_error,
     guard::Guard,
+    orders::Traded,
     scenario::Scenario,
     session::{
         self, BOT_USERS, HELLO_WALL, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions,
@@ -96,6 +97,31 @@ pub struct Spot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_usd: Option<f64>,
 }
+
+/// What a spot scenario's step messages carry besides the clock: what a bot
+/// can't cheaply read from the chain itself. Each is off unless asked for,
+/// and a scenario without this section sends the step message it always did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TurnData {
+    /// Every trade on the venues since the previous step, the bot's own
+    /// marked.
+    #[serde(default)]
+    pub tape: bool,
+    /// The top this many price levels of each venue's book, per side. Zero
+    /// sends none.
+    #[serde(default)]
+    pub depth_levels: usize,
+    /// The world's clock, in Unix seconds.
+    #[serde(default)]
+    pub timestamps: bool,
+    /// With the tape, the taker and maker of each trade.
+    #[serde(default)]
+    pub parties: bool,
+}
+
+/// The most price levels a step can carry per side.
+pub const MAX_DEPTH_LEVELS: usize = 20;
 
 impl Spot {
     /// The spot markets, as the mandate names them.
@@ -178,6 +204,37 @@ impl Spot {
         if scenario.duration_slots == 0 {
             return Err("spot: the session has no slots".into());
         }
+        if let Some(data) = &scenario.turn_data {
+            if !(data.tape || data.depth_levels > 0 || data.timestamps)
+                || (data.parties && !data.tape)
+            {
+                return Err("turn_data: asks for nothing, or for parties without a tape".into());
+            }
+            if data.depth_levels > MAX_DEPTH_LEVELS {
+                return Err(format!(
+                    "turn_data: depth_levels {} is over {MAX_DEPTH_LEVELS}",
+                    data.depth_levels
+                ));
+            }
+        }
+        if let Some(order) = &scenario.order {
+            order.validate()?;
+            if order.side == Side::Sell && self.base < order.quantity {
+                return Err(format!(
+                    "order: selling {} SOL from a wallet of {}",
+                    order.quantity, self.base
+                ));
+            }
+        }
+        if let Some(participation) = &scenario.participation {
+            participation.validate()?;
+        }
+        if let Some(net) = &scenario.net {
+            net.validate()?;
+            if scenario.order.is_some() {
+                return Err("net: a net-scored session has no order".into());
+            }
+        }
         Ok(())
     }
 }
@@ -192,6 +249,17 @@ pub struct SpotReport {
     pub fills: Vec<SpotFill>,
     /// Each side the bot was seen resting an order on, per market.
     pub open_orders: Vec<(InstrumentRef, Side)>,
+    /// For a scenario with a tape or a participation charge: each venue's
+    /// traded base volume at each step, the bot's own fills included.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub volume: Vec<VenueVolume>,
+}
+
+/// One venue's traded base volume, step by step.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct VenueVolume {
+    pub venue: String,
+    pub per_step: Vec<f64>,
 }
 
 impl SpotReport {
@@ -341,37 +409,134 @@ impl Venues {
         })
     }
 
-    /// Every fill the venues recorded for the owner in slots after
-    /// `after_slot`, each once, oldest first.
-    async fn fills(&self, after_slot: u64, base_slot: u64) -> Result<Vec<SpotFill>> {
-        let mut found: Vec<(MarketFill, Side, &'static str)> = Vec::new();
-        let mut seen: HashSet<(String, u128)> = HashSet::new();
-        let mut keep = |fills: Vec<MarketFill>, ids: &[Pubkey]| {
-            for fill in fills {
-                let Some(side) = fill.side_for(ids) else {
-                    continue;
-                };
-                if seen.insert((fill.instrument.0.clone(), fill.sequence)) {
-                    let role = if ids.contains(&fill.taker) {
-                        "taker"
-                    } else {
-                        "maker"
-                    };
-                    found.push((fill, side, role));
-                }
-            }
-        };
+    /// Add to the ledger every match the venues recorded in slots after
+    /// `after_slot` that it hasn't got, oldest first, and return the index
+    /// of the first new one.
+    async fn scan(&self, ledger: &mut Ledger, after_slot: u64) -> Result<usize> {
+        let first = ledger.fills.len();
+        let mut found: Vec<(MarketFill, Vec<Pubkey>)> = Vec::new();
         if let Some((_, meter)) = &self.phoenix {
-            keep(meter.market_fills(after_slot).await?, &[self.owner]);
+            for fill in meter.market_fills(after_slot).await? {
+                found.push((fill, vec![self.owner]));
+            }
         }
         if let Some((_, meter)) = &self.openbook {
             let ids = meter.fill_ids().await?;
-            keep(meter.market_fills(after_slot).await?, &ids);
+            for fill in meter.market_fills(after_slot).await? {
+                found.push((fill, ids.clone()));
+            }
         }
-        found.sort_by_key(|(fill, _, _)| (fill.slot, fill.instrument.0.clone(), fill.sequence));
-        found
-            .into_iter()
-            .map(|(fill, side, role)| {
+        for (fill, ids) in found {
+            if ledger
+                .seen
+                .insert((fill.instrument.0.clone(), fill.sequence))
+            {
+                let own = fill.side_for(&ids).map(|side| {
+                    let role = if ids.contains(&fill.taker) {
+                        Role::Taker
+                    } else {
+                        Role::Maker
+                    };
+                    (side, role)
+                });
+                ledger.fills.push(Seen { fill, own });
+            }
+        }
+        ledger.fills[first..]
+            .sort_by_key(|s| (s.fill.slot, s.fill.instrument.0.clone(), s.fill.sequence));
+        Ok(first)
+    }
+
+    /// The world's clock, in Unix seconds.
+    async fn unix_timestamp(&self) -> Result<i64> {
+        let clock = solana_pubkey::pubkey!("SysvarC1ock11111111111111111111111111111111");
+        let account = market_account(self.chain.as_ref(), &clock).await?;
+        // The clock sysvar: slot, epoch start, epoch, leader schedule epoch,
+        // then the Unix timestamp.
+        account
+            .get(32..40)
+            .and_then(|b| b.try_into().ok())
+            .map(i64::from_le_bytes)
+            .ok_or_else(|| Error::UnknownMarket("the clock sysvar".into()))
+    }
+
+    /// The top `levels` price levels of each venue's book, per side, at
+    /// `slot`.
+    async fn depth(
+        &self,
+        levels: usize,
+        slot: u64,
+        unix_timestamp: i64,
+    ) -> Result<Vec<BookLevels>> {
+        let top = |book: OrderBook| {
+            let take = |side: Vec<PriceLevel>| -> Vec<Level> {
+                side.into_iter()
+                    .take(levels)
+                    .map(|l| Level {
+                        price: grader_f64(l.price),
+                        base: l.quantity.map_or(0.0, grader_f64),
+                    })
+                    .collect()
+            };
+            (take(book.bids), take(book.asks))
+        };
+        let unix = unix_timestamp.max(0) as u64;
+        let mut out = Vec::new();
+        if let Some((market, _)) = &self.phoenix {
+            let account = market_account(self.chain.as_ref(), &market.keys.market).await?;
+            let state = MarketState::decode(&account).map_err(venue_error("phoenix v1 market"))?;
+            let (bids, asks) = top(market.order_book(&state, slot, unix));
+            out.push(BookLevels {
+                venue: "phoenix".into(),
+                bids,
+                asks,
+            });
+        }
+        if let Some((market, _)) = &self.openbook {
+            let book = openbook_v2::read_book(self.chain.as_ref(), market)
+                .await
+                .map_err(venue_error("openbook v2 book"))?;
+            let (bids, asks) = top(market.order_book(&book.bids, &book.asks, unix, Some(slot)));
+            out.push(BookLevels {
+                venue: "openbook".into(),
+                bids,
+                asks,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// A match a venue recorded, and which side of it the bot was.
+struct Seen {
+    fill: MarketFill,
+    own: Option<(Side, Role)>,
+}
+
+/// Every match the venues recorded in the session, once each, as first
+/// seen. A session scans once at the end, or at every step when it reports
+/// a tape or prices participation, so that a fill waiting in OpenBook's
+/// event heap is dated to the step it first showed in.
+#[derive(Default)]
+struct Ledger {
+    seen: HashSet<(String, u128)>,
+    fills: Vec<Seen>,
+    /// How many entries were there before the session began: matches the
+    /// event heap still held from the snapshot. They are not the session's.
+    before: usize,
+}
+
+impl Ledger {
+    /// The bot's own fills, oldest first.
+    fn own(&self, base_slot: u64) -> Result<Vec<SpotFill>> {
+        let mut own: Vec<&Seen> = self.fills[self.before..]
+            .iter()
+            .filter(|s| s.own.is_some())
+            .collect();
+        own.sort_by_key(|s| (s.fill.slot, s.fill.instrument.0.clone(), s.fill.sequence));
+        own.into_iter()
+            .map(|Seen { fill, own }| {
+                let (side, role) = own.expect("filtered to the bot's own");
                 Ok(SpotFill {
                     at: fill.slot.saturating_sub(base_slot),
                     instrument: fill.instrument.0.parse().map_err(|reason: String| {
@@ -381,12 +546,74 @@ impl Venues {
                         }
                     })?,
                     side,
-                    role,
+                    role: match role {
+                        Role::Taker => "taker",
+                        Role::Maker => "maker",
+                    },
                     price: grader_f64(fill.price),
                     base: grader_f64(fill.quantity),
                 })
             })
             .collect()
+    }
+
+    /// Every match as a trade for the participation charge.
+    fn traded(&self, base_slot: u64) -> Vec<Traded> {
+        self.fills[self.before..]
+            .iter()
+            .map(|s| Traded {
+                venue: venue_of(&s.fill),
+                price: grader_f64(s.fill.price),
+                slot: s.fill.slot.saturating_sub(base_slot),
+                base: grader_f64(s.fill.quantity),
+                own: s.own.is_some(),
+            })
+            .collect()
+    }
+
+    /// Each venue's traded base volume at each of `steps` steps.
+    fn volume(&self, venues: &[String], base_slot: u64, steps: u64) -> Vec<VenueVolume> {
+        venues
+            .iter()
+            .map(|venue| {
+                let mut per_step = vec![0.0; steps as usize];
+                for seen in self.fills[self.before..]
+                    .iter()
+                    .filter(|s| &venue_of(&s.fill) == venue)
+                {
+                    let at = seen.fill.slot.saturating_sub(base_slot);
+                    let step = (at.saturating_sub(1) / SLOTS_PER_STEP).min(steps.saturating_sub(1));
+                    per_step[step as usize] += grader_f64(seen.fill.quantity);
+                }
+                VenueVolume {
+                    venue: venue.clone(),
+                    per_step,
+                }
+            })
+            .collect()
+    }
+}
+
+fn venue_of(fill: &MarketFill) -> String {
+    fill.instrument
+        .0
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// A ledger entry as a step's tape shows it.
+fn trade(seen: &Seen, parties: bool) -> Trade {
+    Trade {
+        venue: venue_of(&seen.fill),
+        side: seen.fill.taker_side,
+        price: grader_f64(seen.fill.price),
+        base: grader_f64(seen.fill.quantity),
+        slot: seen.fill.slot,
+        taker: parties.then(|| seen.fill.taker.to_string()),
+        maker: parties.then(|| seen.fill.maker.to_string()),
+        own: seen.own.map(|(_, role)| role),
     }
 }
 
@@ -408,8 +635,17 @@ fn venue_error<E: std::fmt::Display>(what: &'static str) -> impl Fn(E) -> Error 
 
 /// Give `owner` `base` wrapped SOL and `quote` USDC, and SOL for fees. Setup
 /// only: USDC comes from a cheatcode; the SOL is wrapped by an ordinary
-/// transaction, so its token account is a real native one.
-pub fn fund(surfnet: &Surfnet, owner: &Keypair, base: f64, quote: f64) -> Result<()> {
+/// transaction, so its token account is a real native one. With `accounts`
+/// the wallet has both token accounts even when it starts with none of an
+/// asset, as a bot trading toward an order needs (it buys into the wSOL
+/// account, or sells into the USDC one).
+pub fn fund(
+    surfnet: &Surfnet,
+    owner: &Keypair,
+    base: f64,
+    quote: f64,
+    accounts: bool,
+) -> Result<()> {
     let cheats = surfnet.cheatcodes();
     let wrapped = (base * 1e9).round() as u64;
     let fees = (FEE_SOL * 1e9) as u64;
@@ -420,8 +656,14 @@ pub fn fund(surfnet: &Surfnet, owner: &Keypair, base: f64, quote: f64) -> Result
         (quote * 1e6).round() as u64,
         None,
     )?;
-    if wrapped > 0 {
-        let (_, instructions) = token::wrap_sol(&owner.pubkey(), wrapped, true);
+    if wrapped > 0 || accounts {
+        let (_, mut instructions) = token::wrap_sol(&owner.pubkey(), wrapped, true);
+        if accounts {
+            instructions.insert(
+                0,
+                token::create_ata_idempotent(&owner.pubkey(), &owner.pubkey(), &USDC_MINT),
+            );
+        }
         mtx_kit::send(&chain::rpc_client(surfnet), owner, instructions, "wrap SOL")?;
     }
     Ok(())
@@ -540,7 +782,13 @@ pub(crate) async fn run_session(
     let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(internal.url()));
 
     let bot = Keypair::new();
-    fund(&surfnet, &bot, spot.base, spot.quote)?;
+    fund(
+        &surfnet,
+        &bot,
+        spot.base,
+        spot.quote,
+        scenario.order.is_some(),
+    )?;
     let venues = Venues::connect(chain, &spot.venues, bot.pubkey()).await?;
     let start = venues.read().await?;
     let instruments = spot.instruments();
@@ -658,6 +906,18 @@ pub(crate) async fn run_session(
     let start_price_usd = start.wallet.price_usd;
     let mut peak_value_usd = start_value_usd;
     let mut max_drawdown_usd: f64 = 0.0;
+    // Scan the venues at every step only when the scenario reports a tape or
+    // prices participation; otherwise once, at the end.
+    let tracking = scenario.turn_data.as_ref().is_some_and(|data| data.tape)
+        || scenario.participation.is_some();
+    let mut ledger = Ledger::default();
+    let mut last_scan = base_slot;
+    if tracking || scenario.turn_data.is_some() {
+        venues
+            .scan(&mut ledger, base_slot.saturating_sub(1))
+            .await?;
+        ledger.before = ledger.fills.len();
+    }
     let mut bot_exit = None;
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     for k in 0..steps {
@@ -672,6 +932,15 @@ pub(crate) async fn run_session(
         guard.release(k).await;
         let now = venues.read().await?;
         note(&mut observed, &now);
+        let first_new = if tracking {
+            let first = venues
+                .scan(&mut ledger, last_scan.saturating_sub(1))
+                .await?;
+            last_scan = slot;
+            first
+        } else {
+            0
+        };
         let value_usd = now.wallet.value_usd;
         peak_value_usd = peak_value_usd.max(value_usd);
         max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
@@ -708,11 +977,28 @@ pub(crate) async fn run_session(
             continue;
         }
         let started = Instant::now();
-        let step = Step {
-            k,
-            slot,
-            last: k + 1 == steps,
-        };
+        let mut step = Step::new(k, slot, k + 1 == steps);
+        if let Some(data) = &scenario.turn_data {
+            let clock = if data.timestamps || data.depth_levels > 0 {
+                Some(venues.unix_timestamp().await?)
+            } else {
+                None
+            };
+            if data.tape {
+                step.tape = ledger.fills[first_new..]
+                    .iter()
+                    .map(|seen| trade(seen, data.parties))
+                    .collect();
+            }
+            if data.depth_levels > 0 {
+                step.depth = venues
+                    .depth(data.depth_levels, slot, clock.unwrap_or_default())
+                    .await?;
+            }
+            if data.timestamps {
+                step.unix_timestamp = clock;
+            }
+        }
         let wall = TURN_WALL.min(budget.saturating_sub(spent));
         let answered = session::take_turn(&mut writer, &mut reader, step, wall).await;
         let took = started.elapsed();
@@ -736,8 +1022,59 @@ pub(crate) async fn run_session(
 
     let end = venues.read().await?;
     note(&mut observed, &end);
-    let fills = venues.fills(base_slot, base_slot).await?;
+    venues
+        .scan(
+            &mut ledger,
+            if tracking {
+                last_scan.saturating_sub(1)
+            } else {
+                base_slot
+            },
+        )
+        .await?;
+    let fills = ledger.own(base_slot)?;
     let end_value_usd = end.wallet.value_usd;
+    let order = scenario.order.as_ref().map(|order| {
+        let own: Vec<(Side, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
+        order.report(
+            start.wallet.base,
+            end.wallet.base,
+            start_price_usd,
+            end.wallet.price_usd,
+            end_value_usd - start_value_usd,
+            &own,
+        )
+    });
+    let participation = scenario
+        .participation
+        .as_ref()
+        .map(|p| p.report(&ledger.traded(base_slot), &spot.venues));
+    let net = scenario.net.as_ref().map(|n| {
+        let own: Vec<(String, Side, f64)> = fills
+            .iter()
+            .map(|f| (f.instrument.venue.clone(), f.side, f.base))
+            .collect();
+        n.report(
+            start.wallet.base,
+            end.wallet.base,
+            (start_price_usd, end.wallet.price_usd),
+            end_value_usd - start_value_usd,
+            &own,
+            &spot.venues,
+        )
+    });
+    let pnl_usd = order.as_ref().map_or_else(
+        || {
+            net.as_ref()
+                .map_or(end_value_usd - start_value_usd, |n| n.pnl_usd())
+        },
+        |o| o.pnl_usd(),
+    ) - participation.as_ref().map_or(0.0, |p| p.charge_usd);
+    let volume = if tracking || scenario.turn_data.is_some() {
+        ledger.volume(&spot.venues, base_slot, steps)
+    } else {
+        Vec::new()
+    };
     let instrument = instruments[0].clone();
     let report = SessionReport {
         scenario: scenario.name.clone(),
@@ -745,7 +1082,7 @@ pub(crate) async fn run_session(
         end_mark_usd: end.wallet.price_usd,
         start_value_usd,
         end_value_usd,
-        pnl_usd: end_value_usd - start_value_usd,
+        pnl_usd,
         end_position: end.wallet.base,
         liquidatable: false,
         refused_calls: guard.refused(),
@@ -766,7 +1103,11 @@ pub(crate) async fn run_session(
             end: end.wallet,
             fills,
             open_orders,
+            volume,
         }),
+        order,
+        participation,
+        net,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {
@@ -835,6 +1176,10 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             fair_path: None,
+            turn_data: None,
+            order: None,
+            participation: None,
+            net: None,
             spot: Some(Spot {
                 venues: vec!["phoenix".into(), "openbook".into()],
                 base: 10.0,
@@ -899,6 +1244,63 @@ mod tests {
         let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);
         perp.mandate.limits.max_drawdown_usd = None;
         assert!(perp.validate().unwrap_err().contains("drawdown"));
+    }
+
+    #[test]
+    fn turn_data_orders_and_participation_are_checked_and_round_trip() {
+        use crate::orders::{ExecutionOrder, Participation};
+
+        let mut full = scenario();
+        full.turn_data = Some(TurnData {
+            tape: true,
+            depth_levels: 5,
+            timestamps: true,
+            parties: true,
+        });
+        full.order = Some(ExecutionOrder {
+            side: Side::Sell,
+            quantity: 10.0,
+            haircut_bps: 50.0,
+            reduce_only: false,
+        });
+        full.participation = Some(Participation {
+            max_share: 0.2,
+            window_slots: 8,
+            price_bps: 5.0,
+        });
+        assert_eq!(full.validate(), Ok(()));
+        let json = serde_json::to_string(&full).unwrap();
+        assert_eq!(serde_json::from_str::<Scenario>(&json).unwrap(), full);
+        // A scenario without them writes none of them.
+        let plain = serde_json::to_string(&scenario()).unwrap();
+        assert!(!plain.contains("turn_data") && !plain.contains("order"));
+        assert!(!plain.contains("participation"));
+
+        let mut empty = full.clone();
+        empty.turn_data = Some(TurnData::default());
+        assert!(empty.validate().unwrap_err().contains("asks for nothing"));
+        let mut parties = full.clone();
+        parties.turn_data = Some(TurnData {
+            tape: false,
+            depth_levels: 2,
+            timestamps: false,
+            parties: true,
+        });
+        assert!(parties.validate().is_err());
+        let mut deep = full.clone();
+        deep.turn_data.as_mut().unwrap().depth_levels = MAX_DEPTH_LEVELS + 1;
+        assert!(deep.validate().unwrap_err().contains("depth_levels"));
+        let mut short = full.clone();
+        short.order.as_mut().unwrap().quantity = 11.0;
+        assert!(short.validate().unwrap_err().contains("selling 11"));
+        let mut share = full.clone();
+        share.participation.as_mut().unwrap().max_share = 0.0;
+        assert!(share.validate().is_err());
+
+        // They are for spot scenarios.
+        let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        perp.order = full.order.clone();
+        assert!(perp.validate().unwrap_err().contains("spot scenarios"));
     }
 
     #[test]
