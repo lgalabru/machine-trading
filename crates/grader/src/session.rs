@@ -1028,13 +1028,26 @@ struct SessionDir {
 impl SessionDir {
     fn create(bot: &Keypair, user: &str) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("mtx-session-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&path).map_err(io_error(&path))?;
+        // Only the bot's own user may enter: sessions graded at once run
+        // their bots as different users in one container, and a bot must not
+        // read another's keypair or mandate.
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&path)
+            .map_err(io_error(&path))?;
         let dir = Self {
             path,
             bot_user: bot_user(user),
         };
         let keypair = serde_json::to_string(&bot.to_bytes().to_vec())?;
-        std::fs::write(dir.keypair_path(), keypair).map_err(io_error(dir.keypair_path()))?;
+        let mut file = std::fs::OpenOptions::new();
+        std::os::unix::fs::OpenOptionsExt::mode(file.write(true).create_new(true), 0o600);
+        std::io::Write::write_all(
+            &mut file
+                .open(dir.keypair_path())
+                .map_err(io_error(dir.keypair_path()))?,
+            keypair.as_bytes(),
+        )
+        .map_err(io_error(dir.keypair_path()))?;
         if let Some((uid, gid)) = dir.bot_user {
             for path in [dir.path.clone(), dir.keypair_path()] {
                 std::os::unix::fs::chown(&path, Some(uid), Some(gid)).map_err(io_error(&path))?;
@@ -1173,5 +1186,27 @@ async fn stop_bot(child: &mut Child, bot_user: Option<&str>) {
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-u", user])
             .status();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn session_dir_and_its_files_are_private() {
+        let dir = SessionDir::create(&Keypair::new(), "mtx-bot-none").unwrap();
+        assert_eq!(mode(&dir.path), 0o700);
+        assert_eq!(mode(&dir.keypair_path()), 0o600);
+        let mandate = dir
+            .write_mandate(&Mandate::perp("phoenix", "SOL-PERP", 1.0, 1.0))
+            .unwrap();
+        assert_eq!(mode(mandate.parent().unwrap()), 0o700);
     }
 }
