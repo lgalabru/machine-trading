@@ -89,8 +89,10 @@ fn is_one(x: &f64) -> bool {
 /// From `from_slot` to just before `to_slot` (slots into the session), on
 /// `venue` or every venue, the makers' ladder is `depth` times as deep, its
 /// gaps `spread` times as wide, only the nearest `quoting` share of its
-/// levels shows, and its bids are `1 + lean` times their size and its asks
-/// `1 - lean`. Overlapping episodes multiply (their leans add).
+/// levels shows, its bids are `1 + lean` times their size and its asks
+/// `1 - lean`, and the whole ladder sits `offset_bps` off the reference (a
+/// venue quoting away from fair). Overlapping episodes multiply (their leans
+/// and offsets add).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Episode {
@@ -106,6 +108,8 @@ pub struct Episode {
     pub quoting: f64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub lean: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset_bps: f64,
 }
 
 /// The makers' shape at one step on one venue: the product of the episodes
@@ -116,6 +120,7 @@ pub struct Shape {
     pub spread: f64,
     pub quoting: f64,
     pub lean: f64,
+    pub offset_bps: f64,
 }
 
 impl Default for Shape {
@@ -125,6 +130,7 @@ impl Default for Shape {
             spread: 1.0,
             quoting: 1.0,
             lean: 0.0,
+            offset_bps: 0.0,
         }
     }
 }
@@ -177,6 +183,7 @@ impl MakerModel {
                 || bad(e.quoting)
                 || e.quoting > 1.0
                 || !(e.lean.is_finite() && e.lean.abs() <= 1.0)
+                || !(e.offset_bps.is_finite() && e.offset_bps.abs() < 1e4)
             {
                 return Err(format!(
                     "makers: schedule episode {i} must end after it starts, with depth and \
@@ -198,6 +205,7 @@ impl MakerModel {
                 shape.spread *= e.spread;
                 shape.quoting *= e.quoting;
                 shape.lean += e.lean;
+                shape.offset_bps += e.offset_bps;
             }
         }
         shape.lean = shape.lean.clamp(-1.0, 1.0);
@@ -213,7 +221,9 @@ impl MakerModel {
     /// then asks, each (price, size), nearest first.
     pub fn quotes(&self, book: &Book, reference_usd: f64, shape: &Shape) -> (Ladder, Ladder) {
         let lean = (book.inventory / self.ladder()).clamp(-1.0, 1.0);
-        let center = reference_usd * (1.0 - self.skew_bps * lean / 1e4);
+        let center = reference_usd
+            * (1.0 + shape.offset_bps / 1e4)
+            * (1.0 - self.skew_bps * lean / 1e4);
         let levels =
             ((shape.quoting * self.sizes.len() as f64).ceil() as usize).min(self.sizes.len());
         let side = |sign: f64, available: f64, weight: f64| {
@@ -593,6 +603,7 @@ pub(crate) mod tests {
                 spread: 2.0,
                 quoting: 0.5,
                 lean: 0.0,
+                offset_bps: 0.0,
             },
             Episode {
                 venue: None,
@@ -602,6 +613,7 @@ pub(crate) mod tests {
                 spread: 1.0,
                 quoting: 1.0,
                 lean: -0.1,
+                offset_bps: 0.0,
             },
         ];
         assert_eq!(m.validate(), Ok(()));
@@ -629,6 +641,31 @@ pub(crate) mod tests {
             json,
             serde_json::json!({ "from_slot": 14, "to_slot": 30, "lean": -0.1 })
         );
+    }
+
+    #[test]
+    fn an_offset_moves_one_venues_ladder_off_the_reference() {
+        let mut m = model();
+        let episode = |venue: &str, offset_bps| Episode {
+            venue: Some(venue.into()),
+            from_slot: 0,
+            to_slot: 10,
+            depth: 1.0,
+            spread: 1.0,
+            quoting: 1.0,
+            lean: 0.0,
+            offset_bps,
+        };
+        m.schedule = vec![episode("phoenix", 50.0), episode("phoenix", -20.0)];
+        assert_eq!(m.validate(), Ok(()));
+        let phoenix = m.shape("phoenix", 4);
+        assert!(close(phoenix.offset_bps, 30.0), "offsets add");
+        let (bids, asks) = m.quotes(&Book::default(), 100.0, &phoenix);
+        assert!(close(bids[0].0, 100.3 * 0.999) && close(asks[0].0, 100.3 * 1.001));
+        let (bids, _) = m.quotes(&Book::default(), 100.0, &m.shape("openbook", 4));
+        assert!(close(bids[0].0, 99.9), "the other venue stays on the reference");
+        m.schedule[0].offset_bps = f64::NAN;
+        assert!(m.validate().is_err());
     }
 
     #[test]
