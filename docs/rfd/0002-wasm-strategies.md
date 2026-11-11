@@ -247,3 +247,26 @@ defend, no bot users, no keypair files.
   now adds `processed`, for process bots as well. The process and component
   references still earn the same PnL, and the reference and maker the same
   as before the guard change.
+- 2026-11-11: the tasks move to components. The maker, the carry desk and
+  the weekend reference are ported (`bots/maker-wasm`, `bots/carry-wasm`,
+  `bots/weekend-wasm`; the last two link the process bots' models rather
+  than copying them). Each earns its process reference's PnL to the cent
+  on its task's practice set. Porting them named what a component lacked:
+  the venue's metadata (`Session::venue`, read without the chain by the
+  kit's `venue` feature), its own key (`Session::authority`, for its trader
+  account and to tell its own orders on the tape), the task's variables
+  (`Session::var("MTX_REOPEN_SLOT")`), and the top of the book: Hawkeye's
+  view is a simulated transaction a component can't build, so `Market`
+  carries the index and best bid and ask from the read the mark already
+  comes from. Two process habits had no counterpart and didn't matter:
+  the maker read its position after a lean to count its own fill, and the
+  carry desk read it after every slice; counting the order as filled gives
+  the same sessions. The starter is now a component, the verifier and
+  `mtx-practice` grade with `--components-only`, and the oracle solutions
+  are the ported bots. The ladder's anchors and rungs stay processes.
+- 2026-11-11: a trap ends a component's session. A probe that panics at
+  step 3 is never entered again: Wasmtime answers every later call with
+  "cannot enter component instance". The grader now stops calling a
+  strategy after its first trap, and the instructions say so; an error
+  returned from `step` only skips the step. Re-instantiating after a trap
+  would lose the strategy's state silently, so we don't.

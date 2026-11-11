@@ -8,8 +8,9 @@
 #            toolchain: a verifier runs bots, it never builds them.
 #   dev      ghcr.io/solana-foundation/machine-trading:<tag>
 #            Agents start from it: everything in runtime, a Rust toolchain,
-#            the bot SDK at /opt/mtx/sdk with its dependencies compiled, and a
-#            built starter bot at /app/bot.
+#            the wasm32-wasip2 target, the bot SDK at /opt/mtx/sdk with its
+#            dependencies compiled for it, and the starter strategy built at
+#            /app/bot/bot.wasm.
 #
 # Tasks add what is theirs: the snapshot they trade on (MTX_SNAPSHOT) and
 # their practice scenarios (/opt/mtx/practice) in environment/. Hidden sets
@@ -85,6 +86,7 @@ ARG CARGO_BUILD_JOBS=6
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 RUN apt-get update \
     && apt-get install -y --no-install-recommends procps jq \
+    && rustup target add wasm32-wasip2 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash agent \
     && mkdir -p /app /opt/mtx/target /opt/mtx/practice \
@@ -106,13 +108,12 @@ ENV CARGO_HOME=/home/agent/.cargo
 # compiled dependencies instead of rebuilding Solana from scratch.
 ENV CARGO_TARGET_DIR=/opt/mtx/target
 
-# The agent's bot starts as a copy of the starter, built. The crate cache
+# The agent's bot starts as a copy of the starter, built into bot.wasm. The crate cache
 # stays whole: Cargo wants the downloaded tarballs, not only the extracted
 # sources, so trimming it makes every agent build re-fetch from crates.io.
 USER agent
 RUN cp -r /opt/mtx/sdk/bots/starter /app/bot \
-    && sed -i 's|path = "../../crates/kit"|path = "/opt/mtx/sdk/crates/kit"|; s|^name = "mtx-bot-starter"|name = "bot"|; s|^name = "mtx-starter"|name = "bot"|' /app/bot/Cargo.toml \
-    && sed -i 's|--bin mtx-starter|--bin bot|' /app/bot/build.sh \
+    && sed -i 's|path = "../../crates/kit"|path = "/opt/mtx/sdk/crates/kit"|; s|^name = "mtx-bot-starter"|name = "bot"|' /app/bot/Cargo.toml \
     && cp /opt/mtx/sdk/Cargo.lock /app/bot/Cargo.lock \
     && /app/bot/build.sh \
     && rm -rf /app/bot/target

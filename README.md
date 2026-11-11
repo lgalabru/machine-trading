@@ -42,11 +42,11 @@ mtx bench review 0.10.0
 
 ## Write your own bot
 
-You need Rust and `mtx` (above); no Docker. A bot is a Rust program that
-trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
-You write a strategy, and [`mtx-kit`](crates/kit)'s run loop does
-the rest: it answers the grader, reads the market before every step, and
-sends your orders inside the mandate.
+You need Rust with the `wasm32-wasip2` target and `mtx` (above); no
+Docker. A bot is a strategy that trades one session: the [guide to writing a bot](https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html) has it all.
+You write it on [`mtx-kit`](crates/kit) and build it into a WebAssembly
+component, and the grader does the rest: it reads the market before every
+step, calls your strategy, and sends its orders inside the mandate.
 
 ```rust
 use mtx_kit::prelude::*;
@@ -66,9 +66,7 @@ impl Strategy for FadeTheDip {
     }
 }
 
-fn main() -> BotResult {
-    mtx_kit::run(FadeTheDip::default())
-}
+mtx_kit::export!(FadeTheDip);
 ```
 
 ```sh
@@ -77,8 +75,8 @@ cd ~/my-bot
 mtx bot practice              # build it, and grade it on a task's practice scenarios
 ```
 
-`Market` is a plain value (the step, mark and oracle, position, estimated
-PnL and drawdown, the mandate's room), and `Orders`
+`Market` is a plain value (the step, mark, oracle, index and best bid and
+ask, position, estimated PnL and drawdown, the mandate's room), and `Orders`
 records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
 `mtx_kit::rpc` reads anything else from the chain.
