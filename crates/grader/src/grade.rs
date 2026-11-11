@@ -649,6 +649,7 @@ mod tests {
             spot: None,
             order: None,
             participation: None,
+            net: None,
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -702,6 +703,7 @@ mod tests {
             turn_data: None,
             order: None,
             participation: None,
+            net: None,
             reference_pnl_usd,
         }
     }
