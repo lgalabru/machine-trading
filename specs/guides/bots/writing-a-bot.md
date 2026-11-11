@@ -228,9 +228,13 @@ world directly.
   Everything the strategy knows comes through `start`, `step` and `rpc`.
   Randomness is seeded from the session: the same session plays the same
   every run.
-- **A budget per call.** Each call to `start`, `step` or `end` may run ten
-  billion WebAssembly instructions; past that it traps. A step may make 256
-  `rpc` calls; past that, `rpc` returns an error. A trap, from a panic or the
+- **A budget.** Each call to `start`, `step` or `end` may run ten billion
+  WebAssembly instructions, and the session two billion a step in all
+  (about 0.1 s of computing a step; the references spend at most 75
+  million). Memory may grow to 1 GiB. Past either, the call traps. A step
+  may make 256 `rpc` calls; past that, `rpc` returns an error.
+- **A component that doesn't load** (not a component, or importing what
+  the grader doesn't provide) plays the session without trading. A trap, from a panic or the
   budget, ends the strategy: Wasmtime won't enter it again, so it isn't
   called for the rest of the session, and what it left resting stays.
   Return an error instead of panicking: an error only skips the step.

@@ -12,7 +12,8 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     for `wasm32-wasip2`, which the image now carries), and each task's
     instructions give the component's contract instead of the process's:
     no files, environment, network or clock, ten billion instructions a
-    call, 256 reads a step, no turn deadline, and a trap ends the strategy
+    call and two billion a step over the session, 1 GiB of memory, 256
+    reads a step, no turn deadline, and a trap ends the strategy
     for the session. The oracle solutions are
     the reference bots ported to components (`bots/*-wasm`): on each task's
     practice set, each earns its process reference's PnL to the cent. The

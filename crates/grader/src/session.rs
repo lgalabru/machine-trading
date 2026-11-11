@@ -258,6 +258,16 @@ pub struct TurnReport {
     pub wall_ms: u64,
     /// Sends refused because they came while the world moved.
     pub late_sends: usize,
+    /// A component's fuel: what the session spent, and the most one call
+    /// spent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuel_used: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuel_max_call: Option<u64>,
+    /// Why a component played no more of the session, if it stopped: it
+    /// didn't load, or it trapped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<String>,
 }
 
 impl SessionReport {
@@ -759,6 +769,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     if let Some(bot) = wasm_bot.as_mut() {
         bot.end().await;
+        let (used, max_call) = bot.fuel();
+        turns.fuel_used = Some(used);
+        turns.fuel_max_call = Some(max_call);
+        turns.stopped = bot.stopped.clone();
     }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;

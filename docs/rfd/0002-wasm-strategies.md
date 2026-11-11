@@ -270,3 +270,16 @@ defend, no bot users, no keypair files.
   strategy after its first trap, and the instructions say so; an error
   returned from `step` only skips the step. Re-instantiating after a trap
   would lose the strategy's state silently, so we don't.
+- 2026-11-11: step 3, fuel. A loop that spins every step spends 2.1
+  billion units in about 108 ms on an M-series core: about 20 billion a
+  second. On one practice session each, the references spend at most 75
+  million a step (funding-carry, 40.6 billion over 536 steps; the maker
+  11.7 million in all, the weekend reference 473 million, flash-crash's
+  334 thousand). A call may spend 10 billion, and a session two billion a
+  step in all (`FUEL_PER_STEP`): about 0.1 s a step, which bounds a
+  72-session hidden set's computing near an hour on a slower core, below
+  the verifier's timeout, where the process bots' 0.5 s a step allowed
+  three. The spinner runs out at step 134 of 280 and plays no more. Memory
+  is capped at 1 GiB. A `bot.wasm` that doesn't load (random bytes, in the
+  check) plays the session without trading instead of failing the grade,
+  and each session's report carries its fuel and why a component stopped.

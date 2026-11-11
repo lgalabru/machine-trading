@@ -69,6 +69,10 @@ pub struct GradeReport {
     /// Why the grade itself was tampered with, if it was: the reward is 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tampered: Option<String>,
+    /// Why the bot wasn't graded at all, if it wasn't (a grade of strategy
+    /// components only, and no `bot.wasm`): the reward is 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_graded: Option<String>,
     /// The SHA-256 of the secret a drawn hidden set came from: enough to
     /// tell two grades on the same set, nothing more.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,6 +174,10 @@ impl GradeReport {
             (
                 "tampered".to_string(),
                 f64::from(u8::from(self.tampered.is_some())),
+            ),
+            (
+                "not_graded".to_string(),
+                f64::from(u8::from(self.not_graded.is_some())),
             ),
             ("worst_pnl_usd".to_string(), self.risk.worst_pnl_usd),
             ("tail_pnl_usd".to_string(), self.risk.tail_pnl_usd),
@@ -281,7 +289,12 @@ fn write_details(
 
 pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     if opts.components_only && crate::wasm::component_in(opts.bot_dir).is_none() {
-        return Err(Error::NotAComponent(opts.bot_dir.to_path_buf()));
+        let reason = Error::NotAComponent(opts.bot_dir.to_path_buf()).to_string();
+        tracing::warn!("{reason}: the reward is 0");
+        let mut report = score(Vec::new());
+        report.not_graded = Some(reason);
+        report.skill = Some(0.0);
+        return Ok(report);
     }
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
@@ -406,6 +419,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         reference_ratio,
         skill,
         tampered: None,
+        not_graded: None,
         eval_seed_sha256: None,
         risk: Risk::of(&scenarios),
         markout: total_markout(&scenarios),
@@ -709,6 +723,35 @@ mod tests {
 
     use super::*;
     use crate::scenario::{VENUE, Waypoint};
+
+    #[tokio::test]
+    async fn a_components_only_grade_of_a_process_bot_scores_zero() {
+        let dir = std::env::temp_dir().join(format!("mtx-not-a-component-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("run.sh"), "#!/bin/sh\n").unwrap();
+        let report = grade(GradeOptions {
+            snapshot_dir: &dir,
+            bot_dir: &dir,
+            scenarios: &[],
+            log_dir: &dir,
+            jobs: 1,
+            first_bot_user: 0,
+            reference_dir: None,
+            anchor_jobs: 1,
+            regimes: None,
+            stop_on_disqualify: false,
+            detail_dir: None,
+            annotations: None,
+            components_only: true,
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(report.reward, 0.0);
+        assert_eq!(report.skill, Some(0.0));
+        assert!(report.not_graded.is_some());
+        assert_eq!(report.rewards()["not_graded"], 1.0);
+    }
 
     fn session(pnl_usd: f64) -> SessionReport {
         SessionReport {
