@@ -1,7 +1,8 @@
 #!/bin/bash
-# Reference solution: the weekend strategy from bots/weekend in the mtx
-# repository (its sources and its trained forecasters), built into the starter's place. It
-# needs four crates the starter doesn't list; all are in the SDK's lockfile.
+# Reference solution: the weekend strategy from bots/weekend-wasm in the mtx
+# repository (its sources and its trained forecaster), a strategy component
+# built into the starter's place. It needs three crates the starter doesn't
+# list; all are in the SDK's lockfile.
 set -euo pipefail
 cp /solution/src/*.rs /app/bot/src/
 mkdir -p /app/bot/model
@@ -15,6 +16,5 @@ done <<'DEPS'
 borsh "=1.8.1"
 bs58 "=0.5.1"
 serde_json "=1.0.154"
-solana-rpc-client-api "=4.3.2"
 DEPS
 /app/bot/build.sh

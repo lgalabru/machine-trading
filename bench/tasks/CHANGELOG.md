@@ -5,6 +5,25 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
 - **Unreleased.**
+  - **Bots are strategy components.** The verifier grades `/app/bot/bot.wasm`,
+    a WebAssembly component the grader loads and calls (RFD 0002), and
+    nothing else (`mtx grade --components-only`, in `test.sh` and
+    `mtx-practice`). The starter is one (`src/lib.rs`; `build.sh` builds it
+    for `wasm32-wasip2`, which the image now carries), and each task's
+    instructions give the component's contract instead of the process's:
+    no files, environment, network or clock, ten billion instructions a
+    call, 256 reads a step, no turn deadline, and a trap ends the strategy
+    for the session. The oracle solutions are
+    the reference bots ported to components (`bots/*-wasm`): on each task's
+    practice set, each earns its process reference's PnL to the cent. The
+    references the hidden sets are scored against stay processes.
+  - **What a component reads.** `Session` gains the venue's metadata
+    (`venue`, read with `mtx_kit::venue::PhoenixVenue`, feature `venue`),
+    the starting oracle, the trading key's public key (`authority`) and the
+    task's variables (`var("MTX_REOPEN_SLOT")`). `Market` gains Phoenix's
+    index and the book's best bid and ask, from the read the mark comes
+    from. `rpc_account` and `rpc_accounts` return accounts' data, and
+    `mtx_kit::log` writes the strategy's log, in a component or a process.
   - **One `Strategy`, synchronous.** `mtx_kit::Strategy`'s `start`,
     `step` and `end` are plain functions, and `step` takes `&mut Orders`.
     The same strategy runs as a process (`mtx_kit::run`) and as a

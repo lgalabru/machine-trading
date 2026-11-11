@@ -4955,11 +4955,7 @@ dependencies = [
 name = "mtx-bot-starter"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "mtx-kit",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

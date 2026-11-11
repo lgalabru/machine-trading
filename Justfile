@@ -9,7 +9,7 @@ image := "machine-trading"
 tag := "0.12.0"
 tasks := "bench/tasks"
 # Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend"
+references := "flash-crash-spcx=reference-wasm market-making-spcx=maker-wasm funding-carry-spcx=carry-wasm weekend-gap-spcx=weekend-wasm"
 # The harness versions `just bench` runs, pinned so results compare: each
 # provider's own coding agent, Claude Code for Anthropic models and Codex for
 # OpenAI's.

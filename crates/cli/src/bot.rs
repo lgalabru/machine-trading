@@ -26,8 +26,10 @@ const REPO_URL: &str = "https://github.com/lgalabru/machine-trading";
 /// The commit this `mtx` was built from, when it was built from a git
 /// checkout (see `build.rs`).
 const BUILT_COMMIT: Option<&str> = option_env!("MTX_GIT_COMMIT");
-const STARTER_MAIN: &str = include_str!("../../../bots/starter/src/main.rs");
-const STARTER_RUN: &str = include_str!("../../../bots/starter/run.sh");
+const STARTER_LIB: &str = include_str!("../../../bots/starter/src/lib.rs");
+const STARTER_BUILD: &str = include_str!("../../../bots/starter/build.sh");
+/// The kit's features a strategy component builds with.
+const KIT_FEATURES: &str = r#"default-features = false, features = ["component", "venue"]"#;
 /// The workspace's lockfile, so a new bot builds against the versions the
 /// SDK is tested with. Cargo drops the entries the bot doesn't use.
 const LOCKFILE: &str = include_str!("../../../Cargo.lock");
@@ -151,8 +153,8 @@ fn write_executable(path: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
-/// `mtx bot new`: a strategy on `mtx-kit`'s run loop that watches the
-/// market and never trades (bots/starter), ready to build and practise.
+/// `mtx bot new`: a strategy component that watches the market and never
+/// trades (bots/starter), ready to build and practise.
 pub fn new(dir: &Path, git: bool, given_repo: Option<&Path>) -> Result<String> {
     if dir.exists() && dir.read_dir()?.next().is_some() {
         bail!("{} exists and isn't empty", dir.display());
@@ -160,10 +162,13 @@ pub fn new(dir: &Path, git: bool, given_repo: Option<&Path>) -> Result<String> {
     let kit = if git {
         let rev = BUILT_COMMIT
             .context("this mtx wasn't built from a git checkout, so it can't pin the SDK by commit: leave out --git")?;
-        format!(r#"mtx-kit = {{ git = "{REPO_URL}", rev = "{rev}" }}"#)
+        format!(r#"mtx-kit = {{ git = "{REPO_URL}", rev = "{rev}", {KIT_FEATURES} }}"#)
     } else {
         let sdk = repo(given_repo)?.join("crates/kit");
-        format!(r#"mtx-kit = {{ path = "{}" }}"#, sdk.display())
+        format!(
+            r#"mtx-kit = {{ path = "{}", {KIT_FEATURES} }}"#,
+            sdk.display()
+        )
     };
     // Refuse before making anything: the checkout's workspace would claim it.
     let absolute = std::path::absolute(dir)?;
@@ -186,13 +191,13 @@ edition = "2024"
 version = "0.1.0"
 publish = false
 
-[[bin]]
-name = "bot"
-path = "src/main.rs"
+# A strategy component: build.sh builds it for wasm32-wasip2 into bot.wasm.
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
 
 [dependencies]
 {kit}
-tracing = "0.1"
 
 # Its own workspace, wherever it's created.
 [workspace]
@@ -200,25 +205,11 @@ tracing = "0.1"
     );
     std::fs::write(dir.join("Cargo.toml"), cargo)?;
     std::fs::write(dir.join("Cargo.lock"), LOCKFILE)?;
-    std::fs::write(dir.join("src/main.rs"), STARTER_MAIN)?;
-    write_executable(&dir.join("run.sh"), STARTER_RUN)?;
-    write_executable(
-        &dir.join("build.sh"),
-        r#"#!/usr/bin/env bash
-# Build the bot into bin/bot, where run.sh starts it. The grader runs bin/bot
-# as it is, and builds nothing: run this after every change.
-set -euo pipefail
-cd "$(dirname "$0")"
-exe="$(cargo build --release --bin bot --message-format=json-render-diagnostics \
-  | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
-mkdir -p bin
-cp "$exe" bin/bot
-echo "built bin/bot"
-"#,
-    )?;
-    std::fs::write(dir.join(".gitignore"), "/target\n/bin\n")?;
+    std::fs::write(dir.join("src/lib.rs"), STARTER_LIB)?;
+    write_executable(&dir.join("build.sh"), STARTER_BUILD)?;
+    std::fs::write(dir.join(".gitignore"), "/target\n/bot.wasm\n")?;
     Ok(format!(
-        "made a bot in {}\n\n  cd {}\n  mtx bot practice          # build it, and grade it on the practice scenarios\n\nThe strategy goes in src/main.rs. How to write it, and the rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
+        "made a bot in {}\n\n  rustup target add wasm32-wasip2   # once: the bot builds into a wasm component\n  cd {}\n  mtx bot practice                  # build it, and grade it on the practice scenarios\n\nThe strategy goes in src/lib.rs. How to write it, and the rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
         dir.display(),
         dir.display()
     ))
@@ -231,13 +222,34 @@ pub struct Checked {
     pub notes: Vec<String>,
 }
 
-/// `mtx bot check`: the bot directory against the contract's shape.
+/// `mtx bot check`: the bot directory against the contract's shape. A bot
+/// is a strategy component, `bot.wasm`; a directory without one is a
+/// process bot (`run.sh` and `bin/bot`), which only practice runs.
 pub fn check(dir: &Path) -> Checked {
     let mut problems = Vec::new();
     let mut notes = Vec::new();
-    if !dir.join("run.sh").is_file() {
-        problems.push("no run.sh: the grader starts the bot with `bash run.sh`".into());
+    let wasm = dir.join("bot.wasm");
+    if wasm.exists() {
+        match std::fs::read(&wasm) {
+            Err(e) => problems.push(format!("can't read bot.wasm: {e}")),
+            // A component's preamble: the wasm magic, then layer 1. A core
+            // module (version 1, layer 0) isn't one.
+            Ok(bytes) if bytes.get(..8) == Some(b"\0asm\x0d\0\x01\0") => {}
+            Ok(bytes) if bytes.starts_with(b"\0asm") => problems.push(
+                "bot.wasm is a core wasm module, not a component: build it for wasm32-wasip2 (`./build.sh`)".into(),
+            ),
+            Ok(_) => problems.push("bot.wasm isn't wasm".into()),
+        }
+        stale(&wasm, dir, "bot.wasm", &mut notes);
+        return Checked { problems, notes };
     }
+    if !dir.join("run.sh").is_file() {
+        problems.push("no bot.wasm: build the strategy first (`./build.sh`)".into());
+        return Checked { problems, notes };
+    }
+    notes.push(
+        "a process bot (run.sh, no bot.wasm): practice runs it, but the bench grades strategy components only".into(),
+    );
     let bin = dir.join("bin/bot");
     match std::fs::read(&bin) {
         Err(_) => problems.push("no bin/bot: build the bot first (`./build.sh`)".into()),
@@ -263,16 +275,23 @@ pub fn check(dir: &Path) -> Checked {
             } else if !elf && !bytes.starts_with(b"#!") {
                 notes.push("bin/bot is neither a native executable nor a script".into());
             }
-            if let (Ok(built), Some(newest)) = (
-                std::fs::metadata(&bin).and_then(|m| m.modified()),
-                newest_source(&dir.join("src")),
-            ) && newest > built
-            {
-                notes.push("src/ changed since bin/bot was built: run ./build.sh".into());
-            }
+            stale(&bin, dir, "bin/bot", &mut notes);
         }
     }
     Checked { problems, notes }
+}
+
+/// A note if `src/` changed since `built` was.
+fn stale(built: &Path, dir: &Path, name: &str, notes: &mut Vec<String>) {
+    if let (Ok(built), Some(newest)) = (
+        std::fs::metadata(built).and_then(|m| m.modified()),
+        newest_source(&dir.join("src")),
+    ) && newest > built
+    {
+        notes.push(format!(
+            "src/ changed since {name} was built: run ./build.sh"
+        ));
+    }
 }
 
 fn newest_source(dir: &Path) -> Option<std::time::SystemTime> {
@@ -363,6 +382,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         stop_on_disqualify: false,
         detail_dir: None,
         annotations: None,
+        components_only: false,
     })
     .await?;
     if options.json {
@@ -455,7 +475,7 @@ pub fn pack(
     let dir = dir
         .canonicalize()
         .with_context(|| format!("no bot at {}", dir.display()))?;
-    for file in ["Cargo.toml", "build.sh", "run.sh"] {
+    for file in ["Cargo.toml", "build.sh"] {
         if !dir.join(file).is_file() {
             bail!(
                 "no {file} in {}: a packed bot is its source, built by build.sh",
@@ -512,7 +532,10 @@ fn copy_source(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)?.flatten() {
         let name = entry.file_name();
-        if matches!(name.to_str(), Some("target" | "bin" | ".git" | "logs")) {
+        if matches!(
+            name.to_str(),
+            Some("target" | "bin" | "bot.wasm" | ".git" | "logs")
+        ) {
             continue;
         }
         let path = entry.path();
@@ -556,9 +579,8 @@ mod tests {
         for file in [
             "Cargo.toml",
             "Cargo.lock",
-            "run.sh",
             "build.sh",
-            "src/main.rs",
+            "src/lib.rs",
             ".gitignore",
         ] {
             assert!(dir.join(file).is_file(), "no {file}");
