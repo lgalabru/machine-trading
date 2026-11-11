@@ -4,6 +4,15 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **Unreleased.**
+  - **The order sheet counts resting orders.** `plan()` cut each resting
+    order against the position alone, so two bids of 50 under a cap of 70
+    both went out, and filling both broke the mandate. It now counts every
+    order resting, from earlier steps (`Market::resting_bids` and
+    `resting_asks`, the run loop's ledger since its last cancel) and earlier
+    on the sheet, as filled. `room_to_buy()` and `room_to_sell()` count them
+    too, by the mandate's own rule (`Allowance::room` in `mtx-core`), which
+    the grader's audit now shares.
 - **0.12.0.** New tasks on new scenario hooks in the engine (book
   premiums, a taker tape, per-session funding, off-hours markets; each
   opt-in, so flash-crash's and market-making's sessions are unchanged).

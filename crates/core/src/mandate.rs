@@ -45,6 +45,47 @@ pub struct Allowance {
     pub max_position: f64,
 }
 
+/// [`Allowance::room`] for a cap of `max_position`, for callers that hold
+/// the cap without the allowance, such as a bot's run loop.
+pub fn position_room(
+    max_position: f64,
+    position: f64,
+    resting_bids: f64,
+    resting_asks: f64,
+) -> (f64, f64) {
+    (
+        (max_position - position - resting_bids).max(0.0),
+        (max_position + position - resting_asks).max(0.0),
+    )
+}
+
+/// How far past a cap a position may read before it breaks it: positions
+/// convert from lots to base units in floating point.
+const POSITION_TOLERANCE: f64 = 1e-9;
+
+impl Allowance {
+    /// How much more the account may buy and sell in this instrument,
+    /// `(buy, sell)` in base units, if every order resting now fills: its
+    /// `resting_bids` can only take the position up and its `resting_asks`
+    /// down. The rule [`Mandate::audit`] checks, asked before a trade
+    /// instead of after a session. This reader has no `min_position`:
+    /// `max_position` bounds a short as much as a long.
+    pub fn room(&self, position: f64, resting_bids: f64, resting_asks: f64) -> (f64, f64) {
+        position_room(self.max_position, position, resting_bids, resting_asks)
+    }
+
+    /// The breach, if holding anywhere from `lowest` to `highest` breaks
+    /// the allowance's cap.
+    pub fn breach(&self, lowest: f64, highest: f64) -> Option<Breach> {
+        let held = highest.max(-lowest);
+        (held > self.max_position * (1.0 + POSITION_TOLERANCE)).then(|| Breach::Position {
+            instrument: self.instrument.clone(),
+            held,
+            cap: self.max_position,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
@@ -144,16 +185,8 @@ impl Mandate {
             let Some(allowance) = self.allowance(&range.instrument) else {
                 return Some(Breach::OutsideUniverse { positions: 1 });
             };
-            // This reader has no `min_position`: `max_position` bounds a
-            // short as much as a long.
-            let held = range.peak();
-            // Lots convert to base units in floating point.
-            if held > allowance.max_position * (1.0 + 1e-9) {
-                return Some(Breach::Position {
-                    instrument: range.instrument.clone(),
-                    held,
-                    cap: allowance.max_position,
-                });
+            if let Some(breach) = allowance.breach(range.lowest, range.highest) {
+                return Some(breach);
             }
         }
         if observed.max_drawdown_usd > self.limits.max_drawdown_usd {
@@ -504,5 +537,21 @@ mod tests {
         assert!(InstrumentRef::of_holding(&InstrumentId::new("SPCX"), &perp).is_err());
         let mislabelled = InstrumentRef::of_holding(&InstrumentId::new("phoenix:spot:SPCX"), &perp);
         assert!(mislabelled.unwrap_err().contains("names a spot"));
+    }
+
+    #[test]
+    fn room_counts_resting_orders_as_filled() {
+        let mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        let allowance = &mandate.universe[0];
+        assert_eq!(allowance.room(0.0, 0.0, 0.0), (70.0, 70.0));
+        // Long 20, bids of 30 resting and asks of 10: 20 more to buy, 80 to sell.
+        assert_eq!(allowance.room(20.0, 30.0, 10.0), (20.0, 80.0));
+        // Already over in one direction: no room that way, never negative.
+        assert_eq!(allowance.room(60.0, 30.0, 0.0), (0.0, 130.0));
+        // What room allows, breach accepts; one more lot, it doesn't.
+        let (buy, _) = allowance.room(20.0, 30.0, 10.0);
+        assert_eq!(allowance.breach(20.0 - 10.0, 20.0 + 30.0 + buy), None);
+        assert!(allowance.breach(0.0, 70.5).is_some());
+        assert!(allowance.breach(-70.5, 0.0).is_some());
     }
 }
