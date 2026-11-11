@@ -5,7 +5,7 @@
 
 use std::collections::VecDeque;
 
-use mtx_strategy::{Intent, Market, Session, Side, Strategy};
+use mtx_kit::prelude::*;
 
 const ENTER_PCT: f64 = 1.14;
 const STEP_PCT: f64 = 1.36;
@@ -47,14 +47,14 @@ struct Reference {
 }
 
 impl Strategy for Reference {
-    fn start(&mut self, session: &Session) -> Result<(), String> {
+    fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.cap;
         self.start_mark = session.start_mark;
         self.last_mark = session.start_mark;
         Ok(())
     }
 
-    fn step(&mut self, market: &Market) -> Result<Vec<Intent>, String> {
+    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         let (mark, held) = (market.mark, market.position.size);
         let level = (mark / self.start_mark - 1.0) * 100.0;
         let jump = self.last.map_or(0.0, |l| level - l);
@@ -63,7 +63,7 @@ impl Strategy for Reference {
         self.last_mark = mark;
         self.peak_value = self.peak_value.max(self.value);
         if !self.halted && self.peak_value - self.value > HALT_DRAWDOWN_USD {
-            mtx_strategy::log("drawdown past the halt; closing and stopping");
+            mtx_kit::component::log("drawdown past the halt; closing and stopping");
             self.halted = true;
         }
 
@@ -114,30 +114,28 @@ impl Strategy for Reference {
         if self.halted {
             target = 0.0;
         }
-        Ok(toward(held, target, mark))
+        toward(orders, held, target, mark);
+        Ok(())
     }
 }
 
 /// Market orders moving the position from `held` toward `target`, by up to
 /// [`MAX_STEP_TRADE`] this step, in slices of [`SLICE`].
-fn toward(held: f64, target: f64, mark: f64) -> Vec<Intent> {
-    let mut orders = Vec::new();
+fn toward(orders: &mut Orders, held: f64, target: f64, mark: f64) {
     let mut missing = (target - held).clamp(-MAX_STEP_TRADE, MAX_STEP_TRADE);
     while missing.abs() >= 1.0 {
         let size = missing.abs().floor().min(SLICE);
-        let (side, limit) = if missing > 0.0 {
-            (Side::Bid, mark * 1.02)
+        if missing > 0.0 {
+            orders.buy(size, round_cents(mark * 1.02));
         } else {
-            (Side::Ask, mark * 0.98)
-        };
-        orders.push(Intent::Market((side, size, round_cents(limit))));
+            orders.sell(size, round_cents(mark * 0.98));
+        }
         missing -= size.copysign(missing);
     }
-    orders
 }
 
 fn round_cents(usd: f64) -> f64 {
     (usd * 100.0).round() / 100.0
 }
 
-mtx_strategy::export!(Reference);
+mtx_kit::export!(Reference);

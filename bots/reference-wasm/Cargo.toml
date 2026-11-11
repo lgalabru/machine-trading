@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-mtx-strategy = { path = "../../crates/strategy" }
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
 
 [workspace]
 

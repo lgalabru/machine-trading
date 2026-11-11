@@ -4,8 +4,8 @@
 //! the grader, reads the market before every step, and sends what `step`
 //! puts on the order sheet, cut to the mandate's position cap. Fill in
 //! `step`: `orders.target_position(units)` to be long or short,
-//! `orders.quote(bid, ask, size)` to make a market, and `orders.trader()`
-//! for anything else.
+//! `orders.quote(bid, ask, size)` to make a market, and `mtx_kit::rpc` to
+//! read anything else from the chain.
 
 use mtx_kit::prelude::*;
 use tracing::info;
@@ -14,17 +14,17 @@ use tracing::info;
 struct Watcher;
 
 impl Strategy for Watcher {
-    async fn start(&mut self, session: &Session) -> BotResult {
+    fn start(&mut self, session: &Session) -> BotResult {
         info!(
-            symbol = session.env.symbol,
-            steps = session.hello.steps,
-            cap = session.env.max_position,
+            symbol = session.symbol,
+            steps = session.steps,
+            cap = session.cap,
             "started"
         );
         Ok(())
     }
 
-    async fn step(&mut self, market: &Market, _orders: &mut Orders<'_>) -> BotResult {
+    fn step(&mut self, market: &Market, _orders: &mut Orders) -> BotResult {
         info!(
             step = market.k,
             mark = market.mark,

@@ -235,3 +235,15 @@ defend, no bot users, no keypair files.
   against 2.1 ms): the reads, not the strategy, are the cost. `rpc` is
   implemented, an allowlist forwarded to the guarded endpoint, but nothing
   calls it yet: that is step 2, with the maker.
+- 2026-11-11: one trait. `mtx-strategy` is folded into `mtx-kit`: the
+  strategy (`Strategy`, `Session`, `Market`, `Orders`, `plan()`, `rpc()`)
+  builds everywhere; the Solana client, protocols and process plumbing are
+  behind a default `chain` feature; `export!` and the WIT world
+  (`crates/kit/wit`) behind `component`. The kit without `chain` builds for
+  `wasm32-wasip2`; `mtx-core`'s turn client is Unix only. `rpc()` answers in
+  a process too, a blocking call to the session's endpoint, and both sides
+  check `RPC_METHODS`. Writing it showed reads that named no commitment
+  were served at the node's default, 31 slots behind the step: the guard
+  now adds `processed`, for process bots as well. The process and component
+  references still earn the same PnL, and the reference and maker the same
+  as before the guard change.

@@ -55,7 +55,7 @@ use mtx_kit::prelude::*;
 struct FadeTheDip { peak: f64 }
 
 impl Strategy for FadeTheDip {
-    async fn step(&mut self, market: &Market, orders: &mut Orders<'_>) -> BotResult {
+    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         self.peak = self.peak.max(market.mark);
         if market.mark < self.peak * 0.97 {
             orders.target_position(market.cap);    // cut to the position cap for you
@@ -78,10 +78,10 @@ mtx bot practice              # build it, and grade it on a task's practice scen
 ```
 
 `Market` is a plain value (the step, mark and oracle, position, estimated
-PnL and drawdown, the mandate's room, the turn budget left), and `Orders`
+PnL and drawdown, the mandate's room), and `Orders`
 records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
-`orders.trader()` reaches the venue for anything else.
+`mtx_kit::rpc` reads anything else from the chain.
 `mtx bot practice --task <name>` practises another task in `bench/tasks`,
 and scenarios `mtx scenario generate` draws can be graded too:
 `mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check

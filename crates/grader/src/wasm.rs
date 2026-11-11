@@ -1,6 +1,6 @@
 //! Strategies as WebAssembly components (`docs/rfd/0002-wasm-strategies.md`):
 //! a bot directory with a `bot.wasm` is a component of the `mtx:strategy`
-//! world (`crates/strategy/wit`), which the grader calls instead of starting
+//! world (`crates/kit/wit`), which the grader calls instead of starting
 //! a process.
 //!
 //! The component gets no files, no environment and no network. Its WASI
@@ -28,7 +28,7 @@ use crate::Error;
 
 wasmtime::component::bindgen!({
     world: "strategy",
-    path: "../strategy/wit",
+    path: "../kit/wit",
     imports: { default: async },
     exports: { default: async },
 });
@@ -45,23 +45,9 @@ const FUEL_PER_CALL: u64 = 10_000_000_000;
 /// The most `rpc` calls one step may make.
 const RPC_CALLS_PER_STEP: u32 = 256;
 
-/// RPC methods a strategy may call: reads of the chain as it is. Nothing
-/// that writes, and nothing that depends on wall time or the node's own
-/// state.
-const RPC_METHODS: &[&str] = &[
-    "getAccountInfo",
-    "getBalance",
-    "getBlock",
-    "getBlockHeight",
-    "getMultipleAccounts",
-    "getProgramAccounts",
-    "getSignaturesForAddress",
-    "getSlot",
-    "getTokenAccountBalance",
-    "getTokenAccountsByOwner",
-    "getTransaction",
-    "simulateTransaction",
-];
+/// RPC methods a strategy may call: the kit's list, which `mtx_kit::rpc`
+/// checks on its side too.
+use mtx_kit::RPC_METHODS;
 
 /// The bot directory's component, if it has one.
 pub fn component_in(bot_dir: &Path) -> Option<PathBuf> {
@@ -353,7 +339,6 @@ impl WasmBot {
             pnl: self.pnl,
             peak_pnl: self.peak_pnl,
             drawdown: self.peak_pnl - self.pnl,
-            budget_left: Duration::ZERO,
         };
         let market = Market {
             k,
@@ -531,7 +516,10 @@ mod tests {
             start_mark: 100.0,
             cap: 70.0,
             max_drawdown: 1_000.0,
-            mandate: "{}".into(),
+            mandate: serde_json::to_string(&mtx_core::Mandate::perp(
+                "phoenix", "SPCX", 70.0, 1_000.0,
+            ))
+            .unwrap(),
             seed: 7,
         };
         assert!(matches!(strategy.start(&session).await, Outcome::Done(())));
