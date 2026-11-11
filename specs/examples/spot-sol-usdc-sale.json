@@ -1,0 +1,25 @@
+{
+  "version": "v0",
+  "term": {
+    "until_slot": 412600
+  },
+  "universe": [
+    {
+      "instrument": "openbook:spot:SOL-USDC",
+      "max_position": 30000.0,
+      "sides": [
+        "sell"
+      ],
+      "min_sell_price": 94.0
+    },
+    {
+      "instrument": "phoenix:spot:SOL-USDC",
+      "max_position": 30000.0,
+      "sides": [
+        "sell"
+      ],
+      "min_sell_price": 94.0
+    }
+  ],
+  "limits": {}
+}

@@ -64,12 +64,12 @@ use crate::{
 /// lands on a step.
 pub const SLOTS_PER_STEP: u64 = SLOTS_BETWEEN_STEPS;
 /// How long the world waits for the bot's `ready`, and for each `done`.
-const HELLO_WALL: Duration = Duration::from_secs(10);
-const TURN_WALL: Duration = Duration::from_secs(5);
+pub(crate) const HELLO_WALL: Duration = Duration::from_secs(10);
+pub(crate) const TURN_WALL: Duration = Duration::from_secs(5);
 /// What all of a bot's turns in a session may take together, per step: the
 /// slot time, so a slow bot is no slower than the world used to be. Past it,
 /// the world stops waiting.
-const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
+pub(crate) const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
 
 /// Collateral each session's trader starts with.
 pub const DEPOSIT_USDC: f64 = 10_000.0;
@@ -141,6 +141,9 @@ pub struct SessionReport {
     /// Market making: what the grader's own maker did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub competitor: Option<CompeteReport>,
+    /// A spot session: the wallet at the start and the end, and every fill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spot: Option<crate::spot::SpotReport>,
     /// Execution faults: the plan, and what fired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub faults: Option<crate::faults::FaultsReport>,
@@ -264,6 +267,16 @@ impl SessionReport {
             positions: self.positions.clone(),
             positions_outside_universe: self.positions_outside_universe,
             max_drawdown_usd: self.max_drawdown_usd,
+            fills: self
+                .spot
+                .as_ref()
+                .map(|spot| spot.observed_fills())
+                .unwrap_or_default(),
+            open_orders: self
+                .spot
+                .as_ref()
+                .map(|spot| spot.open_orders.clone())
+                .unwrap_or_default(),
         }
     }
 }
@@ -273,7 +286,12 @@ impl SessionReport {
 /// the grader may run it again from scratch.
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut bot_started = false;
-    match run_session(opts, &mut bot_started).await {
+    let session = if opts.scenario.spot.is_some() {
+        crate::spot::run_session(opts, &mut bot_started).await
+    } else {
+        run_session(opts, &mut bot_started).await
+    };
+    match session {
         Err(error) if !bot_started => Err(Error::Setup(Box::new(error))),
         done => done,
     }
@@ -492,7 +510,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         symbol: scenario.symbol.clone(),
         end_slot,
         max_position: scenario.max_position(),
-        max_drawdown_usd: mandate.limits.max_drawdown_usd,
+        max_drawdown_usd: mandate
+            .limits
+            .max_drawdown_usd
+            .expect("a perp scenario's mandate has a drawdown limit"),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
 
@@ -712,18 +733,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             last: k + 1 == steps,
         };
         let wall = TURN_WALL.min(budget.saturating_sub(spent));
-        let answered = send(writer, &Message::Step(step)).await
-            && tokio::time::timeout(wall, async {
-                loop {
-                    match next_message(reader).await {
-                        Some(Message::Done { k: done }) if done == k => return true,
-                        Some(_) => continue,
-                        None => return false,
-                    }
-                }
-            })
-            .await
-            .unwrap_or(false);
+        let answered = take_turn(writer, reader, step, wall).await;
         let took = started.elapsed();
         spent += took;
         if !answered {
@@ -754,7 +764,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         None => (None, Vec::new()),
     };
     let calls = guard.call_log();
-    let transactions = transactions(&rpc, &calls, base_slot, &phoenix, market);
+    let transactions = transactions(&rpc, &calls, base_slot, &|ix, keys| {
+        decode_instruction(ix, keys, &phoenix, market)
+    });
     let competitor = match (quoting, competitor.as_ref()) {
         (Some(quoting), Some(competitor)) => Some(quoting.report(competitor).await),
         _ => None,
@@ -794,6 +806,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         valuation: scenario.valuation(),
         flow,
         competitor,
+        spot: None,
         faults: guard.faults_report(),
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
@@ -909,12 +922,11 @@ fn decode_instruction(
 }
 
 /// Look up each of the bot's sends: where it executed and how it went.
-fn transactions(
+pub(crate) fn transactions(
     rpc: &RpcClient,
     calls: &CallLog,
     base_slot: u64,
-    phoenix: &Phoenix,
-    market: &phoenix_rise::types::exchange::ExchangeMarketConfig,
+    decode: &dyn Fn(&serde_json::Value, &[serde_json::Value]) -> IxRecord,
 ) -> Vec<TxRecord> {
     // The chain runs a transaction once: a second send of the same signed
     // transaction (the same instructions on the same blockhash) gets its
@@ -984,7 +996,7 @@ fn transactions(
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|ix| decode_instruction(ix, &keys, phoenix, market))
+                .map(|ix| decode(ix, &keys))
                 .collect();
             if !record.ok {
                 record.logs = logs;
@@ -995,13 +1007,36 @@ fn transactions(
         .collect()
 }
 
+/// Hand the bot `step` and wait up to `wall` for its `done`; false if it
+/// didn't answer in time or its end is gone.
+pub(crate) async fn take_turn(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    reader: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    step: Step,
+    wall: Duration,
+) -> bool {
+    let k = step.k;
+    send(writer, &Message::Step(step)).await
+        && tokio::time::timeout(wall, async {
+            loop {
+                match next_message(reader).await {
+                    Some(Message::Done { k: done }) if done == k => return true,
+                    Some(_) => continue,
+                    None => return false,
+                }
+            }
+        })
+        .await
+        .unwrap_or(false)
+}
+
 /// Wait until the surfnet has produced `slot`.
 /// The slot once the switch to manual block production has taken: the
 /// runloop takes it in its own time, and until it does the clock can still
 /// produce a slot. Overrides registered next count from the slot they're
 /// registered at, so a slot produced after the read would land them a slot
 /// late, on a wall-clock race.
-async fn manual_slot(rpc: &RpcClient) -> Result<u64> {
+pub(crate) async fn manual_slot(rpc: &RpcClient) -> Result<u64> {
     let mut slot = rpc.get_slot()?;
     for _ in 0..20 {
         // Longer than two of the clock's slots.
@@ -1022,7 +1057,7 @@ async fn manual_slot(rpc: &RpcClient) -> Result<u64> {
     )))
 }
 
-async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
+pub(crate) async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let now = rpc.get_slot()?;
@@ -1037,7 +1072,7 @@ async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
 }
 
 /// Send one turn message; false if the bot's end is gone.
-async fn send(writer: &mut tokio::net::unix::OwnedWriteHalf, message: &Message) -> bool {
+pub(crate) async fn send(writer: &mut tokio::net::unix::OwnedWriteHalf, message: &Message) -> bool {
     let mut line = serde_json::to_string(message).expect("turn messages serialize");
     line.push('\n');
     writer.write_all(line.as_bytes()).await.is_ok()
@@ -1045,7 +1080,7 @@ async fn send(writer: &mut tokio::net::unix::OwnedWriteHalf, message: &Message) 
 
 /// The bot's next turn message; `None` once its end is gone. Lines that
 /// aren't messages are skipped.
-async fn next_message(
+pub(crate) async fn next_message(
     reader: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
 ) -> Option<Message> {
     loop {
@@ -1058,7 +1093,7 @@ async fn next_message(
 
 /// A meter's amount as the grader's `f64`: the nearest double to the exact
 /// decimal, which is what dividing Phoenix's integer lots in `f64` gave.
-fn grader_f64(amount: Decimal) -> f64 {
+pub(crate) fn grader_f64(amount: Decimal) -> f64 {
     amount
         .to_string()
         .parse()
@@ -1084,13 +1119,13 @@ fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
 }
 
 /// A private directory for the bot: its keypair and its `HOME`.
-struct SessionDir {
-    path: PathBuf,
-    bot_user: Option<(u32, u32)>,
+pub(crate) struct SessionDir {
+    pub(crate) path: PathBuf,
+    pub(crate) bot_user: Option<(u32, u32)>,
 }
 
 impl SessionDir {
-    fn create(bot: &Keypair, user: &str) -> Result<Self> {
+    pub(crate) fn create(bot: &Keypair, user: &str) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("mtx-session-{}", uuid::Uuid::new_v4()));
         // Only the bot's own user may enter: sessions graded at once run
         // their bots as different users in one container, and a bot must not
@@ -1120,11 +1155,11 @@ impl SessionDir {
         Ok(dir)
     }
 
-    fn keypair_path(&self) -> PathBuf {
+    pub(crate) fn keypair_path(&self) -> PathBuf {
         self.path.join("keypair.json")
     }
 
-    fn write_mandate(&self, mandate: &Mandate) -> Result<PathBuf> {
+    pub(crate) fn write_mandate(&self, mandate: &Mandate) -> Result<PathBuf> {
         let path = self.path.join("mandate.json");
         mandate.save(&path)?;
         if let Some((uid, gid)) = self.bot_user {
@@ -1164,7 +1199,7 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
 }
 
 /// Start the bot, with `turns` as its file descriptor [`turns::TURN_FD`].
-fn spawn_bot(
+pub(crate) fn spawn_bot(
     bot_dir: &Path,
     env: &BotEnv,
     workdir: &SessionDir,
@@ -1230,7 +1265,7 @@ fn spawn_bot(
     child
 }
 
-async fn stop_bot(child: &mut Child, bot_user: Option<&str>) {
+pub(crate) async fn stop_bot(child: &mut Child, bot_user: Option<&str>) {
     if let Some(pid) = child.id() {
         let group = -(pid as i32);
         // SAFETY: signalling a process group we created; a stale group is harmless.

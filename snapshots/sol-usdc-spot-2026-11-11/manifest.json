@@ -1,0 +1,9 @@
+{
+  "created_at_unix": 1794357685,
+  "fork_host": "api.mainnet-beta.solana.com",
+  "fork_slot": 467925719,
+  "accounts": 302,
+  "symbol": "SOL-USDC",
+  "mark_price_usd": 83.41269412,
+  "kind": "spot"
+}
