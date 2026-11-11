@@ -14,6 +14,7 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     Error, Result,
+    actors::Actors,
     chain::Override,
     error::io_error,
     making::Making,
@@ -64,6 +65,10 @@ pub struct Scenario {
     /// those markets and `symbol` their pair, such as `SOL-USDC`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot: Option<Spot>,
+    /// Participants the grader runs beside the bot: makers quoting each
+    /// venue and counterparties that react to the bot (see [`crate::actors`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actors: Option<Actors>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,6 +197,9 @@ impl Scenario {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(actors) = &self.actors {
+            actors.validate()?;
+        }
         if let Some(spot) = &self.spot {
             return spot.validate(self);
         }
@@ -454,6 +462,8 @@ impl Scenario {
             TAPE_SETUP_SLOTS
         } else if self.offhours.is_some() {
             OFFHOURS_SETUP_SLOTS
+        } else if self.actors.is_some() {
+            ACTORS_SETUP_SLOTS
         } else {
             SETUP_SLOTS
         }
@@ -543,6 +553,9 @@ pub const SETUP_SLOTS: u64 = 60;
 pub const OFFHOURS_SETUP_SLOTS: u64 = 240;
 /// A session that also onboards a taker tape.
 pub const TAPE_SETUP_SLOTS: u64 = 600;
+/// A session with actors onboards their seats, and the makers quote, before
+/// the bot.
+pub const ACTORS_SETUP_SLOTS: u64 = 240;
 
 /// The largest part of an at-once move, in percent of the level it starts
 /// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
@@ -808,6 +821,7 @@ impl ShockFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            actors: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -1442,6 +1456,7 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            actors: None,
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1500,6 +1515,7 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            actors: None,
             reference_pnl_usd: None,
         }
     }
@@ -1555,6 +1571,7 @@ mod tests {
             size: 1.0,
             limit_bps: 20.0,
             account: 0,
+            venue: None,
         };
         let tape = Scenario {
             tape: vec![order(5), order(9)],

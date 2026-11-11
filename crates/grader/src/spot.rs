@@ -17,8 +17,14 @@
 //!    the programs' own records (see the kit's meters), and audits them
 //!    against the mandate's sides and limit prices.
 //!
-//! Nothing moves the market here but the bot: the scenario has no path. A
-//! session values the account at the snapshot's Pyth price throughout.
+//! Without actors, nothing moves the market here but the bot: the scenario
+//! has no path, and the account is valued at the snapshot's Pyth price
+//! throughout. With them (see [`crate::actors`]), seats on each venue quote
+//! and trade around the scenario's level, which the path steps from the
+//! snapshot's Pyth price at each waypoint; a tape's takers trade at the
+//! start of each step; OpenBook is cranked after each step's blocks. With
+//! `oracle`, Pyth's SOL/USD price steps along the path too, and the account
+//! is valued there.
 
 use std::{
     collections::HashSet,
@@ -57,9 +63,12 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    Error, Result, chain,
+    Error, Result,
+    actors::{Cast, Seat, StepFlow, VenueFlow},
+    chain,
     error::io_error,
     guard::Guard,
+    making::level_at,
     scenario::Scenario,
     session::{
         self, BOT_USERS, HELLO_WALL, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions,
@@ -161,16 +170,48 @@ impl Spot {
         if scenario.mandate.term.is_some() {
             return Err("mandate: a scenario's mandate has no term; the session sets it".into());
         }
-        if !scenario.path.is_empty()
+        let actors = scenario.actors.is_some();
+        if ((!scenario.path.is_empty() || !scenario.tape.is_empty()) && !actors)
             || scenario.making.is_some()
             || scenario.offhours.is_some()
             || scenario.funding.is_some()
-            || !scenario.tape.is_empty()
         {
             return Err(
-                "spot: a spot scenario has no path, market making, off-hours, funding or tape"
+                "spot: a spot scenario has no market making, off-hours or funding, and a path or \
+                 a tape only with actors"
                     .into(),
             );
+        }
+        let mut after = 0;
+        for (i, order) in scenario.tape.iter().enumerate() {
+            let venue = order.venue.map_or(self.venues[0].as_str(), |v| v.name());
+            if order.slot < after
+                || order.slot >= scenario.duration_slots
+                || !(order.size.is_finite() && order.size > 0.0)
+                || !(order.limit_bps.is_finite() && order.limit_bps >= 0.0)
+                || !self.venues.iter().any(|v| v == venue)
+            {
+                return Err(format!(
+                    "spot: tape order {i} must come in slot order, inside the session, with a \
+                     size and a limit, on one of the session's venues"
+                ));
+            }
+            after = order.slot;
+        }
+        // The actors' level steps to each waypoint at its slot.
+        let mut after = None;
+        for (i, waypoint) in scenario.path.iter().enumerate() {
+            if after.is_some_and(|slot| waypoint.slot <= slot)
+                || waypoint.slot >= scenario.duration_slots
+                || !(waypoint.level_pct.is_finite() && waypoint.level_pct > -100.0)
+                || waypoint.premium_pct != 0.0
+            {
+                return Err(format!(
+                    "spot: waypoint {i} must come after the last, inside the session, above \
+                     -100% and with no premium"
+                ));
+            }
+            after = Some(waypoint.slot);
         }
         if scenario.duration_slots == 0 {
             return Err("spot: the session has no slots".into());
@@ -387,6 +428,60 @@ impl Venues {
     }
 }
 
+impl Venues {
+    /// What traded in fills recorded after `after_slot` that aren't in
+    /// `seen`: the bot's, and each seat's, by seat number.
+    async fn step_flow(
+        &self,
+        after_slot: u64,
+        seen: &mut HashSet<(String, u128)>,
+        seats: &[Arc<Seat>],
+    ) -> Result<StepFlow> {
+        let mut fills = Vec::new();
+        let mut bot = vec![self.owner];
+        if let Some((_, meter)) = &self.phoenix {
+            fills.extend(meter.market_fills(after_slot).await?);
+        }
+        if let Some((_, meter)) = &self.openbook {
+            bot = meter.fill_ids().await?;
+            fills.extend(meter.market_fills(after_slot).await?);
+        }
+        let ids: Vec<Vec<Pubkey>> = seats.iter().map(|s| s.ids()).collect();
+        let mut flow = StepFlow {
+            bot: Vec::new(),
+            bot_passive: Vec::new(),
+            seats: seats
+                .iter()
+                .map(|s| VenueFlow {
+                    venue: s.venue.clone(),
+                    ..VenueFlow::default()
+                })
+                .collect(),
+        };
+        for fill in fills {
+            if !seen.insert((fill.instrument.0.clone(), fill.sequence)) {
+                continue;
+            }
+            let venue = fill.instrument.0.split(':').next().unwrap_or_default();
+            let base = grader_f64(fill.quantity);
+            if let Some(side) = fill.side_for(&bot) {
+                flow.add_bot(venue, side, base);
+                if !bot.contains(&fill.taker) {
+                    flow.add_bot_passive(venue, side, base);
+                }
+            }
+            for (n, ids) in ids.iter().enumerate() {
+                match fill.side_for(ids) {
+                    Some(Side::Buy) => flow.seats[n].bought += base,
+                    Some(Side::Sell) => flow.seats[n].sold += base,
+                    None => {}
+                }
+            }
+        }
+        Ok(flow)
+    }
+}
+
 async fn market_account(chain: &dyn ChainClient, address: &Pubkey) -> Result<Vec<u8>> {
     Ok(chain
         .get_account(address)
@@ -541,6 +636,30 @@ pub(crate) async fn run_session(
     let venues = Venues::connect(chain, &spot.venues, bot.pubkey()).await?;
     let start = venues.read().await?;
     let instruments = spot.instruments();
+    // The actors' seats, onboarded in every session of the scenario; the
+    // makers quote around the level before the bot starts.
+    let start_level_usd = start.wallet.price_usd;
+    let level = |at: u64| start_level_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
+    let mut cast = match &scenario.actors {
+        Some(actors) => {
+            let rpc_url = internal.url().to_string();
+            let surfnet = &surfnet;
+            Some(
+                Cast::prepare(
+                    actors,
+                    &spot.venues,
+                    &scenario.tape,
+                    |venue| {
+                        let rpc_url = rpc_url.clone();
+                        async move { Seat::spot(surfnet, &venue, &rpc_url, None).await }
+                    },
+                    level(0),
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
@@ -555,12 +674,48 @@ pub(crate) async fn run_session(
             first_slot, "setup ran past the session's first slot: this session won't replay"
         );
     }
+    // Pyth follows the path: each waypoint's level lands on its slot.
+    if scenario.actors.as_ref().is_some_and(|a| a.oracle) && !scenario.path.is_empty() {
+        let feed = pyth::feed_account(0, &pyth::SOL_USD_FEED_ID);
+        let account = rpc.get_account(&feed)?;
+        let update = pyth::PriceUpdate::decode_feed(&account.data, &pyth::SOL_USD_FEED_ID)
+            .map_err(venue_error("pyth SOL/USD"))?;
+        let scale = 10f64.powi(update.exponent);
+        let overrides = scenario
+            .path
+            .iter()
+            .map(|waypoint| {
+                let raw = (level(waypoint.slot) / scale).round() as i64;
+                chain::Override {
+                    template_id: "pyth-price-feed-v2",
+                    account: feed,
+                    values: serde_json::json!({
+                        "feed_id": "sol-usd",
+                        "price_message.price": raw,
+                        "price_message.ema_price": raw,
+                    }),
+                    slot: first_slot.saturating_sub(slot).max(1) + waypoint.slot,
+                    label: format!("SOL/USD at {}", waypoint.slot),
+                }
+            })
+            .collect();
+        chain::register_scenario(&rpc, "oracle", overrides)?;
+    }
     while slot < first_slot {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
+    // The setup's fills (the makers clearing stale orders) aren't the
+    // session's.
+    let mut seen_fills = HashSet::new();
+    let mut read_from = base_slot;
+    if let Some(cast) = &cast {
+        venues
+            .step_flow(setup_from, &mut seen_fills, cast.seats())
+            .await?;
+    }
     let start_slot = base_slot;
     let end_slot = start_slot + scenario.duration_slots;
     let mandate = Mandate {
@@ -658,12 +813,28 @@ pub(crate) async fn run_session(
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     for k in 0..steps {
         guard.set_turn(legacy);
+        if let Some(cast) = &mut cast {
+            let at = slot - base_slot;
+            cast.before_flow(at, level(at)).await;
+        }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = session::wait_for_slot(&rpc, slot + 1).await?;
         }
         let at = slot - base_slot;
+        let mut level_usd = None;
+        if let Some(cast) = &mut cast {
+            cast.crank().await;
+            // A slot back, in case a transaction landed in the last read's
+            // slot after it: each fill counts once either way.
+            let flow = venues
+                .step_flow(read_from.saturating_sub(1), &mut seen_fills, cast.seats())
+                .await?;
+            read_from = slot;
+            cast.after_blocks(at, level(at), &flow).await;
+            level_usd = Some(cast.moment(at, level(at)).reference_usd);
+        }
         let now = venues.read().await?;
         note(&mut observed, &now);
         let value_usd = now.wallet.value_usd;
@@ -674,7 +845,7 @@ pub(crate) async fn run_session(
             at,
             mark_usd: now.wallet.price_usd,
             index_usd: now.wallet.price_usd,
-            level_usd: now.wallet.price_usd,
+            level_usd: level_usd.unwrap_or(now.wallet.price_usd),
             book_usd: None,
             best_bid_usd: None,
             best_ask_usd: None,
@@ -732,6 +903,10 @@ pub(crate) async fn run_session(
     let fills = venues.fills(base_slot, base_slot).await?;
     let end_value_usd = end.wallet.value_usd;
     let instrument = instruments[0].clone();
+    let actors = match &cast {
+        Some(cast) => Some(cast.report().await),
+        None => None,
+    };
     let report = SessionReport {
         scenario: scenario.name.clone(),
         start_mark_usd: start_price_usd,
@@ -759,6 +934,7 @@ pub(crate) async fn run_session(
             fills,
             open_orders,
         }),
+        actors,
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {
@@ -831,6 +1007,7 @@ mod tests {
                 quote: 0.0,
                 bound_usd: None,
             }),
+            actors: None,
             reference_pnl_usd: None,
         }
     }
@@ -854,7 +1031,28 @@ mod tests {
 
         let mut moving = scenario();
         moving.path.push(crate::scenario::Waypoint::at(4, -1.0));
-        assert!(moving.validate().unwrap_err().contains("no path"));
+        assert!(moving.validate().unwrap_err().contains("only with actors"));
+        // With actors, a path and a tape.
+        moving.actors = Some(crate::actors::Actors::default());
+        moving.tape.push(crate::making::TakerOrder {
+            slot: 6,
+            side: crate::making::TakerSide::Sell,
+            size: 1.0,
+            limit_bps: 50.0,
+            account: 0,
+            venue: Some(crate::making::TakerVenue::Openbook),
+        });
+        assert_eq!(moving.validate(), Ok(()));
+        let mut late = moving.clone();
+        late.tape[0].slot = 40;
+        assert!(late.validate().unwrap_err().contains("tape order 0"));
+        let mut back = moving.clone();
+        back.path.push(crate::scenario::Waypoint::at(2, 1.0));
+        assert!(back.validate().unwrap_err().contains("waypoint 1"));
+        let mut elsewhere = moving;
+        elsewhere.spot.as_mut().unwrap().venues = vec!["phoenix".into()];
+        elsewhere.mandate.universe.truncate(1);
+        assert!(elsewhere.validate().unwrap_err().contains("tape order 0"));
 
         let mut other = scenario();
         other.symbol = "SOL".into();

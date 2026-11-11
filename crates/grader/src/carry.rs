@@ -505,6 +505,7 @@ impl CarryFamily {
             funding: Some(funding),
             tape,
             spot: None,
+            actors: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -558,6 +559,7 @@ impl CarryFamily {
                 size: (size * 100.0).round() / 100.0,
                 limit_bps: self.tape_limit_bps,
                 account: (rng.next_u64() % TAKER_ACCOUNTS as u64) as u8,
+                venue: None,
             });
             slot += rng.range_u64(self.tape_gap);
         }
