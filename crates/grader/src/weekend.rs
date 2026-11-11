@@ -424,6 +424,7 @@ impl WeekendFamily {
             tape: Vec::new(),
             spot: None,
             actors: None,
+            family_actors: None,
             reference_pnl_usd: None,
         };
         (scenario, shape)

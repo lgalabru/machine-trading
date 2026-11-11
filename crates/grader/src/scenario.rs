@@ -14,7 +14,7 @@ use solana_pubkey::Pubkey;
 
 use crate::{
     Error, Result,
-    actors::Actors,
+    actors::{Actors, FamilyPlan},
     chain::Override,
     error::io_error,
     making::Making,
@@ -69,6 +69,11 @@ pub struct Scenario {
     /// venue and counterparties that react to the bot (see [`crate::actors`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actors: Option<Actors>,
+    /// A spot scenario's family actors: the family's name and its plan for
+    /// them, built by the builder it registered (see
+    /// [`crate::actors::family`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family_actors: Option<FamilyPlan>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -202,6 +207,9 @@ impl Scenario {
         }
         if let Some(spot) = &self.spot {
             return spot.validate(self);
+        }
+        if self.family_actors.is_some() {
+            return Err("family actors run in spot sessions".into());
         }
         if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
         {
@@ -822,6 +830,7 @@ impl ShockFamily {
             tape: Vec::new(),
             spot: None,
             actors: None,
+            family_actors: None,
             reference_pnl_usd: None,
         };
         let shape = Shape {
@@ -1457,6 +1466,7 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             actors: None,
+            family_actors: None,
             reference_pnl_usd: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1516,6 +1526,7 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             actors: None,
+            family_actors: None,
             reference_pnl_usd: None,
         }
     }
