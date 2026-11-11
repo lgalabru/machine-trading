@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# How much of the agent's time limit is left.
+#
+# A task opts in through its task.toml, in [environment.env]:
+#   MTX_AGENT_TIMEOUT_SEC: the task's [agent] timeout_sec;
+#   MTX_AGENT_TIMEOUT_MULTIPLIER: "${MTX_AGENT_TIMEOUT_MULTIPLIER:-1}", the
+#     run's --agent-timeout-multiplier, which `just bench` exports.
+# The limit is their product. The time starts with the agent's harness: the
+# oldest process of the caller's user other than PID 1. Harbor starts it,
+# as the task's agent user, when the agent's run starts.
+set -euo pipefail
+
+limit=${MTX_AGENT_TIMEOUT_SEC:-}
+if [ -z "$limit" ]; then
+  echo "time-left: this task sets no time limit" >&2
+  exit 1
+fi
+total=$(awk -v l="$limit" -v m="${MTX_AGENT_TIMEOUT_MULTIPLIER:-1}" \
+  'BEGIN { if (l + 0 <= 0 || m + 0 <= 0) exit 1; printf "%d", l * m }') || {
+  echo "time-left: bad MTX_AGENT_TIMEOUT_SEC or MTX_AGENT_TIMEOUT_MULTIPLIER" >&2
+  exit 1
+}
+
+# A process can report a wrapped elapsed time (2^32 - 1) while it starts:
+# anything over a day isn't the harness.
+used=$(ps -u "$(id -u)" -o pid=,etimes= \
+  | awk '$1 != 1 && $2 < 86400 && $2 > max { max = $2 } END { printf "%d", max + 0 }')
+left=$((total - used))
+[ "$left" -lt 0 ] && left=0
+mmss() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
+printf '%s left of %s (%s used; time is up at %s UTC)\n' \
+  "$(mmss "$left")" "$(mmss "$total")" "$(mmss "$used")" \
+  "$(date -u -d "@$(($(date -u +%s) - used + total))" +%H:%M:%S)"

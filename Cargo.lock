@@ -4527,6 +4527,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-carry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "mtx-bot-carry-gbm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mtx-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
@@ -4565,6 +4587,21 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mtx-kit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mtx-bot-weekend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borsh 1.8.1",
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+ "solana-rpc-client-api",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4623,6 +4660,7 @@ dependencies = [
  "axum",
  "borsh 1.8.1",
  "bs58",
+ "bytemuck",
  "flate2",
  "futures 0.3.34",
  "libc",

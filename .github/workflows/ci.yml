@@ -22,10 +22,16 @@ jobs:
       - name: Install Harbor
         run: uv tool install harbor==0.25.0
       - name: Each oracle is its task's reference bot
-        # Mirrors `references` in the Justfile.
+        # Mirrors `references` and `check-solution` in the Justfile: every
+        # source file, and the model the bot reads, if any.
         run: |
-          for pair in flash-crash-spcx=reference market-making-spcx=maker; do
-            diff -u "bots/${pair#*=}/src/main.rs" "bench/tasks/${pair%%=*}/solution/src/main.rs"
+          for pair in flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend; do
+            bot="bots/${pair#*=}"; solution="bench/tasks/${pair%%=*}/solution"
+            diff -ru "$bot/src" "$solution/src"
+            if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
+            for model in "$bot"/model.*; do
+              if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
+            done
           done
       - name: Lint every task
         # Images are pinned by `just release`; between releases a task may
@@ -42,9 +48,18 @@ jobs:
           node --check "$RUNNER_TEMP/viewer.js"
       - name: Scenarios carry a reference baseline
         # The rest of a scenario, its mandate included, is checked by
-        # crates/grader/tests/files.rs.
+        # crates/grader/tests/files.rs. A task that keeps its reference out of
+        # practice (`practice_reference = false` in task.toml) carries none:
+        # agents shown the reference's PnL tune toward it.
         run: |
           for f in bench/tasks/*/environment/practice/*.json; do
+            task="${f%%/environment/*}"
+            if grep -q '^practice_reference *= *false' "$task/task.toml"; then
+              echo "$f: no baseline expected ($task hides its reference from practice)"
+              jq -e '(.reference_pnl_usd == null) and (.path | length > 0)' "$f" > /dev/null \
+                || { echo "::error file=$f::a hidden reference's practice scenario has a baseline, or no path"; exit 1; }
+              continue
+            fi
             jq -e '(.reference_pnl_usd | type == "number") and (.path | length > 0)' "$f" > /dev/null \
               || { echo "::error file=$f::missing reference_pnl_usd or path"; exit 1; }
           done

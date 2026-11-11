@@ -1,4 +1,5 @@
-//! The taker flow of a market-making session (see [`crate::making`]).
+//! The grader's taker flow: a market-making session's (see [`crate::making`]),
+//! and the orders any other scenario lists (a weekend's, a tape).
 //!
 //! Before the cheatcodes lock, the grader onboards a pool of taker accounts
 //! and widens the snapshot's makers to the scenario's spread. While the bot
@@ -18,7 +19,7 @@ use tracing::{info, warn};
 use crate::{
     Result,
     error::io_error,
-    making::{Making, TAKER_ACCOUNTS, TakerSide, level_at},
+    making::{TAKER_ACCOUNTS, TakerOrder, TakerSide, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
     snapshot::OfflineWorld,
@@ -55,21 +56,38 @@ impl Drop for Takers {
 }
 
 impl Takers {
-    /// Onboard the taker pool and widen the makers. Setup: cheatcodes must
-    /// still be unlocked. The takers trade through `rpc_url`.
+    /// Widen the makers to `half_spread_bps`, then onboard the taker pool.
+    /// Setup: cheatcodes must still be unlocked. The takers trade through
+    /// `rpc_url`.
     pub async fn prepare(
         world: &OfflineWorld,
         phoenix: &Phoenix,
         scenario: &Scenario,
-        making: &Making,
+        half_spread_bps: f64,
         start_mark_ticks: u64,
         rpc_url: &str,
     ) -> Result<Self> {
         let half_spread_ticks =
-            (start_mark_ticks as f64 * making.competitor_bps / 10_000.0).round() as u64;
+            (start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
         let widened_ticks =
             phoenix::widen_makers(&world.surfnet, phoenix, &scenario.symbol, half_spread_ticks)?;
+        let mut takers = Self::onboard(world, phoenix, scenario, rpc_url).await?;
+        takers.widened_ticks = widened_ticks;
+        info!(
+            takers = takers.traders.len(),
+            widened_ticks, half_spread_bps, "takers ready"
+        );
+        Ok(takers)
+    }
 
+    /// Onboard the taker pool, leaving the makers as they are. Setup:
+    /// cheatcodes must still be unlocked. The takers trade through `rpc_url`.
+    pub async fn onboard(
+        world: &OfflineWorld,
+        phoenix: &Phoenix,
+        scenario: &Scenario,
+        rpc_url: &str,
+    ) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("mtx-takers-{}", uuid::Uuid::new_v4()));
         // Root's alone: bots run in the same container, and these keypairs
         // sign for accounts with collateral of their own.
@@ -98,25 +116,20 @@ impl Takers {
                 mandate_path: None,
             })?);
         }
-        info!(
-            takers = traders.len(),
-            widened_ticks,
-            competitor_bps = making.competitor_bps,
-            "takers ready"
-        );
         Ok(Self {
             traders,
-            widened_ticks,
+            widened_ticks: 0,
             dir,
         })
     }
 
-    /// The flow's state through a session, starting before its first order.
-    pub fn flow(&self, making: &Making) -> Flow {
+    /// The flow's state through a session that sends `orders`, starting
+    /// before the first of them.
+    pub fn flow(&self, orders: &[TakerOrder]) -> Flow {
         Flow {
             next: 0,
             report: FlowReport {
-                orders: making.takers.len(),
+                orders: orders.len(),
                 makers_widened_ticks: self.widened_ticks,
                 ..FlowReport::default()
             },
@@ -150,19 +163,25 @@ pub struct Flow {
 }
 
 impl Flow {
-    /// Send, in order, every order due by `at` slots into the session, priced
-    /// off the scenario's level there.
+    /// Send, in order, every one of `orders` due by `at` slots into the
+    /// session, priced off the scenario's level there.
     pub async fn step(
         &mut self,
         takers: &Takers,
         scenario: &Scenario,
-        making: &Making,
+        orders: &[TakerOrder],
         start_mark_usd: f64,
         at: u64,
     ) {
-        while let Some(order) = making.takers.get(self.next).filter(|o| o.slot <= at) {
+        let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
+        self.send(takers, orders, level, at).await;
+    }
+
+    /// Send, in order, every one of `orders` due by `at` slots into the
+    /// session, priced off `level` (USD).
+    pub async fn send(&mut self, takers: &Takers, orders: &[TakerOrder], level: f64, at: u64) {
+        while let Some(order) = orders.get(self.next).filter(|o| o.slot <= at) {
             self.next += 1;
-            let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
             // The order's own limit: it fills only against quotes at least
             // this close to the level, or not at all.
             let reach = order.limit_bps / 10_000.0;

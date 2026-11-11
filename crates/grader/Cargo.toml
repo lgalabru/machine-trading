@@ -8,6 +8,7 @@ license.workspace = true
 axum.workspace = true
 async-trait = "0.1"
 borsh = "1"
+bytemuck = "1"
 bs58 = "0.5"
 flate2 = "1"
 libc.workspace = true

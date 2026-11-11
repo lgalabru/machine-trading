@@ -1,0 +1,1200 @@
+{
+  "name": "practice-2",
+  "description": "SPCX closed for 452 slots with 53 taker orders, informed flow from account 0, account 2 working 44 shares to sell; the weekend moved it -5.17% and it opens at -5.90%",
+  "symbol": "SPCX",
+  "duration_slots": 607,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 15,
+      "level_pct": -0.178
+    },
+    {
+      "slot": 28,
+      "level_pct": -0.171
+    },
+    {
+      "slot": 31,
+      "level_pct": -0.347
+    },
+    {
+      "slot": 37,
+      "level_pct": -0.377
+    },
+    {
+      "slot": 40,
+      "level_pct": -0.379
+    },
+    {
+      "slot": 43,
+      "level_pct": -0.371
+    },
+    {
+      "slot": 46,
+      "level_pct": -0.373
+    },
+    {
+      "slot": 49,
+      "level_pct": -0.375
+    },
+    {
+      "slot": 52,
+      "level_pct": -0.601
+    },
+    {
+      "slot": 55,
+      "level_pct": -0.603
+    },
+    {
+      "slot": 58,
+      "level_pct": -0.737
+    },
+    {
+      "slot": 61,
+      "level_pct": -0.761
+    },
+    {
+      "slot": 64,
+      "level_pct": -0.763
+    },
+    {
+      "slot": 67,
+      "level_pct": -0.953
+    },
+    {
+      "slot": 70,
+      "level_pct": -0.955
+    },
+    {
+      "slot": 73,
+      "level_pct": -0.957
+    },
+    {
+      "slot": 76,
+      "level_pct": -0.959
+    },
+    {
+      "slot": 79,
+      "level_pct": -1.183
+    },
+    {
+      "slot": 84,
+      "level_pct": -1.185
+    },
+    {
+      "slot": 87,
+      "level_pct": -1.343
+    },
+    {
+      "slot": 90,
+      "level_pct": -1.445
+    },
+    {
+      "slot": 93,
+      "level_pct": -1.683
+    },
+    {
+      "slot": 103,
+      "level_pct": -2.391
+    },
+    {
+      "slot": 106,
+      "level_pct": -2.449
+    },
+    {
+      "slot": 111,
+      "level_pct": -2.411
+    },
+    {
+      "slot": 114,
+      "level_pct": -2.532
+    },
+    {
+      "slot": 117,
+      "level_pct": -2.486
+    },
+    {
+      "slot": 121,
+      "level_pct": -2.723
+    },
+    {
+      "slot": 127,
+      "level_pct": -2.969
+    },
+    {
+      "slot": 134,
+      "level_pct": -2.994
+    },
+    {
+      "slot": 139,
+      "level_pct": -3.283
+    },
+    {
+      "slot": 142,
+      "level_pct": -3.315
+    },
+    {
+      "slot": 151,
+      "level_pct": -3.564
+    },
+    {
+      "slot": 155,
+      "level_pct": -3.451
+    },
+    {
+      "slot": 158,
+      "level_pct": -3.629
+    },
+    {
+      "slot": 163,
+      "level_pct": -3.723
+    },
+    {
+      "slot": 167,
+      "level_pct": -3.878
+    },
+    {
+      "slot": 170,
+      "level_pct": -3.877
+    },
+    {
+      "slot": 173,
+      "level_pct": -3.907
+    },
+    {
+      "slot": 176,
+      "level_pct": -4.06
+    },
+    {
+      "slot": 179,
+      "level_pct": -3.934
+    },
+    {
+      "slot": 182,
+      "level_pct": -3.922
+    },
+    {
+      "slot": 187,
+      "level_pct": -4.029
+    },
+    {
+      "slot": 190,
+      "level_pct": -4.031
+    },
+    {
+      "slot": 193,
+      "level_pct": -4.272
+    },
+    {
+      "slot": 196,
+      "level_pct": -4.268
+    },
+    {
+      "slot": 199,
+      "level_pct": -4.533
+    },
+    {
+      "slot": 202,
+      "level_pct": -4.608
+    },
+    {
+      "slot": 205,
+      "level_pct": -4.604
+    },
+    {
+      "slot": 208,
+      "level_pct": -4.599
+    },
+    {
+      "slot": 211,
+      "level_pct": -4.618
+    },
+    {
+      "slot": 214,
+      "level_pct": -4.927
+    },
+    {
+      "slot": 217,
+      "level_pct": -4.773
+    },
+    {
+      "slot": 220,
+      "level_pct": -4.768
+    },
+    {
+      "slot": 223,
+      "level_pct": -4.887
+    },
+    {
+      "slot": 226,
+      "level_pct": -5.239
+    },
+    {
+      "slot": 229,
+      "level_pct": -5.235
+    },
+    {
+      "slot": 232,
+      "level_pct": -5.187
+    },
+    {
+      "slot": 235,
+      "level_pct": -5.267
+    },
+    {
+      "slot": 238,
+      "level_pct": -5.264
+    },
+    {
+      "slot": 241,
+      "level_pct": -5.453
+    },
+    {
+      "slot": 244,
+      "level_pct": -5.469
+    },
+    {
+      "slot": 247,
+      "level_pct": -5.552
+    },
+    {
+      "slot": 250,
+      "level_pct": -5.546
+    },
+    {
+      "slot": 253,
+      "level_pct": -5.539
+    },
+    {
+      "slot": 256,
+      "level_pct": -5.533
+    },
+    {
+      "slot": 259,
+      "level_pct": -5.521
+    },
+    {
+      "slot": 262,
+      "level_pct": -5.516
+    },
+    {
+      "slot": 265,
+      "level_pct": -5.625
+    },
+    {
+      "slot": 268,
+      "level_pct": -5.618
+    },
+    {
+      "slot": 271,
+      "level_pct": -5.61
+    },
+    {
+      "slot": 274,
+      "level_pct": -5.603
+    },
+    {
+      "slot": 277,
+      "level_pct": -5.596
+    },
+    {
+      "slot": 280,
+      "level_pct": -5.568
+    },
+    {
+      "slot": 283,
+      "level_pct": -5.561
+    },
+    {
+      "slot": 286,
+      "level_pct": -5.555
+    },
+    {
+      "slot": 289,
+      "level_pct": -5.548
+    },
+    {
+      "slot": 292,
+      "level_pct": -5.542
+    },
+    {
+      "slot": 295,
+      "level_pct": -5.713
+    },
+    {
+      "slot": 298,
+      "level_pct": -5.704
+    },
+    {
+      "slot": 301,
+      "level_pct": -5.695
+    },
+    {
+      "slot": 304,
+      "level_pct": -5.603
+    },
+    {
+      "slot": 307,
+      "level_pct": -5.65
+    },
+    {
+      "slot": 310,
+      "level_pct": -5.642
+    },
+    {
+      "slot": 313,
+      "level_pct": -5.586
+    },
+    {
+      "slot": 316,
+      "level_pct": -5.579
+    },
+    {
+      "slot": 319,
+      "level_pct": -5.571
+    },
+    {
+      "slot": 322,
+      "level_pct": -5.564
+    },
+    {
+      "slot": 325,
+      "level_pct": -5.561
+    },
+    {
+      "slot": 328,
+      "level_pct": -5.844
+    },
+    {
+      "slot": 331,
+      "level_pct": -5.831
+    },
+    {
+      "slot": 334,
+      "level_pct": -5.819
+    },
+    {
+      "slot": 337,
+      "level_pct": -5.808
+    },
+    {
+      "slot": 340,
+      "level_pct": -5.796
+    },
+    {
+      "slot": 343,
+      "level_pct": -5.81
+    },
+    {
+      "slot": 346,
+      "level_pct": -6.003
+    },
+    {
+      "slot": 349,
+      "level_pct": -5.988
+    },
+    {
+      "slot": 352,
+      "level_pct": -5.984
+    },
+    {
+      "slot": 355,
+      "level_pct": -5.969
+    },
+    {
+      "slot": 358,
+      "level_pct": -6.201
+    },
+    {
+      "slot": 361,
+      "level_pct": -6.183
+    },
+    {
+      "slot": 364,
+      "level_pct": -6.169
+    },
+    {
+      "slot": 367,
+      "level_pct": -6.151
+    },
+    {
+      "slot": 370,
+      "level_pct": -6.044
+    },
+    {
+      "slot": 373,
+      "level_pct": -6.153
+    },
+    {
+      "slot": 376,
+      "level_pct": -6.136
+    },
+    {
+      "slot": 379,
+      "level_pct": -6.119
+    },
+    {
+      "slot": 382,
+      "level_pct": -6.026
+    },
+    {
+      "slot": 385,
+      "level_pct": -6.01
+    },
+    {
+      "slot": 388,
+      "level_pct": -5.954
+    },
+    {
+      "slot": 391,
+      "level_pct": -5.804
+    },
+    {
+      "slot": 394,
+      "level_pct": -5.884
+    },
+    {
+      "slot": 397,
+      "level_pct": -5.816
+    },
+    {
+      "slot": 400,
+      "level_pct": -5.803
+    },
+    {
+      "slot": 403,
+      "level_pct": -5.79
+    },
+    {
+      "slot": 406,
+      "level_pct": -5.778
+    },
+    {
+      "slot": 409,
+      "level_pct": -5.957
+    },
+    {
+      "slot": 412,
+      "level_pct": -6.163
+    },
+    {
+      "slot": 415,
+      "level_pct": -6.145
+    },
+    {
+      "slot": 418,
+      "level_pct": -6.126
+    },
+    {
+      "slot": 421,
+      "level_pct": -6.109
+    },
+    {
+      "slot": 424,
+      "level_pct": -6.091
+    },
+    {
+      "slot": 427,
+      "level_pct": -6.074
+    },
+    {
+      "slot": 430,
+      "level_pct": -6.023
+    },
+    {
+      "slot": 433,
+      "level_pct": -5.928
+    },
+    {
+      "slot": 436,
+      "level_pct": -5.913
+    },
+    {
+      "slot": 439,
+      "level_pct": -5.899
+    },
+    {
+      "slot": 442,
+      "level_pct": -5.815
+    },
+    {
+      "slot": 445,
+      "level_pct": -5.801
+    },
+    {
+      "slot": 448,
+      "level_pct": -5.893
+    },
+    {
+      "slot": 451,
+      "level_pct": -5.878
+    },
+    {
+      "slot": 454,
+      "level_pct": -5.902
+    },
+    {
+      "slot": 470,
+      "level_pct": -5.938
+    },
+    {
+      "slot": 482,
+      "level_pct": -5.866
+    },
+    {
+      "slot": 495,
+      "level_pct": -5.956
+    },
+    {
+      "slot": 503,
+      "level_pct": -5.905
+    },
+    {
+      "slot": 514,
+      "level_pct": -5.949
+    },
+    {
+      "slot": 527,
+      "level_pct": -5.926
+    },
+    {
+      "slot": 533,
+      "level_pct": -5.877
+    },
+    {
+      "slot": 545,
+      "level_pct": -5.857
+    },
+    {
+      "slot": 551,
+      "level_pct": -5.908
+    },
+    {
+      "slot": 560,
+      "level_pct": -5.925
+    },
+    {
+      "slot": 568,
+      "level_pct": -5.891
+    },
+    {
+      "slot": 582,
+      "level_pct": -5.918
+    },
+    {
+      "slot": 588,
+      "level_pct": -5.933
+    },
+    {
+      "slot": 600,
+      "level_pct": -5.857
+    }
+  ],
+  "offhours": {
+    "reopen_slot": 454,
+    "band_pct": 6.667,
+    "half_spread_bps": 14.51,
+    "index": [
+      {
+        "slot": 16,
+        "level_pct": -0.011
+      },
+      {
+        "slot": 24,
+        "level_pct": -0.022
+      },
+      {
+        "slot": 32,
+        "level_pct": -0.043
+      },
+      {
+        "slot": 40,
+        "level_pct": -0.065
+      },
+      {
+        "slot": 48,
+        "level_pct": -0.085
+      },
+      {
+        "slot": 56,
+        "level_pct": -0.127
+      },
+      {
+        "slot": 64,
+        "level_pct": -0.18
+      },
+      {
+        "slot": 72,
+        "level_pct": -0.23
+      },
+      {
+        "slot": 80,
+        "level_pct": -0.292
+      },
+      {
+        "slot": 88,
+        "level_pct": -0.36
+      },
+      {
+        "slot": 96,
+        "level_pct": -0.445
+      },
+      {
+        "slot": 104,
+        "level_pct": -0.574
+      },
+      {
+        "slot": 112,
+        "level_pct": -0.7
+      },
+      {
+        "slot": 120,
+        "level_pct": -0.83
+      },
+      {
+        "slot": 128,
+        "level_pct": -0.968
+      },
+      {
+        "slot": 136,
+        "level_pct": -1.099
+      },
+      {
+        "slot": 144,
+        "level_pct": -1.242
+      },
+      {
+        "slot": 152,
+        "level_pct": -1.392
+      },
+      {
+        "slot": 160,
+        "level_pct": -1.536
+      },
+      {
+        "slot": 168,
+        "level_pct": -1.687
+      },
+      {
+        "slot": 176,
+        "level_pct": -1.84
+      },
+      {
+        "slot": 184,
+        "level_pct": -1.974
+      },
+      {
+        "slot": 192,
+        "level_pct": -2.122
+      },
+      {
+        "slot": 200,
+        "level_pct": -2.282
+      },
+      {
+        "slot": 208,
+        "level_pct": -2.431
+      },
+      {
+        "slot": 216,
+        "level_pct": -2.582
+      },
+      {
+        "slot": 224,
+        "level_pct": -2.753
+      },
+      {
+        "slot": 232,
+        "level_pct": -2.915
+      },
+      {
+        "slot": 240,
+        "level_pct": -3.079
+      },
+      {
+        "slot": 248,
+        "level_pct": -3.238
+      },
+      {
+        "slot": 256,
+        "level_pct": -3.386
+      },
+      {
+        "slot": 264,
+        "level_pct": -3.53
+      },
+      {
+        "slot": 272,
+        "level_pct": -3.664
+      },
+      {
+        "slot": 280,
+        "level_pct": -3.787
+      },
+      {
+        "slot": 288,
+        "level_pct": -3.901
+      },
+      {
+        "slot": 296,
+        "level_pct": -4.017
+      },
+      {
+        "slot": 304,
+        "level_pct": -4.123
+      },
+      {
+        "slot": 312,
+        "level_pct": -4.217
+      },
+      {
+        "slot": 320,
+        "level_pct": -4.304
+      },
+      {
+        "slot": 328,
+        "level_pct": -4.403
+      },
+      {
+        "slot": 336,
+        "level_pct": -4.494
+      },
+      {
+        "slot": 344,
+        "level_pct": -4.592
+      },
+      {
+        "slot": 352,
+        "level_pct": -4.681
+      },
+      {
+        "slot": 360,
+        "level_pct": -4.778
+      },
+      {
+        "slot": 368,
+        "level_pct": -4.86
+      },
+      {
+        "slot": 376,
+        "level_pct": -4.942
+      },
+      {
+        "slot": 384,
+        "level_pct": -5.011
+      },
+      {
+        "slot": 392,
+        "level_pct": -5.068
+      },
+      {
+        "slot": 400,
+        "level_pct": -5.115
+      },
+      {
+        "slot": 408,
+        "level_pct": -5.169
+      },
+      {
+        "slot": 416,
+        "level_pct": -5.231
+      },
+      {
+        "slot": 424,
+        "level_pct": -5.286
+      },
+      {
+        "slot": 432,
+        "level_pct": -5.327
+      },
+      {
+        "slot": 440,
+        "level_pct": -5.363
+      }
+    ],
+    "takers": [
+      {
+        "slot": 14,
+        "side": "sell",
+        "size": 1.0,
+        "limit_bps": 49.51,
+        "account": 0
+      },
+      {
+        "slot": 28,
+        "side": "sell",
+        "size": 1.16,
+        "limit_bps": 56.13,
+        "account": 0
+      },
+      {
+        "slot": 36,
+        "side": "buy",
+        "size": 0.77,
+        "limit_bps": 22.37,
+        "account": 1
+      },
+      {
+        "slot": 36,
+        "side": "sell",
+        "size": 0.85,
+        "limit_bps": 63.06,
+        "account": 0
+      },
+      {
+        "slot": 50,
+        "side": "sell",
+        "size": 1.39,
+        "limit_bps": 62.69,
+        "account": 0
+      },
+      {
+        "slot": 56,
+        "side": "sell",
+        "size": 0.78,
+        "limit_bps": 50.64,
+        "account": 0
+      },
+      {
+        "slot": 64,
+        "side": "sell",
+        "size": 1.12,
+        "limit_bps": 55.84,
+        "account": 0
+      },
+      {
+        "slot": 76,
+        "side": "sell",
+        "size": 0.72,
+        "limit_bps": 75.63,
+        "account": 0
+      },
+      {
+        "slot": 86,
+        "side": "sell",
+        "size": 0.62,
+        "limit_bps": 71.83,
+        "account": 0
+      },
+      {
+        "slot": 92,
+        "side": "sell",
+        "size": 1.02,
+        "limit_bps": 63.0,
+        "account": 0
+      },
+      {
+        "slot": 102,
+        "side": "sell",
+        "size": 4.0,
+        "limit_bps": 60.28,
+        "account": 0
+      },
+      {
+        "slot": 112,
+        "side": "sell",
+        "size": 0.66,
+        "limit_bps": 78.8,
+        "account": 0
+      },
+      {
+        "slot": 120,
+        "side": "sell",
+        "size": 0.95,
+        "limit_bps": 50.32,
+        "account": 0
+      },
+      {
+        "slot": 126,
+        "side": "sell",
+        "size": 1.17,
+        "limit_bps": 62.92,
+        "account": 0
+      },
+      {
+        "slot": 138,
+        "side": "sell",
+        "size": 1.59,
+        "limit_bps": 75.21,
+        "account": 0
+      },
+      {
+        "slot": 150,
+        "side": "sell",
+        "size": 1.23,
+        "limit_bps": 86.48,
+        "account": 0
+      },
+      {
+        "slot": 154,
+        "side": "buy",
+        "size": 0.44,
+        "limit_bps": 39.63,
+        "account": 1
+      },
+      {
+        "slot": 156,
+        "side": "sell",
+        "size": 1.01,
+        "limit_bps": 83.77,
+        "account": 0
+      },
+      {
+        "slot": 162,
+        "side": "sell",
+        "size": 0.58,
+        "limit_bps": 39.5,
+        "account": 3
+      },
+      {
+        "slot": 166,
+        "side": "sell",
+        "size": 1.05,
+        "limit_bps": 80.14,
+        "account": 0
+      },
+      {
+        "slot": 174,
+        "side": "sell",
+        "size": 1.15,
+        "limit_bps": 74.92,
+        "account": 0
+      },
+      {
+        "slot": 178,
+        "side": "buy",
+        "size": 0.54,
+        "limit_bps": 31.01,
+        "account": 7
+      },
+      {
+        "slot": 186,
+        "side": "sell",
+        "size": 0.65,
+        "limit_bps": 45.18,
+        "account": 0
+      },
+      {
+        "slot": 190,
+        "side": "sell",
+        "size": 0.42,
+        "limit_bps": 26.57,
+        "account": 5
+      },
+      {
+        "slot": 192,
+        "side": "sell",
+        "size": 1.04,
+        "limit_bps": 50.46,
+        "account": 2
+      },
+      {
+        "slot": 198,
+        "side": "sell",
+        "size": 1.34,
+        "limit_bps": 66.35,
+        "account": 0
+      },
+      {
+        "slot": 200,
+        "side": "sell",
+        "size": 0.45,
+        "limit_bps": 48.07,
+        "account": 1
+      },
+      {
+        "slot": 212,
+        "side": "sell",
+        "size": 1.98,
+        "limit_bps": 52.62,
+        "account": 0
+      },
+      {
+        "slot": 216,
+        "side": "buy",
+        "size": 0.59,
+        "limit_bps": 42.78,
+        "account": 6
+      },
+      {
+        "slot": 220,
+        "side": "sell",
+        "size": 0.6,
+        "limit_bps": 80.97,
+        "account": 2
+      },
+      {
+        "slot": 224,
+        "side": "sell",
+        "size": 2.09,
+        "limit_bps": 44.97,
+        "account": 0
+      },
+      {
+        "slot": 232,
+        "side": "sell",
+        "size": 0.67,
+        "limit_bps": 82.85,
+        "account": 0
+      },
+      {
+        "slot": 238,
+        "side": "sell",
+        "size": 1.72,
+        "limit_bps": 73.67,
+        "account": 2
+      },
+      {
+        "slot": 240,
+        "side": "buy",
+        "size": 0.52,
+        "limit_bps": 56.01,
+        "account": 5
+      },
+      {
+        "slot": 246,
+        "side": "sell",
+        "size": 0.57,
+        "limit_bps": 45.56,
+        "account": 0
+      },
+      {
+        "slot": 258,
+        "side": "buy",
+        "size": 0.32,
+        "limit_bps": 44.67,
+        "account": 5
+      },
+      {
+        "slot": 264,
+        "side": "sell",
+        "size": 0.75,
+        "limit_bps": 74.96,
+        "account": 2
+      },
+      {
+        "slot": 292,
+        "side": "sell",
+        "size": 0.88,
+        "limit_bps": 82.85,
+        "account": 2
+      },
+      {
+        "slot": 302,
+        "side": "buy",
+        "size": 0.54,
+        "limit_bps": 23.29,
+        "account": 3
+      },
+      {
+        "slot": 304,
+        "side": "sell",
+        "size": 0.27,
+        "limit_bps": 82.3,
+        "account": 2
+      },
+      {
+        "slot": 326,
+        "side": "sell",
+        "size": 1.25,
+        "limit_bps": 75.65,
+        "account": 2
+      },
+      {
+        "slot": 344,
+        "side": "sell",
+        "size": 1.02,
+        "limit_bps": 53.96,
+        "account": 2
+      },
+      {
+        "slot": 356,
+        "side": "sell",
+        "size": 1.76,
+        "limit_bps": 75.04,
+        "account": 2
+      },
+      {
+        "slot": 368,
+        "side": "buy",
+        "size": 0.56,
+        "limit_bps": 34.87,
+        "account": 1
+      },
+      {
+        "slot": 370,
+        "side": "sell",
+        "size": 0.87,
+        "limit_bps": 74.22,
+        "account": 2
+      },
+      {
+        "slot": 386,
+        "side": "buy",
+        "size": 0.26,
+        "limit_bps": 57.24,
+        "account": 3
+      },
+      {
+        "slot": 388,
+        "side": "buy",
+        "size": 0.67,
+        "limit_bps": 35.9,
+        "account": 4
+      },
+      {
+        "slot": 392,
+        "side": "sell",
+        "size": 0.81,
+        "limit_bps": 44.8,
+        "account": 2
+      },
+      {
+        "slot": 408,
+        "side": "sell",
+        "size": 1.02,
+        "limit_bps": 77.23,
+        "account": 2
+      },
+      {
+        "slot": 410,
+        "side": "sell",
+        "size": 0.98,
+        "limit_bps": 44.85,
+        "account": 1
+      },
+      {
+        "slot": 430,
+        "side": "sell",
+        "size": 1.31,
+        "limit_bps": 57.66,
+        "account": 2
+      },
+      {
+        "slot": 432,
+        "side": "buy",
+        "size": 1.4,
+        "limit_bps": 30.22,
+        "account": 6
+      },
+      {
+        "slot": 446,
+        "side": "sell",
+        "size": 0.64,
+        "limit_bps": 73.75,
+        "account": 2
+      }
+    ]
+  }
+}

@@ -54,7 +54,7 @@ use crate::{
     error::io_error,
     flow::{FlowReport, TakerRecord, Takers},
     guard::{CallLog, Guard},
-    making::level_at,
+    making::{book_at, level_at},
     phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS},
     scenario::Scenario,
     snapshot,
@@ -80,12 +80,6 @@ pub const DEPOSIT_USDC: f64 = 10_000.0;
 pub const BOT_USERS: [&str; 4] = ["mtx-bot", "mtx-bot-2", "mtx-bot-3", "mtx-bot-4"];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
-/// Slots from the surfnet's start to the session's: setup runs on the wall
-/// clock and takes 10 to 15 of them, more on a loaded machine. The world
-/// then steps to this one, so every session starts at the same slot however
-/// long its setup took: state that depends on the slot (Phoenix's funding,
-/// the oracle's age) replays the same.
-const SETUP_SLOTS: u64 = 60;
 
 pub struct SessionOptions<'a> {
     pub snapshot_dir: &'a Path,
@@ -188,8 +182,12 @@ pub struct StepRecord {
     pub mark_usd: f64,
     /// Phoenix's index (oracle) price.
     pub index_usd: f64,
-    /// The scenario's planned level.
+    /// The scenario's planned level: Phoenix's index.
     pub level_usd: f64,
+    /// Where the scenario puts the book's makers, when it gives the book a
+    /// premium over the level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_bid_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -297,6 +295,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
+    // A scenario that sets funding values it with the funding it has accrued
+    // and not settled yet; others as Phoenix's collateral and unrealized PnL
+    // alone.
     let meter = PhoenixEternalMeter::new(
         Arc::new(PhoenixExchange::new(world.exchange.clone())),
         internal.url(),
@@ -304,7 +305,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         bot.pubkey(),
         &scenario.symbol,
     )
-    .map_err(mtx_kit::Error::from)?;
+    .map_err(mtx_kit::Error::from)?
+    .with_unsettled_funding(scenario.funding.is_some());
     if meter.trader() != trader {
         return Err(Error::InvalidExchangeKey(format!(
             "the meter would read trader account {}, but the bot was onboarded at {trader}",
@@ -319,16 +321,20 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .collect();
     let market_id = scenario.instrument().id();
     let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
-    // Market making: the takers and the widened makers, set up while
-    // cheatcodes still work.
-    let (takers, competitor) = match &scenario.making {
-        Some(making) => (
+    if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
+        phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
+    }
+    // The takers, set up while cheatcodes still work: market making's, with
+    // the makers widened and a competing maker; off hours', with the makers
+    // widened and no competitor; a tape's, with the makers as they are.
+    let (takers, competitor) = match (&scenario.making, &scenario.offhours) {
+        (Some(making), _) => (
             Some(
                 Takers::prepare(
                     &world,
                     &phoenix,
                     scenario,
-                    making,
+                    making.competitor_bps,
                     start_mark_ticks,
                     internal.url(),
                 )
@@ -336,23 +342,52 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             ),
             Some(Competitor::prepare(&world, &phoenix, scenario, internal.url()).await?),
         ),
-        None => (None, None),
+        (None, Some(off)) => (
+            Some(
+                Takers::prepare(
+                    &world,
+                    &phoenix,
+                    scenario,
+                    off.half_spread_bps,
+                    start_mark_ticks,
+                    internal.url(),
+                )
+                .await?,
+            ),
+            None,
+        ),
+        (None, None) if !scenario.tape.is_empty() => (
+            Some(Takers::onboard(&world, &phoenix, scenario, internal.url()).await?),
+            None,
+        ),
+        (None, None) => (None, None),
+    };
+    // The orders the takers send, whichever kind of scenario lists them.
+    let orders: &[crate::making::TakerOrder] = match (&scenario.making, &scenario.offhours) {
+        (Some(making), _) => &making.takers,
+        (None, Some(off)) => &off.takers,
+        (None, None) => &scenario.tape,
     };
     // What a market-making account's position is worth: the scenario's own
     // oracle level at `slot`, which quoting can't push the way it can push
     // Phoenix's mark. Otherwise the mark, as Phoenix reports it.
+    // Where the book trades at a premium, the scenario's book level: what
+    // closing the position would fetch, which Phoenix's mark, a blend of the
+    // book and the index, is not.
     let value = async |value_usd: f64, units: f64, slot: u64, base_slot: u64| -> Result<f64> {
-        if scenario.making.is_none() {
-            return Ok(value_usd);
-        }
+        let at = slot.saturating_sub(base_slot);
+        let level = match scenario.valuation() {
+            "oracle" => level_at(&scenario.path, at),
+            "book" => book_at(&scenario.path, at),
+            _ => return Ok(value_usd),
+        };
         let mark = hawkeye
             .view_bbo(&scenario.symbol)
             .await?
             .value
             .mark_price_ticks;
-        let oracle = start_mark_usd
-            * (1.0 + level_at(&scenario.path, slot.saturating_sub(base_slot)) / 100.0);
-        Ok(value_usd + units * (oracle - phoenix.ticks_to_usd(market, mark)))
+        let price = start_mark_usd * (1.0 + level / 100.0);
+        Ok(value_usd + units * (price - phoenix.ticks_to_usd(market, mark)))
     };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
@@ -361,13 +396,52 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
         BlockProductionMode::Manual,
     ))?;
-    let mut slot = rpc.get_slot()?;
-    let first_slot = setup_from + SETUP_SLOTS;
+    let mut slot = manual_slot(&rpc).await?;
+    // Slots from the surfnet's start to the session's: setup runs on the
+    // wall clock and takes 10 to 15 of them, more on a loaded machine, and
+    // more again where it onboards takers. The world then steps to this one,
+    // so every session starts at the same slot however long its setup took:
+    // state that depends on the slot (Phoenix's funding, the oracle's age)
+    // replays the same.
+    let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
         warn!(
             slot,
             first_slot, "setup ran past the session's first slot: this session won't replay"
         );
+    }
+    // The market's funding parameters land on the session's first slot, so
+    // they're in force, and their intervals start at the same point, before
+    // the bot starts.
+    let perp_asset_map = phoenix.perp_asset_map()?;
+    if let Some(funding) = &scenario.funding {
+        chain::register_scenario(
+            &rpc,
+            "funding",
+            vec![crate::scenario::funding_override(
+                perp_asset_map,
+                &scenario.symbol,
+                funding,
+                first_slot.saturating_sub(slot).max(1),
+            )],
+        )?;
+    }
+    // Surfpool restamps Phoenix's oracle readings, and the slot its mark's
+    // EMA last stepped at, with the current slot whenever it plays a Phoenix
+    // override. Setup's last one (a taker's onboarding) plays wherever the
+    // wall clock put it, and the EMA's next step runs from there: the mark
+    // comes out a tick apart run to run. One more on the session's first
+    // slot restamps them all to it. A funding scenario's own override,
+    // played there, does the same.
+    if scenario.funding.is_none() && (scenario.offhours.is_some() || !scenario.tape.is_empty()) {
+        chain::register_scenario(
+            &rpc,
+            "readings",
+            vec![phoenix::enable_trader(
+                trader,
+                first_slot.saturating_sub(slot).max(1),
+            )],
+        )?;
     }
     while slot < first_slot {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
@@ -378,7 +452,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // the guard's upstream has no cheatcodes, airdrops, or way to stop it.
     // Overrides count from the slot they were registered at; so does the
     // takers' flow.
-    let perp_asset_map = phoenix.perp_asset_map()?;
+    if let Some(funding) = &scenario.funding {
+        while slot < first_slot + 1 {
+            surfnet.send_command(SimnetCommand::SlotForward(None))?;
+            slot = wait_for_slot(&rpc, slot + 1).await?;
+        }
+        phoenix::check_funding(&rpc, &phoenix, &scenario.symbol, funding)?;
+    }
     chain::register_scenario(
         &rpc,
         &scenario.name,
@@ -410,6 +490,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
 
     let late_before = surfnet.coalesced_slots();
     let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+    // Off hours: the slot the external market reopens at, from the venue's
+    // calendar, as `MTX_REOPEN_SLOT`.
+    let reopen_slot = scenario
+        .offhours
+        .as_ref()
+        .map(|off| start_slot + off.reopen_slot);
     *bot_started = true;
     let mut child = spawn_bot(
         opts.bot_dir,
@@ -418,6 +504,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         opts.bot_log,
         theirs,
         opts.regime,
+        reopen_slot,
     )?;
     ours.set_nonblocking(true)
         .map_err(io_error("turn socket"))?;
@@ -454,10 +541,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let budget = TURN_BUDGET_PER_STEP * steps as u32;
     let mut spent = Duration::ZERO;
 
-    let mut flow = takers
-        .as_ref()
-        .zip(scenario.making.as_ref())
-        .map(|(takers, making)| takers.flow(making));
+    let mut flow = takers.as_ref().map(|takers| takers.flow(orders));
     let mut quoting = competitor
         .as_ref()
         .zip(scenario.making.as_ref())
@@ -477,11 +561,16 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // below).
     let mut flow_due: Option<u64> = None;
     let send_flow = async |flow: &mut Option<crate::flow::Flow>, at: Option<u64>| {
-        if let (Some(flow), Some(takers), Some(making), Some(at)) =
-            (flow.as_mut(), takers.as_ref(), scenario.making.as_ref(), at)
-        {
-            flow.step(takers, scenario, making, start_mark_usd, at)
-                .await;
+        let (Some(flow), Some(takers), Some(at)) = (flow.as_mut(), takers.as_ref(), at) else {
+            return;
+        };
+        if scenario.making.is_none() && scenario.offhours.is_none() {
+            // The tape trades at the book, where its premium puts it.
+            let book = start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0);
+            flow.send(takers, orders, book, at).await
+        } else {
+            flow.step(takers, scenario, orders, start_mark_usd, at)
+                .await
         }
     };
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
@@ -527,6 +616,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             mark_usd: usd(bbo.mark_price_ticks),
             index_usd: usd(bbo.index_price_ticks),
             level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
+            book_usd: (scenario.valuation() == "book")
+                .then(|| start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0)),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
             position,
@@ -637,11 +728,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         positions: observed.positions,
         positions_outside_universe,
         max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
-        valuation: if scenario.making.is_some() {
-            "oracle"
-        } else {
-            "mark"
-        },
+        valuation: scenario.valuation(),
         flow,
         competitor,
         turns,
@@ -845,6 +932,32 @@ fn transactions(
 }
 
 /// Wait until the surfnet has produced `slot`.
+/// The slot once the switch to manual block production has taken: the
+/// runloop takes it in its own time, and until it does the clock can still
+/// produce a slot. Overrides registered next count from the slot they're
+/// registered at, so a slot produced after the read would land them a slot
+/// late, on a wall-clock race.
+async fn manual_slot(rpc: &RpcClient) -> Result<u64> {
+    let mut slot = rpc.get_slot()?;
+    for _ in 0..20 {
+        // Longer than two of the clock's slots.
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let now = rpc.get_slot()?;
+        if now == slot {
+            return Ok(slot);
+        }
+        warn!(
+            from = slot,
+            to = now,
+            "the clock produced slots after the switch to manual"
+        );
+        slot = now;
+    }
+    Err(Error::Timeout(format!(
+        "block production still running at slot {slot}"
+    )))
+}
+
 async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -981,6 +1094,7 @@ fn spawn_bot(
     log: &Path,
     turns: StdUnixStream,
     regime: Option<&str>,
+    reopen_slot: Option<u64>,
 ) -> Result<Child> {
     let run_sh = bot_dir.join("run.sh");
     if !run_sh.is_file() {
@@ -1018,6 +1132,9 @@ fn spawn_bot(
     }
     if let Some(regime) = regime {
         command.env("MTX_REGIME", regime);
+    }
+    if let Some(reopen_slot) = reopen_slot {
+        command.env("MTX_REOPEN_SLOT", reopen_slot.to_string());
     }
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at

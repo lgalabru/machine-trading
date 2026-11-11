@@ -45,9 +45,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         'surfpool-core = { path = "/src/surfpool/crates/core" }' \
         'surfpool-types = { path = "/src/surfpool/crates/types" }' > .cargo/config.toml; \
     fi \
-    && cargo build --release --locked -p mtx-cli -p mtx-bot-reference -p mtx-bot-maker \
+    && cargo build --release --locked -p mtx-cli -p mtx-bot-reference -p mtx-bot-maker -p mtx-bot-carry -p mtx-bot-weekend \
     && cp target/release/mtx /usr/local/bin/mtx \
-    && for anchor in flash-crash:reference market-making:maker; do \
+    && for anchor in flash-crash:reference market-making:maker funding-carry:carry weekend-gap:weekend; do \
       family="${anchor%%:*}"; bot="${anchor##*:}"; \
       mkdir -p "/opt/mtx/anchors/$family/bin"; \
       cp "bots/$bot/run.sh" "/opt/mtx/anchors/$family/run.sh"; \
@@ -91,6 +91,7 @@ RUN apt-get update \
     && chown agent:agent /app /opt/mtx/target
 COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
 COPY bench/image/mtx-practice /usr/local/bin/mtx-practice
+COPY bench/image/time-left /usr/local/bin/time-left
 COPY snapshots/ /opt/mtx/snapshots/
 
 # The SDK, with the repository's lockfile so bots build against the versions
