@@ -644,7 +644,12 @@ fn replay_check(root: &Path, family: &str, ladder: &Value, fast: bool, out: &Pat
     let output = Command::new(exe)
         .args(["grade", "--draw", family, "--jobs", "4", "--bot", bot])
         .args(["--count", &count.to_string(), "--snapshot", &snapshot(root)])
-        .args(["--replay", &runs.to_string(), "--replay-load", &load.to_string()])
+        .args([
+            "--replay",
+            &runs.to_string(),
+            "--replay-load",
+            &load.to_string(),
+        ])
         .arg("--report")
         .arg(&report)
         .env("MTX_EVAL_SEED", secret)
@@ -665,7 +670,10 @@ fn replay_check(root: &Path, family: &str, ladder: &Value, fast: bool, out: &Pat
                 )
             } else {
                 let differences = r["differences"].as_array().map_or(0, Vec::len);
-                format!("{differences} reports differed; first: {}", r["differences"][0])
+                format!(
+                    "{differences} reports differed; first: {}",
+                    r["differences"][0]
+                )
             };
             Check::from(GRADED, id, title, identical, detail)
         }
@@ -703,7 +711,10 @@ fn calibration_file(root: &Path, task: &str) -> Option<PathBuf> {
 /// against the task's asset calibration, which exits nonzero on a failed
 /// realism check.
 fn calibration_check(root: &Path, task: &str, family: &str, fast: bool) -> Check {
-    let (id, title) = ("market-calibration", "The market matches its calibration file");
+    let (id, title) = (
+        "market-calibration",
+        "The market matches its calibration file",
+    );
     if !has_command(&["market-cal", "check"], None) {
         return Check::not_run(
             REALISTIC,
@@ -717,7 +728,13 @@ fn calibration_check(root: &Path, task: &str, family: &str, fast: bool) -> Check
     };
     let file = file.to_string_lossy().into_owned();
     let count = CALIBRATION_FAST_SESSIONS.to_string();
-    let mut args = vec!["market-cal", "check", family, "--calibration", file.as_str()];
+    let mut args = vec![
+        "market-cal",
+        "check",
+        family,
+        "--calibration",
+        file.as_str(),
+    ];
     if fast {
         args.extend(["--count", count.as_str()]);
     }
@@ -1131,7 +1148,11 @@ mod tests {
             std::fs::write(dir.join("calibration/market").join(f), "").unwrap();
         }
         let file = calibration_file(&dir, "flash-crash-spcx").unwrap();
-        assert!(file.ends_with("spcx.20261111.bb.toml"), "{}", file.display());
+        assert!(
+            file.ends_with("spcx.20261111.bb.toml"),
+            "{}",
+            file.display()
+        );
         assert!(calibration_file(&dir, "flash-crash-btc").is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
