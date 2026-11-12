@@ -195,8 +195,16 @@ impl Scenario {
         Ok(scenario)
     }
 
-    /// Write the scenario as a v2 file (see [`crate::scenario_v2`]).
+    /// Write the scenario as a v1 file, which everything that reads a
+    /// scenario file (the task images, CI, the practice files) expects.
+    /// [`Scenario::save_v2`] writes the v2 layout.
     pub fn save(&self, path: &Path) -> Result<()> {
+        let contents = serde_json::to_string_pretty(self)? + "\n";
+        std::fs::write(path, contents).map_err(io_error(path))
+    }
+
+    /// Write the scenario as a v2 file (see [`crate::scenario_v2`]).
+    pub fn save_v2(&self, path: &Path) -> Result<()> {
         let v2 = crate::scenario_v2::ScenarioV2::try_from(self).map_err(|reason| {
             Error::InvalidScenario {
                 path: path.to_path_buf(),

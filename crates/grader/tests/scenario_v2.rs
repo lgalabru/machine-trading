@@ -88,7 +88,7 @@ fn golden_v2_files_are_what_v1_files_write() {
     for (source, name) in GOLDEN {
         let v1 = Scenario::load(&root().join(source)).unwrap();
         let tmp = std::env::temp_dir().join(format!("mtx-v2-{}-{name}", std::process::id()));
-        v1.save(&tmp).unwrap();
+        v1.save_v2(&tmp).unwrap();
         let written = std::fs::read_to_string(&tmp).unwrap();
         std::fs::remove_file(&tmp).unwrap();
         if std::env::var_os("MTX_BLESS").is_some() {

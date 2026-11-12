@@ -285,8 +285,10 @@ impl MarketModel {
     /// Waypoints in order, in range, and each move finished before the next
     /// starts; the fair value in order and inside the session; the closed
     /// period consistent with the path; the last move finished before the
-    /// session ends.
-    pub fn validate(&self, duration_slots: u64) -> Result<(), String> {
+    /// session ends. A closed period's taker orders (`takers`, the
+    /// scenario's [`Actors::takers`]) are checked with it, as
+    /// [`OffHours::validate`] does.
+    pub fn validate(&self, duration_slots: u64, takers: &[TakerOrder]) -> Result<(), String> {
         let mut book = 0.0;
         let mut free_from = 0;
         for (i, waypoint) in self.path.iter().enumerate() {
@@ -323,7 +325,7 @@ impl MarketModel {
                 return Err("an off-hours scenario's waypoints carry no premium".into());
             }
             closed
-                .as_offhours(Vec::new())
+                .as_offhours(takers.to_vec())
                 .validate(&self.path, duration_slots)
                 .map_err(|reason| format!("offhours: {reason}"))?;
             if !self.path.iter().any(|w| w.slot == closed.reopen_slot) {
@@ -374,23 +376,29 @@ impl Actors {
         *self == Self::default()
     }
 
-    /// A competitor with a floor under its spread, and taker orders in slot
-    /// order, inside the session, well formed. `role` names the flow in the
-    /// errors: `taker` for a scenario's own, `tape` for a tape.
-    pub fn validate(&self, duration_slots: u64, role: &str) -> Result<(), String> {
+    /// A competitor with a floor under its spread (and, with it, taker
+    /// orders as [`Making::validate`] checks them); otherwise, unless the
+    /// takers belong to a closed period, which checks them with its path
+    /// (see [`MarketModel::validate`]), a tape in slot order, inside the
+    /// session and well formed.
+    pub fn validate(&self, duration_slots: u64, closed_period: bool) -> Result<(), String> {
         if let Some(competitor) = &self.competitor {
-            Making {
+            return Making {
                 competitor_bps: competitor.competitor_bps,
                 competition: competitor.competition,
-                takers: Vec::new(),
+                takers: self.takers.clone(),
             }
-            .validate(duration_slots)?;
+            .validate(duration_slots)
+            .map_err(|reason| format!("making: {reason}"));
+        }
+        if closed_period {
+            return Ok(());
         }
         let mut last = 0;
         for (i, order) in self.takers.iter().enumerate() {
             if order.slot < last || order.slot >= duration_slots {
                 return Err(format!(
-                    "{role} order {i} at slot {} is out of order or past the session",
+                    "tape order {i} at slot {} is out of order or past the session",
                     order.slot
                 ));
             }
@@ -398,7 +406,7 @@ impl Actors {
                 || !(order.limit_bps.is_finite() && order.limit_bps > 0.0)
                 || order.account >= TAKER_ACCOUNTS
             {
-                return Err(format!("{role} order {i} is malformed: {order:?}"));
+                return Err(format!("tape order {i} is malformed: {order:?}"));
             }
             last = order.slot;
         }
@@ -438,6 +446,7 @@ impl ScenarioV2 {
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
         self.venues_are_one_kind()?;
+        self.flows_do_not_mix()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
         } else {
@@ -445,9 +454,12 @@ impl ScenarioV2 {
         }
         self.assets.validate()?;
         self.venues.validate()?;
-        self.market_model.validate(self.duration_slots)?;
-        self.actors
-            .validate(self.duration_slots, self.taker_role())?;
+        self.market_model
+            .validate(self.duration_slots, &self.actors.takers)?;
+        self.actors.validate(
+            self.duration_slots,
+            self.market_model.closed_period.is_some(),
+        )?;
         if let Some(faults) = &self.faults {
             faults
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
@@ -458,7 +470,6 @@ impl ScenarioV2 {
         }
         self.scoring.validate()?;
         self.mandate_covers_the_market()?;
-        self.flows_do_not_mix()?;
         self.order_fits_the_wallet()
     }
 
@@ -568,14 +579,6 @@ impl ScenarioV2 {
             return Err("a scenario has either making or offhours, not both".into());
         }
         Ok(())
-    }
-
-    fn taker_role(&self) -> &'static str {
-        if self.actors.competitor.is_some() || self.market_model.closed_period.is_some() {
-            "taker"
-        } else {
-            "tape"
-        }
     }
 
     /// A sell order can't be bigger than the wallet; a net-scored session
@@ -778,25 +781,37 @@ impl TryFrom<&Scenario> for ScenarioV2 {
     }
 }
 
+/// What a file says about its version, and nothing else.
+#[derive(Deserialize)]
+struct Sniff {
+    #[serde(default)]
+    schema: Option<serde_json::Value>,
+}
+
+/// A v1 file that states its version: `"schema": 1` is accepted, and the
+/// rest is the flat v1 scenario.
+#[derive(Deserialize)]
+struct V1Stated {
+    #[allow(dead_code)]
+    schema: u32,
+    #[serde(flatten)]
+    scenario: Scenario,
+}
+
 /// Read a scenario file's text: v2 if it says `"schema": 2`, v1 if it has no
-/// `schema` (or says 1). Anything else is refused by name.
+/// `schema` or says `"schema": 1`. Anything else is refused by name. The
+/// text is parsed once, as the version it names, so errors point into the
+/// file and a repeated key is an error; the version is read first and only
+/// to choose the parser.
 pub fn parse(contents: &str) -> Result<Scenario, ParseError> {
-    let mut value: serde_json::Value = serde_json::from_str(contents)?;
-    let schema = match value.as_object_mut().and_then(|o| o.get("schema").cloned()) {
-        None => 1,
-        Some(v) => v.as_u64().ok_or(ParseError::Schema(v))?,
-    };
+    let Sniff { schema } = serde_json::from_str(contents)?;
     match schema {
-        1 => {
-            if let Some(object) = value.as_object_mut() {
-                object.remove("schema");
-            }
-            Ok(serde_json::from_value(value)?)
-        }
-        2 => serde_json::from_value::<ScenarioV2>(value)?
+        None => Ok(serde_json::from_str(contents)?),
+        Some(v) if v == 1 => Ok(serde_json::from_str::<V1Stated>(contents)?.scenario),
+        Some(v) if v == 2 => serde_json::from_str::<ScenarioV2>(contents)?
             .into_scenario()
             .map_err(ParseError::Invalid),
-        _ => Err(ParseError::Schema(schema.into())),
+        Some(other) => Err(ParseError::Schema(other)),
     }
 }
 
@@ -948,7 +963,7 @@ mod tests {
         s.market_model.path.push(Waypoint::at(0, 5.0));
         assert!(
             s.market_model
-                .validate(s.duration_slots)
+                .validate(s.duration_slots, &s.actors.takers)
                 .unwrap_err()
                 .contains("previous move")
         );
@@ -956,7 +971,7 @@ mod tests {
         s.market_model.fair_path = Some(vec![Waypoint::at(s.duration_slots + 1, 1.0)]);
         assert!(
             s.market_model
-                .validate(s.duration_slots)
+                .validate(s.duration_slots, &s.actors.takers)
                 .unwrap_err()
                 .contains("fair value")
         );
@@ -965,17 +980,28 @@ mod tests {
         s.actors.competitor.as_mut().unwrap().competitor_bps = 0.0;
         assert!(
             s.actors
-                .validate(s.duration_slots, "taker")
+                .validate(s.duration_slots, false)
                 .unwrap_err()
-                .contains("competitor_bps")
+                .contains("making: competitor_bps")
         );
         let mut s = making();
         s.actors.takers[0].account = TAKER_ACCOUNTS;
         assert!(
             s.actors
-                .validate(s.duration_slots, "taker")
+                .validate(s.duration_slots, false)
                 .unwrap_err()
-                .contains("malformed")
+                .contains("making: taker order 0 uses account")
+        );
+        let mut s = shock();
+        s.actors.takers = vec![TakerOrder {
+            account: TAKER_ACCOUNTS,
+            ..making().actors.takers[0]
+        }];
+        assert!(
+            s.actors
+                .validate(s.duration_slots, false)
+                .unwrap_err()
+                .contains("tape order 0 is malformed")
         );
 
         let mut s = shock();
@@ -1048,5 +1074,94 @@ mod tests {
             serde_json::from_str::<ScenarioV2>(&text.replace("\"tx\":{}", "\"tx\":{\"x\":1}"))
                 .is_err()
         );
+    }
+
+    /// What main said for the same input, word for word.
+    #[test]
+    fn v1_inputs_keep_their_error_texts() {
+        let err = |scenario: &Scenario| scenario.validate().unwrap_err();
+
+        let mut m = MakingFamily::spcx().sample("m", 3);
+        m.making.as_mut().unwrap().takers[1].slot = 0;
+        m.making.as_mut().unwrap().takers[0].slot = 5;
+        assert_eq!(err(&m), "making: taker order 1 is out of slot order");
+        let mut m = MakingFamily::spcx().sample("m", 3);
+        m.making.as_mut().unwrap().takers[0].size = 0.0;
+        assert_eq!(err(&m), "making: taker order 0 has size 0");
+        let mut m = MakingFamily::spcx().sample("m", 3);
+        m.making.as_mut().unwrap().takers[0].account = 99;
+        assert_eq!(err(&m), "making: taker order 0 uses account 99, of 8");
+        let mut m = MakingFamily::spcx().sample("m", 3);
+        m.making.as_mut().unwrap().competitor_bps = 0.0;
+        assert_eq!(err(&m), "making: competitor_bps 0 must be positive");
+
+        let mut w = WeekendFamily::spcx().sample("w", 3);
+        w.offhours.as_mut().unwrap().takers.push(TakerOrder {
+            slot: 0,
+            ..w.offhours.as_ref().unwrap().takers[0]
+        });
+        let end = w.offhours.as_ref().unwrap().takers.len() - 1;
+        assert_eq!(
+            err(&w),
+            format!("offhours: taker order {end} is out of order or past the session")
+        );
+
+        let mut t = ShockFamily::spcx().sample("s", 3);
+        t.tape = vec![TakerOrder {
+            slot: t.duration_slots,
+            ..making().actors.takers[0]
+        }];
+        assert!(err(&t).starts_with("tape order 0 at slot"));
+    }
+
+    #[test]
+    fn save_writes_v1_and_save_v2_writes_v2() {
+        let dir = std::env::temp_dir().join(format!("mtx-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut v1 = MakingFamily::spcx().sample("m", 3);
+        v1.reference_pnl_usd = Some(12.5);
+        let path = dir.join("v1.json");
+        v1.save(&path).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // The layout CI's jq reads.
+        assert!(json.get("schema").is_none());
+        assert_eq!(json["reference_pnl_usd"], 12.5);
+        assert!(json["path"].as_array().is_some_and(|p| !p.is_empty()));
+        assert_eq!(Scenario::load(&path).unwrap(), v1);
+
+        let path = dir.join("v2.json");
+        v1.save_v2(&path).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["schema"], 2);
+        assert_eq!(Scenario::load(&path).unwrap(), v1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parsing_reads_the_text_once_as_the_version_it_names() {
+        let v1 = ShockFamily::spcx().sample("s", 3);
+        let text = serde_json::to_string_pretty(&v1).unwrap();
+
+        // A repeated key is an error, in v1 and in v2.
+        let repeated = text.replacen("\"name\"", "\"name\": \"x\",\n  \"name\"", 1);
+        assert!(parse(&repeated).unwrap_err().to_string().contains("duplicate field"));
+        let text2 = serde_json::to_string_pretty(&v2(&v1)).unwrap();
+        let repeated = text2.replacen("\"name\"", "\"name\": \"x\",\n  \"name\"", 1);
+        assert!(parse(&repeated).unwrap_err().to_string().contains("duplicate field"));
+
+        // A syntax error points into the file.
+        let broken = text.replacen("\"symbol\"", "\"symbol\" 1", 1);
+        let message = parse(&broken).unwrap_err().to_string();
+        assert!(message.contains("line ") && message.contains("column "), "{message}");
+        let unknown = text.replacen("\"symbol\"", "\"nonsense\": 1,\n  \"symbol\"", 1);
+        assert!(parse(&unknown).unwrap_err().to_string().contains("line "));
+
+        // `"schema": 1` is v1 and is accepted; the v1 field set still holds.
+        let stated = text.replacen('{', "{\n  \"schema\": 1,", 1);
+        assert_eq!(parse(&stated).unwrap(), v1);
+        let stated_unknown = stated.replacen("\"symbol\"", "\"nonsense\": 1,\n  \"symbol\"", 1);
+        assert!(parse(&stated_unknown).is_err());
     }
 }
