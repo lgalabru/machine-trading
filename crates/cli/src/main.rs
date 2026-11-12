@@ -30,6 +30,7 @@ mod compact;
 mod mcp;
 mod play;
 mod publish;
+mod rescore;
 mod review;
 mod run;
 mod ui;
@@ -149,6 +150,28 @@ enum Command {
         /// `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
         #[arg(long)]
         details: Option<PathBuf>,
+    },
+    /// Score a finished grade again from what it wrote, without running a
+    /// session: for when a scoring rule changes. Each session's report and
+    /// scenario come from its detail file (`mtx grade --details`). Prints
+    /// the new report, and on stderr where it differs from the old one.
+    Rescore {
+        /// The grade's report (`mtx grade --report`).
+        report: PathBuf,
+        /// The grade's detail files (`mtx grade --details`; default:
+        /// `sessions` beside the report, as the verifier writes them).
+        #[arg(long)]
+        details: Option<PathBuf>,
+        /// Write the new report here.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Write Harbor's reward.json for it here.
+        #[arg(long)]
+        reward: Option<PathBuf>,
+        /// Fail unless the new report is the old one: nothing about scoring
+        /// changed.
+        #[arg(long)]
+        check: bool,
     },
     /// Run the reference bot through scenarios and save its PnL in each file.
     Calibrate {
@@ -402,6 +425,19 @@ enum BenchCommand {
         /// tags) point at <site>/social.jpg.
         #[arg(long)]
         site: Option<String>,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Score every trial of a batch or release again from its reports and
+    /// detail files, without running a session (see `mtx rescore`): each
+    /// trial's reward and skill as reported and as scored now.
+    Rescore {
+        /// A batch (jobs/bench/<batch>), a Harbor job, one trial, or a
+        /// published release's version.
+        path: String,
+        /// Fail unless every trial scores as it was reported.
+        #[arg(long)]
+        check: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -680,6 +716,68 @@ async fn run() -> Result<()> {
         }
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
+        }
+        Command::Bench(BenchCommand::Rescore {
+            path,
+            check,
+            results,
+        }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?)?;
+            if check && summary["changed"].as_u64() != Some(0) {
+                eprintln!("{}", serde_json::to_string_pretty(&summary)?);
+                anyhow::bail!(
+                    "{} of {} trials score differently than reported",
+                    summary["changed"],
+                    summary["trials"]
+                );
+            }
+            serde_json::to_string_pretty(&summary)?
+        }
+        Command::Rescore {
+            report,
+            details,
+            out,
+            reward,
+            check,
+        } => {
+            let details = details.unwrap_or_else(|| {
+                report
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join("sessions")
+            });
+            let rescored = rescore::rescore(&report, &details, None)?;
+            for difference in &rescored.differences {
+                eprintln!("{}", rescore::describe(difference));
+            }
+            eprintln!(
+                "{}",
+                if rescored.differences.is_empty() {
+                    format!("the same as {}", report.display())
+                } else {
+                    format!(
+                        "{} parts differ from {}",
+                        rescored.differences.len(),
+                        report.display()
+                    )
+                }
+            );
+            if check && !rescored.differences.is_empty() {
+                anyhow::bail!(
+                    "the grade scores differently than {} says",
+                    report.display()
+                );
+            }
+            let json = serde_json::to_string_pretty(&rescored.report)?;
+            if let Some(path) = out {
+                std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
+            }
+            if let Some(path) = reward {
+                let rewards = serde_json::to_string_pretty(&rescored.report.rewards())?;
+                std::fs::write(&path, rewards).with_context(|| path.display().to_string())?;
+            }
+            json
         }
         Command::Bench(BenchCommand::Review {
             path,
