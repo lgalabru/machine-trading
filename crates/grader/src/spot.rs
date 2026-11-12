@@ -50,8 +50,9 @@ use mtx_kit::{
 use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
-use surfpool_sdk::{BlockProductionMode, CheatcodeFilter, SimnetCommand, Surfnet};
+use surfpool_sdk::{CheatcodeFilter, SimnetCommand, Surfnet};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::UnixStream,
@@ -59,15 +60,14 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    Error, Result, chain,
+    Error, Result,
     error::io_error,
     guard::Guard,
     orders::Traded,
     scenario::Scenario,
     session::{
-        self, BOT_USERS, HELLO_WALL, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions,
-        SessionReport, StepRecord, TURN_BUDGET_PER_STEP, TURN_WALL, Timeline, TurnReport,
-        grader_f64,
+        self, BOT_USERS, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions, SessionReport,
+        StepRecord, TURN_BUDGET_PER_STEP, Timeline, TurnReport, grader_f64,
     },
     snapshot,
 };
@@ -488,6 +488,7 @@ impl Venues {
             let (bids, asks) = top(market.order_book(&state, slot, unix));
             out.push(BookLevels {
                 venue: "phoenix".into(),
+                market: Some(format!("phoenix:spot:{SYMBOL}")),
                 bids,
                 asks,
             });
@@ -499,6 +500,7 @@ impl Venues {
             let (bids, asks) = top(market.order_book(&book.bids, &book.asks, unix, Some(slot)));
             out.push(BookLevels {
                 venue: "openbook".into(),
+                market: Some(format!("openbook:spot:{SYMBOL}")),
                 bids,
                 asks,
             });
@@ -607,6 +609,7 @@ fn venue_of(fill: &MarketFill) -> String {
 fn trade(seen: &Seen, parties: bool) -> Trade {
     Trade {
         venue: venue_of(&seen.fill),
+        market: Some(format!("{}:spot:{SYMBOL}", venue_of(&seen.fill))),
         side: seen.fill.taker_side,
         price: grader_f64(seen.fill.price),
         base: grader_f64(seen.fill.quantity),
@@ -641,6 +644,7 @@ fn venue_error<E: std::fmt::Display>(what: &'static str) -> impl Fn(E) -> Error 
 /// account, or sells into the USDC one).
 pub fn fund(
     surfnet: &Surfnet,
+    rpc: &RpcClient,
     owner: &Keypair,
     base: f64,
     quote: f64,
@@ -664,14 +668,14 @@ pub fn fund(
                 token::create_ata_idempotent(&owner.pubkey(), &owner.pubkey(), &USDC_MINT),
             );
         }
-        mtx_kit::send(&chain::rpc_client(surfnet), owner, instructions, "wrap SOL")?;
+        mtx_kit::send(rpc, owner, instructions, "wrap SOL")?;
     }
     Ok(())
 }
 
 /// Trade a little on each venue as `trader` would: a Phoenix seat, a resting
 /// bid and its cancel, a small sell; an OpenBook open orders account, the
-/// same. Returns the Pyth SOL/USD price. For [`snapshot::prepare_spot`]:
+/// same. Returns the Pyth SOL/USD price. For a snapshot recipe's `spot-exercise` action ([`crate::recipe`]):
 /// every account these touch is then in the surfnet, and so in the export.
 pub async fn exercise(rpc_url: &str, trader: &Keypair) -> Result<f64> {
     use mtx_kit::protocols::{
@@ -775,15 +779,19 @@ pub(crate) async fn run_session(
         .snapshot_dir
         .canonicalize()
         .map_err(io_error(opts.snapshot_dir))?;
-    let (surfnet, _) = snapshot::start_snapshot(&snapshot_dir, snapshot::Access::Private).await?;
+    let (surfnet, _) = snapshot::start_snapshot_stepped(&snapshot_dir).await?;
     let internal = Guard::internal(surfnet.rpc_url()).await?;
-    let rpc = mtx_kit::rpc_client(internal.url());
+    let rpc = mtx_kit::rpc_client_with_timeout(internal.url(), session::INTERNAL_RPC_TIMEOUT);
     let setup_from = rpc.get_slot()?;
-    let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(internal.url()));
+    let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::with_timeout(
+        internal.url(),
+        session::INTERNAL_RPC_TIMEOUT,
+    ));
 
-    let bot = Keypair::new();
+    let bot = opts.keys.keypair("bot", 0);
     fund(
         &surfnet,
+        &rpc,
         &bot,
         spot.base,
         spot.quote,
@@ -795,16 +803,14 @@ pub(crate) async fn run_session(
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
-    surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
-        BlockProductionMode::Manual,
-    ))?;
-    let mut slot = session::manual_slot(&rpc).await?;
+    let mut slot = rpc.get_slot()?;
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
-        warn!(
-            slot,
-            first_slot, "setup ran past the session's first slot: this session won't replay"
-        );
+        return Err(Error::SetupSlots {
+            scenario: scenario.name.clone(),
+            used: slot - setup_from,
+            budget: scenario.setup_slots(),
+        });
     }
     while slot < first_slot {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
@@ -856,6 +862,7 @@ pub(crate) async fn run_session(
     let (reader, mut writer) = socket.into_split();
     let mut reader = BufReader::new(reader).lines();
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
+    let walls = session::Walls::new(opts.trusted, steps);
     info!(
         scenario = scenario.name,
         start_slot, end_slot, steps, "spot bot started"
@@ -867,7 +874,13 @@ pub(crate) async fn run_session(
         slots_per_step: SLOTS_PER_STEP,
         start_slot,
         end_slot,
-        turn_wall_ms: TURN_WALL.as_millis() as u64,
+        turn_wall_ms: walls.announced().as_millis() as u64,
+        reports: scenario.turn_data.as_ref().map(|data| turns::Reports {
+            tape: data.tape,
+            depth: data.depth_levels > 0,
+            timestamps: data.timestamps,
+        }),
+        seed: Some(turns::scenario_seed(&scenario.name)),
     };
     let mut turns = TurnReport {
         steps,
@@ -875,14 +888,13 @@ pub(crate) async fn run_session(
     };
     let legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
         && matches!(
-            tokio::time::timeout(HELLO_WALL, session::next_message(&mut reader)).await,
+            tokio::time::timeout(walls.hello(), session::next_message(&mut reader)).await,
             Ok(Some(Message::Ready))
         ));
     if legacy {
         info!("the bot didn't answer the hello: the world moves at the slot time");
     }
     turns.legacy = legacy;
-    let budget = TURN_BUDGET_PER_STEP * steps as u32;
     let mut spent = Duration::ZERO;
 
     // Every spot market bounds the same SOL, held from the start.
@@ -999,7 +1011,7 @@ pub(crate) async fn run_session(
                 step.unix_timestamp = clock;
             }
         }
-        let wall = TURN_WALL.min(budget.saturating_sub(spent));
+        let wall = walls.turn(spent);
         let answered = session::take_turn(&mut writer, &mut reader, step, wall).await;
         let took = started.elapsed();
         spent += took;
@@ -1335,5 +1347,37 @@ mod tests {
             ..Observed::default()
         };
         assert!(mandate.audit(&observed).is_some());
+    }
+
+    /// A spot session's setup on a stepped surfnet: funding wraps SOL by a
+    /// transaction, which must land through the grader's own client without
+    /// a block (the surfnet produces none until the grader steps it).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stepped_spot_setup_funds_the_wallet_without_a_block() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../snapshots/sol-usdc-spot-2026-11-11")
+            .canonicalize()
+            .unwrap();
+        let (surfnet, _) = snapshot::start_snapshot_stepped(&dir).await.unwrap();
+        let internal = Guard::internal(surfnet.rpc_url()).await.unwrap();
+        let url = internal.url().to_string();
+        let first = mtx_kit::rpc_client(&url).get_slot().unwrap();
+        let owner = Keypair::new();
+        let wallet = owner.pubkey();
+        let funded = tokio::time::timeout(
+            Duration::from_secs(60),
+            tokio::task::spawn_blocking(move || {
+                let rpc = mtx_kit::rpc_client(&url);
+                fund(&surfnet, &rpc, &owner, 2.5, 100.0, true)?;
+                let wsol = token::ata(&wallet, &token::native_mint());
+                let balance = rpc.get_token_account_balance(&wsol)?;
+                Ok::<_, Error>((rpc.get_slot()?, balance.amount))
+            }),
+        )
+        .await
+        .expect("funding a stepped surfnet's wallet hung")
+        .unwrap()
+        .unwrap();
+        assert_eq!(funded, (first, "2500000000".to_string()));
     }
 }

@@ -5,8 +5,9 @@ use clap::{Parser, Subcommand};
 use mtx_grader::{
     carry::CarryFamily,
     grade::{self, GradeOptions},
+    keys::SessionKeys,
     making::MakingFamily,
-    phoenix,
+    phoenix, recipe, replay,
     scenario::{Scenario, ShockFamily},
     snapshot,
     weekend::WeekendFamily,
@@ -108,6 +109,11 @@ enum Command {
         /// Don't open a browser.
         #[arg(long)]
         no_open: bool,
+        /// The address to listen on. Pass 0.0.0.0 to open the studio from
+        /// another device on your network (an iPad): it then prints a URL
+        /// with a token, and a QR code of it.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         /// The machine-trading checkout to use (default: the one this mtx was
         /// built from).
         #[arg(long, env = "MTX_REPO")]
@@ -145,6 +151,20 @@ enum Command {
         /// verifier's rule. The reference can still be a process.
         #[arg(long)]
         components_only: bool,
+        /// The bot is trusted, as the reference is (an anchor or a ladder
+        /// rung): a process bot gets all the time it needs for each turn.
+        #[arg(long)]
+        trusted: bool,
+        /// Run the grade this many times and fail unless every run's session
+        /// reports, the reference's included, are byte for byte the same
+        /// (wall times aside). The report is the first run's, with a
+        /// `replay` section.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        replay: u32,
+        /// While replaying, keep this many threads busy: the replay runs on
+        /// a loaded machine.
+        #[arg(long, default_value_t = 0)]
+        replay_load: usize,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -280,7 +300,7 @@ struct Sessions {
     #[arg(long, default_value = "logs")]
     logs: PathBuf,
     /// Sessions to run at once, each on its own surfnet (1-4). A machine
-    /// that can't keep up fails the run on late slots rather than skewing it.
+    /// that can't keep up grades slower, not differently.
     #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
     jobs: usize,
     /// The first bot user (0-3) sessions run their bots as, when run as
@@ -554,37 +574,24 @@ impl Authoring {
 
 #[derive(Subcommand)]
 enum SnapshotCommand {
-    /// Fork mainnet, warm up the Phoenix accounts a task touches, and export them.
-    Prepare {
-        /// Output directory, e.g. snapshots/phoenix-spcx-2026-10-29.
+    /// Build a snapshot from its recipe: fork, warm up and export. Writes
+    /// beside the recipe, with a manifest that records its hash.
+    Build {
+        /// The recipe, e.g. snapshots/sol-usdc-spot-2026-11-11/recipe.toml.
+        recipe: PathBuf,
+        /// Write here instead of beside the recipe.
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         /// Datasource to fork. May embed an API key; only its host is recorded.
-        #[arg(
-            long,
-            env = "MTX_FORK_RPC_URL",
-            default_value = "https://api.mainnet-beta.solana.com"
-        )]
+        #[arg(long, env = "MTX_FORK_RPC_URL", default_value = recipe::DEFAULT_FORK_RPC)]
         fork_rpc: String,
-        #[arg(long, default_value = phoenix::DEFAULT_API_URL)]
-        phoenix_api: String,
-        #[arg(long, default_value = "SPCX")]
-        symbol: String,
-    },
-    /// Fork mainnet, warm up Phoenix v1's and OpenBook v2's SOL/USDC markets
-    /// and the Pyth SOL/USD feed, and export them: a snapshot for spot
-    /// sessions.
-    PrepareSpot {
-        /// Output directory, e.g. snapshots/sol-usdc-spot-2026-11-11.
+        /// Replace a snapshot already in the output directory.
         #[arg(long)]
-        out: PathBuf,
-        /// Datasource to fork. May embed an API key; only its host is recorded.
-        #[arg(
-            long,
-            env = "MTX_FORK_RPC_URL",
-            default_value = "https://api.mainnet-beta.solana.com"
-        )]
-        fork_rpc: String,
+        force: bool,
+        /// Mixed into the keys of simulated markets and never recorded; the
+        /// same secret rebuilds the same keys. Random by default.
+        #[arg(long, env = "MTX_BUILD_SECRET", hide_env_values = true)]
+        secret: Option<String>,
     },
     /// Restart offline from a snapshot and trade through a scripted crash.
     Verify {
@@ -825,23 +832,24 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&cmp)?
         }
-        Command::Snapshot(SnapshotCommand::Prepare {
+        Command::Snapshot(SnapshotCommand::Build {
+            recipe,
             out,
             fork_rpc,
-            phoenix_api,
-            symbol,
+            force,
+            secret,
         }) => {
-            let manifest = snapshot::prepare(snapshot::PrepareOptions {
-                out_dir: out,
-                fork_rpc_url: fork_rpc,
-                phoenix_api_url: phoenix_api,
-                symbol,
-            })
+            let manifest = recipe::build(
+                &recipe,
+                recipe::BuildOptions {
+                    out_dir: out,
+                    fork_rpc_url: fork_rpc,
+                    force,
+                    secret,
+                },
+            )
             .await?;
             serde_json::to_string_pretty(&manifest)?
-        }
-        Command::Snapshot(SnapshotCommand::PrepareSpot { out, fork_rpc }) => {
-            serde_json::to_string_pretty(&snapshot::prepare_spot(&out, &fork_rpc).await?)?
         }
         Command::Snapshot(SnapshotCommand::VerifyFork {
             fork_rpc,
@@ -980,6 +988,9 @@ async fn run() -> Result<()> {
             tell_regime,
             stop_on_disqualify,
             components_only,
+            trusted,
+            replay,
+            replay_load,
             reward,
             report,
             details,
@@ -987,9 +998,13 @@ async fn run() -> Result<()> {
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
             let mut annotations: Option<Vec<serde_json::Value>> = None;
+            // A drawn set's session keys come from the batch's secret, so
+            // every grade of it signs the same; otherwise from a fresh one.
+            let mut keys = SessionKeys::random();
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
-                    let (seed, hash) = eval_seed()?;
+                    let (seed, hash, batch_keys) = eval_seed()?;
+                    keys = batch_keys;
                     let scenarios = match family {
                         Family::FlashCrash => shaped(
                             ShockFamily::spcx().draw_set("hidden", count, seed),
@@ -1061,7 +1076,7 @@ async fn run() -> Result<()> {
             if let Some(path) = &reward {
                 remove_if_present(path)?;
             }
-            let mut graded = grade::grade(GradeOptions {
+            let options = || GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
                 scenarios: &scenarios,
@@ -1075,10 +1090,38 @@ async fn run() -> Result<()> {
                 detail_dir: details.as_deref(),
                 annotations: annotations.as_deref(),
                 components_only,
+                trusted,
                 observer: None,
-            })
-            .await?;
+                keys: &keys,
+            };
+            let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
+            let mut graded = grade::grade(options()).await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
+            if replay > 1 {
+                let first = replay::reports(&graded)?;
+                let mut differences = Vec::new();
+                for run in 2..=replay as usize {
+                    let mut again = grade::grade(options()).await?;
+                    again.eval_seed_sha256.clone_from(&graded.eval_seed_sha256);
+                    differences.extend(replay::compare(&first, &replay::reports(&again)?, run));
+                    eprintln!(
+                        "replay {run} of {replay}: {}",
+                        if differences.is_empty() {
+                            "the same so far"
+                        } else {
+                            "different"
+                        }
+                    );
+                }
+                graded.replay = Some(replay::ReplayCheck {
+                    runs: replay as usize,
+                    load_threads: replay_load,
+                    reports: first.len(),
+                    identical: differences.is_empty(),
+                    differences,
+                });
+            }
+            drop(load);
             if let Some(path) = &reward
                 && path.exists()
             {
@@ -1087,6 +1130,16 @@ async fn run() -> Result<()> {
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
                 std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
+            }
+            if let Some(check) = graded.replay.as_ref().filter(|check| !check.identical) {
+                let first = check.differences.first().map(ToString::to_string);
+                return Err(mtx_grader::Error::Replay(format!(
+                    "{} reports differed over {} runs; first: {}",
+                    check.differences.len(),
+                    check.runs,
+                    first.unwrap_or_default()
+                ))
+                .into());
             }
             if let Some(path) = reward {
                 let rewards = serde_json::to_string_pretty(&graded.rewards())?;
@@ -1099,9 +1152,11 @@ async fn run() -> Result<()> {
             task,
             port,
             no_open,
+            host,
             repo,
         } => {
             studio::studio(studio::StudioOptions {
+                host: &host,
                 dir: &bot_path,
                 task: task.as_deref(),
                 repo: repo.as_deref(),
@@ -1227,7 +1282,7 @@ fn shaped<S: serde::Serialize>(
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
 /// secret's SHA-256 (hex), which is all a report may say about it.
-fn eval_seed() -> anyhow::Result<(u64, String)> {
+fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     use sha2::{Digest, Sha256};
     let secret = std::env::var("MTX_EVAL_SEED").unwrap_or_default();
     if secret.len() < 32 {
@@ -1241,7 +1296,11 @@ fn eval_seed() -> anyhow::Result<(u64, String)> {
     // The seed is a different hash than the one reported, so the report
     // doesn't hand anyone the seed itself.
     let seed = Sha256::digest([b"mtx-eval-seed:".as_slice(), secret.as_bytes()].concat());
-    Ok((u64::from_le_bytes(seed[..8].try_into()?), hash))
+    Ok((
+        u64::from_le_bytes(seed[..8].try_into()?),
+        hash,
+        SessionKeys::from_eval_seed(secret.as_bytes()),
+    ))
 }
 
 fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
