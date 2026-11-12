@@ -914,6 +914,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
         };
         let logs = studio.dir.join("target/mtx-studio-logs");
         let _ = std::fs::create_dir_all(&logs);
+        let keys = mtx_grader::keys::SessionKeys::random();
         let report = runtime.block_on(async {
             tokio::select! {
                 biased;
@@ -932,7 +933,9 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
                     detail_dir: None,
                     annotations: None,
                     components_only: true,
+                    trusted: false,
                     observer: Some(control.clone() as Arc<dyn StepObserver>),
+                    keys: &keys,
                 }) => Some(report),
             }
         });
@@ -1214,7 +1217,7 @@ impl StepObserver for Control {
                 && trace
                     .sent
                     .iter()
-                    .any(|(a, r)| r.is_ok() && !matches!(a, Action::CancelAll)))
+                    .any(|(a, r)| r.landed() && !matches!(a, Action::CancelAll)))
             || (b.on_trap && trapped);
         match state.mode {
             Mode::Step => self.stop(state, "step", Some(k)),
@@ -1286,6 +1289,8 @@ fn intent_json(intent: &Intent) -> Value {
             size,
         } => json!({ "kind": "limit", "side": side(*s), "price": price, "size": size }),
         Intent::CancelAll => json!({ "kind": "cancelAll" }),
+        // What the studio doesn't draw yet, as the kit writes it.
+        other => json!({ "kind": "other", "text": format!("{other:?}") }),
     }
 }
 
@@ -1301,7 +1306,15 @@ fn action_json(action: &Action) -> Value {
             price,
             size,
         } => json!({ "kind": "limit", "side": side(*s), "price": price, "size": size }),
+        Action::PostOnly {
+            side: s,
+            price,
+            size,
+        } => json!({
+            "kind": "limit", "side": side(*s), "price": price, "size": size, "postOnly": true,
+        }),
         Action::CancelAll => json!({ "kind": "cancelAll" }),
+        other => json!({ "kind": "other", "text": format!("{other:?}") }),
     }
 }
 
@@ -1327,8 +1340,8 @@ fn trace_json(trace: &StepTrace) -> Value {
         "notes": trace.notes,
         "sent": trace.sent.iter().map(|(a, r)| json!({
             "action": action_json(a),
-            "ok": r.is_ok(),
-            "error": r.as_ref().err(),
+            "ok": r.landed(),
+            "error": r.reason(),
         })).collect::<Vec<_>>(),
         "fuel": trace.fuel,
         "rpc_calls": trace.rpc_calls,

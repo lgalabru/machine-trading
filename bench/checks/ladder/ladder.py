@@ -64,6 +64,9 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
         "--first-bot-user", str(first_bot_user),
         "--snapshot", snapshot, "--bot", os.path.join(ROOT, rung["dir"]),
         "--logs", os.path.join(out, "logs", rung["name"]), "--report", report,
+        # Rungs are ours, like the reference: their turns wait for them, so a
+        # rung's skill doesn't depend on how loaded the machine is.
+        "--trusted",
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
