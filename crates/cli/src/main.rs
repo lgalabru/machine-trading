@@ -424,6 +424,13 @@ enum BenchCommand {
 
 #[derive(Subcommand)]
 enum ScenarioCommand {
+    /// Check scenario files as a session would load them: each one's
+    /// path, mandate and timing. A problem says how to fix it.
+    Check {
+        /// The scenario files.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     /// Draw scenarios from a task's family (`--family`), one file per
     /// scenario.
     /// Sets are stratified: each kind of session (a shock's direction and
@@ -841,6 +848,35 @@ async fn run() -> Result<()> {
         }
         Command::Snapshot(SnapshotCommand::Verify { dir, crash_pct }) => {
             serde_json::to_string_pretty(&snapshot::verify(&dir, crash_pct).await?)?
+        }
+        Command::Scenario(ScenarioCommand::Check { files }) => {
+            let mut failed = 0;
+            for file in &files {
+                match mtx_grader::scenario::Scenario::load(file) {
+                    Ok(scenario) => notice::print(
+                        notice::NoticeLevel::Success,
+                        &format!("{} is a scenario", file.display()),
+                        &format!(
+                            "{}: {} steps, {} waypoints",
+                            scenario.name,
+                            scenario.duration_slots.div_ceil(2),
+                            scenario.path.len()
+                        ),
+                    ),
+                    Err(error) => {
+                        failed += 1;
+                        notice::print(
+                            notice::NoticeLevel::Error,
+                            &format!("{} isn't a valid scenario", file.display()),
+                            &format!("{error:#}"),
+                        );
+                    }
+                }
+            }
+            if failed > 0 {
+                anyhow::bail!("{failed} of {} scenario files have problems", files.len());
+            }
+            String::new()
         }
         Command::Scenario(ScenarioCommand::Generate {
             out,

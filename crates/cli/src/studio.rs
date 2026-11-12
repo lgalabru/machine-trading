@@ -127,7 +127,7 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
     let root = crate::bot::repo(options.repo)?;
     let task = crate::bot::resolve_task(&root, options.task)?;
     let snapshot = crate::bot::task_snapshot(&root, &task)?;
-    seed_scenarios(&dir, &root, &task)?;
+    seed_scenarios(&dir)?;
     let (events, _) = broadcast::channel(4096);
     let studio = Arc::new(Studio {
         dir: dir.clone(),
@@ -171,34 +171,42 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
 
 /// The studio's own scenarios, a few steps long and plain to read: the
 /// first to play in a new workspace.
-const FIRST_SCENARIO: &str = "practice-101";
+pub(crate) const FIRST_SCENARIO: &str = "practice-101";
 
-/// A workspace without scenarios gets the task's practice set; every
-/// workspace gets the studio's own (`studio/scenarios/`) if it lacks them.
-fn seed_scenarios(dir: &Path, root: &Path, task: &str) -> Result<()> {
+/// The studio's own scenarios' names (`studio/scenarios/`).
+pub(crate) fn builtin_scenarios() -> Vec<String> {
+    let mut names: Vec<String> = ASSETS
+        .get_dir("scenarios")
+        .into_iter()
+        .flat_map(|d| d.files())
+        .filter_map(|f| {
+            f.path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// One of the studio's own scenarios, by name.
+pub(crate) fn builtin_scenario(name: &str) -> Option<&'static [u8]> {
+    ASSETS
+        .get_file(format!("scenarios/{name}.json"))
+        .map(|f| f.contents())
+}
+
+/// Every workspace gets the studio's own scenarios (`studio/scenarios/`)
+/// that it lacks.
+fn seed_scenarios(dir: &Path) -> Result<()> {
     let scenarios = dir.join(SCENARIOS);
-    if !scenarios.is_dir() {
-        std::fs::create_dir_all(&scenarios)?;
-        for file in crate::bot::practice_scenarios(root, task)? {
-            if let Some(name) = file.file_name() {
-                std::fs::copy(&file, scenarios.join(name))?;
-            }
-        }
-        notice::print(
-            NoticeLevel::Info,
-            "Scenarios",
-            &format!("copied {task}'s practice set into {}", scenarios.display()),
-        );
-    }
-    if let Some(own) = ASSETS.get_dir("scenarios") {
-        for file in own.files() {
-            let Some(name) = file.path().file_name() else {
-                continue;
-            };
-            let to = scenarios.join(name);
-            if !to.exists() {
-                std::fs::write(&to, file.contents())?;
-            }
+    std::fs::create_dir_all(&scenarios)?;
+    for name in builtin_scenarios() {
+        let to = scenarios.join(format!("{name}.json"));
+        if !to.exists()
+            && let Some(bytes) = builtin_scenario(&name)
+        {
+            std::fs::write(&to, bytes)?;
         }
     }
     Ok(())
@@ -503,7 +511,9 @@ async fn handle(studio: &Arc<Studio>, command: &str, args: &Value) -> Result<Val
             let text = str_arg("text")?;
             let context = args["context"].clone();
             let studio = studio.clone();
-            tokio::task::spawn_blocking(move || compose(&studio, &text, &context)).await??;
+            let images: Vec<Value> = args["images"].as_array().cloned().unwrap_or_default();
+            tokio::task::spawn_blocking(move || compose(&studio, &text, &context, &images))
+                .await??;
             Ok(json!({}))
         }
         "composer/cancel" => {
@@ -1282,6 +1292,9 @@ struct AgentState {
     history: Vec<Value>,
     /// The next message's number.
     messages: u64,
+    /// Whether the agent takes images in a prompt (ACP's
+    /// `promptCapabilities.image`), once it has started.
+    images: bool,
 }
 
 fn agent_id(agent: Agent) -> &'static str {
@@ -1362,21 +1375,63 @@ fn discover_agents() -> Vec<Value> {
 
 /// What the agent is told about the workspace, before the first prompt.
 fn primer(studio: &Studio) -> String {
+    let mtx = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "mtx".into());
     format!(
-        "You are working in an mtx studio workspace: a trading strategy for the machine-trading bench, \
-and the market scenarios it plays.\n\
-- The strategy is a Rust crate (src/lib.rs) on mtx-kit, built into a WebAssembly component: \
-`impl Strategy` with `start`, `step` and `end`, and `mtx_kit::export!`. The guide: \
-https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html\n\
-- Scenarios are JSON files in scenarios/ (the {task} task's format: a `path` of waypoints, \
-`slot` and `level_pct`, and a `mandate`).\n\
-- The person drives the studio: they build and play the strategy from the page, and see each step. \
-Edit the files they ask about; don't run the strategy yourself, and keep changes small and explained.\n\
-- Each message may carry context from the page: the open file, the scenario, the last build's \
-errors, and the step the session stopped at.",
-        task = studio.task
+        r#"You are working in an mtx studio workspace, {dir}: a trading strategy for the machine-trading bench, and the market scenarios it plays. The person sees the studio's page: an editor on these files, a chart of the scenario, and the session step by step when they press Play.
+
+The strategy is a Rust crate (src/lib.rs) on mtx-kit, built into a WebAssembly component: `impl Strategy` with `start(&Session)`, `step(&Market, &mut Orders)` and `end`, and `mtx_kit::export!`. `step` reads the market (mark, oracle, best bid and ask, position, pnl) and fills an order sheet: `orders.target_position(units)`, `orders.buy(size, limit)`, `orders.sell(..)`, `orders.bid(price, size)`, `orders.ask(..)`, `orders.quote(bid, ask, size)`, `orders.cancel_all()`. `println!` shows in the session's log. The guide: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html
+
+Scenarios are JSON files in scenarios/, one market session each (the {task} task's format):
+- `name` (the file's name, without .json), `description` (one plain sentence of what happens), `symbol` "SPCX".
+- `duration_slots`: the session's length. A step is 2 slots: 10 slots is 5 steps.
+- `path`: waypoints `{{"slot": s, "level_pct": p}}`. At slot s the market starts to move to p% from its starting mark (-3.0 is 3% below it, 0.0 back to the start), and holds there until the next waypoint.
+- Phoenix moves its price at most 4% at once: a move larger than that lands in parts, one 4% step every 2 slots. The next waypoint must start after the move ends: at or after slot s + 2 * ceil(|move| / 4%) + 1. From 0% to +5% at slot 5 takes 2 steps, so the next waypoint starts at slot 10 or later.
+- `mandate`: keep it as it is (`max_position` is the position cap, `max_drawdown_usd` the loss limit).
+- After writing or changing a scenario, check it: `{mtx} scenario check scenarios/<name>.json`. It says what's wrong and how to fix it. The studio also checks every scenario you touched when your turn ends, and sends you its problems.
+
+To try the strategy yourself: `{mtx} bot run --bot {dir} --scenario scenarios/<name>.json`. It builds, plays one session, and prints what the strategy printed and its PnL (and `--debug --auto 0` for every step). The person can also press Play on the page.
+
+When you're asked to design a strategy for a situation (a market described, or a screenshot of a chart): first write a scenario that reproduces it, as a new file with a plain name, and check it. Then reason about what would trade it well, change src/lib.rs, run it on that scenario, and say what it made and why. Keep changes small and explained; each message may carry the page's context (the open file, the scenario, the step on screen, the last build's errors)."#,
+        dir = studio.dir.display(),
+        task = studio.task,
     )
 }
+
+/// The workspace's scenario files, and when each last changed.
+fn scenario_times(dir: &Path) -> HashMap<String, Option<SystemTime>> {
+    scenario_names(dir)
+        .into_iter()
+        .map(|name| {
+            let modified = std::fs::metadata(dir.join(SCENARIOS).join(format!("{name}.json")))
+                .and_then(|m| m.modified())
+                .ok();
+            (name, modified)
+        })
+        .collect()
+}
+
+/// The scenarios a turn wrote that don't load, and why.
+fn broken_scenarios(
+    dir: &Path,
+    before: &HashMap<String, Option<SystemTime>>,
+) -> Vec<(String, String)> {
+    scenario_times(dir)
+        .into_iter()
+        .filter(|(name, at)| before.get(name) != Some(at))
+        .filter_map(|(name, _)| {
+            let path = dir.join(SCENARIOS).join(format!("{name}.json"));
+            Scenario::load(&path)
+                .err()
+                .map(|error| (format!("{SCENARIOS}/{name}.json"), format!("{error:#}")))
+        })
+        .collect()
+}
+
+/// How many times the studio sends a turn's broken scenarios back to the
+/// agent before leaving them to the person.
+const SCENARIO_FIXES: usize = 2;
 
 /// Record a composer event, and send it: a message's chunks land on the
 /// message with its `id`, a tool call's updates on the call with its.
@@ -1420,8 +1475,10 @@ fn next_message_id(studio: &Studio) -> String {
     format!("m{}", state.messages)
 }
 
-/// One prompt to the agent, its reply streamed to the page.
-fn compose(studio: &Studio, text: &str, context: &Value) -> Result<()> {
+/// One prompt to the agent, its reply streamed to the page. `images` are
+/// pasted screenshots, `{mimeType, data}` (base64), sent as ACP image
+/// blocks. Scenarios the turn breaks go back to the agent to fix.
+fn compose(studio: &Studio, text: &str, context: &Value, images: &[Value]) -> Result<()> {
     let first_line: String = text
         .lines()
         .next()
@@ -1436,20 +1493,34 @@ fn compose(studio: &Studio, text: &str, context: &Value) -> Result<()> {
         .pick
         .unwrap_or(Agent::ClaudeCode)
         .name();
-    notice::print(NoticeLevel::Info, &format!("Asked {name}"), &first_line);
+    let shots = if images.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " (and {} image{})",
+            images.len(),
+            if images.len() == 1 { "" } else { "s" }
+        )
+    };
+    notice::print(
+        NoticeLevel::Info,
+        &format!("Asked {name}{shots}"),
+        &first_line,
+    );
     let user = next_message_id(studio);
     composer_event(
         studio,
         "composer/message",
-        json!({ "id": user, "role": "user", "text": text, "done": true }),
+        json!({ "id": user, "role": "user", "text": text, "done": true, "images": images.len() }),
     );
-    let (client, session) = {
+    let (client, session, first) = {
         let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
         if state.busy {
             bail!("the agent is still answering: cancel it first");
         }
         let pick = state.pick.unwrap_or(Agent::ClaudeCode);
-        if state.client.is_none() {
+        let first = state.client.is_none();
+        if first {
             studio.output("agent", &format!("starting {}…", pick.name()));
             let log = std::fs::File::create(studio.dir.join("target/mtx-studio-agent.log"))
                 .or_else(|_| {
@@ -1464,29 +1535,78 @@ fn compose(studio: &Studio, text: &str, context: &Value) -> Result<()> {
                 let (program, package) = pick.adapter();
                 format!("starting {program}; install it with `npm install -g {package}`")
             })?;
-            client.initialize().context("ACP initialize")?;
+            let init = client.initialize().context("ACP initialize")?;
+            state.images = init.agent_capabilities["promptCapabilities"]["image"] == json!(true);
             let session = client
                 .new_session(&studio.dir, &[])
                 .context("ACP session/new")?;
             state.client = Some((Arc::new(client), session));
-            state.busy = true;
-            let (client, session) = state
-                .client
-                .as_ref()
-                .map(|(c, s)| (c.clone(), s.clone()))
-                .unwrap_or_else(|| unreachable!());
-            drop(state);
-            let first = format!("{}\n\n{}", primer(studio), prompt_text(text, context));
-            return run(studio, &client, &session, &first);
+        }
+        if !images.is_empty() && !state.images {
+            bail!(
+                "{} doesn't take images here: describe the chart instead",
+                pick.name()
+            );
         }
         state.busy = true;
-        state
+        let (client, session) = state
             .client
             .as_ref()
             .map(|(c, s)| (c.clone(), s.clone()))
-            .unwrap_or_else(|| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        (client, session, first)
     };
-    run(studio, &client, &session, &prompt_text(text, context))
+    let mut text = prompt_text(text, context);
+    if first {
+        text = format!("{}\n\n{text}", primer(studio));
+    }
+    let mut blocks = vec![json!({ "type": "text", "text": text })];
+    blocks.extend(images.iter().map(
+        |image| json!({ "type": "image", "mimeType": image["mimeType"], "data": image["data"] }),
+    ));
+    let mut before = scenario_times(&studio.dir);
+    run(studio, &client, &session, blocks)?;
+    for _ in 0..SCENARIO_FIXES {
+        let broken = broken_scenarios(&studio.dir, &before);
+        if broken.is_empty() {
+            return Ok(());
+        }
+        let list: Vec<String> = broken
+            .iter()
+            .map(|(file, error)| format!("- {file}: {error}"))
+            .collect();
+        let note = format!(
+            "mtx refused {}:\n{}",
+            if broken.len() == 1 {
+                "a scenario"
+            } else {
+                "scenarios"
+            },
+            list.join("\n")
+        );
+        notice::print(
+            NoticeLevel::Warning,
+            "A scenario doesn't load",
+            &list.join("\n"),
+        );
+        let id = next_message_id(studio);
+        composer_event(
+            studio,
+            "composer/message",
+            json!({ "id": id, "role": "studio", "text": note, "done": true }),
+        );
+        before = scenario_times(&studio.dir);
+        studio.agent.lock().unwrap_or_else(|e| e.into_inner()).busy = true;
+        run(
+            studio,
+            &client,
+            &session,
+            vec![
+                json!({ "type": "text", "text": format!("{note}\n\nFix the file (`mtx scenario check` says why), then reply in one line.") }),
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 /// The person's message, with the page's context after it.
@@ -1501,9 +1621,14 @@ fn prompt_text(text: &str, context: &Value) -> String {
 }
 
 /// Stream one turn to the page.
-fn run(studio: &Studio, client: &Arc<AgentClient>, session: &str, prompt: &str) -> Result<()> {
+fn run(
+    studio: &Studio,
+    client: &Arc<AgentClient>,
+    session: &str,
+    prompt: Vec<Value>,
+) -> Result<()> {
     let result = (|| -> Result<()> {
-        let mut turn = client.prompt(session, prompt)?;
+        let mut turn = client.prompt_blocks(session, prompt)?;
         // ACP updates a tool call by its id, often without its title: the
         // page gets the whole call each time.
         let mut calls: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
