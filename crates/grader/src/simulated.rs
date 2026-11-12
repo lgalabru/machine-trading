@@ -54,6 +54,9 @@ const PHOENIX_TREES_OFFSET: usize = 576 + 256 + 48;
 const PHOENIX_TREE_HEADER: usize = 32;
 const PHOENIX_ORDER_NODE: usize = 64;
 const PHOENIX_SEAT_NODE: usize = 144;
+/// What the Seat Manager's deposit collector holds to seat traders: it asks
+/// for at least 2,976,880 lamports when it takes the market.
+const SEAT_DEPOSITS: u64 = 10_000_000;
 const COMPUTE_UNITS: u32 = 1_400_000;
 
 /// Which token program owns a mint.
@@ -362,6 +365,17 @@ fn create_account(
     }
 }
 
+/// A system transfer.
+fn transfer(from: &Pubkey, to: &Pubkey, lamports: u64) -> Instruction {
+    let mut data = 2u32.to_le_bytes().to_vec();
+    data.extend_from_slice(&lamports.to_le_bytes());
+    Instruction {
+        program_id: Pubkey::default(),
+        accounts: vec![AccountMeta::new(*from, true), AccountMeta::new(*to, false)],
+        data,
+    }
+}
+
 fn account_meta(key: Pubkey, writable: bool, signer: bool) -> AccountMeta {
     match (writable, signer) {
         (true, s) => AccountMeta::new(key, s),
@@ -523,8 +537,9 @@ fn seat_manager_claim_authority_ix(market: &Pubkey, payer: &Pubkey) -> Instructi
             account_meta(phoenix_v1::PROGRAM_ID, false, false),
             account_meta(phoenix_v1::ix::log_authority(), false, false),
             account_meta(*market, true, false),
-            account_meta(*payer, true, true),
             account_meta(phoenix_v1::ix::seat_manager(market), true, false),
+            account_meta(*payer, true, true),
+            account_meta(phoenix_v1::ix::seat_deposit_collector(market), true, false),
             account_meta(Pubkey::default(), false, false),
         ],
         data: vec![0],
@@ -704,6 +719,11 @@ pub async fn phoenix_v1_market(
         &creator,
         &[],
         vec![
+            transfer(
+                &creator.pubkey(),
+                &phoenix_v1::ix::seat_deposit_collector(&market.pubkey()),
+                SEAT_DEPOSITS,
+            ),
             phoenix_name_successor_ix(
                 &market.pubkey(),
                 &creator.pubkey(),
