@@ -15,6 +15,14 @@ chmod -R a+rX /app/bot
 # behind if the grader itself fails.
 trap 'rm -f /logs/verifier/reward.json' ERR
 
+# This script and the image it runs in must be the same task's: a build that
+# mixed two tasks' files would grade the bot on the wrong market.
+if [ "${MTX_TASK:-}" != "market-making-spcx" ]; then
+  echo "test.sh: this is market-making-spcx's verifier, in an image built for" \
+    "'${MTX_TASK:-}': its tests were mixed up at build time. Rebuild it." >&2
+  exit 3
+fi
+
 if [ -z "${MTX_EVAL_SEED:-}" ]; then
   echo "test.sh: MTX_EVAL_SEED is empty: the batch didn't pass its secret, and" \
     "hidden sets are drawn from it. Export one before harbor run." >&2

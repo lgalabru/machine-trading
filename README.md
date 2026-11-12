@@ -72,10 +72,12 @@ mtx_kit::export!(FadeTheDip);
 ```sh
 mtx bot new ~/my-bot          # a strategy that watches the market and never trades
 cd ~/my-bot
+mtx bot run --debug           # watch it play one session, step by step
 mtx bot practice              # build it, and grade it on a task's practice scenarios
 ```
 
-`Market` is a plain value (the step, mark, oracle, index and best bid and
+The [step-by-step guide](https://lgalabru.github.io/machine-trading/guides/bots/first-strategy.html)
+builds a first strategy and watches it trade. `Market` is a plain value (the step, mark, oracle, index and best bid and
 ask, position, estimated PnL and drawdown, the mandate's room), and `Orders`
 records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `ask`, `cancel_all`), so a strategy can be unit-tested without a chain;
