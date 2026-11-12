@@ -24,6 +24,8 @@ path = "src/main.rs"
 buy = []
 # Buy 1 SOL instead of selling.
 accumulate = []
+# Rest a bid on each of the first six steps, then cancel.
+rest = []
 
 [dependencies]
 serde_json = "1"
