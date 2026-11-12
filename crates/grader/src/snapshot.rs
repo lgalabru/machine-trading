@@ -8,10 +8,12 @@
 //!   `surfnet.json` beside it, if there is one, is used as is.
 //! - `exchange.json`: Phoenix's `/exchange` response taken at the same moment
 //! - `manifest.json`: provenance and a few reference values
+//! - `recipe.toml`: what the snapshot holds and how it is built
 //!
-//! `prepare` forks mainnet and exercises the code paths a task will use, so the
-//! accounts they touch get fetched. `verify` restarts from the files with no
-//! network and checks that trading and scenarios still work.
+//! A snapshot is built from its `recipe.toml` (see [`crate::recipe`]), which
+//! forks mainnet and exercises the code paths a task will use, so the accounts
+//! they touch get fetched. `verify` restarts from the files with no network and
+//! checks that trading and scenarios still work.
 
 use std::{
     path::{Path, PathBuf},
@@ -20,25 +22,23 @@ use std::{
 
 use phoenix_rise::{core::LimitOrderTicket, math::Side, types::exchange::ExchangeResponse};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use surfpool_sdk::{BlockProductionMode, Surfnet, SurfnetBuilder};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::{
-    Result,
-    chain::{self, Override},
+    Result, chain,
     error::{Error, io_error},
     phoenix::{self, Phoenix},
 };
 
 const SURFNET_FILE: &str = "surfnet.json";
-const SURFNET_GZ: &str = "surfnet.json.gz";
-const EXCHANGE_FILE: &str = "exchange.json";
-const MANIFEST_FILE: &str = "manifest.json";
+pub(crate) const SURFNET_GZ: &str = "surfnet.json.gz";
+pub(crate) const EXCHANGE_FILE: &str = "exchange.json";
+pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 /// Matches the CLI default, so scenario slot offsets mean the same thing everywhere.
-const SLOT_TIME_MS: u64 = 250;
+pub(crate) const SLOT_TIME_MS: u64 = 250;
 /// How long one surfnet start may take, and how many times to try. The SDK
 /// picks its ports by binding and releasing them, so another process on the
 /// machine can take one first: the runloop then exits on the bind error and
@@ -55,149 +55,46 @@ pub struct Manifest {
     pub accounts: usize,
     pub symbol: String,
     pub mark_price_usd: f64,
-    /// `spot` for a spot snapshot (see [`prepare_spot`]), which has no
-    /// `exchange.json`; absent for Phoenix Eternal's.
+    /// `spot` for a spot snapshot, which has no `exchange.json`; absent for
+    /// Phoenix Eternal's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// The SHA-256 of the `recipe.toml` it was built from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_sha256: Option<String>,
+    /// Every program and account the recipe declares.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<Source>,
+    /// Whether the snapshot holds anything made rather than forked: a task
+    /// that trades it says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub simulated: bool,
+    /// What the recipe made (see [`crate::simulated`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub created: Vec<Created>,
 }
 
-pub struct PrepareOptions {
-    pub out_dir: PathBuf,
-    pub fork_rpc_url: String,
-    pub phoenix_api_url: String,
-    pub symbol: String,
+/// A program or account a recipe declares.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Source {
+    /// `program`, or the declared kind: `market`, `mint`, `oracle`...
+    pub role: String,
+    pub name: String,
+    pub address: String,
 }
 
-pub async fn prepare(opts: PrepareOptions) -> Result<Manifest> {
-    let exchange = phoenix::fetch_exchange(&opts.phoenix_api_url).await?;
-    let surfnet = Surfnet::builder()
-        .remote_rpc_url(&opts.fork_rpc_url)
-        .block_production_mode(BlockProductionMode::Clock)
-        .slot_time_ms(SLOT_TIME_MS)
-        .start()
-        .await?;
-    let rpc = chain::rpc_client(&surfnet);
-    let phoenix = Phoenix::new(exchange.clone(), surfnet.rpc_url());
-    let market = phoenix.market(&opts.symbol)?;
-
-    // Exercise everything a trading task does, with a throwaway trader, so the
-    // accounts behind each path end up in the local SVM and in the export.
-    let warmup = Keypair::new();
-    let trader = phoenix::onboard_trader(&surfnet, &phoenix, &warmup, 1_000.0).await?;
-    let hawkeye = phoenix.hawkeye(warmup.pubkey());
-    let bbo = hawkeye.view_bbo(&opts.symbol).await?.value;
-    hawkeye.view_margin(warmup.pubkey(), 0, 0).await?;
-    hawkeye
-        .view_margin_for_asset(warmup.pubkey(), 0, 0, market.asset_id)
-        .await?;
-    let mark_price_usd = phoenix.ticks_to_usd(market, bbo.mark_price_ticks);
-    let bid = LimitOrderTicket::builder()
-        .authority(warmup.pubkey())
-        .trader_account(trader)
-        .symbol(&opts.symbol)
-        .side(Side::Bid)
-        .price(mark_price_usd * 0.5)
-        .num_base_lots(phoenix.base_units_to_lots(market, 1.0))
-        .build()?;
-    mtx_kit::send(
-        &rpc,
-        &warmup,
-        phoenix.tx().place_limit_order(bid).await?,
-        "warmup bid",
-    )?;
-    let cancel = phoenix
-        .tx()
-        .build_cancel_all_orders(warmup.pubkey(), trader, &opts.symbol)?;
-    mtx_kit::send(&rpc, &warmup, cancel, "warmup cancel")?;
-
-    // Scenario templates fetch accounts the trading path never reads (oracle
-    // feeds, maker state). Move the market to where it already is so they load
-    // without changing the price we export.
-    chain::forward_surfnet_logs(&surfnet);
-    let perp_asset_map = phoenix.perp_asset_map()?;
-    chain::register_scenario(
-        &rpc,
-        "warmup market move",
-        vec![
-            Override {
-                template_id: "phoenix-market-move",
-                account: perp_asset_map,
-                values: json!({ "symbol": opts.symbol, "target_ticks": bbo.mark_price_ticks.to_string() }),
-                slot: 2,
-                label: "move to current mark".into(),
-            },
-            Override {
-                template_id: "phoenix-market-uncross",
-                account: perp_asset_map,
-                values: json!({ "symbol": opts.symbol }),
-                slot: 2,
-                label: "uncross".into(),
-            },
-        ],
-    )?;
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    let fork_slot = rpc.get_slot()?;
-    let accounts = chain::export_snapshot(&rpc)?;
-    std::fs::create_dir_all(&opts.out_dir).map_err(io_error(&opts.out_dir))?;
-    write_gz(&opts.out_dir.join(SURFNET_GZ), &accounts)?;
-    write_json(&opts.out_dir.join(EXCHANGE_FILE), &exchange)?;
-    let manifest = Manifest {
-        created_at_unix: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default(),
-        fork_host: host_of(&opts.fork_rpc_url),
-        fork_slot,
-        accounts: accounts.len(),
-        symbol: opts.symbol,
-        mark_price_usd,
-        kind: None,
-    };
-    write_json(&opts.out_dir.join(MANIFEST_FILE), &manifest)?;
-    info!(accounts = manifest.accounts, dir = %opts.out_dir.display(), "snapshot written");
-    Ok(manifest)
-}
-
-/// Fork mainnet and write a spot snapshot: Phoenix v1 and OpenBook v2 with
-/// their SOL/USDC markets (books, event heap, vaults, the seat manager), the
-/// Pyth SOL/USD feed and the mints. A throwaway trader exercises every path a
-/// spot session takes (funding, a seat, an open orders account, a resting
-/// order and its cancel, a small take on each venue), so the accounts behind
-/// them are exported.
-pub async fn prepare_spot(out_dir: &Path, fork_rpc_url: &str) -> Result<Manifest> {
-    let surfnet = Surfnet::builder()
-        .remote_rpc_url(fork_rpc_url)
-        .block_production_mode(BlockProductionMode::Clock)
-        .slot_time_ms(SLOT_TIME_MS)
-        .start()
-        .await?;
-    chain::forward_surfnet_logs(&surfnet);
-    let rpc = chain::rpc_client(&surfnet);
-    let warmup = Keypair::new();
-    crate::spot::fund(&surfnet, &warmup, 10.0, 2_000.0, false)?;
-    let price = crate::spot::exercise(surfnet.rpc_url(), &warmup).await?;
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    let fork_slot = rpc.get_slot()?;
-    let accounts = chain::export_snapshot(&rpc)?;
-    std::fs::create_dir_all(out_dir).map_err(io_error(out_dir))?;
-    write_gz(&out_dir.join(SURFNET_GZ), &accounts)?;
-    let manifest = Manifest {
-        created_at_unix: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default(),
-        fork_host: host_of(fork_rpc_url),
-        fork_slot,
-        accounts: accounts.len(),
-        symbol: "SOL-USDC".into(),
-        mark_price_usd: price,
-        kind: Some("spot".into()),
-    };
-    write_json(&out_dir.join(MANIFEST_FILE), &manifest)?;
-    info!(accounts = manifest.accounts, dir = %out_dir.display(), "spot snapshot written");
-    Ok(manifest)
+/// A mint or market a recipe made.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Created {
+    /// `mint`, `phoenix-v1-market` or `openbook-v2-market`.
+    pub kind: String,
+    pub name: String,
+    pub address: String,
+    /// The program that owns it.
+    pub program: String,
+    /// Always true; says so where a reader looks at one entry.
+    pub simulated: bool,
+    pub detail: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -230,7 +127,7 @@ pub enum Access {
 
 /// Starts the surfnet `build` describes, trying again when a start fails or
 /// hangs (see [`SURFNET_START_TIMEOUT`]). A hung start is left on its thread.
-async fn start_surfnet(build: impl Fn() -> SurfnetBuilder) -> Result<Surfnet> {
+pub(crate) async fn start_surfnet(build: impl Fn() -> SurfnetBuilder) -> Result<Surfnet> {
     let mut failure = None;
     for attempt in 1..=SURFNET_START_ATTEMPTS {
         let builder = build();
@@ -408,7 +305,7 @@ async fn crash_test(
     })
 }
 
-fn host_of(url: &str) -> String {
+pub(crate) fn host_of(url: &str) -> String {
     url.split("://")
         .nth(1)
         .and_then(|rest| rest.split(['/', '?']).next())
@@ -459,7 +356,7 @@ pub fn surfnet_file(dir: &Path, manifest: &Manifest) -> Result<PathBuf> {
     Ok(out)
 }
 
-fn write_gz(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn write_gz(path: &Path, value: &impl Serialize) -> Result<()> {
     let file = std::fs::File::create(path).map_err(io_error(path))?;
     let mut gz =
         flate2::write::GzEncoder::new(std::io::BufWriter::new(file), flate2::Compression::best());
@@ -469,7 +366,7 @@ fn write_gz(path: &Path, value: &impl Serialize) -> Result<()> {
         .map_err(io_error(path))
 }
 
-fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let contents = serde_json::to_string_pretty(value)?;
     std::fs::write(path, contents).map_err(io_error(path))
 }
@@ -481,6 +378,8 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -495,6 +394,10 @@ mod tests {
             symbol: "SPCX".into(),
             mark_price_usd: 1.0,
             kind: None,
+            recipe_sha256: None,
+            sources: Vec::new(),
+            simulated: false,
+            created: Vec::new(),
         };
         write_gz(&dir.join(SURFNET_GZ), &json!({ "a": { "lamports": 1 } })).unwrap();
         let first = surfnet_file(&dir, &manifest).unwrap();
