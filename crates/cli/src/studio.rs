@@ -102,13 +102,24 @@ pub struct StudioOptions<'a> {
 
 /// `mtx studio`.
 pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
-    let dir = options
-        .dir
+    // The bot's directory, or its Cargo.toml.
+    let given = if options.dir.file_name().is_some_and(|n| n == "Cargo.toml") {
+        options.dir.parent().unwrap_or(Path::new("."))
+    } else {
+        options.dir
+    };
+    let given = if given.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        given
+    };
+    let dir = given
         .canonicalize()
-        .with_context(|| format!("no workspace at {}", options.dir.display()))?;
+        .with_context(|| format!("no bot at {}", options.dir.display()))?;
     if !dir.join("Cargo.toml").is_file() || !dir.join("src/lib.rs").is_file() {
         bail!(
-            "{} isn't a strategy: the studio opens a crate with src/lib.rs, as `mtx bot new` makes",
+            "{} isn't a strategy: mtx studio opens a crate with src/lib.rs, as `mtx bot new` makes. \
+             Run it from the bot's directory, or pass --bot-path",
             dir.display()
         );
     }
