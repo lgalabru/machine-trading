@@ -28,10 +28,13 @@ mod bot;
 mod charts;
 mod compact;
 mod mcp;
+mod notice;
 mod play;
 mod publish;
 mod review;
 mod run;
+mod studio;
+mod tools;
 mod ui;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
@@ -87,6 +90,29 @@ enum Command {
     /// Write your own bot: start one, practise it on a task, package it.
     #[command(subcommand)]
     Bot(BotCommand),
+    /// A workbench for a strategy and its scenarios, in the browser: edit
+    /// the strategy, ask an agent to change it or the scenario, play it step
+    /// by step against the market's chart.
+    Studio {
+        /// The strategy, as `mtx bot new` makes it: its directory, or its
+        /// Cargo.toml.
+        #[arg(long, default_value = ".")]
+        bot_path: PathBuf,
+        /// The task its scenarios come from, as named in bench/tasks
+        /// (default: the flash-crash task).
+        #[arg(long)]
+        task: Option<String>,
+        /// Port; 0 picks a free one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Don't open a browser.
+        #[arg(long)]
+        no_open: bool,
+        /// The machine-trading checkout to use (default: the one this mtx was
+        /// built from).
+        #[arg(long, env = "MTX_REPO")]
+        repo: Option<PathBuf>,
+    },
     /// Run a bot through scenarios and score it against the reference PnL.
     Grade {
         #[command(flatten)]
@@ -414,6 +440,13 @@ enum BenchCommand {
 
 #[derive(Subcommand)]
 enum ScenarioCommand {
+    /// Check scenario files as a session would load them: each one's
+    /// path, mandate and timing. A problem says how to fix it.
+    Check {
+        /// The scenario files.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     /// Draw scenarios from a task's family (`--family`), one file per
     /// scenario.
     /// Sets are stratified: each kind of session (a shock's direction and
@@ -608,17 +641,20 @@ async fn run() -> Result<()> {
         ) => !authoring.verbose,
         _ => false,
     };
-    // `mtx bot` prints its own summary: the grader's logs only if asked.
-    let default_filter = if interactive || matches!(cli.command, Command::Bot(_)) {
-        "warn"
-    } else {
-        "info"
-    };
+    // `mtx bot` prints its own summary, and `mtx studio` its own notices
+    // (the page shows the sessions): the grader's logs only if asked.
+    let default_filter =
+        if interactive || matches!(cli.command, Command::Bot(_) | Command::Studio { .. }) {
+            "warn"
+        } else {
+            "info"
+        };
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.into()),
         )
         .with_writer(ui::LogWriter)
+        .event_format(notice::NoticeFormat)
         .init();
     // A terminal reads the progress lines; JSON is for scripts.
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
@@ -828,6 +864,35 @@ async fn run() -> Result<()> {
         }
         Command::Snapshot(SnapshotCommand::Verify { dir, crash_pct }) => {
             serde_json::to_string_pretty(&snapshot::verify(&dir, crash_pct).await?)?
+        }
+        Command::Scenario(ScenarioCommand::Check { files }) => {
+            let mut failed = 0;
+            for file in &files {
+                match mtx_grader::scenario::Scenario::load(file) {
+                    Ok(scenario) => notice::print(
+                        notice::NoticeLevel::Success,
+                        &format!("{} is a scenario", file.display()),
+                        &format!(
+                            "{}: {} steps, {} waypoints",
+                            scenario.name,
+                            scenario.duration_slots.div_ceil(2),
+                            scenario.path.len()
+                        ),
+                    ),
+                    Err(error) => {
+                        failed += 1;
+                        notice::print(
+                            notice::NoticeLevel::Error,
+                            &format!("{} isn't a valid scenario", file.display()),
+                            &format!("{error:#}"),
+                        );
+                    }
+                }
+            }
+            if failed > 0 {
+                anyhow::bail!("{failed} of {} scenario files have problems", files.len());
+            }
+            String::new()
         }
         Command::Scenario(ScenarioCommand::Generate {
             out,
@@ -1083,6 +1148,23 @@ async fn run() -> Result<()> {
                 std::fs::write(&path, rewards).with_context(|| path.display().to_string())?;
             }
             json
+        }
+        Command::Studio {
+            bot_path,
+            task,
+            port,
+            no_open,
+            repo,
+        } => {
+            studio::studio(studio::StudioOptions {
+                dir: &bot_path,
+                task: task.as_deref(),
+                repo: repo.as_deref(),
+                port,
+                open: !no_open,
+            })
+            .await?;
+            String::new()
         }
         Command::Bot(command) => match command {
             BotCommand::New { dir, git, repo } => bot::new(&dir, git, repo.as_deref())?,

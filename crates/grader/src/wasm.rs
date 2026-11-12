@@ -401,6 +401,22 @@ impl WasmStrategy {
     }
 }
 
+/// The account at a step, as the session measures it (not the strategy's
+/// estimate): taken before the strategy's turn, so the position change is
+/// what filled during the previous step.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Account {
+    pub value_usd: f64,
+    pub pnl_usd: f64,
+    /// Below the session's highest value so far.
+    pub drawdown_usd: f64,
+    pub position: f64,
+    /// Since the step before: the net of what filled meanwhile.
+    pub position_change: f64,
+    /// The scenario's planned level at the step.
+    pub level_usd: f64,
+}
+
 /// One step of a component's session, as `mtx bot run --debug` shows it:
 /// what the strategy was handed, what it printed and asked for, and what the
 /// grader sent.
@@ -419,6 +435,8 @@ pub struct StepTrace {
     pub sent: Vec<(mtx_kit::Action, std::result::Result<(), String>)>,
     pub fuel: u64,
     pub rpc_calls: u32,
+    /// The account as the session measured it at this step.
+    pub account: Option<Account>,
 }
 
 /// Watches a component's session step by step: `mtx bot run --debug`. It
@@ -457,6 +475,8 @@ pub struct WasmBot {
     /// didn't load, or it trapped (Wasmtime won't enter its instance again).
     pub stopped: Option<String>,
     observer: Option<std::sync::Arc<dyn StepObserver>>,
+    /// The account the session measured for the coming turn.
+    account: Option<Account>,
 }
 
 impl WasmBot {
@@ -561,6 +581,7 @@ impl WasmBot {
             last: None,
             stopped,
             observer,
+            account: None,
         })
     }
 
@@ -649,6 +670,7 @@ impl WasmBot {
                 sent: Vec::new(),
                 fuel,
                 rpc_calls,
+                account: self.account,
             }
         });
         let intents = match outcome {
@@ -713,6 +735,11 @@ impl WasmBot {
         );
         self.observe(trace);
         true
+    }
+
+    /// The account as the session measured it, for the next turn's trace.
+    pub fn measured(&mut self, account: Account) {
+        self.account = Some(account);
     }
 
     /// Hand a step's trace to the observer, if there is one.
