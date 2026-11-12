@@ -33,8 +33,8 @@ public data pulled on 2026-11-11 and 2026-11-12.
 
 | File | Fair value from | Main limits |
 |---|---|---|
-| `sol-usd.20261112.24db85c6` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
-| `spcx.20261112.2b3c40c1` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
+| `sol-usd.20261112.f34a5413` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
+| `spcx.20261112.35b73974` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
 
 Each file lists its sources and limits under `[meta]`.
 
@@ -65,15 +65,26 @@ calibration:
   multiplier and its within-state log-sd. The draw is normalized so that
   the median session (over regimes, level draws and hours of the day)
   runs at `per_second_sd`.
-  - The fitter sets `per_second_sd` so that the model's median window sd
-    matches the real windows' median. It divides out what the model's own
-    windows read at unit level.
-  - It fits `df` the same way, to the real windows' within-window
-    kurtosis.
+  - The fitter fits the model to the same window statistics the checks
+    read, by simulating the model's own sessions as `check_model` draws
+    them (for SOL, ticked as the real closes are):
+    - `per_second_sd` matches the real windows' median window sd;
+    - `df` matches their within-window kurtosis;
+    - the level dispersion matches their vol of vol. For SOL that is a
+      common scale on the regimes' log-sds; for SPCX it is the single
+      state's log-sd.
+    - For SPCX, the GARCH `alpha` and persistence also match the |r| ACF
+      at lags 1 and 5, and the mark's half-life matches the lag-1 return
+      ACF.
   - Regimes switch at their hourly rates. The calendar and the hour of the
     day scale each block.
 - **Returns.** The model runs GARCH(1,1) on blocks with unit-variance
   Student-t innovations, then a Gaussian bridge from blocks to slots.
+- **Mark.** A file whose fair value is a venue's smoothed mark (SPCX's
+  Phoenix mark) has `[fair_value.mark]`. Every `update_seconds` (5 s) the
+  output moves toward the path by an exponential average with the fitted
+  half-life (2.7 s), and holds in between. That smoothing gives real 1 m
+  marks their small positive lag-1 autocorrelation.
 - **Events.** A gap is drawn when the calendar enters a session kind that
   gaps. Background jumps (a Poisson process) are opt-in, because the
   fitted tails already hold those moves. A tail move lands in one slot,
@@ -108,8 +119,8 @@ lead_seconds = 60
 ```
 
 ```sh
-mtx market-cal show calibration/market/spcx.20261112.2b3c40c1.toml
-mtx market-cal generate --calibration calibration/market/spcx.20261112.2b3c40c1.toml \
+mtx market-cal show calibration/market/spcx.20261112.35b73974.toml
+mtx market-cal generate --calibration calibration/market/spcx.20261112.35b73974.toml \
   --template bench/tasks/<task>/environment/practice/<one>.json \
   --spec open.toml --out /tmp/drawn --prefix open --count 6 --seed 7
 ```
@@ -141,7 +152,7 @@ Each file's `[realism]` section names the bars each statistic reads:
 | Check | Statistic | Gated | The obviously wrong value its band must leave out |
 |---|---|---|---|
 | `vol_level` | median over windows of their return sd | yes, required | half and twice the real value |
-| `vol_of_vol` | coefficient of variation of the window sds: clustering across sessions | yes, required | the windows at one common sd |
+| `vol_of_vol` | spread of the windows' log sd (interquartile range / 1.349): clustering across sessions | yes, required | the windows at one common sd |
 | `kurtosis_within` | kurtosis of returns, each window scaled to unit RMS | yes, required (or `tail_ratio`) | Gaussian returns at each window's sd |
 | `tail_ratio` | 99th over 90th percentile of \|r\|, each window scaled to unit RMS | yes, required (or `kurtosis_within`) | the same Gaussian windows |
 | `clustering_lag_<n>` | ACF of \|r\| within windows at each lag | yes | each window shuffled |
@@ -160,8 +171,16 @@ the difference:
 - the generated statistic's, bootstrapped from the generated windows (200
   draws, fixed seed), and at least the real spread at that many windows.
 
-So a fair generator passes whatever its seed. Only the gap check, resting
-on about a hundred opens, keeps a stated band.
+A fair generator should therefore rarely fail.
+
+**Measured false-fail rate.** The calibrated model was checked on 60 fresh
+seeds at 300 sessions and 60 at 1000, for each file: 240 runs in all, with
+0 fails and 0 not judged. On the same seeds the no-regimes market was
+caught 240 out of 240 times. The ignored test `false_fail_rates` reruns
+this in a few seconds in release. Its assertion bar is at most 1 fail in
+60 (≤2%) per file and size, and at least 57 catches in 60 (≥95%).
+
+Only the gap check, resting on about a hundred opens, keeps a stated band.
 
 **Power.** The fitter also records what each statistic reads on the
 obviously wrong market (`[realism.null]`):
@@ -196,8 +215,8 @@ judged against them on returns.
 `passed` is true only on `pass`.
 
 ```sh
-mtx market-cal check model --calibration calibration/market/sol-usd.20261112.24db85c6.toml
-mtx market-cal check market-making --calibration calibration/market/sol-usd.20261112.24db85c6.toml
+mtx market-cal check model --calibration calibration/market/sol-usd.20261112.f34a5413.toml
+mtx market-cal check market-making --calibration calibration/market/sol-usd.20261112.f34a5413.toml
 mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file>
 ```
 
@@ -211,7 +230,7 @@ mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file
 
 **What the shipped files reject.** A sweep of wrong markets ran at 300
 sessions, on seeds 1-3, against both files. The calibrated model passed
-all 6 runs, and every wrong market failed every run:
+all 6 runs, and every wrong market failed every run (54 of 54):
 - constant-volatility Gaussian;
 - volatility at 0.5×, 0.7×, 1.5× and 2×;
 - no session-to-session vol dispersion;
