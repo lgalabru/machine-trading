@@ -741,6 +741,24 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         guard.set_step(k);
         guard.set_turn(true);
         if let Some(bot) = wasm_bot.as_mut() {
+            if let Some(now) = steps_seen.last() {
+                let peak = steps_seen
+                    .iter()
+                    .map(|r| r.value_usd)
+                    .fold(start_value_usd, f64::max);
+                let before = steps_seen
+                    .len()
+                    .checked_sub(2)
+                    .map_or(0.0, |i| steps_seen[i].position);
+                bot.measured(crate::wasm::Account {
+                    value_usd: now.value_usd,
+                    pnl_usd: now.pnl_usd,
+                    drawdown_usd: peak - now.value_usd,
+                    position: now.position,
+                    position_change: now.position - before,
+                    level_usd: now.level_usd,
+                });
+            }
             let started = Instant::now();
             let answered = bot.turn(&Step::new(k, slot, k + 1 == steps)).await;
             let took = started.elapsed();

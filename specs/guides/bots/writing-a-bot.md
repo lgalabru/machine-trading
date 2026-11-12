@@ -264,7 +264,7 @@ can't show: fills, slippage, and the market moving.
 
 | Command | What it does |
 | --- | --- |
-| `mtx bot run` | Builds the bot and plays one practice session, showing what it printed. `--debug` stops at every step: the market, what it printed, its sheet, the orders sent (`--auto 200`, `--from 40`, `--scenario practice-4`). |
+| `mtx bot run` | Builds the bot and plays one practice session, showing what it printed. `--debug` stops at every step: the market, what it printed, its sheet, the orders sent (`--auto 200`, `--from 40`). It plays `practice-101` (5 steps) unless `--scenario` names another: `practice-102` (10 steps), one of the task's practice set, or a file. |
 | `mtx bot practice` | Builds the bot, then grades it on the task's practice scenarios. |
 | `mtx bot practice --task <name>` | Another task in `bench/tasks`, such as the market-making one. |
 | `mtx bot practice more/*.json` | Grades on scenarios `mtx scenario generate` drew. |

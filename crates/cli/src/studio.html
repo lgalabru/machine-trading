@@ -1,0 +1,1344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mtx studio</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #000; --pane: #0a0a0c; --pane-2: #111114; --raise: #18181b; --raise-2: #222226;
+    --line: #232327; --line-soft: #18181b;
+    --text: #fafafa; --text-2: #a1a1aa; --text-3: #71717a; --text-4: #52525b;
+    --accent: #a2ef5b; --accent-soft: rgba(162, 239, 91, .13);
+    --up: #5ed16a; --down: #ff5f57; --warn: #f5b74a; --blue: #7aa2f7; --violet: #bf5af2;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --gap: 6px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); overflow: hidden; }
+  body { font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+  button, select, textarea, input { font: inherit; color: inherit; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--text-3); }
+  .pos { color: var(--up); } .neg { color: var(--down); }
+
+  /* The bar: where you are, and whether the server is there. */
+  .bar { flex: none; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-size: 12.5px; color: var(--text-2); user-select: none; }
+  .bar .brand { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 650; letter-spacing: -.01em; }
+  .bar .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 10px rgba(162, 239, 91, .6); }
+  .bar .sep { color: var(--text-4); }
+  .bar .ws { color: var(--text); font-weight: 500; }
+  .bar .tag { font: 600 10.5px var(--mono); padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--text-2); }
+  .bar .tag.mock { color: var(--warn); border-color: rgba(245, 183, 74, .4); }
+  .bar .grow { flex: 1; }
+  .bar .conn { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); }
+  .bar .conn i { width: 6px; height: 6px; border-radius: 99px; background: var(--text-4); }
+  .bar .conn.on i { background: var(--up); } .bar .conn.off i { background: var(--down); animation: blink 1.2s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+
+  /* Four panes: two columns, each split in two; the gaps between them drag. */
+  #grid { flex: 1; min-height: 0; display: flex; padding: 0 var(--gap) var(--gap); }
+  .col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #col-l { flex: 0 0 calc(var(--lw, .58) * (100% - var(--gap))); }
+  #col-r { flex: 1; }
+  .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--pane); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color .12s; }
+  .pane:focus-within { border-color: #34343a; }
+  #col-l > .pane:first-child { flex: 0 0 calc(var(--lt, .85) * (100% - var(--gap))); }
+  #col-r > .pane:first-child { flex: 0 0 calc(var(--rt, .61) * (100% - var(--gap))); }
+  .col > .pane:last-child { flex: 1; }
+  .split { flex: none; position: relative; z-index: 5; }
+  .split.v { width: var(--gap); cursor: col-resize; }
+  .split.h { height: var(--gap); cursor: row-resize; }
+  .split::after { content: ""; position: absolute; inset: 0; border-radius: 3px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+  .split.v::after { left: 2px; right: 2px; } .split.h::after { top: 2px; bottom: 2px; }
+  .split:hover::after, .split.drag::after { opacity: .7; }
+  body.dragging { user-select: none; } body.dragging iframe, body.dragging .cm-editor { pointer-events: none; }
+  body[data-max] .split, body[data-max] .pane:not(.max), body[data-max] .col:not(:has(.max)) { display: none; }
+  body[data-max] .col:has(.max), body[data-max] .pane.max { flex: 1 1 100% !important; }
+
+  .head { flex: none; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); background: var(--pane-2); min-width: 0; }
+  .head .title { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); flex: none; }
+  .head .grow { flex: 1; min-width: 0; }
+  .body { flex: 1; min-height: 0; position: relative; }
+  .ib { flex: none; display: inline-grid; place-items: center; width: 26px; height: 24px; border-radius: 6px; border: 0; background: none; color: var(--text-3); cursor: pointer; }
+  .ib:hover { background: var(--raise-2); color: var(--text); }
+  .ib svg { width: 14px; height: 14px; }
+  .btn { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--raise); color: var(--text-2); cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .btn:hover:not(:disabled) { color: var(--text); border-color: #3a3a40; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn svg { width: 12px; height: 12px; }
+  .btn.icon { padding: 0 6px; }
+  .btn.go { background: var(--accent); border-color: var(--accent); color: #071203; font-weight: 650; }
+  .btn.go:hover:not(:disabled) { filter: brightness(1.08); color: #071203; border-color: var(--accent); }
+  .btn.on { color: var(--accent); border-color: rgba(162, 239, 91, .45); background: var(--accent-soft); }
+  select.pick { height: 24px; max-width: 190px; padding: 0 22px 0 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--raise) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%2371717a'/%3E%3C/svg%3E") no-repeat right 8px center; appearance: none; color: var(--text-2); font-size: 12px; cursor: pointer; }
+  select.pick:hover { color: var(--text); border-color: #3a3a40; }
+  .seg { flex: none; display: flex; padding: 2px; gap: 1px; border-radius: 7px; background: var(--raise); border: 1px solid var(--line); }
+  .seg button { border: 0; background: none; height: 18px; padding: 0 7px; border-radius: 5px; font: 600 10.5px var(--mono); color: var(--text-3); cursor: pointer; }
+  .seg button.on { background: #34343a; color: var(--text); }
+
+  /* Editor. */
+  .tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; align-self: stretch; align-items: flex-end; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 29px; padding: 0 10px; border-radius: 7px 7px 0 0; border: 1px solid transparent; border-bottom: 0; background: none; color: var(--text-3); cursor: pointer; font: 12px var(--mono); }
+  .tab:hover { color: var(--text-2); }
+  .tab.on { background: var(--pane); border-color: var(--line); color: var(--text); position: relative; top: 1px; }
+  .tab .dirty { width: 6px; height: 6px; border-radius: 99px; background: var(--warn); display: none; }
+  .tab.is-dirty .dirty { display: block; }
+  .tab .errs { font: 600 10px var(--mono); color: var(--down); }
+  #editor { position: absolute; inset: 0; }
+  #editor .cm-editor { height: 100%; }
+  .notice { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 6; display: none; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; background: #1b1810; border: 1px solid rgba(245, 183, 74, .4); color: #f3dfb4; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0, 0, 0, .6); }
+  .notice.on { display: flex; }
+  .notice .grow { flex: 1; }
+
+  /* Market. */
+  #market-stats { display: flex; align-items: baseline; gap: 18px; padding: 10px 14px 2px; flex: none; min-width: 0; overflow: hidden; white-space: nowrap; }
+  #market-stats .big { font: 600 24px/1 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; }
+  #market-stats .d { align-self: center; margin-left: -8px; font-size: 12px; padding: 1px 6px; }
+  .stat .v { padding: 0 3px; margin: 0 -3px; border-radius: 4px; }
+  .stat { display: flex; flex-direction: column; gap: 1px; }
+  .stat .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+  .stat .v { font: 600 12.5px var(--mono); }
+  #market-desc { padding: 2px 14px 0; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+  #chart { position: absolute; inset: 0; }
+  #chart svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #chart text { font: 500 10px var(--mono); fill: #8e8e93; }
+  #chart .lab { font: 700 9px var(--sans); letter-spacing: .09em; fill: #52525b; }
+  .market-body { display: flex; flex-direction: column; }
+  .market-body .plot { flex: 1; min-height: 0; position: relative; }
+  .legend { display: flex; gap: 12px; align-items: center; font-size: 11px; color: var(--text-3); min-width: 0; overflow: hidden; white-space: nowrap; }
+  .legend i { display: inline-block; width: 12px; height: 2px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .tip { position: fixed; z-index: 50; pointer-events: none; display: none; min-width: 150px; padding: 7px 9px; border-radius: 8px; background: rgba(12, 12, 14, .96); border: 1px solid var(--line); font: 11.5px/1.55 var(--mono); color: var(--text-2); box-shadow: 0 8px 24px rgba(0, 0, 0, .55); }
+  .tip b { color: var(--text); font-weight: 600; }
+  .tip .r { display: flex; justify-content: space-between; gap: 14px; }
+
+  /* Execution. */
+  .state { flex: none; display: inline-flex; align-items: center; gap: 6px; font: 600 10.5px var(--mono); padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--text-3); white-space: nowrap; }
+  .state i { width: 6px; height: 6px; border-radius: 99px; background: currentColor; }
+  .state.running { color: var(--accent); border-color: rgba(162, 239, 91, .4); } .state.running i { animation: blink 1s ease-in-out infinite; }
+  .state.stopped { color: var(--warn); border-color: rgba(245, 183, 74, .4); }
+  .state.building, .state.starting { color: var(--blue); border-color: rgba(122, 162, 247, .4); } .state.building i, .state.starting i { animation: blink 1s ease-in-out infinite; }
+  .state.failed { color: var(--down); border-color: rgba(255, 95, 87, .4); }
+  .sub { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .sub::-webkit-scrollbar { display: none; }
+  .sub .lbl { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-4); margin: 0 2px 0 6px; flex: none; }
+  .view-tabs { display: flex; gap: 2px; }
+  .view-tabs button { border: 0; background: none; padding: 3px 9px; border-radius: 6px; color: var(--text-3); cursor: pointer; font-size: 12px; font-weight: 500; }
+  .view-tabs button.on { background: var(--raise-2); color: var(--text); }
+  .view-tabs .cnt { font: 600 10px var(--mono); margin-left: 4px; color: var(--down); }
+  .exec-body { display: flex; flex-direction: column; }
+  .scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #2c2c30 transparent; }
+  #steps, #buildlog { font: 12px/1.6 var(--mono); padding: 6px 0 14px; }
+  .empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--text-3); font: 13px/1.6 var(--sans); padding: 20px; }
+  .empty kbd, .hint kbd { font: 600 10.5px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--raise-2); border: 1px solid var(--line); color: var(--text-2); }
+  /* The session as a console: one block per step. Its numbers with what
+     changed since the step before, then what the strategy printed and did. */
+  .st { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 0 8px; padding: 3px 12px 3px 6px; border-left: 2px solid transparent; cursor: pointer; }
+  .st:hover { background: rgba(255, 255, 255, .03); }
+  .st .n { text-align: right; color: var(--text-4); font-weight: 600; }
+  .st.act .n { color: var(--text); }
+  .st .nums { display: flex; flex-wrap: wrap; gap: 0 18px; color: var(--text-3); white-space: nowrap; }
+  .st .m { display: inline-flex; align-items: baseline; gap: 6px; }
+  .st .m .k { font: 600 9.5px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--text-4); }
+  .st .m b { font-weight: 500; color: var(--text-2); }
+  .st .m.chg b { color: var(--text); font-weight: 600; }
+  .d { font: 600 11px var(--mono); padding: 0 5px; border-radius: 4px; }
+  .d.up { color: var(--up); background: rgba(94, 209, 106, .12); } .d.down { color: var(--down); background: rgba(255, 95, 87, .12); }
+  .st.fresh .d.up, .flash-up { animation: flash-up .9s ease-out; }
+  .st.fresh .d.down, .flash-down { animation: flash-down .9s ease-out; }
+  @keyframes flash-up { 0%, 25% { background: var(--up); color: #04160a; box-shadow: 0 0 0 3px rgba(94, 209, 106, .35); } }
+  @keyframes flash-down { 0%, 25% { background: var(--down); color: #fff; box-shadow: 0 0 0 3px rgba(255, 95, 87, .35); } }
+  .lg { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .lg i { font-style: normal; color: var(--text-4); text-align: center; }
+  .lg.say { color: var(--text); } .lg.say i { color: var(--accent); }
+  .lg.ask { color: var(--text-2); } .lg.ask i { color: var(--blue); }
+  .lg.ok i { color: var(--accent); } .lg.ok { color: var(--text-2); }
+  .lg.bad, .lg.bad i { color: var(--down); }
+  .lg.fill.buy, .lg.fill.buy i { color: var(--up); } .lg.fill.sell, .lg.fill.sell i { color: var(--down); }
+  .lg.dim { color: var(--text-3); }
+  .lg b { font-weight: 600; color: var(--text); }
+  .st .more { display: none; margin-top: 2px; padding-top: 2px; border-top: 1px dashed var(--line); color: var(--text-3); }
+  .st.open .more { display: block; }
+  .chip.bp { color: var(--down); background: rgba(255, 95, 87, .13); font: 600 9.5px var(--mono); padding: 0 6px; border-radius: 99px; }
+  .lnk { color: var(--text-3); cursor: pointer; text-decoration: underline dotted; }
+  .lnk:hover { color: var(--text); }
+  .st.sel { border-left-color: var(--text-3); background: rgba(255, 255, 255, .03); }
+  .st.cur { border-left-color: var(--accent); background: var(--accent-soft); }
+  .note { padding: 2px 12px; color: var(--text-3); white-space: pre-wrap; }
+  .note.printed { color: var(--text-2); } .note.warn { color: var(--warn); } .note.bad { color: var(--down); }
+  .report { margin: 10px 12px 2px; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--pane-2); font-family: var(--sans); display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .report .big { font: 600 20px/1 var(--sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .report.bad { border-color: rgba(255, 95, 87, .45); }
+  #buildlog .l { padding: 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+  #buildlog .l.err { color: var(--down); } #buildlog .l.warn { color: var(--warn); } #buildlog .l.ok { color: var(--accent); }
+  .diag { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; margin: 6px 10px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--pane-2); cursor: pointer; font-family: var(--sans); font-size: 12.5px; }
+  .diag:hover { border-color: #3a3a40; }
+  .diag .where { font: 11px var(--mono); color: var(--text-3); }
+  .diag.error i { color: var(--down); } .diag.warning i { color: var(--warn); }
+  .diag i { font-style: normal; font-weight: 700; }
+
+  /* Composer. */
+  #thread { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 100%; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; max-width: 86%; padding: 7px 11px; border-radius: 12px 12px 3px 12px; background: var(--raise-2); white-space: pre-wrap; }
+  .msg.agent p { margin: 0 0 8px; } .msg.agent p:last-child { margin: 0; }
+  .msg code { font: 12px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--raise-2); }
+  .msg pre { margin: 0 0 8px; padding: 9px 11px; border-radius: 8px; background: #060607; border: 1px solid var(--line); overflow: auto; font: 12px/1.55 var(--mono); }
+  .msg pre code { padding: 0; background: none; }
+  /* The agent's tool calls: one line per run, in words. It opens to its
+     calls, and a call to its details. */
+  .run { align-self: stretch; font-size: 12.5px; color: var(--text-2); min-width: 0; }
+  .run summary { list-style: none; display: grid; grid-template-columns: 14px minmax(0, 1fr) 10px; gap: 8px; align-items: baseline; cursor: pointer; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; }
+  .run summary::-webkit-details-marker { display: none; }
+  .run summary:hover { background: rgba(255, 255, 255, .04); color: var(--text); }
+  .run summary .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run[open] > summary .what, .call[open] > summary .what { white-space: normal; }
+  .run summary::after { content: "›"; color: var(--text-4); transition: transform .12s; justify-self: center; }
+  .run details[open] > summary::after, .run[open] > summary::after { transform: rotate(90deg); }
+  .run .calls { margin: 2px 0 4px 6px; padding-left: 12px; border-left: 1px solid var(--line); }
+  .call summary { color: var(--text-3); font-size: 12px; }
+  .mk { align-self: center; justify-self: center; width: 10px; height: 10px; font: 700 10px/10px var(--mono); text-align: center; }
+  .mk.completed { color: var(--accent); } .mk.completed::before { content: "✓"; }
+  .mk.failed { color: var(--down); } .mk.failed::before { content: "✗"; }
+  .mk.pending, .mk.in_progress { border: 1.5px solid var(--line); border-top-color: var(--warn); border-radius: 99px; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .call .detail { margin: 3px 0 8px 22px; font: 11.5px/1.5 var(--mono); min-width: 0; }
+  .call .detail pre { margin: 0 0 4px; padding: 6px 9px; border-radius: 7px; background: #060607; border: 1px solid var(--line); max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); scrollbar-width: thin; }
+  .call .detail pre.cmd { color: var(--text); }
+  .call .detail .kv { color: var(--text-3); margin-bottom: 3px; overflow-wrap: anywhere; }
+  .call .detail .kv b { color: var(--text-2); font-weight: 500; }
+  .call .detail .kv .lnk { margin-left: 6px; }
+  .diff i { display: block; font-style: normal; padding: 0 4px; margin: 0 -4px; }
+  .diff .del { color: #ffb3ae; background: rgba(255, 95, 87, .13); } .diff .add { color: #b5efbb; background: rgba(94, 209, 106, .13); }
+  .diff .gap { color: var(--text-4); }
+  /* While the agent's turn runs, one moving thing at the end of the thread:
+     a running tool call's own spinner, or this line. It opens to what the
+     agent is thinking. */
+  .live { align-self: stretch; font-size: 12.5px; color: var(--text-3); min-width: 0; }
+  .live summary { list-style: none; display: inline-grid; grid-template-columns: 14px auto; gap: 8px; align-items: baseline; cursor: default; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; }
+  .live summary::-webkit-details-marker { display: none; }
+  .live.has-thought summary { cursor: pointer; }
+  .live.has-thought summary:hover { background: rgba(255, 255, 255, .04); color: var(--text-2); }
+  .live.has-thought summary .what::after { content: " ›"; color: var(--text-4); }
+  .live .thinking { margin: 2px 0 2px 22px; max-height: 120px; overflow: auto; font-size: 12px; line-height: 1.5; color: var(--text-4); white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: none; }
+  /* The input is the pane's own floor: no box of its own. With no messages
+     yet it fills the pane. */
+  .compose { flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line-soft); }
+  .composer-body:not(.has-thread) .compose { flex: 1; border-top: 0; }
+  .composer-body:not(.has-thread) #thread-scroll { display: none; }
+  .compose textarea { display: block; flex: 1; width: 100%; min-height: 38px; max-height: 180px; resize: none; border: 0; outline: 0; background: none; padding: 10px 14px 4px; font: 13px/1.5 var(--sans); }
+  .composer-body:not(.has-thread) .compose textarea { max-height: none; }
+  .compose textarea::placeholder { color: var(--text-4); }
+  .shots { flex: none; display: flex; gap: 8px; padding: 10px 14px 0; overflow-x: auto; scrollbar-width: none; }
+  .shot { position: relative; flex: none; }
+  .shot img, .msg .pics img { display: block; height: 54px; max-width: 120px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #000; }
+  .shot button { position: absolute; top: -6px; right: -6px; width: 17px; height: 17px; border-radius: 99px; border: 1px solid var(--line); background: var(--raise-2); color: var(--text-2); font: 600 10px/1 var(--sans); cursor: pointer; padding: 0; }
+  .shot button:hover { color: var(--text); background: #3a3a40; }
+  .msg .pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+  .msg .pics .count { font: 11px var(--mono); color: var(--text-3); }
+  .msg.studio { align-self: stretch; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; padding: 7px 10px; border-radius: 8px; border: 1px dashed rgba(245, 183, 74, .45); background: rgba(245, 183, 74, .06); color: #e9d6ab; font: 12px/1.55 var(--mono); white-space: pre-wrap; }
+  .msg.studio::before { content: "!"; font-weight: 700; color: var(--warn); text-align: center; }
+  #p-composer.drop { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft) inset; }
+  .compose .foot { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px 12px; min-width: 0; }
+  .ctx { display: flex; gap: 5px; min-width: 0; overflow: hidden; flex: 1; }
+  .ctx button { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line); background: none; border-radius: 99px; padding: 1px 8px; font: 11px var(--mono); color: var(--text-2); cursor: pointer; }
+  .ctx button.off { color: var(--text-4); text-decoration: line-through; border-style: dashed; }
+  .composer-body { display: flex; flex-direction: column; }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; padding: 8px 14px; border-radius: 9px; background: #1c1012; border: 1px solid rgba(255, 95, 87, .45); color: #ffd5d2; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0, 0, 0, .6); display: none; max-width: 70vw; }
+  .toast.on { display: block; }
+
+  /* A narrow window: the panes stack and the page scrolls. */
+  @media (max-width: 820px) {
+    html, body { overflow: auto; height: auto; }
+    #grid { flex-direction: column; gap: var(--gap); }
+    .col { display: contents; }
+    .split { display: none; }
+    .pane { flex: none !important; height: 70vh; }
+  }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="brand"><span class="dot"></span>mtx studio</span>
+  <span class="sep">›</span><span class="ws" id="ws-name">…</span>
+  <span class="tag" id="task-tag" hidden></span>
+  <span class="tag mock" id="mock-tag" hidden>mock</span>
+  <span class="grow"></span>
+  <span class="conn" id="conn"><i></i><span>connecting</span></span>
+</div>
+
+<div id="grid">
+  <div class="col" id="col-l">
+    <section class="pane" id="p-editor" data-pane="editor">
+      <div class="head">
+        <div class="tabs grow" id="tabs"></div>
+        <button class="btn go" id="play" title="Play / pause (⌘Enter)"></button>
+        <button class="btn" id="step" title="Step in: one step, then stop (F10)"></button>
+        <button class="btn" id="restart" title="Restart the session from its first step (⇧⌘Enter)"></button>
+        <button class="btn icon" id="stop" title="Stop the session"></button>
+        <button class="btn" id="save" title="Save (⌘S)" disabled>Save</button>
+        <button class="ib max-b" title="Maximize (double-click the header)"></button>
+      </div>
+      <div class="body">
+        <div id="editor"></div>
+        <div class="notice" id="notice"><span class="grow" id="notice-text"></span><button class="btn" id="notice-theirs">Load theirs</button><button class="btn" id="notice-mine">Keep mine</button></div>
+      </div>
+    </section>
+    <div class="split h" data-split="lt"></div>
+    <section class="pane" id="p-composer" data-pane="composer">
+      <div class="head">
+        <span class="title">Composer</span>
+        <span class="grow"></span>
+        <select class="pick" id="agent" title="The coding agent"></select>
+        <select class="pick" id="model" title="Its model"></select>
+        <button class="ib max-b" title="Maximize"></button>
+      </div>
+      <div class="body composer-body">
+        <div class="scroll" id="thread-scroll"><div id="thread"></div></div>
+        <div class="compose" id="compose">
+          <div class="shots" id="shots" hidden></div>
+          <textarea id="prompt" rows="1" placeholder="Ask for a change, or paste a screenshot of a market and ask for a strategy for it."></textarea>
+          <div class="foot">
+            <div class="ctx" id="ctx" title="What goes with the message. Click one to leave it out."></div>
+            <button class="btn" id="cancel" hidden>Stop</button>
+            <button class="btn go" id="send" title="Send (Enter)">Send</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="split v" data-split="lw"></div>
+  <div class="col" id="col-r">
+    <section class="pane" id="p-market" data-pane="market">
+      <div class="head">
+        <span class="title">Market</span>
+        <select class="pick" id="scenario" title="The scenario to play"></select>
+        <button class="btn" id="open-scenario" title="Open the scenario's file in the editor">Edit</button>
+        <div class="legend grow" id="legend"></div>
+        <button class="ib max-b" title="Maximize"></button>
+      </div>
+      <div class="body market-body">
+        <div id="market-stats"></div>
+        <div id="market-desc"></div>
+        <div class="plot"><div id="chart"></div></div>
+      </div>
+    </section>
+    <div class="split h" data-split="rt"></div>
+    <section class="pane" id="p-exec" data-pane="exec">
+      <div class="head">
+        <span class="title">Execution</span>
+        <div class="view-tabs" id="views"><button data-view="session" class="on">Session</button><button data-view="build">Build<span class="cnt" id="build-cnt"></span></button></div>
+        <span class="grow"></span>
+        <span class="state" id="state"><i></i><span>idle</span></span>
+        <button class="ib max-b" title="Maximize"></button>
+      </div>
+      <div class="body exec-body">
+        <div class="sub">
+          <span class="lbl" style="margin-left:2px">Speed</span>
+          <div class="seg" id="speed"></div>
+          <span class="lbl">Stop on</span>
+          <button class="btn" data-bp="onOrders" title="Stop at a step where the strategy asks for orders">orders</button>
+          <button class="btn" data-bp="onFill" title="Stop when the position changed">fills</button>
+          <button class="btn on" data-bp="onTrap" title="Stop when the strategy fails">traps</button>
+          <span class="muted" id="bp-steps" style="font: 11px var(--mono); white-space: nowrap"></span>
+          <span style="flex:1"></span>
+          <button class="btn" id="build" title="Build the strategy (⌘B)"></button>
+        </div>
+        <div class="scroll" id="session-view"><div id="steps"></div></div>
+        <div class="scroll" id="build-view" hidden><div id="buildlog"></div></div>
+      </div>
+    </section>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import * as CM from "./studio/codemirror.js";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+const fix = (x, d = 2) => (isNum(x) ? x.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "–");
+const usd = (x, d = 2) => (isNum(x) ? "$" + fix(Math.abs(x), d) : "–");
+const susd = (x, d = 2) => (isNum(x) ? (x > 0.004 ? "+" : x < -0.004 ? "−" : "") + "$" + fix(Math.abs(x), d) : "–");
+const units = (x) => (isNum(x) ? (Math.abs(x - Math.round(x)) < 1e-9 ? String(Math.round(x)) : fix(x, 2)) : "–");
+const sunits = (x) => (isNum(x) ? (x > 0 ? "+" : x < 0 ? "−" : "") + units(Math.abs(x)) : "–");
+const tone = (x) => (isNum(x) && Math.abs(x) > 0.004 ? (x > 0 ? "pos" : "neg") : "");
+const store = {
+  get(key, fallback) { try { const v = localStorage.getItem("mtx-studio:" + key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem("mtx-studio:" + key, JSON.stringify(value)); } catch { /* private mode */ } },
+};
+const ICON = {
+  play: '<svg viewBox="0 0 12 12"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 12 12"><path d="M2.5 1.5h2.5v9H2.5zM7 1.5h2.5v9H7z" fill="currentColor"/></svg>',
+  step: '<svg viewBox="0 0 12 12"><path d="M1.5 3.5h5a3 3 0 0 1 3 3V8M7.5 6.5l2 2 2-2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="3" cy="9.3" r="1.3" fill="currentColor"/></svg>',
+  restart: '<svg viewBox="0 0 12 12"><path d="M10 6a4 4 0 1 1-1.2-2.85M10 1.5v2.2H7.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  stop: '<svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1.2" fill="currentColor"/></svg>',
+  build: '<svg viewBox="0 0 12 12"><path d="M7.2 1.6a2.6 2.6 0 0 0-2.3 3.6L1.6 8.5a1.1 1.1 0 0 0 1.6 1.6l3.3-3.3a2.6 2.6 0 0 0 3.6-2.6L8.6 5.7 7 4.1l1.5-1.5a2.6 2.6 0 0 0-1.3-1z" fill="currentColor"/></svg>',
+  max: '<svg viewBox="0 0 14 14"><path d="M8.5 2.5h3v3M5.5 11.5h-3v-3M11.5 2.5 8 6M2.5 11.5 6 8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+// ---------------------------------------------------------------- the link
+// One socket, DAP-shaped: requests answered by `request_seq`, and events.
+const MOCK = new URLSearchParams(location.search).has("mock");
+const link = (() => {
+  let seq = 0, post = null, ready = null;
+  const waiting = new Map(), handlers = new Map(), opened = [];
+  const receive = (m) => {
+    if (m.type === "response") {
+      const w = waiting.get(m.request_seq);
+      if (!w) return;
+      waiting.delete(m.request_seq);
+      if (m.success) w.resolve(m.body ?? {});
+      else w.reject(Object.assign(new Error(m.message || "failed"), { body: m.body || {} }));
+    } else if (m.type === "event") {
+      for (const fn of handlers.get(m.event) || []) fn(m.body ?? {});
+    }
+  };
+  const status = (on, text) => { const c = $("conn"); c.className = "conn " + (on ? "on" : "off"); c.lastElementChild.textContent = text; };
+  const connect = () => {
+    ready = new Promise((resolve) => {
+      if (MOCK) {
+        import("./studio/mock.js").then(({ mock }) => { post = mock(receive).post; status(true, "mock server"); resolve(); opened.forEach((fn) => fn()); });
+        return;
+      }
+      const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+      ws.onopen = () => { post = (m) => ws.send(JSON.stringify(m)); status(true, "connected"); resolve(); opened.forEach((fn) => fn()); };
+      ws.onmessage = (e) => { try { receive(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+      ws.onclose = () => {
+        post = null; status(false, "reconnecting");
+        for (const w of waiting.values()) w.reject(new Error("the studio's server went away"));
+        waiting.clear();
+        setTimeout(connect, 1000);
+      };
+    });
+  };
+  return {
+    start: connect,
+    onOpen: (fn) => opened.push(fn),
+    on: (event, fn) => { handlers.set(event, [...(handlers.get(event) || []), fn]); },
+    async send(command, args = {}) {
+      await ready;
+      if (!post) throw new Error("not connected");
+      const s = ++seq;
+      return new Promise((resolve, reject) => { waiting.set(s, { resolve, reject }); post({ seq: s, type: "request", command, arguments: args }); });
+    },
+  };
+})();
+let toastTimer;
+const toast = (text) => { const t = $("toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 5000); };
+const tell = (error) => { console.error(error); toast(error.message || String(error)); };
+
+// ---------------------------------------------------------------- state
+const S = {
+  files: [], scenarios: [], task: "",
+  bufs: new Map(),            // path -> {state, version, saved, theirs}
+  open: null, tabs: store.get("tabs", ["src/lib.rs"]),
+  diags: new Map(),           // path -> [diagnostic]
+  scenario: null, plan: null,
+  session: "idle",            // idle | building | starting | running | stopped | terminated | failed
+  started: null, steps: [], report: null, sel: null,
+  bps: { steps: new Set(store.get("bp-steps", [])), onOrders: false, onFill: false, onTrap: true, ...store.get("bp-on", {}) },
+  speed: store.get("speed2", -1),
+  agents: [], pick: { agent: null, model: null }, busy: false,
+  ctx: { file: true, scenario: true, step: true, build: true },
+  view: "session",
+};
+
+// ---------------------------------------------------------------- layout
+const grid = $("grid");
+const DEFAULT_SIZES = { lw: .58, lt: .85, rt: .61 };
+const sizes = { ...DEFAULT_SIZES, ...store.get("layout2", {}) };
+const applySizes = () => { for (const [k, v] of Object.entries(sizes)) grid.style.setProperty("--" + k, v); };
+applySizes();
+for (const split of document.querySelectorAll(".split")) {
+  split.addEventListener("pointerdown", (down) => {
+    const key = split.dataset.split, across = key === "lw";
+    const box = (across ? grid : split.parentElement).getBoundingClientRect();
+    split.setPointerCapture(down.pointerId);
+    split.classList.add("drag"); document.body.classList.add("dragging");
+    const move = (e) => {
+      const f = across ? (e.clientX - box.left) / box.width : (e.clientY - box.top) / box.height;
+      sizes[key] = Math.min(.92, Math.max(.08, f));
+      applySizes(); drawSoon();
+    };
+    const up = () => { split.removeEventListener("pointermove", move); split.classList.remove("drag"); document.body.classList.remove("dragging"); store.set("layout2", sizes); };
+    split.addEventListener("pointermove", move);
+    split.addEventListener("pointerup", up, { once: true });
+    split.addEventListener("pointercancel", up, { once: true });
+  });
+  split.addEventListener("dblclick", () => { sizes[split.dataset.split] = DEFAULT_SIZES[split.dataset.split]; applySizes(); store.set("layout2", sizes); drawSoon(); });
+}
+const maximize = (pane) => {
+  const on = !pane.classList.contains("max");
+  document.querySelectorAll(".pane.max").forEach((p) => p.classList.remove("max"));
+  if (on) { pane.classList.add("max"); document.body.dataset.max = pane.dataset.pane; } else delete document.body.dataset.max;
+  drawSoon();
+};
+for (const b of document.querySelectorAll(".max-b")) { b.innerHTML = ICON.max; b.addEventListener("click", () => maximize(b.closest(".pane"))); }
+for (const h of document.querySelectorAll(".head")) h.addEventListener("dblclick", (e) => { if (!e.target.closest("button, select, .tab")) maximize(h.closest(".pane")); });
+
+// ---------------------------------------------------------------- editor
+const { EditorView, EditorState, tags: t } = CM;
+const theme = EditorView.theme({
+  "&": { color: "#e4e4e7", backgroundColor: "transparent", fontSize: "12.5px" },
+  ".cm-content": { fontFamily: "var(--mono)", caretColor: "#a2ef5b", padding: "8px 0 40px" },
+  ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.6", scrollbarWidth: "thin", scrollbarColor: "#2c2c30 transparent" },
+  ".cm-gutters": { backgroundColor: "#0a0a0c", color: "#52525b", border: "none" },
+  ".cm-lineNumbers .cm-gutterElement": { padding: "0 10px 0 14px", minWidth: "40px" },
+  ".cm-activeLine": { backgroundColor: "rgba(255,255,255,.03)" },
+  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "#a1a1aa" },
+  "&.cm-focused": { outline: "none" },
+  "&.cm-focused .cm-cursor": { borderLeftColor: "#a2ef5b", borderLeftWidth: "2px" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "rgba(122,162,247,.28)" },
+  ".cm-selectionMatch": { backgroundColor: "rgba(162,239,91,.14)" },
+  ".cm-matchingBracket": { backgroundColor: "rgba(162,239,91,.2)", outline: "none" },
+  ".cm-panels": { backgroundColor: "#111114", color: "#e4e4e7", borderTop: "1px solid #232327" },
+  ".cm-panels input, .cm-panels button": { fontFamily: "var(--mono)", fontSize: "12px" },
+  ".cm-textfield": { backgroundColor: "#18181b", border: "1px solid #232327", borderRadius: "5px" },
+  ".cm-button": { backgroundImage: "none", backgroundColor: "#18181b", border: "1px solid #232327", borderRadius: "5px" },
+  ".cm-tooltip": { backgroundColor: "#111114", border: "1px solid #2c2c30", borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,.5)" },
+  ".cm-tooltip-lint": { padding: "2px 4px", fontFamily: "var(--sans)", fontSize: "12.5px" },
+  ".cm-diagnostic": { borderLeftWidth: "3px", padding: "5px 9px" },
+  ".cm-lintRange-error": { backgroundImage: "none", borderBottom: "2px wavy #ff5f57", textDecoration: "underline wavy #ff5f57", textUnderlineOffset: "3px" },
+  ".cm-lintRange-warning": { backgroundImage: "none", textDecoration: "underline wavy #f5b74a", textUnderlineOffset: "3px" },
+  ".cm-foldGutter .cm-gutterElement": { color: "#3f3f46" },
+  ".cm-foldPlaceholder": { backgroundColor: "#222226", border: "none", color: "#a1a1aa", padding: "0 6px" },
+}, { dark: true });
+const highlight = CM.HighlightStyle.define([
+  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: "#ff7b72" },
+  { tag: [t.string, t.special(t.string), t.character], color: "#a5d6ff" },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: "#7d8590", fontStyle: "italic" },
+  { tag: [t.number, t.bool, t.atom, t.constant(t.variableName), t.standard(t.variableName)], color: "#79c0ff" },
+  { tag: [t.typeName, t.className, t.namespace, t.self], color: "#ffa657" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "#d2a8ff" },
+  { tag: [t.propertyName, t.attributeName, t.labelName], color: "#7ee787" },
+  { tag: [t.meta, t.annotation, t.processingInstruction], color: "#8b949e" },
+  { tag: [t.operator, t.punctuation, t.bracket], color: "#c9d1d9" },
+  { tag: t.heading, color: "#ffa657", fontWeight: "600" },
+  { tag: t.invalid, color: "#ff5f57" },
+]);
+const language = (path) => (path.endsWith(".rs") ? CM.rust() : path.endsWith(".json") ? CM.json() : path.endsWith(".toml") ? CM.StreamLanguage.define(CM.toml) : []);
+const extensions = (path) => [
+  CM.lineNumbers(), CM.highlightActiveLineGutter(), CM.history(), CM.foldGutter(), CM.drawSelection(),
+  CM.indentOnInput(), CM.bracketMatching(), CM.closeBrackets(), CM.highlightActiveLine(), CM.highlightSelectionMatches(),
+  CM.indentUnit.of(path.endsWith(".json") ? "  " : "    "), EditorState.tabSize.of(4),
+  CM.keymap.of([...CM.closeBracketsKeymap, ...CM.defaultKeymap, ...CM.searchKeymap, ...CM.historyKeymap, CM.indentWithTab]),
+  CM.search({ top: false }), CM.lintGutter(), language(path), CM.syntaxHighlighting(highlight), theme,
+  EditorView.updateListener.of((u) => { if (u.docChanged) renderTabs(); }),
+];
+const view = new EditorView({ parent: $("editor"), state: EditorState.create({ doc: "", extensions: [theme, EditorState.readOnly.of(true)] }) });
+const buf = (path = S.open) => S.bufs.get(path);
+const textOf = (path) => (path === S.open ? view.state : buf(path).state).doc.toString();
+const dirty = (path) => { const b = buf(path); return Boolean(b) && textOf(path) !== b.saved; };
+
+async function openFile(path, at) {
+  try {
+    if (!S.bufs.has(path)) {
+      const { text, version } = await link.send("file/read", { path });
+      S.bufs.set(path, { state: EditorState.create({ doc: text, extensions: extensions(path) }), version, saved: text, theirs: null });
+    }
+    if (S.open && buf()) buf().state = view.state;
+    S.open = path;
+    if (!S.tabs.includes(path)) S.tabs.push(path);
+    store.set("tabs", S.tabs); store.set("open", path);
+    view.setState(buf().state);
+    applyDiagnostics();
+    renderTabs(); renderNotice(); renderCtx();
+    if (at) {
+      const line = view.state.doc.line(Math.min(Math.max(1, at.line), view.state.doc.lines));
+      view.dispatch({ selection: { anchor: Math.min(line.to, line.from + Math.max(0, (at.column || 1) - 1)) }, effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
+      view.focus();
+    }
+  } catch (e) { S.tabs = S.tabs.filter((p) => p !== path); tell(e); }
+}
+function closeTab(path) {
+  if (dirty(path) && !confirm(`${path} has unsaved changes. Close it anyway?`)) return;
+  S.tabs = S.tabs.filter((p) => p !== path); S.bufs.delete(path); store.set("tabs", S.tabs);
+  if (S.open === path) { S.open = null; if (S.tabs.length) openFile(S.tabs.at(-1)); else { view.setState(EditorState.create({ doc: "", extensions: [theme, EditorState.readOnly.of(true)] })); renderTabs(); } } else renderTabs();
+}
+function renderTabs() {
+  const more = S.files.filter((p) => !S.tabs.includes(p));
+  $("tabs").innerHTML = S.tabs.map((p) => {
+    const errs = (S.diags.get(p) || []).filter((d) => d.severity === "error").length;
+    return `<button class="tab ${p === S.open ? "on" : ""} ${dirty(p) ? "is-dirty" : ""}" data-path="${esc(p)}" title="${esc(p)} — middle-click to close"><span>${esc(p.split("/").pop())}</span>${errs ? `<span class="errs">${errs}</span>` : ""}<span class="dirty"></span></button>`;
+  }).join("") + (more.length ? `<select class="pick" id="more-files" style="align-self:center;margin-left:4px;max-width:34px;padding-left:8px" title="Open a file"><option value="">＋</option>${more.map((p) => `<option>${esc(p)}</option>`).join("")}</select>` : "");
+  $("save").disabled = !S.open || !dirty(S.open);
+}
+$("tabs").addEventListener("click", (e) => { const tab = e.target.closest(".tab"); if (tab) openFile(tab.dataset.path); });
+$("tabs").addEventListener("auxclick", (e) => { const tab = e.target.closest(".tab"); if (tab && e.button === 1) closeTab(tab.dataset.path); });
+$("tabs").addEventListener("change", (e) => { if (e.target.id === "more-files" && e.target.value) openFile(e.target.value); });
+
+function applyDiagnostics() {
+  if (!S.open) return;
+  const doc = view.state.doc;
+  const at = (line, column) => { const l = doc.line(Math.min(Math.max(1, line || 1), doc.lines)); return Math.min(l.to, l.from + Math.max(0, (column || 1) - 1)); };
+  const list = (S.diags.get(S.open) || []).map((d) => {
+    const from = at(d.line, d.column);
+    let to = at(d.endLine ?? d.line, d.endColumn ?? d.column);
+    if (to <= from) to = Math.min(doc.length, from + 1);
+    return { from, to, severity: d.severity === "warning" ? "warning" : d.severity === "error" ? "error" : "info", message: d.message };
+  });
+  view.dispatch(CM.setDiagnostics(view.state, list));
+}
+function setDiagnostics(list, only) {
+  if (only) S.diags.delete(only); else for (const p of [...S.diags.keys()]) if (!p.startsWith("scenarios/")) S.diags.delete(p);
+  for (const d of list || []) S.diags.set(d.file, [...(S.diags.get(d.file) || []), d]);
+  applyDiagnostics(); renderTabs(); renderBuild(); renderCtx();
+}
+
+async function save(path = S.open, force) {
+  const b = buf(path);
+  if (!b) return true;
+  const text = textOf(path);
+  try {
+    const { version } = await link.send("file/write", { path, text, baseVersion: force ?? b.version });
+    b.version = version; b.saved = text; b.theirs = null;
+    if (path.startsWith("scenarios/")) { setDiagnostics([], path); if (path === scenarioPath()) loadScenario(S.scenario); }
+    renderTabs(); renderNotice();
+    return true;
+  } catch (e) {
+    if (e.body?.conflict) { b.theirs = { text: e.body.text, version: e.body.version, by: "disk" }; if (path !== S.open) await openFile(path); renderNotice(); }
+    else if (e.body?.diagnostics) { setDiagnostics(e.body.diagnostics, path); if (path !== S.open) await openFile(path); toast(e.message); }
+    else tell(e);
+    return false;
+  }
+}
+const saveAll = async () => { for (const p of S.tabs) if (dirty(p) && !(await save(p))) return false; return true; };
+$("save").addEventListener("click", () => save());
+function replaceText(path, text, version) {
+  const b = buf(path);
+  b.version = version; b.saved = text; b.theirs = null;
+  if (path === S.open) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  else b.state = b.state.update({ changes: { from: 0, to: b.state.doc.length, insert: text } }).state;
+  renderTabs(); renderNotice();
+}
+function renderNotice() {
+  const b = buf();
+  $("notice").classList.toggle("on", Boolean(b?.theirs));
+  if (b?.theirs) $("notice-text").textContent = `${b.theirs.by === "agent" ? "The agent" : "Something else"} changed ${S.open} while you were editing it.`;
+}
+$("notice-theirs").addEventListener("click", () => { const b = buf(); replaceText(S.open, b.theirs.text, b.theirs.version); });
+$("notice-mine").addEventListener("click", () => { const b = buf(); const v = b.theirs.version; b.theirs = null; renderNotice(); save(S.open, v); });
+link.on("file/changed", (m) => {
+  if (!S.files.includes(m.path)) refreshLists();
+  const b = buf(m.path);
+  if (b) {
+    if (m.text === textOf(m.path)) { b.version = m.version; b.saved = m.text; renderTabs(); }
+    else if (dirty(m.path)) { b.theirs = { text: m.text, version: m.version, by: m.by }; if (m.path === S.open) renderNotice(); }
+    else replaceText(m.path, m.text, m.version);
+  }
+  if (m.path === scenarioPath()) loadScenario(S.scenario);
+});
+
+// ---------------------------------------------------------------- market
+const scenarioPath = () => (S.scenario ? `scenarios/${S.scenario}.json` : null);
+async function loadScenario(name) {
+  if (!name) return;
+  S.scenario = name;
+  $("scenario").value = name;
+  try { S.plan = await link.send("scenario/read", { name }); } catch (e) { S.plan = null; tell(e); }
+  renderMarket(); renderCtx();
+}
+$("scenario").addEventListener("change", (e) => {
+  const shown = S.steps.length && S.session !== "idle";
+  if (shown && ["running", "stopped", "building", "starting"].includes(S.session)) link.send("terminate").catch(() => {});
+  clearSession(); store.set("scenario2", e.target.value); loadScenario(e.target.value);
+});
+$("open-scenario").addEventListener("click", () => { if (scenarioPath()) openFile(scenarioPath()); });
+$("legend").innerHTML = `<span><i style="background:#fafafa"></i>mark</span><span><i style="background:repeating-linear-gradient(90deg,#71717a 0 3px,transparent 3px 6px)"></i>planned</span><span><i style="background:#7aa2f7"></i>position</span><span><i style="background:#5ed16a"></i>PnL</span>`;
+
+const cur = () => (S.sel !== null && S.steps[S.sel] ? S.sel : S.steps.length - 1);
+$("market-stats").innerHTML = `<span class="big" id="s-pnl">$0.00</span><span class="d" id="s-dpnl" hidden></span>` +
+  ["Step", "Mark", "Position", "Drawdown", "Reference"].map((key) => `<div class="stat" id="s-${key.toLowerCase()}-box"><span class="k">${key}</span><span class="v" id="s-${key.toLowerCase()}"></span></div>`).join("");
+function renderMarket() {
+  const sc = S.plan?.scenario, n = S.plan?.steps ?? S.started?.steps ?? 0;
+  const k = cur(), step = S.steps[k], a = step?.account, prev = S.steps[k - 1];
+  const pnl = S.report && isNum(S.report.pnl_usd) && S.sel === null ? S.report.pnl_usd : a?.pnl_usd;
+  const ref = sc?.reference_pnl_usd;
+  const cap = S.started?.cap ?? sc?.mandate?.universe?.[0]?.max_position;
+  const limit = S.started?.max_drawdown ?? sc?.mandate?.limits?.max_drawdown_usd;
+  $("s-pnl").textContent = step ? susd(pnl) : "$0.00"; $("s-pnl").className = "big " + tone(pnl);
+  const d = step ? a.pnl_usd - (prev ? prev.account.pnl_usd : 0) : 0, dp = $("s-dpnl");
+  dp.hidden = Math.abs(d) <= 0.004;
+  if (!dp.hidden) { dp.textContent = `${d > 0 ? "▲" : "▼"} ${usd(d)}`; dp.classList.toggle("up", d > 0); dp.classList.toggle("down", d < 0); dp.title = "PnL's change at this step"; }
+  $("s-step").innerHTML = step ? `${k + 1} <span class="muted">of ${n}</span>` : `<span class="muted">– of ${n || "–"}</span>`;
+  $("s-mark").textContent = step ? usd(step.market.mark) : usd(S.plan?.start_mark_usd);
+  $("s-position").innerHTML = step ? `${a.position === 0 ? "flat" : sunits(a.position)} <span class="muted">/ ${units(cap)}</span>` : `<span class="muted">flat / ${units(cap)}</span>`;
+  $("s-drawdown").innerHTML = step ? `${usd(a.drawdown_usd)} <span class="muted">/ ${usd(limit, 0)}</span>` : `<span class="muted">– / ${usd(limit, 0)}</span>`;
+  $("s-reference-box").hidden = !isNum(ref);
+  $("s-reference").textContent = susd(ref); $("s-reference").className = "v " + tone(ref);
+  renderCtx();
+  $("market-desc").textContent = sc?.description ?? (S.scenarios.length ? "" : "No scenarios in scenarios/ yet: ask the agent for one.");
+  drawSoon();
+}
+// A step landed: flash the headline numbers that moved, green for better.
+function flashStats(prev, now) {
+  if (!now) return;
+  const was = prev?.account ?? { pnl_usd: 0, position: 0, drawdown_usd: 0 };
+  const flash = (id, change, flip) => {
+    if (Math.abs(change) <= 0.004) return;
+    const el = $(id), cls = (change > 0) !== Boolean(flip) ? "flash-up" : "flash-down";
+    el.classList.remove("flash-up", "flash-down"); void el.offsetWidth; el.classList.add(cls);
+  };
+  flash("s-pnl", now.account.pnl_usd - was.pnl_usd);
+  flash("s-dpnl", now.account.pnl_usd - was.pnl_usd);
+  flash("s-position", now.account.position - was.position);
+  flash("s-drawdown", now.account.drawdown_usd - was.drawdown_usd, true);
+  flash("s-mark", now.market.mark - (prev?.market.mark ?? now.market.mark));
+}
+
+// The chart: price, position and PnL over the scenario's steps, one x axis.
+let drawQueued = false, hoverK = null;
+const drawSoon = () => { if (!drawQueued) { drawQueued = true; requestAnimationFrame(() => { drawQueued = false; draw(); }); } };
+let geo = null;
+function draw() {
+  const host = $("chart"), W = host.clientWidth, H = host.clientHeight;
+  if (W < 60 || H < 60) return;
+  const plan = S.plan?.plan || [], steps = S.steps;
+  const n = Math.max(plan.length, S.started?.steps ?? 0, steps.length, 2);
+  const L = 12, R = 58, T = 10, B = 22, gap = 12;
+  const inner = H - T - B - 2 * gap;
+  const hp = Math.max(40, inner * .56), hq = Math.max(22, inner * .18), hn = Math.max(22, inner - hp - hq);
+  const y0 = T, y1 = y0 + hp + gap, y2 = y1 + hq + gap;
+  const x = (k) => L + (k / n) * (W - L - R), xc = (k) => x(k + .5);
+  const start = S.started?.start_mark;
+  const planned = plan.map((p) => (isNum(start) ? start * (1 + p.level_pct / 100) : p.mark_usd));
+  const marks = steps.map((s) => s.market.mark);
+  const cap = S.started?.cap ?? S.plan?.scenario?.mandate?.universe?.[0]?.max_position ?? 1;
+  const range = (vals, pad = .08, floor = 0) => {
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    const span = Math.max(hi - lo, floor);
+    const mid = (hi + lo) / 2;
+    return [mid - span / 2 - span * pad, mid + span / 2 + span * pad];
+  };
+  const [plo, phi] = range([...planned, ...marks], .1, (planned[0] || 100) * .004);
+  const pnls = steps.map((s) => s.account.pnl_usd);
+  const [nlo, nhi] = range([0, ...pnls], .15, 2);
+  const yp = (v) => y0 + (1 - (v - plo) / (phi - plo)) * hp;
+  const yq = (v) => y1 + (1 - (v + cap) / (2 * cap)) * hq;
+  const yn = (v) => y2 + (1 - (v - nlo) / (nhi - nlo)) * hn;
+  // Each value holds for its step, then jumps.
+  const stepPath = (vals, y) => vals.map((v, i) => `${i ? `V${y(v).toFixed(1)}` : `M${x(0).toFixed(1)},${y(v).toFixed(1)}`}H${x(i + 1).toFixed(1)}`).join("");
+  const path = stepPath;
+  const o = [];
+  // Grids and labels.
+  const ticks = (lo, hi, count) => { const raw = (hi - lo) / count, mag = 10 ** Math.floor(Math.log10(raw)), nice = [1, 2, 2.5, 5, 10].find((m) => m * mag >= raw) * mag; const out = []; for (let v = Math.ceil(lo / nice) * nice; v <= hi; v += nice) out.push(v); return out; };
+  for (const v of ticks(plo, phi, Math.max(2, Math.floor(hp / 44)))) o.push(`<line x1="${L}" x2="${W - R}" y1="${yp(v)}" y2="${yp(v)}" stroke="#18181b"/><text x="${W - R + 6}" y="${yp(v) + 3}">${fix(v, phi - plo < 4 ? 2 : 1)}</text>`);
+  for (const v of [-cap, 0, cap]) o.push(`<line x1="${L}" x2="${W - R}" y1="${yq(v)}" y2="${yq(v)}" stroke="${v ? "#18181b" : "#2c2c30"}" ${v ? 'stroke-dasharray="2 4"' : ""}/><text x="${W - R + 6}" y="${yq(v) + 3}">${v > 0 ? "+" : ""}${units(v)}</text>`);
+  for (const v of ticks(nlo, nhi, 2)) o.push(`<line x1="${L}" x2="${W - R}" y1="${yn(v)}" y2="${yn(v)}" stroke="${Math.abs(v) < 1e-9 ? "#2c2c30" : "#18181b"}"/><text x="${W - R + 6}" y="${yn(v) + 3}">${Math.abs(v) < 1e-9 ? "$0" : susd(v, Math.abs(nhi - nlo) < 20 ? 1 : 0)}</text>`);
+  o.push(`<text class="lab" x="${L}" y="${y0 + 9}">PRICE</text><text class="lab" x="${L}" y="${y1 + 9}">POSITION</text><text class="lab" x="${L}" y="${y2 + 9}">PNL</text>`);
+  const every = [1, 2, 5, 10, 20, 25, 50, 100, 200].find((e) => (n / e) * 46 < W - L - R) || 500;
+  for (let k = every; k <= n; k += every) o.push(`${every === 1 && k < n ? `<line x1="${x(k)}" x2="${x(k)}" y1="${T}" y2="${H - B}" stroke="#131316"/>` : every > 1 ? `<line x1="${xc(k - 1)}" x2="${xc(k - 1)}" y1="${T}" y2="${H - B}" stroke="#131316"/>` : ""}<text x="${xc(k - 1)}" y="${H - 7}" text-anchor="middle">${k}</text>`);
+  // The scenario: its planned path, and the takers' orders.
+  if (planned.length) o.push(`<path d="${path(planned, yp)}" fill="none" stroke="#71717a" stroke-width="1.2" stroke-dasharray="3 3" opacity="${steps.length ? .7 : 1}"/>`);
+  for (const tk of S.plan?.takers || []) o.push(`<line x1="${xc(tk.k)}" x2="${xc(tk.k)}" y1="${y0 + hp}" y2="${y0 + hp - Math.min(14, 3 + tk.size * 3)}" stroke="${tk.side === "bid" || tk.side === "buy" ? "#5ed16a" : "#ff5f57"}" opacity=".55"/>`);
+  // The session.
+  if (steps.length) {
+    const book = steps.filter((s) => isNum(s.market.best_bid) && isNum(s.market.best_ask));
+    if (book.length === steps.length) o.push(`<path d="${path(steps.map((s) => s.market.best_ask), yp)}${[...steps].reverse().map((s, i) => `V${yp(s.market.best_bid).toFixed(1)}H${x(steps.length - 1 - i).toFixed(1)}`).join("")}Z" fill="rgba(250,250,250,.07)"/>`);
+    o.push(`<path d="${path(marks, yp)}" fill="none" stroke="#fafafa" stroke-width="1.5" stroke-linejoin="round"/>`);
+    const pos = steps.map((s) => s.account.position);
+    o.push(`<path d="${stepPath(pos, yq)}V${yq(0)}H${x(0)}Z" fill="rgba(122,162,247,.16)"/><path d="${stepPath(pos, yq)}" fill="none" stroke="#7aa2f7" stroke-width="1.4"/>`);
+    const last = pnls.at(-1), color = last >= 0 ? "#5ed16a" : "#ff5f57";
+    o.push(`<path d="${path(pnls, yn)}V${yn(0)}H${x(0)}Z" fill="${last >= 0 ? "rgba(94,209,106,.13)" : "rgba(255,95,87,.13)"}"/><path d="${path(pnls, yn)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>`);
+    // What the strategy asked for (hollow), and what filled (solid).
+    steps.forEach((s, i) => {
+      if (s.failed) o.push(`<path d="M${xc(i) - 4},${yp(s.market.mark) - 4}l8,8m0,-8l-8,8" stroke="#ff5f57" stroke-width="1.6"/>`);
+      else if (s.sent.length) o.push(`<circle cx="${xc(i)}" cy="${yp(s.market.mark)}" r="3" fill="#000" stroke="#7aa2f7" stroke-width="1.3"/>`);
+      const ch = s.account.position_change;
+      if (ch) { const up = ch > 0, px = xc(i), py = yp(s.market.mark) + (up ? 12 : -12); o.push(`<path d="M${px},${py + (up ? -6 : 6)}l5,${up ? 8 : -8}h-10z" fill="${up ? "#5ed16a" : "#ff5f57"}" stroke="#000" stroke-width=".8"/>`); }
+    });
+  }
+  // Breakpoints on the axis, the playhead, the selection.
+  for (const b of S.bps.steps) if (b <= n) o.push(`<circle cx="${xc(b - 1)}" cy="${H - B + 3}" r="3.2" fill="#ff5f57"/>`);
+  const k = cur();
+  if (steps.length) {
+    const head = steps.length - 1;
+    if (k !== head) o.push(`<rect x="${x(head)}" width="${Math.max(1, x(1) - x(0))}" y="${T}" height="${H - B - T}" fill="#a2ef5b" opacity=".06"/>`);
+    o.push(`<rect x="${x(k)}" width="${Math.max(1.2, x(1) - x(0))}" y="${T}" height="${H - B - T}" fill="#a2ef5b" opacity="${x(1) - x(0) > 3 ? .1 : .9}"/><circle cx="${xc(k)}" cy="${yp(steps[k].market.mark)}" r="3.5" fill="#a2ef5b" stroke="#000"/>`);
+  }
+  o.push(`<line id="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="rgba(250,250,250,.3)" visibility="hidden"/>`);
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${o.join("")}</svg>`;
+  geo = { L, R, W, H, B, n, x: xc, planned };
+  if (hoverK !== null) showCross(hoverK);
+}
+new ResizeObserver(drawSoon).observe($("chart"));
+const kAt = (e) => { const r = $("chart").getBoundingClientRect(); return Math.min(geo.n - 1, Math.max(0, Math.floor(((e.clientX - r.left - geo.L) / (geo.W - geo.L - geo.R)) * geo.n))); };
+function showCross(k) { const c = document.getElementById("cross"); if (c && geo) { c.setAttribute("x1", geo.x(k)); c.setAttribute("x2", geo.x(k)); c.setAttribute("visibility", "visible"); } }
+$("chart").addEventListener("mousemove", (e) => {
+  if (!geo) return;
+  const k = (hoverK = kAt(e)), s = S.steps[k], tip = $("tip");
+  showCross(k);
+  const row = (a, b, cls = "") => `<div class="r"><span>${a}</span><b class="${cls}">${b}</b></div>`;
+  const onAxis = e.clientY - $("chart").getBoundingClientRect().top > geo.H - geo.B;
+  tip.innerHTML = `<b>step ${k + 1}</b>${S.bps.steps.has(k + 1) ? ' <span class="neg">● breakpoint</span>' : ""}` +
+    (s ? row("mark", usd(s.market.mark)) + row("position", s.account.position === 0 ? "flat" : sunits(s.account.position)) + row("pnl", susd(s.account.pnl_usd), tone(s.account.pnl_usd)) +
+      (s.account.position_change ? row("filled", sunits(s.account.position_change), s.account.position_change > 0 ? "pos" : "neg") : "") + (s.sent.length ? row("sent", `${s.sent.length} order${s.sent.length > 1 ? "s" : ""}`) : "") +
+      (s.printed.length ? `<div style="color:var(--text-3);max-width:260px;white-space:normal">${esc(s.printed[0])}</div>` : "")
+      : isNum(geo.planned[k]) ? row("planned", usd(geo.planned[k])) : "") +
+    `<div style="color:var(--text-4);margin-top:3px">${onAxis ? "click: toggle a breakpoint" : s ? "click: show this step" : "⇧-click: break here"}</div>`;
+  tip.style.display = "block";
+  const tw = tip.offsetWidth;
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - tw - 8) + "px"; tip.style.top = e.clientY + 14 + "px";
+});
+$("chart").addEventListener("mouseleave", () => { hoverK = null; $("tip").style.display = "none"; document.getElementById("cross")?.setAttribute("visibility", "hidden"); });
+$("chart").addEventListener("click", (e) => {
+  if (!geo) return;
+  const k = kAt(e), onAxis = e.clientY - $("chart").getBoundingClientRect().top > geo.H - geo.B;
+  if (onAxis || e.shiftKey || !S.steps[k]) toggleBreakpoint(k + 1);
+  else select(k, true);
+});
+
+// ---------------------------------------------------------------- execution
+// "auto" plays a scenario in about six seconds, whatever its length: slow
+// enough to follow five steps, fast enough for three hundred.
+const SPEEDS = [["auto", -1], ["1×", 800], ["4×", 200], ["16×", 50], ["max", 0]];
+const msPerStep = () => (S.speed >= 0 ? S.speed : Math.round(Math.min(900, Math.max(20, 6000 / (S.plan?.steps || 100)))));
+$("speed").innerHTML = SPEEDS.map(([label, ms]) => `<button data-ms="${ms}" title="${ms < 0 ? "about six seconds a session" : ms ? ms + " ms a step" : "as fast as it goes"}">${label}</button>`).join("");
+const renderSpeed = () => { for (const b of $("speed").children) b.classList.toggle("on", Number(b.dataset.ms) === S.speed); };
+$("speed").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.speed = Number(b.dataset.ms); store.set("speed2", S.speed); renderSpeed();
+  if (live()) link.send("setSpeed", { msPerStep: msPerStep() }).catch(() => {});
+});
+const live = () => S.session === "running" || S.session === "stopped";
+const bpArgs = () => ({ steps: [...S.bps.steps].sort((a, b) => a - b), onOrders: S.bps.onOrders, onFill: S.bps.onFill, onTrap: S.bps.onTrap });
+function renderBps() {
+  for (const b of document.querySelectorAll("[data-bp]")) b.classList.toggle("on", S.bps[b.dataset.bp]);
+  const list = bpArgs().steps;
+  $("bp-steps").innerHTML = list.length ? `· step${list.length > 1 ? "s" : ""} ${list.map((k) => `<span class="neg" data-k="${k}" style="cursor:pointer" title="Remove">${k}</span>`).join(", ")}` : "";
+}
+function pushBps() {
+  store.set("bp-steps", bpArgs().steps); store.set("bp-on", { onOrders: S.bps.onOrders, onFill: S.bps.onFill, onTrap: S.bps.onTrap });
+  renderBps(); drawSoon();
+  for (const el of document.querySelectorAll(".st")) el.querySelector(".chip.bp")?.remove();
+  for (const k of S.bps.steps) markBreakpoint(k);
+  if (live()) link.send("setBreakpoints", bpArgs()).catch(tell);
+}
+const markBreakpoint = (k) => { const ln = document.querySelector(`#st-${k - 1} .chips`); if (ln && !ln.querySelector(".bp")) ln.insertAdjacentHTML("afterbegin", '<span class="chip bp">break</span>'); };
+function toggleBreakpoint(k) { if (S.bps.steps.has(k)) S.bps.steps.delete(k); else S.bps.steps.add(k); pushBps(); }
+for (const b of document.querySelectorAll("[data-bp]")) b.addEventListener("click", () => { S.bps[b.dataset.bp] = !S.bps[b.dataset.bp]; pushBps(); });
+$("bp-steps").addEventListener("click", (e) => { if (e.target.dataset.k) toggleBreakpoint(Number(e.target.dataset.k)); });
+
+function renderControls() {
+  const s = S.session, playing = s === "running", busy = s === "building" || s === "starting";
+  $("play").innerHTML = (playing ? ICON.pause + "Pause" : ICON.play + (s === "stopped" ? "Continue" : "Play"));
+  $("play").disabled = busy || !S.scenario;
+  $("step").innerHTML = ICON.step + "Step"; $("step").disabled = playing || busy || !S.scenario;
+  $("restart").innerHTML = ICON.restart + "Restart"; $("restart").disabled = busy || s === "idle";
+  $("stop").innerHTML = ICON.stop; $("stop").disabled = !live() && s !== "starting";
+  $("build").innerHTML = ICON.build + "Build"; $("build").disabled = busy || playing;
+  const label = { idle: "idle", building: "building", starting: "starting the market", running: "running", stopped: `stopped${S.steps.length ? " at " + S.steps.length : ""}`, terminated: "ended", failed: "failed" }[s];
+  $("state").className = "state " + s; $("state").lastElementChild.textContent = label;
+}
+function setSession(state) { S.session = state; renderControls(); renderCtx(); }
+function setView(v) {
+  S.view = v;
+  for (const b of $("views").children) b.classList.toggle("on", b.dataset.view === v);
+  $("session-view").hidden = v !== "session"; $("build-view").hidden = v !== "build";
+}
+$("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setView(b.dataset.view); });
+
+const EMPTY = `<div class="empty"><div>Press <b>Play</b> to build the strategy and run it on this scenario, or <b>Step</b> to go one step at a time.<br><span class="muted">Each step shows what the strategy printed and did, and what moved.</span></div></div>`;
+function clearSession() {
+  S.steps = []; S.started = null; S.report = null; S.sel = null; pending.length = 0;
+  $("steps").innerHTML = EMPTY; follow = true;
+  if (!live() && S.session !== "building" && S.session !== "starting") setSession("idle");
+  renderMarket();
+}
+const intentText = (i) => ({
+  target: () => `target position <b>${sunits(i.position)}</b> <span class="muted">in slices of ${units(i.slice)}${i.maxPerStep == null ? "" : `, ${units(i.maxPerStep)} a step`}, ${i.slippageBps} bp slippage</span>`,
+  quote: () => `quote <b>${units(i.size)}</b> at bid ${fix(i.bid)} / ask ${fix(i.ask)}`,
+  market: () => `market ${i.side === "bid" ? "buy" : "sell"} <b>${units(i.size)}</b> <span class="muted">limit ${fix(i.limit)}</span>`,
+  limit: () => `limit ${i.side === "bid" ? "buy" : "sell"} <b>${units(i.size)}</b> at ${fix(i.price)}`,
+  cancelAll: () => "cancel every resting order",
+}[i.kind] || (() => esc(JSON.stringify(i))))();
+const orderText = (a) => (a.kind === "cancelAll" ? "cancel every resting order" : `${a.side === "bid" ? "buy" : "sell"} <b>${units(a.size)}</b> ${a.kind === "market" ? "at market" : `at ${fix(a.price)}`}`);
+// Orders sent in a step, grouped: "buy 10 + 10 + 10 + 5 at market".
+function sentLines(sent) {
+  const out = [], ok = sent.filter((x) => x.ok), bad = sent.filter((x) => !x.ok);
+  const groups = new Map();
+  for (const x of ok) { const a = x.action, key = a.kind === "cancelAll" ? "cancel" : `${a.side}|${a.kind}|${a.kind === "limit" ? a.price : ""}`; groups.set(key, [...(groups.get(key) || []), a]); }
+  for (const list of groups.values()) {
+    const a = list[0];
+    if (a.kind === "cancelAll") { out.push(`<div class="lg ok"><i>✓</i><span>cancelled every resting order</span></div>`); continue; }
+    const total = list.reduce((sum, x) => sum + x.size, 0);
+    out.push(`<div class="lg ok"><i>✓</i><span>sent ${a.side === "bid" ? "buy" : "sell"} <b>${units(total)}</b> ${a.kind === "market" ? "at market" : `at ${fix(a.price)}`}${list.length > 1 ? ` <span class="muted">in ${list.length} orders (${list.map((x) => units(x.size)).join(" + ")})</span>` : ""}</span></div>`);
+  }
+  for (const x of bad) out.push(`<div class="lg bad"><i>✗</i><span>${orderText(x.action)} failed: ${esc(x.error)}</span></div>`);
+  return out.join("");
+}
+const delta = (value, text, flip) => (Math.abs(value) > 0.004 ? `<span class="d ${(value > 0) !== Boolean(flip) ? "up" : "down"}">${value > 0 ? "▲" : "▼"} ${text}</span>` : "");
+function stepHtml(s, fresh) {
+  const m = s.market, a = s.account, k = s.k, prev = S.steps[k - 1];
+  const dMark = prev ? m.mark - prev.market.mark : 0;
+  const dPnl = prev ? a.pnl_usd - prev.account.pnl_usd : a.pnl_usd;
+  const metric = (key, value, d, cls = "") => `<span class="m ${d ? "chg" : ""}"><span class="k">${key}</span><b class="${cls}">${value}</b>${d}</span>`;
+  const nums =
+    metric("mark", fix(m.mark), prev && Math.abs(dMark) > 0.004 ? delta(dMark, `${fix(Math.abs(dMark / prev.market.mark) * 100)}%`) : "") +
+    metric("position", a.position === 0 ? "flat" : sunits(a.position), delta(a.position_change, units(Math.abs(a.position_change)))) +
+    metric("PnL", susd(a.pnl_usd), delta(dPnl, usd(dPnl)), tone(a.pnl_usd));
+  const logs =
+    (a.position_change ? `<div class="lg fill ${a.position_change > 0 ? "buy" : "sell"}"><i>●</i><span>filled: ${a.position_change > 0 ? "bought" : "sold"} <b>${units(Math.abs(a.position_change))}</b>, now ${a.position === 0 ? "flat" : sunits(a.position)}</span></div>` : "") +
+    s.printed.map((line) => `<div class="lg say"><i>›</i><span>${esc(line)}</span></div>`).join("") +
+    (s.failed ? `<div class="lg bad"><i>✗</i><span>the strategy failed: ${esc(s.failed)}</span></div>` : "") +
+    s.intents.map((x) => `<div class="lg ask"><i>→</i><span>asked: ${intentText(x)}</span></div>`).join("") +
+    s.notes.map((x) => `<div class="lg dim"><i>✂</i><span>cut to the cap: ${esc(x)}</span></div>`).join("") +
+    sentLines(s.sent);
+  const book = isNum(m.best_bid) && isNum(m.best_ask) ? `bid ${fix(m.best_bid)} · ask ${fix(m.best_ask)}` : "no book";
+  const more = `<div>oracle ${fix(m.oracle)} · index ${fix(m.index)} · ${book} · slot ${m.slot}${m.last ? " · the last step" : ""}</div>` +
+    `<div>${m.position.size === 0 ? "" : `entry ${fix(m.position.entry_usd)} · `}resting ${units(m.resting_bids)}/${units(m.resting_asks)} · value ${usd(a.value_usd)} · drawdown ${usd(a.drawdown_usd)} · ${fix(s.fuel, 0)} fuel${s.rpc_calls ? ` · ${s.rpc_calls} RPC` : ""}</div>` +
+    `<div><span class="lnk" data-break="${k + 1}">${S.bps.steps.has(k + 1) ? "remove the breakpoint" : "break at this step"}</span></div>`;
+  return `<div class="st ${logs ? "act" : ""} ${fresh ? "fresh" : ""}" id="st-${k}" data-k="${k}"><span class="n">${k + 1}</span><div><div class="nums">${nums}<span class="chips">${S.bps.steps.has(k + 1) ? '<span class="chip bp">break</span>' : ""}</span></div>${logs}<div class="more">${more}</div></div></div>`;
+}
+// Steps arrive faster than frames at full speed: append them a frame at a time.
+const pending = []; let flushQueued = false, follow = true, replaying = false;
+const scroller = $("session-view");
+scroller.addEventListener("scroll", () => { follow = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40; });
+function flush() {
+  flushQueued = false;
+  if (!pending.length) return;
+  if (!S.steps.length || $("steps").querySelector(".empty")) $("steps").innerHTML = startedHtml();
+  let html = "";
+  for (const s of pending) { html += stepHtml(s, !replaying); S.steps[s.k] = s; }
+  if (!replaying) flashStats(S.steps[S.steps.length - 1 - pending.length], S.steps.at(-1));
+  pending.length = 0;
+  $("steps").insertAdjacentHTML("beforeend", html);
+  markCurrent();
+  if (follow && S.sel === null) scroller.scrollTop = scroller.scrollHeight;
+  renderMarket();
+}
+const startedHtml = () => (S.started ? (S.started.printed || []).map((p) => `<div class="note printed">${esc(p)}</div>`).join("") + (S.started.failed ? `<div class="note bad">start failed: ${esc(S.started.failed)}</div>` : "") : "");
+function markCurrent() {
+  document.querySelectorAll(".st.cur, .st.sel").forEach((el) => el.classList.remove("cur", "sel"));
+  const head = S.steps.length - 1;
+  document.getElementById(`st-${head}`)?.classList.add("cur");
+  if (S.sel !== null && S.sel !== head) document.getElementById(`st-${S.sel}`)?.classList.add("sel");
+}
+function select(k, reveal) {
+  S.sel = k === S.steps.length - 1 ? null : k;
+  markCurrent(); renderMarket(); renderCtx();
+  const el = document.getElementById(`st-${k}`);
+  if (el && reveal) { el.classList.add("open"); setView("session"); el.scrollIntoView({ block: "nearest" }); follow = false; }
+}
+$("steps").addEventListener("click", (e) => {
+  const br = e.target.closest("[data-break]");
+  if (br) { toggleBreakpoint(Number(br.dataset.break)); const k = Number(br.dataset.break) - 1; br.textContent = S.bps.steps.has(k + 1) ? "remove the breakpoint" : "break at this step"; return; }
+  const el = e.target.closest(".st"); if (!el || getSelection().toString()) return;
+  el.classList.toggle("open"); select(Number(el.dataset.k), false);
+});
+function reportHtml(r) {
+  if (r.error) return `<div class="report bad"><span class="neg">The session failed.</span><span class="num" style="white-space:pre-wrap">${esc(r.error)}</span></div>`;
+  const vs = isNum(r.reference_pnl_usd) ? r.pnl_usd - r.reference_pnl_usd : null;
+  const bad = r.disqualified || r.not_graded;
+  return `<div class="report ${bad ? "bad" : ""}"><span class="big ${tone(r.pnl_usd)}">${susd(r.pnl_usd)}</span>
+    ${isNum(vs) ? `<span>reference <b class="num ${tone(r.reference_pnl_usd)}">${susd(r.reference_pnl_usd)}</b> · <span class="num ${tone(vs)}">${susd(vs)}</span> against it</span>` : ""}
+    ${isNum(r.bound_pnl_usd) ? `<span class="muted">hindsight bound ${usd(r.bound_pnl_usd)}</span>` : ""}
+    ${r.disqualified ? `<span class="neg">disqualified: ${esc(typeof r.disqualified === "string" ? r.disqualified : JSON.stringify(r.disqualified))}</span>` : ""}
+    ${r.not_graded ? `<span class="neg">not graded: ${esc(r.not_graded)}</span>` : ""}
+    ${r.stopped && !r.not_graded ? `<span class="muted">stopped: ${esc(r.stopped)}</span>` : ""}</div>`;
+}
+
+const onSession = {
+  started(b) {
+    S.steps = []; pending.length = 0; S.report = null; S.sel = null; follow = true;
+    S.started = { ...b.session, printed: b.printed, failed: b.failed };
+    $("steps").innerHTML = startedHtml();
+    setSession("running"); setView("session"); renderMarket();
+  },
+  step(b) { pending.push(b); if (!flushQueued) { flushQueued = true; requestAnimationFrame(flush); } },
+  stopped(b) {
+    flush(); S.sel = null; setSession("stopped"); markCurrent(); renderMarket();
+    document.getElementById(`st-${S.steps.length - 1}`)?.scrollIntoView({ block: "nearest" });
+    if (b.reason === "trap") setView("session");
+  },
+  continued() { setSession("running"); },
+  terminated(b) {
+    flush(); S.report = b;
+    if ($("steps").querySelector(".empty")) $("steps").innerHTML = "";
+    $("steps").insertAdjacentHTML("beforeend", reportHtml(b));
+    setSession(b.error ? "failed" : "terminated"); renderMarket();
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+  },
+};
+// After Stop, what the old session still sends is not shown.
+let halted = false;
+for (const [name, fn] of Object.entries(onSession)) link.on(name, (b) => { if (!halted) fn(b); });
+
+// Build output, and its diagnostics.
+let buildLines = [], built = null;
+function renderBuild() {
+  const all = [...S.diags.values()].flat();
+  const errs = all.filter((d) => d.severity === "error").length;
+  $("build-cnt").textContent = errs || "";
+  const cards = all.map((d, i) => `<div class="diag ${esc(d.severity)}" data-i="${i}"><i>${d.severity === "error" ? "✕" : "!"}</i><div><div>${esc(d.message)}</div><div class="where">${esc(d.file)}:${d.line}:${d.column}</div></div></div>`).join("");
+  const cls = (l) => (/^error/.test(l) ? "err" : /^warning/.test(l) ? "warn" : /^built |Finished/.test(l.trim()) ? "ok" : "");
+  $("buildlog").innerHTML = (cards || "") + (buildLines.length ? buildLines.map((l) => `<div class="l ${cls(l)}">${esc(l)}</div>`).join("") : cards ? "" : `<div class="empty" style="height:auto;padding-top:40px">No build yet. Play builds the strategy first.</div>`);
+  $("buildlog").querySelectorAll(".diag").forEach((el) => el.addEventListener("click", () => { const d = all[Number(el.dataset.i)]; openFile(d.file, d); }));
+  const bv = $("build-view"); bv.scrollTop = cards ? 0 : bv.scrollHeight;
+}
+link.on("output", (b) => {
+  if (b.category === "build") { if (/^building the strategy/.test(b.text)) buildLines = []; buildLines.push(...String(b.text).split("\n")); renderBuild(); }
+  else if (b.category !== "agent") $("steps").insertAdjacentHTML("beforeend", `<div class="note ${b.category === "grader" ? "" : "printed"}">${esc(b.text)}</div>`);
+});
+link.on("built", (b) => { built = b; setDiagnostics(b.diagnostics); if (!b.ok) setView("build"); });
+
+async function launch(stopOnEntry) {
+  if (!S.scenario) return;
+  if (!(await saveAll())) return;
+  clearSession(); halted = false; setSession("building");
+  try { await link.send("launch", { scenario: S.scenario, stopOnEntry, breakpoints: bpArgs(), msPerStep: msPerStep() }); if (S.session === "building") setSession("starting"); }
+  catch (e) { setSession("failed"); if (built && !built.ok) setView("build"); else tell(e); }
+}
+async function play() {
+  if (S.session === "running") return link.send("pause").catch(tell);
+  if (S.session === "stopped") return link.send("continue").catch(tell);
+  if (S.session !== "building" && S.session !== "starting") return launch(false);
+}
+async function stepIn() {
+  if (S.session === "stopped") return link.send("next").then(() => setSession("running")).catch(tell);
+  if (!["running", "building", "starting"].includes(S.session)) return launch(true);
+}
+async function restart() {
+  if (S.session === "building" || S.session === "starting") return;
+  if (!(await saveAll())) return;
+  const had = S.session !== "idle";
+  clearSession(); halted = false; setSession("building");
+  try { await link.send(had ? "restart" : "launch", had ? {} : { scenario: S.scenario, stopOnEntry: false, breakpoints: bpArgs(), msPerStep: msPerStep() }); if (S.session === "building") setSession("starting"); }
+  catch (e) { setSession("failed"); if (built && !built.ok) setView("build"); else tell(e); }
+}
+async function buildNow() {
+  if (!(await saveAll())) return;
+  const was = S.session; setSession("building"); setView("build");
+  try { await link.send("build"); } catch (e) { tell(e); }
+  setSession(was === "building" ? "idle" : was);
+}
+$("play").addEventListener("click", play);
+$("step").addEventListener("click", stepIn);
+$("restart").addEventListener("click", restart);
+$("stop").addEventListener("click", async () => {
+  try {
+    const status = await link.send("terminate");
+    if (status.state === "terminated" && !S.report) {
+      flush(); halted = true; setSession("terminated");
+      $("steps").insertAdjacentHTML("beforeend", `<div class="note warn">stopped${S.steps.length ? ` after step ${S.steps.length}` : " before its first step"}</div>`);
+    }
+  } catch (e) { tell(e); }
+});
+$("build").addEventListener("click", buildNow);
+
+// ---------------------------------------------------------------- composer
+const thread = $("thread"), threadScroll = $("thread-scroll");
+const md = (text) => {
+  const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
+  return String(text).split(/```/).map((part, i) => {
+    if (i % 2) return `<pre><code>${esc(part.replace(/^[\w-]*\n/, ""))}</code></pre>`;
+    return part.split(/\n{2,}/).filter((p) => p.trim()).map((p) => {
+      const lines = p.split("\n");
+      if (lines.every((l) => /^\s*([-*]|\d+\.)\s+/.test(l))) return `<p>${lines.map((l) => "• " + inline(l.replace(/^\s*([-*]|\d+\.)\s+/, ""))).join("<br>")}</p>`;
+      if (/^#{1,4}\s/.test(p)) return `<p><b>${inline(p.replace(/^#{1,4}\s+/, ""))}</b></p>`;
+      return `<p>${inline(p).replace(/\n/g, "<br>")}</p>`;
+    }).join("");
+  }).join("");
+};
+const texts = new Map();
+const pinned = () => threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight < 60;
+function showMessage(m) {
+  // A thought isn't a message: it shows under the live line while it lasts.
+  if (m.role === "thought") { if (S.busy) { pulse.thought = m.id === pulse.thoughtId ? pulse.thought + (m.text ?? "") : (m.text ?? ""); pulse.thoughtId = m.id; pulse.thinking = !m.done && Boolean(pulse.thought.trim()); pulse.replying = false; renderLive(); } return; }
+  if (m.role === "agent" && !m.text && !document.getElementById("cm-" + m.id)) { pulse.replying = false; pulse.thinking = false; renderLive(); return; }
+  if (m.role === "agent") { pulse.replying = !m.done; pulse.thinking = false; pulse.thought = ""; }
+  const stick = pinned();
+  let el = document.getElementById("cm-" + m.id);
+  if (!el) {
+    threadShown();
+    el = document.createElement("div");
+    el.id = "cm-" + m.id; el.className = "msg " + (m.role || "agent");
+    thread.appendChild(el); texts.set(m.id, "");
+  }
+  const text = texts.get(m.id) + (m.text ?? ""); texts.set(m.id, text);
+  if (m.role === "user") {
+    // The server echoes how many images went with it; the page still has
+    // the ones it just sent.
+    const count = m.images ?? Number(el.dataset.images || 0);
+    el.dataset.images = count;
+    const mine = count && sentShots?.length === count ? sentShots : el.shots;
+    if (mine) { el.shots = mine; sentShots = null; }
+    el.innerHTML = esc(text) + (count ? `<div class="pics">${mine ? mine.map((x) => `<img src="${x.url}" alt="">`).join("") : `<span class="count">${count} image${count > 1 ? "s" : ""}</span>`}</div>` : "");
+  }
+  else if (m.role === "studio") el.textContent = text;
+  else el.innerHTML = md(text);
+  renderLive();
+  if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
+}
+// Tool calls, grouped in runs: the calls between two of the agent's messages.
+const runs = new Map(); // run -> {el, calls: Map id -> call, open, opened: Set id}
+// A small diff: the lines that differ between two texts, with two of context.
+function diffHtml(d) {
+  const a = String(d.old ?? "").split("\n"), b = String(d.new ?? "").split("\n");
+  let head = 0; while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0; while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const line = (cls, mark, text) => `<i class="${cls}">${mark} ${esc(text)}</i>`;
+  const before = a.slice(Math.max(0, head - 2), head), after = a.slice(a.length - tail, a.length - tail + 2);
+  return `<pre class="diff">${head > 2 ? '<i class="gap">  …</i>' : ""}${before.map((t) => line("", " ", t)).join("")}${a.slice(head, a.length - tail).map((t) => line("del", "−", t)).join("")}${b.slice(head, b.length - tail).map((t) => line("add", "+", t)).join("")}${after.map((t) => line("", " ", t)).join("")}${tail > 2 ? '<i class="gap">  …</i>' : ""}</pre>`;
+}
+const workspaceFile = (path) => (path ? S.files.find((f) => path === f || String(path).endsWith("/" + f)) : null);
+function callDetail(c) {
+  const input = c.input && typeof c.input === "object" ? c.input : {};
+  const out = [];
+  const opens = (path) => (workspaceFile(path) ? `<span class="lnk" data-open="${esc(workspaceFile(path))}">open</span>` : "");
+  if (typeof input.command === "string") out.push(`<pre class="cmd">$ ${esc(input.command)}</pre>`);
+  else {
+    const shown = ["file_path", "path", "pattern", "query", "glob", "url"].filter((key) => (typeof input[key] === "string" || typeof input[key] === "number") && !(key.endsWith("path") && (c.diffs || []).length));
+    for (const key of shown) out.push(`<div class="kv">${key.replace("file_path", "path")} <b>${esc(input[key])}</b>${key.endsWith("path") ? opens(input[key]) : ""}</div>`);
+    if (!shown.length && !(c.diffs || []).length && Object.keys(input).length) out.push(`<pre>${esc(JSON.stringify(input, null, 1).slice(0, 800))}</pre>`);
+  }
+  for (const d of c.diffs || []) out.push(`<div class="kv"><b>${esc(d.path ?? "")}</b>${opens(d.path)}</div>${diffHtml(d)}`);
+  // Agents fence a command's output as markdown: show what's inside.
+  const output = String(c.output || "").replace(/^```[\w-]*\n/, "").replace(/\n```\s*$/, "");
+  if (output.trim()) out.push(`<pre>${esc(output)}</pre>`);
+  return out.join("") || `<div class="kv">${esc(c.title || "no details")}</div>`;
+}
+function renderRun(r) {
+  const calls = [...r.calls.values()];
+  const status = calls.some((c) => c.status === "failed") ? "failed" : calls.every((c) => c.status === "completed") ? "completed" : "in_progress";
+  const summary = calls.at(-1).runSummary || calls.map((c) => c.summary || c.title).join(", ");
+  r.el.open = r.open;
+  r.el.innerHTML = `<summary><span class="mk ${status}"></span><span class="what">${esc(summary)}</span></summary><div class="calls">${calls.map((c) =>
+    `<details class="call" data-id="${esc(c.id)}" ${r.opened.has(c.id) ? "open" : ""}><summary><span class="mk ${esc(c.status || "pending")}"></span><span class="what">${esc(c.summary || c.title || "tool call")}</span></summary><div class="detail">${r.opened.has(c.id) ? callDetail(c) : ""}</div></details>`).join("")}</div>`;
+}
+function showTool(m) {
+  const stick = pinned();
+  const key = m.run || "solo-" + m.id;
+  let r = runs.get(key);
+  if (!r) {
+    threadShown();
+    r = { el: document.createElement("details"), calls: new Map(), open: false, opened: new Set() };
+    r.el.className = "run";
+    r.el.addEventListener("toggle", (e) => {
+      if (e.target === r.el) { r.open = r.el.open; return; }
+      const id = e.target.dataset?.id; if (!id) return;
+      if (e.target.open) { r.opened.add(id); e.target.querySelector(".detail").innerHTML = callDetail(r.calls.get(id)); } else r.opened.delete(id);
+    }, true);
+    r.el.addEventListener("click", (e) => { if (e.target.dataset.open) openFile(e.target.dataset.open); });
+    runs.set(key, r); thread.appendChild(r.el);
+  }
+  r.calls.set(m.id, m);
+  renderRun(r);
+  pulse.replying = false; pulse.thinking = false; pulse.thought = ""; renderLive();
+  if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
+}
+link.on("composer/message", showMessage);
+link.on("composer/tool", showTool);
+const composerBody = thread.closest(".composer-body");
+// A conversation needs more room than an empty input: the composer takes
+// it from the editor, unless the divider has been dragged.
+const roomFor = (on) => { if (!("lt" in store.get("layout2", {}))) { sizes.lt = on ? .62 : DEFAULT_SIZES.lt; applySizes(); } };
+const threadEmpty = () => { thread.innerHTML = ""; composerBody.classList.remove("has-thread"); roomFor(false); };
+const threadShown = () => { if (!composerBody.classList.contains("has-thread")) { composerBody.classList.add("has-thread"); roomFor(true); } };
+
+function renderAgents() {
+  const a = $("agent"), m = $("model");
+  a.innerHTML = (S.pick.agent ? "" : `<option value="">pick an agent</option>`) + S.agents.map((g) => `<option value="${esc(g.id)}" ${g.available ? "" : "disabled"} title="${esc(g.reason || "")}">${esc(g.name)}${g.available ? "" : " (unavailable)"}</option>`).join("");
+  a.value = S.pick.agent || "";
+  const models = S.agents.find((g) => g.id === S.pick.agent)?.models || [];
+  m.innerHTML = models.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  m.value = S.pick.model || ""; m.hidden = models.length < 2;
+  a.title = S.agents.filter((g) => !g.available).map((g) => `${g.name}: ${g.reason}`).join("\n") || "The coding agent";
+}
+async function selectAgent(agent, model) {
+  try { const p = await link.send("agents/select", { agent, model: model || "" }); S.pick = { agent: p.agent, model: p.model }; } catch (e) { tell(e); }
+  renderAgents();
+}
+$("agent").addEventListener("change", (e) => selectAgent(e.target.value, ""));
+$("model").addEventListener("change", (e) => selectAgent(S.pick.agent, e.target.value));
+
+const CTX = { file: () => S.open, scenario: () => S.scenario, step: () => (S.steps.length ? `step ${cur() + 1}` : null), build: () => { const n = [...S.diags.values()].flat().filter((d) => d.severity === "error").length; return n ? `${n} build error${n > 1 ? "s" : ""}` : null; } };
+function renderCtx() {
+  $("ctx").innerHTML = Object.entries(CTX).map(([key, label]) => (label() ? `<button data-ctx="${key}" class="${S.ctx[key] ? "" : "off"}">${esc(label())}</button>` : "")).join("");
+}
+$("ctx").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { S.ctx[b.dataset.ctx] = !S.ctx[b.dataset.ctx]; renderCtx(); } });
+function context() {
+  const c = {};
+  if (S.ctx.file && S.open) c.file = { path: S.open, unsaved: dirty(S.open) };
+  if (S.ctx.scenario && S.scenario) c.scenario = { name: S.scenario, path: scenarioPath(), description: S.plan?.scenario?.description };
+  const errors = [...S.diags.values()].flat().filter((d) => d.severity === "error");
+  if (S.ctx.build && errors.length) c.build = { ok: false, errors: errors.slice(0, 10) };
+  if (S.ctx.step && S.steps.length) {
+    const s = S.steps[cur()];
+    c.session = { scenario: S.scenario, state: S.session, steps_played: S.steps.length, steps: S.started?.steps, report: S.report || undefined };
+    c.step = { number: s.k + 1, k: s.k, mark: s.market.mark, oracle: s.market.oracle, best_bid: s.market.best_bid, best_ask: s.market.best_ask, position: s.account.position, filled_since_last_step: s.account.position_change, pnl_usd: s.account.pnl_usd, drawdown_usd: s.account.drawdown_usd, printed: s.printed, failed: s.failed, intents: s.intents, cuts: s.notes, sent: s.sent };
+  }
+  return c;
+}
+// The live line: shown while the turn runs, unless a tool call is running
+// (its spinner is the moving thing) or the reply is streaming (its text is).
+const pulse = { el: null, open: false, thinking: false, replying: false, thought: "", thoughtId: null };
+const callRunning = () => [...runs.values()].some((r) => [...r.calls.values()].some((c) => c.status !== "completed" && c.status !== "failed"));
+function renderLive() {
+  const show = S.busy && !pulse.replying && !callRunning();
+  if (!show) { pulse.el?.remove(); return; }
+  if (!pulse.el) {
+    // Built once: a click must land on the same nodes while chunks stream.
+    pulse.el = document.createElement("details"); pulse.el.className = "live";
+    pulse.el.innerHTML = `<summary><span class="mk in_progress"></span><span class="what"></span></summary><div class="thinking"></div>`;
+    pulse.el.addEventListener("toggle", () => { if (pulse.el.isConnected) pulse.open = pulse.el.open; });
+    pulse.el.firstElementChild.addEventListener("click", (e) => { if (!pulse.thought.trim()) e.preventDefault(); });
+  }
+  const stick = pinned(), has = Boolean(pulse.thought.trim());
+  pulse.el.classList.toggle("has-thought", has);
+  if (pulse.el.open !== (pulse.open && has)) pulse.el.open = pulse.open && has;
+  pulse.el.querySelector(".what").textContent = pulse.thinking ? "thinking" : "working";
+  pulse.el.querySelector(".thinking").textContent = pulse.thought.trim();
+  threadShown();
+  if (thread.lastElementChild !== pulse.el) thread.appendChild(pulse.el);
+  const box = pulse.el.querySelector(".thinking"); if (box) box.scrollTop = box.scrollHeight;
+  if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
+}
+function setBusy(on) {
+  S.busy = on; $("cancel").hidden = !on; $("send").disabled = on;
+  if (!on || !pulse.el?.isConnected) Object.assign(pulse, { thinking: false, replying: false, thought: "", thoughtId: null });
+  renderLive();
+}
+// Screenshots to send with the next message: pasted, or dropped on the pane.
+let shots = [], sentShots = null;
+const MAX_EDGE = 1568;
+function renderShots() {
+  $("shots").hidden = !shots.length;
+  $("shots").innerHTML = shots.map((x, i) => `<div class="shot"><img src="${x.url}" alt="screenshot ${i + 1}"><button data-i="${i}" title="Remove">×</button></div>`).join("");
+}
+$("shots").addEventListener("click", (e) => { if (e.target.dataset.i) { shots.splice(Number(e.target.dataset.i), 1); renderShots(); } });
+async function addImages(files) {
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) continue;
+    try {
+      const url = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(r.error); r.readAsDataURL(file); });
+      const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error("that image doesn't load")); i.src = url; });
+      const scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+      let out = url;
+      // Agents take PNG, JPEG, GIF and WebP, up to a size: redraw the rest.
+      if (scale < 1 || !/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.naturalWidth * scale); canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        out = canvas.toDataURL("image/png");
+      }
+      const [head, data] = out.split(",");
+      shots.push({ mimeType: head.slice(5, head.indexOf(";")), data, url: out });
+    } catch (e) { tell(e); }
+  }
+  renderShots(); $("prompt").focus();
+}
+$("prompt").addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (files.length) { e.preventDefault(); addImages(files); }
+});
+const composerPane = $("p-composer");
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+composerPane.addEventListener("dragover", (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; composerPane.classList.add("drop"); } });
+composerPane.addEventListener("dragleave", (e) => { if (!composerPane.contains(e.relatedTarget)) composerPane.classList.remove("drop"); });
+composerPane.addEventListener("drop", (e) => { if (hasFiles(e)) { e.preventDefault(); composerPane.classList.remove("drop"); addImages([...e.dataTransfer.files]); } });
+// A file dropped anywhere else would replace the page: don't let it.
+addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });
+
+async function sendPrompt() {
+  const box = $("prompt"), text = box.value.trim();
+  if ((!text && !shots.length) || S.busy) return;
+  if (!S.pick.agent) {
+    const first = S.agents.find((g) => g.available);
+    if (!first) return toast("No coding agent found. Install claude-agent-acp or codex-acp, or Node for npx.");
+    await selectAgent(first.id, "");
+  }
+  // The agent reads files from disk: save what's on screen first.
+  if (!(await saveAll())) return;
+  const images = shots; shots = []; renderShots();
+  box.value = ""; grow(); setBusy(true);
+  sentShots = images.length ? images : null;
+  try { await link.send("composer/send", { text: text || "Look at this.", context: context(), ...(images.length ? { images: images.map(({ mimeType, data }) => ({ mimeType, data })) } : {}) }); }
+  catch (e) { tell(e); }
+  sentShots = null; setBusy(false);
+}
+const grow = () => { const b = $("prompt"); b.style.height = "auto"; b.style.height = Math.min(180, b.scrollHeight) + "px"; };
+$("prompt").addEventListener("input", grow);
+$("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendPrompt(); } });
+$("send").addEventListener("click", sendPrompt);
+$("cancel").addEventListener("click", () => link.send("composer/cancel").catch(tell));
+
+// ---------------------------------------------------------------- keys
+addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === "s") { e.preventDefault(); save(); }
+  else if (mod && e.key === "Enter" && e.shiftKey) { e.preventDefault(); restart(); }
+  else if (mod && e.key === "Enter") { e.preventDefault(); play(); }
+  else if (mod && e.key === "b") { e.preventDefault(); buildNow(); }
+  else if (e.key === "F10" || (mod && e.key === "'")) { e.preventDefault(); stepIn(); }
+  else if (e.key === "Escape" && document.body.dataset.max) maximize(document.querySelector(".pane.max"));
+});
+addEventListener("beforeunload", (e) => { if (S.tabs.some(dirty)) e.preventDefault(); });
+
+// ---------------------------------------------------------------- start
+async function refreshLists() {
+  const init = await link.send("initialize");
+  S.files = init.files; S.scenarios = init.scenarios; S.task = init.task;
+  $("ws-name").textContent = String(init.workspace).split("/").filter(Boolean).pop() || "workspace";
+  $("ws-name").title = init.workspace;
+  $("task-tag").textContent = init.task; $("task-tag").hidden = !init.task;
+  $("scenario").innerHTML = S.scenarios.map((n) => `<option>${esc(n)}</option>`).join("");
+  if (S.scenario) $("scenario").value = S.scenario;
+  renderTabs();
+  return init;
+}
+link.onOpen(async () => {
+  try {
+    const init = await refreshLists();
+    document.title = `${$("ws-name").textContent} · mtx studio`;
+    S.pick = { agent: init.agent?.agent ?? null, model: init.agent?.model ?? null };
+    // Files: keep what's being edited across a reconnect, reload the rest.
+    for (const path of [...S.bufs.keys()]) if (!dirty(path)) S.bufs.delete(path);
+    S.tabs = S.tabs.filter((p) => S.files.includes(p));
+    if (!S.tabs.length && S.files.includes("src/lib.rs")) S.tabs = ["src/lib.rs"];
+    const first = S.tabs.includes(S.open) ? S.open : S.tabs.includes(store.get("open")) ? store.get("open") : S.tabs[0];
+    S.open = null;
+    if (first) await openFile(first);
+    const session = init.session || { state: "idle" };
+    const wanted = (session.state !== "idle" && session.scenario) || S.scenario || store.get("scenario2") || init.defaultScenario;
+    await loadScenario(S.scenarios.includes(wanted) ? wanted : S.scenarios[0]);
+    link.send("agents/list").then((r) => { S.agents = r.agents; if (r.selected?.agent) S.pick = { agent: r.selected.agent, model: r.selected.model }; renderAgents(); }).catch(tell);
+    link.send("composer/history").then((r) => {
+      thread.innerHTML = ""; texts.clear(); runs.clear(); pulse.el = null;
+      for (const m of r.messages) (m.role ? showMessage({ ...m, done: true }) : showTool(m));
+      if (!r.messages.length) threadEmpty();
+      threadScroll.scrollTop = threadScroll.scrollHeight;
+    }).catch(tell);
+    setBusy(Boolean(init.agent?.busy));
+    // A session already there (the page reloaded): replay it.
+    clearSession();
+    if (session.state && session.state !== "idle") {
+      if (["running", "stopped"].includes(session.state) && session.breakpoints?.steps) { S.bps.steps = new Set(session.breakpoints.steps); for (const key of ["onOrders", "onFill", "onTrap"]) if (key in session.breakpoints) S.bps[key] = Boolean(session.breakpoints[key]); }
+      const { events } = await link.send("session/history");
+      replaying = true;
+      for (const ev of events) onSession[ev.event]?.(ev.body);
+      flush(); replaying = false;
+      if (session.state === "running") setSession("running");
+    }
+    renderBps(); renderControls(); renderCtx();
+  } catch (e) { tell(e); }
+});
+// For the console, and for scripts that drive the page.
+window.studio = { state: S, view, link, openFile, save, addImages };
+$("mock-tag").hidden = !MOCK;
+$("steps").innerHTML = EMPTY; threadEmpty();
+renderSpeed(); renderBps(); renderControls(); renderBuild(); setView("session");
+link.start();
+</script>
+</body>
+</html>
