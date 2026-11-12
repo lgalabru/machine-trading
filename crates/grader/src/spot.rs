@@ -800,7 +800,9 @@ pub(crate) async fn run_session(
     let instruments = spot.instruments();
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    // Spot sessions run process bots only.
+    let user = Some(BOT_USERS[opts.slot.ok_or(Error::NoBotUser)?]);
+    let workdir = SessionDir::create(&bot, user)?;
     let mut slot = rpc.get_slot()?;
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
@@ -1019,7 +1021,7 @@ pub(crate) async fn run_session(
     }
     guard.set_turn(false);
     let _ = session::send(&mut writer, &Message::End).await;
-    session::stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    session::stop_bot(&mut child, workdir.bot_user.and(user)).await;
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
     let calls = guard.call_log();

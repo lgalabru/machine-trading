@@ -643,15 +643,22 @@ pub async fn calibrate(
     Ok(sessions)
 }
 
-/// Run every scenario, one per bot user in `bot_users` at a time, reports in
-/// scenario order.
+/// The most sessions of a strategy component a grade runs at once.
+pub const MAX_COMPONENT_JOBS: usize = 32;
+
+/// Run every scenario, `bot_users.len()` at a time, reports in scenario
+/// order.
 ///
-/// Concurrent sessions each get their own surfnet, and run their bots as
-/// different users (see [`session::BOT_USERS`]). Sessions are kept in an
-/// ordered window of `jobs` (the range's length), so the ones running at
-/// once always have distinct `bot_users.start + index % jobs` slots. A
-/// machine too loaded for `jobs` grades slower, not differently. `trusted`
-/// bots get [`SessionOptions::trusted`].
+/// Concurrent sessions share nothing: each has its own surfnet, ports, RPC
+/// guard, directory, keys (derived from the session, not the order it ran
+/// in) and, for a component, its own store and fuel. So a grade comes out
+/// the same whatever `jobs` is, and a machine too loaded for it grades
+/// slower, not differently. A process bot also runs as its own user (see
+/// [`session::BOT_USERS`]): sessions are kept in an ordered window of
+/// `jobs`, so the ones running at once always have distinct `bot_users.start
+/// + index % jobs` users, and `jobs` is at most the number of users. A
+/// component needs no user: up to [`MAX_COMPONENT_JOBS`] of its sessions run
+/// at once. `trusted` bots get [`SessionOptions::trusted`].
 #[allow(clippy::too_many_arguments)]
 async fn run_sessions(
     snapshot_dir: &Path,
@@ -666,10 +673,19 @@ async fn run_sessions(
     keys: RoleKeys<'_>,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
-    if !(1..=session::BOT_USERS.len()).contains(&jobs) {
-        return Err(Error::Jobs(jobs, session::BOT_USERS.len()));
+    let components = crate::wasm::component_in(bot_dir).is_some()
+        && scenarios
+            .iter()
+            .all(|scenario| session::plays_component(bot_dir, scenario));
+    let most = if components {
+        MAX_COMPONENT_JOBS
+    } else {
+        session::BOT_USERS.len()
+    };
+    if !(1..=most).contains(&jobs) {
+        return Err(Error::Jobs(jobs, most));
     }
-    if bot_users.end > session::BOT_USERS.len() {
+    if !components && bot_users.end > session::BOT_USERS.len() {
         return Err(Error::BotUsers {
             first: first_bot_user,
             jobs,
@@ -682,11 +698,6 @@ async fn run_sessions(
         .map(|(index, scenario)| {
             let observer = observer.clone();
             async move {
-            // Stagger the first sessions so their surfnets don't race for
-            // the same free ports.
-            if index < jobs {
-                tokio::time::sleep(STAGGER * index as u32).await;
-            }
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
             let run = || {
                 session::run(SessionOptions {
@@ -694,7 +705,7 @@ async fn run_sessions(
                     scenario,
                     bot_dir,
                     bot_log: &bot_log,
-                    slot: first_bot_user + index % jobs,
+                    slot: (!components).then_some(first_bot_user + index % jobs),
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
                     trusted,
                     observer: observer.clone(),
@@ -732,8 +743,6 @@ async fn run_sessions(
     }
     Ok(reports)
 }
-
-const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Errors from the grader's own machinery talking to its surfnet, as
 /// opposed to a missing bot, an invalid scenario or a loaded machine
@@ -1100,6 +1109,41 @@ mod tests {
         assert!(matches!(run(4, 1).await, Err(Error::BotUsers { .. })));
         assert!(run(2, 2).await.unwrap().is_empty());
         assert!(run(0, 4).await.unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&logs);
+    }
+
+    #[tokio::test]
+    async fn a_components_sessions_run_many_at_once_with_no_bot_users() {
+        let logs = std::env::temp_dir().join(format!("mtx-logs-{}", uuid::Uuid::new_v4()));
+        let bot = std::env::temp_dir().join(format!("mtx-component-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&bot).unwrap();
+        std::fs::write(bot.join(crate::wasm::BOT_WASM), b"").unwrap();
+        let keys = SessionKeys::random();
+        let run = |first: usize, jobs: usize| {
+            run_sessions(
+                Path::new("."),
+                &bot,
+                &[],
+                &logs,
+                first..first + jobs,
+                None,
+                false,
+                false,
+                None,
+                keys.role("bot"),
+            )
+        };
+        assert!(run(0, 16).await.unwrap().is_empty());
+        assert!(run(3, MAX_COMPONENT_JOBS).await.unwrap().is_empty());
+        assert!(matches!(
+            run(0, MAX_COMPONENT_JOBS + 1).await,
+            Err(Error::Jobs(_, MAX_COMPONENT_JOBS))
+        ));
+        assert!(matches!(run(0, 0).await, Err(Error::Jobs(0, _))));
+        // A process bot's sessions still take one bot user each.
+        std::fs::remove_file(bot.join(crate::wasm::BOT_WASM)).unwrap();
+        assert!(matches!(run(0, 5).await, Err(Error::Jobs(5, 4))));
+        let _ = std::fs::remove_dir_all(&bot);
         let _ = std::fs::remove_dir_all(&logs);
     }
 
