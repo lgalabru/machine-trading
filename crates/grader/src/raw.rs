@@ -1808,14 +1808,21 @@ mod tests {
         )
         .replace([' ', '\n'], "");
         for pair in &pairs {
-            let hex: String = pair.secret_bytes().iter().map(|b| format!("{b:02x}")).collect();
+            let hex: String = pair
+                .secret_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             for secret in [
                 pair.to_base58_string(),
                 hex,
                 format!("{:?}", pair.secret_bytes()).replace(' ', ""),
                 format!("{:?}", &pair.to_bytes()[..]).replace(' ', ""),
             ] {
-                assert!(!written.contains(&secret), "a secret key in the session's output");
+                assert!(
+                    !written.contains(&secret),
+                    "a secret key in the session's output"
+                );
             }
         }
 
