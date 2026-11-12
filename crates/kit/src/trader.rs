@@ -196,11 +196,15 @@ impl Trader {
             Side::Bid => Rounding::Down,
             Side::Ask => Rounding::Up,
         };
-        Ok(self
-            .inner
+        self.inner
             .market()
             .instrument
-            .round_price(decimal(price_usd, "price")?, rounding))
+            .checked_round_price(decimal(price_usd, "price")?, rounding)
+            .ok_or_else(|| {
+                Error::InvalidOrder(format!(
+                    "price {price_usd} is past what the tick grid holds"
+                ))
+            })
     }
 
     /// Rest an order on the book at `price_usd`, or fill against it if the
