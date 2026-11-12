@@ -74,6 +74,7 @@ pub mod core;
 pub mod lending;
 #[cfg(any(feature = "chain", feature = "spot-venue"))]
 pub mod protocols;
+pub mod raw;
 mod strategy;
 #[cfg(any(feature = "chain", feature = "spot-venue"))]
 pub mod token;
@@ -104,6 +105,7 @@ pub use mtx_core::{
     rust_decimal::{self, Decimal},
     turns,
 };
+pub use raw::{RawReceipt, RawTransaction, send_raw};
 /// The Solana types the kit's signatures use, so callers need not pin
 /// matching versions of the Solana crates themselves.
 #[cfg(any(feature = "chain", feature = "venue", feature = "spot-venue"))]
@@ -111,9 +113,12 @@ pub use solana_pubkey::Pubkey;
 #[cfg(feature = "chain")]
 pub use solana_transaction::{Hash, Instruction, Signature};
 pub use strategy::{
-    Action, BotResult, Execution, Intent, Market, Orders, Position, RPC_METHODS, SESSION_VARS,
-    Session, Side, Strategy, log, plan, resting_after, rpc, rpc_account, rpc_accounts,
-    step_offline,
+    Action, AmountUnit, Book, BotResult, Execution, FeeView, Intent, LendingPosition, LineOptions,
+    LiquidityPosition, LiquidityShape, Market, MarketKind, OpenOrder, Orders, OwnFill, Planned,
+    Position, PriceRange, RPC_METHODS, Reports, Rfq, Role, Route, SESSION_VARS, SendSource,
+    SendState, SendStatus, Session, Side, Strategy, TimeInForce, TxOptions, VenueInfo, VenueView,
+    log, phoenix_market_address, plan, plan_sheet, plan_sheet_with, resting_after, rpc,
+    rpc_account, rpc_accounts, step_offline, venue_views,
 };
 
 #[cfg(feature = "phoenix")]
@@ -136,7 +141,7 @@ mod bot {
             phoenix_rise,
         },
         run::run,
-        trader::{Top, Trader},
+        trader::{Sent, Top, Trader},
         tx::{rpc_client, rpc_client_with_timeout, send},
     };
 }
@@ -144,7 +149,7 @@ mod bot {
 /// What a strategy needs: `use mtx_kit::prelude::*;`.
 pub mod prelude {
     pub use crate::{
-        Action, BotResult, Execution, Intent, Market, Orders, Position, Session, Side, Strategy,
-        plan, rpc, step_offline,
+        Action, BotResult, Execution, Intent, Market, Orders, Position, SendState, Session, Side,
+        Strategy, TxOptions, plan, plan_sheet, rpc, step_offline,
     };
 }

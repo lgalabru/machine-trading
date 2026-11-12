@@ -97,6 +97,13 @@ spot-smoke:
     grade spot-smoke-openbook spot-smoke smoke-openbook clean --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
 
+# The strategy interface end to end: the probe puts one line of each kind
+# on its first sheet in a flash-crash session, and its log
+# (target/logs/wit-probe) shows what it was handed and what became of each.
+wit-probe:
+    just --justfile bots/wit-probe/Justfile build
+    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-spcx/environment/practice/practice-1.json
+
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
