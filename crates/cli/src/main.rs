@@ -25,11 +25,13 @@ mod author;
 mod authoring;
 mod bot;
 mod charts;
+mod compact;
 mod market_cal;
 mod mcp;
 mod play;
 mod publish;
 mod review;
+mod run;
 mod ui;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
@@ -182,6 +184,38 @@ enum BotCommand {
         /// such as ones `mtx scenario generate` drew.
         scenarios: Vec<PathBuf>,
     },
+    /// Build a bot and play one practice session, showing what its strategy
+    /// printed; with --debug, step by step.
+    Run {
+        /// The bot directory.
+        #[arg(long, default_value = ".")]
+        bot: PathBuf,
+        /// The task, as named in bench/tasks (default: the flash-crash task).
+        #[arg(long)]
+        task: Option<String>,
+        /// A practice scenario by name (`practice-3`), or a scenario file
+        /// (default: the task's first practice scenario).
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Run the bot as it is, without running `just build`.
+        #[arg(long)]
+        no_build: bool,
+        /// Step through the session: at each step, the market the strategy
+        /// was handed, what it printed, its order sheet and the orders sent.
+        #[arg(long)]
+        debug: bool,
+        /// With --debug: play on at this pace, in milliseconds a step,
+        /// instead of waiting for a key.
+        #[arg(long, requires = "debug")]
+        auto: Option<u64>,
+        /// With --debug: show steps from this one on (counting from 1).
+        #[arg(long, requires = "debug", default_value_t = 1)]
+        from: u64,
+        /// The machine-trading checkout to use (default: the one this mtx was
+        /// built from).
+        #[arg(long, env = "MTX_REPO")]
+        repo: Option<PathBuf>,
+    },
     /// Check a bot directory against the bot contract's shape: a bot.wasm
     /// that is a component, built from the current source.
     Check {
@@ -326,6 +360,16 @@ enum BenchCommand {
         /// Replace a release already published under that name.
         #[arg(long)]
         force: bool,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Compact a release published before compacting was part of publishing:
+    /// no transaction signatures, sessions' tables as columns, each scenario
+    /// and each source file once, logs cut shorter. Readers see the same
+    /// sessions. Running it twice changes nothing.
+    Compact {
+        /// The release's version (bench/results/<version>), or `all`.
+        version: String,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -669,6 +713,35 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&summary)?
         }
+        Command::Bench(BenchCommand::Compact { version, results }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let releases: Vec<PathBuf> = if version == "all" {
+                publish::releases(&results)
+                    .into_iter()
+                    .map(|r| r.path)
+                    .collect()
+            } else {
+                vec![results.join(&version)]
+            };
+            let mut out = serde_json::Map::new();
+            for release in releases {
+                anyhow::ensure!(
+                    release.join("release.json").is_file(),
+                    "{} isn't a published release",
+                    release.display()
+                );
+                ui::start(format!("Compacting {}", release.display()));
+                let done = compact::compact_release(&release)?;
+                ui::done(format!(
+                    "Compacted {}: {:.1} MB → {:.1} MB",
+                    release.display(),
+                    done.bytes_before as f64 / 1e6,
+                    done.bytes_after as f64 / 1e6
+                ));
+                out.insert(release.display().to_string(), serde_json::to_value(done)?);
+            }
+            serde_json::to_string_pretty(&out)?
+        }
         Command::Bench(BenchCommand::Export { out, site, results }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             let releases = publish::releases(&results);
@@ -937,6 +1010,7 @@ async fn run() -> Result<()> {
                 detail_dir: details.as_deref(),
                 annotations: annotations.as_deref(),
                 components_only,
+                observer: None,
             })
             .await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
@@ -973,6 +1047,28 @@ async fn run() -> Result<()> {
                     build: !no_build,
                     jobs,
                     json,
+                    repo: repo.as_deref(),
+                })
+                .await?
+            }
+            BotCommand::Run {
+                bot,
+                task,
+                scenario,
+                no_build,
+                debug,
+                auto,
+                from,
+                repo,
+            } => {
+                run::run(run::Run {
+                    dir: &bot,
+                    task: task.as_deref(),
+                    scenario: scenario.as_deref(),
+                    build: !no_build,
+                    debug,
+                    auto: auto.map(std::time::Duration::from_millis),
+                    from: from.saturating_sub(1),
                     repo: repo.as_deref(),
                 })
                 .await?

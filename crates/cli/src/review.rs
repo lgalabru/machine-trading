@@ -390,8 +390,10 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
                     }
                     continue;
                 }
-                if let Ok(bytes) = std::fs::read(&src) {
-                    write(&format!("session/{n}/{role}/{name}.json.gz"), &bytes)?;
+                // As the review serves it: a compact release's session
+                // expanded, its scenario inlined.
+                if let Ok(json) = read_session(dir, role, name) {
+                    write(&format!("session/{n}/{role}/{name}.json.gz"), &gz(&json))?;
                     files += 1;
                 }
             }
@@ -423,6 +425,30 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
                 }),
         );
         for path in paths {
+            // A file another trial keeps (a compact release's shared file)
+            // is written once, by that trial, and aliased here.
+            if !dir.join(&path).exists()
+                && !dir.join(format!("{path}.gz")).exists()
+                && let Some(owner) = shared_file(dir, &path).and_then(|file| {
+                    let rel = file
+                        .strip_prefix(dir.parent()?.parent()?.canonicalize().ok()?)
+                        .ok()?;
+                    // <job>/<trial>/<path>
+                    let mut parts = rel.components();
+                    let trial = dir
+                        .parent()?
+                        .parent()?
+                        .join(parts.next()?)
+                        .join(parts.next()?);
+                    index_of_dir.get(&trial.canonicalize().ok()?).copied()
+                })
+            {
+                aliases.insert(
+                    format!("file/{n}/{path}"),
+                    json!(format!("file/{owner}/{path}")),
+                );
+                continue;
+            }
             if let Ok(text) = file_text(&state, n, &path) {
                 write(&format!("file/{n}/{path}.gz"), &gz(text.as_bytes()))?;
                 files += 1;
@@ -878,8 +904,7 @@ fn trial_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
         names.dedup();
         names
     };
-    let mut files = Vec::new();
-    list_files(&dir, &dir.join("artifacts/app/bot"), &mut files);
+    let files = trial_files(&dir, &dir.join("artifacts/app/bot"));
     let logs: Vec<String> = FILES
         .iter()
         .filter(|f| dir.join(f).is_file() || dir.join(format!("{f}.gz")).is_file())
@@ -955,6 +980,30 @@ fn natural_key(name: &str) -> (String, u64) {
 }
 
 /// Source files under `dir`, relative to the trial, build output left out.
+/// A trial's files, those another trial of its release keeps for it
+/// ([`crate::compact::SHARED_FILES`]) included, sorted by path.
+fn trial_files(trial: &FsPath, dir: &FsPath) -> Vec<Value> {
+    let mut out = Vec::new();
+    list_files(trial, dir, &mut out);
+    let prefix = dir
+        .strip_prefix(trial)
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    for (path, _) in read_json(&trial.join(crate::compact::SHARED_FILES))
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+    {
+        if path.starts_with(&prefix)
+            && let Some(file) = shared_file(trial, &path)
+        {
+            let bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+            out.push(json!({ "path": path, "bytes": bytes }));
+        }
+    }
+    out.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    out
+}
+
 fn list_files(trial: &FsPath, dir: &FsPath, out: &mut Vec<Value>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -1044,7 +1093,23 @@ fn read_session(dir: &FsPath, role: &str, name: &str) -> Result<Vec<u8>, ApiErro
     flate2::read::GzDecoder::new(file)
         .read_to_end(&mut json)
         .map_err(|e| anyhow::anyhow!("{}: {e}", gz.display()))?;
-    Ok(json)
+    // A compact release's session: as the grader wrote it, for every reader.
+    let mut value: Value =
+        serde_json::from_slice(&json).map_err(|e| anyhow::anyhow!("{}: {e}", gz.display()))?;
+    let release = dir.parent().and_then(FsPath::parent);
+    crate::compact::expand_session(&mut value, release);
+    Ok(serde_json::to_vec(&value).map_err(anyhow::Error::from)?)
+}
+
+/// Where a file of a published trial is: its own, or the copy another
+/// trial of its release keeps ([`crate::compact::SHARED_FILES`]).
+fn shared_file(dir: &FsPath, path: &str) -> Option<PathBuf> {
+    let release = dir.parent().and_then(FsPath::parent)?;
+    let rel = read_json(&dir.join(crate::compact::SHARED_FILES))?
+        .get(path)?
+        .as_str()?
+        .to_string();
+    crate::compact::inside(release, &rel)
 }
 
 /// The most points a session's curve carries in `/api/curves`.
@@ -1269,11 +1334,17 @@ fn file_text(state: &AppState, n: usize, path: &str) -> Result<String, ApiError>
     } else {
         (full, false)
     };
-    // A link inside the trial could point anywhere.
-    let real = full.canonicalize().map_err(|_| ApiError::NotFound)?;
-    if !real.starts_with(&dir) || !real.is_file() {
-        return Err(ApiError::NotFound);
-    }
+    // A compact release keeps a file once: another trial may have it.
+    let real = match full.canonicalize() {
+        Ok(real) => {
+            // A link inside the trial could point anywhere.
+            if !real.starts_with(&dir) || !real.is_file() {
+                return Err(ApiError::NotFound);
+            }
+            real
+        }
+        Err(_) => shared_file(&dir, path).ok_or(ApiError::NotFound)?,
+    };
     let file = std::fs::File::open(&real).map_err(|_| ApiError::NotFound)?;
     let mut reader: Box<dyn Read> = if gzipped {
         Box::new(flate2::read::GzDecoder::new(file))
