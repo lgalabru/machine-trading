@@ -25,6 +25,7 @@ mod author;
 mod authoring;
 mod bot;
 mod charts;
+mod compact;
 mod mcp;
 mod play;
 mod publish;
@@ -357,6 +358,16 @@ enum BenchCommand {
         #[arg(long)]
         results: Option<PathBuf>,
     },
+    /// Compact a release published before compacting was part of publishing:
+    /// no transaction signatures, sessions' tables as columns, each scenario
+    /// and each source file once, logs cut shorter. Readers see the same
+    /// sessions. Running it twice changes nothing.
+    Compact {
+        /// The release's version (bench/results/<version>), or `all`.
+        version: String,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
     /// Write every published release as a static site: the review page and
     /// its data, for GitHub Pages. The browser inflates the gzipped files.
     Export {
@@ -676,6 +687,35 @@ async fn run() -> Result<()> {
                 ));
             }
             serde_json::to_string_pretty(&summary)?
+        }
+        Command::Bench(BenchCommand::Compact { version, results }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let releases: Vec<PathBuf> = if version == "all" {
+                publish::releases(&results)
+                    .into_iter()
+                    .map(|r| r.path)
+                    .collect()
+            } else {
+                vec![results.join(&version)]
+            };
+            let mut out = serde_json::Map::new();
+            for release in releases {
+                anyhow::ensure!(
+                    release.join("release.json").is_file(),
+                    "{} isn't a published release",
+                    release.display()
+                );
+                ui::start(format!("Compacting {}", release.display()));
+                let done = compact::compact_release(&release)?;
+                ui::done(format!(
+                    "Compacted {}: {:.1} MB → {:.1} MB",
+                    release.display(),
+                    done.bytes_before as f64 / 1e6,
+                    done.bytes_after as f64 / 1e6
+                ));
+                out.insert(release.display().to_string(), serde_json::to_value(done)?);
+            }
+            serde_json::to_string_pretty(&out)?
         }
         Command::Bench(BenchCommand::Export { out, site, results }) => {
             let results = results.unwrap_or_else(publish::results_dir);
