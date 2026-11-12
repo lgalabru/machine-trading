@@ -1,0 +1,25 @@
+{
+  "name": "mtx-studio-vendor",
+  "private": true,
+  "description": "Bundles the studio page's editor (CodeMirror 6) into ../src/studio/codemirror.js",
+  "scripts": {
+    "build": "esbuild codemirror.mjs --bundle --format=esm --minify --target=es2022 --legal-comments=none --outfile=../src/studio/codemirror.js"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6",
+    "@codemirror/lang-json": "^6",
+    "@codemirror/lang-rust": "^6",
+    "@codemirror/language": "^6",
+    "@codemirror/lint": "^6",
+    "@codemirror/search": "^6",
+    "@codemirror/state": "^6",
+    "@codemirror/view": "^6",
+    "@codemirror/autocomplete": "^6",
+    "@codemirror/legacy-modes": "^6",
+    "@lezer/highlight": "^1",
+    "codemirror": "^6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25"
+  }
+}

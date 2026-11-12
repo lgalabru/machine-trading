@@ -85,7 +85,7 @@ impl StopReason {
 }
 
 /// One thing that happened during a prompt turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TurnEvent {
     /// A piece of the assistant's reply.
     Text(String),
@@ -96,6 +96,13 @@ pub enum TurnEvent {
         id: String,
         title: Option<String>,
         status: Option<String>,
+        /// ACP's kind (`read`, `edit`, `execute`, `search`, …), the tool's
+        /// raw input (a command, a path, a pattern), what it gave back
+        /// (`content`: text and diffs) and the files it touched.
+        kind: Option<String>,
+        raw_input: Option<Value>,
+        content: Option<Value>,
+        locations: Option<Value>,
     },
     /// The turn finished; no more events follow.
     Done(StopReason),
@@ -569,6 +576,13 @@ fn handle_update(shared: &Shared, params: Option<&Value>) {
                     .get("status")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                kind: update
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                raw_input: update.get("rawInput").cloned(),
+                content: update.get("content").cloned(),
+                locations: update.get("locations").cloned(),
             }),
         _ => None,
     };
@@ -787,6 +801,10 @@ mod tests {
                     id: "t1".into(),
                     title: Some("run tests".into()),
                     status: Some("in_progress".into()),
+                    kind: None,
+                    raw_input: None,
+                    content: None,
+                    locations: None,
                 },
                 TurnEvent::Text("Hello, ".into()),
                 TurnEvent::Text("world".into()),
