@@ -10,3 +10,4 @@ and never reuse a number. Decisions themselves live in [`../adr/`](../adr/).
 | --- | --- | --- |
 | [0001](0001-instrument-traits.md) | Traits split by trading mechanism, state typed by instrument | Discussion |
 | [0002](0002-wasm-strategies.md) | Strategies compiled to wasm, called by the grader | Discussion |
+| [0003](0003-studio.md) | `mtx studio`, a workbench for a strategy and its scenario | Discussion |
