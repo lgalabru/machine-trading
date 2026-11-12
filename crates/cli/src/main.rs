@@ -302,8 +302,9 @@ struct Sessions {
     jobs: usize,
     /// The first bot user (0-3) sessions run their bots as, when run as
     /// root; they use `--jobs` of them from there. Graders running at once
-    /// on one machine need ranges that don't overlap: a session's end kills
-    /// every process of its bot user.
+    /// on one machine never share a bot user at the same time (a session's
+    /// end kills every process of its user): a session waits for its user,
+    /// so ranges that don't overlap keep them from waiting.
     #[arg(long, default_value_t = 0)]
     first_bot_user: usize,
     /// Scenario files, run in order.

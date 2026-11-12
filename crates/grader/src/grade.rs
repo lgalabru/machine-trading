@@ -229,8 +229,9 @@ pub struct GradeOptions<'a> {
     pub jobs: usize,
     /// The first of [`session::BOT_USERS`] this grade's bots run as; it
     /// uses `jobs` of them from there. Graders running at once on one
-    /// machine need ranges that don't overlap: a session's end kills every
-    /// process of its bot user.
+    /// machine never share a user at the same time (see
+    /// [`session::BotUserLock`]); ranges that don't overlap keep them from
+    /// waiting for each other.
     pub first_bot_user: usize,
     /// A reference bot to run on the same scenarios first, as the baseline,
     /// with `anchor_jobs` sessions at once (it's trusted: it can share the
@@ -782,18 +783,26 @@ async fn run_sessions(
             let observer = observer.clone();
             async move {
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
+            let slot = (!components).then_some(first_bot_user + index % jobs);
             let run = || {
                 session::run(SessionOptions {
                     snapshot_dir,
                     scenario,
                     bot_dir,
                     bot_log: &bot_log,
-                    slot: (!components).then_some(first_bot_user + index % jobs),
+                    slot,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
                     trusted,
                     observer: observer.clone(),
                     keys: keys.session(index, &scenario.name),
                 })
+            };
+            // Another grade on this machine may use the same bot user, and
+            // a session's end kills everything its user runs: hold the user
+            // while the session runs.
+            let _user = match slot {
+                Some(slot) => Some(session::BotUserLock::acquire(session::BOT_USERS[slot]).await?),
+                None => None,
             };
             // A session whose setup fails on the machine (a request to its
             // own surfnet that can't get through on a loaded host) runs once

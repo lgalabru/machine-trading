@@ -1382,6 +1382,60 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
     }
 }
 
+/// Where graders on a machine hold the bot users their sessions run as:
+/// a fixed path, not `TMPDIR`, so that every grader finds it.
+const BOT_USER_LOCKS: &str = "/tmp/mtx-bot-users";
+
+/// One of [`BOT_USERS`], held for a session against every grader on the
+/// machine. A session's end kills every process its bot user owns (a bot can
+/// leave its process group, not its user), so two grades running at once
+/// must never run bots as the same user at the same time: a session that
+/// wants a user another grade holds waits for it. Only a grader running as
+/// root runs bots as these users; otherwise holding one is a no-op.
+pub struct BotUserLock {
+    /// The locked file, closed (and so let go) on drop.
+    _held: Option<std::fs::File>,
+}
+
+impl BotUserLock {
+    pub async fn acquire(user: &str) -> Result<Self> {
+        // SAFETY: getuid has no preconditions.
+        if unsafe { libc::getuid() } != 0 {
+            return Ok(Self { _held: None });
+        }
+        let dir = Path::new(BOT_USER_LOCKS);
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(dir)
+            .map_err(io_error(dir))?;
+        Ok(Self {
+            _held: Some(lock(&dir.join(format!("{user}.lock"))).await?),
+        })
+    }
+}
+
+/// An exclusive lock on the file at `path`, waited for: released when the
+/// file is closed, by the process ending too.
+async fn lock(path: &Path) -> Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(io_error(path))?;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::os::fd::AsRawFd;
+        // SAFETY: flock on a descriptor this file owns.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            Ok(file)
+        } else {
+            Err(io_error(&path)(std::io::Error::last_os_error()))
+        }
+    })
+    .await
+    .map_err(|e| Error::Timeout(format!("a bot user's lock: {e}")))?
+}
+
 /// How a process bot starts: `just run` from its `Justfile`, or `bash
 /// run.sh` (the bots kept from earlier releases, under `bench/checks`).
 fn entry_point(bot_dir: &Path) -> Result<Command> {
@@ -1541,6 +1595,27 @@ mod tests {
         })
         .await;
         assert_eq!(second.unwrap(), 7);
+    }
+
+    /// Two grades on one machine never hold a bot user at once: the second
+    /// waits until the first lets go.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_bot_user_is_held_by_one_session_at_a_time() {
+        let path = std::env::temp_dir().join(format!("mtx-user-{}.lock", uuid::Uuid::new_v4()));
+        let first = lock(&path).await.unwrap();
+        let second = tokio::spawn({
+            let path = path.clone();
+            async move { lock(&path).await.unwrap() }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!second.is_finished(), "both held the user");
+        drop(first);
+        let second = tokio::time::timeout(Duration::from_secs(10), second)
+            .await
+            .expect("the user was let go")
+            .unwrap();
+        drop(second);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
