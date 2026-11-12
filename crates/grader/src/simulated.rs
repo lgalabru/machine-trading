@@ -485,7 +485,9 @@ pub async fn phoenix_v1_market(
         || spec.quote_lot_atoms == 0
         || !base_unit.is_multiple_of(spec.base_lot_atoms)
         || !quote_unit.is_multiple_of(spec.quote_lot_atoms)
-        || !spec.tick_quote_atoms_per_base_unit.is_multiple_of(spec.quote_lot_atoms)
+        || !spec
+            .tick_quote_atoms_per_base_unit
+            .is_multiple_of(spec.quote_lot_atoms)
     {
         return Err(invalid(format!(
             "{}: lots must divide a unit and the tick must be whole quote lots",
