@@ -1,11 +1,13 @@
 # infra 05: spot as wasm components, wasm-buildable decoders, Token-2022 and v0
 
-## STATE (checkpoint 2026-11-11 ~19:50 PST)
-- Done and pushed (origin infra/05-spot-wasm, 4 commits up to 08c2769b): kit split, Token-2022, v0/ALT, spot component host, spot-smoke component. fmt, workspace clippy, kit --all-features clippy+tests, wasm clippy (all bots + kit venue features), cargo test --workspace: all pass.
-- `just spot-smoke` on runner-5: all 8 grades ran (7 --components-only + 1 process); buyer/reduce-only disqualified as expected.
-- RUNNING: anchor proof on northpier-runner-5, container `infra-05-build`, script /data/builders/infra-05/proof.sh (base = origin/main c80ca119 in /w/base, target /w/target-base; branch in /w/src, target /w/target); output /data/builders/infra-05/proof.out and /w/proof/*.json. Seed in /w/proof/.seed (never print; delete when done).
-- NEXT: run /data/builders/infra-05/compare.sh in the container (expects identical reports without wall-clock fields); then report; then clean up: `docker rm -f infra-05-build` and remove /data/builders/infra-05 on runner-5.
+## STATE (final, 2026-11-11 PST)
+Done. Branch infra/05-spot-wasm pushed. Runner-5 scratch (container infra-05-build, /data/builders/infra-05) removed.
 
+## Proof
+- `cargo +nightly fmt --check`, `clippy -D warnings` (workspace; mtx-kit --all-features; wasm32-wasip2 for starter/reference/maker/carry/weekend/spot-smoke and for mtx-kit's venue features), `cargo test --workspace` and `cargo test -p mtx-kit --all-features`: pass (runner-5, rust 1.97.1).
+- New tests: kit `token` (vs spl-token-2022-interface), `chain::token` Token-2022, `chain::lookup`, v0 packing/signing/sending; grader guard v0 forwarding, spot host grid/venues, ignored `the_spot_smoke_component_sells_and_buys_once` (CI runs it), and `tests/tokens_and_v0.rs`: an offline surfnet, a Token-2022 mint with a 1% transfer fee funded via `spot::fund_mint`, transfers through the guard (fee/withheld as the kit predicts), an ALT made in setup and a v0 transfer that lands as version 0 with 2 loaded writable keys, logged by the guard.
+- `just spot-smoke`: 8 grades (7 `--components-only` + 1 process). Components fill on Phoenix and on OpenBook alone; buyer is disqualified (side) and reduce-only is disqualified ("bought 0.1 SOL"); the component decodes the books itself through rpc; fuel ~1.66e9 per 20-step session.
+- Anchors: the 4 references (as components, `--components-only`), 6 hidden sessions each, one private seed, origin/main vs this branch. Component binaries are byte-identical. Reports are identical except `wall_ms`/`turn_ms` and, for funding-carry and weekend-gap, `fuel_used`/`fuel_max_call`. That fuel noise is already on main: a second main run of weekend-gap with the same seed differs from the first in the same way. Flag it for PR 12, deterministic grading: the fuel counts are not reproducible (probably the size of rpc answers).
 
 Title: Spot sessions run strategy components; Phoenix v1/OpenBook v2 decoding for wasm; Token-2022 and v0 transactions
 
