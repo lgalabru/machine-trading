@@ -223,7 +223,19 @@ async fn a_rebuild_is_byte_identical() {
             .filter(|f| y.get(f.as_str()) != Some(&x[f.as_str()]))
             .cloned()
             .collect();
-        format!("{key} owner {}: {fields:?}", x["owner"])
+        let bytes = |v: &serde_json::Value| {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(v["data"].as_str().unwrap_or_default())
+                .unwrap_or_default()
+        };
+        let (p, q) = (bytes(x), bytes(y));
+        let at: Vec<_> = (0..p.len().min(q.len()))
+            .filter(|i| p[*i] != q[*i])
+            .take(6)
+            .map(|i| format!("{i}: {} vs {}", p[i], q[i]))
+            .collect();
+        format!("{key} owner {} len {} {fields:?} bytes {at:?}", x["owner"], p.len())
     };
     let report: Vec<_> = differing.iter().map(describe).collect();
     assert!(differing.is_empty(), "accounts differ: {report:?}");
