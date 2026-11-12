@@ -491,7 +491,7 @@ impl Seat for BookSeat {
             sent: false,
         };
         let no_lots = || Sent {
-            state: SendState::NotSent("rounds to no lots".into()),
+            state: SendState::NotSent("rounds to nothing on the market's grid".into()),
             sent: false,
         };
         let sent = match planned.action {
