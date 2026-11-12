@@ -94,14 +94,14 @@ impl Competitor {
         std::fs::write(&path, bytes).map_err(io_error(&path))?;
         let trader = Trader::connect_with_timeout(
             &BotEnv {
-            rpc_url: rpc_url.to_string(),
-            keypair_path: path,
-            exchange_path: world.exchange_path.clone(),
-            symbol: scenario.symbol.clone(),
-            end_slot: u64::MAX,
-            max_position: f64::MAX,
-            max_drawdown_usd: f64::MAX,
-            mandate_path: None,
+                rpc_url: rpc_url.to_string(),
+                keypair_path: path,
+                exchange_path: world.exchange_path.clone(),
+                symbol: scenario.symbol.clone(),
+                end_slot: u64::MAX,
+                max_position: f64::MAX,
+                max_drawdown_usd: f64::MAX,
+                mandate_path: None,
             },
             INTERNAL_RPC_TIMEOUT,
         )?;
@@ -193,7 +193,11 @@ impl Quoting {
         }
         self.report.tightest_bps = self.report.tightest_bps.min(self.bid_bps).min(self.ask_bps);
 
-        let held = match patiently("the competitor's position", async || trader.position().await).await {
+        let held = match patiently("the competitor's position", async || {
+            trader.position().await
+        })
+        .await
+        {
             Ok(position) => position.size,
             Err(error) => {
                 warn!("competitor reading its position: {error}");
@@ -225,10 +229,11 @@ impl Quoting {
     }
 
     pub async fn report(mut self, competitor: &Competitor) -> CompeteReport {
-        self.report.end_position =
-            patiently("the competitor's position", async || competitor.trader.position().await)
-                .await
-                .map_or(0.0, |p| p.size);
+        self.report.end_position = patiently("the competitor's position", async || {
+            competitor.trader.position().await
+        })
+        .await
+        .map_or(0.0, |p| p.size);
         info!(report = ?self.report, "competitor done");
         self.report
     }
