@@ -1,21 +1,29 @@
-//! Market calibration.
+//! Market calibration and market model v2.
 //!
 //! - [`calibration`]: the per-asset files fitted to real market data
 //!   (`calibration/market/<asset>.<date>.<hash>.toml`).
 //! - [`calendar`]: trading calendars (regular hours, extended hours,
 //!   overnight, weekends, holidays).
+//! - [`model`]: the fair-value process a calibration drives, compiled to the
+//!   waypoints sessions replay. Opt-in: a scenario uses it only when drawn
+//!   from it, and records which file it came from.
 //!
 //! "Market calibration" is not `mtx calibrate`, which writes a scenario's
 //! reference PnL. See `docs/market-calibration.md`.
 
 pub mod calendar;
 pub mod calibration;
+pub mod model;
 
 pub use calibration::Calibration;
+pub use model::{MarketModel, MarketModelRecord, ModelSpec};
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use mtx_core::mandate::Mandate;
+
     use super::Calibration;
+    use crate::scenario::{Scenario, VENUE};
 
     const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261111.7f960b0d.toml");
     const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261111.8c2b4e5c.toml");
@@ -31,6 +39,31 @@ pub(crate) mod tests {
     fn with_sha(mut calibration: Calibration, text: &str) -> Calibration {
         calibration.sha256 = super::calibration::sha256_hex(text.as_bytes());
         calibration
+    }
+
+    /// A perp scenario with no path, for a model to fill.
+    pub(crate) fn template() -> Scenario {
+        Scenario {
+            name: "template".into(),
+            description: "drawn from a market calibration".into(),
+            symbol: "SPCX".into(),
+            duration_slots: 480,
+            mandate: Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0),
+            path: Vec::new(),
+            making: None,
+            offhours: None,
+            funding: None,
+            tape: Vec::new(),
+            spot: None,
+            faults: None,
+            turn_data: None,
+            order: None,
+            participation: None,
+            net: None,
+            reference_pnl_usd: None,
+            fair_path: None,
+            market_model: None,
+        }
     }
 
     #[test]
