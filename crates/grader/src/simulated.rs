@@ -456,6 +456,21 @@ async fn pin(clock: Option<&ClockPin>, surfnet: &Surfnet) -> Result<()> {
     }
 }
 
+impl ClockPin {
+    /// Where a snapshot made after the steps should start: past the last one,
+    /// so a session's clock is never before the time an order records.
+    /// `(slot, unix seconds)`.
+    pub fn end(&self) -> (u64, u64) {
+        let n = self.step.load(std::sync::atomic::Ordering::SeqCst) + 1;
+        (self.slot + n * 1_000, (self.unix_ms + n * 250_000) / 1_000)
+    }
+
+    /// Whether any step ran.
+    pub fn used(&self) -> bool {
+        self.step.load(std::sync::atomic::Ordering::SeqCst) > 0
+    }
+}
+
 /// A market made by an action.
 #[derive(Debug, Clone)]
 pub struct Made {
@@ -479,6 +494,40 @@ fn phoenix_seat_ix(market: &Pubkey, authority: &Pubkey, trader: &Pubkey) -> Inst
             account_meta(Pubkey::default(), false, false),
         ],
         data: vec![105],
+    }
+}
+
+/// Phoenix's `NameSuccessor`: the authority hands the market to `successor`.
+fn phoenix_name_successor_ix(market: &Pubkey, authority: &Pubkey, successor: &Pubkey) -> Instruction {
+    let mut data = vec![102];
+    data.extend_from_slice(successor.as_ref());
+    Instruction {
+        program_id: phoenix_v1::PROGRAM_ID,
+        accounts: vec![
+            account_meta(phoenix_v1::PROGRAM_ID, false, false),
+            account_meta(phoenix_v1::ix::log_authority(), false, false),
+            account_meta(*market, true, false),
+            account_meta(*authority, false, true),
+        ],
+        data,
+    }
+}
+
+/// The Seat Manager's `ClaimMarketAuthority`: it takes the market as its
+/// named successor, as it holds every mainnet Phoenix v1 market, and seats any
+/// trader that asks (`ClaimSeat`).
+fn seat_manager_claim_authority_ix(market: &Pubkey, payer: &Pubkey) -> Instruction {
+    Instruction {
+        program_id: phoenix_v1::SEAT_MANAGER_ID,
+        accounts: vec![
+            account_meta(phoenix_v1::PROGRAM_ID, false, false),
+            account_meta(phoenix_v1::ix::log_authority(), false, false),
+            account_meta(*market, true, false),
+            account_meta(*payer, true, true),
+            account_meta(phoenix_v1::ix::seat_manager(market), true, false),
+            account_meta(Pubkey::default(), false, false),
+        ],
+        data: vec![0],
     }
 }
 
@@ -647,6 +696,23 @@ pub async fn phoenix_v1_market(
                 .map_err(|e| invalid(format!("seeding {side:?} {quantity} at {price}: {e}")))?;
         }
     }
+    // The handover mainnet markets have: the Seat Manager becomes the market's
+    // authority, so a bot claims its seat from it with the kit's code.
+    pin(clock, surfnet).await?;
+    send(
+        rpc,
+        &creator,
+        &[],
+        vec![
+            phoenix_name_successor_ix(
+                &market.pubkey(),
+                &creator.pubkey(),
+                &phoenix_v1::ix::seat_manager(&market.pubkey()),
+            ),
+            seat_manager_claim_authority_ix(&market.pubkey(), &creator.pubkey()),
+        ],
+        "hand the phoenix v1 market to the seat manager",
+    )?;
     info!(name = %spec.name, market = %market.pubkey(), "simulated phoenix v1 market created");
     Ok(Made {
         address: market.pubkey(),

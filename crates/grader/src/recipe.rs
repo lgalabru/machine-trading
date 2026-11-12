@@ -425,27 +425,40 @@ async fn spot_exercise(surfnet: &Surfnet, _rpc: &RpcClient) -> Result<f64> {
     Ok(price)
 }
 
+/// The account that paid the surfnet's payer its startup airdrop: the faucet,
+/// found from the payer's first transaction.
+fn faucet_of(rpc: &RpcClient, payer: &Pubkey) -> Result<Pubkey> {
+    let missing = || invalid("the surfnet's faucet could not be identified".into());
+    let signatures = chain::call(
+        rpc,
+        "getSignaturesForAddress",
+        json!([payer.to_string(), { "commitment": "confirmed" }]),
+    )?;
+    let first = signatures
+        .as_array()
+        .and_then(|l| l.last())
+        .and_then(|e| e["signature"].as_str())
+        .ok_or_else(missing)?;
+    let transaction = chain::call(
+        rpc,
+        "getTransaction",
+        json!([first, { "encoding": "json", "maxSupportedTransactionVersion": 0 }]),
+    )?;
+    let key = transaction["transaction"]["message"]["accountKeys"][0]
+        .as_str()
+        .ok_or_else(missing)?;
+    parse_key(key)
+}
+
 /// Drops the two accounts every surfnet makes for itself from a random keypair,
 /// its payer and its faucet: an offline start makes its own, and with them in
 /// the export two builds of one recipe would differ.
 fn without_surfnet_keys(
     mut accounts: std::collections::BTreeMap<String, Option<surfpool_sdk::AccountSnapshot>>,
     payer: &Pubkey,
+    faucet: &Pubkey,
 ) -> std::collections::BTreeMap<String, Option<surfpool_sdk::AccountSnapshot>> {
-    const FAUCET_LAMPORTS: u64 = 100_000_000_000_000;
-    accounts.retain(|address, account| {
-        if *address == payer.to_string() {
-            return false;
-        }
-        let Some(account) = account else { return true };
-        let value = serde_json::to_value(account).unwrap_or_default();
-        let lamports = value["lamports"]
-            .as_u64()
-            .or_else(|| value["lamports"].as_str().and_then(|l| l.parse().ok()))
-            .unwrap_or(0);
-        let system_owned = value["owner"].as_str() == Some("11111111111111111111111111111111");
-        !(system_owned && lamports >= FAUCET_LAMPORTS)
-    });
+    accounts.retain(|address, _| *address != payer.to_string() && *address != faucet.to_string());
     accounts
 }
 
@@ -667,13 +680,19 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         created,
         exchange,
         price,
+        clock,
         ..
     } = world;
     let mark_price_usd =
         price.ok_or_else(|| invalid("the recipe's warm-up reports no price".into()))?;
 
     let (fork_slot, created_at_unix) = match &source_manifest {
-        Some(m) => (m.fork_slot, m.created_at_unix),
+        // Past the steps the clock was pinned to, so a session never starts
+        // before the time an order records.
+        Some(m) => match &clock {
+            Some(c) if c.used() => c.end(),
+            _ => (m.fork_slot, m.created_at_unix),
+        },
         None => (
             rpc.get_slot()?,
             std::time::SystemTime::now()
@@ -682,7 +701,9 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
                 .unwrap_or_default(),
         ),
     };
-    let accounts = without_surfnet_keys(chain::export_snapshot(&rpc)?, &surfnet.payer().pubkey());
+    let payer = surfnet.payer().pubkey();
+    let faucet = faucet_of(&rpc, &payer)?;
+    let accounts = without_surfnet_keys(chain::export_snapshot(&rpc)?, &payer, &faucet);
     for s in &sources {
         if !matches!(accounts.get(&s.address), Some(Some(_))) {
             return Err(invalid(format!(
