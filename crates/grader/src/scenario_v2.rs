@@ -9,7 +9,7 @@
 //! |----------------|--------------------------------------------------------------|
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
 //! | `venues`       | the perp venue's funding, the spot markets and their data    |
-//! | `market_model` | the price path, the fair value, a closed period              |
+//! | `market_model` | the price path, fair value, closed period, their record      |
 //! | `oracles`      | the price feeds the grader writes, and how they fail         |
 //! | `actors`       | the competing maker and the grader's taker flow              |
 //! | `faults`       | execution faults on the bot's sends and reads                |
@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     faults::Faults,
     making::{Competition, Making, TAKER_ACCOUNTS, TakerOrder},
+    market::MarketModelRecord,
     offhours::OffHours,
     oracles::{Oracles, Source},
     orders::{ExecutionOrder, NetScoring, Participation},
@@ -142,6 +143,10 @@ pub struct MarketModel {
     /// For a scenario where the underlying's own market is closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_period: Option<ClosedPeriod>,
+    /// Opt-in: the market calibration the path was drawn from, and what was
+    /// drawn (see [`crate::market::model`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<MarketModelRecord>,
 }
 
 /// The closed period before the underlying's market reopens, and Phoenix's
@@ -290,8 +295,8 @@ impl MarketModel {
 
     /// Waypoints in order, in range, and each move finished before the next
     /// starts; the fair value in order and inside the session; the closed
-    /// period consistent with the path; the last move finished before the
-    /// session ends. A closed period's taker orders (`takers`, the
+    /// period consistent with the path; the record's marks inside the
+    /// session; the last move finished before the session ends. A closed period's taker orders (`takers`, the
     /// scenario's [`Actors::takers`]) are checked with it, as
     /// [`OffHours::validate`] does.
     pub fn validate(&self, duration_slots: u64, takers: &[TakerOrder]) -> Result<(), String> {
@@ -364,6 +369,11 @@ impl MarketModel {
                 }
                 previous = waypoint.slot;
             }
+        }
+        if let Some(record) = &self.record {
+            record
+                .validate(duration_slots)
+                .map_err(|reason| format!("market_model: {reason}"))?;
         }
         if free_from > duration_slots {
             return Err(format!(
@@ -698,6 +708,7 @@ impl ScenarioV2 {
             path,
             fair_path,
             closed_period,
+            record,
         } = market_model;
         let Actors { competitor, takers } = actors;
         let (making, offhours, tape) = match (competitor, closed_period) {
@@ -745,6 +756,7 @@ impl ScenarioV2 {
             oracles,
             reference_pnl_usd: scoring.reference_pnl_usd,
             fair_path,
+            market_model: record,
         })
     }
 }
@@ -843,6 +855,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 path: v1.path.clone(),
                 fair_path: v1.fair_path.clone(),
                 closed_period,
+                record: v1.market_model.clone(),
             },
             oracles: v1.oracles.clone(),
             actors: Actors { competitor, takers },
@@ -1278,6 +1291,53 @@ mod tests {
         assert_eq!(s.validate(), Ok(()));
         s.oracles = Some(with(feed(pyth(SOL_USD), true)));
         assert!(s.validate().unwrap_err().contains("values the account"));
+    }
+
+    /// A shock scenario whose path is drawn from the SPCX calibration.
+    fn drawn() -> ScenarioV2 {
+        let model = crate::market::MarketModel::new(
+            crate::market::tests::spcx(),
+            crate::market::ModelSpec::default(),
+        )
+        .unwrap();
+        v2(&model
+            .scenario(&crate::market::tests::template(), "drawn", 5)
+            .unwrap())
+    }
+
+    #[test]
+    fn a_market_model_record_round_trips_through_v2_and_json() {
+        let as_v2 = drawn();
+        assert!(as_v2.market_model.record.is_some());
+        assert_eq!(as_v2.validate(), Ok(()));
+        let v1 = as_v2.clone().into_scenario().unwrap();
+        assert_eq!(v1.market_model, as_v2.market_model.record);
+        assert_eq!(v2(&v1), as_v2);
+        let text = serde_json::to_string_pretty(&as_v2).unwrap();
+        assert!(text.contains("\"record\""));
+        assert_eq!(parse(&text).unwrap(), v1);
+        assert_eq!(serde_json::from_str::<ScenarioV2>(&text).unwrap(), as_v2);
+        assert_eq!(parse(&serde_json::to_string(&v1).unwrap()).unwrap(), v1);
+
+        let mut value = serde_json::to_value(&as_v2).unwrap();
+        value["market_model"]["record"]["nonsense"] = 1.into();
+        assert!(parse(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn the_market_model_section_checks_its_record() {
+        let mut s = drawn();
+        s.market_model.record.as_mut().unwrap().calibration_sha256 = "x".into();
+        let error = s
+            .market_model
+            .validate(s.duration_slots, &s.actors.takers)
+            .unwrap_err();
+        assert!(error.starts_with("market_model: "), "{error}");
+        // The v1 text, word for word.
+        assert_eq!(
+            s.into_scenario().unwrap_err(),
+            "market_model: names its calibration and the file's SHA-256"
+        );
     }
 
     #[test]

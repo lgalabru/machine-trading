@@ -19,8 +19,9 @@ phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Hashes recipes and programs (src/recipe.rs) and derives each session's
-# keypairs from the grade's secret (src/keys.rs).
+# Hashes recipes and programs (src/recipe.rs), derives each session's
+# keypairs from the grade's secret (src/keys.rs), and pins
+# market-calibration files (src/market).
 sha2 = "0.10"
 solana-keypair.workspace = true
 solana-pubkey.workspace = true

@@ -179,3 +179,40 @@ fn golden_v2_oracles_file_is_what_a_v1_scenario_with_feeds_writes() {
         v1
     );
 }
+
+/// A perp scenario whose path is drawn from a market calibration, so it
+/// carries `market_model`'s record: no shipped file has one yet, so the v1
+/// side is drawn here from the committed SPCX calibration.
+#[test]
+fn golden_v2_market_model_file_is_what_a_drawn_v1_scenario_writes() {
+    use mtx_grader::market::{Calibration, MarketModel, ModelSpec};
+    let calibration = Calibration::load(
+        &root().join("calibration/market/spcx.20261112.d1f48be2.toml"),
+    )
+    .unwrap();
+    let model = MarketModel::new(calibration, ModelSpec::default()).unwrap();
+    let mut template = Scenario::load(
+        &root().join("bench/tasks/flash-crash-spcx/environment/practice/practice-1.json"),
+    )
+    .unwrap();
+    template.path.clear();
+    let v1 = model.scenario(&template, "drawn-1", 7).unwrap();
+    assert!(v1.market_model.is_some());
+    let name = "market-model.json";
+    let golden = root().join("crates/grader/tests/golden/scenario_v2");
+    let tmp = std::env::temp_dir().join(format!("mtx-v2-{}-{name}", std::process::id()));
+    v1.save_v2(&tmp).unwrap();
+    let written = std::fs::read_to_string(&tmp).unwrap();
+    std::fs::remove_file(&tmp).unwrap();
+    if std::env::var_os("MTX_BLESS").is_some() {
+        std::fs::write(golden.join(name), &written).unwrap();
+    }
+    let expected = std::fs::read_to_string(golden.join(name))
+        .unwrap_or_else(|e| panic!("{name}: {e}; bless it"));
+    assert_eq!(written, expected);
+    assert_eq!(Scenario::load(&golden.join(name)).unwrap(), v1);
+    assert_eq!(
+        ScenarioV2::try_from(&v1).unwrap().into_scenario().unwrap(),
+        v1
+    );
+}

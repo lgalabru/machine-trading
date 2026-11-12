@@ -26,7 +26,7 @@ docs together.
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet` |
 | `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
-| `market_model` | `path`, `fair_path`, and a `closed_period` with Phoenix's index through it |
+| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the calibration draw the path came from ([market calibration](market-calibration.md)) |
 | `oracles` | Price `feeds` the grader writes (Phoenix, Pyth, Scope) and their `failures` |
 | `actors` | The `competitor` maker and the grader's `takers` |
 | `faults` | Execution faults on the bot's sends and reads |

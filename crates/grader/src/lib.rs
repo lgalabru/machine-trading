@@ -11,6 +11,7 @@ pub mod grade;
 pub mod guard;
 pub mod keys;
 pub mod making;
+pub mod market;
 pub mod offhours;
 pub mod oracles;
 pub mod orders;
