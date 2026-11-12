@@ -27,6 +27,7 @@ mod bot;
 mod charts;
 mod compact;
 mod mcp;
+mod notice;
 mod play;
 mod publish;
 mod review;
@@ -617,17 +618,20 @@ async fn run() -> Result<()> {
         ) => !authoring.verbose,
         _ => false,
     };
-    // `mtx bot` prints its own summary: the grader's logs only if asked.
-    let default_filter = if interactive || matches!(cli.command, Command::Bot(_)) {
-        "warn"
-    } else {
-        "info"
-    };
+    // `mtx bot` prints its own summary, and `mtx studio` its own notices
+    // (the page shows the sessions): the grader's logs only if asked.
+    let default_filter =
+        if interactive || matches!(cli.command, Command::Bot(_) | Command::Studio { .. }) {
+            "warn"
+        } else {
+            "info"
+        };
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.into()),
         )
         .with_writer(ui::LogWriter)
+        .event_format(notice::NoticeFormat)
         .init();
     // A terminal reads the progress lines; JSON is for scripts.
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
