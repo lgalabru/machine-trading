@@ -1079,11 +1079,24 @@ mod tests {
                 .collect();
             failed.sort();
             failed.dedup();
+            // Where the generated statistics centre: the median over seeds
+            // of generated / real.
+            let centre = |name: &str| {
+                let ratios: Vec<f64> = reports
+                    .iter()
+                    .filter_map(|r| r.checks.iter().find(|c| c.name == name))
+                    .filter_map(|c| Some(c.generated? / c.real?))
+                    .collect();
+                format!("{name} {:.2}", median(&ratios))
+            };
+            let centres = ["vol_level", "vol_of_vol", "tail_ratio", "predictability"]
+                .map(centre)
+                .join(", ");
             (
                 count_of(Verdict::Pass),
                 count_of(Verdict::Fail),
                 count_of(Verdict::NotJudged),
-                failed.join(", "),
+                format!("{}; centres: {centres}", failed.join(", ")),
             )
         };
         println!(
