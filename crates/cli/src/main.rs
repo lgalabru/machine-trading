@@ -107,6 +107,11 @@ enum Command {
         /// Don't open a browser.
         #[arg(long)]
         no_open: bool,
+        /// The address to listen on. Pass 0.0.0.0 to open the studio from
+        /// another device on your network (an iPad): it then prints a URL
+        /// with a token, and a QR code of it.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         /// The machine-trading checkout to use (default: the one this mtx was
         /// built from).
         #[arg(long, env = "MTX_REPO")]
@@ -1094,9 +1099,11 @@ async fn run() -> Result<()> {
             task,
             port,
             no_open,
+            host,
             repo,
         } => {
             studio::studio(studio::StudioOptions {
+                host: &host,
                 dir: &bot_path,
                 task: task.as_deref(),
                 repo: repo.as_deref(),
