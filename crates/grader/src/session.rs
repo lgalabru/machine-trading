@@ -421,7 +421,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 )
                 .await?,
             ),
-            Some(Competitor::prepare(&world, &phoenix, scenario, internal.url(), &opts.keys).await?),
+            Some(
+                Competitor::prepare(&world, &phoenix, scenario, internal.url(), &opts.keys).await?,
+            ),
         ),
         (None, Some(off)) => (
             Some(

@@ -153,8 +153,14 @@ mod tests {
         let keys = SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars");
         assert_eq!(format!("{keys:?}"), "SessionKeys(..)");
         assert_ne!(
-            SessionKeys::random().session("s").keypair("bot", 0).pubkey(),
-            SessionKeys::random().session("s").keypair("bot", 0).pubkey()
+            SessionKeys::random()
+                .session("s")
+                .keypair("bot", 0)
+                .pubkey(),
+            SessionKeys::random()
+                .session("s")
+                .keypair("bot", 0)
+                .pubkey()
         );
     }
 
@@ -211,7 +217,11 @@ mod tests {
             }
             let text = String::from_utf8_lossy(&bytes).replace([' ', '\n'], "");
             for secret in &secrets {
-                assert!(!text.contains(secret.as_str()), "a session key in {}", path.display());
+                assert!(
+                    !text.contains(secret.as_str()),
+                    "a session key in {}",
+                    path.display()
+                );
             }
             files += 1;
         }
