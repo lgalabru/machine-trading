@@ -197,3 +197,12 @@ granted (v1); every tool call shows in the composer.
   session gives the real one (143.05 against 143.11 on flash-crash). A page
   that reloads gets the session's state and its history, and the
   composer's.
+- 2026-11-12: `terminate` ends the session where it is (found by fable
+  against the page). It used to let the session run out unseen and report
+  the whole run. Now it wakes the observer and fires a signal the
+  session's runtime races the grader against: dropping the grader's future
+  stops the surfnet and the bot, in 10 ms from step 33 of practice-4, with
+  nothing left listening. `terminated` then says `{terminated: true, k}`,
+  and the history keeps the steps played. Between `launch` and `started`,
+  while the market is set up (about 4 s), the session's state is
+  `starting`; breakpoints are reported only for a live session.
