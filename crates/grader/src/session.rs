@@ -115,6 +115,9 @@ pub struct SessionOptions<'a> {
     /// and the session's budget, so a loaded machine can't make it miss a
     /// turn. Components run on fuel either way.
     pub trusted: bool,
+    /// The session's keys: the bot's, the takers' and the maker's (see
+    /// [`crate::keys`]).
+    pub keys: crate::keys::SessionKeyring<'a>,
     /// Watches a component's session step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
@@ -353,7 +356,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
     let market = phoenix.market(&scenario.symbol)?;
 
-    let bot = Keypair::new();
+    let bot = opts.keys.keypair("bot", 0);
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
     let hawkeye = phoenix.hawkeye(bot.pubkey());
@@ -414,10 +417,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     making.competitor_bps,
                     start_mark_ticks,
                     internal.url(),
+                    &opts.keys,
                 )
                 .await?,
             ),
-            Some(Competitor::prepare(&world, &phoenix, scenario, internal.url()).await?),
+            Some(Competitor::prepare(&world, &phoenix, scenario, internal.url(), &opts.keys).await?),
         ),
         (None, Some(off)) => (
             Some(
@@ -428,13 +432,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     off.half_spread_bps,
                     start_mark_ticks,
                     internal.url(),
+                    &opts.keys,
                 )
                 .await?,
             ),
             None,
         ),
         (None, None) if !scenario.tape.is_empty() => (
-            Some(Takers::onboard(&world, &phoenix, scenario, internal.url()).await?),
+            Some(Takers::onboard(&world, &phoenix, scenario, internal.url(), &opts.keys).await?),
             None,
         ),
         (None, None) => (None, None),
@@ -1071,10 +1076,13 @@ pub(crate) fn transactions(
         .collect()
 }
 
-/// The grader's own read, made again if it fails, up to [`READ_ATTEMPTS`]
-/// times: on a starved machine a read can time out on the client's side, and
-/// reading again changes nothing, since nothing moves while the grader reads.
-pub(crate) async fn patiently<T, E: std::fmt::Display>(
+/// The grader's own read, made again if it fails for want of an answer (a
+/// timeout, a lost connection: see [`is_transport`]), up to
+/// [`READ_ATTEMPTS`] times. On a starved machine a read can time out on the
+/// client's side, and reading again changes nothing, since nothing moves
+/// while the grader reads. Any other error is the answer, and comes back at
+/// once.
+pub(crate) async fn patiently<T, E: std::error::Error + 'static>(
     what: &str,
     mut read: impl AsyncFnMut() -> std::result::Result<T, E>,
 ) -> std::result::Result<T, E> {
@@ -1082,13 +1090,40 @@ pub(crate) async fn patiently<T, E: std::fmt::Display>(
     loop {
         match read().await {
             Ok(value) => return Ok(value),
-            Err(error) if attempt < READ_ATTEMPTS => {
-                warn!(what, attempt, %error, "a grader read failed; reading again");
+            Err(error) if attempt < READ_ATTEMPTS && is_transport(&error) => {
+                warn!(what, attempt, %error, "a grader read got no answer; reading again");
                 attempt += 1;
             }
             Err(error) => return Err(error),
         }
     }
+}
+
+/// Whether `error` is a request that got no answer (it timed out, or its
+/// connection failed) rather than an answer. Errors that keep their source
+/// say so through reqwest's; some clients flatten theirs into text.
+pub(crate) fn is_transport(error: &(dyn std::error::Error + 'static)) -> bool {
+    const NO_ANSWER: [&str; 5] = [
+        "timed out",
+        "error sending request",
+        "connection refused",
+        "connection reset",
+        "connection closed",
+    ];
+    let mut next = Some(error);
+    while let Some(error) = next {
+        if let Some(http) = error.downcast_ref::<reqwest::Error>()
+            && (http.is_timeout() || http.is_connect() || http.is_request())
+        {
+            return true;
+        }
+        let text = error.to_string().to_lowercase();
+        if NO_ANSWER.iter().any(|sign| text.contains(sign)) {
+            return true;
+        }
+        next = error.source();
+    }
+    false
 }
 
 /// How long the world waits for a process bot: its hello, and each turn.
@@ -1424,6 +1459,43 @@ mod tests {
 
     fn mode(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("{0}")]
+    struct Failed(String);
+
+    #[tokio::test]
+    async fn only_unanswered_reads_are_made_again() {
+        let mut calls = 0;
+        let timed_out = patiently("x", async || {
+            calls += 1;
+            Err::<(), _>(Failed("error sending request: operation timed out".into()))
+        })
+        .await;
+        assert!(timed_out.is_err());
+        assert_eq!(calls, READ_ATTEMPTS);
+
+        let mut calls = 0;
+        let answered = patiently("x", async || {
+            calls += 1;
+            Err::<(), _>(Failed("no market SPCX".into()))
+        })
+        .await;
+        assert!(answered.is_err());
+        assert_eq!(calls, 1);
+
+        let mut calls = 0;
+        let second = patiently("x", async || {
+            calls += 1;
+            if calls == 1 {
+                Err(Failed("Connection refused (os error 111)".into()))
+            } else {
+                Ok(7)
+            }
+        })
+        .await;
+        assert_eq!(second.unwrap(), 7);
     }
 
     #[test]

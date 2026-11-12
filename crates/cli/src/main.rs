@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use mtx_grader::{
     carry::CarryFamily,
     grade::{self, GradeOptions},
+    keys::SessionKeys,
     making::MakingFamily,
     phoenix, replay,
     scenario::{Scenario, ShockFamily},
@@ -934,9 +935,13 @@ async fn run() -> Result<()> {
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
             let mut annotations: Option<Vec<serde_json::Value>> = None;
+            // A drawn set's session keys come from the batch's secret, so
+            // every grade of it signs the same; otherwise from a fresh one.
+            let mut keys = SessionKeys::random();
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
-                    let (seed, hash) = eval_seed()?;
+                    let (seed, hash, batch_keys) = eval_seed()?;
+                    keys = batch_keys;
                     let scenarios = match family {
                         Family::FlashCrash => shaped(
                             ShockFamily::spcx().draw_set("hidden", count, seed),
@@ -1024,6 +1029,7 @@ async fn run() -> Result<()> {
                 components_only,
                 trusted,
                 observer: None,
+                keys: &keys,
             };
             let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
             let mut graded = grade::grade(options()).await?;
@@ -1193,7 +1199,7 @@ fn shaped<S: serde::Serialize>(
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
 /// secret's SHA-256 (hex), which is all a report may say about it.
-fn eval_seed() -> anyhow::Result<(u64, String)> {
+fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     use sha2::{Digest, Sha256};
     let secret = std::env::var("MTX_EVAL_SEED").unwrap_or_default();
     if secret.len() < 32 {
@@ -1207,7 +1213,11 @@ fn eval_seed() -> anyhow::Result<(u64, String)> {
     // The seed is a different hash than the one reported, so the report
     // doesn't hand anyone the seed itself.
     let seed = Sha256::digest([b"mtx-eval-seed:".as_slice(), secret.as_bytes()].concat());
-    Ok((u64::from_le_bytes(seed[..8].try_into()?), hash))
+    Ok((
+        u64::from_le_bytes(seed[..8].try_into()?),
+        hash,
+        SessionKeys::from_eval_seed(secret.as_bytes()),
+    ))
 }
 
 fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {

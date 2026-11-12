@@ -785,7 +785,7 @@ pub(crate) async fn run_session(
         session::INTERNAL_RPC_TIMEOUT,
     ));
 
-    let bot = Keypair::new();
+    let bot = opts.keys.keypair("bot", 0);
     fund(
         &surfnet,
         &rpc,

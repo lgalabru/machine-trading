@@ -19,6 +19,7 @@ use tracing::{info, warn};
 use crate::{
     Result,
     error::io_error,
+    keys::SessionKeyring,
     making::{TAKER_ACCOUNTS, TakerOrder, TakerSide, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
@@ -67,12 +68,13 @@ impl Takers {
         half_spread_bps: f64,
         start_mark_ticks: u64,
         rpc_url: &str,
+        keys: &SessionKeyring<'_>,
     ) -> Result<Self> {
         let half_spread_ticks =
             (start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
         let widened_ticks =
             phoenix::widen_makers(&world.surfnet, phoenix, &scenario.symbol, half_spread_ticks)?;
-        let mut takers = Self::onboard(world, phoenix, scenario, rpc_url).await?;
+        let mut takers = Self::onboard(world, phoenix, scenario, rpc_url, keys).await?;
         takers.widened_ticks = widened_ticks;
         info!(
             takers = takers.traders.len(),
@@ -89,6 +91,7 @@ impl Takers {
         phoenix: &Phoenix,
         scenario: &Scenario,
         rpc_url: &str,
+        keys: &SessionKeyring<'_>,
     ) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("mtx-takers-{}", uuid::Uuid::new_v4()));
         // Root's alone: bots run in the same container, and these keypairs
@@ -96,7 +99,9 @@ impl Takers {
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
             .create(&dir)
             .map_err(io_error(&dir))?;
-        let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS).map(|_| Keypair::new()).collect();
+        let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
+            .map(|i| keys.keypair("taker", i as u32))
+            .collect();
         phoenix::onboard_traders_stepped(
             &world.surfnet,
             phoenix,
