@@ -623,8 +623,9 @@ pub struct Terms<'a> {
 /// the session trades, with the bot's key, through the bot's guarded
 /// endpoint, and how its market is read.
 pub struct Desk {
-    /// The session's markets, the bot's own first, as `start` lists them.
-    pub venues: Vec<mtx_kit::VenueInfo>,
+    /// The session's markets, the bot's own first, as `start` lists them
+    /// (the interface's `venues`).
+    pub markets: Vec<mtx_kit::VenueInfo>,
     /// A seat on each market the session trades. A line for a market
     /// without one comes back not sent.
     pub seats: Vec<Box<dyn crate::venue::Seat>>,
@@ -735,7 +736,7 @@ impl WasmBot {
             authority: desk.authority.clone(),
             vars,
             seed,
-            venues: desk.venues.clone(),
+            venues: desk.markets.clone(),
             venue: desk.venue.clone(),
             reports,
             applies_tx_options: false,

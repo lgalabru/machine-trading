@@ -42,7 +42,7 @@ use crate::{
         grader_f64, patiently, wait_for_slot,
     },
     snapshot,
-    venue::{Seat, Venue, phoenix_perp::PhoenixPerp},
+    venue::{Market, Seat, perps::PerpMarket, phoenix::Phoenix as PhoenixVenue},
     wasm::{Desk, Reader},
 };
 
@@ -110,13 +110,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
         phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
     }
-    let venue = PhoenixPerp::new(
+    // The scenario's perp, as Phoenix offers it.
+    let perp = PhoenixVenue::with_exchange(
+        internal.url(),
         world.exchange.clone(),
         world.exchange_path.clone(),
-        &scenario.symbol,
-        internal.url(),
         bot.pubkey(),
-    )?;
+    )
+    .perp(&scenario.symbol)?;
     // The actors, set up while cheatcodes still work: market making's
     // takers, with the makers widened, and a competing maker; off hours'
     // takers, with the makers widened and no competitor; a tape's takers,
@@ -141,7 +142,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
             .map(|i| opts.keys.keypair("taker", i as u32))
             .collect();
-        let seats = onboard(&world, &phoenix, &venue, &rpc, internal.url(), keypairs).await?;
+        let seats = onboard(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
         tracing::info!(takers = seats.len(), widened_ticks, "takers ready");
         cast.add(Box::new(Takers::new(
             seats,
@@ -152,16 +153,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     if let Some(making) = &scenario.making {
         let keypair = opts.keys.keypair("competitor", 0);
-        let seat = onboard(
-            &world,
-            &phoenix,
-            &venue,
-            &rpc,
-            internal.url(),
-            vec![keypair],
-        )
-        .await?
-        .remove(0);
+        let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
+            .await?
+            .remove(0);
         cast.add(Box::new(Competitor::new(seat, making)));
     }
 
@@ -262,7 +256,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
-        venue,
+        perp,
         market,
         bot: bot.pubkey(),
         meter,
@@ -306,7 +300,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
 async fn onboard(
     world: &snapshot::OfflineWorld,
     phoenix: &Phoenix,
-    venue: &PhoenixPerp,
+    perp: &PerpMarket,
     rpc: &solana_rpc_client::rpc_client::RpcClient,
     rpc_url: &str,
     keypairs: Vec<Keypair>,
@@ -321,7 +315,7 @@ async fn onboard(
     .await?;
     let mut seats = Vec::with_capacity(keypairs.len());
     for keypair in keypairs {
-        seats.push(venue.seat(keypair, rpc_url).await?);
+        seats.push(perp.seat(keypair, rpc_url).await?);
     }
     Ok(seats)
 }
@@ -330,7 +324,7 @@ async fn onboard(
 struct PerpAccount {
     scenario: Scenario,
     phoenix: Phoenix,
-    venue: PhoenixPerp,
+    perp: PerpMarket,
     market: ExchangeMarketConfig,
     bot: Pubkey,
     meter: PhoenixEternalMeter,
@@ -452,17 +446,17 @@ impl Account for PerpAccount {
     ) -> Result<Desk> {
         // The bot's own trader, through the guard's host side: its sends
         // are the bot's, its reads aren't.
-        let trader = Arc::new(self.venue.trader(bot.insecure_clone(), host_url)?);
+        let trader = Arc::new(self.perp.trader(bot.insecure_clone(), host_url)?);
         let venue = std::fs::read_to_string(&env.exchange_path)
             .map_err(crate::error::io_error(&env.exchange_path))?;
         Ok(Desk {
-            venues: mtx_kit::VenueInfo::of_perp_session(
+            markets: mtx_kit::VenueInfo::of_perp_session(
                 mandate,
                 &env.symbol,
                 mtx_kit::phoenix_market_address(&venue, &env.symbol),
             ),
-            seats: vec![Box::new(crate::venue::phoenix_perp::PerpSeat::new(
-                self.venue.instrument().to_string(),
+            seats: vec![Box::new(crate::venue::perps::PerpSeat::new(
+                self.perp.instrument().to_string(),
                 trader.clone(),
             ))],
             symbol: env.symbol.clone(),

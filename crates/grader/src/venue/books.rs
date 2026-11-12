@@ -1,5 +1,7 @@
-//! Spot order books as [`Venue`]s: the SOL-USDC market each venue profile
-//! names on Phoenix v1 and OpenBook v2 (`specs/venues/`).
+//! Spot order books as [`Market`]s (`specs/instruments/spot.md`): the
+//! markets the venue profiles name on Phoenix v1 and OpenBook v2
+//! (`specs/venues/`), which [`super::phoenix`] and [`super::openbook`]
+//! offer.
 //!
 //! A book's seat trades from a wallet: a take needs no other account, a
 //! resting order needs the venue's own (a Phoenix seat, an OpenBook open
@@ -15,14 +17,14 @@ use std::sync::{
 
 use async_trait::async_trait;
 use mtx_core::{
-    Decimal, Side as CoreSide,
+    Decimal, Holding, Side as CoreSide,
     mandate::{InstrumentRef, Kind},
     turns::{BookLevels, Level},
 };
 use mtx_kit::{
     Action, Planned, SendState, Sent, Side,
     chain::{ChainClient, FireAndForgetOptions, RpcChainClient, SendMode},
-    core::{OrderBook, PriceLevel, SpotBalances},
+    core::{OrderBook, PriceLevel},
     protocols::{
         NamedMarket,
         openbook::v2::{
@@ -40,51 +42,66 @@ use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 
-use super::{MarketKind, Seat, SeatResult, Venue};
+use super::{Market, Seat, SeatResult};
 /// The book venues a spot session can trade on.
 pub use crate::spot::VENUES;
-use crate::{Error, Result, session::grader_f64, spot::SYMBOL};
+use crate::{Error, Result, session::grader_f64};
 
 /// One spot book's market, decoded once.
-enum Market {
+enum Decoded {
     Phoenix(Box<PhoenixV1Market>),
     OpenBook(Box<OpenBookV2Market>),
 }
 
-/// The SOL-USDC book of one venue profile.
-pub struct SpotBook {
+/// A spot book a venue profile names.
+pub struct BookMarket {
     instrument: InstrumentRef,
     named: NamedMarket,
     chain: Arc<dyn ChainClient>,
-    market: Market,
+    market: Decoded,
 }
 
-impl SpotBook {
-    /// The profile's market on `venue` (`phoenix` or `openbook`), read
-    /// through `chain`.
-    pub async fn connect(venue: &str, chain: Arc<dyn ChainClient>) -> Result<Self> {
-        let (named, market) = match venue {
-            "phoenix" => {
-                let named = phoenix_v1::MARKETS[0];
-                let account = market_account(chain.as_ref(), &named.address).await?;
-                let market = PhoenixV1Market::decode(named.address, &account, "SOL", "USDC")
-                    .map_err(venue_error("phoenix v1 market"))?;
-                (named, Market::Phoenix(Box::new(market)))
-            }
-            "openbook" => {
-                let named = openbook_v2::MARKETS[0];
-                let account = market_account(chain.as_ref(), &named.address).await?;
-                let market = OpenBookV2Market::decode(named.address, &account, "SOL", "USDC")
-                    .map_err(venue_error("openbook v2 market"))?;
-                (named, Market::OpenBook(Box::new(market)))
-            }
-            other => return Err(not_a_book(other)),
+/// The markets `venue`'s profile names (`phoenix` or `openbook`).
+pub fn named_markets(venue: &str) -> Result<&'static [NamedMarket]> {
+    match venue {
+        "phoenix" => Ok(phoenix_v1::MARKETS),
+        "openbook" => Ok(openbook_v2::MARKETS),
+        other => Err(not_a_book(other)),
+    }
+}
+
+/// The base and quote asset symbols of a `BASE-QUOTE` market symbol.
+fn assets(symbol: &str) -> Result<(&str, &str)> {
+    symbol
+        .split_once('-')
+        .ok_or_else(|| Error::UnknownMarket(format!("{symbol} is not BASE-QUOTE")))
+}
+
+impl BookMarket {
+    /// The `symbol` market the profile of `venue` (`phoenix` or `openbook`)
+    /// names, read through `chain`.
+    pub async fn connect(venue: &str, symbol: &str, chain: Arc<dyn ChainClient>) -> Result<Self> {
+        let named = *named_markets(venue)?
+            .iter()
+            .find(|m| m.symbol == symbol)
+            .ok_or_else(|| Error::UnknownMarket(format!("{venue}:spot:{symbol}")))?;
+        let (base, quote) = assets(symbol)?;
+        let account = market_account(chain.as_ref(), &named.address).await?;
+        let market = match venue {
+            "phoenix" => Decoded::Phoenix(Box::new(
+                PhoenixV1Market::decode(named.address, &account, base, quote)
+                    .map_err(venue_error("phoenix v1 market"))?,
+            )),
+            _ => Decoded::OpenBook(Box::new(
+                OpenBookV2Market::decode(named.address, &account, base, quote)
+                    .map_err(venue_error("openbook v2 market"))?,
+            )),
         };
         Ok(Self {
             instrument: InstrumentRef {
                 venue: venue.into(),
                 kind: Kind::Spot,
-                symbol: SYMBOL.into(),
+                symbol: symbol.into(),
             },
             named,
             chain,
@@ -95,8 +112,8 @@ impl SpotBook {
     /// The program the market runs on.
     pub fn program(&self) -> Pubkey {
         match self.market {
-            Market::Phoenix(_) => phoenix_v1::PROGRAM_ID,
-            Market::OpenBook(_) => openbook_v2::PROGRAM_ID,
+            Decoded::Phoenix(_) => phoenix_v1::PROGRAM_ID,
+            Decoded::OpenBook(_) => openbook_v2::PROGRAM_ID,
         }
     }
 
@@ -111,7 +128,7 @@ impl SpotBook {
     async fn book(&self, at: Option<(u64, i64)>) -> Result<OrderBook> {
         let chain = self.chain.as_ref();
         Ok(match &self.market {
-            Market::Phoenix(market) => {
+            Decoded::Phoenix(market) => {
                 let account = market_account(chain, &market.keys.market).await?;
                 let state =
                     MarketState::decode(&account).map_err(venue_error("phoenix v1 market"))?;
@@ -121,7 +138,7 @@ impl SpotBook {
                 };
                 market.order_book(&state, slot, unix)
             }
-            Market::OpenBook(market) => {
+            Decoded::OpenBook(market) => {
                 let book = openbook_v2::read_book(chain, market)
                     .await
                     .map_err(venue_error("openbook v2 book"))?;
@@ -136,13 +153,9 @@ impl SpotBook {
 }
 
 #[async_trait]
-impl Venue for SpotBook {
+impl Market for BookMarket {
     fn instrument(&self) -> &InstrumentRef {
         &self.instrument
-    }
-
-    fn kind(&self) -> MarketKind {
-        MarketKind::Spot
     }
 
     fn address(&self) -> Pubkey {
@@ -179,10 +192,11 @@ impl Venue for SpotBook {
         }))
     }
 
-    async fn balances(&self, owner: &Pubkey) -> Result<Option<SpotBalances>> {
+    /// The base asset, then the quote, each as the spot profile counts it.
+    async fn holdings(&self, owner: &Pubkey) -> Result<Vec<Holding>> {
         let chain = self.chain.as_ref();
-        Ok(Some(match &self.market {
-            Market::Phoenix(market) => {
+        let balances = match &self.market {
+            Decoded::Phoenix(market) => {
                 let account = market_account(chain, &market.keys.market).await?;
                 let state =
                     MarketState::decode(&account).map_err(venue_error("phoenix v1 market"))?;
@@ -190,10 +204,14 @@ impl Venue for SpotBook {
                     .await
                     .map_err(venue_error("phoenix v1 balances"))?
             }
-            Market::OpenBook(market) => openbook_v2::balances(chain, market, owner)
+            Decoded::OpenBook(market) => openbook_v2::balances(chain, market, owner)
                 .await
                 .map_err(venue_error("openbook v2 balances"))?,
-        }))
+        };
+        Ok(vec![
+            Holding::Spot(balances.base),
+            Holding::Spot(balances.quote),
+        ])
     }
 
     async fn fills(
@@ -203,13 +221,13 @@ impl Venue for SpotBook {
     ) -> Result<Vec<(MarketFill, Vec<Pubkey>)>> {
         let chain = self.chain.clone();
         Ok(match self.market {
-            Market::Phoenix(_) => PhoenixV1Meter::new(chain, *owner, &[self.named])
+            Decoded::Phoenix(_) => PhoenixV1Meter::new(chain, *owner, &[self.named])
                 .market_fills(after_slot)
                 .await?
                 .into_iter()
                 .map(|fill| (fill, vec![*owner]))
                 .collect(),
-            Market::OpenBook(_) => {
+            Decoded::OpenBook(_) => {
                 let meter = OpenBookV2Meter::new(chain, *owner, &[self.named]);
                 let ids = meter.fill_ids().await?;
                 meter
@@ -226,6 +244,7 @@ impl Venue for SpotBook {
         Ok(Box::new(
             BookSeat::connect(
                 &self.instrument,
+                &self.named,
                 Arc::new(RpcChainClient::new(rpc_url)),
                 signer,
             )
@@ -252,36 +271,26 @@ pub struct BookSeat {
 impl BookSeat {
     async fn connect(
         instrument: &InstrumentRef,
+        named: &NamedMarket,
         chain: Arc<dyn ChainClient>,
         signer: Keypair,
     ) -> Result<Self> {
+        let (base, quote) = assets(&instrument.symbol)?;
         let mode = SendMode::FireAndForget(FireAndForgetOptions { simulate: false });
         let owner = signer.pubkey();
         let venue = instrument.venue.as_str();
         let trader = match venue {
             "phoenix" => Trader::Phoenix(Box::new(
-                PhoenixV1Trader::connect(
-                    chain,
-                    phoenix_v1::MARKETS[0].address,
-                    "SOL",
-                    "USDC",
-                    owner,
-                )
-                .await
-                .map_err(venue_error("phoenix v1 market"))?
-                .with_send_mode(mode),
+                PhoenixV1Trader::connect(chain, named.address, base, quote, owner)
+                    .await
+                    .map_err(venue_error("phoenix v1 market"))?
+                    .with_send_mode(mode),
             )),
             "openbook" => Trader::OpenBook(Box::new(
-                OpenBookV2Trader::connect(
-                    chain,
-                    openbook_v2::MARKETS[0].address,
-                    "SOL",
-                    "USDC",
-                    owner,
-                )
-                .await
-                .map_err(venue_error("openbook v2 market"))?
-                .with_send_mode(mode),
+                OpenBookV2Trader::connect(chain, named.address, base, quote, owner)
+                    .await
+                    .map_err(venue_error("openbook v2 market"))?
+                    .with_send_mode(mode),
             )),
             other => return Err(not_a_book(other)),
         };
@@ -653,33 +662,31 @@ struct SessionMarket {
 }
 
 impl SessionVenues {
-    /// The profiles' markets on `venues`, lines naming none going to the
-    /// first.
-    pub fn of(venues: &[String]) -> Result<Self> {
-        let market = |venue: &str, program: &Pubkey, named: &NamedMarket| SessionMarket {
-            venue: venue.into(),
-            symbol: named.symbol.into(),
-            program: program.to_string(),
-            market: named.address.to_string(),
-            base_mint: named.base_mint.to_string(),
-            quote_mint: named.quote_mint.to_string(),
-        };
+    /// The `symbol` markets the profiles name on `venues`, lines naming
+    /// none going to the first.
+    pub fn of(venues: &[String], symbol: &str) -> Result<Self> {
         Ok(Self {
             orders: venues.first().cloned().unwrap_or_default(),
             markets: venues
                 .iter()
-                .map(|venue| match venue.as_str() {
-                    "phoenix" => Ok(market(
-                        venue,
-                        &phoenix_v1::PROGRAM_ID,
-                        &phoenix_v1::MARKETS[0],
-                    )),
-                    "openbook" => Ok(market(
-                        venue,
-                        &openbook_v2::PROGRAM_ID,
-                        &openbook_v2::MARKETS[0],
-                    )),
-                    other => Err(not_a_book(other)),
+                .map(|venue| {
+                    let program = match venue.as_str() {
+                        "phoenix" => phoenix_v1::PROGRAM_ID,
+                        "openbook" => openbook_v2::PROGRAM_ID,
+                        other => return Err(not_a_book(other)),
+                    };
+                    let named = named_markets(venue)?
+                        .iter()
+                        .find(|m| m.symbol == symbol)
+                        .ok_or_else(|| Error::UnknownMarket(format!("{venue}:spot:{symbol}")))?;
+                    Ok(SessionMarket {
+                        venue: venue.clone(),
+                        symbol: named.symbol.into(),
+                        program: program.to_string(),
+                        market: named.address.to_string(),
+                        base_mint: named.base_mint.to_string(),
+                        quote_mint: named.quote_mint.to_string(),
+                    })
                 })
                 .collect::<Result<_>>()?,
         })
@@ -774,8 +781,8 @@ mod tests {
 
     #[test]
     fn a_component_is_told_every_market_and_where_its_orders_go() {
-        let venues = SessionVenues::of(&["openbook".into(), "phoenix".into()]).unwrap();
-        assert!(SessionVenues::of(&["raydium".into()]).is_err());
+        let venues = SessionVenues::of(&["openbook".into(), "phoenix".into()], "SOL-USDC").unwrap();
+        assert!(SessionVenues::of(&["raydium".into()], "SOL-USDC").is_err());
         let json = serde_json::to_value(&venues).unwrap();
         assert_eq!(json["orders"], "openbook");
         assert_eq!(
@@ -819,7 +826,8 @@ mod tests {
             max_drawdown: 1_500.0,
             venues: VenueInfo::of_mandate(&mandate, &own, |_| true),
             mandate,
-            venue: serde_json::to_string(&SessionVenues::of(&venues).unwrap()).unwrap(),
+            venue: serde_json::to_string(&SessionVenues::of(&venues, crate::spot::SYMBOL).unwrap())
+                .unwrap(),
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
