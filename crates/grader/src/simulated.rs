@@ -8,10 +8,12 @@
 //! made is flagged in the manifest (`simulated`, `created`), so a task can say
 //! so.
 //!
-//! The accounts come out the same on every build. Keypairs derive from the
-//! recipe's name and a label (nothing secret signs for them), mints are written
-//! straight into the surfnet, and the books fill with a fixed ladder around the
-//! price.
+//! The market's creator, authority and maker is a keypair derived from the
+//! build's private secret, the recipe's name and a label. The secret is never
+//! recorded, so nobody who holds the snapshot can sign for those accounts; a
+//! build given the same secret (`MTX_BUILD_SECRET`) reproduces them. Mints are
+//! written straight into the surfnet with no mint authority, and the books fill
+//! with a fixed ladder around the price.
 
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
@@ -174,18 +176,19 @@ pub struct OpenbookMarketSpec {
     pub ladder: Ladder,
 }
 
-/// A keypair derived from the recipe's name and a label: the same on every
-/// build, and not a secret (it only signs for simulated accounts).
-pub fn derived_keypair(recipe: &str, label: &str) -> Keypair {
-    let seed = Sha256::digest(format!("mtx-recipe/{recipe}/{label}"));
+/// A keypair derived from a namespace and a label. The namespace is the
+/// build's private secret and the recipe's name (see [`crate::recipe`]): with
+/// the same secret a rebuild gets the same keys, and without it nobody can
+/// derive them, since the recipe's name ships with the snapshot.
+pub fn derived_keypair(namespace: &str, label: &str) -> Keypair {
+    let seed = Sha256::digest(format!("mtx-recipe/{namespace}/{label}"));
     Keypair::new_from_array(seed.into())
 }
 
-/// An SPL mint account's bytes: `authority` may mint, nothing is frozen.
-pub fn mint_data(decimals: u8, authority: &Pubkey) -> [u8; 82] {
+/// An SPL mint account's bytes: no mint authority and no freeze authority, so
+/// nobody can mint more (balances are set by cheatcode).
+pub fn mint_data(decimals: u8) -> [u8; 82] {
     let mut data = [0u8; 82];
-    data[0..4].copy_from_slice(&1u32.to_le_bytes());
-    data[4..36].copy_from_slice(authority.as_ref());
     data[44] = decimals;
     data[45] = 1;
     data
@@ -194,11 +197,10 @@ pub fn mint_data(decimals: u8, authority: &Pubkey) -> [u8; 82] {
 /// Writes a mint into the surfnet.
 pub fn create_mint(surfnet: &Surfnet, recipe: &str, spec: &MintSpec) -> Result<Pubkey> {
     let address = derived_keypair(recipe, &format!("mint/{}", spec.name)).pubkey();
-    let authority = derived_keypair(recipe, "creator").pubkey();
     surfnet.cheatcodes().set_account(
         &address,
         MINT_LAMPORTS,
-        &mint_data(spec.decimals, &authority),
+        &mint_data(spec.decimals),
         &spec.program.program(),
     )?;
     info!(name = %spec.name, %address, "simulated mint created");
@@ -790,11 +792,9 @@ mod tests {
     }
 
     #[test]
-    fn a_mint_is_82_bytes_with_its_decimals() {
-        let authority = Pubkey::new_from_array([7; 32]);
-        let data = mint_data(6, &authority);
-        assert_eq!(&data[0..4], &[1, 0, 0, 0]);
-        assert_eq!(&data[4..36], authority.as_ref());
+    fn a_mint_is_82_bytes_with_its_decimals_and_no_authority() {
+        let data = mint_data(6);
+        assert_eq!(&data[0..36], &[0; 36], "no mint authority");
         assert_eq!((data[44], data[45]), (6, 1));
         assert_eq!(&data[46..50], &[0; 4], "no freeze authority");
     }

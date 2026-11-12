@@ -527,6 +527,13 @@ enum SnapshotCommand {
         /// Datasource to fork. May embed an API key; only its host is recorded.
         #[arg(long, env = "MTX_FORK_RPC_URL", default_value = recipe::DEFAULT_FORK_RPC)]
         fork_rpc: String,
+        /// Replace a snapshot already in the output directory.
+        #[arg(long)]
+        force: bool,
+        /// Mixed into the keys of simulated markets and never recorded; the
+        /// same secret rebuilds the same keys. Random by default.
+        #[arg(long, env = "MTX_BUILD_SECRET", hide_env_values = true)]
+        secret: Option<String>,
     },
     /// Restart offline from a snapshot and trade through a scripted crash.
     Verify {
@@ -768,12 +775,16 @@ async fn run() -> Result<()> {
             recipe,
             out,
             fork_rpc,
+            force,
+            secret,
         }) => {
             let manifest = recipe::build(
                 &recipe,
                 recipe::BuildOptions {
                     out_dir: out,
                     fork_rpc_url: fork_rpc,
+                    force,
+                    secret,
                 },
             )
             .await?;

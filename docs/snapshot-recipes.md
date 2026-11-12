@@ -67,11 +67,15 @@ forked). A recipe can make a mint and a market on the real program
 instead, so a bot trades them with the code it uses on mainnet.
 
 ```toml
+[[account]]
+name = "USDC"
+kind = "mint"
+address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
 [[warmup]]
 action = "create-mint"
 name = "NVDAon"
-decimals = 9
-program = "token-2022"            # or "spl" (default)
+decimals = 9                      # "spl" (default); "token-2022" for the AMM actions
 
 [[warmup]]
 action = "openbook-v2-market"
@@ -79,7 +83,7 @@ name = "NVDAon/USDC"
 base = "NVDAon"                   # a created mint, a declared account's name, or an address
 quote = "USDC"
 base_lot_atoms = 1000000          # sizes are in token atoms: the grid is explicit
-quote_lot_atoms = 100
+quote_lot_atoms = 1               # OpenBook needs 1 (see below)
 price = { calibration = "calibration/nvda.toml", key = "fair_value.price" }
 ladder = { levels = 5, half_spread_bps = 10, step_bps = 10, level_size = "20" }
 ```
@@ -101,12 +105,16 @@ ladder = { levels = 5, half_spread_bps = 10, step_bps = 10, level_size = "20" }
   mints. `create-mint` can still make one (`program = "token-2022"`), for
   the AMM pool actions that follow; an order-book action on it fails the
   build with a message that says so.
-- Mints are written straight into the surfnet. The market's creator, its
-  accounts and the mints' addresses derive from the recipe name and the
-  market's name, so a rebuild reproduces them. The keypairs are not
-  secrets; they only control simulated accounts.
-- The creator is the market's authority and the maker of the ladder; it is
-  funded by cheatcode with both mints.
+- Mints are written straight into the surfnet with no mint authority and no
+  freeze authority, so nobody can mint more.
+- The market's creator is its authority and the maker of the ladder; it is
+  funded by cheatcode with both mints. Its key, the market keys and the
+  mints' addresses derive from the build's **secret**, the recipe name and
+  the market's name. The recipe name ships with the snapshot, so the secret
+  is what keeps the keys private: it is never recorded, and a build draws a
+  random one unless `--secret` (or `MTX_BUILD_SECRET`) gives it. Give the
+  same secret to rebuild the same addresses; without it the addresses
+  differ and the manifest records the new ones.
 
 ## The manifest
 
@@ -133,13 +141,39 @@ assets in `created`.
 
 A build from a mainnet fork depends on mainnet at the fork slot, so two
 builds differ in prices, slots and times; the manifest's recipe hash,
-fork slot and sources say what was built and when. A build from
-`fork.from_snapshot` copies the source's fork slot and time and, with no
-random keypairs in its actions, is byte-identical on every run (the
-surfnet's own payer and faucet, random on every start, are left out of the
-export)
-(`crates/grader/tests/recipe.rs` checks this). The committed snapshots stay
-as they were built; rebuilding one with `--out` leaves them alone.
+fork slot and sources say what was built and when.
+
+**Program code.** Mainnet programs are upgraded in place, so the same
+address can run different code a week later. This is not hypothetical: after
+the SPCX snapshot was taken, Phoenix Eternal and Phoenix Rise were
+redeployed, and a fresh fork of them no longer accepts the funding
+scenario's overrides, so a rebuilt SPCX snapshot fails the funding-carry
+task. The manifest therefore records, for every declared program, its
+ProgramData account, deploy slot and a hash of its code (`programdata`,
+`deploy_slot`, `code_sha256` in `sources`). A recipe can then:
+
+- `expect_code_sha256 = "…"`: fail the build when the code on the chain
+  differs, and
+- `pin_from = "."` (any snapshot directory, relative to the recipe): replace
+  the chain's ProgramData with the one in that snapshot, so the rebuild runs
+  the code the task was built on. The source's name is recorded as
+  `pinned_from`.
+
+The two committed recipes pin to their own snapshots.
+
+**Clock.** A build from `fork.from_snapshot` copies the source's fork slot
+and time and makes a block for each transaction and none otherwise, so
+nothing the warm-up writes depends on how long the machine takes (an
+order's placement time, for one). With the same secret it is byte-identical
+on every run (`crates/grader/tests/recipe.rs` checks this under parallel
+test threads). The surfnet's own payer and faucet, random on every start,
+are left out of the export. A build from a mainnet fork runs on the wall
+clock.
+
+**Overwriting.** `mtx snapshot build` refuses to replace a
+`surfnet.json.gz` already in the output directory; pass `--out DIR`, or
+`--force`. An `exchange.json` comes from the `phoenix-eternal` action, or is
+copied from the `from_snapshot` source.
 
 The two original `prepare` commands are the `phoenix-eternal` and
 `spot-exercise` actions. Their warm-up trader is a random keypair, as before,

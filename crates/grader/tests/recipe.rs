@@ -24,6 +24,11 @@ symbol = "FAKE-USDC"
 [fork]
 from_snapshot = "SOURCE"
 
+[[program]]
+name = "phoenix-v1"
+address = "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY"
+pin_from = "SOURCE"
+
 [[account]]
 name = "USDC"
 kind = "mint"
@@ -87,13 +92,19 @@ fn setup(tag: &str) -> PathBuf {
     dir
 }
 
+fn options(dir: &Path, out: &str) -> BuildOptions {
+    BuildOptions {
+        out_dir: Some(dir.join(out)),
+        fork_rpc_url: String::new(),
+        force: false,
+        secret: Some("test-secret".into()),
+    }
+}
+
 async fn build(dir: &Path, out: &str) -> Manifest {
     recipe::build(
         &dir.join("recipe.toml"),
-        BuildOptions {
-            out_dir: Some(dir.join(out)),
-            fork_rpc_url: String::new(),
-        },
+        options(dir, out),
     )
     .await
     .unwrap()
@@ -106,7 +117,12 @@ async fn simulated_markets_are_made_seeded_and_flagged() {
 
     assert!(manifest.simulated);
     assert_eq!(manifest.recipe_sha256.as_ref().map(String::len), Some(64));
-    assert_eq!(manifest.sources.len(), 1);
+    assert_eq!(manifest.sources.len(), 2);
+    let program = &manifest.sources[0];
+    assert_eq!(program.name, "phoenix-v1");
+    assert_eq!(program.code_sha256.as_ref().map(String::len), Some(64));
+    assert!(program.deploy_slot.is_some() && program.programdata.is_some());
+    assert!(program.pinned_from.as_deref() == Some("sol-usdc-spot-2026-11-11"));
     let kinds: Vec<_> = manifest.created.iter().map(|c| c.kind.as_str()).collect();
     assert_eq!(
         kinds,
@@ -224,10 +240,7 @@ async fn a_declared_account_the_warmup_never_loads_fails_the_build() {
     std::fs::write(dir.join("recipe.toml"), text).unwrap();
     let error = recipe::build(
         &dir.join("recipe.toml"),
-        BuildOptions {
-            out_dir: Some(dir.join("a")),
-            fork_rpc_url: String::new(),
-        },
+        options(&dir, "a"),
     )
     .await;
     // The Pyth feed is in the source snapshot, so it exports; a sysvar,
@@ -242,10 +255,7 @@ async fn a_declared_account_the_warmup_never_loads_fails_the_build() {
     std::fs::write(dir.join("recipe.toml"), text).unwrap();
     let error = recipe::build(
         &dir.join("recipe.toml"),
-        BuildOptions {
-            out_dir: Some(dir.join("b")),
-            fork_rpc_url: String::new(),
-        },
+        options(&dir, "b"),
     )
     .await
     .unwrap_err();
@@ -265,13 +275,56 @@ async fn token_2022_mints_exist_but_the_order_books_refuse_them() {
     std::fs::write(dir.join("recipe.toml"), text).unwrap();
     let error = recipe::build(
         &dir.join("recipe.toml"),
-        BuildOptions {
-            out_dir: Some(dir.join("a")),
-            fork_rpc_url: String::new(),
-        },
+        options(&dir, "a"),
     )
     .await
     .unwrap_err();
     assert!(error.to_string().contains("Token-2022"), "{error}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_program_hash_is_checked_and_a_snapshot_is_not_overwritten() {
+    let dir = setup("pin");
+    let manifest = build(&dir, "a").await;
+    let hash = manifest.sources[0].code_sha256.clone().unwrap();
+    let text = std::fs::read_to_string(dir.join("recipe.toml")).unwrap();
+
+    let with = |expected: &str| {
+        text.replace(
+            "name = \"phoenix-v1\"\n",
+            &format!("name = \"phoenix-v1\"\nexpect_code_sha256 = \"{expected}\"\n"),
+        )
+    };
+    std::fs::write(dir.join("recipe.toml"), with(&hash)).unwrap();
+    build(&dir, "b").await;
+    std::fs::write(dir.join("recipe.toml"), with(&"0".repeat(64))).unwrap();
+    let error = recipe::build(&dir.join("recipe.toml"), options(&dir, "c"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("not the expected"), "{error}");
+
+    let error = recipe::build(&dir.join("recipe.toml"), options(&dir, "a"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("already exists"), "{error}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_keys_of_a_simulated_market_depend_on_a_secret_nobody_records() {
+    let dir = setup("secret");
+    let one = build(&dir, "a").await;
+    let mut other = options(&dir, "b");
+    other.secret = Some("another-secret".into());
+    let two = recipe::build(&dir.join("recipe.toml"), other).await.unwrap();
+    let market = |m: &Manifest| m.created.iter().find(|c| c.kind == "phoenix-v1-market").unwrap().address.clone();
+    assert_ne!(market(&one), market(&two));
+    let recorded = std::fs::read_to_string(dir.join("a/manifest.json")).unwrap();
+    assert!(!recorded.contains("test-secret"));
+    let mint = |m: &Manifest| m.created.iter().find(|c| c.name == "FAKE").unwrap().address.clone();
+    let (surfnet, _) = snapshot::start_snapshot(&dir.join("a"), Access::Open).await.unwrap();
+    let account = surfnet.rpc_client().get_account(&mint(&one).parse().unwrap()).unwrap();
+    assert_eq!(&account.data[..4], &[0; 4], "no mint authority");
     std::fs::remove_dir_all(&dir).unwrap();
 }
