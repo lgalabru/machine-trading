@@ -607,7 +607,11 @@ async fn run() -> Result<()> {
                 ladder_summary,
             };
             let (report, dir) = gates::run(&authoring::repo_root(), &task, &opts)?;
-            eprintln!("{}\nreport: {}/gates.{{md,json}}", report.markdown(), dir.display());
+            eprintln!(
+                "{}\nreport: {}/gates.{{md,json}}",
+                report.markdown(),
+                dir.display()
+            );
             if !report.passed {
                 println!("{}", serde_json::to_string_pretty(&report)?);
                 std::process::exit(1);
