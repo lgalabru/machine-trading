@@ -102,12 +102,9 @@ fn options(dir: &Path, out: &str) -> BuildOptions {
 }
 
 async fn build(dir: &Path, out: &str) -> Manifest {
-    recipe::build(
-        &dir.join("recipe.toml"),
-        options(dir, out),
-    )
-    .await
-    .unwrap()
+    recipe::build(&dir.join("recipe.toml"), options(dir, out))
+        .await
+        .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -235,7 +232,11 @@ async fn a_rebuild_is_byte_identical() {
             .take(6)
             .map(|i| format!("{i}: {} vs {}", p[i], q[i]))
             .collect();
-        format!("{key} owner {} len {} {fields:?} bytes {at:?}", x["owner"], p.len())
+        format!(
+            "{key} owner {} len {} {fields:?} bytes {at:?}",
+            x["owner"],
+            p.len()
+        )
     };
     let report: Vec<_> = differing.iter().map(describe).collect();
     assert!(differing.is_empty(), "accounts differ: {report:?}");
@@ -250,11 +251,7 @@ async fn a_declared_account_the_warmup_never_loads_fails_the_build() {
         "[[account]]\nname = \"somewhere\"\naddress = \"7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE\"\n\n[[account]]",
     );
     std::fs::write(dir.join("recipe.toml"), text).unwrap();
-    let error = recipe::build(
-        &dir.join("recipe.toml"),
-        options(&dir, "a"),
-    )
-    .await;
+    let error = recipe::build(&dir.join("recipe.toml"), options(&dir, "a")).await;
     // The Pyth feed is in the source snapshot, so it exports; a sysvar,
     // which exports leave out, does not.
     assert!(error.is_ok());
@@ -265,12 +262,9 @@ async fn a_declared_account_the_warmup_never_loads_fails_the_build() {
             "SysvarC1ock11111111111111111111111111111111",
         );
     std::fs::write(dir.join("recipe.toml"), text).unwrap();
-    let error = recipe::build(
-        &dir.join("recipe.toml"),
-        options(&dir, "b"),
-    )
-    .await
-    .unwrap_err();
+    let error = recipe::build(&dir.join("recipe.toml"), options(&dir, "b"))
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("never loaded"), "{error}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -285,12 +279,9 @@ async fn token_2022_mints_exist_but_the_order_books_refuse_them() {
             "name = \"FAKE2/USDC\"\nbase = \"FAKE22\"",
         );
     std::fs::write(dir.join("recipe.toml"), text).unwrap();
-    let error = recipe::build(
-        &dir.join("recipe.toml"),
-        options(&dir, "a"),
-    )
-    .await
-    .unwrap_err();
+    let error = recipe::build(&dir.join("recipe.toml"), options(&dir, "a"))
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("Token-2022"), "{error}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -329,14 +320,35 @@ async fn the_keys_of_a_simulated_market_depend_on_a_secret_nobody_records() {
     let one = build(&dir, "a").await;
     let mut other = options(&dir, "b");
     other.secret = Some("another-secret".into());
-    let two = recipe::build(&dir.join("recipe.toml"), other).await.unwrap();
-    let market = |m: &Manifest| m.created.iter().find(|c| c.kind == "phoenix-v1-market").unwrap().address.clone();
+    let two = recipe::build(&dir.join("recipe.toml"), other)
+        .await
+        .unwrap();
+    let market = |m: &Manifest| {
+        m.created
+            .iter()
+            .find(|c| c.kind == "phoenix-v1-market")
+            .unwrap()
+            .address
+            .clone()
+    };
     assert_ne!(market(&one), market(&two));
     let recorded = std::fs::read_to_string(dir.join("a/manifest.json")).unwrap();
     assert!(!recorded.contains("test-secret"));
-    let mint = |m: &Manifest| m.created.iter().find(|c| c.name == "FAKE").unwrap().address.clone();
-    let (surfnet, _) = snapshot::start_snapshot(&dir.join("a"), Access::Open).await.unwrap();
-    let account = surfnet.rpc_client().get_account(&mint(&one).parse().unwrap()).unwrap();
+    let mint = |m: &Manifest| {
+        m.created
+            .iter()
+            .find(|c| c.name == "FAKE")
+            .unwrap()
+            .address
+            .clone()
+    };
+    let (surfnet, _) = snapshot::start_snapshot(&dir.join("a"), Access::Open)
+        .await
+        .unwrap();
+    let account = surfnet
+        .rpc_client()
+        .get_account(&mint(&one).parse().unwrap())
+        .unwrap();
     assert_eq!(&account.data[..4], &[0; 4], "no mint authority");
     std::fs::remove_dir_all(&dir).unwrap();
 }

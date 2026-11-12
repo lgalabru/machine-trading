@@ -50,8 +50,8 @@ use crate::{
     phoenix::{self, Phoenix},
     simulated::{self, MintSpec, OpenbookMarketSpec, PhoenixMarketSpec, PriceInput},
     snapshot::{
-        self, Created, MANIFEST_FILE, Manifest, SLOT_TIME_MS, Source, host_of,
-        start_surfnet, write_gz, write_json,
+        self, Created, MANIFEST_FILE, Manifest, SLOT_TIME_MS, Source, host_of, start_surfnet,
+        write_gz, write_json,
     },
 };
 
@@ -493,7 +493,12 @@ fn snapshot_account(dir: &Path, address: &Pubkey) -> Result<(u64, Vec<u8>, Pubke
     let file = snapshot::surfnet_file(dir, &manifest)?;
     let text = std::fs::read_to_string(&file).map_err(io_error(&file))?;
     let all: serde_json::Value = serde_json::from_str(&text)?;
-    let missing = || invalid(format!("{address} is not in the snapshot {}", dir.display()));
+    let missing = || {
+        invalid(format!(
+            "{address} is not in the snapshot {}",
+            dir.display()
+        ))
+    };
     let entry = all.get(address.to_string()).ok_or_else(missing)?;
     let text_of = |field: &str| entry[field].as_str().map(str::to_string);
     let lamports = entry["lamports"]
@@ -533,7 +538,9 @@ fn pin_and_record(
     }
     let account = rpc.get_account(&programdata)?;
     if account.data.len() < 45 || account.data[..4] != [3, 0, 0, 0] {
-        return Err(invalid(format!("{programdata} is not a ProgramData account")));
+        return Err(invalid(format!(
+            "{programdata} is not a ProgramData account"
+        )));
     }
     let deploy_slot = u64::from_le_bytes(account.data[4..12].try_into().expect("8 bytes"));
     let code_sha256 = hex(&Sha256::digest(&account.data[45..]));
@@ -592,7 +599,12 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
                 .ok()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_default();
-            (surfnet, Some(manifest), Some(src), format!("snapshot:{name}"))
+            (
+                surfnet,
+                Some(manifest),
+                Some(src),
+                format!("snapshot:{name}"),
+            )
         }
         None => {
             let url = opts.fork_rpc_url.clone();
