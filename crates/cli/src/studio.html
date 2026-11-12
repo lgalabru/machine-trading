@@ -190,9 +190,6 @@
   .msg code { font: 12px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--raise-2); }
   .msg pre { margin: 0 0 8px; padding: 9px 11px; border-radius: 8px; background: #060607; border: 1px solid var(--line); overflow: auto; font: 12px/1.55 var(--mono); }
   .msg pre code { padding: 0; background: none; }
-  .msg.thought { color: var(--text-3); font-size: 12px; border-left: 2px solid var(--line); padding-left: 10px; }
-  .msg.thought summary { cursor: pointer; list-style: none; color: var(--text-4); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
-  .msg.thought summary::-webkit-details-marker { display: none; }
   /* The agent's tool calls: one line per run, in words. It opens to its
      calls, and a call to its details. */
   .run { align-self: stretch; font-size: 12.5px; color: var(--text-2); min-width: 0; }
@@ -219,8 +216,16 @@
   .diff i { display: block; font-style: normal; padding: 0 4px; margin: 0 -4px; }
   .diff .del { color: #ffb3ae; background: rgba(255, 95, 87, .13); } .diff .add { color: #b5efbb; background: rgba(94, 209, 106, .13); }
   .diff .gap { color: var(--text-4); }
-  .typing { align-self: flex-start; color: var(--text-3); font-size: 12px; display: none; } .typing.on { display: block; }
-  .typing::after { content: "…"; animation: blink 1s ease-in-out infinite; }
+  /* While the agent's turn runs, one moving thing at the end of the thread:
+     a running tool call's own spinner, or this line. It opens to what the
+     agent is thinking. */
+  .live { align-self: stretch; font-size: 12.5px; color: var(--text-3); min-width: 0; }
+  .live summary { list-style: none; display: inline-grid; grid-template-columns: 14px auto; gap: 8px; align-items: baseline; cursor: default; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; }
+  .live summary::-webkit-details-marker { display: none; }
+  .live.has-thought summary { cursor: pointer; }
+  .live.has-thought summary:hover { background: rgba(255, 255, 255, .04); color: var(--text-2); }
+  .live.has-thought summary .what::after { content: " ›"; color: var(--text-4); }
+  .live .thinking { margin: 2px 0 2px 22px; max-height: 120px; overflow: auto; font-size: 12px; line-height: 1.5; color: var(--text-4); white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: none; }
   /* The input is the pane's own floor: no box of its own. With no messages
      yet it fills the pane. */
   .compose { flex: none; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line-soft); }
@@ -1047,11 +1052,15 @@ const md = (text) => {
 const texts = new Map();
 const pinned = () => threadScroll.scrollHeight - threadScroll.scrollTop - threadScroll.clientHeight < 60;
 function showMessage(m) {
+  // A thought isn't a message: it shows under the live line while it lasts.
+  if (m.role === "thought") { if (S.busy) { pulse.thought = m.id === pulse.thoughtId ? pulse.thought + (m.text ?? "") : (m.text ?? ""); pulse.thoughtId = m.id; pulse.thinking = !m.done && Boolean(pulse.thought.trim()); pulse.replying = false; renderLive(); } return; }
+  if (m.role === "agent" && !m.text && !document.getElementById("cm-" + m.id)) { pulse.replying = false; pulse.thinking = false; renderLive(); return; }
+  if (m.role === "agent") { pulse.replying = !m.done; pulse.thinking = false; pulse.thought = ""; }
   const stick = pinned();
   let el = document.getElementById("cm-" + m.id);
   if (!el) {
     threadShown();
-    el = document.createElement(m.role === "thought" ? "details" : "div");
+    el = document.createElement("div");
     el.id = "cm-" + m.id; el.className = "msg " + (m.role || "agent");
     thread.appendChild(el); texts.set(m.id, "");
   }
@@ -1066,8 +1075,8 @@ function showMessage(m) {
     el.innerHTML = esc(text) + (count ? `<div class="pics">${mine ? mine.map((x) => `<img src="${x.url}" alt="">`).join("") : `<span class="count">${count} image${count > 1 ? "s" : ""}</span>`}</div>` : "");
   }
   else if (m.role === "studio") el.textContent = text;
-  else if (m.role === "thought") { const open = el.open; el.innerHTML = `<summary>thinking</summary>${md(text)}`; el.open = open; if (!text.trim()) el.remove(); }
   else el.innerHTML = md(text);
+  renderLive();
   if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
 }
 // Tool calls, grouped in runs: the calls between two of the agent's messages.
@@ -1124,6 +1133,7 @@ function showTool(m) {
   }
   r.calls.set(m.id, m);
   renderRun(r);
+  pulse.replying = false; pulse.thinking = false; pulse.thought = ""; renderLive();
   if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
 }
 link.on("composer/message", showMessage);
@@ -1169,14 +1179,35 @@ function context() {
   }
   return c;
 }
+// The live line: shown while the turn runs, unless a tool call is running
+// (its spinner is the moving thing) or the reply is streaming (its text is).
+const pulse = { el: null, open: false, thinking: false, replying: false, thought: "", thoughtId: null };
+const callRunning = () => [...runs.values()].some((r) => [...r.calls.values()].some((c) => c.status !== "completed" && c.status !== "failed"));
+function renderLive() {
+  const show = S.busy && !pulse.replying && !callRunning();
+  if (!show) { pulse.el?.remove(); return; }
+  if (!pulse.el) {
+    // Built once: a click must land on the same nodes while chunks stream.
+    pulse.el = document.createElement("details"); pulse.el.className = "live";
+    pulse.el.innerHTML = `<summary><span class="mk in_progress"></span><span class="what"></span></summary><div class="thinking"></div>`;
+    pulse.el.addEventListener("toggle", () => { if (pulse.el.isConnected) pulse.open = pulse.el.open; });
+    pulse.el.firstElementChild.addEventListener("click", (e) => { if (!pulse.thought.trim()) e.preventDefault(); });
+  }
+  const stick = pinned(), has = Boolean(pulse.thought.trim());
+  pulse.el.classList.toggle("has-thought", has);
+  if (pulse.el.open !== (pulse.open && has)) pulse.el.open = pulse.open && has;
+  pulse.el.querySelector(".what").textContent = pulse.thinking ? "thinking" : "working";
+  pulse.el.querySelector(".thinking").textContent = pulse.thought.trim();
+  threadShown();
+  if (thread.lastElementChild !== pulse.el) thread.appendChild(pulse.el);
+  const box = pulse.el.querySelector(".thinking"); if (box) box.scrollTop = box.scrollHeight;
+  if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
+}
 function setBusy(on) {
   S.busy = on; $("cancel").hidden = !on; $("send").disabled = on;
-  let el = document.getElementById("typing");
-  if (on && !el) { el = document.createElement("div"); el.id = "typing"; el.className = "typing on"; el.textContent = "working"; }
-  if (on) { threadShown(); thread.appendChild(el); threadScroll.scrollTop = threadScroll.scrollHeight; } else el?.remove();
+  if (!on || !pulse.el?.isConnected) Object.assign(pulse, { thinking: false, replying: false, thought: "", thoughtId: null });
+  renderLive();
 }
-const typingLast = () => { const el = document.getElementById("typing"); if (el) thread.appendChild(el); };
-link.on("composer/message", typingLast); link.on("composer/tool", typingLast);
 // Screenshots to send with the next message: pasted, or dropped on the pane.
 let shots = [], sentShots = null;
 const MAX_EDGE = 1568;
@@ -1283,7 +1314,7 @@ link.onOpen(async () => {
     await loadScenario(S.scenarios.includes(wanted) ? wanted : S.scenarios[0]);
     link.send("agents/list").then((r) => { S.agents = r.agents; if (r.selected?.agent) S.pick = { agent: r.selected.agent, model: r.selected.model }; renderAgents(); }).catch(tell);
     link.send("composer/history").then((r) => {
-      thread.innerHTML = ""; texts.clear(); runs.clear();
+      thread.innerHTML = ""; texts.clear(); runs.clear(); pulse.el = null;
       for (const m of r.messages) (m.role ? showMessage({ ...m, done: true }) : showTool(m));
       if (!r.messages.length) threadEmpty();
       threadScroll.scrollTop = threadScroll.scrollHeight;
