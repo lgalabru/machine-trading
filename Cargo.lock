@@ -4995,6 +4995,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-wit-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-cli"
 version = "0.1.0"
 dependencies = [
@@ -5061,6 +5068,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "solana-keypair",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
