@@ -106,6 +106,8 @@ pub struct SessionOptions<'a> {
     /// and the session's budget, so a loaded machine can't make it miss a
     /// turn. Components run on fuel either way.
     pub trusted: bool,
+    /// Watches a component's session step by step (`mtx bot run --debug`).
+    pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -585,6 +587,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .collect(),
                 },
                 Box::new(log),
+                opts.observer.clone(),
             )
             .await?,
         );
