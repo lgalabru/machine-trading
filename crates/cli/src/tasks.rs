@@ -150,6 +150,17 @@ pub fn load(root: &Path) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
+/// `items` without repeats, in order.
+fn unique(items: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        if !out.contains(&item) {
+            out.push(item);
+        }
+    }
+    out
+}
+
 /// The anchors, one per line, a shared one once.
 fn anchors(tasks: &[Task]) -> String {
     let mut lines: Vec<String> = Vec::new();
@@ -173,11 +184,7 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, String>> {
     let join = |f: &dyn Fn(&Task) -> String, sep: &str| -> String {
         tasks.iter().map(f).collect::<Vec<_>>().join(sep)
     };
-    let needles = tasks
-        .iter()
-        .flat_map(|t| t.mtx.leak_needles.iter().cloned())
-        .collect::<Vec<_>>()
-        .join("|");
+    let needles = unique(tasks.iter().flat_map(|t| t.mtx.leak_needles.iter().cloned())).join("|");
     files.insert(
         PathBuf::from("bench/tasks/tasks.just"),
         format!(
@@ -191,7 +198,7 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, String>> {
              # Lines only the answers hold, `|` apart.\n\
              leak_needles := \"{needles}\"\n",
             join(&|t| format!("{}={}", t.dir, t.mtx.reference), " "),
-            join(&|t| t.mtx.reference.clone(), " "),
+            unique(tasks.iter().map(|t| t.mtx.reference.clone())).join(" "),
             join(&|t| format!("{}={}", t.dir, t.mtx.ladder), " "),
         ),
     );
