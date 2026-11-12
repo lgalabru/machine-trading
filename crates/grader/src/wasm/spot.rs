@@ -255,8 +255,16 @@ fn spot_venues(venues: &[String]) -> crate::Result<SpotVenues> {
         markets: venues
             .iter()
             .map(|venue| match venue.as_str() {
-                "phoenix" => Ok(market(venue, &phoenix_v1::PROGRAM_ID, &phoenix_v1::MARKETS[0])),
-                "openbook" => Ok(market(venue, &openbook_v2::PROGRAM_ID, &openbook_v2::MARKETS[0])),
+                "phoenix" => Ok(market(
+                    venue,
+                    &phoenix_v1::PROGRAM_ID,
+                    &phoenix_v1::MARKETS[0],
+                )),
+                "openbook" => Ok(market(
+                    venue,
+                    &openbook_v2::PROGRAM_ID,
+                    &openbook_v2::MARKETS[0],
+                )),
                 other => Err(crate::Error::Transaction {
                     label: "a spot component's venues".into(),
                     reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
