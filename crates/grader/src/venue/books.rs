@@ -742,6 +742,8 @@ fn not_a_book(venue: &str) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use mtx_kit::{Intent, Market, Position, Session, VenueInfo};
+
     use super::*;
 
     #[test]
@@ -785,5 +787,81 @@ mod tests {
             phoenix_v1::MARKETS[0].address.to_string()
         );
         assert_eq!(json["markets"][1]["symbol"], "SOL-USDC");
+    }
+
+    /// The spot smoke as a component: set `MTX_TEST_SPOT_WASM` to
+    /// `bots/spot-smoke`'s buyer build (`just build` there).
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a built component"]
+    async fn the_spot_smoke_component_sells_and_buys_once() {
+        let path = std::path::PathBuf::from(std::env::var("MTX_TEST_SPOT_WASM").unwrap());
+        let mut strategy = crate::wasm::WasmStrategy::load(
+            &path,
+            "http://127.0.0.1:1",
+            Box::new(std::io::sink()),
+            7,
+            100 * crate::wasm::FUEL_PER_CALL,
+        )
+        .await
+        .unwrap();
+        let venues: Vec<String> = vec!["phoenix".into(), "openbook".into()];
+        let mandate =
+            mtx_core::Mandate::spot(&VENUES, crate::spot::SYMBOL, 10.0);
+        let own = mandate.universe[0].instrument.clone();
+        let session = Session {
+            steps: 20,
+            slots_per_step: 2,
+            start_slot: 100,
+            end_slot: 140,
+            symbol: crate::spot::SYMBOL.into(),
+            start_mark: 150.0,
+            start_oracle: 150.0,
+            cap: 10.0,
+            max_drawdown: 1_500.0,
+            venues: VenueInfo::of_mandate(&mandate, &own, |_| true),
+            mandate,
+            venue: serde_json::to_string(&SessionVenues::of(&venues).unwrap())
+                .unwrap(),
+            authority: String::new(),
+            vars: Vec::new(),
+            seed: 7,
+            reports: mtx_kit::Reports::default(),
+            applies_tx_options: false,
+        };
+        assert!(matches!(strategy.start(&session).await, crate::wasm::Outcome::Done(())));
+        let market = |k| Market {
+            best_bid: Some(149.9),
+            best_ask: Some(150.1),
+            last: false,
+            k,
+            slot: 100 + 2 * k,
+            mark: 150.0,
+            oracle: 150.0,
+            index: 150.0,
+            position: Position {
+                size: 10.0,
+                entry_usd: 150.0,
+            },
+            cap: 10.0,
+            max_drawdown: 1_500.0,
+            ..Market::default()
+        };
+        // It reads the books through rpc, which this test doesn't answer,
+        // and trades anyway: a sell, and the buyer's buy.
+        let crate::wasm::Outcome::Done(first) = strategy.step(&market(0)).await else {
+            panic!()
+        };
+        let sides: Vec<Side> = first
+            .iter()
+            .map(|(intent, _)| match intent {
+                Intent::Market { side, .. } => *side,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(sides, [Side::Ask, Side::Bid]);
+        let crate::wasm::Outcome::Done(second) = strategy.step(&market(1)).await else {
+            panic!()
+        };
+        assert!(second.is_empty());
     }
 }
