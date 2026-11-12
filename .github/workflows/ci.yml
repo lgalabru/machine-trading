@@ -166,9 +166,11 @@ jobs:
         run: cargo build --release --locked -p mtx-cli
       - name: mtx gates
         if: steps.tasks.outputs.tasks != ''
+        env:
+          TASKS: ${{ steps.tasks.outputs.tasks }}
         run: |
           status=0
-          for task in ${{ steps.tasks.outputs.tasks }}; do
+          for task in $TASKS; do
             target/release/mtx gates "$task" --fast > /dev/null || status=1
             cat "target/gates/$task/gates.md" >> "$GITHUB_STEP_SUMMARY"
           done
