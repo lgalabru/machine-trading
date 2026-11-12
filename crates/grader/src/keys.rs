@@ -91,19 +91,61 @@ impl SessionKeyring<'_> {
     /// The keypair for `role` (`bot`, `taker`, `competitor`), the `index`th
     /// of its kind.
     pub fn keypair(&self, role: &str, index: u32) -> Keypair {
-        let field = |bytes: &[u8]| {
-            let mut framed = (bytes.len() as u64).to_le_bytes().to_vec();
-            framed.extend_from_slice(bytes);
-            framed
-        };
-        Keypair::new_from_array(digest(&[
-            KEY_DOMAIN,
-            &self.keys.secret,
-            &field(self.session.as_bytes()),
-            &field(role.as_bytes()),
-            &index.to_le_bytes(),
-        ]))
+        keypair(self.keys, &self.session, role, index)
     }
+
+    /// The session's fresh signers for raw sends, which outlive this
+    /// borrow: see [`FreshKeys`].
+    pub fn fresh(&self) -> FreshKeys {
+        FreshKeys {
+            keys: self.keys.clone(),
+            session: self.session.clone(),
+        }
+    }
+}
+
+/// The keypairs a session's raw sends are signed with besides the bot's
+/// (`crate::raw`): the `n`th fresh signer of the `id`th raw send of step
+/// `step` is the session's keypair for role `fresh/{step}/{id}`, index `n`.
+/// They come from the grader's secret, never from anything a strategy
+/// sees, so no strategy can know one before the grader hands out its
+/// address, or ever sign as one.
+#[derive(Clone)]
+pub struct FreshKeys {
+    keys: SessionKeys,
+    session: String,
+}
+
+impl std::fmt::Debug for FreshKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FreshKeys(..)")
+    }
+}
+
+impl FreshKeys {
+    pub fn keypair(&self, step: u64, id: u32, n: u8) -> Keypair {
+        keypair(
+            &self.keys,
+            &self.session,
+            &format!("fresh/{step}/{id}"),
+            u32::from(n),
+        )
+    }
+}
+
+fn keypair(keys: &SessionKeys, session: &str, role: &str, index: u32) -> Keypair {
+    let field = |bytes: &[u8]| {
+        let mut framed = (bytes.len() as u64).to_le_bytes().to_vec();
+        framed.extend_from_slice(bytes);
+        framed
+    };
+    Keypair::new_from_array(digest(&[
+        KEY_DOMAIN,
+        &keys.secret,
+        &field(session.as_bytes()),
+        &field(role.as_bytes()),
+        &index.to_le_bytes(),
+    ]))
 }
 
 fn digest(parts: &[&[u8]]) -> [u8; 32] {
@@ -149,6 +191,32 @@ mod tests {
     }
 
     #[test]
+    fn fresh_signers_are_the_sessions_and_never_another_key() {
+        let keys = SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars");
+        let keyring = keys.session("bot/0/crash-1");
+        let fresh = keyring.fresh();
+        assert_eq!(format!("{fresh:?}"), "FreshKeys(..)");
+        assert_eq!(
+            fresh.keypair(3, 1, 2).pubkey(),
+            keyring.keypair("fresh/3/1", 2).pubkey()
+        );
+        let mut seen = vec![keyring.keypair("bot", 0).pubkey()];
+        for (step, id, n) in [(3, 1, 2), (3, 1, 0), (3, 0, 2), (4, 1, 2), (31, 1, 2)] {
+            let key = fresh.keypair(step, id, n).pubkey();
+            assert!(!seen.contains(&key));
+            seen.push(key);
+        }
+        // Not another session's, and nothing the scenario's name gives away.
+        assert_ne!(
+            fresh.keypair(3, 1, 2).pubkey(),
+            keys.session("bot/1/crash-1")
+                .fresh()
+                .keypair(3, 1, 2)
+                .pubkey()
+        );
+    }
+
+    #[test]
     fn the_secret_never_prints() {
         let keys = SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars");
         assert_eq!(format!("{keys:?}"), "SessionKeys(..)");
@@ -165,10 +233,11 @@ mod tests {
     }
 
     /// After a grade of a drawn set, none of its session keys' secrets is
-    /// anywhere in what the grade wrote: its report, details or logs. Run
-    /// with the grade's `MTX_EVAL_SEED` and `MTX_TEST_GRADE_DIR` (searched
-    /// recursively, `.gz` files unpacked); `report.json` there names the
-    /// sessions.
+    /// anywhere in what the grade wrote: its report, details or logs, nor
+    /// any of the fresh signers its raw sends could have had (the first
+    /// [`RAW_IDS`] sends of every step). Run with the grade's
+    /// `MTX_EVAL_SEED` and `MTX_TEST_GRADE_DIR` (searched recursively, `.gz`
+    /// files unpacked); `report.json` there names the sessions.
     #[test]
     #[ignore = "needs a finished grade: MTX_TEST_GRADE_DIR and its MTX_EVAL_SEED"]
     fn no_session_key_appears_in_a_grades_output() {
@@ -178,17 +247,38 @@ mod tests {
         let keys = SessionKeys::from_eval_seed(seed.as_bytes());
         let report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.join("report.json")).unwrap()).unwrap();
-        let scenarios: Vec<String> = report["scenarios"]
+        let scenarios: Vec<(String, u64)> = report["scenarios"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|s| s["scenario"].as_str().unwrap().to_string())
+            .map(|s| {
+                (
+                    s["scenario"].as_str().unwrap().to_string(),
+                    s["turns"]["steps"].as_u64().unwrap_or(0),
+                )
+            })
             .collect();
         assert!(!scenarios.is_empty());
         let mut secrets = vec![seed.clone(), hex(&keys.secret)];
-        for (index, scenario) in scenarios.iter().enumerate() {
+        // Fresh signers are too many to search for one by one: every
+        // word of the output is looked up among them instead.
+        let mut fresh = std::collections::HashSet::new();
+        for (index, (scenario, steps)) in scenarios.iter().enumerate() {
             for role in ["bot", "reference"] {
                 let keyring = keys.role(role).session(index, scenario);
+                let raw = keyring.fresh();
+                for step in 0..*steps {
+                    for id in 0..RAW_IDS {
+                        for n in 0..mtx_kit::raw::MAX_FRESH_SIGNERS {
+                            let pair = raw.keypair(step, id, n);
+                            fresh.insert(pair.to_base58_string());
+                            fresh.insert(hex(pair.secret_bytes()));
+                            fresh.insert(hex(&pair.to_bytes()));
+                            fresh.insert(format!("{:?}", &pair.to_bytes()[..]).replace(' ', ""));
+                            fresh.insert(format!("{:?}", pair.secret_bytes()).replace(' ', ""));
+                        }
+                    }
+                }
                 let mut pairs = vec![keyring.keypair("bot", 0), keyring.keypair("competitor", 0)];
                 pairs.extend(
                     (0..crate::making::TAKER_ACCOUNTS as u32).map(|i| keyring.keypair("taker", i)),
@@ -223,10 +313,23 @@ mod tests {
                     path.display()
                 );
             }
+            let words = text
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .chain(text.split(|c: char| !(c.is_ascii_digit() || "[],".contains(c))));
+            for word in words {
+                assert!(
+                    !fresh.contains(word),
+                    "a fresh signer's key in {}",
+                    path.display()
+                );
+            }
             files += 1;
         }
         assert!(files > 1, "nothing to search");
     }
+
+    /// Raw sends per step the leak check covers.
+    const RAW_IDS: u32 = 8;
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
