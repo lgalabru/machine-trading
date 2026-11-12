@@ -97,7 +97,7 @@ jobs:
         # the grader's host.
         run: |
           rustup target add wasm32-wasip2
-          for bot in starter reference maker carry weekend spot-smoke; do
+          for bot in starter printer first-strategy reference maker carry weekend spot-smoke; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
