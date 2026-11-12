@@ -38,6 +38,13 @@ use crate::{
 /// Fewer windows than this and the return checks are skipped: the
 /// statistics are too noisy to judge.
 pub const MIN_WINDOWS: usize = 30;
+/// What a pass needs judged, with power: the volatility level, its spread
+/// across sessions, and fat tails (either tail check).
+pub const REQUIRED: [&[&str]; 3] = [
+    &["vol_level"],
+    &["vol_of_vol"],
+    &["tail_ratio", "kurtosis_within"],
+];
 /// Fewer gaps than this and the gap check is skipped.
 pub const MIN_GAPS: usize = 20;
 
@@ -115,6 +122,9 @@ pub enum Status {
     Skipped,
     /// Reported for the record; never fails.
     Info,
+    /// Within its band, but so is the obviously wrong market's value: the
+    /// check can't tell them apart here, so it judges nothing.
+    NoPower,
 }
 
 /// A report's outcome.
@@ -125,8 +135,9 @@ pub enum Verdict {
     Pass,
     /// A check failed.
     Fail,
-    /// Nothing failed, but the return checks didn't run (too few windows, or
-    /// no `[realism]`): the market wasn't judged. Not a pass.
+    /// Nothing failed, but the market wasn't judged: the return checks
+    /// didn't run (too few windows, or no `[realism]`), or a required one
+    /// (vol level, vol of vol, a tail check) had no power. Not a pass.
     NotJudged,
 }
 
@@ -176,11 +187,17 @@ pub struct Report {
 
 impl Report {
     /// Set the verdict from the checks: a failure fails; otherwise the
-    /// report passes only if the return checks ran.
+    /// report passes only if the return checks ran and each of
+    /// [`REQUIRED`] has a check that passed with power.
     fn decide(&mut self) {
+        let judged = |names: &[&str]| {
+            self.checks
+                .iter()
+                .any(|c| c.status == Status::Pass && names.contains(&c.name.as_str()))
+        };
         self.verdict = if self.checks.iter().any(|c| c.status == Status::Fail) {
             Verdict::Fail
-        } else if self.generated.is_none() {
+        } else if self.generated.is_none() || !REQUIRED.iter().all(|group| judged(group)) {
             Verdict::NotJudged
         } else {
             Verdict::Pass
@@ -244,7 +261,7 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
     let mut normalized = Vec::new();
     let mut lag1 = Vec::new();
     for r in windows {
-        sd.push(moments(r).sd);
+        sd.push(moments(&aggregate(r, realism.vol_bars)).sd);
         let ra = aggregate(r, agg);
         let rms = (mean(&ra.iter().map(|v| v * v).collect::<Vec<_>>())).sqrt();
         if rms > 0.0 {
@@ -290,7 +307,7 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
         clustering,
         predictability: mean(&lag1),
         tail_ratio: {
-            let abs: Vec<f64> = pooled.iter().map(|v| v.abs()).collect();
+            let abs: Vec<f64> = normalized.iter().map(|v| v.abs()).collect();
             quantile(&abs, 0.99) / quantile(&abs, 0.9)
         },
     }
@@ -299,16 +316,21 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
 /// Bootstrap draws of the generated windows behind each band.
 const SPREAD_DRAWS: usize = 200;
 
-/// Compare generated windows' statistics with the reference. Each gated
-/// check's band is the file's, widened to `spread.sigmas` standard
-/// deviations of the difference's sampling error: the real statistic's
-/// (from the file, scaled to the real window count) and the generated
-/// one's (bootstrapped from the generated windows, and at least the real
-/// statistic's spread at that many windows), so a fair generator passes
-/// whatever its seed. Pooled kurtosis and Hill's index are
-/// reported, not gated.
+/// Compare generated windows' statistics with the reference.
+///
+/// Each gated check's band is `spread.sigmas` standard deviations of the
+/// difference's sampling error: the real statistic's (from the file, scaled
+/// to the real window count) and the generated one's (bootstrapped from the
+/// generated windows, and at least the real statistic's spread at that many
+/// windows). A fair generator therefore passes whatever its seed.
+///
+/// A check judges only if its band leaves out the obviously wrong value
+/// (the file's nulls: thin tails, no vol of vol, no clustering; half and
+/// twice the volatility; a lag-1 autocorrelation 0.3 off). One that passes
+/// without that power reports [`Status::NoPower`]. Pooled kurtosis and
+/// Hill's index are reported, not gated.
 pub fn compare(realism: &Realism, windows: &[Vec<f64>]) -> (WindowStats, Vec<Check>) {
-    let (r, b, s) = (&realism.reference, &realism.bands, &realism.spread);
+    let (r, s, null) = (&realism.reference, &realism.spread, &realism.null);
     let g = window_stats(windows, realism);
     let own = bootstrap(windows, realism);
     // Spread sds are at `s.windows` windows: scale them to the real count
@@ -320,65 +342,89 @@ pub fn compare(realism: &Realism, windows: &[Vec<f64>]) -> (WindowStats, Vec<Che
     let at_n = (s.windows as f64 / windows.len().max(1) as f64).sqrt();
     let width =
         |real_sd: f64, own_sd: f64| s.sigmas * (real_sd * real).hypot(own_sd.max(real_sd * at_n));
-    let ratio = |band: Band, real_sd: f64, own_sd: f64| {
-        let [lo, hi] = band.ratio.unwrap_or([1.0, 1.0]);
-        let w = width(real_sd, own_sd).exp();
-        Band {
-            ratio: Some([lo.min(1.0 / w), hi.max(w)]),
+    let ratio = |name: &str, real_v: f64, gen_v: f64, sds: (f64, f64), nulls: &[f64]| {
+        let w = width(sds.0, sds.1).exp();
+        let held = nulls
+            .iter()
+            .find(|n| (1.0 / w..=w).contains(&(**n / real_v)));
+        let band = Band {
+            ratio: Some([1.0 / w, w]),
             diff: None,
-        }
+        };
+        gate(name, real_v, gen_v, band, held.copied())
     };
-    let diff = |band: Band, real_sd: f64, own_sd: f64| Band {
-        ratio: None,
-        diff: Some(band.diff.unwrap_or(0.0).max(width(real_sd, own_sd))),
+    let diff = |name: &str, real_v: f64, gen_v: f64, sds: (f64, f64), nulls: &[f64]| {
+        let d = width(sds.0, sds.1);
+        let held = nulls.iter().find(|n| (**n - real_v).abs() <= d);
+        let band = Band {
+            ratio: None,
+            diff: Some(d),
+        };
+        gate(name, real_v, gen_v, band, held.copied())
     };
     let mut checks = vec![
-        judge(
+        ratio(
             "vol_level",
             r.vol_level,
             g.vol_level,
-            ratio(b.vol_level, s.log_sd.vol_level, own.log_sd.vol_level),
+            (s.log_sd.vol_level, own.log_sd.vol_level),
+            &[0.5 * r.vol_level, 2.0 * r.vol_level],
         ),
-        judge(
+        ratio(
             "vol_of_vol",
             r.vol_of_vol,
             g.vol_of_vol,
-            ratio(b.vol_of_vol, s.log_sd.vol_of_vol, own.log_sd.vol_of_vol),
+            (s.log_sd.vol_of_vol, own.log_sd.vol_of_vol),
+            &[null.vol_of_vol],
         ),
-        judge(
+        diff(
             "kurtosis_within",
             r.kurtosis_within,
             g.kurtosis_within,
-            diff(
-                b.kurtosis_within,
-                s.sd.kurtosis_within,
-                own.sd.kurtosis_within,
-            ),
+            (s.sd.kurtosis_within, own.sd.kurtosis_within),
+            &[null.kurtosis_within],
         ),
-        judge(
+        ratio(
             "tail_ratio",
             r.tail_ratio,
             g.tail_ratio,
-            ratio(b.tail_ratio, s.log_sd.tail_ratio, own.log_sd.tail_ratio),
+            (s.log_sd.tail_ratio, own.log_sd.tail_ratio),
+            &[null.tail_ratio],
         ),
         info("kurtosis_pooled", r.kurtosis_pooled, g.kurtosis_pooled),
         info("tail_index", r.tail_index, g.tail_index),
     ];
     for (i, lag) in realism.cluster_lags.iter().enumerate() {
-        checks.push(judge(
+        checks.push(diff(
             &format!("clustering_lag_{lag}"),
             r.clustering[i],
             g.clustering[i],
-            diff(b.clustering, s.sd.clustering[i], own.sd.clustering[i]),
+            (s.sd.clustering[i], own.sd.clustering[i]),
+            &[null.clustering[i]],
         ));
     }
-    checks.push(judge(
+    checks.push(diff(
         "predictability",
         r.predictability,
         g.predictability,
-        diff(b.predictability, s.sd.predictability, own.sd.predictability),
+        (s.sd.predictability, own.sd.predictability),
+        &[r.predictability - 0.3, r.predictability + 0.3],
     ));
     (g, checks)
+}
+
+/// Judge a gated check; a pass whose band holds a null value (`held`) has
+/// no power.
+fn gate(name: &str, real: f64, generated: f64, band: Band, held: Option<f64>) -> Check {
+    let mut check = judge(name, real, generated, band);
+    if let (Status::Pass, Some(null)) = (check.status, held) {
+        check.status = Status::NoPower;
+        check.detail = format!(
+            "{}; no power: the band also holds {null:.4}, the obviously wrong market's value",
+            check.detail
+        );
+    }
+    check
 }
 
 /// The sampling spread of each gated statistic over `windows`: drawn with
@@ -448,7 +494,7 @@ fn judge(name: &str, real: f64, generated: f64, band: Band) -> Check {
                 let ok = (lo..=hi).contains(&ratio);
                 (
                     pass(ok),
-                    format!("generated / real = {ratio:.3}, band [{lo}, {hi}]"),
+                    format!("generated / real = {ratio:.3}, band [{lo:.3}, {hi:.3}]"),
                 )
             }
         }
@@ -456,7 +502,7 @@ fn judge(name: &str, real: f64, generated: f64, band: Band) -> Check {
             let gap = (generated - real).abs();
             (
                 pass(gap <= d),
-                format!("|generated - real| = {gap:.4}, band {d}"),
+                format!("|generated - real| = {gap:.4}, band {d:.4}"),
             )
         }
         (None, None) => (Status::Fail, "no band".into()),
@@ -904,47 +950,148 @@ mod tests {
     #[test]
     fn the_calibrated_model_passes_its_own_checks_whatever_the_seed() {
         // Each check's band is its sampling spread, so a fair generator
-        // passes on every seed, at the default size and at gates' fast one.
+        // passes on every seed; with no stated floors, vol_level judges the
+        // level itself.
         for cal in [sol(), spcx()] {
-            for (count, seeds) in [(300, 1..=4), (60, 1..=4)] {
-                for seed in seeds {
-                    let report = check_model(&cal, &ModelSpec::default(), count, seed).unwrap();
-                    let failed: Vec<_> = report
-                        .checks
-                        .iter()
-                        .filter(|c| c.status == Status::Fail)
-                        .collect();
-                    assert_eq!(
-                        report.verdict,
-                        Verdict::Pass,
-                        "{} at {count} sessions, seed {seed}: {failed:#?}",
-                        cal.meta.calibration_id
-                    );
-                    assert!(report.passed);
-                    assert!(report.windows >= count * 8 / 10);
-                }
+            for seed in 1..=4 {
+                let report = check_model(&cal, &ModelSpec::default(), 300, seed).unwrap();
+                let failed: Vec<_> = report
+                    .checks
+                    .iter()
+                    .filter(|c| c.status != Status::Pass && c.status != Status::Info)
+                    .collect();
+                assert_eq!(
+                    report.verdict,
+                    Verdict::Pass,
+                    "{} seed {seed}: {failed:#?}",
+                    cal.meta.calibration_id
+                );
+                assert!(report.passed);
+                assert_eq!(status(&report, "vol_level"), Status::Pass);
             }
         }
         let spcx = check_model(&spcx(), &ModelSpec::default(), 100, 2).unwrap();
-        assert!(
-            spcx.checks
-                .iter()
-                .any(|c| c.name == "gap_size_median" && c.status == Status::Pass)
-        );
-        assert!(
-            spcx.checks
-                .iter()
-                .any(|c| c.name == "round_trips" && c.status == Status::Pass)
-        );
+        assert_eq!(status(&spcx, "gap_size_median"), Status::Pass);
+        assert_eq!(status(&spcx, "round_trips"), Status::Pass);
+    }
+
+    fn status(report: &Report, name: &str) -> Status {
+        report
+            .checks
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("no check {name}"))
+            .status
     }
 
     #[test]
-    fn a_gaussian_walk_fails_the_tail_checks() {
+    fn half_and_twice_the_volatility_fail_on_both_files() {
+        for cal in [sol(), spcx()] {
+            for vol_mult in [0.5, 2.0] {
+                let spec = ModelSpec {
+                    vol_mult,
+                    ..ModelSpec::default()
+                };
+                let report = check_model(&cal, &spec, 300, 1).unwrap();
+                assert_eq!(status(&report, "vol_level"), Status::Fail, "{vol_mult}");
+                assert_eq!(report.verdict, Verdict::Fail);
+            }
+        }
+    }
+
+    #[test]
+    fn thin_tails_do_not_pass() {
+        // Gaussian innovations, everything else the calibration's.
+        for cal in [sol(), spcx()] {
+            let mut gaussian = cal.clone();
+            gaussian.fair_value.tails.df = 1e6;
+            for seed in 1..=2 {
+                let report = check_model(&gaussian, &ModelSpec::default(), 300, seed).unwrap();
+                assert_eq!(report.verdict, Verdict::Fail, "{}", cal.meta.calibration_id);
+                assert!(
+                    [
+                        status(&report, "tail_ratio"),
+                        status(&report, "kurtosis_within")
+                    ]
+                    .contains(&Status::Fail)
+                );
+            }
+        }
+    }
+
+    /// The adversarial table in PR_NOTES: each wrong market against each
+    /// file, and which checks catch it. `cargo test -p mtx-grader --lib
+    /// adversarial_table -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn adversarial_table() {
+        type Wrong = fn(&mut Calibration, &mut ModelSpec);
+        let cases: [(&str, Wrong); 10] = [
+            ("calibrated", |_, _| {}),
+            ("gaussian, constant vol", |c, _| {
+                let fv = &mut c.fair_value;
+                fv.tails.df = 1e6;
+                fv.clustering.alpha = 0.0;
+                fv.clustering.beta = 0.0;
+                fv.regimes.log_sd_within.iter_mut().for_each(|s| *s = 0.0);
+                fv.regimes.vol_mult.iter_mut().for_each(|m| *m = 1.0);
+                fv.intraday_vol_mult_utc = None;
+            }),
+            ("vol 0.5x", |_, s| s.vol_mult = 0.5),
+            ("vol 0.7x", |_, s| s.vol_mult = 0.7),
+            ("vol 1.5x", |_, s| s.vol_mult = 1.5),
+            ("vol 2x", |_, s| s.vol_mult = 2.0),
+            ("no regimes", |c, _| {
+                let r = &mut c.fair_value.regimes;
+                r.log_sd_within.iter_mut().for_each(|s| *s = 0.0);
+                r.vol_mult.iter_mut().for_each(|m| *m = 1.0);
+            }),
+            ("thin tails (df 1e6)", |c, _| c.fair_value.tails.df = 1e6),
+            ("tails too heavy (df 2.5)", |c, _| {
+                c.fair_value.tails.df = 2.5
+            }),
+            ("tails too heavy (df 3)", |c, _| c.fair_value.tails.df = 3.0),
+        ];
+        println!("| case | file | seed | verdict | fail | no power |");
+        println!("|---|---|---|---|---|---|");
+        for (name, wrong) in cases {
+            for cal in [sol(), spcx()] {
+                for seed in 1..=3 {
+                    let (mut c, mut spec) = (cal.clone(), ModelSpec::default());
+                    wrong(&mut c, &mut spec);
+                    let r = check_model(&c, &spec, 300, seed).unwrap();
+                    let named = |s: Status| {
+                        r.checks
+                            .iter()
+                            .filter(|c| c.status == s)
+                            .map(|c| match (s, c.real, c.generated) {
+                                (Status::Fail, Some(real), Some(generated)) => {
+                                    format!("{} ({:.3}x)", c.name, generated / real)
+                                }
+                                _ => c.name.clone(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    println!(
+                        "| {name} | {} | {seed} | {:?} | {} | {} |",
+                        cal.meta.asset,
+                        r.verdict,
+                        named(Status::Fail),
+                        named(Status::NoPower)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_gaussian_walk_fails() {
         // Constant volatility, Gaussian steps, at the real level.
         let cal = sol();
         let realism = cal.realism.as_ref().unwrap();
         let mut rng = SplitMix64(9);
-        let per_slot = realism.reference.vol_level / (realism.bar_seconds / SLOT_SECONDS).sqrt();
+        let per_slot = cal.fair_value.per_second_sd * SLOT_SECONDS.sqrt();
         let sessions: Vec<SessionPath> = (0..1000)
             .map(|_| {
                 let mut level = 0.0;
@@ -960,19 +1107,11 @@ mod tests {
                 }
             })
             .collect();
+        assert_eq!(realism.window_bars as f64 * realism.bar_seconds, 120.0);
         let report = report(&cal, "gaussian", &sessions, SLOT_SECONDS, None);
-        let status = |name: &str| {
-            report
-                .checks
-                .iter()
-                .find(|c| c.name == name)
-                .unwrap()
-                .status
-        };
-        assert_eq!(status("vol_level"), Status::Pass);
-        assert_eq!(status("vol_of_vol"), Status::Fail);
-        assert_eq!(status("tail_ratio"), Status::Fail);
-        assert_eq!(status("kurtosis_pooled"), Status::Info);
+        assert_eq!(status(&report, "vol_of_vol"), Status::Fail);
+        assert_eq!(status(&report, "tail_ratio"), Status::Fail);
+        assert_eq!(status(&report, "kurtosis_pooled"), Status::Info);
         assert_eq!(report.verdict, Verdict::Fail);
         assert!(!report.passed);
     }
