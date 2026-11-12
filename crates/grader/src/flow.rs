@@ -80,8 +80,9 @@ impl Takers {
         Ok(takers)
     }
 
-    /// Onboard the taker pool, leaving the makers as they are. Setup:
-    /// cheatcodes must still be unlocked. The takers trade through `rpc_url`.
+    /// Onboard the taker pool, leaving the makers as they are. Setup, on a
+    /// stepped surfnet: cheatcodes must still be unlocked. The takers trade
+    /// through `rpc_url`, the grader's own.
     pub async fn onboard(
         world: &OfflineWorld,
         phoenix: &Phoenix,
@@ -95,13 +96,16 @@ impl Takers {
             .create(&dir)
             .map_err(io_error(&dir))?;
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS).map(|_| Keypair::new()).collect();
-        let onboarded = futures::future::join_all(keypairs.iter().map(|keypair| {
-            phoenix::onboard_trader(&world.surfnet, phoenix, keypair, TAKER_DEPOSIT_USDC)
-        }))
-        .await;
+        phoenix::onboard_traders_stepped(
+            &world.surfnet,
+            phoenix,
+            &mtx_kit::rpc_client(rpc_url),
+            &keypairs.iter().collect::<Vec<_>>(),
+            TAKER_DEPOSIT_USDC,
+        )
+        .await?;
         let mut traders = Vec::with_capacity(keypairs.len());
-        for (i, (keypair, onboarded)) in keypairs.iter().zip(onboarded).enumerate() {
-            onboarded?;
+        for (i, keypair) in keypairs.iter().enumerate() {
             let path = dir.join(format!("taker-{i}.json"));
             let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
             std::fs::write(&path, bytes).map_err(io_error(&path))?;

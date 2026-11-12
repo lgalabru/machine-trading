@@ -78,12 +78,20 @@ pub struct GradeReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eval_seed_sha256: Option<String>,
     pub risk: Risk,
+    /// `mtx grade --replay`: whether every run came out the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<crate::replay::ReplayCheck>,
     /// The sessions' markout, luck and residual, summed, when every scenario
     /// reports a fair value. Reported, not scored: `reward` and `skill` are
     /// PnL's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub markout: Option<Decomposition>,
     pub scenarios: Vec<ScenarioResult>,
+    /// The reference's sessions, when the grade ran it: kept out of the
+    /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
+    /// replay check.
+    #[serde(skip)]
+    pub anchors: Vec<SessionReport>,
 }
 
 /// How the bot made its PnL, across sessions. Reported, not scored: with a
@@ -243,6 +251,9 @@ pub struct GradeOptions<'a> {
     /// Grade the bot only if it is a strategy component (a `bot.wasm`): the
     /// verifier's rule. The reference can still be a process.
     pub components_only: bool,
+    /// The bot is trusted, as the reference is (an anchor or a ladder rung
+    /// graded as the bot): see [`SessionOptions::trusted`].
+    pub trusted: bool,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -307,6 +318,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
             None,
             false,
+            true,
         )
         .await?;
         check_timing(&anchors)?;
@@ -328,6 +340,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.first_bot_user..opts.first_bot_user + opts.jobs,
         opts.regimes,
         opts.stop_on_disqualify,
+        opts.trusted,
     )
     .await?;
     check_timing(&sessions)?;
@@ -343,7 +356,8 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         write_details(dir, "reference", &anchored, &scenarios, opts.annotations)?;
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
-    let report = score(sessions.into_iter().zip(&scenarios).collect());
+    let mut report = score(sessions.into_iter().zip(&scenarios).collect());
+    report.anchors = anchored;
     info!(
         reward = report.reward,
         pnl_usd = report.pnl_usd,
@@ -422,8 +436,10 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         not_graded: None,
         eval_seed_sha256: None,
         risk: Risk::of(&scenarios),
+        replay: None,
         markout: total_markout(&scenarios),
         scenarios,
+        anchors: Vec::new(),
     }
 }
 
@@ -492,25 +508,19 @@ fn total_markout(sessions: &[ScenarioResult]) -> Option<Decomposition> {
     )
 }
 
-/// Sessions whose clock fell behind by more than this many slots (2 seconds
-/// at 250ms slots) aren't scored: the bot saw a slower market than the one
-/// it was meant to trade, and its PnL isn't comparable.
-pub const MAX_LATE_SLOTS: u64 = 8;
-
 /// The share of a market-making session's taker orders that may fail before
 /// the session isn't scored.
 pub const MAX_FAILED_TAKER_SHARE: f64 = 0.1;
 
-/// Fail the grade, as an infrastructure error, rather than score sessions the
-/// machine was too loaded to run on time. Harbor retries a failed verifier;
-/// a skewed score would stand.
+/// Fail the grade, as an infrastructure error, rather than score sessions
+/// that didn't run as their scenarios describe. Harbor retries a failed
+/// verifier; a skewed score would stand. A loaded machine alone no longer
+/// shows up here: sessions run on no clock, so slots can't come late (see
+/// [`crate::snapshot::start_offline_stepped`]).
 fn check_timing(sessions: &[SessionReport]) -> Result<()> {
     let late: Vec<String> = sessions
         .iter()
         .filter_map(|s| {
-            if s.late_slots > MAX_LATE_SLOTS {
-                return Some(format!("{} ({} slots late)", s.scenario, s.late_slots));
-            }
             // A market-making session whose takers didn't trade as listed
             // didn't see the flow its scenario describes.
             let flow = s.flow.as_ref()?;
@@ -600,9 +610,9 @@ pub async fn calibrate(
         first_bot_user..first_bot_user + jobs,
         None,
         false,
+        true,
     )
     .await?;
-    // A reference recorded on a loaded machine would skew every score after it.
     check_timing(&sessions)?;
     for ((path, scenario), session) in scenarios.iter_mut().zip(&sessions) {
         // The same rules as grading: a reference the grader would
@@ -628,8 +638,9 @@ pub async fn calibrate(
 /// different users (see [`session::BOT_USERS`]). Sessions are kept in an
 /// ordered window of `jobs` (the range's length), so the ones running at
 /// once always have distinct `bot_users.start + index % jobs` slots. A
-/// machine too loaded for `jobs` shows up as late slots, which fail the
-/// grade rather than skew it.
+/// machine too loaded for `jobs` grades slower, not differently. `trusted`
+/// bots get [`SessionOptions::trusted`].
+#[allow(clippy::too_many_arguments)]
 async fn run_sessions(
     snapshot_dir: &Path,
     bot_dir: &Path,
@@ -638,6 +649,7 @@ async fn run_sessions(
     bot_users: std::ops::Range<usize>,
     regimes: Option<&[String]>,
     stop_on_disqualify: bool,
+    trusted: bool,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
     if !(1..=session::BOT_USERS.len()).contains(&jobs) {
@@ -668,6 +680,7 @@ async fn run_sessions(
                     bot_log: &bot_log,
                     slot: first_bot_user + index % jobs,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
+                    trusted,
                 })
             };
             // A session whose setup fails on the machine (a request to its
@@ -745,6 +758,7 @@ mod tests {
             detail_dir: None,
             annotations: None,
             components_only: true,
+            trusted: false,
         })
         .await
         .unwrap();
@@ -1029,14 +1043,11 @@ mod tests {
     }
 
     #[test]
-    fn late_sessions_fail_the_grade_instead_of_scoring() {
+    fn a_slow_machine_doesnt_void_a_grade() {
         let mut slow = session(10.0);
-        slow.late_slots = MAX_LATE_SLOTS + 1;
-        assert!(check_timing(&[session(1.0), slow]).is_err());
-
-        let mut tolerable = session(10.0);
-        tolerable.late_slots = MAX_LATE_SLOTS;
-        assert!(check_timing(&[tolerable]).is_ok());
+        slow.wall_ms = 3_600_000;
+        slow.turns.wall_ms = 1_000_000;
+        assert!(check_timing(&[session(1.0), slow]).is_ok());
     }
 
     #[tokio::test]
@@ -1050,6 +1061,7 @@ mod tests {
                 &logs,
                 first..first + jobs,
                 None,
+                false,
                 false,
             )
         };
@@ -1082,7 +1094,7 @@ mod tests {
             detail: "short".into(),
         })));
         assert!(!is_transient(&Error::MissingBot("bot".into())));
-        assert!(!is_transient(&Error::Degraded("late slots".into())));
+        assert!(!is_transient(&Error::Degraded("failed takers".into())));
         assert!(!is_transient(&Error::UnknownMarket("XYZ".into())));
     }
 

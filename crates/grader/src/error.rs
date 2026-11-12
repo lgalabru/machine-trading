@@ -44,6 +44,17 @@ pub enum Error {
     /// A session failed before its bot started.
     #[error(transparent)]
     Setup(Box<Error>),
+    /// A session's setup produced more slots than its scenario leaves it: a
+    /// setup that changed, not a slow machine (setup runs on no clock).
+    #[error("{scenario}'s setup took {used} slots, past the {budget} its scenario leaves it")]
+    SetupSlots {
+        scenario: String,
+        used: u64,
+        budget: u64,
+    },
+    /// Two runs of the same grade disagreed (see [`crate::replay`]).
+    #[error("the grade didn't replay: {0}")]
+    Replay(String),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
     #[error("no bot at {}: a bot is a directory with a bot.wasm, or a Justfile whose `run` starts it", .0.display())]
