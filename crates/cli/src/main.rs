@@ -33,6 +33,7 @@ mod publish;
 mod review;
 mod run;
 mod studio;
+mod tools;
 mod ui;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by

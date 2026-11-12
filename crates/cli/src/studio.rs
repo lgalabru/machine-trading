@@ -1620,6 +1620,122 @@ fn prompt_text(text: &str, context: &Value) -> String {
     )
 }
 
+/// A tool call as the agent has described it so far.
+#[derive(Default)]
+struct Call {
+    title: Option<String>,
+    status: Option<String>,
+    kind: Option<String>,
+    input: Value,
+    content: Value,
+    locations: Value,
+}
+
+impl Call {
+    fn merge(
+        &mut self,
+        title: Option<String>,
+        status: Option<String>,
+        kind: Option<String>,
+        input: Option<Value>,
+        content: Option<Value>,
+        locations: Option<Value>,
+    ) {
+        if title.is_some() {
+            self.title = title;
+        }
+        if status.is_some() {
+            self.status = status;
+        }
+        if kind.is_some() {
+            self.kind = kind;
+        }
+        if let Some(input) = input.filter(|v| !v.is_null()) {
+            self.input = input;
+        }
+        if let Some(content) = content.filter(|v| !v.is_null()) {
+            self.content = content;
+        }
+        if let Some(locations) = locations.filter(|v| !v.is_null()) {
+            self.locations = locations;
+        }
+    }
+
+    fn action(&self) -> crate::tools::Action {
+        crate::tools::describe(
+            self.title.as_deref().unwrap_or_default(),
+            self.kind.as_deref(),
+            &self.input,
+        )
+    }
+
+    /// The call as `composer/tool` carries it: its line in words, and what
+    /// the page shows when it's opened (the input, the output, a diff).
+    fn json(&self, id: &str, run: &str, run_summary: &str) -> Value {
+        let title = self.title.as_deref().unwrap_or_default();
+        let mut output = Vec::new();
+        let mut diffs = Vec::new();
+        for item in self.content.as_array().into_iter().flatten() {
+            match item["type"].as_str() {
+                Some("diff") => diffs.push(json!({
+                    "path": item["path"],
+                    "old": clip(item["oldText"].as_str().unwrap_or_default()),
+                    "new": clip(item["newText"].as_str().unwrap_or_default()),
+                })),
+                _ => {
+                    if let Some(text) = item["content"]["text"]
+                        .as_str()
+                        .or_else(|| item["text"].as_str())
+                    {
+                        output.push(text.to_string());
+                    }
+                }
+            }
+        }
+        json!({
+            "id": id,
+            "run": run,
+            "runSummary": run_summary,
+            "summary": crate::tools::describe_line(title, self.kind.as_deref(), &self.input),
+            "title": self.title,
+            "kind": self.kind,
+            "status": self.status.as_deref().unwrap_or("pending"),
+            "input": clip_value(&self.input),
+            "output": clip(&output.join("\n")),
+            "diffs": diffs,
+            "locations": self.locations,
+        })
+    }
+}
+
+/// The most of one text a tool call's details carry to the page.
+const DETAIL_CHARS: usize = 4000;
+
+fn clip(text: &str) -> String {
+    if text.chars().count() <= DETAIL_CHARS {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(DETAIL_CHARS).collect();
+    format!(
+        "{kept}\n… ({} more characters)",
+        text.chars().count() - DETAIL_CHARS
+    )
+}
+
+/// A tool's input with its long strings clipped (a file it writes, whole).
+fn clip_value(value: &Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(clip(s)),
+        Value::Array(items) => Value::Array(items.iter().map(clip_value).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), clip_value(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// Stream one turn to the page.
 fn run(
     studio: &Studio,
@@ -1629,35 +1745,60 @@ fn run(
 ) -> Result<()> {
     let result = (|| -> Result<()> {
         let mut turn = client.prompt_blocks(session, prompt)?;
-        // ACP updates a tool call by its id, often without its title: the
-        // page gets the whole call each time.
-        let mut calls: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        // ACP updates a tool call by its id, often with only what changed:
+        // the page gets the whole call each time, in words (axel's
+        // `describe_line`), and the run of calls it belongs to, summed up
+        // (`summarize`): calls between two of the agent's messages are a run.
+        let mut calls: HashMap<String, Call> = HashMap::new();
         let reply = next_message_id(studio);
         let thought = next_message_id(studio);
+        let mut run_id: Option<String> = None;
+        let mut run_calls: Vec<String> = Vec::new();
         loop {
             match turn.recv_timeout(Duration::from_secs(600))? {
-                TurnEvent::Text(chunk) => composer_event(
-                    studio,
-                    "composer/message",
-                    json!({ "id": reply, "role": "agent", "text": chunk, "done": false }),
-                ),
+                TurnEvent::Text(chunk) => {
+                    // The agent speaks: the next calls start a new run.
+                    run_id = None;
+                    run_calls.clear();
+                    composer_event(
+                        studio,
+                        "composer/message",
+                        json!({ "id": reply, "role": "agent", "text": chunk, "done": false }),
+                    )
+                }
                 TurnEvent::Thought(chunk) => composer_event(
                     studio,
                     "composer/message",
                     json!({ "id": thought, "role": "thought", "text": chunk, "done": false }),
                 ),
-                TurnEvent::ToolCall { id, title, status } => {
-                    let call = calls.entry(id.clone()).or_default();
-                    if title.is_some() {
-                        call.0 = title;
+                TurnEvent::ToolCall {
+                    id,
+                    title,
+                    status,
+                    kind,
+                    raw_input,
+                    content,
+                    locations,
+                } => {
+                    calls
+                        .entry(id.clone())
+                        .or_default()
+                        .merge(title, status, kind, raw_input, content, locations);
+                    let run = run_id
+                        .get_or_insert_with(|| next_message_id(studio))
+                        .clone();
+                    if !run_calls.contains(&id) {
+                        run_calls.push(id.clone());
                     }
-                    if status.is_some() {
-                        call.1 = status;
-                    }
+                    let actions: Vec<crate::tools::Action> = run_calls
+                        .iter()
+                        .filter_map(|c| calls.get(c))
+                        .map(Call::action)
+                        .collect();
                     composer_event(
                         studio,
                         "composer/tool",
-                        json!({ "id": id, "title": call.0, "status": call.1.as_deref().unwrap_or("pending") }),
+                        calls[&id].json(&id, &run, &crate::tools::summarize(&actions, 80)),
                     );
                 }
                 TurnEvent::Done(reason) => {
