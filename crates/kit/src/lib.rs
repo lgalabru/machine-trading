@@ -61,7 +61,9 @@
 //! |---------|------|
 //! | `phoenix` (default) | [`protocols::phoenix`]: Phoenix Eternal perpetuals; and the bot plumbing on them |
 //! | `phoenix-v1` | [`protocols::phoenix::v1`]: Phoenix v1 spot order books |
+//! | `phoenix-v1-venue` | Phoenix v1's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `openbook-v2` | [`protocols::openbook::v2`]: OpenBook v2 spot order books |
+//! | `openbook-v2-venue` | OpenBook v2's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
@@ -70,9 +72,11 @@ pub mod chain;
 pub mod core;
 #[cfg(feature = "chain")]
 pub mod lending;
-#[cfg(feature = "chain")]
+#[cfg(any(feature = "chain", feature = "spot-venue"))]
 pub mod protocols;
 mod strategy;
+#[cfg(any(feature = "chain", feature = "spot-venue"))]
+pub mod token;
 #[cfg(feature = "venue")]
 pub mod venue;
 

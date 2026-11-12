@@ -20,7 +20,7 @@
 
 use solana_pubkey::Pubkey;
 
-use crate::chain::ChainError;
+use crate::protocols::DecodeError;
 
 /// Size of the market header.
 pub const HEADER_SIZE: usize = 576;
@@ -144,8 +144,8 @@ pub struct MarketState {
     pub seats: Vec<TraderState>,
 }
 
-fn decode_error(detail: impl Into<String>) -> ChainError {
-    ChainError::Decode {
+fn decode_error(detail: impl Into<String>) -> DecodeError {
+    DecodeError {
         what: "phoenix v1 market",
         detail: detail.into(),
     }
@@ -154,22 +154,22 @@ fn decode_error(detail: impl Into<String>) -> ChainError {
 struct Bytes<'a>(&'a [u8]);
 
 impl Bytes<'_> {
-    fn array<const N: usize>(&self, at: usize) -> Result<[u8; N], ChainError> {
+    fn array<const N: usize>(&self, at: usize) -> Result<[u8; N], DecodeError> {
         self.0
             .get(at..at + N)
             .and_then(|b| b.try_into().ok())
             .ok_or_else(|| decode_error(format!("account ends before byte {}", at + N)))
     }
 
-    fn u32(&self, at: usize) -> Result<u32, ChainError> {
+    fn u32(&self, at: usize) -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(self.array(at)?))
     }
 
-    fn u64(&self, at: usize) -> Result<u64, ChainError> {
+    fn u64(&self, at: usize) -> Result<u64, DecodeError> {
         Ok(u64::from_le_bytes(self.array(at)?))
     }
 
-    fn key(&self, at: usize) -> Result<Pubkey, ChainError> {
+    fn key(&self, at: usize) -> Result<Pubkey, DecodeError> {
         Ok(Pubkey::new_from_array(self.array(at)?))
     }
 
@@ -179,7 +179,7 @@ impl Bytes<'_> {
         offset: usize,
         node: usize,
         capacity: u64,
-    ) -> Result<Vec<(usize, u32)>, ChainError> {
+    ) -> Result<Vec<(usize, u32)>, DecodeError> {
         let at = |i: u32| offset + TREE_HEADER + (i as usize - 1) * node;
         let mut out = Vec::new();
         let mut stack: Vec<u32> = Vec::new();
@@ -210,7 +210,7 @@ impl Bytes<'_> {
 
 impl MarketHeader {
     /// Decodes the header and the FIFO market's parameters.
-    pub fn decode(data: &[u8]) -> Result<Self, ChainError> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let d = Bytes(data);
         if data.len() < BIDS_OFFSET {
             return Err(decode_error("too short for a market"));
@@ -241,7 +241,7 @@ impl MarketHeader {
 
 impl MarketState {
     /// Decodes a whole market account.
-    pub fn decode(data: &[u8]) -> Result<Self, ChainError> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let header = MarketHeader::decode(data)?;
         let to_usize =
             |v: u64| usize::try_from(v).map_err(|_| decode_error("tree size out of range"));
@@ -258,7 +258,7 @@ impl MarketState {
         let orders = |offset: usize,
                       capacity: u64,
                       side: BookSide|
-         -> Result<Vec<RestingOrder>, ChainError> {
+         -> Result<Vec<RestingOrder>, DecodeError> {
             d.tree(offset, ORDER_NODE, capacity)?
                 .into_iter()
                 .map(|(p, _)| {
@@ -289,7 +289,7 @@ impl MarketState {
                     base_lots_free: d.u64(p + 72)?,
                 })
             })
-            .collect::<Result<_, ChainError>>()?;
+            .collect::<Result<_, DecodeError>>()?;
         Ok(Self {
             header,
             bids,
