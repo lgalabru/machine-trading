@@ -93,8 +93,29 @@ pub struct FairValue {
     pub intraday_vol_mult_utc: Option<Vec<f64>>,
     pub tails: Tails,
     pub clustering: Clustering,
+    /// For a fair value that is a venue's smoothed mark: how it trails the
+    /// path. Without it, the path itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<MarkSmoothing>,
     pub regimes: Regimes,
     pub jumps: Jumps,
+}
+
+/// A mark that every `update_seconds` moves toward the underlying path by
+/// an exponential average with the given half-life, holding in between.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MarkSmoothing {
+    pub model: MarkModel,
+    pub half_life_seconds: f64,
+    pub update_seconds: f64,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkModel {
+    Ema,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -422,8 +443,8 @@ pub struct Nulls {
 pub struct WindowStats {
     /// Median over windows of the sd of their returns over `vol_bars`.
     pub vol_level: f64,
-    /// Coefficient of variation of those windows' sd: volatility clustering
-    /// across sessions.
+    /// The spread of those windows' log sd (interquartile range over 1.349):
+    /// volatility clustering across sessions, robust to a few wild windows.
     pub vol_of_vol: f64,
     /// Excess kurtosis of aggregated returns, each window scaled to unit
     /// RMS: the shape of returns, not how volatility differs between
@@ -613,6 +634,10 @@ impl Calibration {
         }
         if (r.share.iter().sum::<f64>() - 1.0).abs() > 1e-3 {
             return Err("fair_value.regimes.share must sum to 1".into());
+        }
+        if let Some(mark) = &fv.mark {
+            positive("fair_value.mark.half_life_seconds", mark.half_life_seconds)?;
+            positive("fair_value.mark.update_seconds", mark.update_seconds)?;
         }
         let j = &fv.jumps;
         non_negative("fair_value.jumps.per_hour", j.per_hour)?;
