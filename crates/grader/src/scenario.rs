@@ -104,6 +104,41 @@ pub struct Scenario {
     /// told. It is not shown to the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_path: Option<Vec<Waypoint>>,
+    /// Opt-in: a strategy component may build transactions itself, for
+    /// what its sheet can't say, and the grader signs them (`send`, see
+    /// [`crate::raw`]). Absent, the session refuses every one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_sends: Option<RawSends>,
+}
+
+/// What a scenario's raw sends may do.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RawSends {
+    /// The programs, base58, a raw transaction may run, at the top level or
+    /// through another program. The compute budget program is always
+    /// allowed: it only sets the transaction's own limits and fee.
+    pub programs: Vec<String>,
+}
+
+impl RawSends {
+    /// The programs, parsed and in order.
+    pub fn programs(&self) -> std::result::Result<Vec<Pubkey>, String> {
+        let mut programs = Vec::with_capacity(self.programs.len());
+        for program in &self.programs {
+            let key = program
+                .parse::<Pubkey>()
+                .map_err(|_| format!("{program} is not a base58 address"))?;
+            if programs.contains(&key) {
+                return Err(format!("{program} is listed twice"));
+            }
+            programs.push(key);
+        }
+        if programs.is_empty() {
+            return Err("no programs: leave raw_sends out to turn raw sends off".into());
+        }
+        Ok(programs)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -228,6 +263,13 @@ impl Scenario {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(raw) = &self.raw_sends {
+            raw.programs()
+                .map_err(|reason| format!("raw_sends: {reason}"))?;
+            if self.spot.is_some() {
+                return Err("raw_sends: only perp sessions take raw sends yet".into());
+            }
+        }
         if let Some(spot) = &self.spot {
             if let Some(faults) = &self.faults {
                 faults
@@ -924,6 +966,7 @@ impl ShockFamily {
                     premium_pct: 0.0,
                 }]
             }),
+            raw_sends: None,
         };
         let shape = Shape {
             direction,
@@ -1555,6 +1598,7 @@ mod tests {
             assert_eq!(
                 Scenario {
                     fair_path: None,
+                    raw_sends: None,
                     ..marked.clone()
                 },
                 plain
@@ -1630,6 +1674,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            raw_sends: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1694,6 +1739,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            raw_sends: None,
         }
     }
 
