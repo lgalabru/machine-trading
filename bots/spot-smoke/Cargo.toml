@@ -7,11 +7,31 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
+# The strategy: a component on wasm32-wasip2 (`bot.wasm`, and with `buy` or
+# `accumulate`, buyer/bot.wasm and accumulate/bot.wasm).
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+# The same smoke as a process bot (`bin/bot`), which process/ runs: spot
+# sessions still run process bots, for anchors and smokes.
 [[bin]]
 name = "mtx-spot-smoke"
 path = "src/main.rs"
 
+[features]
+# Also buy 0.1 SOL: under a sell-only mandate, a breach.
+buy = []
+# Buy 1 SOL instead of selling.
+accumulate = []
+
 [dependencies]
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component", "phoenix-v1-venue", "openbook-v2-venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mtx-kit = { path = "../../crates/kit", features = ["phoenix-v1", "openbook-v2"] }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }

@@ -7,6 +7,11 @@
 //! result is an [`ExecutionPlan`]: an ordered list of transactions, each with
 //! a compute budget, all paid by one payer.
 //!
+//! A plan packed with address lookup tables ([`pack_with_lookup_tables`])
+//! sends v0 transactions: an account a table holds goes in as a one-byte
+//! index instead of its 32-byte key, so a route across many accounts fits
+//! the wire limit. Without tables, transactions are legacy, as before.
+//!
 //! Then **plan → preview → execute**:
 //!
 //! 1. [`preview`] simulates every step against current state, for a human or
@@ -18,6 +23,8 @@
 use std::time::Duration;
 
 use solana_compute_budget_interface::ComputeBudgetInstruction;
+pub use solana_message::AddressLookupTableAccount;
+use solana_message::{VersionedMessage, v0};
 use solana_pubkey::Pubkey;
 use solana_transaction::{
     Hash, Instruction, Message, Signature, Transaction, versioned::VersionedTransaction,
@@ -66,6 +73,9 @@ pub struct TransactionPlan {
     pub instructions: Vec<Instruction>,
     /// Compute-unit limit requested.
     pub compute_unit_limit: u32,
+    /// Address lookup tables its accounts may come from: with any, it is a
+    /// v0 transaction.
+    pub lookup_tables: Vec<AddressLookupTableAccount>,
 }
 
 impl TransactionPlan {
@@ -75,7 +85,15 @@ impl TransactionPlan {
             labels: vec![group.label.clone()],
             instructions: group.instructions.clone(),
             compute_unit_limit,
+            lookup_tables: Vec::new(),
         }
+    }
+
+    /// The same transaction, its accounts looked up in `tables`: a v0
+    /// transaction if there are any.
+    pub fn with_lookup_tables(mut self, tables: &[AddressLookupTableAccount]) -> Self {
+        self.lookup_tables = tables.to_vec();
+        self
     }
 
     fn with_group(&self, group: &InstructionGroup) -> Self {
@@ -100,7 +118,8 @@ impl TransactionPlan {
         all
     }
 
-    /// The legacy message for `payer` at `blockhash`.
+    /// The legacy message for `payer` at `blockhash`, without the lookup
+    /// tables.
     pub fn message(&self, payer: &Pubkey, blockhash: Hash) -> Message {
         Message::new_with_blockhash(&self.all_instructions(), Some(payer), &blockhash)
     }
@@ -110,10 +129,54 @@ impl TransactionPlan {
         Transaction::new_unsigned(self.message(payer, blockhash))
     }
 
+    /// The message for `payer` at `blockhash`: legacy, or v0 when the
+    /// transaction has lookup tables.
+    pub fn versioned_message(
+        &self,
+        payer: &Pubkey,
+        blockhash: Hash,
+    ) -> Result<VersionedMessage, PlanError> {
+        if self.lookup_tables.is_empty() {
+            return Ok(VersionedMessage::Legacy(self.message(payer, blockhash)));
+        }
+        v0::Message::try_compile(
+            payer,
+            &self.all_instructions(),
+            &self.lookup_tables,
+            blockhash,
+        )
+        .map(VersionedMessage::V0)
+        .map_err(|e| PlanError::Compile {
+            label: self.label(),
+            detail: e.to_string(),
+        })
+    }
+
+    /// An unsigned transaction for `payer` at `blockhash`, legacy or v0 as
+    /// [`TransactionPlan::versioned_message`] makes it.
+    pub fn versioned(
+        &self,
+        payer: &Pubkey,
+        blockhash: Hash,
+    ) -> Result<VersionedTransaction, PlanError> {
+        let message = self.versioned_message(payer, blockhash)?;
+        Ok(VersionedTransaction {
+            signatures: vec![
+                Signature::default();
+                usize::from(message.header().num_required_signatures)
+            ],
+            message,
+        })
+    }
+
     /// Serialized size in bytes once signed, independent of the blockhash.
+    /// A v0 transaction whose accounts don't compile against its tables
+    /// counts as too large.
     pub fn serialized_size(&self, payer: &Pubkey) -> usize {
-        let message = self.message(payer, Hash::default());
-        let signatures = usize::from(message.header.num_required_signatures);
+        let Ok(message) = self.versioned_message(payer, Hash::default()) else {
+            return usize::MAX;
+        };
+        let signatures = usize::from(message.header().num_required_signatures);
         // compact-u16 signature count (1 byte below 128) + 64 bytes each.
         1 + 64 * signatures + message.serialize().len()
     }
@@ -153,13 +216,28 @@ pub fn pack(
     groups: &[InstructionGroup],
     compute_unit_limit: u32,
 ) -> Result<ExecutionPlan, PlanError> {
+    pack_with_lookup_tables(payer, groups, compute_unit_limit, &[])
+}
+
+/// [`pack`] into v0 transactions whose accounts may come from `tables`
+/// (legacy ones if `tables` is empty). Read the tables with
+/// [`lookup_table`](crate::chain::lookup::lookup_table).
+pub fn pack_with_lookup_tables(
+    payer: &Pubkey,
+    groups: &[InstructionGroup],
+    compute_unit_limit: u32,
+    tables: &[AddressLookupTableAccount],
+) -> Result<ExecutionPlan, PlanError> {
     let mut steps = Vec::new();
     let mut current: Option<TransactionPlan> = None;
+    let fresh = |group: &InstructionGroup| {
+        TransactionPlan::from_group(group, compute_unit_limit).with_lookup_tables(tables)
+    };
 
     for group in groups.iter().filter(|g| !g.instructions.is_empty()) {
         let candidate = match &current {
             Some(plan) => plan.with_group(group),
-            None => TransactionPlan::from_group(group, compute_unit_limit),
+            None => fresh(group),
         };
         if candidate.serialized_size(payer) <= MAX_TRANSACTION_SIZE {
             current = Some(candidate);
@@ -168,7 +246,7 @@ pub fn pack(
         if let Some(full) = current.take() {
             steps.push(full);
         }
-        let alone = TransactionPlan::from_group(group, compute_unit_limit);
+        let alone = fresh(group);
         let size = alone.serialized_size(payer);
         if size > MAX_TRANSACTION_SIZE {
             return Err(PlanError::GroupTooLarge {
@@ -223,7 +301,7 @@ pub async fn preview(
     let blockhash = client.get_latest_blockhash().await?;
     let mut previews = Vec::with_capacity(plan.steps.len());
     for (index, step) in plan.steps.iter().enumerate() {
-        let tx = VersionedTransaction::from(step.transaction(&plan.payer, blockhash));
+        let tx = step.versioned(&plan.payer, blockhash)?;
         let outcome = client.simulate(&tx, watch).await?;
         previews.push(StepPreview {
             label: step.label(),
@@ -303,7 +381,7 @@ pub async fn execute(
     for step in &plan.steps {
         let label = step.label();
         let blockhash = client.get_latest_blockhash().await?;
-        let mut tx = VersionedTransaction::from(step.transaction(&plan.payer, blockhash));
+        let mut tx = step.versioned(&plan.payer, blockhash)?;
 
         let simulation = client.simulate(&tx, watch).await?;
         if let Some(error) = simulation.error.clone() {
@@ -461,7 +539,7 @@ pub async fn fire_and_forget_step(
     options: FireAndForgetOptions,
 ) -> Result<Signature, ChainError> {
     let label = step.label();
-    let mut tx = VersionedTransaction::from(step.transaction(payer, blockhash));
+    let mut tx = step.versioned(payer, blockhash)?;
     if options.simulate {
         let simulation = client.simulate(&tx, &[]).await?;
         if let Some(error) = simulation.error {
@@ -523,6 +601,78 @@ mod tests {
 
     fn group(label: &str, payer: &Pubkey, n: usize) -> InstructionGroup {
         InstructionGroup::new(label, (0..n).map(|_| transfer(payer)).collect())
+    }
+
+    #[tokio::test]
+    async fn lookup_tables_pack_v0_transactions_that_sign_and_send() {
+        let payer = Keypair::new();
+        let recipients: Vec<Pubkey> = (0..40).map(|_| Pubkey::new_unique()).collect();
+        let transfers: Vec<Instruction> = recipients
+            .iter()
+            .map(|to| system_instruction::transfer(&payer.pubkey(), to, 1))
+            .collect();
+        let wide = InstructionGroup::new("wide", transfers);
+        // 40 recipients' keys don't fit a legacy transaction.
+        assert!(matches!(
+            pack(&payer.pubkey(), std::slice::from_ref(&wide), 200_000),
+            Err(PlanError::GroupTooLarge { .. })
+        ));
+        let table = AddressLookupTableAccount {
+            key: Pubkey::new_unique(),
+            addresses: recipients.clone(),
+        };
+        let plan = pack_with_lookup_tables(
+            &payer.pubkey(),
+            std::slice::from_ref(&wide),
+            200_000,
+            std::slice::from_ref(&table),
+        )
+        .unwrap();
+        assert_eq!(plan.len(), 1);
+        let step = &plan.steps[0];
+        let mut tx = step.versioned(&payer.pubkey(), Hash::new_unique()).unwrap();
+        let VersionedMessage::V0(message) = &tx.message else {
+            panic!("not a v0 message")
+        };
+        assert_eq!(message.address_table_lookups.len(), 1);
+        assert_eq!(message.address_table_lookups[0].writable_indexes.len(), 40);
+        payer.sign_transaction(&mut tx).await.unwrap();
+        assert!(tx.verify_with_results().iter().all(|ok| *ok));
+        assert_eq!(
+            wincode::serialize(&tx).unwrap().len(),
+            step.serialized_size(&payer.pubkey())
+        );
+        assert!(step.serialized_size(&payer.pubkey()) <= MAX_TRANSACTION_SIZE);
+
+        // Sending goes out as v0, simulated first.
+        let client = MockChainClient::new();
+        let signatures = fire_and_forget(&plan, &payer, &client, FireAndForgetOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(signatures.len(), 1);
+        let sent = client.sent();
+        assert!(matches!(sent[0].message, VersionedMessage::V0(_)));
+        assert_eq!(client.simulated().len(), 1);
+
+        // Without the tables the same plan is legacy, as before.
+        let legacy = TransactionPlan::from_group(&group("g", &payer.pubkey(), 2), 200_000);
+        assert!(matches!(
+            legacy
+                .versioned(&payer.pubkey(), Hash::default())
+                .unwrap()
+                .message,
+            VersionedMessage::Legacy(_)
+        ));
+        // A signer never comes from a table: it stays a static key.
+        let signer_in_table = TransactionPlan::from_group(&group("g", &payer.pubkey(), 1), 200_000)
+            .with_lookup_tables(&[AddressLookupTableAccount {
+                key: Pubkey::new_unique(),
+                addresses: vec![payer.pubkey()],
+            }]);
+        let tx = signer_in_table
+            .versioned(&payer.pubkey(), Hash::default())
+            .unwrap();
+        assert_eq!(tx.message.static_account_keys()[0], payer.pubkey());
     }
 
     #[test]
