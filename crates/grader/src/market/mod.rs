@@ -28,8 +28,8 @@ pub(crate) mod tests {
     use super::Calibration;
     use crate::scenario::{Scenario, VENUE};
 
-    const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261112.24db85c6.toml");
-    const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261112.2b3c40c1.toml");
+    const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261112.f34a5413.toml");
+    const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261112.35b73974.toml");
 
     pub(crate) fn sol() -> Calibration {
         with_sha(Calibration::parse(SOL).unwrap(), SOL)
@@ -105,7 +105,7 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .contains("schema_version")
         );
-        let df = SOL.replace("df = 4.301", "df = 1.5");
+        let df = SOL.replace("df = 4.141", "df = 1.5");
         assert!(Calibration::parse(&df).unwrap_err().contains("df"));
         let gap = SPCX.replace("into = \"regular\"", "into = \"lunch\"");
         assert!(Calibration::parse(&gap).unwrap_err().contains("lunch"));
