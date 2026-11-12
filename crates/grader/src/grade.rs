@@ -1052,7 +1052,7 @@ mod tests {
     #[test]
     fn sessions_whose_takers_failed_fail_the_grade() {
         let mut thin = session(10.0);
-        thin.flow = Some(crate::flow::FlowReport {
+        thin.flow = Some(crate::actors::FlowReport {
             orders: 100,
             sent: 100,
             failed: 11,

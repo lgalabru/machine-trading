@@ -22,27 +22,24 @@
 //! Nothing moves the market here but the bot: the scenario has no path. A
 //! session values the account at the snapshot's Pyth price throughout.
 
-use std::{
-    collections::HashSet,
-    os::unix::net::UnixStream as StdUnixStream,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[cfg(test)]
+use std::time::Duration;
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
+use async_trait::async_trait;
 use mtx_core::{
     Decimal, Side,
     mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange, Term},
-    turns::{self, BookLevels, Hello, Level, Message, Role, Step, Trade},
+    turns::{self, BookLevels, Role, Step, Trade},
 };
 use mtx_kit::{
     BotEnv,
     chain::{ChainClient, RpcChainClient, token},
-    core::{OrderBook, PriceLevel, SpotBalances},
+    core::SpotBalances,
     protocols::{
         USDC_MINT,
-        openbook::v2::{self as openbook_v2, OpenBookV2Market, OpenBookV2Meter},
-        phoenix::v1::{self as phoenix_v1, MarketState, PhoenixV1Market, PhoenixV1Meter},
+        openbook::v2 as openbook_v2,
+        phoenix::v1 as phoenix_v1,
         pyth,
         spot::{MarketFill, value_usd},
     },
@@ -53,23 +50,26 @@ use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use surfpool_sdk::{CheatcodeFilter, SimnetCommand, Surfnet};
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    net::UnixStream,
-};
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::{
     Error, Result,
+    actors::{Cast, Moment, Pricing, Takers},
     error::io_error,
     guard::Guard,
+    making::TAKER_ACCOUNTS,
     orders::Traded,
     scenario::Scenario,
     session::{
-        self, BOT_USERS, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions, SessionReport,
-        StepRecord, TURN_BUDGET_PER_STEP, Timeline, TurnReport, grader_f64,
+        self, Account, BOT_USERS, Done, IxRecord, Prepared, SLOTS_PER_STEP, SessionDir,
+        SessionOptions, SessionReport, StepRecord, Timeline, World, grader_f64,
     },
     snapshot,
+    venue::{
+        Venue,
+        books::{self, SpotBook},
+    },
+    wasm::{Desk, Reader},
 };
 
 /// The pair every spot session trades: the one market each profile names.
@@ -193,14 +193,15 @@ impl Spot {
             || scenario.making.is_some()
             || scenario.offhours.is_some()
             || scenario.funding.is_some()
-            || !scenario.tape.is_empty()
             || scenario.fair_path.is_some()
         {
             return Err(
-                "spot: a spot scenario has no path, fair path, market making, off-hours, funding or tape"
+                "spot: a spot scenario has no path, fair path, market making, off-hours or funding"
                     .into(),
             );
         }
+        // A tape trades the session's first venue.
+        scenario.validate_tape()?;
         if scenario.duration_slots == 0 {
             return Err("spot: the session has no slots".into());
         }
@@ -302,13 +303,12 @@ pub struct SpotFill {
     pub base: f64,
 }
 
-/// The bot's account on the session's venues, read through the grader's
-/// own client.
+/// The session's books, read through the grader's own client for the bot's
+/// account, in the profiles' order (Phoenix first).
 struct Venues {
     chain: Arc<dyn ChainClient>,
     owner: Pubkey,
-    phoenix: Option<(PhoenixV1Market, PhoenixV1Meter)>,
-    openbook: Option<(OpenBookV2Market, OpenBookV2Meter)>,
+    books: Vec<SpotBook>,
 }
 
 /// One reading of the account.
@@ -323,52 +323,24 @@ impl Venues {
         venues: &[String],
         owner: Pubkey,
     ) -> Result<Self> {
-        let mut phoenix = None;
-        let mut openbook = None;
-        for venue in venues {
-            match venue.as_str() {
-                "phoenix" => {
-                    let named = phoenix_v1::MARKETS[0];
-                    let account = market_account(chain.as_ref(), &named.address).await?;
-                    let market = PhoenixV1Market::decode(named.address, &account, "SOL", "USDC")
-                        .map_err(venue_error("phoenix v1 market"))?;
-                    let meter = PhoenixV1Meter::new(chain.clone(), owner, &[named]);
-                    phoenix = Some((market, meter));
-                }
-                _ => {
-                    let named = openbook_v2::MARKETS[0];
-                    let account = market_account(chain.as_ref(), &named.address).await?;
-                    let market = OpenBookV2Market::decode(named.address, &account, "SOL", "USDC")
-                        .map_err(venue_error("openbook v2 market"))?;
-                    let meter = OpenBookV2Meter::new(chain.clone(), owner, &[named]);
-                    openbook = Some((market, meter));
-                }
-            }
+        let mut books = Vec::new();
+        for venue in VENUES.iter().filter(|v| venues.iter().any(|w| w == *v)) {
+            books.push(SpotBook::connect(venue, chain.clone()).await?);
         }
         Ok(Self {
             chain,
             owner,
-            phoenix,
-            openbook,
+            books,
         })
     }
 
     async fn read(&self) -> Result<Reading> {
         let chain = self.chain.as_ref();
-        let mut held: Vec<(&str, SpotBalances)> = Vec::new();
-        if let Some((market, _)) = &self.phoenix {
-            let account = market_account(chain, &market.keys.market).await?;
-            let state = MarketState::decode(&account).map_err(venue_error("phoenix v1 market"))?;
-            let balances = phoenix_v1::balances(chain, market, &state, &self.owner)
-                .await
-                .map_err(venue_error("phoenix v1 balances"))?;
-            held.push(("phoenix", balances));
-        }
-        if let Some((market, _)) = &self.openbook {
-            let balances = openbook_v2::balances(chain, market, &self.owner)
-                .await
-                .map_err(venue_error("openbook v2 balances"))?;
-            held.push(("openbook", balances));
+        let mut held: Vec<(&InstrumentRef, SpotBalances)> = Vec::new();
+        for book in &self.books {
+            if let Some(balances) = book.balances(&self.owner).await? {
+                held.push((book.instrument(), balances));
+            }
         }
         let all: Vec<SpotBalances> = held.iter().map(|(_, b)| b.clone()).collect();
         let value = value_usd(chain, &all).await?;
@@ -385,17 +357,12 @@ impl Venues {
                     .sum::<Decimal>()
         };
         let mut open_orders = Vec::new();
-        for (venue, balances) in &held {
-            let instrument = InstrumentRef {
-                venue: (*venue).into(),
-                kind: Kind::Spot,
-                symbol: SYMBOL.into(),
-            };
+        for (instrument, balances) in &held {
             if balances.base.locked > Decimal::ZERO {
-                open_orders.push((instrument.clone(), Side::Sell));
+                open_orders.push(((*instrument).clone(), Side::Sell));
             }
             if balances.quote.locked > Decimal::ZERO {
-                open_orders.push((instrument, Side::Buy));
+                open_orders.push(((*instrument).clone(), Side::Buy));
             }
         }
         Ok(Reading {
@@ -415,16 +382,8 @@ impl Venues {
     async fn scan(&self, ledger: &mut Ledger, after_slot: u64) -> Result<usize> {
         let first = ledger.fills.len();
         let mut found: Vec<(MarketFill, Vec<Pubkey>)> = Vec::new();
-        if let Some((_, meter)) = &self.phoenix {
-            for fill in meter.market_fills(after_slot).await? {
-                found.push((fill, vec![self.owner]));
-            }
-        }
-        if let Some((_, meter)) = &self.openbook {
-            let ids = meter.fill_ids().await?;
-            for fill in meter.market_fills(after_slot).await? {
-                found.push((fill, ids.clone()));
-            }
+        for book in &self.books {
+            found.extend(book.fills(after_slot, &self.owner).await?);
         }
         for (fill, ids) in found {
             if ledger
@@ -447,19 +406,6 @@ impl Venues {
         Ok(first)
     }
 
-    /// The world's clock, in Unix seconds.
-    async fn unix_timestamp(&self) -> Result<i64> {
-        let clock = solana_pubkey::pubkey!("SysvarC1ock11111111111111111111111111111111");
-        let account = market_account(self.chain.as_ref(), &clock).await?;
-        // The clock sysvar: slot, epoch start, epoch, leader schedule epoch,
-        // then the Unix timestamp.
-        account
-            .get(32..40)
-            .and_then(|b| b.try_into().ok())
-            .map(i64::from_le_bytes)
-            .ok_or_else(|| Error::UnknownMarket("the clock sysvar".into()))
-    }
-
     /// The top `levels` price levels of each venue's book, per side, at
     /// `slot`.
     async fn depth(
@@ -468,42 +414,9 @@ impl Venues {
         slot: u64,
         unix_timestamp: i64,
     ) -> Result<Vec<BookLevels>> {
-        let top = |book: OrderBook| {
-            let take = |side: Vec<PriceLevel>| -> Vec<Level> {
-                side.into_iter()
-                    .take(levels)
-                    .map(|l| Level {
-                        price: grader_f64(l.price),
-                        base: l.quantity.map_or(0.0, grader_f64),
-                    })
-                    .collect()
-            };
-            (take(book.bids), take(book.asks))
-        };
-        let unix = unix_timestamp.max(0) as u64;
         let mut out = Vec::new();
-        if let Some((market, _)) = &self.phoenix {
-            let account = market_account(self.chain.as_ref(), &market.keys.market).await?;
-            let state = MarketState::decode(&account).map_err(venue_error("phoenix v1 market"))?;
-            let (bids, asks) = top(market.order_book(&state, slot, unix));
-            out.push(BookLevels {
-                venue: "phoenix".into(),
-                market: Some(format!("phoenix:spot:{SYMBOL}")),
-                bids,
-                asks,
-            });
-        }
-        if let Some((market, _)) = &self.openbook {
-            let book = openbook_v2::read_book(self.chain.as_ref(), market)
-                .await
-                .map_err(venue_error("openbook v2 book"))?;
-            let (bids, asks) = top(market.order_book(&book.bids, &book.asks, unix, Some(slot)));
-            out.push(BookLevels {
-                venue: "openbook".into(),
-                market: Some(format!("openbook:spot:{SYMBOL}")),
-                bids,
-                asks,
-            });
+        for book in &self.books {
+            out.extend(book.depth(levels, slot, unix_timestamp).await?);
         }
         Ok(out)
     }
@@ -618,15 +531,6 @@ fn trade(seen: &Seen, parties: bool) -> Trade {
         maker: parties.then(|| seen.fill.maker.to_string()),
         own: seen.own.map(|(_, role)| role),
     }
-}
-
-async fn market_account(chain: &dyn ChainClient, address: &Pubkey) -> Result<Vec<u8>> {
-    Ok(chain
-        .get_account(address)
-        .await
-        .map_err(venue_error("market"))?
-        .ok_or_else(|| Error::UnknownMarket(address.to_string()))?
-        .data)
 }
 
 fn venue_error<E: std::fmt::Display>(what: &'static str) -> impl Fn(E) -> Error {
@@ -790,12 +694,14 @@ pub async fn exercise(rpc_url: &str, trader: &Keypair) -> Result<f64> {
     Ok(grader_f64(price))
 }
 
-/// One spot session; see the module docs and [`session::run`].
-pub(crate) async fn run_session(
-    opts: SessionOptions<'_>,
-    bot_started: &mut bool,
-) -> Result<SessionReport> {
-    let began = Instant::now();
+/// Each spot taker's wallet: far more than its orders need, so none fails
+/// for funds.
+const TAKER_BASE: f64 = 10_000.0;
+const TAKER_QUOTE: f64 = 2_000_000.0;
+
+/// Set a spot session up, up to the bot's start; see the module docs and
+/// [`session::run`].
+pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let scenario = opts.scenario;
     let spot = scenario
         .spot
@@ -823,9 +729,27 @@ pub(crate) async fn run_session(
         spot.quote,
         scenario.order.is_some(),
     )?;
-    let venues = Venues::connect(chain, &spot.venues, bot.pubkey()).await?;
+    let venues = Venues::connect(chain.clone(), &spot.venues, bot.pubkey()).await?;
     let start = venues.read().await?;
     let instruments = spot.instruments();
+    // A tape's takers, each a funded wallet trading the session's first
+    // venue.
+    let mut cast = Cast::default();
+    if !scenario.tape.is_empty() {
+        let first = SpotBook::connect(&spot.venues[0], chain.clone()).await?;
+        let mut seats = Vec::new();
+        for i in 0..TAKER_ACCOUNTS {
+            let keypair = opts.keys.keypair("taker", u32::from(i));
+            fund(&surfnet, &rpc, &keypair, TAKER_BASE, TAKER_QUOTE, true)?;
+            seats.push(first.seat(keypair, internal.url()).await?);
+        }
+        cast.add(Box::new(Takers::new(
+            seats,
+            scenario.tape.clone(),
+            Pricing::Book,
+            0,
+        )));
+    }
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
@@ -844,9 +768,7 @@ pub(crate) async fn run_session(
     }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
-    let start_slot = base_slot;
-    guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
-    let end_slot = start_slot + scenario.duration_slots;
+    let end_slot = base_slot + scenario.duration_slots;
     let mandate = Mandate {
         term: Some(Term {
             until_slot: end_slot,
@@ -869,165 +791,141 @@ pub(crate) async fn run_session(
             .unwrap_or(start.wallet.value_usd),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
-
-    let late_before = surfnet.coalesced_slots();
-    *bot_started = true;
-    let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
-    let walls = session::Walls::new(opts.trusted, steps);
-    let mut turns = TurnReport {
-        steps,
-        ..TurnReport::default()
-    };
     // What the steps carry beyond the clock, for either kind of bot.
-    let hello_reports = scenario.turn_data.as_ref().map(|data| turns::Reports {
+    let reports = scenario.turn_data.as_ref().map(|data| turns::Reports {
         tape: data.tape,
         depth: data.depth_levels > 0,
         timestamps: data.timestamps,
     });
-    // A bot is a process speaking the turn protocol, or a component the
-    // grader calls (`crate::wasm::spot`).
-    let mut process = None;
-    let mut wasm_bot = None;
-    let legacy;
-    if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
-        let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
-        wasm_bot = Some(
-            crate::wasm::spot::SpotWasmBot::start(
-                &component,
-                crate::wasm::spot::SpotStart {
-                    venues: &spot.venues,
-                    rpc_url: guard.url(),
-                    signer: bot.insecure_clone(),
-                    end_slot,
-                    mandate: &mandate,
-                    max_position: env.max_position,
-                    max_drawdown_usd: env.max_drawdown_usd,
-                    wallet: &start.wallet,
-                },
-                crate::wasm::Clock {
-                    steps,
-                    slots_per_step: SLOTS_PER_STEP,
-                    start_slot,
-                    scenario: &scenario.name,
-                    vars: opts
-                        .regime
-                        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
-                        .into_iter()
-                        .collect(),
-                    reports: hello_reports.into(),
-                },
-                Box::new(log),
-            )
-            .await?,
-        );
-        legacy = false;
-        info!(
-            scenario = scenario.name,
-            start_slot, end_slot, steps, "spot strategy component loaded"
-        );
-    } else {
-        let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
-        let child = session::spawn_bot(
-            opts.bot_dir,
-            &env,
-            &workdir,
-            opts.bot_log,
-            theirs,
-            opts.regime,
-            None,
-        )?;
-        ours.set_nonblocking(true)
-            .map_err(io_error("turn socket"))?;
-        let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
-        let (reader, mut writer) = socket.into_split();
-        let mut reader = BufReader::new(reader).lines();
-        info!(
-            scenario = scenario.name,
-            start_slot, end_slot, steps, "spot bot started"
-        );
-        let hello = Hello {
-            protocol: turns::PROTOCOL.into(),
-            steps,
-            slots_per_step: SLOTS_PER_STEP,
-            start_slot,
-            end_slot,
-            turn_wall_ms: walls.announced().as_millis() as u64,
-            seed: Some(turns::scenario_seed(&scenario.name)),
-            reports: hello_reports,
-        };
-        legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
-            && matches!(
-                tokio::time::timeout(walls.hello(), session::next_message(&mut reader)).await,
-                Ok(Some(Message::Ready))
-            ));
-        if legacy {
-            info!("the bot didn't answer the hello: the world moves at the slot time");
-        }
-        process = Some((child, writer, reader));
-    }
-    turns.legacy = legacy;
-    let mut spent = Duration::ZERO;
-
     // Every spot market bounds the same SOL, held from the start.
     let mut observed = Observed::default();
     for instrument in &instruments {
         observed.begin(instrument, start.wallet.base);
     }
-    let mut open_orders: Vec<(InstrumentRef, Side)> = Vec::new();
-    let mut note = |observed: &mut Observed, reading: &Reading| {
-        for instrument in &instruments {
-            observed.record(instrument, reading.wallet.base);
+    let account = SpotAccount {
+        scenario: scenario.clone(),
+        spot: spot.clone(),
+        venues,
+        instruments,
+        base_slot,
+        steps: scenario.duration_slots.div_ceil(SLOTS_PER_STEP),
+        observed,
+        open_orders: Vec::new(),
+        start_value_usd: start.wallet.value_usd,
+        start_price_usd: start.wallet.price_usd,
+        peak_value_usd: start.wallet.value_usd,
+        max_drawdown_usd: 0.0,
+        // Scan the venues at every step only when the scenario reports a
+        // tape or prices participation; otherwise once, at the end.
+        tracking: scenario.turn_data.as_ref().is_some_and(|data| data.tape)
+            || scenario.participation.is_some(),
+        ledger: Ledger::default(),
+        last_scan: base_slot,
+        first_new: 0,
+        start,
+        last: None,
+    };
+    Ok(Prepared {
+        world: World::Snapshot(Box::new(surfnet)),
+        internal,
+        rpc,
+        guard,
+        workdir,
+        bot,
+        base_slot,
+        end_slot,
+        mandate,
+        env,
+        reports,
+        reopen_slot: None,
+        cast,
+        account: Box::new(account),
+    })
+}
+
+/// A spot session's account: the bot's wallet, and what each venue holds
+/// for it, valued at the Pyth SOL/USD price.
+struct SpotAccount {
+    scenario: Scenario,
+    spot: Spot,
+    venues: Venues,
+    instruments: Vec<InstrumentRef>,
+    base_slot: u64,
+    steps: u64,
+    observed: Observed,
+    /// Every market and side the bot had orders resting on, at any step.
+    open_orders: Vec<(InstrumentRef, Side)>,
+    start: Reading,
+    start_value_usd: f64,
+    start_price_usd: f64,
+    peak_value_usd: f64,
+    max_drawdown_usd: f64,
+    tracking: bool,
+    ledger: Ledger,
+    last_scan: u64,
+    /// The first of the ledger's entries the last step found.
+    first_new: usize,
+    /// The last step's reading.
+    last: Option<Reading>,
+}
+
+impl SpotAccount {
+    fn note(&mut self, reading: &Reading) {
+        for instrument in &self.instruments {
+            self.observed.record(instrument, reading.wallet.base);
         }
         for (instrument, side) in &reading.open_orders {
-            observed.record_open_order(instrument, *side);
-            if !open_orders.contains(&(instrument.clone(), *side)) {
-                open_orders.push((instrument.clone(), *side));
+            self.observed.record_open_order(instrument, *side);
+            if !self.open_orders.contains(&(instrument.clone(), *side)) {
+                self.open_orders.push((instrument.clone(), *side));
             }
         }
-    };
-    let start_value_usd = start.wallet.value_usd;
-    let start_price_usd = start.wallet.price_usd;
-    let mut peak_value_usd = start_value_usd;
-    let mut max_drawdown_usd: f64 = 0.0;
-    // Scan the venues at every step only when the scenario reports a tape or
-    // prices participation; otherwise once, at the end.
-    let tracking = scenario.turn_data.as_ref().is_some_and(|data| data.tape)
-        || scenario.participation.is_some();
-    let mut ledger = Ledger::default();
-    let mut last_scan = base_slot;
-    if tracking || scenario.turn_data.is_some() {
-        venues
-            .scan(&mut ledger, base_slot.saturating_sub(1))
-            .await?;
-        ledger.before = ledger.fills.len();
     }
-    let mut bot_exit = None;
-    let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
-    for k in 0..steps {
-        guard.set_turn(legacy);
-        let target = (slot + SLOTS_PER_STEP).min(end_slot);
-        while slot < target {
-            surfnet.send_command(SimnetCommand::SlotForward(None))?;
-            slot = session::wait_for_slot(&rpc, slot + 1).await?;
+}
+
+#[async_trait]
+impl Account for SpotAccount {
+    fn start_value_usd(&self) -> f64 {
+        self.start_value_usd
+    }
+
+    fn moment(&self, at: u64) -> Moment {
+        // Nothing moves a spot market but its traders: the session's price
+        // is where it started.
+        Moment {
+            at,
+            level_usd: self.start_price_usd,
+            book_usd: self.start_price_usd,
         }
-        let at = slot - base_slot;
-        // The bot's held sends land in this step's blocks.
-        guard.release(k).await;
-        let now = venues.read().await?;
-        note(&mut observed, &now);
-        let first_new = if tracking {
-            let first = venues
-                .scan(&mut ledger, last_scan.saturating_sub(1))
+    }
+
+    async fn begin(&mut self) -> Result<()> {
+        if self.tracking || self.scenario.turn_data.is_some() {
+            self.venues
+                .scan(&mut self.ledger, self.base_slot.saturating_sub(1))
                 .await?;
-            last_scan = slot;
+            self.ledger.before = self.ledger.fills.len();
+        }
+        Ok(())
+    }
+
+    async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
+        let now = self.venues.read().await?;
+        self.note(&now);
+        self.first_new = if self.tracking {
+            let first = self
+                .venues
+                .scan(&mut self.ledger, self.last_scan.saturating_sub(1))
+                .await?;
+            self.last_scan = slot;
             first
         } else {
             0
         };
         let value_usd = now.wallet.value_usd;
-        peak_value_usd = peak_value_usd.max(value_usd);
-        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
-        steps_seen.push(StepRecord {
+        self.peak_value_usd = self.peak_value_usd.max(value_usd);
+        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        let record = StepRecord {
             k,
             at,
             mark_usd: now.wallet.price_usd,
@@ -1038,210 +936,200 @@ pub(crate) async fn run_session(
             best_ask_usd: None,
             position: now.wallet.base,
             value_usd,
-            pnl_usd: value_usd - start_value_usd,
+            pnl_usd: value_usd - self.start_value_usd,
             turn_ms: None,
             answered: None,
             fair_usd: None,
-        });
-        if bot_exit.is_none()
-            && let Some((child, _, _)) = process.as_mut()
-            && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
-        {
-            info!(%status, "bot exited before the session ended");
-            bot_exit = Some(status.to_string());
-        }
-        if bot_exit.is_some() {
-            continue;
-        }
-
-        guard.set_step(k);
-        guard.set_turn(true);
-        if let Some(bot) = wasm_bot.as_mut() {
-            let started = Instant::now();
-            let unix_timestamp = venues.unix_timestamp().await?;
-            let answered = bot
-                .turn(k, slot, k + 1 == steps, &now.wallet, unix_timestamp)
-                .await;
-            let took = started.elapsed();
-            if !answered {
-                turns.overran += 1;
-            }
-            turns.wall_ms += took.as_millis() as u64;
-            if let Some(record) = steps_seen.last_mut() {
-                record.turn_ms = Some(took.as_millis() as u64);
-                record.answered = Some(answered);
-            }
-            continue;
-        }
-        let Some((_, writer, reader)) = process.as_mut() else {
-            continue;
         };
-        if legacy {
-            tokio::time::sleep(TURN_BUDGET_PER_STEP).await;
-            continue;
-        }
-        let started = Instant::now();
-        let mut step = Step::new(k, slot, k + 1 == steps);
-        if let Some(data) = &scenario.turn_data {
-            let clock = if data.timestamps || data.depth_levels > 0 {
-                Some(venues.unix_timestamp().await?)
-            } else {
-                None
-            };
-            if data.tape {
-                step.tape = ledger.fills[first_new..]
-                    .iter()
-                    .map(|seen| trade(seen, data.parties))
-                    .collect();
-            }
-            if data.depth_levels > 0 {
-                step.depth = venues
-                    .depth(data.depth_levels, slot, clock.unwrap_or_default())
-                    .await?;
-            }
-            if data.timestamps {
-                step.unix_timestamp = clock;
-            }
-        }
-        let wall = walls.turn(spent);
-        let answered = session::take_turn(writer, reader, step, wall).await;
-        let took = started.elapsed();
-        spent += took;
-        if !answered {
-            turns.overran += 1;
-        }
-        turns.wall_ms += took.as_millis() as u64;
-        if let Some(record) = steps_seen.last_mut() {
-            record.turn_ms = Some(took.as_millis() as u64);
-            record.answered = Some(answered);
-        }
+        self.last = Some(now);
+        Ok(record)
     }
-    guard.set_turn(false);
-    if let Some((mut child, mut writer, _)) = process {
-        let _ = session::send(&mut writer, &Message::End).await;
-        session::stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
-    }
-    if let Some(bot) = wasm_bot.as_mut() {
-        bot.end().await;
-        let (used, max_call) = bot.fuel();
-        turns.fuel_used = Some(used);
-        turns.fuel_max_call = Some(max_call);
-        turns.stopped = bot.stopped.clone();
-    }
-    turns.late_sends = guard.late_sends();
-    let late_slots = surfnet.coalesced_slots() - late_before;
-    let calls = guard.call_log();
-    let transactions = session::transactions(&rpc, &calls, base_slot, &decode_instruction);
 
-    let end = venues.read().await?;
-    note(&mut observed, &end);
-    venues
-        .scan(
-            &mut ledger,
-            if tracking {
-                last_scan.saturating_sub(1)
-            } else {
-                base_slot
+    async fn turn_data(&mut self, step: &mut Step) -> Result<()> {
+        let Some(data) = &self.scenario.turn_data else {
+            return Ok(());
+        };
+        let clock = if data.timestamps || data.depth_levels > 0 {
+            Some(books::unix_timestamp(self.venues.chain.as_ref()).await?)
+        } else {
+            None
+        };
+        if data.tape {
+            step.tape = self.ledger.fills[self.first_new..]
+                .iter()
+                .map(|seen| trade(seen, data.parties))
+                .collect();
+        }
+        if data.depth_levels > 0 {
+            step.depth = self
+                .venues
+                .depth(data.depth_levels, step.slot, clock.unwrap_or_default())
+                .await?;
+        }
+        if data.timestamps {
+            step.unix_timestamp = clock;
+        }
+        Ok(())
+    }
+
+    fn wallet(&self) -> Option<&Wallet> {
+        self.last.as_ref().map(|reading| &reading.wallet)
+    }
+
+    async fn desk(
+        &self,
+        host_url: &str,
+        bot: &Keypair,
+        env: &BotEnv,
+        mandate: &Mandate,
+    ) -> Result<Desk> {
+        // The bot's seats, the scenario's first venue's first, trading
+        // through the guard's host side: their sends are the bot's, their
+        // reads aren't.
+        let mut seats = Vec::new();
+        let mut addresses = Vec::new();
+        for venue in &self.spot.venues {
+            let book = self
+                .venues
+                .books
+                .iter()
+                .find(|b| &b.instrument().venue == venue)
+                .expect("a book for each of the session's venues");
+            seats.push(book.seat(bot.insecure_clone(), host_url).await?);
+            addresses.push((book.instrument().to_string(), book.address().to_string()));
+        }
+        let mut venues = mtx_kit::VenueInfo::of_mandate(mandate, &self.instruments[0], |i| {
+            self.instruments.contains(i)
+        });
+        for info in &mut venues {
+            info.address = addresses
+                .iter()
+                .find(|(id, _)| *id == info.id)
+                .map(|(_, address)| address.clone());
+        }
+        Ok(Desk {
+            venues,
+            seats,
+            symbol: env.symbol.clone(),
+            venue: serde_json::to_string(&books::SessionVenues::of(&self.spot.venues)?)?,
+            authority: bot.pubkey().to_string(),
+            reader: Reader::Wallet {
+                start: self.start.wallet.clone(),
             },
-        )
-        .await?;
-    let fills = ledger.own(base_slot)?;
-    let end_value_usd = end.wallet.value_usd;
-    let order = scenario.order.as_ref().map(|order| {
-        let own: Vec<(Side, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
-        order.report(
-            start.wallet.base,
-            end.wallet.base,
-            start_price_usd,
-            end.wallet.price_usd,
-            end_value_usd - start_value_usd,
-            &own,
-        )
-    });
-    let participation = scenario
-        .participation
-        .as_ref()
-        .map(|p| p.report(&ledger.traded(base_slot), &spot.venues));
-    let net = scenario.net.as_ref().map(|n| {
-        let own: Vec<(String, Side, f64)> = fills
-            .iter()
-            .map(|f| (f.instrument.venue.clone(), f.side, f.base))
-            .collect();
-        n.report(
-            start.wallet.base,
-            end.wallet.base,
-            (start_price_usd, end.wallet.price_usd),
-            end_value_usd - start_value_usd,
-            &own,
-            &spot.venues,
-        )
-    });
-    let pnl_usd = order.as_ref().map_or_else(
-        || {
-            net.as_ref()
-                .map_or(end_value_usd - start_value_usd, |n| n.pnl_usd())
-        },
-        |o| o.pnl_usd(),
-    ) - participation.as_ref().map_or(0.0, |p| p.charge_usd);
-    let volume = if tracking || scenario.turn_data.is_some() {
-        ledger.volume(&spot.venues, base_slot, steps)
-    } else {
-        Vec::new()
-    };
-    let instrument = instruments[0].clone();
-    let report = SessionReport {
-        scenario: scenario.name.clone(),
-        start_mark_usd: start_price_usd,
-        end_mark_usd: end.wallet.price_usd,
-        start_value_usd,
-        end_value_usd,
-        pnl_usd,
-        end_position: end.wallet.base,
-        liquidatable: false,
-        refused_calls: guard.refused(),
-        bot_exit,
-        late_slots,
-        mandate,
-        peak_position: observed.range(&instrument).map_or(0.0, PositionRange::peak),
-        instrument,
-        positions: observed.positions,
-        positions_outside_universe: 0,
-        max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
-        valuation: "pyth",
-        flow: None,
-        competitor: None,
-        faults: guard.faults_report(),
-        spot: Some(SpotReport {
-            start: start.wallet,
-            end: end.wallet,
-            fills,
-            open_orders,
-            volume,
-        }),
-        order,
-        participation,
-        net,
-        turns,
-        wall_ms: began.elapsed().as_millis() as u64,
-        timeline: Timeline {
-            start_slot,
-            end_slot,
-            slots_per_step: SLOTS_PER_STEP,
+        })
+    }
+
+    fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord {
+        decode_instruction(ix, keys)
+    }
+
+    async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
+        let scenario = &self.scenario.clone();
+        let base_slot = self.base_slot;
+        let end = self.venues.read().await?;
+        self.note(&end);
+        let after = if self.tracking {
+            self.last_scan.saturating_sub(1)
+        } else {
+            base_slot
+        };
+        self.venues.scan(&mut self.ledger, after).await?;
+        let ledger = &self.ledger;
+        let fills = ledger.own(base_slot)?;
+        let start = &self.start;
+        let (start_value_usd, start_price_usd) = (self.start_value_usd, self.start_price_usd);
+        let end_value_usd = end.wallet.value_usd;
+        let order = scenario.order.as_ref().map(|order| {
+            let own: Vec<(Side, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
+            order.report(
+                start.wallet.base,
+                end.wallet.base,
+                start_price_usd,
+                end.wallet.price_usd,
+                end_value_usd - start_value_usd,
+                &own,
+            )
+        });
+        let participation = scenario
+            .participation
+            .as_ref()
+            .map(|p| p.report(&ledger.traded(base_slot), &self.spot.venues));
+        let net = scenario.net.as_ref().map(|n| {
+            let own: Vec<(String, Side, f64)> = fills
+                .iter()
+                .map(|f| (f.instrument.venue.clone(), f.side, f.base))
+                .collect();
+            n.report(
+                start.wallet.base,
+                end.wallet.base,
+                (start_price_usd, end.wallet.price_usd),
+                end_value_usd - start_value_usd,
+                &own,
+                &self.spot.venues,
+            )
+        });
+        let pnl_usd = order.as_ref().map_or_else(
+            || {
+                net.as_ref()
+                    .map_or(end_value_usd - start_value_usd, |n| n.pnl_usd())
+            },
+            |o| o.pnl_usd(),
+        ) - participation.as_ref().map_or(0.0, |p| p.charge_usd);
+        let volume = if self.tracking || scenario.turn_data.is_some() {
+            ledger.volume(&self.spot.venues, base_slot, self.steps)
+        } else {
+            Vec::new()
+        };
+        let instrument = self.instruments[0].clone();
+        let observed = std::mem::take(&mut self.observed);
+        Ok(SessionReport {
+            scenario: scenario.name.clone(),
             start_mark_usd: start_price_usd,
-            steps: steps_seen,
-            transactions,
-            calls,
-            taker_orders: Vec::new(),
-        },
-    };
-    info!(
-        scenario = report.scenario,
-        pnl_usd = report.pnl_usd,
-        fills = report.spot.as_ref().map_or(0, |s| s.fills.len()),
-        refused = report.refused_calls.len(),
-        "spot session finished"
-    );
-    Ok(report)
+            end_mark_usd: end.wallet.price_usd,
+            start_value_usd,
+            end_value_usd,
+            pnl_usd,
+            end_position: end.wallet.base,
+            liquidatable: false,
+            refused_calls: done.refused_calls,
+            bot_exit: done.bot_exit,
+            late_slots: done.late_slots,
+            mandate: done.mandate,
+            peak_position: observed.range(&instrument).map_or(0.0, PositionRange::peak),
+            instrument,
+            positions: observed.positions,
+            positions_outside_universe: 0,
+            max_drawdown_usd: self
+                .max_drawdown_usd
+                .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            valuation: "pyth",
+            flow: done.actors.flow,
+            competitor: done.actors.competitor,
+            faults: done.faults,
+            spot: Some(SpotReport {
+                start: start.wallet.clone(),
+                end: end.wallet,
+                fills,
+                open_orders: std::mem::take(&mut self.open_orders),
+                volume,
+            }),
+            order,
+            participation,
+            net,
+            turns: done.turns,
+            wall_ms: done.began.elapsed().as_millis() as u64,
+            timeline: Timeline {
+                start_slot: done.start_slot,
+                end_slot: done.end_slot,
+                slots_per_step: SLOTS_PER_STEP,
+                start_mark_usd: start_price_usd,
+                steps: done.steps,
+                transactions: done.transactions,
+                calls: done.calls,
+                taker_orders: done.actors.taker_orders,
+            },
+        })
+    }
 }
 
 /// One instruction of a bot's transaction, named by its program.
