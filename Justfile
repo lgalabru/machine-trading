@@ -116,17 +116,36 @@ image surfpool="":
 # `<tag>-<task>` for the agent and `<tag>-<task>-verifier`, which task.toml
 # names. Harbor then builds nothing when a trial starts. `push` pushes them,
 # for both platforms, instead of loading them here.
+#
+# Each context is a fresh copy, under a name of its own. BuildKit keeps a
+# context's files between builds by the directory's name, and a file with
+# the same size and mtime counts as unchanged: every task's context is
+# `tests` (or `environment`), and a checkout gives their files one mtime,
+# so two tasks whose files have the same sizes got each other's (2026-11-12:
+# flash-crash's verifier held weekend-gap's tests). A loaded image is then
+# checked against its own files.
 task-images push="":
     #!/usr/bin/env bash
     set -euo pipefail
+    stage="$(mktemp -d)"
+    trap 'rm -rf "$stage"' EXIT
+    # The files of a context, as `sha256sum` lists them, sorted.
+    files() { (cd "$1" && find . -type f ! -name Dockerfile | sort | xargs sha256sum); }
     for dir in {{tasks}}/*/; do
       task="$(basename "$dir")"
-      for part in environment:"" tests:-verifier; do
-        ref="{{registry}}/{{image}}:{{tag}}-$task${part#*:}"
+      for part in environment:"":/opt/mtx/practice:practice tests:-verifier:/tests:.; do
+        IFS=: read -r src suffix inside sub <<< "$part"
+        ref="{{registry}}/{{image}}:{{tag}}-$task$suffix"
+        context="$stage/$task-$src"
+        cp -R "$dir$src" "$context"
         if [ -n "{{push}}" ]; then
-          docker buildx build --platform linux/amd64,linux/arm64 -t "$ref" --push "$dir${part%%:*}"
+          docker buildx build --platform linux/amd64,linux/arm64 -t "$ref" --push "$context"
         else
-          docker buildx build -t "$ref" --load "$dir${part%%:*}"
+          docker buildx build -t "$ref" --load "$context"
+          want="$(files "$context/$sub")"
+          got="$(docker run --rm --entrypoint sh "$ref" -c "cd $inside && find . -type f ! -name Dockerfile | sort | xargs sha256sum")"
+          [ "$want" = "$got" ] || { echo "$ref doesn't hold $task's $src: Docker built it from another context"; exit 1; }
+          echo "$ref holds $task's $src"
         fi
       done
     done
