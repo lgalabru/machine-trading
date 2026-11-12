@@ -121,6 +121,25 @@ pub struct RawSends {
     pub programs: Vec<String>,
 }
 
+/// The programs a raw send may be allowed to run: those whose effects the
+/// grader's audit of a raw send measures (Phoenix's main trader account, the
+/// wallet's tokens), and the system, associated token and compute budget
+/// programs. A venue's program joins when its venue adds its own audit;
+/// until then a position it holds would go unmeasured.
+pub const RAW_SEND_PROGRAMS: [(&str, &str); 5] = [
+    ("Phoenix", "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih"),
+    ("system", "11111111111111111111111111111111"),
+    ("token", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    (
+        "associated token",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    ),
+    (
+        "compute budget",
+        "ComputeBudget111111111111111111111111111111",
+    ),
+];
+
 impl RawSends {
     /// The programs, parsed and in order.
     pub fn programs(&self) -> std::result::Result<Vec<Pubkey>, String> {
@@ -129,6 +148,13 @@ impl RawSends {
             let key = program
                 .parse::<Pubkey>()
                 .map_err(|_| format!("{program} is not a base58 address"))?;
+            if !RAW_SEND_PROGRAMS.iter().any(|(_, p)| p == program) {
+                let audited: Vec<&str> = RAW_SEND_PROGRAMS.iter().map(|(name, _)| *name).collect();
+                return Err(format!(
+                    "{program}: raw sends can't run it yet, since the audit can't measure what it holds; only the {} programs",
+                    audited.join(", ")
+                ));
+            }
             if programs.contains(&key) {
                 return Err(format!("{program} is listed twice"));
             }
