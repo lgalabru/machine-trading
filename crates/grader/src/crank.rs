@@ -9,11 +9,23 @@
 //! [`VenueCrank`] gets a turn (see [`Cranks::step`]).
 //!
 //! A crank acts the way a keeper would, with ordinary transactions from an
-//! account the grader holds: the cheatcodes are locked by then. A crank that
-//! fails ends the session as a grader error, since the venue is no longer
-//! one the scenario describes.
+//! account the grader holds: the cheatcodes are locked by then.
+//!
+//! # Failures
+//!
+//! A crank can fail in two ways, and they are told apart:
+//!
+//! - **The venue refused the transaction** ([`CrankOutcome::Refused`]). The
+//!   bot shares the venue and can cause this (a pool it drained, a market it
+//!   crossed). The session goes on, the refusal is recorded in the report's
+//!   `crank_refusals`, and the crank is called again next step.
+//! - **The grader or its RPC failed** (`Err`). Nothing the bot did explains
+//!   it. The session returns it as [`crate::Error::Setup`], so the grade runs
+//!   the session again from a fresh surfnet when the error is transient
+//!   (see `grade.rs`) and otherwise fails.
 
 use async_trait::async_trait;
+use serde::Serialize;
 use solana_rpc_client::rpc_client::RpcClient;
 
 use crate::Result;
@@ -30,13 +42,30 @@ pub struct CrankStep {
     pub last: bool,
 }
 
+/// What a crank's turn came to, when the grader itself was fine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrankOutcome {
+    Done,
+    /// The venue refused the crank's transaction on chain: the reason.
+    Refused(String),
+}
+
+/// A turn that came to [`CrankOutcome::Refused`].
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CrankRefusal {
+    pub crank: String,
+    pub step: u64,
+    pub reason: String,
+}
+
 /// Upkeep for one venue.
 #[async_trait]
 pub trait VenueCrank: Send {
     fn name(&self) -> &str;
 
-    /// Called once a step, after its blocks have landed.
-    async fn crank(&mut self, rpc: &RpcClient, step: &CrankStep) -> Result<()>;
+    /// Called once a step, after its blocks have landed. `Err` is for the
+    /// grader's own failures only; see the module docs.
+    async fn crank(&mut self, rpc: &RpcClient, step: &CrankStep) -> Result<CrankOutcome>;
 }
 
 /// Makes a session's cranks. A session builds its own, so a rerun starts
@@ -45,22 +74,46 @@ pub type CrankFactory = dyn Fn() -> Vec<Box<dyn VenueCrank>> + Send + Sync;
 
 /// A session's cranks, in the order they run.
 #[derive(Default)]
-pub struct Cranks(Vec<Box<dyn VenueCrank>>);
+pub struct Cranks {
+    cranks: Vec<Box<dyn VenueCrank>>,
+    refusals: Vec<CrankRefusal>,
+}
 
 impl Cranks {
     pub fn new(factory: Option<&CrankFactory>) -> Self {
-        Self(factory.map(|make| make()).unwrap_or_default())
+        Self {
+            cranks: factory.map(|make| make()).unwrap_or_default(),
+            refusals: Vec::new(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.cranks.is_empty()
     }
 
+    /// Every crank takes its turn, even after another was refused. A grader
+    /// failure stops the step, wrapped as [`crate::Error::Setup`].
     pub async fn step(&mut self, rpc: &RpcClient, step: &CrankStep) -> Result<()> {
-        for crank in &mut self.0 {
-            crank.crank(rpc, step).await?;
+        for crank in &mut self.cranks {
+            match crank
+                .crank(rpc, step)
+                .await
+                .map_err(|e| crate::Error::Setup(Box::new(e)))?
+            {
+                CrankOutcome::Done => {}
+                CrankOutcome::Refused(reason) => self.refusals.push(CrankRefusal {
+                    crank: crank.name().to_string(),
+                    step: step.k,
+                    reason,
+                }),
+            }
         }
         Ok(())
+    }
+
+    /// The refusals so far, for the session's report.
+    pub fn into_refusals(self) -> Vec<CrankRefusal> {
+        self.refusals
     }
 }
 
@@ -70,11 +123,12 @@ pub(crate) mod testing {
 
     use super::*;
 
-    /// A crank that records the steps it was called at, and fails at one
-    /// if asked to.
+    /// A crank that records the steps it was called at, and is refused or
+    /// breaks at one if asked to.
     pub(crate) struct Recorder {
         pub name: &'static str,
         pub calls: Arc<Mutex<Vec<(&'static str, CrankStep)>>>,
+        pub refuse_at: Option<u64>,
         pub fail_at: Option<u64>,
     }
 
@@ -84,12 +138,15 @@ pub(crate) mod testing {
             self.name
         }
 
-        async fn crank(&mut self, _rpc: &RpcClient, step: &CrankStep) -> Result<()> {
+        async fn crank(&mut self, _rpc: &RpcClient, step: &CrankStep) -> Result<CrankOutcome> {
             self.calls.lock().unwrap().push((self.name, *step));
             if self.fail_at == Some(step.k) {
                 return Err(crate::Error::Timeout(format!("{} crank", self.name)));
             }
-            Ok(())
+            if self.refuse_at == Some(step.k) {
+                return Ok(CrankOutcome::Refused("custom program error: 0x11".into()));
+            }
+            Ok(CrankOutcome::Done)
         }
     }
 }
@@ -99,6 +156,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{testing::Recorder, *};
+
+    type Calls = Arc<Mutex<Vec<(&'static str, CrankStep)>>>;
 
     fn step(k: u64) -> CrankStep {
         CrankStep {
@@ -113,57 +172,91 @@ mod tests {
         RpcClient::new("http://127.0.0.1:1".to_string())
     }
 
+    fn recorder(
+        name: &'static str,
+        calls: &Calls,
+        refuse_at: Option<u64>,
+        fail_at: Option<u64>,
+    ) -> Box<dyn VenueCrank> {
+        Box::new(Recorder {
+            name,
+            calls: calls.clone(),
+            refuse_at,
+            fail_at,
+        })
+    }
+
+    fn names(calls: &Calls) -> Vec<&'static str> {
+        calls.lock().unwrap().iter().map(|c| c.0).collect()
+    }
+
     #[tokio::test]
     async fn cranks_run_in_order_each_step() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
+        let calls = Calls::default();
         let make = {
             let calls = calls.clone();
-            move || -> Vec<Box<dyn VenueCrank>> {
-                ["a", "b"]
-                    .map(|name| {
-                        Box::new(Recorder {
-                            name,
-                            calls: calls.clone(),
-                            fail_at: None,
-                        }) as Box<dyn VenueCrank>
-                    })
-                    .into()
+            move || {
+                vec![
+                    recorder("a", &calls, None, None),
+                    recorder("b", &calls, None, None),
+                ]
             }
         };
         let mut cranks = Cranks::new(Some(&make));
         for k in 0..3 {
             cranks.step(&rpc(), &step(k)).await.unwrap();
         }
-        let names: Vec<_> = calls.lock().unwrap().iter().map(|c| c.0).collect();
-        assert_eq!(names, ["a", "b", "a", "b", "a", "b"]);
+        assert_eq!(names(&calls), ["a", "b", "a", "b", "a", "b"]);
         assert_eq!(calls.lock().unwrap()[5].1, step(2));
+        assert!(cranks.into_refusals().is_empty());
     }
 
     #[tokio::test]
-    async fn a_failing_crank_stops_the_step() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
+    async fn a_refused_crank_is_recorded_and_the_session_goes_on() {
+        let calls = Calls::default();
         let make = {
             let calls = calls.clone();
-            move || -> Vec<Box<dyn VenueCrank>> {
+            move || {
                 vec![
-                    Box::new(Recorder {
-                        name: "a",
-                        calls: calls.clone(),
-                        fail_at: Some(1),
-                    }),
-                    Box::new(Recorder {
-                        name: "b",
-                        calls: calls.clone(),
-                        fail_at: None,
-                    }),
+                    recorder("a", &calls, Some(1), None),
+                    recorder("b", &calls, None, None),
+                ]
+            }
+        };
+        let mut cranks = Cranks::new(Some(&make));
+        for k in 0..3 {
+            cranks.step(&rpc(), &step(k)).await.unwrap();
+        }
+        assert_eq!(
+            names(&calls).len(),
+            6,
+            "b ran after a was refused, and a ran again"
+        );
+        let refusals = cranks.into_refusals();
+        assert_eq!(refusals.len(), 1);
+        assert_eq!((refusals[0].crank.as_str(), refusals[0].step), ("a", 1));
+        assert!(refusals[0].reason.contains("0x11"));
+    }
+
+    #[tokio::test]
+    async fn a_grader_failure_stops_the_step_as_a_setup_error() {
+        let calls = Calls::default();
+        let make = {
+            let calls = calls.clone();
+            move || {
+                vec![
+                    recorder("a", &calls, None, Some(1)),
+                    recorder("b", &calls, None, None),
                 ]
             }
         };
         let mut cranks = Cranks::new(Some(&make));
         cranks.step(&rpc(), &step(0)).await.unwrap();
-        assert!(cranks.step(&rpc(), &step(1)).await.is_err());
-        let names: Vec<_> = calls.lock().unwrap().iter().map(|c| c.0).collect();
-        assert_eq!(names, ["a", "b", "a"], "b never ran at step 1");
+        let error = cranks.step(&rpc(), &step(1)).await.unwrap_err();
+        assert!(
+            matches!(error, crate::Error::Setup(inner) if matches!(*inner, crate::Error::Timeout(_)))
+        );
+        assert_eq!(names(&calls), ["a", "b", "a"], "b never ran at step 1");
     }
 
     #[test]
