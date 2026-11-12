@@ -104,6 +104,11 @@ pub struct Scenario {
     /// told. It is not shown to the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_path: Option<Vec<Waypoint>>,
+    /// Opt-in: the market calibration the path was drawn from, and what was
+    /// drawn (see [`crate::market::model`]). The path and fair value above
+    /// are what sessions replay; this records where they came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_model: Option<crate::market::MarketModelRecord>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -329,6 +334,11 @@ impl Scenario {
                 }
                 previous = waypoint.slot;
             }
+        }
+        if let Some(model) = &self.market_model {
+            model
+                .validate(self.duration_slots)
+                .map_err(|reason| format!("market_model: {reason}"))?;
         }
         if let Some(making) = &self.making {
             making
@@ -915,6 +925,7 @@ impl ShockFamily {
                     premium_pct: 0.0,
                 }]
             }),
+            market_model: None,
         };
         let shape = Shape {
             direction,
@@ -1621,6 +1632,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1685,6 +1697,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
         }
     }
 

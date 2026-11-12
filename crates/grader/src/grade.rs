@@ -839,6 +839,7 @@ mod tests {
             net: None,
             reference_pnl_usd,
             fair_path: None,
+            market_model: None,
         }
     }
 
