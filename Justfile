@@ -68,16 +68,37 @@ bots:
 snapshot-prepare-spot out:
     cargo run --release -- snapshot prepare-spot --out {{out}}
 
-# A spot session end to end: a bot sells on both SOL/USDC books and passes
-# its sell-only mandate; the same bot buying too is disqualified.
+# A spot session end to end: the smoke component sells on SOL/USDC and passes
+# the mandate's audit; the buyer breaches it; the order smokes; OpenBook
+# alone; and the same smoke as a process bot, which spot sessions still run.
+# Each grade must come out as expected: filled and clean, or disqualified.
 spot-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
     just --justfile bots/spot-smoke/Justfile build
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke bench/checks/spot/smoke.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-sell-order bench/checks/spot/smoke-sell-order.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
+    cargo build --release
+    grade() {
+      local name=$1 bot=$2 check=$3 want=$4; shift 4
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --snapshot snapshots/{{spot_snapshot}} --bot "bots/$bot" "$@" \
+        --logs "target/logs/$name" --report "target/logs/$name.json" "bench/checks/spot/$check.json" > /dev/null
+      local report="target/logs/$name.json"
+      local banned fills
+      banned=$(jq '[.. | objects | select(has("disqualified")) | .disqualified | select(. != null)] | length' "$report")
+      fills=$(jq '[.. | objects | select(has("fills")) | .fills | arrays | length] | add // 0' "$report")
+      case "$want" in
+        clean) [ "$banned" -eq 0 ] && [ "$fills" -gt 0 ] ;;
+        disqualified) [ "$banned" -gt 0 ] ;;
+      esac || { echo "$name: expected $want, got $fills fills and $banned disqualifications"; exit 1; }
+      echo "$name: $want ($fills fills)"
+    }
+    grade spot-smoke spot-smoke smoke clean --components-only
+    grade spot-smoke-buyer spot-smoke/buyer smoke disqualified --components-only
+    grade spot-smoke-sell-order spot-smoke smoke-sell-order clean --components-only
+    grade spot-smoke-buy-order spot-smoke/accumulate smoke-buy-order clean --components-only
+    grade spot-smoke-reduce-only spot-smoke/buyer smoke-reduce-only disqualified --components-only
+    grade spot-smoke-net spot-smoke smoke-net clean --components-only
+    grade spot-smoke-openbook spot-smoke smoke-openbook clean --components-only
+    grade spot-smoke-process spot-smoke/process smoke clean
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":

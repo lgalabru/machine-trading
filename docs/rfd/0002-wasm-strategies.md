@@ -138,6 +138,45 @@ on: the same rule as an error from `step` today. Grading is a function of
 the component, the snapshot and the scenario, so the 72 sessions of a trial
 run in parallel.
 
+### Spot sessions
+
+A spot session (`crates/grader/src/spot.rs`) runs a component the same way
+(`crates/grader/src/wasm/spot.rs`), so a spot grade passes
+`--components-only`. The grader's Phoenix v1 or OpenBook v2 trader holds
+the bot's key and sends through the bot's guard. The first resting order
+also sends the setup it needs: a Phoenix seat, or an OpenBook open orders
+account. The grader sends that setup again on later orders until it sees
+the account. Sizes round down to whole lots, and prices round away from a
+worse fill. An order no market grid can hold is refused. The same
+`mtx:strategy@0.1.0` world reads as follows:
+
+| Field | In a spot session |
+|-------|-------------------|
+| `mark`, `oracle`, `index` | the Pyth SOL/USD price the session values the account at |
+| `best-bid`, `best-ask` | the book of the venue orders go to |
+| `position.size` | SOL held, in the wallet and on every venue, as the profiles count it |
+| `position.entry-usd` | the Pyth price when the session started |
+| `pnl`, `peak-pnl`, `drawdown` | the account's value in USD since the start, as the session measures it |
+| `cap`, `max-drawdown` | the mandate's position cap, and its drawdown limit (or the account's starting value) |
+
+`start` gets the mandate in `session.mandate`, as a process bot gets
+`MTX_MANDATE`, and in `session.venue` the markets as JSON:
+
+```json
+{ "orders": "phoenix",
+  "markets": [ { "venue": "phoenix", "symbol": "SOL-USDC", "program": "PhoeNiX…",
+                 "market": "4DoNfF…", "base_mint": "So111…", "quote_mint": "EPjFW…" },
+               { "venue": "openbook", … } ] }
+```
+
+The 0.1.0 intents name no venue, so a component's orders go to the
+scenario's **first** venue (`orders`) until WIT 0.2 adds the venue to
+intents. Turn data (tape, depth, clock) is not in 0.1.0's `market`. A
+component reads the other books itself through `rpc`, with the kit's
+`phoenix-v1-venue` and `openbook-v2-venue` features, which build the
+venues' decoding and instructions for `wasm32-wasip2` (`bots/spot-smoke`
+does this).
+
 ### The tasks
 
 The task's instruction says the bot is a component built with `mtx bot

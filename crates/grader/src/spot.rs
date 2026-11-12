@@ -566,6 +566,32 @@ pub fn fund(
     Ok(())
 }
 
+/// Give `owner` `atoms` of `mint` in its associated token account, under
+/// whichever token program owns the mint (SPL Token or Token-2022). Setup
+/// only, by cheatcode. Refuses a mint the kit can't move
+/// ([`Mint::unsupported`](mtx_kit::token::Mint::unsupported)): a token a bot
+/// is funded with must be one it can trade. Returns the mint, as read.
+pub fn fund_mint(
+    surfnet: &Surfnet,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    atoms: u64,
+) -> Result<mtx_kit::token::Mint> {
+    let account = chain::rpc_client(surfnet).get_account(mint)?;
+    let decoded =
+        mtx_kit::token::Mint::decode(&account.owner, &account.data).map_err(venue_error("mint"))?;
+    if let Some(why) = decoded.unsupported() {
+        return Err(Error::Transaction {
+            label: format!("funding {mint}"),
+            reason: format!("the kit can't trade this token: {why}"),
+        });
+    }
+    surfnet
+        .cheatcodes()
+        .fund_token(owner, mint, atoms, Some(&decoded.program))?;
+    Ok(decoded)
+}
+
 /// Trade a little on each venue as `trader` would: a Phoenix seat, a resting
 /// bid and its cancel, a small sell; an OpenBook open orders account, the
 /// same. Returns the Pyth SOL/USD price. For [`snapshot::prepare_spot`]:
@@ -744,47 +770,89 @@ pub(crate) async fn run_session(
     };
 
     let late_before = surfnet.coalesced_slots();
-    let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
     *bot_started = true;
-    let mut child = session::spawn_bot(
-        opts.bot_dir,
-        &env,
-        &workdir,
-        opts.bot_log,
-        theirs,
-        opts.regime,
-        None,
-    )?;
-    ours.set_nonblocking(true)
-        .map_err(io_error("turn socket"))?;
-    let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
-    let (reader, mut writer) = socket.into_split();
-    let mut reader = BufReader::new(reader).lines();
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
-    info!(
-        scenario = scenario.name,
-        start_slot, end_slot, steps, "spot bot started"
-    );
-
-    let hello = Hello {
-        protocol: turns::PROTOCOL.into(),
-        steps,
-        slots_per_step: SLOTS_PER_STEP,
-        start_slot,
-        end_slot,
-        turn_wall_ms: TURN_WALL.as_millis() as u64,
-    };
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
     };
-    let legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
-        && matches!(
-            tokio::time::timeout(HELLO_WALL, session::next_message(&mut reader)).await,
-            Ok(Some(Message::Ready))
-        ));
-    if legacy {
-        info!("the bot didn't answer the hello: the world moves at the slot time");
+    // A bot is a process speaking the turn protocol, or a component the
+    // grader calls (`crate::wasm::spot`).
+    let mut process = None;
+    let mut wasm_bot = None;
+    let legacy;
+    if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
+        let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
+        wasm_bot = Some(
+            crate::wasm::spot::SpotWasmBot::start(
+                &component,
+                crate::wasm::spot::SpotStart {
+                    venues: &spot.venues,
+                    rpc_url: guard.url(),
+                    signer: bot.insecure_clone(),
+                    end_slot,
+                    mandate: &mandate,
+                    max_position: env.max_position,
+                    max_drawdown_usd: env.max_drawdown_usd,
+                    wallet: &start.wallet,
+                },
+                crate::wasm::Clock {
+                    steps,
+                    slots_per_step: SLOTS_PER_STEP,
+                    start_slot,
+                    scenario: &scenario.name,
+                    vars: opts
+                        .regime
+                        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+                        .into_iter()
+                        .collect(),
+                },
+                Box::new(log),
+            )
+            .await?,
+        );
+        legacy = false;
+        info!(
+            scenario = scenario.name,
+            start_slot, end_slot, steps, "spot strategy component loaded"
+        );
+    } else {
+        let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+        let child = session::spawn_bot(
+            opts.bot_dir,
+            &env,
+            &workdir,
+            opts.bot_log,
+            theirs,
+            opts.regime,
+            None,
+        )?;
+        ours.set_nonblocking(true)
+            .map_err(io_error("turn socket"))?;
+        let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
+        let (reader, mut writer) = socket.into_split();
+        let mut reader = BufReader::new(reader).lines();
+        info!(
+            scenario = scenario.name,
+            start_slot, end_slot, steps, "spot bot started"
+        );
+        let hello = Hello {
+            protocol: turns::PROTOCOL.into(),
+            steps,
+            slots_per_step: SLOTS_PER_STEP,
+            start_slot,
+            end_slot,
+            turn_wall_ms: TURN_WALL.as_millis() as u64,
+        };
+        legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
+            && matches!(
+                tokio::time::timeout(HELLO_WALL, session::next_message(&mut reader)).await,
+                Ok(Some(Message::Ready))
+            ));
+        if legacy {
+            info!("the bot didn't answer the hello: the world moves at the slot time");
+        }
+        process = Some((child, writer, reader));
     }
     turns.legacy = legacy;
     let budget = TURN_BUDGET_PER_STEP * steps as u32;
@@ -878,6 +946,7 @@ pub(crate) async fn run_session(
             fair_usd: None,
         });
         if bot_exit.is_none()
+            && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
             info!(%status, "bot exited before the session ended");
@@ -889,6 +958,26 @@ pub(crate) async fn run_session(
 
         guard.set_step(k);
         guard.set_turn(true);
+        if let Some(bot) = wasm_bot.as_mut() {
+            let started = Instant::now();
+            let unix_timestamp = venues.unix_timestamp().await?;
+            let answered = bot
+                .turn(k, slot, k + 1 == steps, &now.wallet, unix_timestamp)
+                .await;
+            let took = started.elapsed();
+            if !answered {
+                turns.overran += 1;
+            }
+            turns.wall_ms += took.as_millis() as u64;
+            if let Some(record) = steps_seen.last_mut() {
+                record.turn_ms = Some(took.as_millis() as u64);
+                record.answered = Some(answered);
+            }
+            continue;
+        }
+        let Some((_, writer, reader)) = process.as_mut() else {
+            continue;
+        };
         if legacy {
             tokio::time::sleep(TURN_BUDGET_PER_STEP).await;
             continue;
@@ -917,7 +1006,7 @@ pub(crate) async fn run_session(
             }
         }
         let wall = TURN_WALL.min(budget.saturating_sub(spent));
-        let answered = session::take_turn(&mut writer, &mut reader, step, wall).await;
+        let answered = session::take_turn(writer, reader, step, wall).await;
         let took = started.elapsed();
         spent += took;
         if !answered {
@@ -930,8 +1019,17 @@ pub(crate) async fn run_session(
         }
     }
     guard.set_turn(false);
-    let _ = session::send(&mut writer, &Message::End).await;
-    session::stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    if let Some((mut child, mut writer, _)) = process {
+        let _ = session::send(&mut writer, &Message::End).await;
+        session::stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    }
+    if let Some(bot) = wasm_bot.as_mut() {
+        bot.end().await;
+        let (used, max_call) = bot.fuel();
+        turns.fuel_used = Some(used);
+        turns.fuel_max_call = Some(max_call);
+        turns.stopped = bot.stopped.clone();
+    }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
     let calls = guard.call_log();

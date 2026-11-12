@@ -28,6 +28,8 @@ use wasmtime_wasi::{
 
 use crate::Error;
 
+pub mod spot;
+
 wasmtime::component::bindgen!({
     world: "strategy",
     path: "../kit/wit",

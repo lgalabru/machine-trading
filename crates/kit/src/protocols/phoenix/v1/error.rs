@@ -22,3 +22,9 @@ pub enum PhoenixV1Error {
     #[error("invalid order: {0}")]
     InvalidOrder(String),
 }
+
+impl From<crate::protocols::DecodeError> for PhoenixV1Error {
+    fn from(err: crate::protocols::DecodeError) -> Self {
+        Self::Chain(err.into())
+    }
+}
