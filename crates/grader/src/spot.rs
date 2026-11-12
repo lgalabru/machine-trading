@@ -63,7 +63,6 @@ use crate::{
     error::io_error,
     guard::Guard,
     orders::Traded,
-    scenario::Scenario,
     session::{
         self, BOT_USERS, HELLO_WALL, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions,
         SessionReport, StepRecord, TURN_BUDGET_PER_STEP, TURN_WALL, Timeline, TurnReport,
@@ -1055,6 +1054,7 @@ fn decode_instruction(ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scenario::Scenario;
 
     fn scenario() -> Scenario {
         let mut mandate = Mandate::spot(&VENUES, SYMBOL, 10.0);
