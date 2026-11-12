@@ -97,6 +97,8 @@ pub struct SessionOptions<'a> {
     /// Upkeep for the venues the session trades on, called every step
     /// (see [`crate::crank`]).
     pub cranks: Option<&'a crate::crank::CrankFactory>,
+    /// Watches a component's session step by step (`mtx bot run --debug`).
+    pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -588,6 +590,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .collect(),
                 },
                 Box::new(log),
+                opts.observer.clone(),
             )
             .await?,
         );
