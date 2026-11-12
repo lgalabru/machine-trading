@@ -375,13 +375,7 @@ fn long_checks(long: &LongClustering, windows: &[Vec<f64>], sigmas: f64) -> Vec<
                 ratio: None,
                 diff: Some(d),
             };
-            gate(
-                &name,
-                long.reference[i],
-                generated[i],
-                band,
-                held,
-            )
+            gate(&name, long.reference[i], generated[i], band, held)
         })
         .collect()
 }
@@ -730,7 +724,7 @@ pub fn check_scenarios(calibration: &Calibration, target: &str, scenarios: &[Sce
             books.iter().copied().fold(0.0, f64::max)
         )
     };
-let mut report = report(
+    let mut report = report(
         calibration,
         target,
         &sessions,

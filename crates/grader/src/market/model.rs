@@ -810,8 +810,10 @@ mod tests {
     #[test]
     fn volatility_matches_the_calibration() {
         // With no clustering surprises, regimes or calendar, the slot sd is
-        // the calibrated one times the regime level.
-        let cal = sol();
+        // the calibrated one times the regime level: the path's, before any
+        // mark smooths it.
+        let mut cal = sol();
+        cal.fair_value.mark = None;
         let model = MarketModel::new(
             cal.clone(),
             ModelSpec {

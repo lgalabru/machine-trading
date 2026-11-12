@@ -1,19 +1,19 @@
-# Market calibration spcx.20261112.7fbcbe1c (schema 1.0). Written by infra-calib/calib/export_v1.py
+# Market calibration spcx.20261112.d1f48be2 (schema 1.0). Written by infra-calib/calib/export_v1.py
 # from spcx.20261111.ebab5e7c; never edited by hand. A refit is a new file with a new id.
-# Every input (url, sha256, bytes, fetch time) is in spcx.20261112.7fbcbe1c.inputs.json.
+# Every input (url, sha256, bytes, fetch time) is in spcx.20261112.d1f48be2.inputs.json.
 
 
 [meta]
 schema_version = "1.0"
-calibration_id = "spcx.20261112.7fbcbe1c"
+calibration_id = "spcx.20261112.d1f48be2"
 asset = "spcx"
 symbol = "SPCX"
-fitted_at = "2026-11-12T15:48:28+00:00"
-exported_at = "2026-11-12T15:48:28+00:00"
+fitted_at = "2026-11-12T17:16:26+00:00"
+exported_at = "2026-11-12T17:16:26+00:00"
 fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
-fitter_code_sha256_12 = "5d9f8b9199b4"
+fitter_code_sha256_12 = "6c814d662f10"
 derived_from = "spcx.20261111.ebab5e7c"
-inputs_file = "spcx.20261112.7fbcbe1c.inputs.json"
+inputs_file = "spcx.20261112.d1f48be2.inputs.json"
 inputs_digest = "38bd97b308ebbffd"
 inputs_count = 272
 sources = ["Phoenix perp API /exchange and /candles (SPCX mark, 1 m, since the IPO week)", "Solana RPC getRecentPrioritizationFees and getSignaturesForAddress", "Jito tip floor", "NYSE holiday calendar"]
