@@ -270,7 +270,7 @@ impl StepObserver for Debugger {
         for (i, (action, result)) in trace.sent.iter().enumerate() {
             let line = match result {
                 SendState::Landed(_) => format!("{} {}", paint(ACCENT, "✓"), action_text(action)),
-                SendState::Failed(e) => format!(
+                SendState::Failed { reason: e, .. } => format!(
                     "{} {} {}",
                     paint(RED, "✗"),
                     action_text(action),
