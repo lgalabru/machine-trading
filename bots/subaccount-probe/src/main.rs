@@ -12,9 +12,7 @@ use mtx_kit::{
     chain::{InstructionGroup, TransactionPlan},
     prelude::*,
     protocols::phoenix::eternal::phoenix_rise::{
-        api::TraderKey,
-        core::MarketOrderTicket,
-        ix::market_order::create_place_market_order_ix,
+        api::TraderKey, core::MarketOrderTicket, ix::market_order::create_place_market_order_ix,
         math::Side as PhoenixSide,
     },
     rpc_client,
