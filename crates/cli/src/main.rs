@@ -7,7 +7,7 @@ use mtx_grader::{
     grade::{self, GradeOptions},
     keys::SessionKeys,
     making::MakingFamily,
-    phoenix, replay,
+    phoenix, recipe, replay,
     scenario::{Scenario, ShockFamily},
     snapshot,
     weekend::WeekendFamily,
@@ -591,37 +591,24 @@ impl Authoring {
 
 #[derive(Subcommand)]
 enum SnapshotCommand {
-    /// Fork mainnet, warm up the Phoenix accounts a task touches, and export them.
-    Prepare {
-        /// Output directory, e.g. snapshots/phoenix-spcx-2026-10-29.
+    /// Build a snapshot from its recipe: fork, warm up and export. Writes
+    /// beside the recipe, with a manifest that records its hash.
+    Build {
+        /// The recipe, e.g. snapshots/sol-usdc-spot-2026-11-11/recipe.toml.
+        recipe: PathBuf,
+        /// Write here instead of beside the recipe.
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         /// Datasource to fork. May embed an API key; only its host is recorded.
-        #[arg(
-            long,
-            env = "MTX_FORK_RPC_URL",
-            default_value = "https://api.mainnet-beta.solana.com"
-        )]
+        #[arg(long, env = "MTX_FORK_RPC_URL", default_value = recipe::DEFAULT_FORK_RPC)]
         fork_rpc: String,
-        #[arg(long, default_value = phoenix::DEFAULT_API_URL)]
-        phoenix_api: String,
-        #[arg(long, default_value = "SPCX")]
-        symbol: String,
-    },
-    /// Fork mainnet, warm up Phoenix v1's and OpenBook v2's SOL/USDC markets
-    /// and the Pyth SOL/USD feed, and export them: a snapshot for spot
-    /// sessions.
-    PrepareSpot {
-        /// Output directory, e.g. snapshots/sol-usdc-spot-2026-11-11.
+        /// Replace a snapshot already in the output directory.
         #[arg(long)]
-        out: PathBuf,
-        /// Datasource to fork. May embed an API key; only its host is recorded.
-        #[arg(
-            long,
-            env = "MTX_FORK_RPC_URL",
-            default_value = "https://api.mainnet-beta.solana.com"
-        )]
-        fork_rpc: String,
+        force: bool,
+        /// Mixed into the keys of simulated markets and never recorded; the
+        /// same secret rebuilds the same keys. Random by default.
+        #[arg(long, env = "MTX_BUILD_SECRET", hide_env_values = true)]
+        secret: Option<String>,
     },
     /// Restart offline from a snapshot and trade through a scripted crash.
     Verify {
@@ -889,23 +876,24 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&cmp)?
         }
-        Command::Snapshot(SnapshotCommand::Prepare {
+        Command::Snapshot(SnapshotCommand::Build {
+            recipe,
             out,
             fork_rpc,
-            phoenix_api,
-            symbol,
+            force,
+            secret,
         }) => {
-            let manifest = snapshot::prepare(snapshot::PrepareOptions {
-                out_dir: out,
-                fork_rpc_url: fork_rpc,
-                phoenix_api_url: phoenix_api,
-                symbol,
-            })
+            let manifest = recipe::build(
+                &recipe,
+                recipe::BuildOptions {
+                    out_dir: out,
+                    fork_rpc_url: fork_rpc,
+                    force,
+                    secret,
+                },
+            )
             .await?;
             serde_json::to_string_pretty(&manifest)?
-        }
-        Command::Snapshot(SnapshotCommand::PrepareSpot { out, fork_rpc }) => {
-            serde_json::to_string_pretty(&snapshot::prepare_spot(&out, &fork_rpc).await?)?
         }
         Command::Snapshot(SnapshotCommand::VerifyFork {
             fork_rpc,
