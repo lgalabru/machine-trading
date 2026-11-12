@@ -805,8 +805,7 @@ mod tests {
         .await
         .unwrap();
         let venues: Vec<String> = vec!["phoenix".into(), "openbook".into()];
-        let mandate =
-            mtx_core::Mandate::spot(&VENUES, crate::spot::SYMBOL, 10.0);
+        let mandate = mtx_core::Mandate::spot(&VENUES, crate::spot::SYMBOL, 10.0);
         let own = mandate.universe[0].instrument.clone();
         let session = Session {
             steps: 20,
@@ -820,15 +819,17 @@ mod tests {
             max_drawdown: 1_500.0,
             venues: VenueInfo::of_mandate(&mandate, &own, |_| true),
             mandate,
-            venue: serde_json::to_string(&SessionVenues::of(&venues).unwrap())
-                .unwrap(),
+            venue: serde_json::to_string(&SessionVenues::of(&venues).unwrap()).unwrap(),
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
             reports: mtx_kit::Reports::default(),
             applies_tx_options: false,
         };
-        assert!(matches!(strategy.start(&session).await, crate::wasm::Outcome::Done(())));
+        assert!(matches!(
+            strategy.start(&session).await,
+            crate::wasm::Outcome::Done(())
+        ));
         let market = |k| Market {
             best_bid: Some(149.9),
             best_ask: Some(150.1),
