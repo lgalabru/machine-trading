@@ -578,7 +578,7 @@ pub fn fund_mint(
     mint: &Pubkey,
     atoms: u64,
 ) -> Result<mtx_kit::token::Mint> {
-    let account = chain::rpc_client(surfnet).get_account(mint)?;
+    let account = crate::chain::rpc_client(surfnet).get_account(mint)?;
     let decoded =
         mtx_kit::token::Mint::decode(&account.owner, &account.data).map_err(venue_error("mint"))?;
     if let Some(why) = decoded.unsupported() {

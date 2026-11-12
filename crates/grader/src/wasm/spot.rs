@@ -34,9 +34,7 @@ use mtx_kit::{
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 
-use super::{
-    Clock, FUEL_PER_STEP, Market, Outcome, Position, Session, WasmStrategy, kit_intent,
-};
+use super::{Clock, FUEL_PER_STEP, Market, Outcome, Position, Session, WasmStrategy, kit_intent};
 use crate::spot::Wallet;
 
 /// The book a component's orders go to, and the grader's trader on it.
