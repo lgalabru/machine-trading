@@ -742,12 +742,13 @@ async fn run() -> Result<()> {
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?)?;
-            if check && summary["changed"].as_u64() != Some(0) {
+            if check && (summary["changed"] != 0 || summary["failed"] != 0) {
                 eprintln!("{}", serde_json::to_string_pretty(&summary)?);
                 anyhow::bail!(
-                    "{} of {} trials score differently than reported",
+                    "of {} trials, {} score differently than reported and {} didn't read back",
+                    summary["trials"],
                     summary["changed"],
-                    summary["trials"]
+                    summary["failed"]
                 );
             }
             serde_json::to_string_pretty(&summary)?
