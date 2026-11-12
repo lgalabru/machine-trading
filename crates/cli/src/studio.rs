@@ -45,6 +45,7 @@ use tokio::sync::broadcast;
 use crate::{
     acp::{AgentClient, PermissionPolicy, TurnEvent},
     author::Agent,
+    notice::{self, NoticeLevel},
 };
 
 /// The page. `MTX_STUDIO_PAGE` serves a file from disk instead, read on
@@ -150,7 +151,17 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
         .with_state(studio.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port)).await?;
     let url = format!("http://{}", listener.local_addr()?);
-    eprintln!("mtx studio: {} on {url}", dir.display());
+    notice::print(
+        NoticeLevel::Success,
+        "mtx studio",
+        &format!(
+            "{} · {}\n{url}",
+            dir.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            studio.task
+        ),
+    );
     if options.open {
         crate::play::open_browser(&url);
     }
@@ -173,9 +184,10 @@ fn seed_scenarios(dir: &Path, root: &Path, task: &str) -> Result<()> {
                 std::fs::copy(&file, scenarios.join(name))?;
             }
         }
-        eprintln!(
-            "copied {task}'s practice scenarios into {}",
-            scenarios.display()
+        notice::print(
+            NoticeLevel::Info,
+            "Scenarios",
+            &format!("copied {task}'s practice set into {}", scenarios.display()),
         );
     }
     if let Some(own) = ASSETS.get_dir("scenarios") {
@@ -586,6 +598,9 @@ async fn watch(studio: Arc<Studio>) {
                 } else {
                     "disk"
                 };
+                if by == "agent" {
+                    notice::print(NoticeLevel::Info, "The agent edited", &rel);
+                }
                 studio.event(
                     "file/changed",
                     json!({ "path": rel, "version": version(&text), "text": text, "by": by }),
@@ -680,6 +695,24 @@ fn build(studio: &Studio) -> Result<Value> {
         std::fs::copy(wasm, studio.dir.join(mtx_grader::wasm::BOT_WASM))?;
         studio.output("build", "built bot.wasm");
     }
+    if ok {
+        notice::print(NoticeLevel::Success, "Built", "bot.wasm");
+    } else {
+        let errors: Vec<String> = diagnostics
+            .iter()
+            .filter(|d| d["severity"] == json!("error"))
+            .take(3)
+            .map(|d| {
+                format!(
+                    "{}:{}  {}",
+                    d["file"].as_str().unwrap_or("?"),
+                    d["line"],
+                    d["message"].as_str().unwrap_or_default()
+                )
+            })
+            .collect();
+        notice::print(NoticeLevel::Error, "Build failed", &errors.join("\n"));
+    }
     let built = json!({ "ok": ok, "diagnostics": diagnostics });
     studio.event("built", built.clone());
     Ok(built)
@@ -726,6 +759,11 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
             bail!("the strategy doesn't build: see the build output");
         }
     }
+    notice::print(
+        NoticeLevel::Info,
+        &format!("Playing {name}"),
+        &scenario.description,
+    );
     let control = Arc::new(Control::new(args, studio.clone()));
     *studio.debug.lock().unwrap_or_else(|e| e.into_inner()) = Some(control.clone());
     let studio = studio.clone();
@@ -788,6 +826,56 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
             }
             Some(Err(error)) => json!({ "error": format!("{error:#}") }),
         };
+        let usd = |v: &Value| {
+            v.as_f64().map(|v| {
+                if v < 0.0 {
+                    format!("−${:.2}", -v)
+                } else {
+                    format!("+${v:.2}")
+                }
+            })
+        };
+        match (&body["error"], &body["terminated"]) {
+            (Value::String(error), _) => notice::print(
+                NoticeLevel::Error,
+                &format!("{} failed", scenario.name),
+                error,
+            ),
+            (_, Value::Bool(true)) => notice::print(
+                NoticeLevel::Warning,
+                &format!("{} stopped", scenario.name),
+                &format!("at step {}", body["k"].as_u64().map_or(0, |k| k + 1)),
+            ),
+            _ => notice::print(
+                if body["disqualified"].is_null() {
+                    NoticeLevel::Success
+                } else {
+                    NoticeLevel::Error
+                },
+                &format!(
+                    "{} {}",
+                    scenario.name,
+                    usd(&body["pnl_usd"]).unwrap_or_default()
+                ),
+                &[
+                    Some(format!(
+                        "bound ${:.2}",
+                        body["bound_pnl_usd"].as_f64().unwrap_or(0.0)
+                    )),
+                    usd(&body["reference_pnl_usd"]).map(|r| format!("reference {r}")),
+                    body["disqualified"]
+                        .as_str()
+                        .map(|d| format!("disqualified: {d}")),
+                    body["stopped"]
+                        .as_str()
+                        .map(|s| format!("the strategy stopped: {s}")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ),
+        }
         control.event("terminated", body);
         control.finish();
     });
@@ -1334,6 +1422,21 @@ fn next_message_id(studio: &Studio) -> String {
 
 /// One prompt to the agent, its reply streamed to the page.
 fn compose(studio: &Studio, text: &str, context: &Value) -> Result<()> {
+    let first_line: String = text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(100)
+        .collect();
+    let name = studio
+        .agent
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pick
+        .unwrap_or(Agent::ClaudeCode)
+        .name();
+    notice::print(NoticeLevel::Info, &format!("Asked {name}"), &first_line);
     let user = next_message_id(studio);
     composer_event(
         studio,
