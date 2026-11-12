@@ -22,7 +22,7 @@ use mtx_grader::{
     scenario::Scenario,
     wasm::{StepObserver, StepTrace},
 };
-use mtx_kit::{Action, Intent, LineOptions, SendState, Session, Side, TimeInForce};
+use mtx_kit::{Action, AmountUnit, Intent, LineOptions, SendState, Session, Side, TimeInForce};
 
 pub struct Run<'a> {
     pub dir: &'a Path,
@@ -407,10 +407,36 @@ fn intent_text(intent: &Intent) -> String {
             Side::Ask => format!("ask {} @ {}", units(*size), price(*p)),
         },
         Intent::CancelAll => "cancel_all".into(),
-        Intent::Respond { id, price: p, size } => match size {
-            Some(size) => format!("respond {id}: {} @ {}", units(*size), price(*p)),
-            None => format!("respond {id} @ {}", price(*p)),
-        },
+        Intent::Cancel { client_id } => format!("cancel({client_id})"),
+        Intent::Respond { id, bid, ask, .. } => respond_text(id, *bid, *ask),
+        Intent::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        } => swap_text(*side, *amount, *unit, *limit),
+        // Liquidity and lending: as the sheet holds them.
+        other => format!("{other:?}"),
+    }
+}
+
+fn respond_text(id: &str, bid: Option<f64>, ask: Option<f64>) -> String {
+    let side = |name: &str, p: Option<f64>| p.map(|p| format!(" {name} {}", price(p)));
+    format!(
+        "respond {id}:{}{}",
+        side("bid", bid).unwrap_or_default(),
+        side("ask", ask).unwrap_or_default()
+    )
+}
+
+fn swap_text(side: Side, amount: f64, unit: AmountUnit, limit: f64) -> String {
+    let unit = match unit {
+        AmountUnit::Base => "base",
+        AmountUnit::Quote => "quote",
+    };
+    match side {
+        Side::Bid => format!("swap buy, {} {unit} ≤ {}", units(amount), price(limit)),
+        Side::Ask => format!("swap sell, {} {unit} ≥ {}", units(amount), price(limit)),
     }
 }
 
@@ -430,6 +456,9 @@ fn options_text(options: &LineOptions) -> String {
     }
     if let Some(venue) = &options.venue {
         text.push_str(&format!(" .at({venue})"));
+    }
+    if let Some(id) = options.client_id {
+        text.push_str(&format!(" .client_id({id})"));
     }
     if options.tx.is_some() {
         text.push_str(" .tx(…)");
@@ -460,7 +489,15 @@ fn action_text(action: &Action) -> String {
             Side::Ask => format!("post-only ask {} @ {}", units(*size), price(*p)),
         },
         Action::CancelAll => "cancel all".into(),
-        Action::Respond { id, price: p, .. } => format!("respond {id} @ {}", price(*p)),
+        Action::Cancel { client_id } => format!("cancel {client_id}"),
+        Action::Respond { id, bid, ask, .. } => respond_text(id, *bid, *ask),
+        Action::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        } => swap_text(*side, *amount, *unit, *limit),
+        other => format!("{other:?}"),
     }
 }
 

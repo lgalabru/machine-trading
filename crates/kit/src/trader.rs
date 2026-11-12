@@ -7,7 +7,7 @@ use solana_signer::Signer;
 use solana_transaction::Signature;
 
 use crate::{
-    BotEnv, Decimal, Error, Phoenix, Position, Result, Side,
+    Action, BotEnv, Decimal, Error, Phoenix, Position, Result, SendState, Side,
     core::{Rounding, Side as CoreSide},
     protocols::phoenix::eternal::PhoenixTrader,
     rpc_client,
@@ -246,6 +246,52 @@ impl Trader {
             .await?)
     }
 
+    /// Send one order a sheet planned for this market (`mtx_kit::plan_sheet`),
+    /// and say what became of it. A post-only order that would cross the
+    /// book as it is now (the world is paused) isn't placed, and fails
+    /// without reaching the chain. Actions this trader has no executor for
+    /// aren't sent.
+    pub async fn send_planned(&self, action: &Action) -> Sent {
+        let result = match *action {
+            Action::Market { side, size, limit } => self.place_market(side, size, limit).await,
+            Action::Limit { side, price, size } => self.place_limit(side, price, size).await,
+            Action::PostOnly { side, price, size } => {
+                let crosses = |top: Top| {
+                    let price = self.price(side, price)?.to_string();
+                    let price: f64 = price.parse().unwrap_or(f64::NAN);
+                    Ok::<_, Error>(match side {
+                        Side::Bid => top.best_ask.is_some_and(|ask| price >= ask),
+                        Side::Ask => top.best_bid.is_some_and(|bid| price <= bid),
+                    })
+                };
+                match self.top().await.and_then(crosses) {
+                    Ok(false) => self.place_post_only(side, price, size).await,
+                    Ok(true) => return Sent::checked("post-only would cross: not placed"),
+                    Err(error) => {
+                        return Sent::checked(&format!(
+                            "post-only: couldn't read the book to check it: {error}"
+                        ));
+                    }
+                }
+            }
+            Action::CancelAll => self.cancel_all(),
+            Action::Respond { .. } => {
+                return Sent::not_sent("no requests for quotes in this session");
+            }
+            _ => return Sent::not_sent("unsupported in this session"),
+        };
+        match result {
+            Ok(signature) => Sent {
+                state: SendState::Landed(signature.to_string()),
+                sent: true,
+            },
+            Err(error) => Sent {
+                state: SendState::Failed(error.to_string()),
+                sent: true,
+            },
+        }
+    }
+
     pub fn cancel_all(&self) -> Result<Signature> {
         let ixs = self.phoenix.tx().build_cancel_all_orders(
             self.authority(),
@@ -286,6 +332,32 @@ impl From<crate::phoenix_rise::math::Side> for Side {
         match side {
             crate::phoenix_rise::math::Side::Bid => Self::Bid,
             crate::phoenix_rise::math::Side::Ask => Self::Ask,
+        }
+    }
+}
+
+/// What became of an order [`Trader::send_planned`] was given.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sent {
+    pub state: SendState,
+    /// Whether it reached the chain: a resting order that did counts toward
+    /// what rests, even if it failed (the ledger only over-counts), and a
+    /// failure stops a component's step.
+    pub sent: bool,
+}
+
+impl Sent {
+    fn checked(why: &str) -> Self {
+        Sent {
+            state: SendState::Failed(why.to_string()),
+            sent: false,
+        }
+    }
+
+    fn not_sent(why: &str) -> Self {
+        Sent {
+            state: SendState::NotSent(why.to_string()),
+            sent: false,
         }
     }
 }
