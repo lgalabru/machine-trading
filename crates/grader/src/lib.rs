@@ -9,6 +9,7 @@ pub mod flow;
 pub mod grade;
 pub mod guard;
 pub mod making;
+pub mod market;
 pub mod offhours;
 pub mod orders;
 pub mod phoenix;
