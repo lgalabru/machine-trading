@@ -219,10 +219,10 @@ export function mock(deliver) {
       m.text += chunk; m.done = done;
       event("composer/message", { id, role, text: chunk, done });
     };
-    const tool = (id, title, st) => {
+    const tool = (id, st, call) => {
       const t = messages.find((x) => x.id === id) || messages[messages.push({ id, tool: true }) - 1];
-      Object.assign(t, { title, status: st });
-      event("composer/tool", { id, title, status: st });
+      Object.assign(t, { kind: null, input: {}, output: "", diffs: [], locations: [], ...call, id, status: st });
+      event("composer/tool", { ...t });
     };
     const stream = async (id, role, words) => { for (const w of words.split(/(?<= )/)) { if (cancelled) break; say(id, role, w); await sleep(24); } say(id, role, "", true); };
     const id = `m${++mid}`;
@@ -233,12 +233,19 @@ export function mock(deliver) {
     await stream(thought, "thought", "The strategy buys once the mark is DIP_PCT below the start and sells at half the way back. Let me look at the file before changing anything. ");
     const number = text.match(/(\d+(?:\.\d+)?)\s*%?/);
     if (!cancelled && /dip|buy|threshold|%/i.test(text) && number) {
-      tool("t" + mid, "Read src/lib.rs", "in_progress"); await sleep(400); tool("t" + mid, "Read src/lib.rs", "completed");
-      tool("e" + mid, "Edit src/lib.rs", "in_progress"); await sleep(500);
-      const next = files.get("src/lib.rs").replace(/const DIP_PCT: f64 = [^;]*;/, `const DIP_PCT: f64 = ${Number(number[1]).toFixed(1)};`);
+      const run = "r" + mid, before = files.get("src/lib.rs");
+      const read = { run, title: "Read src/lib.rs", kind: "read", summary: "Read lib.rs", runSummary: "Read lib.rs", input: { file_path: "/mock/bot/src/lib.rs" } };
+      tool("t" + mid, "in_progress", read); await sleep(400);
+      tool("t" + mid, "completed", { ...read, output: before.split("\n").slice(0, 14).join("\n") + "\n…" });
+      const next = before.replace(/const DIP_PCT: f64 = [^;]*;/, `const DIP_PCT: f64 = ${Number(number[1]).toFixed(1)};`);
+      const edit = { run, title: "Edit src/lib.rs", kind: "edit", summary: "Edit lib.rs", runSummary: "Read lib.rs, edit lib.rs, run scenario check", input: { file_path: "/mock/bot/src/lib.rs" }, diffs: [{ path: "/mock/bot/src/lib.rs", old: before, new: next }] };
+      tool("e" + mid, "in_progress", edit); await sleep(500);
       files.set("src/lib.rs", next);
       event("file/changed", { path: "src/lib.rs", version: hash(next), text: next, by: "agent" });
-      tool("e" + mid, "Edit src/lib.rs", "completed");
+      tool("e" + mid, "completed", edit);
+      const check = { run, title: "mtx scenario check scenarios/*.json", kind: "execute", summary: "Run scenario check", runSummary: edit.runSummary, input: { command: "mtx scenario check scenarios/*.json", description: "Check the scenarios still load" } };
+      tool("c" + mid, "in_progress", check); await sleep(500);
+      tool("c" + mid, "completed", { ...check, output: "scenarios/practice-101.json: ok, 5 steps\nscenarios/practice-102.json: ok, 10 steps" });
       await stream(reply, "agent", `I set \`DIP_PCT\` to **${Number(number[1]).toFixed(1)}** in \`src/lib.rs\`: the strategy now waits for a ${Number(number[1]).toFixed(1)}% fall before buying.\n\nPress play to see where it buys on this scenario. A deeper threshold skips the small dips, and misses the shocks that stop short of it.`);
     } else if (!cancelled && images.length) {
       await stream(reply, "agent", `I can see ${images.length === 1 ? "the screenshot" : `${images.length} screenshots`}. A real agent would read the market off the chart, write a scenario that plays it, and sketch a strategy for it; this mock only shows how that turn looks.`);

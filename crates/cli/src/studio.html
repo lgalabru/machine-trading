@@ -193,12 +193,32 @@
   .msg.thought { color: var(--text-3); font-size: 12px; border-left: 2px solid var(--line); padding-left: 10px; }
   .msg.thought summary { cursor: pointer; list-style: none; color: var(--text-4); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
   .msg.thought summary::-webkit-details-marker { display: none; }
-  .tool { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 4px 11px 4px 8px; border-radius: 99px; border: 1px solid var(--line); background: var(--pane-2); font-size: 12px; color: var(--text-2); }
-  .tool i { flex: none; width: 7px; height: 7px; border-radius: 99px; background: var(--text-4); }
-  .tool.in_progress i, .tool.pending i { background: var(--warn); animation: blink 1s ease-in-out infinite; }
-  .tool.completed i { background: var(--accent); } .tool.failed i { background: var(--down); }
-  .tool span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
-  .tool.link { cursor: pointer; } .tool.link:hover { border-color: #3a3a40; color: var(--text); }
+  /* The agent's tool calls: one line per run, in words. It opens to its
+     calls, and a call to its details. */
+  .run { align-self: stretch; font-size: 12.5px; color: var(--text-2); min-width: 0; }
+  .run summary { list-style: none; display: grid; grid-template-columns: 14px minmax(0, 1fr) 10px; gap: 8px; align-items: baseline; cursor: pointer; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; }
+  .run summary::-webkit-details-marker { display: none; }
+  .run summary:hover { background: rgba(255, 255, 255, .04); color: var(--text); }
+  .run summary .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run[open] > summary .what, .call[open] > summary .what { white-space: normal; }
+  .run summary::after { content: "›"; color: var(--text-4); transition: transform .12s; justify-self: center; }
+  .run details[open] > summary::after, .run[open] > summary::after { transform: rotate(90deg); }
+  .run .calls { margin: 2px 0 4px 6px; padding-left: 12px; border-left: 1px solid var(--line); }
+  .call summary { color: var(--text-3); font-size: 12px; }
+  .mk { align-self: center; justify-self: center; width: 10px; height: 10px; font: 700 10px/10px var(--mono); text-align: center; }
+  .mk.completed { color: var(--accent); } .mk.completed::before { content: "✓"; }
+  .mk.failed { color: var(--down); } .mk.failed::before { content: "✗"; }
+  .mk.pending, .mk.in_progress { border: 1.5px solid var(--line); border-top-color: var(--warn); border-radius: 99px; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .call .detail { margin: 3px 0 8px 22px; font: 11.5px/1.5 var(--mono); min-width: 0; }
+  .call .detail pre { margin: 0 0 4px; padding: 6px 9px; border-radius: 7px; background: #060607; border: 1px solid var(--line); max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); scrollbar-width: thin; }
+  .call .detail pre.cmd { color: var(--text); }
+  .call .detail .kv { color: var(--text-3); margin-bottom: 3px; overflow-wrap: anywhere; }
+  .call .detail .kv b { color: var(--text-2); font-weight: 500; }
+  .call .detail .kv .lnk { margin-left: 6px; }
+  .diff i { display: block; font-style: normal; padding: 0 4px; margin: 0 -4px; }
+  .diff .del { color: #ffb3ae; background: rgba(255, 95, 87, .13); } .diff .add { color: #b5efbb; background: rgba(94, 209, 106, .13); }
+  .diff .gap { color: var(--text-4); }
   .typing { align-self: flex-start; color: var(--text-3); font-size: 12px; display: none; } .typing.on { display: block; }
   .typing::after { content: "…"; animation: blink 1s ease-in-out infinite; }
   /* The input is the pane's own floor: no box of its own. With no messages
@@ -1050,14 +1070,60 @@ function showMessage(m) {
   else el.innerHTML = md(text);
   if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
 }
+// Tool calls, grouped in runs: the calls between two of the agent's messages.
+const runs = new Map(); // run -> {el, calls: Map id -> call, open, opened: Set id}
+// A small diff: the lines that differ between two texts, with two of context.
+function diffHtml(d) {
+  const a = String(d.old ?? "").split("\n"), b = String(d.new ?? "").split("\n");
+  let head = 0; while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0; while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const line = (cls, mark, text) => `<i class="${cls}">${mark} ${esc(text)}</i>`;
+  const before = a.slice(Math.max(0, head - 2), head), after = a.slice(a.length - tail, a.length - tail + 2);
+  return `<pre class="diff">${head > 2 ? '<i class="gap">  …</i>' : ""}${before.map((t) => line("", " ", t)).join("")}${a.slice(head, a.length - tail).map((t) => line("del", "−", t)).join("")}${b.slice(head, b.length - tail).map((t) => line("add", "+", t)).join("")}${after.map((t) => line("", " ", t)).join("")}${tail > 2 ? '<i class="gap">  …</i>' : ""}</pre>`;
+}
+const workspaceFile = (path) => (path ? S.files.find((f) => path === f || String(path).endsWith("/" + f)) : null);
+function callDetail(c) {
+  const input = c.input && typeof c.input === "object" ? c.input : {};
+  const out = [];
+  const opens = (path) => (workspaceFile(path) ? `<span class="lnk" data-open="${esc(workspaceFile(path))}">open</span>` : "");
+  if (typeof input.command === "string") out.push(`<pre class="cmd">$ ${esc(input.command)}</pre>`);
+  else {
+    const shown = ["file_path", "path", "pattern", "query", "glob", "url"].filter((key) => (typeof input[key] === "string" || typeof input[key] === "number") && !(key.endsWith("path") && (c.diffs || []).length));
+    for (const key of shown) out.push(`<div class="kv">${key.replace("file_path", "path")} <b>${esc(input[key])}</b>${key.endsWith("path") ? opens(input[key]) : ""}</div>`);
+    if (!shown.length && !(c.diffs || []).length && Object.keys(input).length) out.push(`<pre>${esc(JSON.stringify(input, null, 1).slice(0, 800))}</pre>`);
+  }
+  for (const d of c.diffs || []) out.push(`<div class="kv"><b>${esc(d.path ?? "")}</b>${opens(d.path)}</div>${diffHtml(d)}`);
+  // Agents fence a command's output as markdown: show what's inside.
+  const output = String(c.output || "").replace(/^```[\w-]*\n/, "").replace(/\n```\s*$/, "");
+  if (output.trim()) out.push(`<pre>${esc(output)}</pre>`);
+  return out.join("") || `<div class="kv">${esc(c.title || "no details")}</div>`;
+}
+function renderRun(r) {
+  const calls = [...r.calls.values()];
+  const status = calls.some((c) => c.status === "failed") ? "failed" : calls.every((c) => c.status === "completed") ? "completed" : "in_progress";
+  const summary = calls.at(-1).runSummary || calls.map((c) => c.summary || c.title).join(", ");
+  r.el.open = r.open;
+  r.el.innerHTML = `<summary><span class="mk ${status}"></span><span class="what">${esc(summary)}</span></summary><div class="calls">${calls.map((c) =>
+    `<details class="call" data-id="${esc(c.id)}" ${r.opened.has(c.id) ? "open" : ""}><summary><span class="mk ${esc(c.status || "pending")}"></span><span class="what">${esc(c.summary || c.title || "tool call")}</span></summary><div class="detail">${r.opened.has(c.id) ? callDetail(c) : ""}</div></details>`).join("")}</div>`;
+}
 function showTool(m) {
   const stick = pinned();
-  let el = document.getElementById("ct-" + m.id);
-  if (!el) { threadShown(); el = document.createElement("div"); el.id = "ct-" + m.id; thread.appendChild(el); }
-  const file = m.path || S.files.find((p) => String(m.title || "").includes(p));
-  el.className = `tool ${m.status || "pending"} ${file ? "link" : ""}`;
-  el.innerHTML = `<i></i><span>${esc(m.title || "tool call")}</span>`;
-  el.onclick = file ? () => openFile(file) : null;
+  const key = m.run || "solo-" + m.id;
+  let r = runs.get(key);
+  if (!r) {
+    threadShown();
+    r = { el: document.createElement("details"), calls: new Map(), open: false, opened: new Set() };
+    r.el.className = "run";
+    r.el.addEventListener("toggle", (e) => {
+      if (e.target === r.el) { r.open = r.el.open; return; }
+      const id = e.target.dataset?.id; if (!id) return;
+      if (e.target.open) { r.opened.add(id); e.target.querySelector(".detail").innerHTML = callDetail(r.calls.get(id)); } else r.opened.delete(id);
+    }, true);
+    r.el.addEventListener("click", (e) => { if (e.target.dataset.open) openFile(e.target.dataset.open); });
+    runs.set(key, r); thread.appendChild(r.el);
+  }
+  r.calls.set(m.id, m);
+  renderRun(r);
   if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
 }
 link.on("composer/message", showMessage);
@@ -1217,7 +1283,7 @@ link.onOpen(async () => {
     await loadScenario(S.scenarios.includes(wanted) ? wanted : S.scenarios[0]);
     link.send("agents/list").then((r) => { S.agents = r.agents; if (r.selected?.agent) S.pick = { agent: r.selected.agent, model: r.selected.model }; renderAgents(); }).catch(tell);
     link.send("composer/history").then((r) => {
-      thread.innerHTML = ""; texts.clear();
+      thread.innerHTML = ""; texts.clear(); runs.clear();
       for (const m of r.messages) (m.role ? showMessage({ ...m, done: true }) : showTool(m));
       if (!r.messages.length) threadEmpty();
       threadScroll.scrollTop = threadScroll.scrollHeight;
