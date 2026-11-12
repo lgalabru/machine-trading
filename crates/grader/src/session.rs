@@ -278,6 +278,10 @@ pub struct TurnReport {
     /// didn't load, or it trapped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped: Option<String>,
+    /// A component's lines that carried transaction options, which the
+    /// session accepted and didn't apply (no session does yet).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_options: Option<u64>,
 }
 
 impl SessionReport {
@@ -733,7 +737,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         guard.set_turn(true);
         if let Some(bot) = wasm_bot.as_mut() {
             let started = Instant::now();
-            let answered = bot.turn(k, slot, k + 1 == steps).await;
+            let answered = bot.turn(&Step::new(k, slot, k + 1 == steps)).await;
             let took = started.elapsed();
             if !answered {
                 turns.overran += 1;
@@ -779,6 +783,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         turns.fuel_used = Some(used);
         turns.fuel_max_call = Some(max_call);
         turns.stopped = bot.stopped.clone();
+        turns.tx_options = (bot.tx_options > 0).then_some(bot.tx_options);
     }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
