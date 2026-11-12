@@ -355,3 +355,15 @@ defend, no bot users, no keypair files.
   signature; and fresh signers on raw transactions, named by index in the
   instructions and returned by `send`, for accounts that sign their own
   creation (a position's mint).
+- 2026-11-12: what raw sends need for a new position. Opening a Raydium
+  CLMM or Orca position names accounts derived from the fresh NFT mint: the
+  position PDA and the owner's token account for the mint. A raw
+  transaction now lists derived addresses (a PDA from a program and seeds,
+  or an associated token account), which instructions and later entries
+  name by index; WIT types can't be recursive, so an entry names only the
+  ones before it, which also rules out cycles and bounds the depth by the
+  list's length (32). The grader makes the fresh signers, then resolves
+  the list in order. `remove-liquidity` gained minimums out, an expiring
+  post-only order goes through Phoenix's second multiple-order packet built
+  from its parameters, and a line with an amount that isn't a number gets
+  a note.
