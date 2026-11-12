@@ -4950,6 +4950,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mtx-kit",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -5042,6 +5043,9 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signer",
+ "solana-system-interface 3.3.0",
+ "solana-transaction 4.3.0",
+ "spl-token-2022-interface 3.1.2",
  "surfpool-sdk",
  "thiserror 2.0.21",
  "tokio",
@@ -5049,6 +5053,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
+ "wincode",
 ]
 
 [[package]]
@@ -5067,9 +5072,12 @@ dependencies = [
  "serde_json",
  "solana-account 4.7.0",
  "solana-account-decoder-client-types",
+ "solana-address-lookup-table-interface 3.2.0",
  "solana-commitment-config",
  "solana-compute-budget-interface",
+ "solana-instruction 3.5.1",
  "solana-keypair",
+ "solana-message 4.6.0",
  "solana-program-pack 3.1.0",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
@@ -5079,7 +5087,9 @@ dependencies = [
  "solana-transaction 4.3.0",
  "solana-transaction-status-client-types",
  "spl-associated-token-account-interface",
+ "spl-token-2022-interface 3.1.2",
  "spl-token-interface 3.0.0",
+ "spl-token-metadata-interface 1.0.1",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
