@@ -1,0 +1,1162 @@
+//! `mtx studio`: a workbench for a strategy and its scenarios
+//! (`docs/rfd/0003-studio.md`). This is the server: the page
+//! (`studio.html`) talks to it over one WebSocket, `/ws`, in messages
+//! shaped like the Debug Adapter Protocol's: requests and their responses,
+//! and events.
+//!
+//! The server owns the workspace (a strategy crate and its scenarios), the
+//! build, the debug session and the coding agent. A session is the grader's,
+//! as `mtx bot run` plays it; it stops and resumes because the debugger is
+//! the grader's [`StepObserver`], which blocks until the page says go. The
+//! world waits for a component, so stopping changes nothing in the session.
+
+use std::{
+    collections::HashMap,
+    io::BufRead,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime},
+};
+
+use anyhow::{Context, Result, bail};
+use axum::{
+    Router,
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
+    response::{Html, IntoResponse},
+    routing::get,
+};
+use futures::{SinkExt, StreamExt};
+use mtx_grader::{
+    grade::{self, GradeOptions},
+    scenario::Scenario,
+    wasm::{StepObserver, StepTrace},
+};
+use mtx_kit::{Action, Intent, Session, Side};
+use serde_json::{Value, json};
+use tokio::sync::broadcast;
+
+use crate::{
+    acp::{AgentClient, PermissionPolicy, TurnEvent},
+    author::Agent,
+};
+
+/// The page. `MTX_STUDIO_PAGE` serves a file from disk instead, read on
+/// every load: for working on the page without rebuilding `mtx`. Until the
+/// studio's page lands, the protocol's test page.
+const PAGE: &str = include_str!("studio/dev.html");
+/// The protocol's test page, at `/dev`: every request a button, every
+/// event in a log.
+const DEV_PAGE: &str = include_str!("studio/dev.html");
+/// Where the workspace's scenarios are.
+const SCENARIOS: &str = "scenarios";
+/// The studio's own state in the workspace: the agent picked.
+const SETTINGS: &str = ".mtx/studio.json";
+/// Files the server pushes to the page when they change on disk.
+const WATCHED: &[&str] = &["src", SCENARIOS, "Cargo.toml"];
+
+pub struct StudioOptions<'a> {
+    pub dir: &'a Path,
+    pub task: Option<&'a str>,
+    pub repo: Option<&'a Path>,
+    pub port: u16,
+    pub open: bool,
+}
+
+/// `mtx studio`.
+pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
+    let dir = options
+        .dir
+        .canonicalize()
+        .with_context(|| format!("no workspace at {}", options.dir.display()))?;
+    if !dir.join("Cargo.toml").is_file() || !dir.join("src/lib.rs").is_file() {
+        bail!(
+            "{} isn't a strategy: the studio opens a crate with src/lib.rs, as `mtx bot new` makes",
+            dir.display()
+        );
+    }
+    let root = crate::bot::repo(options.repo)?;
+    let task = crate::bot::resolve_task(&root, options.task)?;
+    let snapshot = crate::bot::task_snapshot(&root, &task)?;
+    seed_scenarios(&dir, &root, &task)?;
+    let (events, _) = broadcast::channel(4096);
+    let studio = Arc::new(Studio {
+        dir: dir.clone(),
+        task,
+        snapshot,
+        events,
+        seq: AtomicU64::new(1),
+        debug: Mutex::new(None),
+        agent: Mutex::new(AgentState::default()),
+        written: Mutex::new(HashMap::new()),
+    });
+    studio.load_settings();
+    tokio::spawn(watch(studio.clone()));
+
+    let app = Router::new()
+        .route("/", get(page))
+        .route("/dev", get(|| async { Html(DEV_PAGE) }))
+        .route("/ws", get(ws))
+        .with_state(studio.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port)).await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    eprintln!("mtx studio: {} on {url}", dir.display());
+    if options.open {
+        crate::play::open_browser(&url);
+    }
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// A workspace without scenarios gets the task's practice set.
+fn seed_scenarios(dir: &Path, root: &Path, task: &str) -> Result<()> {
+    let scenarios = dir.join(SCENARIOS);
+    if scenarios.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(&scenarios)?;
+    for file in crate::bot::practice_scenarios(root, task)? {
+        if let Some(name) = file.file_name() {
+            std::fs::copy(&file, scenarios.join(name))?;
+        }
+    }
+    eprintln!(
+        "copied {task}'s practice scenarios into {}",
+        scenarios.display()
+    );
+    Ok(())
+}
+
+struct Studio {
+    dir: PathBuf,
+    task: String,
+    snapshot: PathBuf,
+    events: broadcast::Sender<String>,
+    seq: AtomicU64,
+    debug: Mutex<Option<Arc<Control>>>,
+    agent: Mutex<AgentState>,
+    /// What the server wrote itself, and when: the watcher doesn't echo it.
+    written: Mutex<HashMap<PathBuf, SystemTime>>,
+}
+
+impl Studio {
+    fn next_seq(&self) -> u64 {
+        self.seq.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Send an event to every page.
+    fn event(&self, event: &str, body: Value) {
+        let message =
+            json!({ "seq": self.next_seq(), "type": "event", "event": event, "body": body });
+        let _ = self.events.send(message.to_string());
+    }
+
+    fn output(&self, category: &str, text: &str) {
+        self.event("output", json!({ "category": category, "text": text }));
+    }
+
+    /// A path inside the workspace, or an error.
+    fn path(&self, rel: &str) -> Result<PathBuf> {
+        let clean = Path::new(rel)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !clean || rel.is_empty() {
+            bail!("{rel} isn't a path in the workspace");
+        }
+        Ok(self.dir.join(rel))
+    }
+
+    fn load_settings(&self) {
+        if let Some(settings) = crate::review::read_json(&self.dir.join(SETTINGS)) {
+            let mut agent = self.agent.lock().unwrap_or_else(|e| e.into_inner());
+            agent.pick = agent_named(settings["agent"].as_str().unwrap_or_default());
+            agent.model = settings["model"].as_str().map(str::to_string);
+        }
+    }
+
+    fn save_settings(&self) -> Result<()> {
+        let agent = self.agent.lock().unwrap_or_else(|e| e.into_inner());
+        let path = self.dir.join(SETTINGS);
+        std::fs::create_dir_all(path.parent().unwrap_or(&self.dir))?;
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&json!({
+                "agent": agent.pick.map(agent_id),
+                "model": agent.model,
+            }))? + "\n",
+        )?;
+        Ok(())
+    }
+}
+
+async fn page() -> impl IntoResponse {
+    match std::env::var_os("MTX_STUDIO_PAGE") {
+        Some(path) => {
+            Html(std::fs::read_to_string(path).unwrap_or_else(|e| format!("MTX_STUDIO_PAGE: {e}")))
+        }
+        None => Html(PAGE.to_string()),
+    }
+}
+
+async fn ws(upgrade: WebSocketUpgrade, State(studio): State<Arc<Studio>>) -> impl IntoResponse {
+    upgrade.on_upgrade(move |socket| connection(socket, studio))
+}
+
+/// One page: its requests in, every event out.
+async fn connection(socket: WebSocket, studio: Arc<Studio>) {
+    let (mut sink, mut stream) = socket.split();
+    let mut events = studio.events.subscribe();
+    let (replies, mut replies_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let send = tokio::spawn(async move {
+        loop {
+            let text = tokio::select! {
+                Some(reply) = replies_rx.recv() => reply,
+                event = events.recv() => match event {
+                    Ok(event) => event,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                else => break,
+            };
+            if sink.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+    while let Some(Ok(message)) = stream.next().await {
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let Ok(request) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let studio = studio.clone();
+        let replies = replies.clone();
+        tokio::spawn(async move {
+            let seq = request["seq"].as_u64().unwrap_or(0);
+            let command = request["command"].as_str().unwrap_or_default().to_string();
+            let result = handle(&studio, &command, &request["arguments"]).await;
+            let response = match result {
+                Ok(body) => json!({
+                    "seq": studio.next_seq(), "type": "response", "request_seq": seq,
+                    "command": command, "success": true, "body": body,
+                }),
+                Err(error) => json!({
+                    "seq": studio.next_seq(), "type": "response", "request_seq": seq,
+                    "command": command, "success": false, "message": format!("{error:#}"),
+                }),
+            };
+            let _ = replies.send(response.to_string());
+        });
+    }
+    send.abort();
+}
+
+async fn handle(studio: &Arc<Studio>, command: &str, args: &Value) -> Result<Value> {
+    let str_arg = |name: &str| -> Result<String> {
+        args[name]
+            .as_str()
+            .map(str::to_string)
+            .with_context(|| format!("{command} needs `{name}`"))
+    };
+    match command {
+        "initialize" => Ok(json!({
+            "workspace": studio.dir,
+            "task": studio.task,
+            "files": workspace_files(&studio.dir),
+            "scenarios": scenario_names(&studio.dir),
+            "agent": agent_pick(studio),
+            "session": studio.debug.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|c| c.status()),
+        })),
+        "file/read" => {
+            let path = studio.path(&str_arg("path")?)?;
+            Ok(
+                json!({ "text": std::fs::read_to_string(&path).with_context(|| path.display().to_string())? }),
+            )
+        }
+        "file/write" => {
+            let path = studio.path(&str_arg("path")?)?;
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&path, str_arg("text")?)?;
+            if let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) {
+                studio
+                    .written
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(path, modified);
+            }
+            Ok(json!({}))
+        }
+        "scenario/read" => {
+            let name = str_arg("name")?;
+            let path = studio.dir.join(SCENARIOS).join(format!("{name}.json"));
+            let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
+            Ok(json!({
+                "scenario": serde_json::to_value(&scenario)?,
+                // The planned path, in slots from the start and percent of
+                // the starting mark: each waypoint's move begins at its slot.
+                "planned": scenario.path.iter().map(|w| json!([w.slot, w.level_pct])).collect::<Vec<_>>(),
+                "slots": scenario.duration_slots,
+            }))
+        }
+        "build" => {
+            let studio = studio.clone();
+            let built = tokio::task::spawn_blocking(move || build(&studio)).await??;
+            Ok(built)
+        }
+        "launch" => launch(studio, args).await,
+        "continue" | "pause" | "next" | "terminate" | "setBreakpoints" | "setSpeed" => {
+            let control = studio
+                .debug
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+                .context("no session: launch one")?;
+            control.command(command, args);
+            if command == "continue" {
+                studio.event("continued", json!({}));
+            }
+            Ok(control.status())
+        }
+        "restart" => {
+            let last = {
+                let debug = studio.debug.lock().unwrap_or_else(|e| e.into_inner());
+                debug.as_ref().map(|c| c.launch.clone())
+            };
+            let launch_args = last.context("no session to restart")?;
+            if let Some(control) = studio
+                .debug
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+            {
+                control.command("terminate", &Value::Null);
+            }
+            Box::pin(launch(studio, &launch_args)).await
+        }
+        "agents/list" => Ok(json!({ "agents": discover_agents(), "pick": agent_pick(studio) })),
+        "agents/select" => {
+            let agent = agent_named(&str_arg("agent")?).context("no such agent")?;
+            {
+                let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+                state.pick = Some(agent);
+                state.model = args["model"]
+                    .as_str()
+                    .map(str::to_string)
+                    .filter(|m| !m.is_empty());
+                // The next prompt starts the new agent.
+                state.client = None;
+            }
+            studio.save_settings()?;
+            Ok(agent_pick(studio))
+        }
+        "composer/send" => {
+            let text = str_arg("text")?;
+            let context = args["context"].clone();
+            let studio = studio.clone();
+            tokio::task::spawn_blocking(move || compose(&studio, &text, &context)).await??;
+            Ok(json!({}))
+        }
+        "composer/cancel" => {
+            let state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((client, session)) = &state.client {
+                client.cancel(session)?;
+            }
+            Ok(json!({}))
+        }
+        other => bail!("unknown command {other}"),
+    }
+}
+
+/// The workspace's files the page may open: sources and scenarios.
+fn workspace_files(dir: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for top in WATCHED {
+        walk(dir, &dir.join(top), &mut files);
+    }
+    files.sort();
+    files
+}
+
+fn walk(root: &Path, path: &Path, out: &mut Vec<String>) {
+    if path.is_file() {
+        if let Ok(rel) = path.strip_prefix(root) {
+            out.push(rel.display().to_string());
+        }
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        walk(root, &entry.path(), out);
+    }
+}
+
+fn scenario_names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir.join(SCENARIOS))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .strip_suffix(".json")
+                .map(str::to_string)
+        })
+        .collect();
+    names.sort_by_key(|n| {
+        let digits = n.len() - n.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        (
+            n[..n.len() - digits].to_string(),
+            n[n.len() - digits..].parse::<u64>().unwrap_or(0),
+        )
+    });
+    names
+}
+
+/// Push the page any watched file that changed on disk, by the agent or by
+/// another editor; not the server's own writes.
+async fn watch(studio: Arc<Studio>) {
+    let mut seen: HashMap<PathBuf, SystemTime> = HashMap::new();
+    let mut first = true;
+    loop {
+        for rel in workspace_files(&studio.dir) {
+            let path = studio.dir.join(&rel);
+            let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
+                continue;
+            };
+            let before = seen.insert(path.clone(), modified);
+            if first || before == Some(modified) {
+                continue;
+            }
+            let ours = studio
+                .written
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&path)
+                .is_some_and(|at| *at == modified);
+            if ours {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let by = if studio.agent.lock().unwrap_or_else(|e| e.into_inner()).busy {
+                    "agent"
+                } else {
+                    "disk"
+                };
+                studio.event(
+                    "file/changed",
+                    json!({ "path": rel, "text": text, "by": by }),
+                );
+            }
+        }
+        first = false;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// Build the strategy into `bot.wasm`, streaming the compiler's output and
+/// returning its diagnostics, by file and line.
+fn build(studio: &Studio) -> Result<Value> {
+    studio.output("build", "building the strategy for wasm32-wasip2…");
+    let mut child = Command::new("cargo")
+        .args([
+            "build",
+            "--release",
+            "--lib",
+            "--target",
+            "wasm32-wasip2",
+            "--message-format=json-diagnostic-rendered-ansi",
+        ])
+        .current_dir(&studio.dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("running cargo")?;
+    let stderr = child.stderr.take();
+    let progress = std::thread::scope(|scope| -> Result<(Vec<Value>, Option<PathBuf>)> {
+        if let Some(stderr) = stderr {
+            scope.spawn(|| {
+                for line in std::io::BufReader::new(stderr)
+                    .lines()
+                    .map_while(Result::ok)
+                {
+                    studio.output("build", &line);
+                }
+            });
+        }
+        let mut diagnostics = Vec::new();
+        let mut wasm = None;
+        let stdout = child.stdout.take().context("cargo's output")?;
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            match message["reason"].as_str() {
+                Some("compiler-message") => {
+                    let m = &message["message"];
+                    if let Some(rendered) = m["rendered"].as_str() {
+                        studio.output("build", rendered);
+                    }
+                    if let Some(span) = m["spans"]
+                        .as_array()
+                        .and_then(|s| s.iter().find(|s| s["is_primary"] == json!(true)))
+                    {
+                        diagnostics.push(json!({
+                            "file": span["file_name"],
+                            "line": span["line_start"],
+                            "column": span["column_start"],
+                            "endLine": span["line_end"],
+                            "endColumn": span["column_end"],
+                            "severity": m["level"],
+                            "message": m["message"],
+                        }));
+                    }
+                }
+                Some("compiler-artifact") => {
+                    if let Some(file) = message["filenames"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .find(|f| f.ends_with(".wasm"))
+                    {
+                        wasm = Some(PathBuf::from(file));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok((diagnostics, wasm))
+    });
+    let (diagnostics, wasm) = progress?;
+    let ok = child.wait()?.success() && wasm.is_some();
+    if let (true, Some(wasm)) = (ok, &wasm) {
+        std::fs::copy(wasm, studio.dir.join(mtx_grader::wasm::BOT_WASM))?;
+        studio.output("build", "built bot.wasm");
+    }
+    let built = json!({ "ok": ok, "diagnostics": diagnostics });
+    studio.event("built", built.clone());
+    Ok(built)
+}
+
+/// Whether the strategy changed since `bot.wasm` was built.
+fn stale(dir: &Path) -> bool {
+    let built = std::fs::metadata(dir.join(mtx_grader::wasm::BOT_WASM)).and_then(|m| m.modified());
+    let Ok(built) = built else {
+        return true;
+    };
+    let mut files = Vec::new();
+    walk(dir, &dir.join("src"), &mut files);
+    files.push("Cargo.toml".into());
+    files.iter().any(|f| {
+        std::fs::metadata(dir.join(f))
+            .and_then(|m| m.modified())
+            .is_ok_and(|m| m > built)
+    })
+}
+
+/// Start a session on a scenario: build if the strategy changed, then play
+/// it in the grader, stopping where the page asked.
+async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
+    if let Some(control) = studio
+        .debug
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        && !control.finished()
+    {
+        bail!("a session is running: terminate it first");
+    }
+    let name = args["scenario"]
+        .as_str()
+        .context("launch needs `scenario`")?
+        .to_string();
+    let path = studio.dir.join(SCENARIOS).join(format!("{name}.json"));
+    let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
+    if stale(&studio.dir) {
+        let builder = studio.clone();
+        let built = tokio::task::spawn_blocking(move || build(&builder)).await??;
+        if built["ok"] != json!(true) {
+            bail!("the strategy doesn't build: see the build output");
+        }
+    }
+    let control = Arc::new(Control::new(args, studio.clone()));
+    *studio.debug.lock().unwrap_or_else(|e| e.into_inner()) = Some(control.clone());
+    let studio = studio.clone();
+    // Its own thread and runtime: the grader's session isn't `Send`, and the
+    // observer blocks a worker while the page decides.
+    std::thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                control.finish();
+                studio.event("terminated", json!({ "error": format!("{error:#}") }));
+                return;
+            }
+        };
+        let logs = studio.dir.join("target/mtx-studio-logs");
+        let _ = std::fs::create_dir_all(&logs);
+        let report = runtime.block_on(grade::grade(GradeOptions {
+            snapshot_dir: &studio.snapshot,
+            bot_dir: &studio.dir,
+            scenarios: std::slice::from_ref(&scenario),
+            log_dir: &logs,
+            jobs: 1,
+            first_bot_user: 0,
+            reference_dir: None,
+            anchor_jobs: 1,
+            regimes: None,
+            stop_on_disqualify: false,
+            detail_dir: None,
+            annotations: None,
+            components_only: true,
+            observer: Some(control.clone() as Arc<dyn StepObserver>),
+        }));
+        control.finish();
+        let body = match report {
+            Ok(report) => {
+                let result = &report.scenarios[0];
+                json!({
+                    "scenario": scenario.name,
+                    "pnl_usd": result.session.pnl_usd,
+                    "bound_pnl_usd": result.bound_pnl_usd,
+                    "reference_pnl_usd": scenario.reference_pnl_usd,
+                    "disqualified": result.disqualified,
+                    "stopped": result.session.turns.stopped,
+                    "not_graded": report.not_graded,
+                })
+            }
+            Err(error) => json!({ "error": format!("{error:#}") }),
+        };
+        studio.event("terminated", body);
+    });
+    Ok(json!({ "scenario": name }))
+}
+
+/// A debug session's controls, shared by the page's requests and the
+/// grader's observer, which blocks on them.
+struct Control {
+    state: Mutex<ControlState>,
+    wake: Condvar,
+    studio: Arc<Studio>,
+    /// What `launch` was asked: `restart` asks it again.
+    launch: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Mode {
+    Running,
+    /// Stopped at a step, waiting for the page.
+    Stopped,
+    /// Stop after the next step.
+    Step,
+    /// Stop at the next step there is.
+    Pause,
+    /// Run out the session without stopping or reporting.
+    Terminating,
+    Finished,
+}
+
+struct ControlState {
+    mode: Mode,
+    breakpoints: Breakpoints,
+    ms_per_step: u64,
+    stop_on_entry: bool,
+    /// The last step seen.
+    k: Option<u64>,
+}
+
+#[derive(Default)]
+struct Breakpoints {
+    steps: Vec<u64>,
+    on_orders: bool,
+    on_fill: bool,
+    on_trap: bool,
+}
+
+impl Breakpoints {
+    fn from(args: &Value) -> Self {
+        Self {
+            steps: args["steps"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_u64)
+                .collect(),
+            on_orders: args["onOrders"] == json!(true),
+            on_fill: args["onFill"] == json!(true),
+            on_trap: args["onTrap"] == json!(true),
+        }
+    }
+}
+
+impl Control {
+    fn new(args: &Value, studio: Arc<Studio>) -> Self {
+        Self {
+            state: Mutex::new(ControlState {
+                mode: Mode::Running,
+                breakpoints: Breakpoints::from(&args["breakpoints"]),
+                ms_per_step: args["msPerStep"].as_u64().unwrap_or(0),
+                stop_on_entry: args["stopOnEntry"] == json!(true),
+                k: None,
+            }),
+            wake: Condvar::new(),
+            studio,
+            launch: args.clone(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ControlState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn command(&self, command: &str, args: &Value) {
+        let mut state = self.lock();
+        if state.mode == Mode::Finished {
+            return;
+        }
+        match command {
+            "continue" => state.mode = Mode::Running,
+            "next" => state.mode = Mode::Step,
+            "pause" if state.mode == Mode::Running => state.mode = Mode::Pause,
+            "terminate" => state.mode = Mode::Terminating,
+            "setBreakpoints" => state.breakpoints = Breakpoints::from(args),
+            "setSpeed" => state.ms_per_step = args["msPerStep"].as_u64().unwrap_or(0),
+            _ => {}
+        }
+        self.wake.notify_all();
+    }
+
+    fn status(&self) -> Value {
+        let state = self.lock();
+        json!({
+            "state": match state.mode {
+                Mode::Stopped => "stopped",
+                Mode::Terminating | Mode::Finished => "terminated",
+                _ => "running",
+            },
+            "k": state.k,
+            "msPerStep": state.ms_per_step,
+        })
+    }
+
+    fn finished(&self) -> bool {
+        self.lock().mode == Mode::Finished
+    }
+
+    fn finish(&self) {
+        self.lock().mode = Mode::Finished;
+        self.wake.notify_all();
+    }
+
+    /// Stop, tell the page, and wait for it to say go.
+    fn stop(
+        &self,
+        mut state: std::sync::MutexGuard<'_, ControlState>,
+        reason: &str,
+        k: Option<u64>,
+    ) {
+        state.mode = Mode::Stopped;
+        self.studio
+            .event("stopped", json!({ "reason": reason, "k": k }));
+        while state.mode == Mode::Stopped {
+            state = self.wake.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+impl StepObserver for Control {
+    fn started(&self, session: &Session, printed: &[String], failed: Option<&str>) {
+        self.studio.event(
+            "started",
+            json!({ "session": session_json(session), "printed": printed, "failed": failed }),
+        );
+        let state = self.lock();
+        if state.stop_on_entry && state.mode == Mode::Running {
+            self.stop(state, "entry", None);
+        }
+    }
+
+    fn step(&self, trace: &StepTrace) {
+        let mut state = self.lock();
+        if state.mode == Mode::Terminating {
+            return;
+        }
+        let k = trace.market.k;
+        state.k = Some(k);
+        drop(state);
+        self.studio.event("step", trace_json(trace));
+        let state = self.lock();
+        let b = &state.breakpoints;
+        let trapped = trace
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("trapped"));
+        let hit = b.steps.contains(&(k + 1))
+            || (b.on_orders && !trace.intents.is_empty())
+            || (b.on_fill
+                && trace
+                    .sent
+                    .iter()
+                    .any(|(a, r)| r.is_ok() && !matches!(a, Action::CancelAll)))
+            || (b.on_trap && trapped);
+        match state.mode {
+            Mode::Step => self.stop(state, "step", Some(k)),
+            Mode::Pause => self.stop(state, "pause", Some(k)),
+            Mode::Running if hit => {
+                self.stop(state, if trapped { "trap" } else { "breakpoint" }, Some(k))
+            }
+            Mode::Running if state.ms_per_step > 0 => {
+                let pace = Duration::from_millis(state.ms_per_step);
+                // Paced: a pause or a step arriving meanwhile still stops here.
+                let (state, _) = self
+                    .wake
+                    .wait_timeout(state, pace)
+                    .unwrap_or_else(|e| e.into_inner());
+                match state.mode {
+                    Mode::Pause => self.stop(state, "pause", Some(k)),
+                    Mode::Step => self.stop(state, "step", Some(k)),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn session_json(s: &Session) -> Value {
+    json!({
+        "symbol": s.symbol,
+        "steps": s.steps,
+        "slots_per_step": s.slots_per_step,
+        "start_slot": s.start_slot,
+        "end_slot": s.end_slot,
+        "start_mark": s.start_mark,
+        "start_oracle": s.start_oracle,
+        "cap": s.cap,
+        "max_drawdown": s.max_drawdown,
+        "vars": s.vars,
+    })
+}
+
+fn side(side: Side) -> &'static str {
+    match side {
+        Side::Bid => "bid",
+        Side::Ask => "ask",
+    }
+}
+
+fn intent_json(intent: &Intent) -> Value {
+    match intent {
+        Intent::Target {
+            position,
+            execution,
+        } => json!({
+            "kind": "target", "position": position,
+            "slice": execution.slice, "maxPerStep": execution.max_per_step,
+            "slippageBps": execution.slippage_bps,
+        }),
+        Intent::Quote { bid, ask, size } => {
+            json!({ "kind": "quote", "bid": bid, "ask": ask, "size": size })
+        }
+        Intent::Market {
+            side: s,
+            size,
+            limit,
+        } => json!({ "kind": "market", "side": side(*s), "size": size, "limit": limit }),
+        Intent::Limit {
+            side: s,
+            price,
+            size,
+        } => json!({ "kind": "limit", "side": side(*s), "price": price, "size": size }),
+        Intent::CancelAll => json!({ "kind": "cancelAll" }),
+    }
+}
+
+fn action_json(action: &Action) -> Value {
+    match action {
+        Action::Market {
+            side: s,
+            size,
+            limit,
+        } => json!({ "kind": "market", "side": side(*s), "size": size, "limit": limit }),
+        Action::Limit {
+            side: s,
+            price,
+            size,
+        } => json!({ "kind": "limit", "side": side(*s), "price": price, "size": size }),
+        Action::CancelAll => json!({ "kind": "cancelAll" }),
+    }
+}
+
+/// A step's trace, as the `step` event carries it.
+fn trace_json(trace: &StepTrace) -> Value {
+    let m = &trace.market;
+    json!({
+        "k": m.k,
+        "steps": trace.steps,
+        "market": {
+            "k": m.k, "slot": m.slot, "last": m.last,
+            "steps_left": m.steps_left, "slots_left": m.slots_left,
+            "mark": m.mark, "oracle": m.oracle, "index": m.index,
+            "best_bid": m.best_bid, "best_ask": m.best_ask,
+            "position": { "size": m.position.size, "entry_usd": m.position.entry_usd },
+            "cap": m.cap, "max_drawdown": m.max_drawdown,
+            "resting_bids": m.resting_bids, "resting_asks": m.resting_asks,
+            "pnl": m.pnl, "peak_pnl": m.peak_pnl, "drawdown": m.drawdown,
+        },
+        "printed": trace.printed,
+        "failed": trace.failed,
+        "intents": trace.intents.iter().map(intent_json).collect::<Vec<_>>(),
+        "notes": trace.notes,
+        "sent": trace.sent.iter().map(|(a, r)| json!({
+            "action": action_json(a),
+            "ok": r.is_ok(),
+            "error": r.as_ref().err(),
+        })).collect::<Vec<_>>(),
+        "fuel": trace.fuel,
+        "rpc_calls": trace.rpc_calls,
+    })
+}
+
+#[derive(Default)]
+struct AgentState {
+    pick: Option<Agent>,
+    model: Option<String>,
+    client: Option<(Arc<AgentClient>, String)>,
+    /// A turn is running: files changing now are the agent's.
+    busy: bool,
+}
+
+fn agent_id(agent: Agent) -> &'static str {
+    match agent {
+        Agent::ClaudeCode => "claude-code",
+        Agent::Codex => "codex",
+    }
+}
+
+fn agent_named(id: &str) -> Option<Agent> {
+    match id {
+        "claude-code" => Some(Agent::ClaudeCode),
+        "codex" => Some(Agent::Codex),
+        _ => None,
+    }
+}
+
+fn agent_pick(studio: &Studio) -> Value {
+    let state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+    json!({ "agent": state.pick.map(agent_id), "model": state.model, "busy": state.busy })
+}
+
+/// The coding agents this machine can run, and whether each is ready.
+fn discover_agents() -> Vec<Value> {
+    let npx = crate::author::on_path("npx");
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    [Agent::ClaudeCode, Agent::Codex]
+        .into_iter()
+        .map(|agent| {
+            let (program, package) = agent.adapter();
+            let installed = crate::author::on_path(program);
+            let (key, login, cli, models): (&str, PathBuf, &str, &[&str]) = match agent {
+                Agent::ClaudeCode => (
+                    "ANTHROPIC_API_KEY",
+                    home.join(".claude"),
+                    "claude",
+                    &["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5"],
+                ),
+                Agent::Codex => ("OPENAI_API_KEY", home.join(".codex/auth.json"), "codex", &[]),
+            };
+            let authenticated = std::env::var_os(key).is_some() || login.exists();
+            json!({
+                "id": agent_id(agent),
+                "name": agent.name(),
+                "adapter": program,
+                "package": package,
+                "available": installed || npx,
+                "via": if installed { "path" } else if npx { "npx" } else { "missing" },
+                "authenticated": authenticated,
+                "auth": if std::env::var_os(key).is_some() { format!("{key} set") } else if login.exists() { format!("{cli} login") } else { format!("set {key} or run `{cli}` to log in") },
+                "models": models,
+            })
+        })
+        .collect()
+}
+
+/// What the agent is told about the workspace, before the first prompt.
+fn primer(studio: &Studio) -> String {
+    format!(
+        "You are working in an mtx studio workspace: a trading strategy for the machine-trading bench, \
+and the market scenarios it plays.\n\
+- The strategy is a Rust crate (src/lib.rs) on mtx-kit, built into a WebAssembly component: \
+`impl Strategy` with `start`, `step` and `end`, and `mtx_kit::export!`. The guide: \
+https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html\n\
+- Scenarios are JSON files in scenarios/ (the {task} task's format: a `path` of waypoints, \
+`slot` and `level_pct`, and a `mandate`).\n\
+- The person drives the studio: they build and play the strategy from the page, and see each step. \
+Edit the files they ask about; don't run the strategy yourself, and keep changes small and explained.\n\
+- Each message may carry context from the page: the open file, the scenario, the last build's \
+errors, and the step the session stopped at.",
+        task = studio.task
+    )
+}
+
+/// One prompt to the agent, its reply streamed to the page.
+fn compose(studio: &Studio, text: &str, context: &Value) -> Result<()> {
+    let (client, session) = {
+        let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+        if state.busy {
+            bail!("the agent is still answering: cancel it first");
+        }
+        let pick = state.pick.unwrap_or(Agent::ClaudeCode);
+        if state.client.is_none() {
+            studio.output("agent", &format!("starting {}…", pick.name()));
+            let log = std::fs::File::create(studio.dir.join("target/mtx-studio-agent.log"))
+                .or_else(|_| {
+                    std::fs::File::create(std::env::temp_dir().join("mtx-studio-agent.log"))
+                })?;
+            let client = AgentClient::spawn_with_stderr(
+                pick.command(state.model.as_deref()),
+                PermissionPolicy::AllowAll,
+                log.into(),
+            )
+            .with_context(|| {
+                let (program, package) = pick.adapter();
+                format!("starting {program}; install it with `npm install -g {package}`")
+            })?;
+            client.initialize().context("ACP initialize")?;
+            let session = client
+                .new_session(&studio.dir, &[])
+                .context("ACP session/new")?;
+            state.client = Some((Arc::new(client), session));
+            state.busy = true;
+            let (client, session) = state
+                .client
+                .as_ref()
+                .map(|(c, s)| (c.clone(), s.clone()))
+                .unwrap_or_else(|| unreachable!());
+            drop(state);
+            let first = format!("{}\n\n{}", primer(studio), prompt_text(text, context));
+            return run(studio, &client, &session, &first);
+        }
+        state.busy = true;
+        state
+            .client
+            .as_ref()
+            .map(|(c, s)| (c.clone(), s.clone()))
+            .unwrap_or_else(|| unreachable!())
+    };
+    run(studio, &client, &session, &prompt_text(text, context))
+}
+
+/// The person's message, with the page's context after it.
+fn prompt_text(text: &str, context: &Value) -> String {
+    if context.is_null() || context.as_object().is_some_and(|o| o.is_empty()) {
+        return text.to_string();
+    }
+    format!(
+        "{text}\n\n<studio-context>\n{}\n</studio-context>",
+        serde_json::to_string_pretty(context).unwrap_or_default()
+    )
+}
+
+/// Stream one turn to the page.
+fn run(studio: &Studio, client: &Arc<AgentClient>, session: &str, prompt: &str) -> Result<()> {
+    let result = (|| -> Result<()> {
+        let mut turn = client.prompt(session, prompt)?;
+        // ACP updates a tool call by its id, often without its title: the
+        // page gets the whole call each time.
+        let mut calls: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        loop {
+            match turn.recv_timeout(Duration::from_secs(600))? {
+                TurnEvent::Text(chunk) => studio.event(
+                    "composer/message",
+                    json!({ "role": "agent", "text": chunk, "done": false }),
+                ),
+                TurnEvent::Thought(chunk) => studio.event(
+                    "composer/message",
+                    json!({ "role": "thought", "text": chunk, "done": false }),
+                ),
+                TurnEvent::ToolCall { id, title, status } => {
+                    let call = calls.entry(id.clone()).or_default();
+                    if title.is_some() {
+                        call.0 = title;
+                    }
+                    if status.is_some() {
+                        call.1 = status;
+                    }
+                    studio.event(
+                        "composer/tool",
+                        json!({ "id": id, "title": call.0, "status": call.1.as_deref().unwrap_or("pending") }),
+                    );
+                }
+                TurnEvent::Done(reason) => {
+                    studio.event(
+                        "composer/message",
+                        json!({ "role": "agent", "text": "", "done": true, "stop": format!("{reason:?}") }),
+                    );
+                    return Ok(());
+                }
+                TurnEvent::Failed(error) => return Err(error.into()),
+            }
+        }
+    })();
+    let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+    state.busy = false;
+    if result.is_err() {
+        state.client = None;
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn breakpoints_read_the_page_s_arguments() {
+        let b = Breakpoints::from(&json!({ "steps": [3, 40], "onOrders": true }));
+        assert_eq!(b.steps, [3, 40]);
+        assert!(b.on_orders && !b.on_fill && !b.on_trap);
+    }
+
+    #[test]
+    fn a_prompt_carries_the_page_s_context_after_it() {
+        assert_eq!(prompt_text("hi", &json!({})), "hi");
+        let text = prompt_text("why no buy?", &json!({ "step": 33 }));
+        assert!(
+            text.starts_with("why no buy?\n\n<studio-context>"),
+            "{text}"
+        );
+        assert!(text.contains("\"step\": 33"), "{text}");
+    }
+
+    #[test]
+    fn agents_are_named_both_ways() {
+        for agent in [Agent::ClaudeCode, Agent::Codex] {
+            assert_eq!(agent_named(agent_id(agent)), Some(agent));
+        }
+        assert_eq!(discover_agents().len(), 2);
+    }
+}
