@@ -81,6 +81,18 @@ pub struct Source {
     pub role: String,
     pub name: String,
     pub address: String,
+    /// For a program: its ProgramData account, the slot it was deployed at and
+    /// the SHA-256 of its code, as the build saw them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub programdata: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deploy_slot: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_sha256: Option<String>,
+    /// The snapshot whose ProgramData the build restored (`pin_from`), if
+    /// the recipe pins this program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_from: Option<String>,
 }
 
 /// A mint or market a recipe made.
@@ -371,7 +383,7 @@ pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     std::fs::write(path, contents).map_err(io_error(path))
 }
 
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+pub(crate) fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
     Ok(serde_json::from_str(&contents)?)
 }

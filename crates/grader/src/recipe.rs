@@ -96,6 +96,15 @@ pub struct Declared {
     /// manifest.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Programs only: the SHA-256 (hex) of the ProgramData's code. The build
+    /// fails when the program on the chain it builds from differs.
+    #[serde(default)]
+    pub expect_code_sha256: Option<String>,
+    /// Programs only: a snapshot directory, relative to the recipe, whose
+    /// ProgramData account replaces the one on the chain. Mainnet programs
+    /// are upgraded in place; this keeps the code the tasks were built on.
+    #[serde(default)]
+    pub pin_from: Option<PathBuf>,
 }
 
 /// What a `phoenix-eternal` action trades.
@@ -133,6 +142,12 @@ pub struct BuildOptions {
     pub out_dir: Option<PathBuf>,
     /// The datasource to fork. May embed an API key; only its host is recorded.
     pub fork_rpc_url: String,
+    /// Overwrite a snapshot already in the output directory.
+    pub force: bool,
+    /// Mixed into every key a simulated market uses, and never recorded: with
+    /// the same secret a rebuild gets the same keys, and without it nobody
+    /// can derive them. A random one by default.
+    pub secret: Option<String>,
 }
 
 impl Recipe {
@@ -144,6 +159,14 @@ impl Recipe {
         let mut names = std::collections::BTreeSet::new();
         for d in self.programs.iter().chain(&self.accounts) {
             parse_key(&d.address)?;
+            if !self.programs.iter().any(|p| std::ptr::eq(p, d))
+                && (d.expect_code_sha256.is_some() || d.pin_from.is_some())
+            {
+                return Err(invalid(format!(
+                    "{}: expect_code_sha256 and pin_from are for programs",
+                    d.name
+                )));
+            }
             if !names.insert(d.name.as_str()) {
                 return Err(invalid(format!("{:?} is declared twice", d.name)));
             }
@@ -165,10 +188,7 @@ fn parse_key(text: &str) -> Result<Pubkey> {
 
 /// The recipe file's SHA-256, hex.
 pub fn recipe_hash(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    hex(&Sha256::digest(text.as_bytes()))
 }
 
 /// A number in a TOML document at a dotted key.
@@ -209,6 +229,8 @@ fn resolve_price(input: &PriceInput, dir: &Path) -> Result<Decimal> {
 /// What a build knows while its actions run.
 struct World<'a> {
     recipe: &'a Recipe,
+    /// The build's secret and the recipe's name: what simulated keys derive from.
+    namespace: String,
     dir: &'a Path,
     surfnet: &'a Surfnet,
     rpc: RpcClient,
@@ -263,7 +285,7 @@ impl World<'_> {
                 self.price = Some(spot_exercise(self.surfnet, &self.rpc).await?);
             }
             Action::CreateMint(spec) => {
-                let address = simulated::create_mint(self.surfnet, &self.recipe.name, spec)?;
+                let address = simulated::create_mint(self.surfnet, &self.namespace, spec)?;
                 self.mints.insert(spec.name.clone(), address);
                 self.record(
                     "mint",
@@ -278,7 +300,7 @@ impl World<'_> {
                 let made = simulated::phoenix_v1_market(
                     self.surfnet,
                     &self.rpc,
-                    &self.recipe.name,
+                    &self.namespace,
                     spec,
                     self.mint(&spec.base)?,
                     self.mint(&spec.quote)?,
@@ -299,7 +321,7 @@ impl World<'_> {
                 let made = simulated::openbook_v2_market(
                     self.surfnet,
                     &self.rpc,
-                    &self.recipe.name,
+                    &self.namespace,
                     spec,
                     self.mint(&spec.base)?,
                     self.mint(&spec.quote)?,
@@ -423,6 +445,117 @@ fn without_surfnet_keys(
     accounts
 }
 
+/// Start the surfnet of a build that begins from another snapshot. It makes a
+/// block for each transaction and none otherwise, so what the warm-up writes
+/// (an order's placement time, a slot) does not depend on how long the machine
+/// takes: two builds with the same secret export the same bytes.
+async fn start_from_snapshot(dir: &Path) -> Result<(Surfnet, Manifest)> {
+    let manifest: Manifest = snapshot::read_json(&dir.join(MANIFEST_FILE))?;
+    let accounts_file = snapshot::surfnet_file(dir, &manifest)?;
+    let surfnet = start_surfnet(|| {
+        Surfnet::builder()
+            .offline(true)
+            .snapshot_file(accounts_file.clone())
+            .block_production_mode(BlockProductionMode::Transaction)
+            .slot_time_ms(SLOT_TIME_MS)
+            .instruction_profiling(false)
+            .max_profiles(1)
+    })
+    .await?;
+    surfnet
+        .cheatcodes()
+        .time_travel_to_slot_at(manifest.fork_slot, manifest.created_at_unix * 1_000)?;
+    Ok((surfnet, manifest))
+}
+
+/// A program's ProgramData account: where the loader keeps its code. Its
+/// 45-byte header holds the deploy slot.
+fn program_data_address(rpc: &RpcClient, program: &Pubkey) -> Result<Pubkey> {
+    let account = rpc.get_account(program)?;
+    if account.data.len() != 36 || account.data[..4] != [2, 0, 0, 0] {
+        return Err(invalid(format!(
+            "{program} is not an upgradeable program (a ProgramData address is expected)"
+        )));
+    }
+    Ok(Pubkey::new_from_array(
+        account.data[4..36].try_into().expect("32 bytes"),
+    ))
+}
+
+/// One account of a snapshot directory: `(lamports, data, owner)`.
+fn snapshot_account(dir: &Path, address: &Pubkey) -> Result<(u64, Vec<u8>, Pubkey)> {
+    use base64::Engine;
+    let manifest: Manifest = snapshot::read_json(&dir.join(MANIFEST_FILE))?;
+    let file = snapshot::surfnet_file(dir, &manifest)?;
+    let text = std::fs::read_to_string(&file).map_err(io_error(&file))?;
+    let all: serde_json::Value = serde_json::from_str(&text)?;
+    let missing = || invalid(format!("{address} is not in the snapshot {}", dir.display()));
+    let entry = all.get(address.to_string()).ok_or_else(missing)?;
+    let text_of = |field: &str| entry[field].as_str().map(str::to_string);
+    let lamports = entry["lamports"]
+        .as_u64()
+        .or_else(|| text_of("lamports").and_then(|l| l.parse().ok()))
+        .ok_or_else(missing)?;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(text_of("data").ok_or_else(missing)?)
+        .map_err(|e| invalid(format!("{address}: {e}")))?;
+    let owner = text_of("owner").ok_or_else(missing)?;
+    Ok((lamports, data, parse_key(&owner)?))
+}
+
+/// Restores a pinned program's code, then reads what the build now sees of it
+/// and checks the expected hash.
+fn pin_and_record(
+    surfnet: &Surfnet,
+    rpc: &RpcClient,
+    dir: &Path,
+    d: &Declared,
+    address: &Pubkey,
+) -> Result<Source> {
+    let programdata = program_data_address(rpc, address)?;
+    let mut pinned_from = None;
+    if let Some(rel) = &d.pin_from {
+        let src = dir.join(rel);
+        let (lamports, data, owner) = snapshot_account(&src, &programdata)?;
+        surfnet
+            .cheatcodes()
+            .set_account(&programdata, lamports, &data, &owner)?;
+        pinned_from = Some(
+            src.canonicalize()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_else(|| rel.display().to_string()),
+        );
+    }
+    let account = rpc.get_account(&programdata)?;
+    if account.data.len() < 45 || account.data[..4] != [3, 0, 0, 0] {
+        return Err(invalid(format!("{programdata} is not a ProgramData account")));
+    }
+    let deploy_slot = u64::from_le_bytes(account.data[4..12].try_into().expect("8 bytes"));
+    let code_sha256 = hex(&Sha256::digest(&account.data[45..]));
+    if let Some(expected) = &d.expect_code_sha256
+        && *expected != code_sha256
+    {
+        return Err(invalid(format!(
+            "{} ({address}) runs code {code_sha256} (deployed at slot {deploy_slot}), not the expected {expected}; pin it with `pin_from` or update the recipe",
+            d.name
+        )));
+    }
+    Ok(Source {
+        role: d.kind.clone().unwrap_or_else(|| "program".into()),
+        name: d.name.clone(),
+        address: address.to_string(),
+        programdata: Some(programdata.to_string()),
+        deploy_slot: Some(deploy_slot),
+        code_sha256: Some(code_sha256),
+        pinned_from,
+    })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Build the snapshot `recipe_path` describes and write it beside the recipe
 /// (or to `opts.out_dir`).
 pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
@@ -431,17 +564,31 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
     recipe.validate()?;
     let dir = recipe_path.parent().unwrap_or(Path::new("."));
     let out_dir = opts.out_dir.unwrap_or_else(|| dir.to_path_buf());
+    let existing = out_dir.join(snapshot::SURFNET_GZ);
+    if existing.exists() && !opts.force {
+        return Err(invalid(format!(
+            "{} already exists: pass --out for another directory, or --force to replace it",
+            existing.display()
+        )));
+    }
+    let secret = opts.secret.unwrap_or_else(|| {
+        format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        )
+    });
 
-    let (surfnet, source_manifest, fork_host) = match &recipe.fork.from_snapshot {
+    let (surfnet, source_manifest, source_dir, fork_host) = match &recipe.fork.from_snapshot {
         Some(rel) => {
             let src = dir.join(rel);
-            let (surfnet, manifest) = snapshot::start_snapshot(&src, Access::Open).await?;
+            let (surfnet, manifest) = start_from_snapshot(&src).await?;
             let name = src
                 .canonicalize()
                 .ok()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_default();
-            (surfnet, Some(manifest), format!("snapshot:{name}"))
+            (surfnet, Some(manifest), Some(src), format!("snapshot:{name}"))
         }
         None => {
             let url = opts.fork_rpc_url.clone();
@@ -452,7 +599,7 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
                     .slot_time_ms(SLOT_TIME_MS)
             })
             .await?;
-            (surfnet, None, host_of(&opts.fork_rpc_url))
+            (surfnet, None, None, host_of(&opts.fork_rpc_url))
         }
     };
     chain::forward_surfnet_logs(&surfnet);
@@ -460,23 +607,31 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
 
     // Declared programs and accounts first, so they load from the fork.
     let mut sources = Vec::new();
-    for (role, list) in [("program", &recipe.programs), ("account", &recipe.accounts)] {
-        for d in list {
-            let address = parse_key(&d.address)?;
-            let account = rpc.get_account(&address)?;
-            if role == "program" && !account.executable {
-                return Err(invalid(format!("{} ({address}) is not executable", d.name)));
-            }
-            sources.push(Source {
-                role: d.kind.clone().unwrap_or_else(|| role.into()),
-                name: d.name.clone(),
-                address: address.to_string(),
-            });
+    for d in &recipe.programs {
+        let address = parse_key(&d.address)?;
+        let account = rpc.get_account(&address)?;
+        if !account.executable {
+            return Err(invalid(format!("{} ({address}) is not executable", d.name)));
         }
+        sources.push(pin_and_record(&surfnet, &rpc, dir, d, &address)?);
+    }
+    for d in &recipe.accounts {
+        let address = parse_key(&d.address)?;
+        rpc.get_account(&address)?;
+        sources.push(Source {
+            role: d.kind.clone().unwrap_or_else(|| "account".into()),
+            name: d.name.clone(),
+            address: address.to_string(),
+            programdata: None,
+            deploy_slot: None,
+            code_sha256: None,
+            pinned_from: None,
+        });
     }
 
     let mut world = World {
         recipe: &recipe,
+        namespace: format!("{secret}/{}", recipe.name),
         dir,
         surfnet: &surfnet,
         rpc,
@@ -519,8 +674,15 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
     }
     std::fs::create_dir_all(&out_dir).map_err(io_error(&out_dir))?;
     write_gz(&out_dir.join(snapshot::SURFNET_GZ), &accounts)?;
+    let exchange_out = out_dir.join(snapshot::EXCHANGE_FILE);
     if let Some(exchange) = &exchange {
-        write_json(&out_dir.join(snapshot::EXCHANGE_FILE), exchange)?;
+        write_json(&exchange_out, exchange)?;
+    } else if let Some(src) = &source_dir {
+        // A Phoenix Eternal snapshot's metadata comes along from its source.
+        let from = src.join(snapshot::EXCHANGE_FILE);
+        if from.is_file() && from.canonicalize().ok() != exchange_out.canonicalize().ok() {
+            std::fs::copy(&from, &exchange_out).map_err(io_error(&from))?;
+        }
     }
     let manifest = Manifest {
         created_at_unix,

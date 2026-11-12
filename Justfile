@@ -49,8 +49,9 @@ install bin="mtx":
     esac
 
 # Build a snapshot from its recipe: fork mainnet, warm up, export.
-snapshot-build name:
-    cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml
+# Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+snapshot-build name *flags:
+    cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
 # Replay a snapshot offline and trade through a scripted crash.
 snapshot-verify dir=("snapshots/" + snapshot):
