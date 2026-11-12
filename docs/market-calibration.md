@@ -33,8 +33,8 @@ public data pulled on 2026-11-11 and 2026-11-12.
 
 | File | Fair value from | Main limits |
 |---|---|---|
-| `sol-usd.20261112.f34a5413` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
-| `spcx.20261112.35b73974` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
+| `sol-usd.20261112.60758f84` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
+| `spcx.20261112.7fbcbe1c` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
 
 Each file lists its sources and limits under `[meta]`.
 
@@ -119,8 +119,8 @@ lead_seconds = 60
 ```
 
 ```sh
-mtx market-cal show calibration/market/spcx.20261112.35b73974.toml
-mtx market-cal generate --calibration calibration/market/spcx.20261112.35b73974.toml \
+mtx market-cal show calibration/market/spcx.20261112.7fbcbe1c.toml
+mtx market-cal generate --calibration calibration/market/spcx.20261112.7fbcbe1c.toml \
   --template bench/tasks/<task>/environment/practice/<one>.json \
   --spec open.toml --out /tmp/drawn --prefix open --count 6 --seed 7
 ```
@@ -215,8 +215,8 @@ judged against them on returns.
 `passed` is true only on `pass`.
 
 ```sh
-mtx market-cal check model --calibration calibration/market/sol-usd.20261112.f34a5413.toml
-mtx market-cal check market-making --calibration calibration/market/sol-usd.20261112.f34a5413.toml
+mtx market-cal check model --calibration calibration/market/sol-usd.20261112.60758f84.toml
+mtx market-cal check market-making --calibration calibration/market/sol-usd.20261112.60758f84.toml
 mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file>
 ```
 

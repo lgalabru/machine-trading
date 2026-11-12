@@ -421,6 +421,37 @@ pub struct Realism {
     /// must reject. A check whose band holds its null has no power.
     pub null: Nulls,
     pub bands: Bands,
+    /// The gated checks whose statistic the model is fitted to (so they
+    /// are in-sample for the model's own sessions), and those it isn't.
+    #[serde(default)]
+    pub fitted: Vec<String>,
+    #[serde(default)]
+    pub out_of_fit: Vec<String>,
+    /// Longer real windows, for volatility clustering within a session
+    /// where the main windows are too short to show it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long: Option<LongClustering>,
+}
+
+/// The |r| ACF within longer real windows (each scaled to unit RMS), its
+/// sampling spread over `spread_windows` windows, and its value on the
+/// same windows shuffled.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LongClustering {
+    pub source: String,
+    pub windows: u64,
+    pub bar_seconds: f64,
+    pub window_bars: usize,
+    pub cluster_lags: Vec<usize>,
+    /// Lags reported but not gated: the model doesn't reproduce them (see
+    /// the file's limits).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub info_lags: Vec<usize>,
+    pub reference: Vec<f64>,
+    pub spread_windows: usize,
+    pub spread_sd: Vec<f64>,
+    pub null: Vec<f64>,
 }
 
 /// The statistics on wrong versions of the real windows (built by the
@@ -476,6 +507,9 @@ pub struct Spread {
     pub draws: usize,
     /// How many standard deviations of the difference a band spans.
     pub sigmas: f64,
+    /// Why that many: the family-wise false-fail rate it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigmas_source: Option<String>,
     pub log_sd: LogSpread,
     pub sd: DiffSpread,
 }
@@ -733,6 +767,22 @@ impl Realism {
         }
         if self.null.clustering.len() != self.cluster_lags.len() {
             return Err("realism.null.clustering needs one value per cluster lag".into());
+        }
+        if let Some(long) = &self.long {
+            let n = long.cluster_lags.len();
+            positive("realism.long.bar_seconds", long.bar_seconds)?;
+            if n == 0
+                || long.reference.len() != n
+                || long.spread_sd.len() != n
+                || long.null.len() != n
+                || long.spread_windows == 0
+                || long.window_bars <= long.cluster_lags.iter().copied().max().unwrap_or(0)
+            {
+                return Err(
+                    "realism.long needs one reference, spread_sd and null per lag, and windows longer than the lags"
+                        .into(),
+                );
+            }
         }
         if self.window_bars < 2 * self.agg_bars.max(self.cluster_bars).max(self.vol_bars) {
             return Err("realism: a window must hold at least two aggregated returns".into());
