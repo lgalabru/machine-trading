@@ -3,8 +3,8 @@
 Fixed bots, from harmful to ideal, graded on fresh hidden sets. A task whose
 scenarios are right ranks them the way a trader would, on every set; a
 scenario change that reorders them fails, whatever it does to the models'
-scores. `just ladder <task>` (`flash-crash`, `market-making`,
-`funding-carry` or `weekend-gap`) draws `sets` hidden sets, each from a secret of its own,
+scores. `just ladder <task>` (a task's folder name, or its ladder's name: the `ladder`
+in its task.toml's `[metadata.mtx]`) draws `sets` hidden sets, each from a secret of its own,
 grades every rung on each with
 `mtx grade --draw`, and checks the task's `<task>.json`:
 

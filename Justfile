@@ -1,6 +1,10 @@
 # Loads MTX_FORK_RPC_URL for snapshot-prepare.
 set dotenv-load := true
 
+# `references`, `reference_bots`, `ladders` and `leak_needles`, written from the
+# task folders by `mtx task sync`.
+import 'bench/tasks/tasks.just'
+
 snapshot := "phoenix-spcx-2026-10-29"
 spot_snapshot := "sol-usdc-spot-2026-11-11"
 registry := "ghcr.io/solana-foundation"
@@ -8,8 +12,6 @@ image := "machine-trading"
 # Bump on every image change that tasks should pick up.
 tag := "0.12.0"
 tasks := "bench/tasks"
-# Each task and the bot its oracle runs, as `<task>=<bot>`.
-references := "flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend"
 # The harness versions `just bench` runs, pinned so results compare: each
 # provider's own coding agent, Claude Code for Anthropic models and Codex for
 # OpenAI's.
@@ -56,11 +58,12 @@ snapshot-prepare out:
 snapshot-verify dir=("snapshots/" + snapshot):
     cargo run --release -- snapshot verify --dir {{dir}}
 
-# Build the bots: the process bots' bin/bot, the components' bot.wasm.
+# Build the bots: the process bots' bin/bot, the components' bot.wasm. Every
+# task's reference, and the starter and the ladder's own bots.
 bots:
     #!/usr/bin/env bash
     set -euo pipefail
-    for bot in starter reference maker dip-buyer carry carry-gbm weekend; do
+    for bot in starter dip-buyer carry-gbm {{reference_bots}}; do
       just --justfile "bots/$bot/Justfile" build
     done
 
@@ -78,6 +81,14 @@ spot-smoke:
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
+
+# Write the lists kept from the task folders (bench/tasks/*/task.toml), or
+# fail if they are stale: the Justfile's, the image's, the dataset's, the READMEs'.
+tasks-sync:
+    cargo run --release -- task sync
+
+tasks-check:
+    cargo run --release -q -- task check
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
@@ -315,22 +326,15 @@ harbor-checks task="flash-crash-spcx" surfpool="": (image surfpool) check-soluti
 leak-audit:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Lines only the answers hold: the reference bots' and the ladder's.
-    needles=(
-      "ride each move while it runs"
-      "then fade it once it stops"
-      "one tick inside the competitor"
-      "backs off after one-sided fills"
-      "fading the premiums the crowd's positioning opened"
-      "hold the gap into the reopen"
-      "mtx-ladder-rungs"
-    )
+        IFS='|' read -ra needles <<< "{{leak_needles}}|mtx-ladder-rungs"
     image="{{registry}}/{{image}}:{{tag}}"
     # Without the image every probe below fails, which reads as no leak.
     docker image inspect "$image" > /dev/null 2>&1 \
       || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
     found=0
-    for path in /opt/mtx/anchors /tests /solution /opt/mtx/sdk/bots/reference /opt/mtx/sdk/bots/maker /opt/mtx/sdk/bots/carry /opt/mtx/sdk/bots/weekend; do
+    paths=(/opt/mtx/anchors /tests /solution)
+    for bot in {{reference_bots}}; do paths+=("/opt/mtx/sdk/bots/$bot"); done
+    for path in "${paths[@]}"; do
       if docker run --rm --entrypoint test "$image" -e "$path"; then
         echo "LEAK: $image holds $path"; found=1
       fi
@@ -365,6 +369,9 @@ clock-probe task:
 ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     #!/usr/bin/env bash
     set -euo pipefail
+    # A task's folder name or its ladder's name.
+    ladder="{{task}}"
+    for pair in {{ladders}}; do [ "${pair%%=*}" = "{{task}}" ] && ladder="${pair#*=}"; done
     cargo build --release -q
     just bots > /dev/null
     (cd bench/checks/ladder/rungs && CARGO_TARGET_DIR="$PWD/../../../../target/ladder-rungs" \
@@ -373,8 +380,8 @@ ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     for bin in blind momentum regime-oracle flow-oracle quoter; do
       cp "target/ladder-rungs/release/$bin" bench/checks/ladder/bin/
     done
-    for bot in bench/checks/exploits/{{task}}-*/; do
+    for bot in bench/checks/exploits/$ladder-*/; do
       CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
-    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx target/release/mtx \
+    python3 -I bench/checks/ladder/ladder.py "$ladder" --mtx target/release/mtx \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}}
