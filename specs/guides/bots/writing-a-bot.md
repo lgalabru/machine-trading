@@ -134,6 +134,13 @@ trading key's public key (`authority`), the task's variables
 | `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
 | `resting_bids`, `resting_asks` | What you have resting, in SPCX: every bid and ask the grader placed since your last cancel or quote, filled or not. |
 | `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
+| `sends` | What became of each order your last sheet planned: its line on the sheet, the venue, your client id, the order as planned, and its state: `Landed` with its signature, `Failed` with the reason (the venue's, or a post-only order that would have crossed) and, for a transaction that ran on chain and failed, its signature, or `NotSent` with why not. Slot, fee and tip are there for sessions that know them. |
+| `notes` | What the grader cut or dropped from your last sheet, and why: the same notes it logs. |
+| `venues` | Each of the session's markets (`Session::venues`, yours first, each with a unique id and its account's address): its best bid and ask, its book and its trades since the last step where the session reports them (`Session::reports`; a reported tape that's empty is a step without trades), your position there, and, as venues arrive, your resting orders, liquidity positions, lending account and the venue's own numbers (`stats`). |
+| `fills` | Your own trades since the last step, from the venues' tapes: empty where the scenario reports no tape, as SPCX's sessions don't. |
+| `tape`, `depth`, `unix_timestamp` | The step's trades and books on every venue, and the world's clock, when the scenario reports them. |
+| `rfqs` | Requests for quotes open at this step, one-sided or two-way: none in today's tasks. |
+| `fees` | The fee market (recent priority fees, the tip floor, the next leaders), where a session models one: none does yet. |
 
 And three helpers: `room_to_buy()` and `room_to_sell()`, how much more you
 can trade each way before the cap if your resting orders all fill, and
@@ -171,6 +178,53 @@ resting:
 
 Each order is its own transaction. The grader sends them in order and stops
 at the first that fails: the rest of the sheet waits for the next step.
+
+**Each line can say more.** A call adds a line to the sheet; these change
+the line added last:
+
+| Call | What it does |
+| --- | --- |
+| `.post_only()` | A `bid`, `ask` or `quote` that takes nothing. One that would cross the book as it is when it's sent (the world is paused, so that includes your own earlier fills) isn't sent: it comes back `Failed("post-only would cross: not placed")` and doesn't count as resting. |
+| `.ioc()` | A `bid` or `ask` that fills what it can now, at no worse than its price, and rests nothing: a market order bounded by the price. |
+| `.reduce_only()` | The line's orders are cut so that no fill can grow or flip your position, whatever else fills: the sheet's earlier orders that shrink it, and what rests on its side, count as filled; earlier orders that grow it count as not filled. Flat, `bid(…).ioc()` then `sell(5, …).reduce_only()` sells nothing: the buy may not fill. The orders also carry Phoenix's reduce-only flag, so a resting one can't open a position however the book moves. |
+| `.expires(slot)` | A `bid`, `ask` or `quote` rests until `slot` (Phoenix's last valid slot); a response to a request for a quote can be taken until then. |
+| `.participation(share)` | A target trades at most `share` of the venue's volume since the last step. The volume is the venue's tape's: in a session without one, there is none to take a share of, and the target doesn't trade. |
+| `.at(venue)` | The line is for another of `Session::venues` (`openbook:spot:SOL-USDC`). A session trades only its own market for now: a line for another comes back `NotSent`. |
+| `.client_id(id)` | Your own id for the line's orders: in their `sends`, and what `cancel(id)` names. |
+| `.tx(TxOptions { … })` | A priority fee, a tip, a compute limit, a bundle id, a route, retries until a slot. Accepted and counted, and changes nothing: no session applies them yet (`Session::applies_tx_options`). |
+
+`orders.bid(99.0, 5.0).post_only()` rests a post-only bid;
+`orders.sell(70.0, 98.0).reduce_only()` sells what you hold, and no more.
+`orders.respond(id, bid, ask)` answers a request for a quote in `rfqs`; no
+task sends requests yet, so it comes back `NotSent`.
+
+The sheet also takes what the next venues will execute: `cancel(id)`,
+`swap(side, amount, unit, limit)`, `add_liquidity(base, quote, range)`,
+`remove_liquidity(position, share)`, `deposit`, `withdraw`, `borrow`,
+`repay` and `liquidate`, each with `.at(venue)`. A session without an
+executor for one answers it `NotSent("unsupported in this session")`; on
+SPCX today that is all of them. A line the session won't execute counts
+for nothing: it doesn't make room under the cap for the lines after it.
+Where a venue executes them, a swap is cut to the cap like a market
+order, `remove_liquidity(position, 0.0)` collects a position's fees only
+(`Intent::RemoveLiquidity` also takes a minimum of each asset out),
+and a `TxOptions` without `cu_limit` asks for the simulation's units plus
+a margin; `retry_until_slot` sends the same transaction again each slot,
+and signs it again with a new blockhash only once the old one has expired
+and the transaction hasn't landed.
+
+Raw transactions the grader signs (the world's `send` import) are
+reserved: every session refuses them for now. When they arrive, an
+instruction names its accounts by address, as the authority, as one of
+the transaction's fresh signers (`Fresh(n)`: keys the grader makes for
+that transaction alone, for accounts that must sign their own creation,
+whose addresses `send` returns), or as one of its derived addresses
+(`Derived(n)`: a PDA from a program and seeds, or an associated token
+account, which may name a fresh signer, as a new position's accounts do).
+`mtx_kit::raw` has the types, and `RawTransaction::check` the rules.
+
+A line with an amount or a price that isn't a number (NaN) isn't sent,
+and a note says so.
 
 For what the market doesn't carry, `mtx_kit::rpc(method, params)` reads the
 chain: synchronously, as it is at this step, for any read in
@@ -225,10 +279,12 @@ is what the benchmark grades.
 
 ### The component
 
-The grader loads `bot.wasm`, a component of the WIT world `mtx:strategy`
-(`crates/kit/wit/strategy.wit`), with `wasmtime`. `mtx_kit::export!` writes
-the binding; another language that builds components can implement the
-world directly.
+The grader loads `bot.wasm`, a component of the WIT world
+`mtx:strategy@0.2.0` (`crates/kit/wit/strategy.wit`), with `wasmtime`.
+`mtx_kit::export!` writes the binding; another language that builds
+components can implement the world directly. A component built on 0.1.0
+(`crates/kit/wit/0.1.0/strategy.wit`) still loads, and plays as it did: it
+gets 0.1.0's market, and its sheet's lines have no options.
 
 - **No files, no environment, no network, and a clock that stands still.**
   Everything the strategy knows comes through `start`, `step` and `rpc`.

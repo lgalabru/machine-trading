@@ -4995,6 +4995,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-wit-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-cli"
 version = "0.1.0"
 dependencies = [
@@ -5008,6 +5015,7 @@ dependencies = [
  "mtx-core",
  "mtx-grader",
  "mtx-kit",
+ "qrcode",
  "rmcp",
  "schemars 1.2.3",
  "serde",
@@ -5067,6 +5075,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signer",
+ "solana-transaction 4.3.0",
  "surfpool-sdk",
  "thiserror 2.0.21",
  "tokio",
@@ -5985,6 +5994,12 @@ dependencies = [
  "quote",
  "syn 3.0.9",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "qstring"
