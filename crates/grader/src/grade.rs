@@ -738,11 +738,12 @@ pub const MAX_COMPONENT_JOBS: usize = 32;
 /// in) and, for a component, its own store and fuel. So a grade comes out
 /// the same whatever `jobs` is, and a machine too loaded for it grades
 /// slower, not differently. A process bot also runs as its own user (see
-/// [`session::BOT_USERS`]): sessions are kept in an ordered window of
-/// `jobs`, so the ones running at once always have distinct `bot_users.start
-/// + index % jobs` users, and `jobs` is at most the number of users. A
+/// [`session::BOT_USERS`]), one of `bot_users` that no other session
+/// running holds (and no other grade on the machine: see
+/// [`session::BotUserLock`]), so `jobs` is at most the number of users. A
 /// component needs no user: up to [`MAX_COMPONENT_JOBS`] of its sessions run
-/// at once. `trusted` bots get [`SessionOptions::trusted`].
+/// at once. A new session starts as soon as any one ends. `trusted` bots
+/// get [`SessionOptions::trusted`].
 #[allow(clippy::too_many_arguments)]
 async fn run_sessions(
     snapshot_dir: &Path,
@@ -778,19 +779,27 @@ async fn run_sessions(
     }
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
     raise_open_file_limit();
+    // The bot users free for a process bot's sessions: each takes one while
+    // it runs, so the ones running at once never share.
+    let free = std::sync::Mutex::new(if components {
+        Vec::new()
+    } else {
+        (first_bot_user..first_bot_user + jobs).rev().collect()
+    });
     let sessions = futures::stream::iter(scenarios.iter().enumerate())
         .map(|(index, scenario)| {
             let observer = observer.clone();
+            let free = &free;
             async move {
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
-            let slot = (!components).then_some(first_bot_user + index % jobs);
+            let user = UserSlot::take(free);
             let run = || {
                 session::run(SessionOptions {
                     snapshot_dir,
                     scenario,
                     bot_dir,
                     bot_log: &bot_log,
-                    slot,
+                    slot: user.slot,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
                     trusted,
                     observer: observer.clone(),
@@ -800,40 +809,92 @@ async fn run_sessions(
             // Another grade on this machine may use the same bot user, and
             // a session's end kills everything its user runs: hold the user
             // while the session runs.
-            let _user = match slot {
-                Some(slot) => Some(session::BotUserLock::acquire(session::BOT_USERS[slot]).await?),
+            let _held = match user.slot {
+                Some(slot) => match session::BotUserLock::acquire(session::BOT_USERS[slot]).await {
+                    Ok(held) => Some(held),
+                    Err(error) => return (index, Err(error)),
+                },
                 None => None,
             };
             // A session whose setup fails on the machine (a request to its
             // own surfnet that can't get through on a loaded host) runs once
             // more, from a fresh surfnet. Its bot hadn't started, so it sees
             // the session once either way. A second failure fails the grade.
-            match run().await {
+            let report = match run().await {
                 Err(Error::Setup(error)) if is_transient(&error) => {
                     warn!(scenario = scenario.name, %error, "session setup failed on the machine; running it again");
                     run().await
                 }
                 done => done,
-            }
+            };
+            (index, report)
         }
         })
-        .buffered(jobs);
+        // A new session starts whenever any one ends: a long session doesn't
+        // hold up the ones behind it.
+        .buffer_unordered(jobs);
+    in_order(sessions, scenarios.len(), stop_on_disqualify).await
+}
+
+/// One of the free bot users, taken for a session and given back when it
+/// ends (or is dropped). `None` for a component, which needs none.
+struct UserSlot<'a> {
+    free: &'a std::sync::Mutex<Vec<usize>>,
+    slot: Option<usize>,
+}
+
+impl<'a> UserSlot<'a> {
+    fn take(free: &'a std::sync::Mutex<Vec<usize>>) -> Self {
+        let slot = free
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop();
+        Self { free, slot }
+    }
+}
+
+impl Drop for UserSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot {
+            self.free
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(slot);
+        }
+    }
+}
+
+/// Sessions' reports as they end, `(index, report)`, put back in scenario
+/// order. With `stop_on_disqualify`, the reports stop at the first
+/// disqualifying session in that order, once every session before it has
+/// ended: the same reports whatever order they ended in.
+async fn in_order(
+    sessions: impl futures::Stream<Item = (usize, Result<SessionReport>)>,
+    count: usize,
+    stop_on_disqualify: bool,
+) -> Result<Vec<SessionReport>> {
     let mut sessions = std::pin::pin!(sessions);
-    let mut reports = Vec::with_capacity(scenarios.len());
-    while let Some(report) = sessions.next().await {
+    let mut done: Vec<Option<SessionReport>> = (0..count).map(|_| None).collect();
+    let mut first_breach: Option<usize> = None;
+    while let Some((index, report)) = sessions.next().await {
         let report = report?;
-        let stop = stop_on_disqualify && disqualification(&report).is_some();
-        reports.push(report);
-        if stop {
+        if stop_on_disqualify && disqualification(&report).is_some() {
+            first_breach = Some(first_breach.map_or(index, |first| first.min(index)));
+        }
+        done[index] = Some(report);
+        if let Some(last) = first_breach
+            && done[..=last].iter().all(Option::is_some)
+        {
             warn!(
-                after = reports.len(),
-                of = scenarios.len(),
+                after = last + 1,
+                of = count,
                 "disqualified: the grade is 0; stopping"
             );
+            done.truncate(last + 1);
             break;
         }
     }
-    Ok(reports)
+    Ok(done.into_iter().flatten().collect())
 }
 
 /// Errors from the grader's own machinery talking to its surfnet, as
@@ -1322,6 +1383,49 @@ mod tests {
         assert!(matches!(run(0, 5).await, Err(Error::Jobs(5, 4))));
         let _ = std::fs::remove_dir_all(&bot);
         let _ = std::fs::remove_dir_all(&logs);
+    }
+
+    #[tokio::test]
+    async fn reports_come_back_in_order_and_stop_at_the_first_breach_in_it() {
+        let named = |index: usize, breach: bool| {
+            let mut report = session(index as f64);
+            report.scenario = format!("s{index}");
+            if breach {
+                report.refused_calls = vec!["surfnet_setAccount".into()];
+            }
+            (index, Ok(report))
+        };
+        let names = |reports: Vec<SessionReport>| -> Vec<String> {
+            reports.into_iter().map(|r| r.scenario).collect()
+        };
+        let ended = vec![
+            named(2, false),
+            named(0, false),
+            named(3, false),
+            named(1, false),
+        ];
+        let all = in_order(futures::stream::iter(ended), 4, true)
+            .await
+            .unwrap();
+        assert_eq!(names(all), ["s0", "s1", "s2", "s3"]);
+        // Session 3 breached first, then 1 did: the reports end at 1, as
+        // they would one at a time.
+        let ended = vec![
+            named(3, true),
+            named(0, false),
+            named(1, true),
+            named(2, false),
+        ];
+        let stopped = in_order(futures::stream::iter(ended), 4, true)
+            .await
+            .unwrap();
+        assert_eq!(names(stopped), ["s0", "s1"]);
+        // Without stopping, every report comes back.
+        let ended = vec![named(1, true), named(0, false)];
+        let kept = in_order(futures::stream::iter(ended), 2, false)
+            .await
+            .unwrap();
+        assert_eq!(names(kept), ["s0", "s1"]);
     }
 
     #[test]
