@@ -186,10 +186,8 @@ fn golden_v2_oracles_file_is_what_a_v1_scenario_with_feeds_writes() {
 #[test]
 fn golden_v2_market_model_file_is_what_a_drawn_v1_scenario_writes() {
     use mtx_grader::market::{Calibration, MarketModel, ModelSpec};
-    let calibration = Calibration::load(
-        &root().join("calibration/market/spcx.20261112.d1f48be2.toml"),
-    )
-    .unwrap();
+    let calibration =
+        Calibration::load(&root().join("calibration/market/spcx.20261112.d1f48be2.toml")).unwrap();
     let model = MarketModel::new(calibration, ModelSpec::default()).unwrap();
     let mut template = Scenario::load(
         &root().join("bench/tasks/flash-crash-spcx/environment/practice/practice-1.json"),
