@@ -27,21 +27,27 @@ just test lint                                     # unit tests and clippy
 `target/logs/`. Don't run heavy builds while grading: a starved machine
 slows the grade.
 
-A grade replays exactly: the same bot, snapshot and scenarios give the same
-report, byte for byte but for wall times. Load slows a grade, not its
-result: sessions run on no clock, trusted bots (the reference, `--trusted`)
-get their turns however long they take, and the grader's own requests wait
-up to ten minutes each, with its reads made again if one fails. The limit:
-a request that fails outright rather than slowly (a surfnet that died, a
-connection refused) still fails it, and a taker order lost that way counts
-as failed. `--replay N` checks it: it runs the grade N times (with
-`--replay-load <threads>` busy threads alongside) and fails at the first
-session report, the reference's included, that came out differently.
+A grade replays exactly: the same bot on the same hidden set (the same
+`MTX_EVAL_SEED`) gets the same report, byte for byte but for wall times.
+The sessions' keypairs are derived from that secret, so their transactions
+and signatures repeat too. A grade of scenario files has no secret and
+draws fresh keys, so its own replays agree but two separate grades of a
+component that reads signatures can differ in fuel. Load slows a grade, not
+its result: sessions run on no clock, trusted bots (the reference,
+`--trusted`) get up to two minutes a turn, and the grader's own requests
+wait up to ten minutes each, a read that got no answer being made again.
+The limit: a request that fails outright rather than slowly (a surfnet that
+died, a refused connection) still fails the grade, and a taker order lost
+that way counts as failed.
+
+`--replay N` checks it: it runs the grade N times (with `--replay-load
+<threads>` busy threads alongside) and fails at the first session report,
+the reference's included, that came out differently.
 
 ```sh
-mtx grade --draw flash-crash --count 6 --reference /opt/mtx/anchors/flash-crash \
-  --bot /opt/mtx/anchors/flash-crash --trusted --snapshot snapshots/phoenix-spcx-2026-10-29 \
-  --replay 5 --replay-load 16
+MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
+  --reference /opt/mtx/anchors/flash-crash --bot bots/reference \
+  --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
 ```
 
 ## Write a bot

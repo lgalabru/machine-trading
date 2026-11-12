@@ -8,6 +8,7 @@ pub mod faults;
 pub mod flow;
 pub mod grade;
 pub mod guard;
+pub mod keys;
 pub mod making;
 pub mod offhours;
 pub mod orders;

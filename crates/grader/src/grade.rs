@@ -30,6 +30,7 @@ use tracing::{info, warn};
 use crate::{
     Error, Result,
     error::io_error,
+    keys::{RoleKeys, SessionKeys},
     scenario::Scenario,
     session::{self, SessionOptions, SessionReport},
 };
@@ -256,6 +257,9 @@ pub struct GradeOptions<'a> {
     pub trusted: bool,
     /// Watches a component's sessions step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    /// Where the sessions' keypairs come from (see [`crate::keys`]): the same
+    /// keys every run of the grade.
+    pub keys: &'a SessionKeys,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -322,6 +326,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             false,
             true,
             None,
+            opts.keys.role("reference"),
         )
         .await?;
         check_timing(&anchors)?;
@@ -345,6 +350,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.stop_on_disqualify,
         opts.trusted,
         opts.observer.clone(),
+        opts.keys.role("bot"),
     )
     .await?;
     check_timing(&sessions)?;
@@ -616,6 +622,7 @@ pub async fn calibrate(
         false,
         true,
         None,
+        SessionKeys::random().role("reference"),
     )
     .await?;
     check_timing(&sessions)?;
@@ -656,6 +663,7 @@ async fn run_sessions(
     stop_on_disqualify: bool,
     trusted: bool,
     observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    keys: RoleKeys<'_>,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
     if !(1..=session::BOT_USERS.len()).contains(&jobs) {
@@ -690,6 +698,7 @@ async fn run_sessions(
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
                     trusted,
                     observer: observer.clone(),
+                    keys: keys.session(index, &scenario.name),
                 })
             };
             // A session whose setup fails on the machine (a request to its
@@ -770,6 +779,7 @@ mod tests {
             components_only: true,
             trusted: false,
             observer: None,
+            keys: &SessionKeys::random(),
         })
         .await
         .unwrap();
@@ -1064,6 +1074,7 @@ mod tests {
     #[tokio::test]
     async fn bot_user_ranges_stay_within_the_users() {
         let logs = std::env::temp_dir().join(format!("mtx-logs-{}", uuid::Uuid::new_v4()));
+        let keys = SessionKeys::random();
         let run = |first: usize, jobs: usize| {
             run_sessions(
                 Path::new("."),
@@ -1075,6 +1086,7 @@ mod tests {
                 false,
                 false,
                 None,
+                keys.role("bot"),
             )
         };
         assert!(matches!(

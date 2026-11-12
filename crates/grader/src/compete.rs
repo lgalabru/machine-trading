@@ -18,12 +18,12 @@ use std::path::PathBuf;
 
 use mtx_kit::{BotEnv, Side, Trader};
 use serde::Serialize;
-use solana_keypair::Keypair;
 use tracing::{info, warn};
 
 use crate::{
     Result,
     error::io_error,
+    keys::SessionKeyring,
     making::{Competition, Making, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
@@ -73,6 +73,7 @@ impl Competitor {
         phoenix: &Phoenix,
         scenario: &Scenario,
         rpc_url: &str,
+        keys: &SessionKeyring<'_>,
     ) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("mtx-competitor-{}", uuid::Uuid::new_v4()));
         // Root's alone: bots run in the same container, and these keypairs
@@ -80,7 +81,7 @@ impl Competitor {
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
             .create(&dir)
             .map_err(io_error(&dir))?;
-        let keypair = Keypair::new();
+        let keypair = keys.keypair("competitor", 0);
         phoenix::onboard_traders_stepped(
             &world.surfnet,
             phoenix,
