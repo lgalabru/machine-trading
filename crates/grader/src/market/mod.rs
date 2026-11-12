@@ -1,4 +1,4 @@
-//! Market calibration and market model v2.
+//! Market calibration, market model v2 and realism checks.
 //!
 //! - [`calibration`]: the per-asset files fitted to real market data
 //!   (`calibration/market/<asset>.<date>.<hash>.toml`).
@@ -7,6 +7,8 @@
 //! - [`model`]: the fair-value process a calibration drives, compiled to the
 //!   waypoints sessions replay. Opt-in: a scenario uses it only when drawn
 //!   from it, and records which file it came from.
+//! - [`realism`]: stylized-fact checks of generated sessions against the
+//!   real asset's.
 //!
 //! "Market calibration" is not `mtx calibrate`, which writes a scenario's
 //! reference PnL. See `docs/market-calibration.md`.
@@ -14,6 +16,7 @@
 pub mod calendar;
 pub mod calibration;
 pub mod model;
+pub mod realism;
 
 pub use calibration::Calibration;
 pub use model::{MarketModel, MarketModelRecord, ModelSpec};
