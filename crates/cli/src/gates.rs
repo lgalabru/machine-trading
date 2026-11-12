@@ -739,16 +739,49 @@ fn calibration_check(root: &Path, task: &str, family: &str, fast: bool) -> Check
         args.extend(["--count", count.as_str()]);
     }
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
-    match run_in(root, &exe.to_string_lossy(), &args, false) {
-        Ok((ok, out)) => Check::from(
-            REALISTIC,
-            id,
-            title,
-            ok,
-            if ok { format!("{file}: {out}") } else { out },
-        ),
-        Err(e) => Check::fail(REALISTIC, id, title, e.to_string()),
+    let output = match Command::new(exe).args(&args).current_dir(root).output() {
+        Ok(o) => o,
+        Err(e) => {
+            return Check::fail(REALISTIC, id, title, format!("couldn't run it: {e}"));
+        }
+    };
+    // It prints its report either way and exits 2 when a check fails.
+    match serde_json::from_slice::<Value>(&output.stdout) {
+        Ok(report) if report["checks"].is_array() => {
+            let name = Path::new(&file)
+                .file_name()
+                .map_or(file.clone(), |n| n.to_string_lossy().into_owned());
+            Check::from(
+                REALISTIC,
+                id,
+                title,
+                output.status.success() && report["passed"] == true,
+                format!("{name}: {}", realism_summary(&report)),
+            )
+        }
+        _ => Check::fail(REALISTIC, id, title, tail(&output)),
     }
+}
+
+/// A realism report in a line: each check's status, and the failed and
+/// skipped ones by name.
+fn realism_summary(report: &Value) -> String {
+    let checks = report["checks"].as_array().cloned().unwrap_or_default();
+    let named = |status: &str| -> Vec<String> {
+        checks
+            .iter()
+            .filter(|c| c["status"] == status)
+            .map(|c| c["name"].as_str().unwrap_or("?").to_string())
+            .collect()
+    };
+    let mut parts = Vec::new();
+    for status in ["pass", "fail", "skipped"] {
+        let names = named(status);
+        if !names.is_empty() {
+            parts.push(format!("{status} {}", names.join(", ")));
+        }
+    }
+    format!("{} sessions; {}", report["sessions"], parts.join("; "))
 }
 
 fn commit(root: &Path) -> String {
@@ -1131,6 +1164,23 @@ mod tests {
         assert!(has_command(&["grade"], Some("report")));
         assert!(!has_command(&["grade"], Some("no-such-flag")));
         assert!(!has_command(&["no-such-tool", "check"], None));
+    }
+
+    #[test]
+    fn a_realism_report_reads_in_a_line() {
+        let report = serde_json::json!({
+            "sessions": 60,
+            "checks": [
+                {"name": "returns", "status": "skipped", "detail": ""},
+                {"name": "spread", "status": "pass", "detail": ""},
+                {"name": "gaps", "status": "fail", "detail": ""},
+            ],
+            "passed": false,
+        });
+        assert_eq!(
+            realism_summary(&report),
+            "60 sessions; pass spread; fail gaps; skipped returns"
+        );
     }
 
     #[test]
