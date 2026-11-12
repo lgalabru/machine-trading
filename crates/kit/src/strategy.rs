@@ -977,6 +977,10 @@ pub struct LineOptions {
     pub tx: Option<TxOptions>,
 }
 
+/// The most market orders one target sends in a step: a target sliced
+/// finer trades the rest at the next step.
+pub const MAX_TARGET_ORDERS: usize = 64;
+
 /// The options of a line that says nothing more.
 const DEFAULT_OPTIONS: LineOptions = LineOptions {
     venue: None,
@@ -1590,7 +1594,16 @@ fn plan_lines<'a>(
                     }
                     missing =
                         missing.signum() * reduce(missing.abs(), l, side, "target", &mut notes);
+                    let mut orders = 0;
                     while missing.abs() >= execution.min_trade {
+                        if orders == MAX_TARGET_ORDERS {
+                            notes.push(format!(
+                                "target {target}: at most {MAX_TARGET_ORDERS} orders a step; {} waits",
+                                missing.abs()
+                            ));
+                            break;
+                        }
+                        orders += 1;
                         let size =
                             (missing.abs() / execution.min_trade).floor() * execution.min_trade;
                         let size = size.min(execution.slice);
@@ -1962,6 +1975,34 @@ mod tests {
             })
             .sum();
         assert_eq!(sold, 130.0, "from +60 to -70");
+    }
+
+    #[test]
+    fn a_target_sliced_too_fine_sends_at_most_its_cap_of_orders() {
+        let execution = Execution {
+            slice: 1e-9,
+            min_trade: 1e-9,
+            ..Execution::default()
+        };
+        let (actions, notes) = plan(
+            &[Intent::Target {
+                position: 70.0,
+                execution,
+            }],
+            &market(0.0),
+        );
+        assert_eq!(actions.len(), MAX_TARGET_ORDERS);
+        assert!(notes[0].contains("at most 64 orders a step"), "{notes:?}");
+        // The default slicing is far inside it.
+        let (actions, notes) = plan(
+            &[Intent::Target {
+                position: -70.0,
+                execution: Execution::default(),
+            }],
+            &market(70.0),
+        );
+        assert_eq!(actions.len(), 14);
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     #[test]
