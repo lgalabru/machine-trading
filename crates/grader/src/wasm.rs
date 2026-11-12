@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 
-use mtx_kit::{Action, Intent, LineOptions, Planned, SendState, SendStatus};
+use mtx_kit::{Intent, LineOptions, Planned, SendSource, SendState, SendStatus};
 use rand::SeedableRng;
 use wasmtime::{
     Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
@@ -233,6 +233,15 @@ impl v2::StrategyImports for Host {
 
     async fn rpc(&mut self, method: String, params: String) -> std::result::Result<String, String> {
         Host::rpc(self, method, params).await
+    }
+
+    /// Reserved for raw sends (the grader-signed `send`): no session enables
+    /// them yet.
+    async fn send(
+        &mut self,
+        _tx: v2::mtx::strategy::types::RawTransaction,
+    ) -> std::result::Result<u32, String> {
+        Err("raw sends aren't enabled in this session".into())
     }
 }
 
@@ -550,6 +559,8 @@ pub struct Clock<'a> {
     pub scenario: &'a str,
     /// The task's variables for the session ([`mtx_kit::SESSION_VARS`]).
     pub vars: Vec<(String, String)>,
+    /// What the session's steps report beyond prices.
+    pub reports: mtx_kit::Reports,
 }
 
 /// A component playing one session: the strategy, and the venue the grader
@@ -595,6 +606,7 @@ impl WasmBot {
             start_slot,
             scenario,
             vars,
+            reports,
         } = clock;
         let trader = mtx_kit::Trader::connect(env)?;
         let start_mark = trader.mark_usd().await?;
@@ -615,6 +627,8 @@ impl WasmBot {
                 None
             }
         };
+        let venue = std::fs::read_to_string(&env.exchange_path)
+            .map_err(crate::error::io_error(&env.exchange_path))?;
         let session = mtx_kit::Session {
             steps,
             slots_per_step,
@@ -626,12 +640,16 @@ impl WasmBot {
             cap: env.max_position,
             max_drawdown: env.max_drawdown_usd,
             mandate: mandate.clone(),
-            venue: std::fs::read_to_string(&env.exchange_path)
-                .map_err(crate::error::io_error(&env.exchange_path))?,
             authority: trader.authority().to_string(),
             vars,
             seed,
-            venues: mtx_kit::VenueInfo::of_perp_session(mandate, &env.symbol),
+            venues: mtx_kit::VenueInfo::of_perp_session(
+                mandate,
+                &env.symbol,
+                mtx_kit::phoenix_market_address(&venue, &env.symbol),
+            ),
+            venue,
+            reports,
             applies_tx_options: false,
         };
         if let Some(strategy) = strategy.as_mut() {
@@ -701,6 +719,7 @@ impl WasmBot {
         self.peak_pnl = self.peak_pnl.max(self.pnl);
         let (venues, fills) = mtx_kit::venue_views(
             &self.session.venues,
+            self.session.reports,
             top.best_bid,
             top.best_ask,
             position,
@@ -734,6 +753,7 @@ impl WasmBot {
             fills,
             rfqs: Vec::new(),
             notes: std::mem::take(&mut self.notes),
+            fees: None,
         };
         let Some(strategy) = self.strategy.as_mut() else {
             self.last = Some(market);
@@ -795,13 +815,14 @@ impl WasmBot {
         self.notes = notes;
         self.last = Some(market);
         let own = self.session.venues[0].id.clone();
-        // The orders sent to the session's own market, the one that failed
-        // included: the ledger of what rests only over-counts.
+        // The orders that reached the chain, the one that failed included:
+        // the ledger of what rests only over-counts.
         let mut tried = Vec::new();
         let mut failed = false;
         for Planned {
             line,
             venue,
+            client_id,
             action,
             ..
         } in planned
@@ -810,28 +831,30 @@ impl WasmBot {
                 SendState::NotSent("an earlier order of the step failed".into())
             } else if let Some(venue) = &venue {
                 SendState::NotSent(format!("{venue} isn't traded in this session"))
-            } else if let Action::Respond { .. } = action {
-                SendState::NotSent("no requests for quotes in this session".into())
             } else {
-                tried.push(action.clone());
-                match self.send(&action).await {
-                    Ok(signature) => SendState::Landed(signature),
-                    Err(error) => {
+                let sent = self.trader.send_planned(&action).await;
+                if sent.sent {
+                    tried.push(action.clone());
+                    if let SendState::Failed(error) = &sent.state {
                         tracing::warn!(step = k, ?action, %error, "order failed; the step's other orders aren't sent");
                         failed = true;
-                        SendState::Failed(error)
                     }
                 }
+                sent.state
             };
             if let Some(trace) = trace.as_mut() {
                 trace.sent.push((action.clone(), state.clone()));
             }
             self.sends.push(SendStatus {
                 step: k,
-                line: line as u32,
+                source: SendSource::Line(line as u32),
                 venue: venue.unwrap_or_else(|| own.clone()),
-                order: action,
+                client_id,
+                order: Some(action),
                 state,
+                slot: None,
+                fee: None,
+                tip: None,
             });
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
@@ -844,23 +867,6 @@ impl WasmBot {
         if let (Some(observer), Some(trace)) = (&self.observer, trace) {
             tokio::task::block_in_place(|| observer.step(&trace));
         }
-    }
-
-    /// Send one order to the session's own market: its signature, or why it
-    /// failed.
-    async fn send(&self, action: &Action) -> std::result::Result<String, String> {
-        let result = match *action {
-            Action::Market { side, size, limit } => {
-                self.trader.place_market(side, size, limit).await
-            }
-            Action::Limit { side, price, size } => self.trader.place_limit(side, price, size).await,
-            Action::PostOnly { side, price, size } => {
-                self.trader.place_post_only(side, price, size).await
-            }
-            Action::CancelAll => self.trader.cancel_all(),
-            Action::Respond { .. } => return Err("no requests for quotes".into()),
-        };
-        result.map(|s| s.to_string()).map_err(|e| e.to_string())
     }
 
     /// The session is over: the strategy's `end`.
@@ -887,7 +893,8 @@ impl WasmBot {
 /// `mtx:strategy@0.2.0`'s side of the kit's types.
 mod wit2 {
     use mtx_kit::{
-        Action, Intent, LineOptions, Market, SendState, Session, Side, TimeInForce, TxOptions,
+        Action, AmountUnit, Intent, LineOptions, Market, MarketKind, PriceRange, Route, SendSource,
+        SendState, Session, Side, TimeInForce, TxOptions,
     };
 
     use super::v2::mtx::strategy::types as w;
@@ -914,12 +921,22 @@ mod wit2 {
                 .map(|v| w::VenueInfo {
                     id: v.id.clone(),
                     kind: match v.kind {
-                        mtx_core::mandate::Kind::Perp => w::MarketKind::Perp,
-                        mtx_core::mandate::Kind::Spot => w::MarketKind::Spot,
+                        MarketKind::Perp => w::MarketKind::Perp,
+                        MarketKind::Spot => w::MarketKind::Spot,
+                        MarketKind::Amm => w::MarketKind::Amm,
+                        MarketKind::Lending => w::MarketKind::Lending,
+                        MarketKind::StakePool => w::MarketKind::StakePool,
                     },
+                    address: v.address.clone(),
                     tradable: v.tradable,
                 })
                 .collect(),
+            reports: w::Reports {
+                tape: s.reports.tape,
+                depth: s.reports.depth,
+                timestamps: s.reports.timestamps,
+                fees: s.reports.fees,
+            },
             applies_tx_options: s.applies_tx_options,
         }
     }
@@ -952,6 +969,27 @@ mod wit2 {
         }
     }
 
+    fn range(r: PriceRange) -> w::PriceRange {
+        w::PriceRange {
+            lower: r.lower,
+            upper: r.upper,
+        }
+    }
+
+    fn kit_range(r: w::PriceRange) -> PriceRange {
+        PriceRange {
+            lower: r.lower,
+            upper: r.upper,
+        }
+    }
+
+    fn unit(unit: AmountUnit) -> w::AmountUnit {
+        match unit {
+            AmountUnit::Base => w::AmountUnit::Base,
+            AmountUnit::Quote => w::AmountUnit::Quote,
+        }
+    }
+
     fn levels(levels: &[mtx_core::turns::Level]) -> Vec<w::Level> {
         levels
             .iter()
@@ -963,6 +1001,7 @@ mod wit2 {
     }
 
     fn order(action: &Action) -> w::Order {
+        let amount = |amount: &Option<f64>| w::Amount { amount: *amount };
         match action {
             &Action::Market {
                 side: s,
@@ -994,10 +1033,51 @@ mod wit2 {
                 time_in_force: w::TimeInForce::PostOnly,
             }),
             Action::CancelAll => w::Order::CancelAll,
-            Action::Respond { id, price, size } => w::Order::Respond(w::RfqResponse {
+            &Action::Cancel { client_id } => w::Order::Cancel(client_id),
+            Action::Respond { id, bid, ask, size } => w::Order::Respond(w::RfqResponse {
                 id: id.clone(),
-                price: *price,
+                bid: *bid,
+                ask: *ask,
                 size: *size,
+            }),
+            &Action::Swap {
+                side: s,
+                amount,
+                unit: u,
+                limit,
+            } => w::Order::Swap(w::Swap {
+                side: side(s),
+                amount,
+                unit: unit(u),
+                limit,
+            }),
+            &Action::AddLiquidity {
+                base,
+                quote,
+                range: r,
+            } => w::Order::AddLiquidity(w::AddLiquidity {
+                base,
+                quote,
+                range: r.map(range),
+            }),
+            Action::RemoveLiquidity { position, share } => {
+                w::Order::RemoveLiquidity(w::RemoveLiquidity {
+                    position: position.clone(),
+                    share: *share,
+                })
+            }
+            Action::Deposit { amount: a } => w::Order::Deposit(amount(a)),
+            Action::Withdraw { amount: a } => w::Order::Withdraw(amount(a)),
+            Action::Borrow { amount: a } => w::Order::Borrow(amount(a)),
+            Action::Repay { amount: a } => w::Order::Repay(amount(a)),
+            Action::Liquidate {
+                obligation,
+                collateral,
+                repay,
+            } => w::Order::Liquidate(w::Liquidate {
+                obligation: obligation.clone(),
+                collateral: collateral.clone(),
+                repay: *repay,
             }),
         }
     }
@@ -1051,6 +1131,34 @@ mod wit2 {
                             .collect()
                     }),
                     position: v.position.map(position),
+                    orders: v
+                        .orders
+                        .iter()
+                        .map(|o| w::OpenOrder {
+                            client_id: o.client_id,
+                            side: side(o.side),
+                            price: o.price,
+                            size: o.size,
+                        })
+                        .collect(),
+                    liquidity: v
+                        .liquidity
+                        .iter()
+                        .map(|p| w::LiquidityPosition {
+                            id: p.id.clone(),
+                            range: p.range.map(range),
+                            base: p.base,
+                            quote: p.quote,
+                            fees_base: p.fees_base,
+                            fees_quote: p.fees_quote,
+                        })
+                        .collect(),
+                    lending: v.lending.map(|l| w::LendingPosition {
+                        supplied: l.supplied,
+                        borrowed: l.borrowed,
+                        health: l.health,
+                    }),
+                    stats: v.stats.clone(),
                 })
                 .collect(),
             sends: m
@@ -1058,9 +1166,13 @@ mod wit2 {
                 .iter()
                 .map(|s| w::SendStatus {
                     step: s.step,
-                    line: s.line,
+                    source: match s.source {
+                        SendSource::Line(n) => w::SendSource::Line(n),
+                        SendSource::Raw(n) => w::SendSource::Raw(n),
+                    },
                     venue: s.venue.clone(),
-                    order: order(&s.order),
+                    client_id: s.client_id,
+                    order: s.order.as_ref().map(order),
                     state: match &s.state {
                         SendState::Landed(signature) => w::SendState::Landed(signature.clone()),
                         SendState::Failed(why) => w::SendState::Failed(why.clone()),
@@ -1068,6 +1180,9 @@ mod wit2 {
                         SendState::Delayed => w::SendState::Delayed,
                         SendState::Expired => w::SendState::Expired,
                     },
+                    slot: s.slot,
+                    fee: s.fee,
+                    tip: s.tip,
                 })
                 .collect(),
             fills: m
@@ -1088,12 +1203,17 @@ mod wit2 {
                 .map(|r| w::Rfq {
                     id: r.id.clone(),
                     venue: r.venue.clone(),
-                    side: side(r.side),
+                    side: r.side.map(side),
                     size: r.size,
                     deadline_slot: r.deadline_slot,
                 })
                 .collect(),
             notes: m.notes.clone(),
+            fees: m.fees.as_ref().map(|f| w::FeeView {
+                cu_prices: f.cu_prices.clone(),
+                tip_floor: f.tip_floor,
+                leaders: f.leaders.clone(),
+            }),
         }
     }
 
@@ -1101,12 +1221,22 @@ mod wit2 {
     pub fn line(intent: w::Intent) -> (Intent, LineOptions) {
         let mut options = LineOptions {
             venue: intent.venue,
+            client_id: intent.client_id,
             reduce_only: intent.reduce_only,
             tx: intent.tx.map(|tx| TxOptions {
                 cu_limit: tx.cu_limit,
                 cu_price: tx.cu_price,
                 tip: tx.tip,
                 bundle: tx.bundle,
+                route: tx.route.map(|route| match route {
+                    w::Route::Rpc => Route::Rpc,
+                    w::Route::Staked => Route::Staked,
+                    w::Route::Jito(j) => Route::Jito {
+                        bundle_only: j.bundle_only,
+                        dont_front: j.dont_front,
+                    },
+                }),
+                retry_until_slot: tx.retry_until_slot,
             }),
             ..LineOptions::default()
         };
@@ -1151,10 +1281,39 @@ mod wit2 {
                 }
             }
             w::Action::CancelAll => Intent::CancelAll,
+            w::Action::Cancel(client_id) => Intent::Cancel { client_id },
             w::Action::Respond(r) => Intent::Respond {
                 id: r.id,
-                price: r.price,
+                bid: r.bid,
+                ask: r.ask,
                 size: r.size,
+            },
+            w::Action::Swap(o) => Intent::Swap {
+                side: kit_side(o.side),
+                amount: o.amount,
+                unit: match o.unit {
+                    w::AmountUnit::Base => AmountUnit::Base,
+                    w::AmountUnit::Quote => AmountUnit::Quote,
+                },
+                limit: o.limit,
+            },
+            w::Action::AddLiquidity(o) => Intent::AddLiquidity {
+                base: o.base,
+                quote: o.quote,
+                range: o.range.map(kit_range),
+            },
+            w::Action::RemoveLiquidity(o) => Intent::RemoveLiquidity {
+                position: o.position,
+                share: o.share,
+            },
+            w::Action::Deposit(a) => Intent::Deposit { amount: a.amount },
+            w::Action::Withdraw(a) => Intent::Withdraw { amount: a.amount },
+            w::Action::Borrow(a) => Intent::Borrow { amount: a.amount },
+            w::Action::Repay(a) => Intent::Repay { amount: a.amount },
+            w::Action::Liquidate(o) => Intent::Liquidate {
+                obligation: o.obligation,
+                collateral: o.collateral,
+                repay: o.repay,
             },
         };
         (intent, options)
@@ -1258,7 +1417,10 @@ fn seed_of(scenario: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use mtx_core::turns::{BookLevels, Level, Role, Trade};
-    use mtx_kit::{Market, Orders, Position, Session, Side, TxOptions, VenueInfo};
+    use mtx_kit::{
+        Action, AmountUnit, Market, Orders, Position, PriceRange, Route, Session, Side, TxOptions,
+        VenueInfo,
+    };
 
     use super::*;
 
@@ -1292,12 +1454,18 @@ mod tests {
             start_oracle: 100.0,
             cap: 70.0,
             max_drawdown: 1_000.0,
-            venues: VenueInfo::of_perp_session(&mandate, "SPCX"),
+            venues: VenueInfo::of_perp_session(&mandate, "SPCX", Some("market".into())),
             mandate,
             venue: "{}".into(),
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
+            reports: mtx_kit::Reports {
+                tape: true,
+                depth: true,
+                timestamps: true,
+                fees: false,
+            },
             applies_tx_options: false,
         }
     }
@@ -1394,34 +1562,29 @@ mod tests {
     }
 
     /// The market a 0.2.0 component is handed at a step with turn data: two
-    /// venues, a tape with one of the strategy's fills, depth, a clock, and
-    /// what became of the last sheet.
-    fn rich_market(venues: &[VenueInfo]) -> Market {
+    /// venues, a tape with one of the strategy's fills, depth, a clock, what
+    /// became of the last sheet, a request for a quote and a fee market.
+    fn rich_market(session: &Session) -> Market {
+        let venues = &session.venues;
+        let trade = |side, price, base, slot, own| Trade {
+            venue: "phoenix".into(),
+            market: Some(venues[0].id.clone()),
+            side,
+            price,
+            base,
+            slot,
+            taker: Some("taker".into()),
+            maker: Some("maker".into()),
+            own,
+        };
         let tape = vec![
-            Trade {
-                venue: "phoenix".into(),
-                side: mtx_core::Side::Sell,
-                price: 99.95,
-                base: 4.0,
-                slot: 101,
-                taker: Some("taker".into()),
-                maker: Some("me".into()),
-                own: Some(Role::Maker),
-            },
-            Trade {
-                venue: "phoenix".into(),
-                side: mtx_core::Side::Buy,
-                price: 100.05,
-                base: 1.5,
-                slot: 102,
-                taker: None,
-                maker: None,
-                own: None,
-            },
+            trade(mtx_core::Side::Sell, 99.95, 4.0, 101, Some(Role::Maker)),
+            trade(mtx_core::Side::Buy, 100.05, 1.5, 102, None),
         ];
         let depth = vec![
             BookLevels {
                 venue: "phoenix".into(),
+                market: Some(venues[0].id.clone()),
                 bids: vec![Level {
                     price: 99.9,
                     base: 12.0,
@@ -1433,6 +1596,7 @@ mod tests {
             },
             BookLevels {
                 venue: "openbook".into(),
+                market: Some(venues[1].id.clone()),
                 bids: vec![Level {
                     price: 150.25,
                     base: 3.0,
@@ -1444,8 +1608,15 @@ mod tests {
             size: 4.0,
             entry_usd: 99.95,
         };
-        let (views, fills) =
-            mtx_kit::venue_views(venues, Some(99.9), Some(100.1), position, &tape, &depth);
+        let (views, fills) = mtx_kit::venue_views(
+            venues,
+            session.reports,
+            Some(99.9),
+            Some(100.1),
+            position,
+            &tape,
+            &depth,
+        );
         Market {
             best_bid: Some(99.9),
             best_ask: Some(100.1),
@@ -1458,35 +1629,69 @@ mod tests {
             sends: vec![
                 SendStatus {
                     step: 0,
-                    line: 2,
+                    source: SendSource::Line(2),
                     venue: venues[0].id.clone(),
-                    order: Action::PostOnly {
+                    client_id: Some(7),
+                    order: Some(Action::PostOnly {
                         side: Side::Bid,
                         price: 99.5,
                         size: 10.0,
-                    },
+                    }),
                     state: SendState::Landed("sig".into()),
+                    slot: Some(101),
+                    fee: Some(5_000),
+                    tip: None,
                 },
                 SendStatus {
                     step: 0,
-                    line: 3,
+                    source: SendSource::Line(3),
                     venue: venues[1].id.clone(),
-                    order: Action::Respond {
+                    client_id: None,
+                    order: Some(Action::Respond {
                         id: "rfq-0".into(),
-                        price: 150.0,
+                        bid: Some(150.0),
+                        ask: None,
                         size: Some(2.0),
-                    },
+                    }),
                     state: SendState::NotSent("no requests for quotes".into()),
+                    slot: None,
+                    fee: None,
+                    tip: None,
+                },
+                SendStatus {
+                    step: 0,
+                    source: SendSource::Raw(0),
+                    venue: String::new(),
+                    client_id: None,
+                    order: None,
+                    state: SendState::Failed("raw sends aren't enabled".into()),
+                    slot: None,
+                    fee: None,
+                    tip: None,
                 },
             ],
-            rfqs: vec![mtx_kit::Rfq {
-                id: "rfq-1".into(),
-                venue: venues[0].id.clone(),
-                side: Side::Ask,
-                size: 5.0,
-                deadline_slot: 110,
-            }],
+            rfqs: vec![
+                mtx_kit::Rfq {
+                    id: "rfq-1".into(),
+                    venue: venues[0].id.clone(),
+                    side: Some(Side::Ask),
+                    size: 5.0,
+                    deadline_slot: 110,
+                },
+                mtx_kit::Rfq {
+                    id: "rfq-2".into(),
+                    venue: venues[0].id.clone(),
+                    side: None,
+                    size: 1.0,
+                    deadline_slot: 112,
+                },
+            ],
             notes: vec!["bid of 20 cut to 10, to stay within the cap".into()],
+            fees: Some(mtx_kit::FeeView {
+                cu_prices: vec![(50, 1_000), (90, 25_000)],
+                tip_floor: Some(10_000),
+                leaders: vec!["leader".into()],
+            }),
             ..market(1, 100.0, 4.0)
         }
     }
@@ -1511,7 +1716,7 @@ mod tests {
         assert!(matches!(strategy.start(&session).await, Outcome::Done(())));
         assert!(log.text().contains(&format!("session {session:?}")));
 
-        let mut market = rich_market(&session.venues);
+        let mut market = rich_market(&session);
         market.k = 0;
         let Outcome::Done(lines) = strategy.step(&market).await else {
             panic!()
@@ -1529,94 +1734,71 @@ mod tests {
                 cu_price: Some(1_000),
                 tip: Some(10_000),
                 bundle: Some(1),
+                route: Some(Route::Jito {
+                    bundle_only: true,
+                    dont_front: true,
+                }),
+                retry_until_slot: Some(112),
             })
             .bid(102.0, 2.0)
             .ioc()
+            .client_id(1)
             .sell(5.0, 98.0)
             .reduce_only()
             .bid(94.9, 1.0)
             .post_only()
+            .client_id(2)
             .ask(99.9, 1.0)
             .post_only()
             .target_position(3.0)
             .participation(0.1)
             .buy(1.0, 102.0)
             .at("openbook:spot:SOL-USDC")
-            .respond("rfq-1", 100.0);
+            .respond("rfq-1", Some(100.0), None)
+            .cancel(2)
+            .swap(Side::Bid, 100.0, AmountUnit::Quote, 101.0)
+            .add_liquidity(
+                1.0,
+                100.0,
+                Some(PriceRange {
+                    lower: 90.0,
+                    upper: 110.0,
+                }),
+            )
+            .remove_liquidity(None, 0.5)
+            .deposit(10.0)
+            .withdraw(None)
+            .borrow(5.0)
+            .repay(None)
+            .liquidate("11111111111111111111111111111111", "phoenix:perp:SPCX", 1.0);
         assert_eq!(lines, expected.clone().into_lines());
 
-        // Planned as the grader sends it, from a position of 4: the sell
-        // reduces 6 to 1, and the target may trade 10% of the 5.5 on the
-        // tape, less than its minimum trade.
+        // Planned as the grader sends it, from a position of 4: the IOC buy
+        // may not fill, so the reduce-only sell gets the 4 held; the target
+        // may trade 10% of the 5.5 on the tape, less than its minimum trade.
         let (planned, notes) = mtx_kit::plan_sheet(&expected, &market);
-        let actions: Vec<_> = planned
-            .iter()
-            .map(|p| (p.line, p.venue.as_deref(), p.action.clone()))
-            .collect();
+        let lines: Vec<_> = planned.iter().map(|p| p.line).collect();
         assert_eq!(
-            actions,
-            [
-                (0, None, Action::CancelAll),
-                (
-                    1,
-                    None,
-                    Action::Market {
-                        side: Side::Bid,
-                        size: 2.0,
-                        limit: 102.0
-                    }
-                ),
-                (
-                    2,
-                    None,
-                    Action::Market {
-                        side: Side::Ask,
-                        size: 5.0,
-                        limit: 98.0
-                    }
-                ),
-                (
-                    3,
-                    None,
-                    Action::PostOnly {
-                        side: Side::Bid,
-                        price: 94.9,
-                        size: 1.0
-                    }
-                ),
-                (
-                    4,
-                    None,
-                    Action::PostOnly {
-                        side: Side::Ask,
-                        price: 99.9,
-                        size: 1.0
-                    }
-                ),
-                (
-                    6,
-                    Some("openbook:spot:SOL-USDC"),
-                    Action::Market {
-                        side: Side::Bid,
-                        size: 1.0,
-                        limit: 102.0
-                    }
-                ),
-                (
-                    7,
-                    None,
-                    Action::Respond {
-                        id: "rfq-1".into(),
-                        price: 100.0,
-                        size: None
-                    }
-                ),
-            ]
+            lines,
+            [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
+        assert_eq!(
+            planned[2].action,
+            Action::Market {
+                side: Side::Ask,
+                size: 4.0,
+                limit: 98.0
+            }
+        );
+        assert_eq!(planned[1].client_id, Some(1));
         assert_eq!(planned[0].tx.and_then(|tx| tx.tip), Some(10_000));
+        assert_eq!(planned[5].venue.as_deref(), Some("openbook:spot:SOL-USDC"));
         assert_eq!(
             notes,
-            ["participation 0.1 of the step's volume: trading 0.55 of 2"]
+            [
+                "reduce-only market order of 5 cut to 4, so as not to grow the position",
+                "participation 0.1 of the step's volume: trading 0.55 of 1"
+            ]
         );
 
         assert!(matches!(

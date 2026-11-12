@@ -101,29 +101,92 @@ pub struct Session {
     /// The markets of the mandate's universe, the session's own first: a
     /// line of the sheet that names no venue is for it.
     pub venues: Vec<VenueInfo>,
+    /// What the session's steps report beyond prices.
+    pub reports: Reports,
     /// Whether the session applies the sheet's [`TxOptions`]. None does yet:
     /// they are accepted and counted, and every order is sent as it would be
     /// without them.
     pub applies_tx_options: bool,
 }
 
+/// What a session's steps report beyond prices: the venues' tapes and
+/// depth, the world's clock, and the fee market. Where the tape is reported,
+/// an empty one is a step without trades.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Reports {
+    pub tape: bool,
+    pub depth: bool,
+    pub timestamps: bool,
+    pub fees: bool,
+}
+
+impl From<Option<mtx_core::turns::Reports>> for Reports {
+    fn from(reports: Option<mtx_core::turns::Reports>) -> Self {
+        let reports = reports.unwrap_or_default();
+        Reports {
+            tape: reports.tape,
+            depth: reports.depth,
+            timestamps: reports.timestamps,
+            fees: false,
+        }
+    }
+}
+
+/// What kind of market a venue is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MarketKind {
+    /// A perpetual future on an order book (Phoenix Eternal).
+    Perp,
+    /// A spot order book (Phoenix v1, OpenBook v2).
+    Spot,
+    /// A pool: constant product, concentrated liquidity or bins.
+    Amm,
+    /// A lending reserve.
+    Lending,
+    /// A stake pool, and its liquid staking token.
+    StakePool,
+}
+
+impl From<mtx_core::mandate::Kind> for MarketKind {
+    fn from(kind: mtx_core::mandate::Kind) -> Self {
+        match kind {
+            mtx_core::mandate::Kind::Perp => MarketKind::Perp,
+            mtx_core::mandate::Kind::Spot => MarketKind::Spot,
+        }
+    }
+}
+
 /// A market the session knows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VenueInfo {
-    /// The market as the mandate's universe writes it,
-    /// `<venue>:<kind>:<symbol>`: `phoenix:perp:SPCX`.
+    /// The market's id, unique in the session: `<venue>:<kind>:<symbol>`,
+    /// as the mandate's universe writes it (`phoenix:perp:SPCX`), and
+    /// `@<address>` after it where two of the session's markets would
+    /// otherwise share it (two pools of one pair).
     pub id: String,
-    pub kind: mtx_core::mandate::Kind,
+    pub kind: MarketKind,
+    /// The market's account, base58: the perp's or the book's market, the
+    /// pool, the lending reserve, the stake pool.
+    pub address: Option<String>,
     /// Whether the session can send orders there. A line for a venue it
     /// can't comes back as [`SendState::NotSent`].
     pub tradable: bool,
 }
 
 impl VenueInfo {
+    /// The venue's name: `phoenix` in `phoenix:perp:SPCX`.
+    pub fn venue(&self) -> &str {
+        self.id.split(':').next().unwrap_or_default()
+    }
+
     /// A perp session's venues: its own market, `symbol`'s perp in the
-    /// mandate's universe (`phoenix:perp:<symbol>` if it names none), which
-    /// is the one it trades, and the universe's others.
-    pub fn of_perp_session(mandate: &Mandate, symbol: &str) -> Vec<VenueInfo> {
+    /// mandate's universe (`phoenix:perp:<symbol>` if it names none), at
+    /// `address`, which is the one it trades; and the universe's others.
+    pub fn of_perp_session(
+        mandate: &Mandate,
+        symbol: &str,
+        address: Option<String>,
+    ) -> Vec<VenueInfo> {
         use mtx_core::mandate::{InstrumentRef, Kind};
         let own = mandate
             .universe
@@ -136,34 +199,46 @@ impl VenueInfo {
                 kind: Kind::Perp,
                 symbol: symbol.into(),
             });
-        Self::of_mandate(mandate, &own, |instrument| *instrument == own)
+        let mut venues = Self::of_mandate(mandate, &own, |instrument| *instrument == own);
+        venues[0].address = address;
+        venues
     }
 
-    /// The mandate's universe, with `first` (the session's own market)
-    /// first, and `tradable` saying which the session can trade.
+    /// The mandate's universe, once each, with `first` (the session's own
+    /// market) first, and `tradable` saying which the session can trade.
     pub fn of_mandate(
         mandate: &Mandate,
         first: &mtx_core::mandate::InstrumentRef,
         tradable: impl Fn(&mtx_core::mandate::InstrumentRef) -> bool,
     ) -> Vec<VenueInfo> {
-        let mut instruments: Vec<_> = mandate
-            .universe
-            .iter()
-            .map(|allowance| &allowance.instrument)
-            .collect();
-        instruments.sort_by_key(|instrument| *instrument != first);
-        if instruments.first() != Some(&first) {
-            instruments.insert(0, first);
+        let mut instruments = vec![first];
+        for allowance in &mandate.universe {
+            if !instruments.contains(&&allowance.instrument) {
+                instruments.push(&allowance.instrument);
+            }
         }
         instruments
             .into_iter()
             .map(|instrument| VenueInfo {
                 id: instrument.to_string(),
-                kind: instrument.kind,
+                kind: instrument.kind.into(),
+                address: None,
                 tradable: tradable(instrument),
             })
             .collect()
     }
+}
+
+/// The market account of `symbol` in Phoenix's `/exchange` metadata
+/// ([`Session::venue`]), if it names one.
+pub fn phoenix_market_address(exchange: &str, symbol: &str) -> Option<String> {
+    let exchange: serde_json::Value = serde_json::from_str(exchange).ok()?;
+    exchange["markets"]
+        .as_array()?
+        .iter()
+        .find(|market| market["symbol"] == symbol)?["marketPubkey"]
+        .as_str()
+        .map(str::to_string)
 }
 
 /// The variables a task may set for a session, beyond the bot's contract:
@@ -365,6 +440,8 @@ pub struct Market {
     /// What the planner cut or dropped from the previous step's sheet, and
     /// why ([`plan_sheet`]'s notes).
     pub notes: Vec<String>,
+    /// The fee market, where the session reports it.
+    pub fees: Option<FeeView>,
 }
 
 /// A venue at one step.
@@ -372,44 +449,124 @@ pub struct Market {
 pub struct VenueView {
     /// As [`VenueInfo::id`] names it.
     pub id: String,
-    /// The book's best bid and ask, if any.
+    /// The book's best bid and ask, or a pool's prices for a small trade
+    /// each way.
     pub best_bid: Option<f64>,
     pub best_ask: Option<f64>,
-    /// The top levels of the book, best first, when the scenario reports
+    /// The top levels of the book, best first, where the session reports
     /// depth.
     pub depth: Option<Book>,
-    /// Every trade there since the previous step, oldest first, when the
-    /// scenario reports a tape: `Some` and empty is a step without trades.
+    /// Every trade there since the previous step, oldest first, where the
+    /// session reports a tape: `Some` and empty is a step without trades.
     pub tape: Option<Vec<mtx_core::turns::Trade>>,
     /// The strategy's position there, if the session reads it.
     pub position: Option<Position>,
+    /// Its orders resting there, as far as the session reads them.
+    pub orders: Vec<OpenOrder>,
+    /// Its liquidity positions there (a pool).
+    pub liquidity: Vec<LiquidityPosition>,
+    /// Its supply and debt there (a lending reserve).
+    pub lending: Option<LendingPosition>,
+    /// The venue's own numbers, by name: a pool's price and liquidity, a
+    /// reserve's utilization and rates, a stake pool's exchange rate.
+    pub stats: Vec<(String, f64)>,
+}
+
+/// One of the strategy's orders resting on a book.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenOrder {
+    pub client_id: Option<u64>,
+    pub side: Side,
+    pub price: f64,
+    /// Base units left.
+    pub size: f64,
+}
+
+/// A price range, in quote units per base unit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PriceRange {
+    pub lower: f64,
+    pub upper: f64,
+}
+
+/// One of the strategy's liquidity positions in a pool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiquidityPosition {
+    /// What [`Intent::RemoveLiquidity`] names it by.
+    pub id: String,
+    /// Where it provides liquidity; `None` for the whole curve.
+    pub range: Option<PriceRange>,
+    /// What it holds now, and its uncollected fees.
+    pub base: f64,
+    pub quote: f64,
+    pub fees_base: f64,
+    pub fees_quote: f64,
+}
+
+/// The strategy's account at a lending reserve, in the reserve's asset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LendingPosition {
+    pub supplied: f64,
+    pub borrowed: f64,
+    /// The obligation's liquidation threshold over its debt: liquidatable
+    /// below 1. `None` without debt.
+    pub health: Option<f64>,
+}
+
+/// The fee market, where the session models one.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FeeView {
+    /// Recent priority fees, micro-lamports per compute unit, as
+    /// `(percentile, price)`.
+    pub cu_prices: Vec<(u8, u64)>,
+    /// The tip floor for a bundle, in lamports.
+    pub tip_floor: Option<u64>,
+    /// The next slots' leaders, in order.
+    pub leaders: Vec<String>,
 }
 
 /// The session's venues at one step, and the strategy's fills, from what
 /// the run loop or the grader read: the top of the session's own market
 /// and the position there, and the step's turn data, which other venues'
-/// views come from. A venue's tape is its trades on the step's tape, if the
-/// step carries one; its depth, the step's levels for it.
+/// views come from.
+///
+/// A tape entry or a book belongs to the venue its `market` names; one
+/// that names none, to the only venue of its venue's name, and to none if
+/// two share it. A venue's tape is `Some` (maybe empty) where the session
+/// reports a tape; its depth, where it reports depth and has levels there.
 #[doc(hidden)]
 pub fn venue_views(
     venues: &[VenueInfo],
+    reports: Reports,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
     position: Position,
     tape: &[mtx_core::turns::Trade],
     depth: &[mtx_core::turns::BookLevels],
 ) -> (Vec<VenueView>, Vec<OwnFill>) {
+    let belongs = |venue: &VenueInfo, market: &Option<String>, name: &str| match market {
+        Some(market) => *market == venue.id,
+        None => name == venue.venue() && venues.iter().filter(|v| v.venue() == name).count() == 1,
+    };
     let mut fills = Vec::new();
     let views = venues
         .iter()
         .enumerate()
         .map(|(i, venue)| {
-            let name = venue.id.split(':').next().unwrap_or_default();
-            let levels = depth.iter().find(|d| d.venue == name);
-            let trades: Vec<_> = tape.iter().filter(|t| t.venue == name).cloned().collect();
+            let levels = depth
+                .iter()
+                .find(|d| belongs(venue, &d.market, &d.venue))
+                .filter(|_| reports.depth);
+            let trades: Option<Vec<_>> = reports.tape.then(|| {
+                tape.iter()
+                    .filter(|t| belongs(venue, &t.market, &t.venue))
+                    .cloned()
+                    .collect()
+            });
             fills.extend(
                 trades
                     .iter()
+                    .flatten()
                     .filter_map(|t| OwnFill::of_trade(&venue.id, t)),
             );
             let own = i == 0;
@@ -429,8 +586,9 @@ pub fn venue_views(
                     bids: l.bids.clone(),
                     asks: l.asks.clone(),
                 }),
-                tape: (!tape.is_empty()).then_some(trades),
+                tape: trades,
                 position: own.then_some(position),
+                ..VenueView::default()
             }
         })
         .collect();
@@ -488,24 +646,40 @@ pub struct Rfq {
     pub id: String,
     pub venue: String,
     /// The requester's side: [`Side::Bid`] wants to buy, so a quote
-    /// answering it sells.
-    pub side: Side,
+    /// answering it sells. `None` asks for both sides.
+    pub side: Option<Side>,
     /// Base units wanted.
     pub size: f64,
     /// The last slot a response is taken at.
     pub deadline_slot: u64,
 }
 
+/// Where an order came from: a line of the sheet, or a raw transaction
+/// (reserved for the grader-signed `send`), numbered from 0 in its step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendSource {
+    Line(u32),
+    Raw(u32),
+}
+
 /// An order the planner made of a line of the sheet, and what became of it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SendStatus {
-    /// The step whose sheet planned it, and its line on the sheet, from 0.
+    /// The step that planned it, and where it came from.
     pub step: u64,
-    pub line: u32,
-    /// The venue it went to, as [`VenueInfo::id`] names it.
+    pub source: SendSource,
+    /// The venue it went to, as [`VenueInfo::id`] names it; empty for a raw
+    /// transaction.
     pub venue: String,
-    pub order: Action,
+    pub client_id: Option<u64>,
+    /// The order as planned; `None` for a raw transaction.
+    pub order: Option<Action>,
     pub state: SendState,
+    /// The slot it landed in, its fee in lamports, and its tip, where the
+    /// session knows them.
+    pub slot: Option<u64>,
+    pub fee: Option<u64>,
+    pub tip: Option<u64>,
 }
 
 /// What became of an order.
@@ -513,7 +687,7 @@ pub struct SendStatus {
 pub enum SendState {
     /// It executed: its signature.
     Landed(String),
-    /// It was sent and failed: why.
+    /// It was sent, or checked, and failed: why.
     Failed(String),
     /// It wasn't sent: why.
     NotSent(String),
@@ -592,22 +766,92 @@ impl Default for Execution {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Intent {
     /// Trade toward this position, with market orders.
-    Target { position: f64, execution: Execution },
+    Target {
+        position: f64,
+        execution: Execution,
+    },
     /// Cancel every resting order, then rest a bid and an ask of `size`.
-    Quote { bid: f64, ask: f64, size: f64 },
+    Quote {
+        bid: f64,
+        ask: f64,
+        size: f64,
+    },
     /// A market order of `size`, filling at no worse than `limit`.
-    Market { side: Side, size: f64, limit: f64 },
+    Market {
+        side: Side,
+        size: f64,
+        limit: f64,
+    },
     /// A resting order of `size` at `price`.
-    Limit { side: Side, price: f64, size: f64 },
+    Limit {
+        side: Side,
+        price: f64,
+        size: f64,
+    },
     /// Cancel every resting order.
     CancelAll,
-    /// Answer the request for a quote `id` ([`Rfq`]): `price` for `size`, or
-    /// for the whole request.
+    /// Cancel the resting order the strategy gave this client id.
+    Cancel {
+        client_id: u64,
+    },
+    /// Answer the request for a quote `id` ([`Rfq`]): a price for each side
+    /// it answers, for `size` or the whole request.
     Respond {
         id: String,
-        price: f64,
+        bid: Option<f64>,
+        ask: Option<f64>,
         size: Option<f64>,
     },
+    /// Swap against a pool: buy ([`Side::Bid`]) or sell the base asset,
+    /// `amount` of it or of the quote asset, at no worse than `limit`.
+    Swap {
+        side: Side,
+        amount: f64,
+        unit: AmountUnit,
+        limit: f64,
+    },
+    /// Provide up to `base` and `quote` to a pool, over `range` or the whole
+    /// curve.
+    AddLiquidity {
+        base: f64,
+        quote: f64,
+        range: Option<PriceRange>,
+    },
+    /// Take `share` of a liquidity position out ([`LiquidityPosition::id`];
+    /// `None` for the only one).
+    RemoveLiquidity {
+        position: Option<String>,
+        share: f64,
+    },
+    /// Supply to a lending reserve, or stake into a stake pool.
+    Deposit {
+        amount: Option<f64>,
+    },
+    /// Take supply out, or unstake: `None` is all of it.
+    Withdraw {
+        amount: Option<f64>,
+    },
+    Borrow {
+        amount: Option<f64>,
+    },
+    /// Repay debt: `None` is all of it.
+    Repay {
+        amount: Option<f64>,
+    },
+    /// Repay `repay` of `obligation`'s debt at this reserve, and take its
+    /// collateral at the reserve `collateral` (a venue id).
+    Liquidate {
+        obligation: String,
+        collateral: String,
+        repay: f64,
+    },
+}
+
+/// What a swap's amount counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmountUnit {
+    Base,
+    Quote,
 }
 
 /// How a limit order, or a quote, lives.
@@ -617,16 +861,28 @@ pub enum TimeInForce {
     /// it crosses.
     #[default]
     Gtc,
-    /// Rests without taking: on Phoenix, one that would cross the book
-    /// isn't placed.
+    /// Rests without taking: one that would cross the book isn't placed,
+    /// and comes back [`SendState::Failed`].
     PostOnly,
     /// Fills what it can now, at no worse than its price, and rests nothing.
     Ioc,
 }
 
-/// How a line's transactions are sent: a priority fee, a tip, a bundle.
-/// Every sheet may carry them; a session applies them only if it says so
-/// ([`Session::applies_tx_options`]), and none does yet.
+/// Where a transaction is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// The RPC node, as today.
+    Rpc,
+    /// A staked connection.
+    Staked,
+    /// A block engine, as a bundle: never outside one if `bundle_only`, and
+    /// not in front of the strategy's other transactions if `dont_front`.
+    Jito { bundle_only: bool, dont_front: bool },
+}
+
+/// How a line's transactions are sent: a priority fee, a tip, a bundle, a
+/// route, retries. Every sheet may carry them; a session applies them only
+/// if it says so ([`Session::applies_tx_options`]), and none does yet.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TxOptions {
     /// Compute units the transaction asks for.
@@ -637,6 +893,9 @@ pub struct TxOptions {
     pub tip: Option<u64>,
     /// Lines with the same bundle id are sent as one bundle.
     pub bundle: Option<u32>,
+    pub route: Option<Route>,
+    /// Send again each slot until this one, if it hasn't landed.
+    pub retry_until_slot: Option<u64>,
 }
 
 /// What a line of the sheet says beyond its intent. The default is the
@@ -647,10 +906,13 @@ pub struct LineOptions {
     /// One of [`Session::venues`]' ids; `None` is the first, the session's
     /// own market.
     pub venue: Option<String>,
+    /// The strategy's own id for the line's orders: echoed in their status,
+    /// and what [`Intent::Cancel`] names.
+    pub client_id: Option<u64>,
     /// For a limit order or a quote.
     pub time_in_force: TimeInForce,
     /// Orders the line plans may only shrink the position, never grow or
-    /// flip it.
+    /// flip it, even if the sheet's earlier orders don't fill.
     pub reduce_only: bool,
     /// For a target: the most of the venue's traded volume since the
     /// previous step to trade this step, a share in (0, 1].
@@ -661,6 +923,7 @@ pub struct LineOptions {
 /// The options of a line that says nothing more.
 const DEFAULT_OPTIONS: LineOptions = LineOptions {
     venue: None,
+    client_id: None,
     time_in_force: TimeInForce::Gtc,
     reduce_only: false,
     participation: None,
@@ -671,9 +934,9 @@ const DEFAULT_OPTIONS: LineOptions = LineOptions {
 /// the process run loop) cuts to the mandate's cap and sends after
 /// [`Strategy::step`] returns.
 ///
-/// Each call adds a line; [`Orders::at`], [`Orders::post_only`],
-/// [`Orders::ioc`], [`Orders::reduce_only`], [`Orders::participation`] and
-/// [`Orders::tx`] change the line added last:
+/// Each call adds a line; [`Orders::at`], [`Orders::client_id`],
+/// [`Orders::post_only`], [`Orders::ioc`], [`Orders::reduce_only`],
+/// [`Orders::participation`] and [`Orders::tx`] change the line added last:
 /// `orders.bid(99.0, 5.0).post_only()`.
 #[derive(Debug, Clone, Default)]
 pub struct Orders {
@@ -783,12 +1046,77 @@ impl Orders {
         self.add(Intent::CancelAll)
     }
 
-    /// Answer the request for a quote `id` with `price`, for all of it.
-    pub fn respond(&mut self, id: &str, price: f64) -> &mut Self {
+    /// Cancel the resting order given `client_id` ([`Orders::client_id`]).
+    pub fn cancel(&mut self, client_id: u64) -> &mut Self {
+        self.add(Intent::Cancel { client_id })
+    }
+
+    /// Answer the request for a quote `id`: a bid, an ask, or both, for the
+    /// whole request.
+    pub fn respond(&mut self, id: &str, bid: Option<f64>, ask: Option<f64>) -> &mut Self {
         self.add(Intent::Respond {
             id: id.to_string(),
-            price,
+            bid,
+            ask,
             size: None,
+        })
+    }
+
+    /// Swap `amount` (of the base asset, or of the quote asset) against a
+    /// pool, at no worse than `limit`.
+    pub fn swap(&mut self, side: Side, amount: f64, unit: AmountUnit, limit: f64) -> &mut Self {
+        self.add(Intent::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        })
+    }
+
+    /// Provide up to `base` and `quote` to a pool, over `range` or the
+    /// whole curve.
+    pub fn add_liquidity(&mut self, base: f64, quote: f64, range: Option<PriceRange>) -> &mut Self {
+        self.add(Intent::AddLiquidity { base, quote, range })
+    }
+
+    /// Take `share` of a liquidity position out.
+    pub fn remove_liquidity(&mut self, position: Option<&str>, share: f64) -> &mut Self {
+        self.add(Intent::RemoveLiquidity {
+            position: position.map(str::to_string),
+            share,
+        })
+    }
+
+    /// Supply `amount` to a lending reserve, or stake it into a stake pool.
+    pub fn deposit(&mut self, amount: f64) -> &mut Self {
+        self.add(Intent::Deposit {
+            amount: Some(amount),
+        })
+    }
+
+    /// Take supply out, or unstake: `None` is all of it.
+    pub fn withdraw(&mut self, amount: Option<f64>) -> &mut Self {
+        self.add(Intent::Withdraw { amount })
+    }
+
+    pub fn borrow(&mut self, amount: f64) -> &mut Self {
+        self.add(Intent::Borrow {
+            amount: Some(amount),
+        })
+    }
+
+    /// Repay debt: `None` is all of it.
+    pub fn repay(&mut self, amount: Option<f64>) -> &mut Self {
+        self.add(Intent::Repay { amount })
+    }
+
+    /// Repay `repay` of `obligation`'s debt and take its collateral at the
+    /// reserve `collateral`.
+    pub fn liquidate(&mut self, obligation: &str, collateral: &str, repay: f64) -> &mut Self {
+        self.add(Intent::Liquidate {
+            obligation: obligation.to_string(),
+            collateral: collateral.to_string(),
+            repay,
         })
     }
 
@@ -797,8 +1125,14 @@ impl Orders {
         self.last(|o| o.venue = Some(venue.to_string()))
     }
 
-    /// The last line's resting orders take nothing: on Phoenix, one that
-    /// would cross the book isn't placed.
+    /// The last line's orders carry `id`: in their status, and for
+    /// [`Orders::cancel`].
+    pub fn client_id(&mut self, id: u64) -> &mut Self {
+        self.last(|o| o.client_id = Some(id))
+    }
+
+    /// The last line's resting orders take nothing: one that would cross
+    /// the book isn't placed.
     pub fn post_only(&mut self) -> &mut Self {
         self.last(|o| o.time_in_force = TimeInForce::PostOnly)
     }
@@ -832,7 +1166,8 @@ impl Orders {
     }
 }
 
-/// A concrete order, as [`plan`] turns intentions into them.
+/// A concrete order, as [`plan`] turns intentions into them, or an action
+/// that isn't an order, as the sheet gave it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Market {
@@ -852,11 +1187,47 @@ pub enum Action {
         size: f64,
     },
     CancelAll,
+    Cancel {
+        client_id: u64,
+    },
     /// A quote answering a request.
     Respond {
         id: String,
-        price: f64,
+        bid: Option<f64>,
+        ask: Option<f64>,
         size: Option<f64>,
+    },
+    Swap {
+        side: Side,
+        amount: f64,
+        unit: AmountUnit,
+        limit: f64,
+    },
+    AddLiquidity {
+        base: f64,
+        quote: f64,
+        range: Option<PriceRange>,
+    },
+    RemoveLiquidity {
+        position: Option<String>,
+        share: f64,
+    },
+    Deposit {
+        amount: Option<f64>,
+    },
+    Withdraw {
+        amount: Option<f64>,
+    },
+    Borrow {
+        amount: Option<f64>,
+    },
+    Repay {
+        amount: Option<f64>,
+    },
+    Liquidate {
+        obligation: String,
+        collateral: String,
+        repay: f64,
     },
 }
 
@@ -867,6 +1238,7 @@ pub struct Planned {
     pub line: usize,
     /// The line's venue: `None` is the session's own market.
     pub venue: Option<String>,
+    pub client_id: Option<u64>,
     pub action: Action,
     pub tx: Option<TxOptions>,
 }
@@ -890,17 +1262,23 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
 /// from the market's, another from its [`VenueView`]'s position, with
 /// nothing resting. The cap is the mandate's on every venue.
 ///
-/// - A reduce-only line is cut, as the cap cuts, so that no fill can take
-///   the position past zero.
+/// - A reduce-only line is cut so that no fill can take the position past
+///   zero, whatever else fills: the sheet's earlier orders that shrink the
+///   position, and the orders resting on its side, count as filled; earlier
+///   orders that grow it count as not filled.
 /// - An immediate-or-cancel limit order is a market order bounded by its
 ///   price; a post-only one rests as [`Action::PostOnly`]. A quote may be
 ///   post-only.
+/// - A swap is cut as a market order; one counted in the quote asset is
+///   counted in base units at its limit price.
 /// - A target's participation cuts each step's trading to its share of the
 ///   volume on the venue's tape since the previous step. A venue without a
 ///   tape has no volume to take a share of: the target doesn't trade, and a
 ///   note says so.
 /// - A target on another venue trades at no worse than its book's mid,
 ///   moved by the slippage.
+/// - Cancels by client id, responses to requests for quotes, liquidity and
+///   lending actions go through as they are.
 pub fn plan_sheet(orders: &Orders, market: &Market) -> (Vec<Planned>, Vec<String>) {
     plan_lines(orders.lines(), market)
 }
@@ -908,9 +1286,49 @@ pub fn plan_sheet(orders: &Orders, market: &Market) -> (Vec<Planned>, Vec<String
 /// One venue's count, as the planner goes down the sheet.
 struct Ledger {
     venue: Option<String>,
+    /// The position if every order so far fills, and what rests each way.
     position: f64,
     bids: f64,
     asks: f64,
+    /// The position before the sheet, and what the sheet's taking orders
+    /// bought and sold.
+    start: f64,
+    bought: f64,
+    sold: f64,
+}
+
+impl Ledger {
+    fn new(venue: Option<String>, position: f64, bids: f64, asks: f64) -> Self {
+        Ledger {
+            venue,
+            position,
+            bids,
+            asks,
+            start: position,
+            bought: 0.0,
+            sold: 0.0,
+        }
+    }
+
+    /// What a reduce-only order may trade on `side`: back to zero from the
+    /// position nearest it, where the sheet's sells (for a sell) or buys
+    /// (for a buy) all fill, with what rests on that side, and nothing that
+    /// grows the position does.
+    fn reduce_room(&self, side: Side) -> f64 {
+        match side {
+            Side::Bid => (-(self.start + self.bought + self.bids)).max(0.0),
+            Side::Ask => (self.start - self.sold - self.asks).max(0.0),
+        }
+    }
+
+    /// An order that takes, counted as filled.
+    fn took(&mut self, side: Side, size: f64) {
+        self.position += signed(side, size);
+        match side {
+            Side::Bid => self.bought += size,
+            Side::Ask => self.sold += size,
+        }
+    }
 }
 
 fn plan_lines<'a>(
@@ -919,26 +1337,20 @@ fn plan_lines<'a>(
 ) -> (Vec<Planned>, Vec<String>) {
     let cap = market.cap;
     let own = market.venues.first().map(|v| v.id.as_str());
-    let mut ledgers = vec![Ledger {
-        venue: None,
-        position: market.position.size,
-        bids: market.resting_bids,
-        asks: market.resting_asks,
-    }];
+    let mut ledgers = vec![Ledger::new(
+        None,
+        market.position.size,
+        market.resting_bids,
+        market.resting_asks,
+    )];
     let mut planned = Vec::new();
     let mut notes = Vec::new();
-    let room = |position: f64, bids: f64, asks: f64, side: Side| {
-        let (buy, sell) = mtx_core::mandate::position_room(cap, position, bids, asks);
+    let room = |l: &Ledger, side: Side| {
+        let (buy, sell) = mtx_core::mandate::position_room(cap, l.position, l.bids, l.asks);
         match side {
             Side::Bid => buy,
             Side::Ask => sell,
         }
-    };
-    // What a reduce-only order may trade: back to zero, counting what rests
-    // on its side as filled.
-    let reduce_room = |position: f64, bids: f64, asks: f64, side: Side| match side {
-        Side::Bid => (-(position + bids)).max(0.0),
-        Side::Ask => (position - asks).max(0.0),
     };
     for (line, (intent, options)) in lines.into_iter().enumerate() {
         let venue = options
@@ -952,30 +1364,23 @@ fn plan_lines<'a>(
         let index = match ledgers.iter().position(|l| l.venue == venue) {
             Some(index) => index,
             None => {
-                ledgers.push(Ledger {
-                    venue: venue.clone(),
-                    position: view.and_then(|v| v.position).map_or(0.0, |p| p.size),
-                    bids: 0.0,
-                    asks: 0.0,
-                });
+                let position = view.and_then(|v| v.position).map_or(0.0, |p| p.size);
+                ledgers.push(Ledger::new(venue.clone(), position, 0.0, 0.0));
                 ledgers.len() - 1
             }
         };
-        let Ledger {
-            position,
-            bids,
-            asks,
-            ..
-        } = &mut ledgers[index];
+        let l = &mut ledgers[index];
         let mut push = |action: Action| {
             planned.push(Planned {
                 line,
                 venue: venue.clone(),
+                client_id: options.client_id,
                 action,
                 tx: options.tx,
             })
         };
-        let reduce = |size: f64, room: f64, what: &str, notes: &mut Vec<String>| {
+        let reduce = |size: f64, l: &Ledger, side: Side, what: &str, notes: &mut Vec<String>| {
+            let room = l.reduce_room(side);
             if options.reduce_only && size > room {
                 notes.push(format!(
                     "reduce-only {what} of {size} cut to {room}, so as not to grow the position"
@@ -1013,7 +1418,7 @@ fn plan_lines<'a>(
                     },
                 };
                 let mut missing =
-                    (wanted - *position).clamp(-execution.max_per_step, execution.max_per_step);
+                    (wanted - l.position).clamp(-execution.max_per_step, execution.max_per_step);
                 if let Some(share) = options.participation {
                     if !(share > 0.0 && share <= 1.0) {
                         notes.push(format!(
@@ -1024,7 +1429,7 @@ fn plan_lines<'a>(
                     // No tape is no volume seen: nothing to take a share of.
                     let volume = view
                         .and_then(|v| v.tape.as_ref())
-                        .map(|tape| tape.iter().map(|t| t.base).sum::<f64>());
+                        .map(|tape| tape.iter().fold(0.0, |volume, t| volume + t.base));
                     if volume.is_none() {
                         notes.push(
                             "participation needs the venue's tape, which this session doesn't report: not trading"
@@ -1045,7 +1450,7 @@ fn plan_lines<'a>(
                 // Resting orders could fill too: trade only what keeps the
                 // position within the cap if they do.
                 let side = if missing > 0.0 { Side::Bid } else { Side::Ask };
-                let room = room(*position, *bids, *asks, side);
+                let room = room(l, side);
                 if missing.abs() > room {
                     notes.push(format!(
                         "target {target} would leave the position past the cap if the resting orders filled: trading {room} of {}",
@@ -1053,13 +1458,7 @@ fn plan_lines<'a>(
                     ));
                     missing = missing.signum() * room;
                 }
-                missing = missing.signum()
-                    * reduce(
-                        missing.abs(),
-                        reduce_room(*position, *bids, *asks, side),
-                        "target",
-                        &mut notes,
-                    );
+                missing = missing.signum() * reduce(missing.abs(), l, side, "target", &mut notes);
                 while missing.abs() >= execution.min_trade {
                     let size = (missing.abs() / execution.min_trade).floor() * execution.min_trade;
                     let size = size.min(execution.slice);
@@ -1073,41 +1472,54 @@ fn plan_lines<'a>(
                         size,
                         limit: round_cents(limit),
                     });
-                    *position += signed(side, size);
+                    l.took(side, size);
                     missing -= signed(side, size);
                 }
             }
             &Intent::Market { side, size, limit } => {
-                let size = cut(
-                    size,
-                    room(*position, *bids, *asks, side),
-                    "market order",
-                    &mut notes,
-                );
-                let size = reduce(
-                    size,
-                    reduce_room(*position, *bids, *asks, side),
-                    "market order",
-                    &mut notes,
-                );
+                let size = cut(size, room(l, side), "market order", &mut notes);
+                let size = reduce(size, l, side, "market order", &mut notes);
                 if size > 0.0 {
                     push(Action::Market { side, size, limit });
-                    *position += signed(side, size);
+                    l.took(side, size);
+                }
+            }
+            &Intent::Swap {
+                side,
+                amount,
+                unit,
+                limit,
+            } => {
+                // In base units, at the limit price for a quote amount.
+                let base = match unit {
+                    AmountUnit::Base => amount,
+                    AmountUnit::Quote if limit > 0.0 => amount / limit,
+                    AmountUnit::Quote => {
+                        notes.push(
+                            "a swap in the quote asset needs a positive limit: not trading".into(),
+                        );
+                        continue;
+                    }
+                };
+                let size = cut(base, room(l, side), "swap", &mut notes);
+                let size = reduce(size, l, side, "swap", &mut notes);
+                if size > 0.0 {
+                    push(Action::Swap {
+                        side,
+                        amount: if size < base {
+                            amount * size / base
+                        } else {
+                            amount
+                        },
+                        unit,
+                        limit,
+                    });
+                    l.took(side, size);
                 }
             }
             &Intent::Limit { side, price, size } => {
-                let size = cut(
-                    size,
-                    room(*position, *bids, *asks, side),
-                    "resting order",
-                    &mut notes,
-                );
-                let size = reduce(
-                    size,
-                    reduce_room(*position, *bids, *asks, side),
-                    "resting order",
-                    &mut notes,
-                );
+                let size = cut(size, room(l, side), "resting order", &mut notes);
+                let size = reduce(size, l, side, "resting order", &mut notes);
                 if size > 0.0 {
                     match options.time_in_force {
                         TimeInForce::Ioc => {
@@ -1116,7 +1528,7 @@ fn plan_lines<'a>(
                                 size,
                                 limit: price,
                             });
-                            *position += signed(side, size);
+                            l.took(side, size);
                         }
                         tif => {
                             push(if tif == TimeInForce::PostOnly {
@@ -1125,8 +1537,8 @@ fn plan_lines<'a>(
                                 Action::Limit { side, price, size }
                             });
                             match side {
-                                Side::Bid => *bids += size,
-                                Side::Ask => *asks += size,
+                                Side::Bid => l.bids += size,
+                                Side::Ask => l.asks += size,
                             }
                         }
                     }
@@ -1145,48 +1557,50 @@ fn plan_lines<'a>(
                     }
                 };
                 push(Action::CancelAll);
-                (*bids, *asks) = (0.0, 0.0);
-                let bid_size = cut(
-                    size,
-                    room(*position, *bids, *asks, Side::Bid),
-                    "bid",
-                    &mut notes,
-                );
-                let ask_size = cut(
-                    size,
-                    room(*position, *bids, *asks, Side::Ask),
-                    "ask",
-                    &mut notes,
-                );
-                let bid_size = reduce(
-                    bid_size,
-                    reduce_room(*position, *bids, *asks, Side::Bid),
-                    "bid",
-                    &mut notes,
-                );
-                let ask_size = reduce(
-                    ask_size,
-                    reduce_room(*position, *bids, *asks, Side::Ask),
-                    "ask",
-                    &mut notes,
-                );
+                (l.bids, l.asks) = (0.0, 0.0);
+                let bid_size = cut(size, room(l, Side::Bid), "bid", &mut notes);
+                let ask_size = cut(size, room(l, Side::Ask), "ask", &mut notes);
+                let bid_size = reduce(bid_size, l, Side::Bid, "bid", &mut notes);
+                let ask_size = reduce(ask_size, l, Side::Ask, "ask", &mut notes);
                 if bid_size > 0.0 {
                     push(rest(Side::Bid, bid, bid_size));
-                    *bids += bid_size;
+                    l.bids += bid_size;
                 }
                 if ask_size > 0.0 {
                     push(rest(Side::Ask, ask, ask_size));
-                    *asks += ask_size;
+                    l.asks += ask_size;
                 }
             }
             Intent::CancelAll => {
                 push(Action::CancelAll);
-                (*bids, *asks) = (0.0, 0.0);
+                (l.bids, l.asks) = (0.0, 0.0);
             }
-            Intent::Respond { id, price, size } => push(Action::Respond {
+            &Intent::Cancel { client_id } => push(Action::Cancel { client_id }),
+            Intent::Respond { id, bid, ask, size } => push(Action::Respond {
                 id: id.clone(),
-                price: *price,
+                bid: *bid,
+                ask: *ask,
                 size: *size,
+            }),
+            &Intent::AddLiquidity { base, quote, range } => {
+                push(Action::AddLiquidity { base, quote, range })
+            }
+            Intent::RemoveLiquidity { position, share } => push(Action::RemoveLiquidity {
+                position: position.clone(),
+                share: *share,
+            }),
+            &Intent::Deposit { amount } => push(Action::Deposit { amount }),
+            &Intent::Withdraw { amount } => push(Action::Withdraw { amount }),
+            &Intent::Borrow { amount } => push(Action::Borrow { amount }),
+            &Intent::Repay { amount } => push(Action::Repay { amount }),
+            Intent::Liquidate {
+                obligation,
+                collateral,
+                repay,
+            } => push(Action::Liquidate {
+                obligation: obligation.clone(),
+                collateral: collateral.clone(),
+                repay: *repay,
             }),
         }
     }
@@ -1220,7 +1634,7 @@ pub fn resting_after(bids: f64, asks: f64, actions: &[Action]) -> (f64, f64) {
                 size,
                 ..
             } => (bids, asks + size),
-            Action::Market { .. } | Action::Respond { .. } => (bids, asks),
+            _ => (bids, asks),
         })
 }
 
@@ -1656,6 +2070,42 @@ mod tests {
             }]
         );
         assert_eq!(notes.len(), 3, "{notes:?}");
+        // An earlier buy that may not fill doesn't count: flat, an IOC buy
+        // of 2 leaves a reduce-only sell nothing to sell, and long 10, a buy
+        // of 5 leaves it 10, not 15.
+        let mut orders = Orders::new();
+        orders.bid(102.0, 2.0).ioc().sell(5.0, 98.0).reduce_only();
+        let (actions, notes) = planned_actions(&orders, &market(0.0));
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert!(notes[0].contains("cut to 0"), "{notes:?}");
+        let mut orders = Orders::new();
+        orders.buy(5.0, 101.0).sell(20.0, 99.0).reduce_only();
+        let (actions, _) = planned_actions(&orders, &market(10.0));
+        assert_eq!(
+            actions[1],
+            Action::Market {
+                side: Side::Ask,
+                size: 10.0,
+                limit: 99.0
+            }
+        );
+        // Earlier sells that shrink the position count as filled: two
+        // reduce-only sells of 8 on a long 10 get 8 and 2.
+        let mut orders = Orders::new();
+        orders
+            .sell(8.0, 99.0)
+            .reduce_only()
+            .sell(8.0, 99.0)
+            .reduce_only();
+        let (actions, _) = planned_actions(&orders, &market(10.0));
+        assert_eq!(
+            actions[1],
+            Action::Market {
+                side: Side::Ask,
+                size: 2.0,
+                limit: 99.0
+            }
+        );
         // Resting asks count: with 15 resting, a reduce-only sell of the
         // long 20 gets 5.
         let resting = Market {
@@ -1678,17 +2128,29 @@ mod tests {
             taker: None,
             maker: None,
             own: None,
+            market: None,
         }
     }
 
+    const TAPE: Reports = Reports {
+        tape: true,
+        depth: true,
+        timestamps: false,
+        fees: false,
+    };
+
     #[test]
     fn participation_takes_a_share_of_the_tape() {
-        let venues =
-            VenueInfo::of_perp_session(&Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0), "SPCX");
+        let venues = VenueInfo::of_perp_session(
+            &Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0),
+            "SPCX",
+            None,
+        );
         let mut orders = Orders::new();
         orders.target_position(70.0).participation(0.25);
-        let traded = |tape: &[mtx_core::turns::Trade]| {
-            let (views, _) = venue_views(&venues, None, None, Position::default(), tape, &[]);
+        let traded = |tape: &[mtx_core::turns::Trade], reports: Reports| {
+            let (views, _) =
+                venue_views(&venues, reports, None, None, Position::default(), tape, &[]);
             let market = Market {
                 venues: views,
                 ..market(0.0)
@@ -1704,11 +2166,15 @@ mod tests {
             (size, notes)
         };
         // 40 traded since the last step: a quarter of it.
-        let (size, notes) = traded(&[trade(30.0), trade(10.0)]);
+        let (size, notes) = traded(&[trade(30.0), trade(10.0)], TAPE);
         assert_eq!(size, 10.0);
         assert!(notes[0].contains("participation 0.25"), "{notes:?}");
-        // No tape, no volume: no trading.
-        let (size, notes) = traded(&[]);
+        // A step without trades: nothing to take a share of.
+        let (size, notes) = traded(&[], TAPE);
+        assert_eq!(size, 0.0);
+        assert!(notes[0].contains("trading 0 of 70"), "{notes:?}");
+        // No tape at all: no volume either, and the note says why.
+        let (size, notes) = traded(&[], Reports::default());
         assert_eq!(size, 0.0);
         assert!(notes[0].contains("doesn't report"), "{notes:?}");
     }
@@ -1722,13 +2188,21 @@ mod tests {
                 .extend(Mandate::spot(&["openbook"], "SOL-USDC", 70.0).universe);
             mandate
         };
-        let venues = VenueInfo::of_perp_session(&mandate, "SPCX");
+        let venues = VenueInfo::of_perp_session(&mandate, "SPCX", None);
         assert_eq!(
             venues.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(),
             ["phoenix:perp:SPCX", "openbook:spot:SOL-USDC"]
         );
         assert!(venues[0].tradable && !venues[1].tradable);
-        let (views, _) = venue_views(&venues, None, None, Position::default(), &[], &[]);
+        let (views, _) = venue_views(
+            &venues,
+            Reports::default(),
+            None,
+            None,
+            Position::default(),
+            &[],
+            &[],
+        );
         let market = Market {
             venues: views,
             ..market(65.0)
@@ -1779,14 +2253,18 @@ mod tests {
 
     #[test]
     fn own_trades_on_the_tape_are_fills() {
-        let venues =
-            VenueInfo::of_perp_session(&Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0), "SPCX");
+        let venues = VenueInfo::of_perp_session(
+            &Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0),
+            "SPCX",
+            None,
+        );
         let mut taken = trade(2.0);
         taken.own = Some(Role::Taker);
         let mut made = trade(3.0);
         made.own = Some(Role::Maker);
         let (views, fills) = venue_views(
             &venues,
+            TAPE,
             Some(99.0),
             Some(101.0),
             Position::default(),
@@ -1801,6 +2279,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(Side::Bid, 2.0, Role::Taker), (Side::Ask, 3.0, Role::Maker)]
         );
+    }
+
+    #[test]
+    fn turn_data_belongs_to_its_market() {
+        // A perp and a spot book on one venue: entries that name their
+        // market go to it; one that names none is no one's.
+        let mut mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        mandate
+            .universe
+            .extend(Mandate::spot(&["phoenix"], "SOL-USDC", 70.0).universe);
+        let venues = VenueInfo::of_perp_session(&mandate, "SPCX", Some("market".into()));
+        assert_eq!(venues[0].address.as_deref(), Some("market"));
+        let mut spot = trade(2.0);
+        spot.market = Some("phoenix:spot:SOL-USDC".into());
+        spot.own = Some(Role::Taker);
+        let mut perp = trade(3.0);
+        perp.market = Some("phoenix:perp:SPCX".into());
+        let depth = [mtx_core::turns::BookLevels {
+            venue: "phoenix".into(),
+            market: Some("phoenix:spot:SOL-USDC".into()),
+            bids: vec![mtx_core::turns::Level {
+                price: 150.0,
+                base: 1.0,
+            }],
+            asks: vec![],
+        }];
+        let (views, fills) = venue_views(
+            &venues,
+            TAPE,
+            None,
+            None,
+            Position::default(),
+            &[spot, perp, trade(1.0)],
+            &depth,
+        );
+        let sizes = |v: &VenueView| v.tape.iter().flatten().map(|t| t.base).collect::<Vec<_>>();
+        assert_eq!(sizes(&views[0]), [3.0]);
+        assert_eq!(sizes(&views[1]), [2.0]);
+        assert!(views[0].depth.is_none());
+        assert_eq!(views[1].best_bid, Some(150.0));
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].venue, "phoenix:spot:SOL-USDC");
     }
 
     #[test]

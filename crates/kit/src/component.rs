@@ -20,11 +20,13 @@ pub mod bindings {
 }
 
 use bindings::mtx::strategy::types as wit;
-use mtx_core::{mandate::Kind, turns};
+use mtx_core::turns;
 
 use crate::{
-    Action, Book, Execution, Intent, LineOptions, Market, OwnFill, Position, Rfq, Role, SendState,
-    SendStatus, Session, Side, TimeInForce, TxOptions, VenueInfo, VenueView,
+    Action, AmountUnit, Book, Execution, FeeView, Intent, LendingPosition, LineOptions,
+    LiquidityPosition, Market, MarketKind, OpenOrder, OwnFill, Position, PriceRange, Reports, Rfq,
+    Role, Route, SendSource, SendState, SendStatus, Session, Side, TimeInForce, VenueInfo,
+    VenueView,
 };
 
 /// The session, as the grader hands it to `start`.
@@ -51,12 +53,22 @@ pub fn session(s: wit::Session) -> Result<Session, String> {
             .map(|v| VenueInfo {
                 id: v.id,
                 kind: match v.kind {
-                    wit::MarketKind::Perp => Kind::Perp,
-                    wit::MarketKind::Spot => Kind::Spot,
+                    wit::MarketKind::Perp => MarketKind::Perp,
+                    wit::MarketKind::Spot => MarketKind::Spot,
+                    wit::MarketKind::Amm => MarketKind::Amm,
+                    wit::MarketKind::Lending => MarketKind::Lending,
+                    wit::MarketKind::StakePool => MarketKind::StakePool,
                 },
+                address: v.address,
                 tradable: v.tradable,
             })
             .collect(),
+        reports: Reports {
+            tape: s.reports.tape,
+            depth: s.reports.depth,
+            timestamps: s.reports.timestamps,
+            fees: s.reports.fees,
+        },
         applies_tx_options: s.applies_tx_options,
     })
 }
@@ -97,6 +109,7 @@ pub fn market(m: wit::Market) -> Market {
                 let book = v.depth.as_ref()?;
                 Some(turns::BookLevels {
                     venue: name(&v.id),
+                    market: Some(v.id.clone()),
                     bids: book.bids.clone(),
                     asks: book.asks.clone(),
                 })
@@ -123,12 +136,17 @@ pub fn market(m: wit::Market) -> Market {
             .map(|r| Rfq {
                 id: r.id,
                 venue: r.venue,
-                side: kit_side(r.side),
+                side: r.side.map(kit_side),
                 size: r.size,
                 deadline_slot: r.deadline_slot,
             })
             .collect(),
         notes: m.notes,
+        fees: m.fees.map(|f| FeeView {
+            cu_prices: f.cu_prices,
+            tip_floor: f.tip_floor,
+            leaders: f.leaders,
+        }),
     }
 }
 
@@ -143,6 +161,13 @@ fn role(role: wit::Role) -> Role {
     match role {
         wit::Role::Taker => Role::Taker,
         wit::Role::Maker => Role::Maker,
+    }
+}
+
+fn range(r: wit::PriceRange) -> PriceRange {
+    PriceRange {
+        lower: r.lower,
+        upper: r.upper,
     }
 }
 
@@ -168,6 +193,7 @@ fn venue_view(v: wit::VenueView) -> VenueView {
             tape.into_iter()
                 .map(|t| turns::Trade {
                     venue: name.clone(),
+                    market: Some(v.id.clone()),
                     side: match t.side {
                         wit::Side::Bid => mtx_core::Side::Buy,
                         wit::Side::Ask => mtx_core::Side::Sell,
@@ -182,6 +208,34 @@ fn venue_view(v: wit::VenueView) -> VenueView {
                 .collect()
         }),
         position: v.position.map(position),
+        orders: v
+            .orders
+            .into_iter()
+            .map(|o| OpenOrder {
+                client_id: o.client_id,
+                side: kit_side(o.side),
+                price: o.price,
+                size: o.size,
+            })
+            .collect(),
+        liquidity: v
+            .liquidity
+            .into_iter()
+            .map(|p| LiquidityPosition {
+                id: p.id,
+                range: p.range.map(range),
+                base: p.base,
+                quote: p.quote,
+                fees_base: p.fees_base,
+                fees_quote: p.fees_quote,
+            })
+            .collect(),
+        lending: v.lending.map(|l| LendingPosition {
+            supplied: l.supplied,
+            borrowed: l.borrowed,
+            health: l.health,
+        }),
+        stats: v.stats,
         id: v.id,
     }
 }
@@ -189,9 +243,13 @@ fn venue_view(v: wit::VenueView) -> VenueView {
 fn send_status(s: wit::SendStatus) -> SendStatus {
     SendStatus {
         step: s.step,
-        line: s.line,
+        source: match s.source {
+            wit::SendSource::Line(n) => SendSource::Line(n),
+            wit::SendSource::Raw(n) => SendSource::Raw(n),
+        },
         venue: s.venue,
-        order: match s.order {
+        client_id: s.client_id,
+        order: s.order.map(|order| match order {
             wit::Order::Market(o) => Action::Market {
                 side: kit_side(o.side),
                 size: o.size,
@@ -215,12 +273,38 @@ fn send_status(s: wit::SendStatus) -> SendStatus {
                 },
             },
             wit::Order::CancelAll => Action::CancelAll,
+            wit::Order::Cancel(client_id) => Action::Cancel { client_id },
             wit::Order::Respond(r) => Action::Respond {
                 id: r.id,
-                price: r.price,
+                bid: r.bid,
+                ask: r.ask,
                 size: r.size,
             },
-        },
+            wit::Order::Swap(o) => Action::Swap {
+                side: kit_side(o.side),
+                amount: o.amount,
+                unit: kit_unit(o.unit),
+                limit: o.limit,
+            },
+            wit::Order::AddLiquidity(o) => Action::AddLiquidity {
+                base: o.base,
+                quote: o.quote,
+                range: o.range.map(range),
+            },
+            wit::Order::RemoveLiquidity(o) => Action::RemoveLiquidity {
+                position: o.position,
+                share: o.share,
+            },
+            wit::Order::Deposit(a) => Action::Deposit { amount: a.amount },
+            wit::Order::Withdraw(a) => Action::Withdraw { amount: a.amount },
+            wit::Order::Borrow(a) => Action::Borrow { amount: a.amount },
+            wit::Order::Repay(a) => Action::Repay { amount: a.amount },
+            wit::Order::Liquidate(o) => Action::Liquidate {
+                obligation: o.obligation,
+                collateral: o.collateral,
+                repay: o.repay,
+            },
+        }),
         state: match s.state {
             wit::SendState::Landed(signature) => SendState::Landed(signature),
             wit::SendState::Failed(why) => SendState::Failed(why),
@@ -228,6 +312,9 @@ fn send_status(s: wit::SendStatus) -> SendStatus {
             wit::SendState::Delayed => SendState::Delayed,
             wit::SendState::Expired => SendState::Expired,
         },
+        slot: s.slot,
+        fee: s.fee,
+        tip: s.tip,
     }
 }
 
@@ -245,6 +332,20 @@ fn side(side: Side) -> wit::Side {
     }
 }
 
+fn kit_unit(unit: wit::AmountUnit) -> AmountUnit {
+    match unit {
+        wit::AmountUnit::Base => AmountUnit::Base,
+        wit::AmountUnit::Quote => AmountUnit::Quote,
+    }
+}
+
+fn wit_range(r: PriceRange) -> wit::PriceRange {
+    wit::PriceRange {
+        lower: r.lower,
+        upper: r.upper,
+    }
+}
+
 /// A line of the sheet, as the grader takes it from `step`.
 #[doc(hidden)]
 pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
@@ -253,6 +354,7 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
         TimeInForce::PostOnly => wit::TimeInForce::PostOnly,
         TimeInForce::Ioc => wit::TimeInForce::Ioc,
     };
+    let amount = |amount| wit::Amount { amount };
     let action = match intent {
         Intent::Target {
             position,
@@ -299,27 +401,71 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
             time_in_force,
         }),
         Intent::CancelAll => wit::Action::CancelAll,
-        Intent::Respond { id, price, size } => {
-            wit::Action::Respond(wit::RfqResponse { id, price, size })
+        Intent::Cancel { client_id } => wit::Action::Cancel(client_id),
+        Intent::Respond { id, bid, ask, size } => {
+            wit::Action::Respond(wit::RfqResponse { id, bid, ask, size })
         }
+        Intent::Swap {
+            side: s,
+            amount,
+            unit,
+            limit,
+        } => wit::Action::Swap(wit::Swap {
+            side: side(s),
+            amount,
+            unit: match unit {
+                AmountUnit::Base => wit::AmountUnit::Base,
+                AmountUnit::Quote => wit::AmountUnit::Quote,
+            },
+            limit,
+        }),
+        Intent::AddLiquidity { base, quote, range } => {
+            wit::Action::AddLiquidity(wit::AddLiquidity {
+                base,
+                quote,
+                range: range.map(wit_range),
+            })
+        }
+        Intent::RemoveLiquidity { position, share } => {
+            wit::Action::RemoveLiquidity(wit::RemoveLiquidity { position, share })
+        }
+        Intent::Deposit { amount: a } => wit::Action::Deposit(amount(a)),
+        Intent::Withdraw { amount: a } => wit::Action::Withdraw(amount(a)),
+        Intent::Borrow { amount: a } => wit::Action::Borrow(amount(a)),
+        Intent::Repay { amount: a } => wit::Action::Repay(amount(a)),
+        Intent::Liquidate {
+            obligation,
+            collateral,
+            repay,
+        } => wit::Action::Liquidate(wit::Liquidate {
+            obligation,
+            collateral,
+            repay,
+        }),
     };
     wit::Intent {
         action,
         venue: options.venue,
+        client_id: options.client_id,
         reduce_only: options.reduce_only,
-        tx: options.tx.map(
-            |TxOptions {
-                 cu_limit,
-                 cu_price,
-                 tip,
-                 bundle,
-             }| wit::TxOptions {
-                cu_limit,
-                cu_price,
-                tip,
-                bundle,
-            },
-        ),
+        tx: options.tx.map(|tx| wit::TxOptions {
+            cu_limit: tx.cu_limit,
+            cu_price: tx.cu_price,
+            tip: tx.tip,
+            bundle: tx.bundle,
+            route: tx.route.map(|route| match route {
+                Route::Rpc => wit::Route::Rpc,
+                Route::Staked => wit::Route::Staked,
+                Route::Jito {
+                    bundle_only,
+                    dont_front,
+                } => wit::Route::Jito(wit::JitoRoute {
+                    bundle_only,
+                    dont_front,
+                }),
+            }),
+            retry_until_slot: tx.retry_until_slot,
+        }),
     }
 }
 

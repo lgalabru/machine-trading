@@ -579,6 +579,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .into_iter()
                         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
                         .collect(),
+                    reports: mtx_kit::Reports::default(),
                 },
                 Box::new(log),
                 opts.observer.clone(),
@@ -617,6 +618,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: TURN_WALL.as_millis() as u64,
+            reports: None,
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
             && matches!(
