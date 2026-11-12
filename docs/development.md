@@ -65,7 +65,13 @@ report and scenario from the grade's detail files (`--details`; by default
 the grader's current rules, prints the new report, and says on stderr where
 it differs from the old one. With nothing changed it is the same report
 (`--check` fails otherwise). `mtx bench rescore <batch or version>` does it
-for every trial of a batch or published release.
+for every trial of a batch or published release. Compacting 0.11.0 parsed
+its session files with serde_json's default float parsing, which can land
+a last bit off, so some of its sessions read back a last bit away from the
+report: 38 of its 40 trials rescore to exactly the same reward and skill,
+the other two differ in the last bit. Floats now parse exactly, so a
+release compacted from now on rescores bit for bit. 0.10.0's sessions
+predate the reports' present shape and don't read back.
 
 ## Write a bot
 
