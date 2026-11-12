@@ -1,11 +1,21 @@
 # PR 10: market calibration, market model v2, realism checks
 
-## Current state (checkpoint 2026-11-12 03:45 UTC)
-- Done and pushed (origin/infra/10-market-model): 5 commits, fmt/clippy (workspace, mtx-kit all features, wasm32-wasip2 bots)/`cargo test --workspace` all green on runner-5.
-- Running: runner-5, container `infra-10-build` (rust:1.97.1, /data/builders/infra-10 mounted at /work): `/work/anchors.sh` grades the 4 reference anchors (6 drawn sessions, one private seed in /work/.seed, never printed) with `/work/mtx-main` (origin/main) and `/work/mtx-head`, writes /work/anchors/{main,head}/<family>/report.json and `<family> IDENTICAL|DIFFERS` lines to /work/anchors.log.
-- Next: read anchors.log (if DIFFERS, rerun main twice to tell wobble from change); CLI smoke (`/work/smoke.sh`); then report. Afterwards remove container `infra-10-build` and /data/builders/infra-10.
+## Proof (runner-5, rust:1.97.1 container, private target dir)
 
-Branch `infra/10-market-model`, from origin/main c80ca119.
+- `cargo +nightly fmt --all -- --check`: clean.
+- clippy `-D warnings` is clean:
+  - on the workspace (all targets);
+  - on `mtx-kit --all-features` (all targets);
+  - on `mtx-bot-{starter,reference,maker,carry,weekend} --lib --target wasm32-wasip2`.
+- `cargo test --workspace` passes, and so does `cargo test -p mtx-kit --all-features`. That includes 27 new tests in `mtx_grader::market`.
+- **Reference anchors.** `mtx grade --draw <family> --count 6`, with each task's reference as both bot and `--reference`, ran on one private seed generated on the box and never printed. It ran with mtx built at origin/main (c80ca119) and at this head.
+  - The session reports are identical for all 4 tasks (flash-crash, market-making, funding-carry, weekend-gap) except `wall_ms`: 12 lines per report, the sessions' wall-clock timing.
+  - Every PnL, fill, risk and score field is byte-identical.
+- **CLI smoke** (`mtx market-cal`):
+  - `check model` passes for SOL (10/10 checks) and SPCX (12/12, with the gap checks).
+  - The 4 current families checked against SOL fail on vol level: 8–47× SOL's 1 s sd. They also fail on some tails and clustering checks, and exit 2. All their round trips lose.
+  - `generate` with `start = before regular, lead 60 s` writes scenarios with a gap recorded at slot 240.
+  - `check` on them skips the return checks (sessions shorter than SPCX's hour windows) and passes round trips.
 
 ## Draft PR description
 
@@ -14,7 +24,7 @@ Branch `infra/10-market-model`, from origin/main c80ca119.
 Market parameters come from a versioned per-asset calibration file fitted to real data. A new opt-in model draws fat-tailed, regime-switching, calendar-aware paths from it. Realism checks compare generated sessions with the real asset.
 
 - `calibration/market/<asset>.<date>.<hash>.toml` (schema 1.0) plus an inputs manifest (URL and SHA-256 of every download). Loaded by `mtx_grader::market::calibration`, which uses strict serde, a `model` on every section and an id-to-filename check. Ships SOL/USD and SPCX, fitted from keyless public data, each with its sources and limits.
-- `mtx_grader::market::model` draws the path. It uses a per-session volatility level and Markov regimes, GARCH(1,1) on blocks with Student-t innovations, and a Gaussian bridge to slots. It adds Poisson background jumps and a trading calendar (pre, regular, post, overnight, weekends, US holidays, New York DST) with gaps at the open, plus correlated multi-asset draws. The path compiles to the existing waypoints (`path`, `fair_path`), and `Scenario::market_model` records the draw.
+- `mtx_grader::market::model` draws the path. It uses a per-session volatility level and Markov regimes, GARCH(1,1) on blocks with Student-t innovations, and a Gaussian bridge to slots. It adds opt-in Poisson background jumps and a trading calendar (pre, regular, post, overnight, weekends, US holidays, New York DST) with gaps at the open, plus correlated multi-asset draws. The path compiles to the existing waypoints (`path`, `fair_path`), and `Scenario::market_model` records the draw.
 - `mtx_grader::market::realism` runs stylized-fact checks: vol level, vol of vol across sessions, within and pooled kurtosis, the tail index, |r| ACF clustering, predictability, gap sizes and round trips that lose spread, impact and fees. Each is computed like for like against the real windows stored in the file, with bands.
 - `mtx market-cal show | generate | check <scenarios|model|family> --calibration <file>`. `check` prints a JSON report and exits 2 on failure. `mtx gates` (PR 14) calls it.
 - Opt-in: existing families, scenarios and the 4 tasks are unchanged. `docs/market-calibration.md` documents it.
@@ -48,6 +58,8 @@ Market parameters come from a versioned per-asset calibration file fitted to rea
 - **Slot length.** The model uses the engine's `SLOT_SECONDS` (0.25 s), not the prototype's 0.4 s, and the file stores `per_second_sd`, so the slot length is the engine's choice.
   - SOL's base sd is the 10 s sd / √10, to stay above 1 s tick noise.
   - SPCX's base sd is the regular-hours 1 m sd / √60.
+- **Tail moves land in one slot.** Each block's Student-t return is a normal part spread over its slots by a Gaussian bridge, plus the t scale's excess in one random slot. An even spread made the two halves of a fat block move together, which inflated SOL's within-session |r| ACF past its band (0.042 against 0.04).
+- **Background jumps are off by default** (`jumps = true` turns them on). The tails and GARCH are fitted on returns that already hold those moves, so adding them again counts them twice. With jumps on, SOL's pooled kurtosis is 4.4× the real value, against 0.47× with them off. The file keeps the jump rate and sizes for families that want explicit jumps, or that size designed shocks as multiples of the p90.
 - **Volatility level is drawn per session.** CALIBRATION.md's finding: within 5 minutes, real clustering is weak, and the real difference is between sessions.
 - **Calendar.** Only UTC and New York are supported (hand-written US DST rule, no tz database). Sessions run by weekday and local hours, and a session whose end is before its start runs past midnight. Holidays are listed in the file: NYSE 2026–2027. Drawn starts fall in the file's `draw_range` (2027 for SPCX), a synthetic year.
 - **SPCX extended hours.** Pre, post and overnight share the closed-hours vol ratio (0.588), because the fit only splits regular hours from the rest. The file states this. The only gap is at the regular open (22 opens). The closed-hours total move is recorded but not used, because the model integrates closed-hours vol instead.

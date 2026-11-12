@@ -66,8 +66,10 @@ calibration:
   rates. The calendar and the hour of day scale each block.
 - **Returns.** The model runs GARCH(1,1) on blocks with unit-variance
   Student-t innovations, then a Gaussian bridge from blocks to slots.
-- **Events.** Background jumps arrive as a Poisson process. A gap is
-  drawn when the calendar enters a session kind that gaps.
+- **Events.** A gap is drawn when the calendar enters a session kind that
+  gaps. Background jumps (a Poisson process) are opt-in, because the
+  fitted tails already hold those moves. A tail move lands in one slot,
+  not spread evenly over its block.
 - **Several assets.** `draw_joint` correlates block innovations with a
   stated correlation matrix on one shared clock. Cross-asset correlation
   isn't fitted yet, so the matrix is a design parameter.
@@ -89,7 +91,7 @@ A spec states every departure from the calibration (TOML, all optional):
 vol_mult = 1.0                 # stress beyond the calibration, stated
 regime = "stressed"            # hold one regime; default: drawn, switching
 waypoint_slots = 4
-jumps = true
+jumps = false                  # background jumps on top of the fitted tails
 gaps = true
 [start]
 mode = "before"                # draw | session | before | at
