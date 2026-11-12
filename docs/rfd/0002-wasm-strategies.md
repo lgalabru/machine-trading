@@ -299,3 +299,25 @@ defend, no bot users, no keypair files.
   `MTX_RUNG` and `MTX_REGIME` through `Session::var` (both are session
   variables in a process). `just build` builds both. The old process code,
   which read and sent through `Trader` itself, is gone.
+- 2026-11-12: the interface, 0.2.0 (`crates/kit/wit/strategy.wit`). What
+  the next tasks need, as conveniences on the same step: the session's
+  venues (`<venue>:<kind>:<symbol>`, the mandate's names, its own first)
+  and a view of each (best bid and ask, the book and the tape when the
+  scenario reports them, the position there); lines that name a venue and
+  carry a time in force (post-only, immediate-or-cancel), reduce-only, a
+  participation cap and transaction options; what became of every order of
+  the last sheet (`sends`: landed with a signature, failed with the venue's
+  reason, not sent, and, for the transaction layer, delayed and expired),
+  the planner's notes, own fills from the tape, and requests for quotes
+  with a response line. Intents became records (an action, a venue, the
+  options) rather than a variant of tuples. The kit plans every sheet with
+  one planner (`plan_sheet`), a ledger per venue; `plan()` is the same for
+  lines without options. The grader keeps 0.1.0 (`wit/0.1.0`), tells the
+  worlds apart by type-checking the component against each before any of
+  its code runs, and plans both with the same planner: the flash-crash,
+  maker, carry and weekend references grade the same, built on either.
+  Not yet: a session trades only its own market (a line for another comes
+  back not sent until spot venues have component executors), no session
+  reports a perp tape (so a perp strategy's fills come from its position),
+  no session sends requests for quotes, and transaction options are
+  counted, not applied, until the transaction layer.
