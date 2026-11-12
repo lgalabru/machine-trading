@@ -63,7 +63,6 @@ use crate::{
     error::io_error,
     guard::Guard,
     orders::Traded,
-    scenario::Scenario,
     session::{
         self, BOT_USERS, HELLO_WALL, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions,
         SessionReport, StepRecord, TURN_BUDGET_PER_STEP, TURN_WALL, Timeline, TurnReport,
@@ -134,108 +133,6 @@ impl Spot {
                 symbol: SYMBOL.into(),
             })
             .collect()
-    }
-
-    /// A spot scenario trades the profiles' SOL-USDC on known venues, under
-    /// a mandate whose universe is exactly those markets, and has no path
-    /// or market making.
-    pub fn validate(&self, scenario: &Scenario) -> std::result::Result<(), String> {
-        if scenario.symbol != SYMBOL {
-            return Err(format!(
-                "spot: the symbol is {SYMBOL}, not {}",
-                scenario.symbol
-            ));
-        }
-        if self.venues.is_empty() {
-            return Err("spot: no venues".into());
-        }
-        for (i, venue) in self.venues.iter().enumerate() {
-            if !VENUES.contains(&venue.as_str()) {
-                return Err(format!(
-                    "spot: unknown venue {venue:?}; spot sessions trade on {VENUES:?}"
-                ));
-            }
-            if self.venues[..i].contains(venue) {
-                return Err(format!("spot: {venue} is listed twice"));
-            }
-        }
-        for (name, amount) in [("base", self.base), ("quote", self.quote)] {
-            if !(amount.is_finite() && amount >= 0.0) {
-                return Err(format!("spot: {name} must be a number of at least 0"));
-            }
-        }
-        if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
-            return Err("spot: bound_usd must be a number".into());
-        }
-        let mut wanted = self.instruments();
-        let mut universe: Vec<InstrumentRef> = scenario
-            .mandate
-            .universe
-            .iter()
-            .map(|a| a.instrument.clone())
-            .collect();
-        wanted.sort();
-        universe.sort();
-        if wanted != universe {
-            return Err(format!(
-                "mandate: the universe must be exactly the spot markets, {}",
-                wanted
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if scenario.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if !scenario.path.is_empty()
-            || scenario.making.is_some()
-            || scenario.offhours.is_some()
-            || scenario.funding.is_some()
-            || !scenario.tape.is_empty()
-            || scenario.fair_path.is_some()
-        {
-            return Err(
-                "spot: a spot scenario has no path, fair path, market making, off-hours, funding or tape"
-                    .into(),
-            );
-        }
-        if scenario.duration_slots == 0 {
-            return Err("spot: the session has no slots".into());
-        }
-        if let Some(data) = &scenario.turn_data {
-            if !(data.tape || data.depth_levels > 0 || data.timestamps)
-                || (data.parties && !data.tape)
-            {
-                return Err("turn_data: asks for nothing, or for parties without a tape".into());
-            }
-            if data.depth_levels > MAX_DEPTH_LEVELS {
-                return Err(format!(
-                    "turn_data: depth_levels {} is over {MAX_DEPTH_LEVELS}",
-                    data.depth_levels
-                ));
-            }
-        }
-        if let Some(order) = &scenario.order {
-            order.validate()?;
-            if order.side == Side::Sell && self.base < order.quantity {
-                return Err(format!(
-                    "order: selling {} SOL from a wallet of {}",
-                    order.quantity, self.base
-                ));
-            }
-        }
-        if let Some(participation) = &scenario.participation {
-            participation.validate()?;
-        }
-        if let Some(net) = &scenario.net {
-            net.validate()?;
-            if scenario.order.is_some() {
-                return Err("net: a net-scored session has no order".into());
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1157,6 +1054,7 @@ fn decode_instruction(ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scenario::Scenario;
 
     fn scenario() -> Scenario {
         let mut mandate = Mandate::spot(&VENUES, SYMBOL, 10.0);
