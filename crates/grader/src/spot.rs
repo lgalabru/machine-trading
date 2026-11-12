@@ -878,6 +878,12 @@ pub(crate) async fn run_session(
         steps,
         ..TurnReport::default()
     };
+    // What the steps carry beyond the clock, for either kind of bot.
+    let hello_reports = scenario.turn_data.as_ref().map(|data| turns::Reports {
+        tape: data.tape,
+        depth: data.depth_levels > 0,
+        timestamps: data.timestamps,
+    });
     // A bot is a process speaking the turn protocol, or a component the
     // grader calls (`crate::wasm::spot`).
     let mut process = None;
@@ -908,6 +914,7 @@ pub(crate) async fn run_session(
                         .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
                         .into_iter()
                         .collect(),
+                    reports: hello_reports.into(),
                 },
                 Box::new(log),
             )
@@ -946,11 +953,7 @@ pub(crate) async fn run_session(
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
             seed: Some(turns::scenario_seed(&scenario.name)),
-            reports: scenario.turn_data.as_ref().map(|data| turns::Reports {
-                tape: data.tape,
-                depth: data.depth_levels > 0,
-                timestamps: data.timestamps,
-            }),
+            reports: hello_reports,
         };
         legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
             && matches!(
