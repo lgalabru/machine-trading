@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::Family;
+use crate::tasks;
 
 /// The task an author starts from: the closest existing one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
@@ -36,6 +36,14 @@ impl Base {
         match self {
             Base::Shocks => "flash-crash-spcx",
             Base::Making => "market-making-spcx",
+        }
+    }
+    /// The scenario generator the base's task draws, which the scaffold
+    /// draws until its own exists.
+    fn generator(self) -> &'static str {
+        match self {
+            Base::Shocks => "flash-crash",
+            Base::Making => "market-making",
         }
     }
     fn bot(self) -> &'static str {
@@ -262,6 +270,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         "description = ",
         &format!("description = {}", toml_string(&spec.summary)),
     );
+    let toml = replace_section(&toml, "[metadata.mtx]", &metadata(spec, &family, base));
     std::fs::write(&toml_path, toml)?;
 
     let test_path = to.join("tests/test.sh");
@@ -318,25 +327,41 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         base.bot()
     ));
 
-    // The Justfile's task-to-bot pairs, which `just solution` and the checks read.
-    let justfile = root.join("Justfile");
-    let just = std::fs::read_to_string(&justfile)?;
-    let just = just
-        .lines()
-        .map(|l| {
-            if l.starts_with("references := \"") && !l.contains(&format!("{name}=")) {
-                l.trim_end_matches('"').to_string() + &format!(" {name}={family}\"")
-            } else {
-                l.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    std::fs::write(&justfile, just)?;
-    written.push(format!("Justfile: references += {name}={family}"));
+    // Everything that lists the task is written from its task.toml.
+    tasks::sync(root)?;
+    written.push("the generated lists (mtx task sync)".to_string());
 
     Ok(json!({ "task": name, "family": family, "written": written, "status": status(root, name)? }))
+}
+
+/// A task's `[metadata.mtx]`, for the scaffold: the base's reference and
+/// ladder until the author's exist.
+fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
+    format!(
+        "generator = {}\nreference = {}\nanchor = {}\nladder = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\n",
+        toml_string(base.generator()),
+        toml_string(family),
+        toml_string(family),
+        toml_string(family),
+        toml_string(&format!(
+            "{TODO}: venue and instrument ({} base)",
+            base.task()
+        )),
+        toml_string(&spec.thesis),
+        toml_string(&spec.thesis),
+    )
+}
+
+/// `text` with the body of the table `header` replaced.
+fn replace_section(text: &str, header: &str, body: &str) -> String {
+    let Some(start) = text.find(&format!("{header}\n")) else {
+        return text.to_string();
+    };
+    let from = start + header.len() + 1;
+    let to = text[from..]
+        .find("\n[")
+        .map_or(text.len(), |i| from + i + 1);
+    format!("{}{body}\n{}", &text[..from], &text[to..])
 }
 
 fn replace_line(text: &str, prefix: &str, line: &str) -> String {
@@ -513,14 +538,9 @@ fn todos(text: &str) -> usize {
     text.matches(TODO).count()
 }
 
-/// The task's bot, from the Justfile's `references`.
-fn bot_of(root: &Path, task: &str) -> Option<String> {
-    let just = read(&root.join("Justfile"));
-    let line = just.lines().find(|l| l.starts_with("references := "))?;
-    line.trim_start_matches("references := ")
-        .trim_matches('"')
-        .split_whitespace()
-        .find_map(|pair| pair.strip_prefix(&format!("{task}=")).map(str::to_string))
+/// The task's `[metadata.mtx]`, if its task.toml has one.
+fn meta_of(root: &Path, task: &str) -> Option<tasks::Task> {
+    tasks::load(root).ok()?.into_iter().find(|t| t.dir == task)
 }
 
 /// Which steps are done for a task, and what to do next.
@@ -536,7 +556,10 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
             known.join(", ")
         );
     }
-    let family = family_of(task);
+    let meta = meta_of(root, task);
+    let family = meta
+        .as_ref()
+        .map_or_else(|| family_of(task), |t| t.mtx.generator.clone());
     let mut steps = Vec::new();
 
     let design = read(&dir.join("DESIGN.md"));
@@ -565,30 +588,32 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         .and_then(|r| r.split_whitespace().next())
         .unwrap_or("")
         .to_string();
-    let families: Vec<String> = Family::value_variants()
-        .iter()
-        .filter_map(|f| f.to_possible_value().map(|v| v.get_name().to_string()))
-        .collect();
-    let exists = families.contains(&family);
+    let families: Vec<&str> = mtx_grader::generators::names();
+    let own = family_of(task);
+    let exists = families.contains(&own.as_str());
+    let drawn = family == own && draw == family && !test.contains("TODO(family)");
+    let anchor = meta
+        .as_ref()
+        .map_or_else(|| family.clone(), |t| t.mtx.anchor().to_string());
     steps.push(Step::new(
         "family",
         "Scenario family",
-        exists && draw == family,
+        exists && drawn,
         if !exists {
-            format!("no `{family}` family in mtx yet (families: {}); test.sh draws `{draw}`", families.join(", "))
-        } else if draw != family {
-            format!("the `{family}` family exists, but tests/test.sh still draws `{draw}`")
+            format!("no `{own}` family in mtx yet (families: {}); test.sh draws `{draw}`", families.join(", "))
+        } else if !drawn {
+            format!("the `{own}` family exists, but task.toml's generator is `{family}` and tests/test.sh draws `{draw}`")
         } else {
             format!("test.sh draws `{family}`")
         },
         if !exists {
-            format!("Write the `{family}` family in crates/grader (task_guide step=family), add it to `Family` in crates/cli/src/main.rs and to `mtx grade --draw`, then make tests/test.sh draw it.")
+            format!("Write the `{own}` family in crates/grader (task_guide step=family), register it in `GENERATORS` (crates/grader/src/generators.rs), then set `generator` in task.toml and make tests/test.sh draw it.")
         } else {
-            format!("In bench/tasks/{task}/tests/test.sh, draw `--draw {family}` and point --reference at /opt/mtx/anchors/{family}; drop the TODO there.")
+            format!("Set `generator = \"{own}\"` in bench/tasks/{task}/task.toml; in tests/test.sh, draw `--draw {own}` and point --reference at /opt/mtx/anchors/{anchor}; drop the TODO there.")
         },
     ));
 
-    let bot = bot_of(root, task);
+    let bot = meta.as_ref().map(|t| t.mtx.reference.clone());
     let solution = read(&dir.join("solution/src/main.rs"));
     let bot_src = bot
         .as_ref()
@@ -599,7 +624,7 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         "Reference bot and oracle",
         bot.is_some() && !bot_src.is_empty() && solution == bot_src,
         match &bot {
-            None => "the Justfile's `references` has no bot for this task".into(),
+            None => "task.toml has no [metadata.mtx] naming the reference bot".into(),
             Some(b) if bot_src.is_empty() => format!("bots/{b}/src/main.rs is missing"),
             Some(b) if solution != bot_src => format!("solution/src/main.rs differs from bots/{b}/src/main.rs"),
             Some(b) => format!("bots/{b}, and the oracle matches it"),
@@ -607,19 +632,14 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         "Write the reference strategy in its bot (task_guide step=reference), then `just solution` to copy it into the oracle.".into(),
     ));
 
-    let image = read(&root.join("bench/image/Dockerfile"));
-    let anchored = bot.as_ref().is_some_and(|b| {
-        image.contains(&format!("{family}:{b}")) && image.contains(&format!("-p mtx-bot-{b}"))
-    });
+    let generated = tasks::stale(root).unwrap_or_default();
+    let anchored = meta.is_some() && !generated.iter().any(|p| p.ends_with("anchors.txt"));
     steps.push(Step::new(
         "anchor",
         "The verifier's reference (image anchor)",
         anchored,
-        if anchored { format!("the image builds mtx-bot-{} into /opt/mtx/anchors/{family}", bot.clone().unwrap_or_default()) } else { "the image doesn't build this task's reference into /opt/mtx/anchors yet".into() },
-        format!(
-            "In bench/image/Dockerfile, add `-p mtx-bot-{b}` to the cargo build and `{family}:{b}` to the anchors loop, then `just image`.",
-            b = bot.clone().unwrap_or_else(|| family.clone())
-        ),
+        if anchored { format!("the image builds mtx-bot-{} into /opt/mtx/anchors/{family}", bot.clone().unwrap_or_default()) } else { "bench/image/anchors.txt doesn't list this task's reference yet".into() },
+        "Run `mtx task sync` (the image builds what bench/image/anchors.txt lists), then `just image`.".to_string(),
     ));
 
     let practice: Vec<PathBuf> = std::fs::read_dir(dir.join("environment/practice"))
@@ -686,21 +706,23 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
             .into(),
     ));
 
-    let ci = read(&root.join(".github/workflows/ci.yml"));
-    let in_ci = bot
-        .as_ref()
-        .is_some_and(|b| ci.contains(&format!("{task}={b}")));
-    let in_dataset = read(&root.join("bench/tasks/dataset.toml"))
-        .contains(&format!("solana-foundation/{task}\""));
     steps.push(Step::new(
         "registry",
-        "CI and the dataset",
-        in_ci && in_dataset,
-        format!("CI oracle check: {}; dataset.toml: {}", if in_ci { "yes" } else { "no" }, if in_dataset { "yes" } else { "no" }),
-        format!(
-            "Add `{task}={}` to the oracle check in .github/workflows/ci.yml; add the task to bench/tasks/dataset.toml (`harbor dataset add solana-foundation/{task}`, or at `just release`).",
-            bot.clone().unwrap_or_default()
-        ),
+        "Generated lists",
+        meta.is_some() && generated.is_empty(),
+        if generated.is_empty() {
+            "the Justfile, image, dataset and READMEs list every task".into()
+        } else {
+            format!(
+                "stale: {}",
+                generated
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+        "Fill in the task's `[metadata.mtx]` in task.toml, then run `mtx task sync`.".into(),
     ));
 
     let lint = std::process::Command::new("harbor")
@@ -768,7 +790,8 @@ pub fn list(root: &Path) -> Vec<Value> {
                     l.strip_prefix("version = ")
                         .map(|v| v.trim_matches('"').to_string())
                 });
-            json!({ "name": name, "version": version, "family": family_of(&name) })
+            let family = meta_of(root, &name).map_or_else(|| family_of(&name), |t| t.mtx.generator);
+            json!({ "name": name, "version": version, "family": family })
         })
         .collect()
 }
@@ -780,13 +803,13 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "Write the design record before building. Thesis: one sentence, `a good bot profits here because it ___`. Then, section by section: expert research (who does this for money, their method, where non-experts go wrong, with sources); the central decision and the options that look defensible; variants (each regime flips the best response); levers with how an honest operator detects each; the no-tells audit; detectability; fairness; failure modes priced; predictions per model tier; generations. If you can't write where non-experts go wrong, the task has no failure mode worth measuring. Deeper: skills/trading-task-design/references/design-record.md."
         }
         "family" => {
-            "A family is a generator `(seed) -> scenario`, in crates/grader: see `ShockFamily` (scenario.rs) for scripted moves and `MakingFamily` (making.rs) for counterparties. Vary what tests the thesis (timing, depth, legs, recovery, duration); include adversarial draws (a move that doesn't revert, a fake-out, a calm session); make the first move unpredictable (mirror it, 50/50); hide the generator's mechanics (uneven steps and gaps, a random tail, small noise); respect protocol physics (Phoenix's oracle band: steps <= 4%). Give it `draw` and `draw_set` (stratified by the family's odds) and a hindsight bound. Register it in `Family` (crates/cli/src/main.rs) and `mtx grade --draw`, and in `mtx scenario generate --family`. Before publishing, read the generator as an adversary: if knowing it alone beats the reference, it leaks. Deeper: SKILL.md step 2, references/ladder-and-ceilings.md."
+            "A family is a generator `(seed) -> scenario`, in crates/grader: see `ShockFamily` (scenario.rs) for scripted moves and `MakingFamily` (making.rs) for counterparties. Vary what tests the thesis (timing, depth, legs, recovery, duration); include adversarial draws (a move that doesn't revert, a fake-out, a calm session); make the first move unpredictable (mirror it, 50/50); hide the generator's mechanics (uneven steps and gaps, a random tail, small noise); respect protocol physics (Phoenix's oracle band: steps <= 4%). Give it `draw` and `draw_set` (stratified by the family's odds) and a hindsight bound. Register it in `GENERATORS` (crates/grader/src/generators.rs) with its practice and hidden draws; `mtx grade --draw` and `mtx scenario generate --family` take its name. Before publishing, read the generator as an adversary: if knowing it alone beats the reference, it leaks. Deeper: SKILL.md step 2, references/ladder-and-ceilings.md."
         }
         "reference" => {
             "The reference sets the 1.0 line: a reasonable, simple strategy, not an optimum, sized to the cap and inside the loss limit on every session. Avoid mechanical biases (a bid always placed before the ask). It runs on the same hidden sessions in every grade, so hidden sets need no calibration; practice scenarios do. Keep the oracle identical: `just solution`. Then build the ladder: nop, a blind bet, a naive strategy, the reference, a ceiling, as strict inequalities (`just ladder <family>`). Deeper: SKILL.md step 3, references/ladder-and-ceilings.md."
         }
         "anchor" => {
-            "The verifier grades the reference itself on each hidden set, from /opt/mtx/anchors/<family> in the runtime image. In bench/image/Dockerfile: add `-p mtx-bot-<bot>` to the `cargo build` line and `<family>:<bot>` to the anchors loop. Rebuild with `just image`."
+            "The verifier grades the reference itself on each hidden set, from /opt/mtx/anchors/<family> in the runtime image. `mtx task sync` lists the task's reference in bench/image/anchors.txt, which the image build reads. Rebuild with `just image`."
         }
         "practice" => {
             "Practice scenarios are drawn from the same family as the hidden ones, ship in environment/practice, and carry the reference's PnL so `mtx-practice` can report it: `mtx scenario generate --family <family> --out bench/tasks/<task>/environment/practice --prefix practice --count 6 --seed <any number>`, then `just calibrate bots/<bot> <files>`. Iterating on scored scenarios is overfitting: the hidden set is drawn inside the verifier from the batch's secret."
@@ -798,7 +821,7 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "Every task README has the same sections (template: \"Task READMEs\" in bench/tasks/README.md): a facts table, The skill, The market, Scoring (only what's specific to the task), Baselines (check table, ladder, reference's numbers), Realism limits, More. Anything every task shares belongs in the dataset README."
         }
         "registry" => {
-            "Add the task to CI's oracle check (`<task>=<bot>` in .github/workflows/ci.yml, mirroring the Justfile's `references`) and to the dataset (bench/tasks/dataset.toml; `just release` pins digests and publishes)."
+            "Fill in the task's `[metadata.mtx]` in task.toml and run `mtx task sync`: it writes the Justfile's and CI's task lists (bench/tasks/tasks.just), the image's anchors, the dataset's task list and the README tables. `just release` pins digests and publishes."
         }
         "lint" => {
             "`harbor lint bench/tasks/<task> --select ALL --ignore unpinned-image` checks the task's files against Harbor's rules; images are pinned at release."
@@ -873,6 +896,14 @@ mod tests {
             .unwrap();
         }
         std::fs::copy(real.join("Justfile"), root.join("Justfile")).unwrap();
+        for file in [
+            "README.md",
+            "bench/tasks/README.md",
+            "bench/tasks/dataset.toml",
+        ] {
+            std::fs::copy(real.join(file), root.join(file)).unwrap();
+        }
+        std::fs::create_dir_all(root.join("bench/image")).unwrap();
         let out = scaffold(&root, &spec()).unwrap();
         let task = root.join("bench/tasks/funding-squeeze-spcx");
         assert!(
@@ -885,7 +916,17 @@ mod tests {
         assert!(
             read(&root.join("bots/funding-squeeze/Cargo.toml")).contains("mtx-bot-funding-squeeze")
         );
-        assert!(read(&root.join("Justfile")).contains("funding-squeeze-spcx=funding-squeeze"));
+        assert!(
+            read(&root.join("bench/tasks/tasks.just"))
+                .contains("funding-squeeze-spcx=funding-squeeze")
+        );
+        assert!(
+            read(&root.join("bench/image/anchors.txt")).contains("funding-squeeze funding-squeeze")
+        );
+        assert!(
+            read(&root.join("bench/tasks/dataset.toml"))
+                .contains("solana-foundation/funding-squeeze-spcx")
+        );
         let steps = out["status"].as_array().unwrap();
         let state = |id: &str| {
             steps.iter().find(|s| s["id"] == id).unwrap()["state"]
