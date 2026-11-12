@@ -367,3 +367,14 @@ defend, no bot users, no keypair files.
   post-only order goes through Phoenix's second multiple-order packet built
   from its parameters, and a line with an amount that isn't a number gets
   a note.
+- 2026-11-12: raw sends land (PR 4). A scenario opts in with `raw_sends`,
+  the programs its raw transactions may run; a component sees them as
+  `MTX_RAW_PROGRAMS`. Fresh signers come from the grade's secret, as the
+  session's other keys do (`fresh/{step}/{id}`), never from the session's
+  seed, which the strategy sees. The grader resolves the keys in order,
+  compiles a v0 message with the lookup tables, and simulates it with
+  Surfpool's `simulateBundle`: the transaction, then Hawkeye's views of the
+  account, so the audit reads the venue's own measurement of the account
+  after it. Every program the logs show it running, through another or
+  not, must be on the list. What is taken is checked again after the
+  sheet, then signed and sent through the bot's guard.
