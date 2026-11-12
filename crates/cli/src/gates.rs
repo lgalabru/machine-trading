@@ -484,6 +484,9 @@ fn exploit_breaches(e: &ExploitResult, fast: bool) -> Vec<(bool, String)> {
     let stats = (e.sessions, e.profitable_sessions, e.max_profitable);
     let (Some(n), Some(k), Some(limit)) = stats else {
         // An older summary carries no sample: take its verdict as it is.
+        if e.ok {
+            return Vec::new();
+        }
         return e.reasons.iter().map(|r| (true, r.clone())).collect();
     };
     let mut out = Vec::new();
@@ -846,7 +849,7 @@ fn calibration_check(root: &Path, task: &str, family: &str) -> Check {
         file.as_str(),
     ];
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
-    let output = match Command::new(exe).args(&args).current_dir(root).output() {
+    let output = match Command::new(exe).args(args).current_dir(root).output() {
         Ok(o) => o,
         Err(e) => {
             return Check::fail(REALISTIC, id, title, format!("couldn't run it: {e}"));
@@ -1233,6 +1236,12 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(check(old, true).status, Status::Fail);
+        let fine = ExploitResult {
+            bot: "old".into(),
+            ok: true,
+            ..Default::default()
+        };
+        assert_eq!(check(fine, true).status, Status::Pass);
         let mut s = summary(&[]);
         s.exploits.push(bot(10, 50.0, 0.2));
         let report = Report::new("t", "fast", "abc".into(), vec![exploit_check(&s, true)]);
