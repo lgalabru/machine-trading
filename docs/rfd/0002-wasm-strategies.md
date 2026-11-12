@@ -378,3 +378,10 @@ defend, no bot users, no keypair files.
   after it. Every program the logs show it running, through another or
   not, must be on the list. What is taken is checked again after the
   sheet, then signed and sent through the bot's guard.
+- 2026-11-12: raw sends, after review. Phoenix lets an authority register
+  isolated subaccounts and move collateral to them, where positions don't
+  show in the main account the session measures; a raw send may write no
+  trader account but the main one. A send the guard holds under the
+  scenario's faults is `delayed`, not failed, and stays ahead of every new
+  send's simulation until it lands or its blockhash expires (two at most).
+  A step may have 16 raw sends simulated.
