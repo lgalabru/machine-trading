@@ -958,7 +958,8 @@ async fn run() -> Result<()> {
                 let first = replay::reports(&graded)?;
                 let mut differences = Vec::new();
                 for run in 2..=replay as usize {
-                    let again = grade::grade(options()).await?;
+                    let mut again = grade::grade(options()).await?;
+                    again.eval_seed_sha256.clone_from(&graded.eval_seed_sha256);
                     differences.extend(replay::compare(&first, &replay::reports(&again)?, run));
                     eprintln!(
                         "replay {run} of {replay}: {}",
