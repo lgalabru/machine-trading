@@ -793,6 +793,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
         };
         let logs = studio.dir.join("target/mtx-studio-logs");
         let _ = std::fs::create_dir_all(&logs);
+        let keys = mtx_grader::keys::SessionKeys::random();
         let report = runtime.block_on(async {
             tokio::select! {
                 biased;
@@ -811,7 +812,9 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
                     detail_dir: None,
                     annotations: None,
                     components_only: true,
+                    trusted: false,
                     observer: Some(control.clone() as Arc<dyn StepObserver>),
+                    keys: &keys,
                 }) => Some(report),
             }
         });

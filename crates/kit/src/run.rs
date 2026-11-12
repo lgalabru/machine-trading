@@ -113,7 +113,9 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             .iter()
             .filter_map(|name| Some((name.to_string(), std::env::var(name).ok()?)))
             .collect(),
-        seed: hello.start_slot,
+        // The scenario's seed, as a component gets it; a grader from
+        // before seeds sent none.
+        seed: hello.seed.unwrap_or(hello.start_slot),
     };
     strategy.start(&session)?;
     info!(authority = %trader.authority(), end_slot = session.end_slot, "started");
