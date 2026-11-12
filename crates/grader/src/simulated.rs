@@ -261,6 +261,9 @@ pub fn openbook_create_data(
     data
 }
 
+/// A price and a quantity, in quote units per base unit and base units.
+pub type Order = (Decimal, Decimal);
+
 /// The ladder's orders: `(price, quantity)` for the bids (best first) and the
 /// asks, on the tick and lot grid. A bid rounds down and an ask up, so a ladder
 /// never crosses.
@@ -269,7 +272,7 @@ pub fn ladder_orders(
     ladder: &Ladder,
     tick: Decimal,
     lot: Decimal,
-) -> Result<(Vec<(Decimal, Decimal)>, Vec<(Decimal, Decimal)>)> {
+) -> Result<(Vec<Order>, Vec<Order>)> {
     let size = Decimal::from_str(&ladder.level_size)
         .map_err(|e| invalid(format!("ladder level_size {:?}: {e}", ladder.level_size)))?;
     let quantity = (size / lot).floor() * lot;
@@ -480,9 +483,9 @@ pub async fn phoenix_v1_market(
     let quote_unit = 10u64.pow(quote_decimals as u32);
     if spec.base_lot_atoms == 0
         || spec.quote_lot_atoms == 0
-        || base_unit % spec.base_lot_atoms != 0
-        || quote_unit % spec.quote_lot_atoms != 0
-        || spec.tick_quote_atoms_per_base_unit % spec.quote_lot_atoms != 0
+        || !base_unit.is_multiple_of(spec.base_lot_atoms)
+        || !quote_unit.is_multiple_of(spec.quote_lot_atoms)
+        || !spec.tick_quote_atoms_per_base_unit.is_multiple_of(spec.quote_lot_atoms)
     {
         return Err(invalid(format!(
             "{}: lots must divide a unit and the tick must be whole quote lots",
@@ -492,7 +495,7 @@ pub async fn phoenix_v1_market(
     let base_lots_per_unit = base_unit / spec.base_lot_atoms;
     let quote_lots_per_unit = quote_unit / spec.quote_lot_atoms;
     let tick_lots = spec.tick_quote_atoms_per_base_unit / spec.quote_lot_atoms;
-    if tick_lots % base_lots_per_unit != 0 {
+    if !tick_lots.is_multiple_of(base_lots_per_unit) {
         return Err(invalid(format!(
             "{}: the tick ({tick_lots} quote lots per base unit) must be a multiple of the {base_lots_per_unit} base lots per unit",
             spec.name
