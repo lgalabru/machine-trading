@@ -408,6 +408,54 @@ fn fund_maker(
     Ok(())
 }
 
+/// Pins the surfnet's clock before each step of a simulated market, so a
+/// build does not depend on how long the machine takes: blocks made between
+/// transactions (a surfnet finalizes asynchronously) would otherwise move the
+/// time that orders and markets record. Each step lands at a fixed slot and
+/// time, a thousand slots after the last.
+pub struct ClockPin {
+    slot: u64,
+    unix_ms: u64,
+    step: std::sync::atomic::AtomicU64,
+}
+
+impl ClockPin {
+    /// Steps count from the source snapshot's slot and time.
+    pub fn new(fork_slot: u64, created_at_unix: u64) -> Self {
+        Self {
+            slot: fork_slot,
+            unix_ms: created_at_unix * 1_000,
+            step: 0.into(),
+        }
+    }
+
+    async fn next(&self, surfnet: &Surfnet) -> Result<()> {
+        // The previous step's transaction leaves blocks to make, back to back;
+        // pinning before they are done would let them move the time after it.
+        let rpc = surfnet.rpc_client();
+        let mut still = 0;
+        let mut slot = rpc.get_slot()?;
+        while still < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let now = rpc.get_slot()?;
+            still = if now == slot { still + 1 } else { 0 };
+            slot = now;
+        }
+        let n = self.step.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        surfnet
+            .cheatcodes()
+            .time_travel_to_slot_at(self.slot + n * 1_000, self.unix_ms + n * 250_000)?;
+        Ok(())
+    }
+}
+
+async fn pin(clock: Option<&ClockPin>, surfnet: &Surfnet) -> Result<()> {
+    match clock {
+        Some(c) => c.next(surfnet).await,
+        None => Ok(()),
+    }
+}
+
 /// A market made by an action.
 #[derive(Debug, Clone)]
 pub struct Made {
@@ -465,6 +513,7 @@ fn phoenix_activate_ix(market: &Pubkey, authority: &Pubkey) -> Instruction {
 
 /// Create a Phoenix v1 market on `base`/`quote`, make its creator a trader and
 /// post the ladder around `price`.
+#[allow(clippy::too_many_arguments)]
 pub async fn phoenix_v1_market(
     surfnet: &Surfnet,
     rpc: &RpcClient,
@@ -473,6 +522,7 @@ pub async fn phoenix_v1_market(
     base: Pubkey,
     quote: Pubkey,
     price: Decimal,
+    clock: Option<&ClockPin>,
 ) -> Result<Made> {
     let (base_owner, base_decimals) = mint_facts(rpc, &base)?;
     let (quote_owner, quote_decimals) = mint_facts(rpc, &quote)?;
@@ -538,6 +588,7 @@ pub async fn phoenix_v1_market(
             &creator.pubkey(),
         ),
     };
+    pin(clock, surfnet).await?;
     send(
         rpc,
         &creator,
@@ -580,6 +631,7 @@ pub async fn phoenix_v1_market(
     )?;
     for (side, orders) in [(Side::Buy, &bids), (Side::Sell, &asks)] {
         for (price, quantity) in orders {
+            pin(clock, surfnet).await?;
             trader
                 .submit(
                     &PhoenixV1Order::PostOnly {
@@ -611,6 +663,7 @@ pub async fn phoenix_v1_market(
 
 /// Create an OpenBook v2 market on `base`/`quote` and post the ladder around
 /// `price`.
+#[allow(clippy::too_many_arguments)]
 pub async fn openbook_v2_market(
     surfnet: &Surfnet,
     rpc: &RpcClient,
@@ -619,6 +672,7 @@ pub async fn openbook_v2_market(
     base: Pubkey,
     quote: Pubkey,
     price: Decimal,
+    clock: Option<&ClockPin>,
 ) -> Result<Made> {
     let (base_owner, base_decimals) = mint_facts(rpc, &base)?;
     let (quote_owner, quote_decimals) = mint_facts(rpc, &quote)?;
@@ -691,6 +745,7 @@ pub async fn openbook_v2_market(
         ),
     };
     let rent = |len| rpc.get_minimum_balance_for_rent_exemption(len);
+    pin(clock, surfnet).await?;
     send(
         rpc,
         &creator,
@@ -738,6 +793,7 @@ pub async fn openbook_v2_market(
     let plan = trader
         .plan_open_account()
         .map_err(|e| invalid(format!("open orders account: {e}")))?;
+    pin(clock, surfnet).await?;
     trader
         .send(&plan, &creator)
         .await
@@ -751,6 +807,7 @@ pub async fn openbook_v2_market(
     )?;
     for (side, orders) in [(Side::Buy, &bid_orders), (Side::Sell, &ask_orders)] {
         for (price, quantity) in orders {
+            pin(clock, surfnet).await?;
             trader
                 .submit(
                     &OpenBookV2Order::PostOnly {

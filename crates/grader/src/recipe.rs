@@ -50,7 +50,7 @@ use crate::{
     phoenix::{self, Phoenix},
     simulated::{self, MintSpec, OpenbookMarketSpec, PhoenixMarketSpec, PriceInput},
     snapshot::{
-        self, Access, Created, MANIFEST_FILE, Manifest, SLOT_TIME_MS, Source, host_of,
+        self, Created, MANIFEST_FILE, Manifest, SLOT_TIME_MS, Source, host_of,
         start_surfnet, write_gz, write_json,
     },
 };
@@ -240,6 +240,8 @@ struct World<'a> {
     exchange: Option<phoenix_rise::types::exchange::ExchangeResponse>,
     /// The last price an action reported.
     price: Option<f64>,
+    /// For a build from a snapshot: the fixed clock simulated steps run at.
+    clock: Option<simulated::ClockPin>,
 }
 
 impl World<'_> {
@@ -305,6 +307,7 @@ impl World<'_> {
                     self.mint(&spec.base)?,
                     self.mint(&spec.quote)?,
                     price,
+                    self.clock.as_ref(),
                 )
                 .await?;
                 self.price = price.to_string().parse().ok().or(self.price);
@@ -326,6 +329,7 @@ impl World<'_> {
                     self.mint(&spec.base)?,
                     self.mint(&spec.quote)?,
                     price,
+                    self.clock.as_ref(),
                 )
                 .await?;
                 self.price = price.to_string().parse().ok().or(self.price);
@@ -639,6 +643,9 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         created: Vec::new(),
         exchange: None,
         price: None,
+        clock: source_manifest
+            .as_ref()
+            .map(|m| simulated::ClockPin::new(m.fork_slot, m.created_at_unix)),
     };
     for action in &recipe.warmup {
         world.run(action).await?;

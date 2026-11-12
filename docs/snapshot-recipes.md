@@ -162,9 +162,12 @@ ProgramData account, deploy slot and a hash of its code (`programdata`,
 The two committed recipes pin to their own snapshots.
 
 **Clock.** A build from `fork.from_snapshot` copies the source's fork slot
-and time and makes a block for each transaction and none otherwise, so
-nothing the warm-up writes depends on how long the machine takes (an
-order's placement time, for one). With the same secret it is byte-identical
+and time, makes a block for each transaction and none otherwise, and pins
+the clock to a fixed slot and time before each step of a simulated market
+(a surfnet finalizes blocks asynchronously, so the time between two
+transactions would otherwise vary with the machine and be written into
+the books), so nothing the warm-up writes depends on how long the machine
+takes. With the same secret it is byte-identical
 on every run (`crates/grader/tests/recipe.rs` checks this under parallel
 test threads). The surfnet's own payer and faucet, random on every start,
 are left out of the export. A build from a mainnet fork runs on the wall
