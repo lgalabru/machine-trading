@@ -61,6 +61,7 @@ pub enum Extension {
     TransferFeeConfig,
     TransferFeeAmount,
     MintCloseAuthority,
+    ConfidentialTransferMint,
     DefaultAccountState,
     ImmutableOwner,
     MemoTransfer,
@@ -83,6 +84,7 @@ impl Extension {
             1 => Self::TransferFeeConfig,
             2 => Self::TransferFeeAmount,
             3 => Self::MintCloseAuthority,
+            4 => Self::ConfidentialTransferMint,
             6 => Self::DefaultAccountState,
             7 => Self::ImmutableOwner,
             8 => Self::MemoTransfer,
@@ -139,8 +141,30 @@ impl TransferFeeConfig {
     }
 }
 
+/// A mint's UI amount multiplier (`ScaledUiAmount`): a holder of `x` atoms
+/// is shown `x × multiplier`, as a tokenized stock shows splits and
+/// dividends. The multiplier becomes `new_multiplier` at
+/// `new_multiplier_effective_timestamp` (Unix seconds).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScaledUiAmount {
+    pub multiplier: f64,
+    pub new_multiplier: f64,
+    pub new_multiplier_effective_timestamp: i64,
+}
+
+impl ScaledUiAmount {
+    /// The multiplier in force at `unix_timestamp`.
+    pub fn at(&self, unix_timestamp: i64) -> f64 {
+        if unix_timestamp >= self.new_multiplier_effective_timestamp {
+            self.new_multiplier
+        } else {
+            self.multiplier
+        }
+    }
+}
+
 /// A mint, as either token program keeps it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Mint {
     /// The program that owns it.
     pub program: Pubkey,
@@ -153,6 +177,11 @@ pub struct Mint {
     pub paused: bool,
     /// Whether new token accounts start frozen (`DefaultAccountState`).
     pub frozen_by_default: bool,
+    /// The program its transfers call (`TransferHook`), if the hook is set.
+    /// A mint may carry the extension with no program: the hook is off.
+    pub transfer_hook: Option<Pubkey>,
+    /// Its UI amount multiplier (`ScaledUiAmount`).
+    pub scaled_ui_amount: Option<ScaledUiAmount>,
 }
 
 impl Mint {
@@ -177,7 +206,10 @@ impl Mint {
             transfer_fee: None,
             paused: false,
             frozen_by_default: false,
+            transfer_hook: None,
+            scaled_ui_amount: None,
         };
+        let short = |what: &str| error(format!("a short {what}"));
         for (extension, value) in extensions(program, data, MINT_LEN, AccountType::Mint)? {
             match extension {
                 Extension::TransferFeeConfig => {
@@ -204,6 +236,30 @@ impl Mint {
                 }
                 // The authority, then whether it is paused.
                 Extension::Pausable => mint.paused = value.get(32) == Some(&1),
+                // The authority, then the program; zeros are no program.
+                Extension::TransferHook => {
+                    let program: [u8; 32] = value
+                        .get(32..64)
+                        .and_then(|b| b.try_into().ok())
+                        .ok_or_else(|| short("transfer hook"))?;
+                    mint.transfer_hook =
+                        (program != [0; 32]).then(|| Pubkey::new_from_array(program));
+                }
+                // The authority, the multiplier, when the new one takes
+                // effect, and the new one.
+                Extension::ScaledUiAmount => {
+                    let field = |at: usize| -> Result<[u8; 8], DecodeError> {
+                        value
+                            .get(at..at + 8)
+                            .and_then(|b| b.try_into().ok())
+                            .ok_or_else(|| short("scaled UI amount config"))
+                    };
+                    mint.scaled_ui_amount = Some(ScaledUiAmount {
+                        multiplier: f64::from_le_bytes(field(32)?),
+                        new_multiplier_effective_timestamp: i64::from_le_bytes(field(40)?),
+                        new_multiplier: f64::from_le_bytes(field(48)?),
+                    });
+                }
                 _ => {}
             }
             mint.extensions.push(extension);
@@ -214,7 +270,7 @@ impl Mint {
     /// Atoms received when `amount` atoms are sent at `epoch`: the amount
     /// less the transfer fee, which the destination holds back.
     pub fn received(&self, amount: u64, epoch: u64) -> u64 {
-        amount - self.transfer_fee(amount, epoch)
+        amount.saturating_sub(self.transfer_fee(amount, epoch))
     }
 
     /// The transfer fee on `amount` atoms at `epoch`.
@@ -224,12 +280,12 @@ impl Mint {
     }
 
     /// Why the kit can't move this token, if it can't: a transfer hook
-    /// needs accounts the kit doesn't resolve; a non-transferable or paused
-    /// mint moves nothing; a mint whose new accounts start frozen can't
-    /// fund one.
+    /// that is set needs accounts the kit doesn't resolve; a
+    /// non-transferable or paused mint moves nothing; a mint whose new
+    /// accounts start frozen can't fund one.
     pub fn unsupported(&self) -> Option<String> {
-        if self.extensions.contains(&Extension::TransferHook) {
-            return Some("its transfers call a hook program".into());
+        if let Some(program) = self.transfer_hook {
+            return Some(format!("its transfers call the hook program {program}"));
         }
         if self.extensions.contains(&Extension::NonTransferable) {
             return Some("it is non-transferable".into());
@@ -417,6 +473,110 @@ mod tests {
                 spl.calculate_fee(amount).unwrap()
             );
         }
+    }
+
+    /// A mint laid out as the tokenized stocks and stablecoins on mainnet
+    /// are (SPCX, SPCXx, PYUSD, PAXG): a permanent delegate, accounts
+    /// initialized by default, pausable, confidential transfers, a transfer
+    /// hook with no program, a UI multiplier and metadata.
+    fn stock_like_mint(hook: Option<Pubkey>) -> Vec<u8> {
+        use spl_token_2022_interface::extension::{
+            confidential_transfer::ConfidentialTransferMint, metadata_pointer::MetadataPointer,
+            pausable::PausableConfig, permanent_delegate::PermanentDelegate,
+            scaled_ui_amount::ScaledUiAmountConfig, transfer_hook::TransferHook,
+        };
+        use spl_token_metadata_interface::state::TokenMetadata;
+        let authority = Pubkey::new_unique();
+        let types = [
+            ExtensionType::PermanentDelegate,
+            ExtensionType::DefaultAccountState,
+            ExtensionType::Pausable,
+            ExtensionType::ConfidentialTransferMint,
+            ExtensionType::TransferHook,
+            ExtensionType::ScaledUiAmount,
+            ExtensionType::MetadataPointer,
+        ];
+        let metadata = TokenMetadata {
+            name: "SpaceX".into(),
+            symbol: "SPCX".into(),
+            uri: "https://example.invalid/spcx.json".into(),
+            ..TokenMetadata::default()
+        };
+        let len = ExtensionType::try_calculate_account_len::<SplMint>(&types).unwrap()
+            + 4
+            + metadata.tlv_size_of().unwrap();
+        let mut data = vec![0; len];
+        let mut state = StateWithExtensionsMut::<SplMint>::unpack_uninitialized(&mut data).unwrap();
+        state
+            .init_extension::<PermanentDelegate>(true)
+            .unwrap()
+            .delegate = Some(authority).try_into().unwrap();
+        state
+            .init_extension::<DefaultAccountState>(true)
+            .unwrap()
+            .state = AccountState::Initialized as u8;
+        state
+            .init_extension::<PausableConfig>(true)
+            .unwrap()
+            .authority = Some(authority).try_into().unwrap();
+        state
+            .init_extension::<ConfidentialTransferMint>(true)
+            .unwrap()
+            .authority = Some(authority).try_into().unwrap();
+        let transfer_hook = state.init_extension::<TransferHook>(true).unwrap();
+        transfer_hook.authority = Some(authority).try_into().unwrap();
+        transfer_hook.program_id = hook.try_into().unwrap();
+        let scaled = state.init_extension::<ScaledUiAmountConfig>(true).unwrap();
+        scaled.authority = Some(authority).try_into().unwrap();
+        scaled.multiplier = 1.5.into();
+        scaled.new_multiplier_effective_timestamp = 1_800_000_000.into();
+        scaled.new_multiplier = 3.0.into();
+        state
+            .init_extension::<MetadataPointer>(true)
+            .unwrap()
+            .authority = Some(authority).try_into().unwrap();
+        state.base = SplMint {
+            supply: 96_000_000_000,
+            decimals: 6,
+            is_initialized: true,
+            ..SplMint::default()
+        };
+        state.pack_base();
+        state.init_account_type().unwrap();
+        state.init_variable_len_extension(&metadata, false).unwrap();
+        data
+    }
+
+    #[test]
+    fn reads_a_tokenized_stocks_mint() {
+        let mint = Mint::decode(&TOKEN_2022_PROGRAM_ID, &stock_like_mint(None)).unwrap();
+        assert_eq!((mint.supply, mint.decimals), (96_000_000_000, 6));
+        assert_eq!(
+            mint.extensions,
+            vec![
+                Extension::PermanentDelegate,
+                Extension::DefaultAccountState,
+                Extension::Pausable,
+                Extension::ConfidentialTransferMint,
+                Extension::TransferHook,
+                Extension::ScaledUiAmount,
+                Extension::MetadataPointer,
+                Extension::TokenMetadata,
+            ]
+        );
+        assert!(!mint.paused && !mint.frozen_by_default);
+        // The hook is there with no program: transfers call nothing.
+        assert_eq!(mint.transfer_hook, None);
+        assert_eq!(mint.unsupported(), None);
+        let scaled = mint.scaled_ui_amount.unwrap();
+        assert_eq!(scaled.at(1_799_999_999), 1.5);
+        assert_eq!(scaled.at(1_800_000_000), 3.0);
+
+        // With a hook program set, the kit refuses it.
+        let program = Pubkey::new_unique();
+        let hooked = Mint::decode(&TOKEN_2022_PROGRAM_ID, &stock_like_mint(Some(program))).unwrap();
+        assert_eq!(hooked.transfer_hook, Some(program));
+        assert!(hooked.unsupported().unwrap().contains("hook"));
     }
 
     #[test]

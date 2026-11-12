@@ -124,3 +124,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 wincode = "0.6"
 # Checks the kit's own Token-2022 decoding against the program's crate.
 spl-token-2022-interface = "3.1"
+spl-token-metadata-interface = "1"
