@@ -91,16 +91,21 @@ jobs:
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
       - name: Strategy components
-        # The starter and the references build for wasm32-wasip2 too, and
-        # the flash-crash reference's component loads in the grader's host.
+        # The starter, the references and the spot smoke build for
+        # wasm32-wasip2 too, as do the kit's spot venue decoders, and the
+        # flash-crash reference's and the spot smoke's components load in
+        # the grader's host.
         run: |
           rustup target add wasm32-wasip2
-          for bot in starter reference maker carry weekend; do
+          for bot in starter reference maker carry weekend spot-smoke; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
+          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
           just --justfile bots/reference/Justfile build
+          just --justfile bots/spot-smoke/Justfile build
           MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
+          MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.
