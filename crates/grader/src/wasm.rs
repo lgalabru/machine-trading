@@ -844,7 +844,7 @@ impl WasmBot {
             return false;
         };
         if let Some(raw) = strategy.raw_sender() {
-            raw.begin(k, self.account);
+            raw.begin(k, self.account).await;
         }
         let outcome = strategy.step(&market).await;
         let raw = strategy.raw_sender();

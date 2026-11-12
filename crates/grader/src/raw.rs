@@ -18,18 +18,26 @@
 //!    compiles, with its lookup tables, into one packet;
 //! 5. it succeeds when simulated against the paused chain, running no
 //!    program off the list, directly or through another; and
-//! 6. the account the venue measures after it (one `simulateBundle`: the
-//!    transaction, then Phoenix's own views of the account) breaks no rule
-//!    of the mandate: its position cap or floor, its universe, its drawdown
-//!    limit.
+//! 6. it writes no Phoenix trader account but the bot's main one (a
+//!    subaccount, or anyone else's), whose positions the session doesn't
+//!    measure; and
+//! 7. the account the venue measures after it (one `simulateBundle`: the
+//!    sends still held, the transaction, then Phoenix's own views of the
+//!    account) breaks no rule of the mandate: its position cap or floor,
+//!    its universe, its drawdown limit.
 //!
-//! A refused send queues nothing. A taken one gets its number within the
+//! A step has at most [`MAX_SIMULATED_PER_STEP`] sends simulated, so a
+//! strategy can't make a step cost the grader more than that. A refused
+//! send queues nothing. A taken one gets its number within the
 //! step and its fresh signers' addresses. After the step's sheet has gone
 //! out, each taken transaction, in the order taken, is simulated and
 //! audited again against the chain as the sheet left it, then signed by the
 //! authority and its fresh signers and sent through the bot's guard. The
 //! next step's market says what became of it: `raw(id)`, with its
-//! signature, slot and fee, or why it failed.
+//! signature, slot and fee, or why it failed; or `delayed`, where the
+//! scenario's faults made the guard hold it. A held send may land at a
+//! later step, so until it does (or its blockhash expires) every new send
+//! is simulated after it, and at most [`MAX_HELD`] may be held at once.
 //!
 //! Everything is a function of the chain and the grade's secret: the same
 //! grade makes the same keys and the same transactions, so it replays.
@@ -47,8 +55,9 @@ use mtx_kit::{
     protocols::USDC_MINT,
     raw::{AccountKey, Derivation, Seed},
 };
-use phoenix_rise::ix::hawkeye::{
-    ViewAssetReturn, ViewBboReturn, ViewMarginReturn, decode_hawkeye_return,
+use phoenix_rise::{
+    accounts::trader::TraderHeader,
+    ix::hawkeye::{ViewAssetReturn, ViewMarginReturn, decode_hawkeye_return},
 };
 use serde_json::{Value, json};
 use solana_keypair::Keypair;
@@ -81,6 +90,15 @@ const PACKET_BYTES: usize = 1232;
 const VIEW_COMPUTE_UNITS: u32 = 1_400_000;
 /// How many of a failed simulation's last log lines its refusal quotes.
 const LOG_TAIL: usize = 6;
+/// The most raw sends a step may have simulated, taken or refused: each
+/// costs the grader a simulation now and another after the sheet, so this
+/// bounds what a strategy can make a step cost.
+pub const MAX_SIMULATED_PER_STEP: u32 = 16;
+/// The most raw sends that may be held at once (a send the bot's guard
+/// held under the scenario's faults, which lands later): each is simulated
+/// ahead of every new one, and a bundle holds five transactions, two of
+/// them the account's views.
+pub const MAX_HELD: usize = 2;
 
 /// What a session's raw sends need from the session.
 pub struct RawConfig {
@@ -120,8 +138,21 @@ pub struct RawSender {
     account: Option<Account>,
     start: Option<Measured>,
     queue: Vec<Queued>,
-    /// Sends taken this step, for the next one's number.
+    /// Sends taken this step, for the next one's number, and sends
+    /// simulated this step.
     taken: u32,
+    simulated: u32,
+    /// Sends the bot's guard held, which may still land.
+    held: Vec<Held>,
+}
+
+/// A raw send the guard held: signed, sent, and not landed yet.
+struct Held {
+    signature: Signature,
+    blockhash: Hash,
+    /// The signed transaction, base64, to simulate ahead of new sends.
+    wire: String,
+    writable: Vec<Pubkey>,
 }
 
 /// A transaction the step took, resolved.
@@ -221,16 +252,58 @@ impl RawSender {
             start: None,
             queue: Vec::new(),
             taken: 0,
+            simulated: 0,
+            held: Vec::new(),
         }
     }
 
     /// Step `k` begins: sends are taken until [`RawSender::close`].
-    /// `account` is the account the session measured for it.
-    pub fn begin(&mut self, k: u64, account: Option<Account>) {
+    /// `account` is the account the session measured for it. Held sends
+    /// that have landed since, or can no longer land, are let go.
+    pub async fn begin(&mut self, k: u64, account: Option<Account>) {
         self.step = Some(k);
         self.account = account;
         self.start = None;
         self.taken = 0;
+        self.simulated = 0;
+        let mut still = Vec::new();
+        for held in std::mem::take(&mut self.held) {
+            let landed = matches!(
+                self.chain.get_transaction(&held.signature).await,
+                Ok(Some(_))
+            );
+            if !landed && self.blockhash_valid(&held.blockhash).await {
+                still.push(held);
+            }
+        }
+        self.held = still;
+    }
+
+    /// Whether a transaction on `blockhash` could still land; `true` when
+    /// the node can't say, so a held send is never forgotten too early.
+    async fn blockhash_valid(&self, blockhash: &Hash) -> bool {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "isBlockhashValid",
+            "params": [blockhash.to_string(), { "commitment": "processed" }],
+        });
+        let answer = async {
+            let text = self
+                .http
+                .post(&self.rpc_url)
+                .timeout(crate::session::INTERNAL_RPC_TIMEOUT)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .ok()?
+                .text()
+                .await
+                .ok()?;
+            serde_json::from_str::<Value>(&text).ok()?["result"]["value"].as_bool()
+        };
+        answer.await.unwrap_or(true)
     }
 
     /// The step returned: it takes no more sends.
@@ -253,6 +326,17 @@ impl RawSender {
         let Some(step) = self.step else {
             return Err("raw sends go out from `step` only".into());
         };
+        if self.simulated >= MAX_SIMULATED_PER_STEP {
+            return Err(format!(
+                "more than {MAX_SIMULATED_PER_STEP} raw sends this step: the rest aren't simulated"
+            ));
+        }
+        if self.held.len() >= MAX_HELD {
+            return Err(format!(
+                "{} raw sends from earlier steps are still held: wait until they land or expire",
+                self.held.len()
+            ));
+        }
         let id = self.taken;
         let fresh: Vec<Keypair> = (0..tx.fresh_signers)
             .map(|n| self.fresh.keypair(step, id, n))
@@ -262,6 +346,7 @@ impl RawSender {
         for instruction in &instructions {
             self.allowed(&instruction.program_id)?;
         }
+        self.simulated += 1;
         let tables = self.lookup_tables(&tx.lookup_tables).await?;
         let start = match self.start {
             Some(start) => start,
@@ -298,12 +383,24 @@ impl RawSender {
         statuses
     }
 
-    async fn send(&self, q: &Queued, signer: &Keypair) -> SendStatus {
-        let guarded = &self.guarded;
+    /// Check, sign and send one taken transaction. One the guard holds is
+    /// `Delayed`: it may land at a later step, so it is kept, and every
+    /// later send is checked as if it had.
+    async fn send(&mut self, q: &Queued, signer: &Keypair) -> SendStatus {
         let failed = |reason: String, signature: Option<Signature>| SendState::Failed {
             reason,
             signature: signature.map(|s| s.to_string()),
         };
+        if self.held.len() >= MAX_HELD {
+            return status(
+                q.step,
+                q.id,
+                failed(
+                    format!("not sent: {} raw sends are still held", self.held.len()),
+                    None,
+                ),
+            );
+        }
         let checked = async {
             let start = self.start.ok_or("no account measured for the step")?;
             let wallet = self.wallet().await?;
@@ -312,7 +409,7 @@ impl RawSender {
         if let Err(reason) = checked.await {
             return status(q.step, q.id, failed(format!("not sent: {reason}"), None));
         }
-        let blockhash = match guarded.get_latest_blockhash().await {
+        let blockhash = match self.guarded.get_latest_blockhash().await {
             Ok(blockhash) => blockhash,
             Err(e) => return status(q.step, q.id, failed(format!("not sent: {e}"), None)),
         };
@@ -322,7 +419,7 @@ impl RawSender {
                 return status(q.step, q.id, failed(format!("not sent: {reason}"), None));
             }
         };
-        let signature = match guarded.send(&tx).await {
+        let signature = match self.guarded.send(&tx).await {
             Ok(signature) => signature,
             Err(e) => return status(q.step, q.id, failed(e.to_string(), None)),
         };
@@ -338,11 +435,20 @@ impl RawSender {
                     ..status(q.step, q.id, state)
                 }
             }
-            Ok(None) => status(
-                q.step,
-                q.id,
-                failed("it didn't land".into(), Some(signature)),
-            ),
+            Ok(None) => {
+                // Held by the guard (or dropped, which looks the same from
+                // here): it may still land.
+                let wire = wincode::serialize(&tx).map(|wire| encode(&wire));
+                if let Ok(wire) = wire {
+                    self.held.push(Held {
+                        signature,
+                        blockhash,
+                        wire,
+                        writable: writable_keys(&q.instructions),
+                    });
+                }
+                status(q.step, q.id, SendState::Delayed)
+            }
             Err(e) => status(q.step, q.id, failed(e.to_string(), Some(signature))),
         }
     }
@@ -415,9 +521,9 @@ impl RawSender {
             .collect()
     }
 
-    /// Simulate the transaction against the chain as it is now, with the
-    /// wallet at `wallet` atoms, and audit what it leaves: `Err` with why
-    /// it can't be taken.
+    /// Simulate the transaction against the chain as it is now, after the
+    /// sends still held, with the wallet at `wallet` atoms, and audit what
+    /// it leaves: `Err` with why it can't be taken.
     async fn check(
         &self,
         instructions: &[Instruction],
@@ -439,11 +545,33 @@ impl RawSender {
             ));
         }
         let writable = writable_keys(instructions);
-        let mut bundle = vec![encode(&wire)];
-        bundle.extend(self.views()?);
-        let results = self.simulate_bundle(&bundle, &writable).await?;
+        // The held sends go first, as if they had landed: a held one that
+        // fails now would change nothing, so it is left out.
+        let mut held: Vec<&Held> = self.held.iter().collect();
+        let (results, ahead) = loop {
+            let mut watch: Vec<Pubkey> = Vec::new();
+            for key in held.iter().flat_map(|h| &h.writable).chain(&writable) {
+                if !watch.contains(key) {
+                    watch.push(*key);
+                }
+            }
+            let mut bundle: Vec<String> = held.iter().map(|h| h.wire.clone()).collect();
+            bundle.push(encode(&wire));
+            bundle.extend(self.views()?);
+            let results = self.simulate_bundle(&bundle, &watch, held.len()).await?;
+            match results
+                .iter()
+                .take(held.len())
+                .position(|r| !r["err"].is_null())
+            {
+                Some(failing) => {
+                    held.remove(failing);
+                }
+                None => break (results, watch),
+            }
+        };
         let result = results
-            .first()
+            .get(held.len())
             .ok_or("the simulation returned nothing for the transaction")?;
         let logs: Vec<String> = result["logs"]
             .as_array()
@@ -464,14 +592,17 @@ impl RawSender {
         for program in invoked(&logs)? {
             self.allowed(&program).map_err(|e| format!("it runs {e}"))?;
         }
-        let delta = wallet_change(
-            &self.authority,
-            &writable,
-            &result["preExecutionAccounts"],
-            &result["postExecutionAccounts"],
-        )?;
+        let before = &results[0]["preExecutionAccounts"];
+        let after_tx = &result["postExecutionAccounts"];
+        let main = self.phoenix.trader_account(&self.authority);
+        if let Some(trader) = other_trader(&main, &ahead, &writable, before, after_tx) {
+            return Err(format!(
+                "it writes Phoenix trader account {trader}: raw sends may only trade from the main one, {main}"
+            ));
+        }
+        let delta = wallet_change(&self.authority, &ahead, before, after_tx)?;
         let wallet_after = u64::try_from(i128::from(wallet) + delta).unwrap_or(0);
-        let after = self.measured(&results[1..], wallet_after)?;
+        let after = self.measured(&results[held.len() + 1..], wallet_after)?;
         let drawdown = self.account.map_or(0.0, |a| a.drawdown_usd);
         match audit(&self.mandate, &self.instrument, drawdown, start, &after) {
             Some(breach) => Err(format!("it would breach the mandate: {breach}")),
@@ -482,7 +613,7 @@ impl RawSender {
     /// The account as the venue shows it now, before anything the step
     /// sends.
     async fn measure_now(&self) -> Result<Measured, String> {
-        let results = self.simulate_bundle(&self.views()?, &[]).await?;
+        let results = self.simulate_bundle(&self.views()?, &[], 0).await?;
         self.measured(&results, self.wallet().await?)
     }
 
@@ -492,9 +623,9 @@ impl RawSender {
             .map_err(|e| format!("reading the wallet: {e}"))
     }
 
-    /// Phoenix's views of the account and the market, as transactions to
-    /// simulate after another: the account's position, its margin, and the
-    /// market's mark.
+    /// Phoenix's views of the main trader account, as transactions to
+    /// simulate after another: its position in the market (with the
+    /// market's mark), and its margin.
     fn views(&self) -> Result<Vec<String>, String> {
         let builder = self.phoenix.tx();
         let market = self
@@ -505,7 +636,6 @@ impl RawSender {
         let views = [
             builder.build_hawkeye_view_margin_for_asset(self.authority, 0, 0, market.asset_id),
             builder.build_hawkeye_view_margin_for_trader(trader),
-            builder.build_hawkeye_view_bbo(&self.symbol),
         ];
         views
             .into_iter()
@@ -526,12 +656,11 @@ impl RawSender {
     /// The account from the results of [`RawSender::views`], with `wallet`
     /// atoms of USDC.
     fn measured(&self, results: &[Value], wallet: u64) -> Result<Measured, String> {
-        let [asset, margin, bbo] = results else {
+        let [asset, margin] = results else {
             return Err("Phoenix's views returned nothing".into());
         };
         let asset: ViewAssetReturn = view(asset, "view_margin_for_asset")?;
         let margin: ViewMarginReturn = view(margin, "view_margin")?;
-        let bbo: ViewBboReturn = view(bbo, "view_bbo")?;
         let market = self
             .phoenix
             .exact_market(&self.symbol)
@@ -558,7 +687,7 @@ impl RawSender {
         ));
         if let Some(price) = self.account.and_then(|a| a.valued_at_usd) {
             value_usd +=
-                position * (price - self.phoenix.ticks_to_usd(config, bbo.mark_price_ticks));
+                position * (price - self.phoenix.ticks_to_usd(config, asset.mark_price_ticks));
         }
         Ok(Measured {
             position,
@@ -569,16 +698,19 @@ impl RawSender {
     }
 
     /// `simulateBundle` on the grader's endpoint, skipping signatures and
-    /// replacing blockhashes, with the first transaction's `watch`
-    /// accounts before and after it: each transaction's result.
+    /// replacing blockhashes, with the `watch` accounts before the first
+    /// transaction and after the one at `after`: each transaction's result.
     async fn simulate_bundle(
         &self,
         bundle: &[String],
         watch: &[Pubkey],
+        after: usize,
     ) -> Result<Vec<Value>, String> {
-        let accounts = |first: Value| {
-            let mut configs = vec![first];
-            configs.resize(bundle.len(), Value::Null);
+        let accounts = |at: usize, config: Value| {
+            let mut configs = vec![Value::Null; bundle.len()];
+            if let Some(slot) = configs.get_mut(at) {
+                *slot = config;
+            }
             configs
         };
         let watched = (!watch.is_empty()).then(|| {
@@ -594,8 +726,8 @@ impl RawSender {
             "params": [
                 { "encodedTransactions": bundle },
                 {
-                    "preExecutionAccountsConfigs": accounts(watched.clone().unwrap_or(Value::Null)),
-                    "postExecutionAccountsConfigs": accounts(watched.unwrap_or(Value::Null)),
+                    "preExecutionAccountsConfigs": accounts(0, watched.clone().unwrap_or(Value::Null)),
+                    "postExecutionAccountsConfigs": accounts(after, watched.unwrap_or(Value::Null)),
                     "transactionEncoding": "base64",
                     "skipSigVerify": true,
                     "replaceRecentBlockhash": true,
@@ -626,10 +758,13 @@ impl RawSender {
             .as_array()
             .ok_or_else(|| infra("no results".into()))?;
         // A failed transaction stops the bundle: what follows it is empty.
-        // The first one's own error says why; a view's means the account
-        // couldn't be measured.
+        // A held send's or the new one's own error says why; a view's means
+        // the account couldn't be measured.
         if !value["summary"].is_string()
-            && results.first().is_some_and(|first| first["err"].is_null())
+            && results
+                .iter()
+                .take(after + 1)
+                .all(|result| result["err"].is_null())
         {
             return Err(infra(format!("{}", value["summary"])));
         }
@@ -814,6 +949,31 @@ pub fn wallet_change(
         Ok(states.iter().map(|state| usdc_of(owner, state)).sum())
     };
     Ok(owned(after)? - owned(before)?)
+}
+
+/// The first of `writes` (a transaction's writable accounts, among
+/// `watched`) that is a Phoenix trader account other than `main`, before or
+/// after it: a subaccount it registers or funds, or another trader's.
+/// Positions there are ones the session doesn't measure.
+pub fn other_trader(
+    main: &Pubkey,
+    watched: &[Pubkey],
+    writes: &[Pubkey],
+    before: &Value,
+    after: &Value,
+) -> Option<Pubkey> {
+    let is_trader = |states: &Value, i: usize| {
+        states[i]["data"][0]
+            .as_str()
+            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+            .is_some_and(|data| TraderHeader::try_read_from_account_bytes(&data).is_ok())
+    };
+    watched
+        .iter()
+        .enumerate()
+        .filter(|(_, key)| *key != main && writes.contains(key))
+        .find(|(i, _)| is_trader(before, *i) || is_trader(after, *i))
+        .map(|(_, key)| *key)
 }
 
 /// The USDC `owner` holds in one account, given as JSON-RPC returns it.
@@ -1443,7 +1603,7 @@ mod tests {
             }
         };
         let other_wallet = mtx_kit::chain::token::ata(&world.other.pubkey(), &USDC_MINT);
-        sender.begin(0, None);
+        sender.begin(0, None).await;
         let mut results = Vec::new();
 
         // 1. A Phoenix market buy of 2, built raw, its trader account
@@ -1640,7 +1800,7 @@ mod tests {
             vec![ASSOCIATED_TOKEN],
             Mandate::perp("phoenix", SPCX, 70.0, 50.0),
         );
-        sender.begin(3, None);
+        sender.begin(3, None).await;
         let memo = Pubkey::from_str_const("MemoSq4gqABAXKb96qnH83TBF8eB5RvwJGAtnwGk8bv");
         let unlisted = sender
             .take(transaction(vec![RawInstruction {
@@ -1686,7 +1846,171 @@ mod tests {
                 && through.contains("isn't a program this session's raw sends may run"),
             "{through}"
         );
+        // A step simulates at most 16 sends: the one above, and 15 more.
+        for _ in 1..MAX_SIMULATED_PER_STEP {
+            assert_eq!(
+                sender.take(transaction(vec![])).await,
+                Err("no instructions".into())
+            );
+        }
+        assert_eq!(
+            sender.take(transaction(vec![])).await,
+            Err("more than 16 raw sends this step: the rest aren't simulated".into())
+        );
         assert!(sender.flush(&world.bot).await.is_empty());
+    }
+
+    /// A subaccount would hold positions the session doesn't measure: one
+    /// transaction that registers one, funds it from the main account and
+    /// buys the whole cap there is refused, and so is each step of it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_subaccount_is_refused_however_it_is_reached() {
+        let world = world().await;
+        let buy = world.market_order(&world.bot, 70).await;
+        let phoenix_program: Pubkey = buy.instructions[1].program.parse().unwrap();
+        let mut sender = world.sender(
+            vec![phoenix_program, SYSTEM, TOKEN, ASSOCIATED_TOKEN],
+            Mandate::perp("phoenix", SPCX, 70.0, 1_000.0),
+        );
+        sender.begin(0, None).await;
+        let bot = world.bot.pubkey();
+        let main = world.phoenix.trader_account(&bot);
+        let sub =
+            Pubkey::find_program_address(&[b"trader", bot.as_ref(), &[0, 1]], &phoenix_program).0;
+        let named = [(bot, AccountKey::Authority)];
+        let raw_all = |ixs: Vec<Instruction>| -> Vec<RawInstruction> {
+            ixs.iter().map(|ix| raw(ix, &named)).collect()
+        };
+        let builder = world.phoenix.tx();
+        let register = raw_all(builder.build_register_trader(bot, 0, 1).unwrap());
+        let sync = raw_all(builder.build_sync_parent_to_child(bot, main, sub).unwrap());
+        let fund = raw_all(
+            builder
+                .build_transfer_collateral(bot, main, sub, 1_000.0)
+                .unwrap(),
+        );
+        // The main account's buy of 70, made on the subaccount.
+        let mut on_sub = buy.clone();
+        on_sub.derived.clear();
+        for ix in &mut on_sub.instructions {
+            for meta in &mut ix.accounts {
+                if meta.key == AccountKey::Derived(0) {
+                    meta.key = AccountKey::Address(sub.to_string());
+                }
+            }
+        }
+        let compute = vec![raw(&compute_limit(1_400_000), &[])];
+        let attempts = [
+            [compute.clone(), register.clone()].concat(),
+            [
+                compute.clone(),
+                register.clone(),
+                sync.clone(),
+                fund.clone(),
+            ]
+            .concat(),
+            [
+                compute.clone(),
+                register,
+                sync,
+                fund,
+                on_sub.instructions[1..].to_vec(),
+            ]
+            .concat(),
+        ];
+        for instructions in attempts {
+            let refusal = sender.take(transaction(instructions)).await.unwrap_err();
+            assert_eq!(
+                refusal,
+                format!(
+                    "it writes Phoenix trader account {sub}: raw sends may only trade from the main one, {main}"
+                )
+            );
+        }
+        // The same buy on the main account is held to the cap: it lands.
+        assert!(sender.take(buy).await.is_ok());
+    }
+
+    /// Under the scenario's latency, the guard holds a send to the next
+    /// step: it is reported delayed, never failed, lands once, and new
+    /// sends are checked as if it had landed until it does.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_held_send_is_delayed_and_lands_once() {
+        let world = world().await;
+        let mut sender = world.sender(vec![SYSTEM], Mandate::perp("phoenix", SPCX, 70.0, 1_000.0));
+        let base = world.rpc.get_slot().unwrap();
+        world.guard.set_faults(
+            Some(&crate::faults::Faults {
+                seed: 1,
+                latency: Some(crate::faults::Latency {
+                    slots: (2, 2),
+                    spike: None,
+                }),
+                congestion: None,
+                blockhash_expiry: None,
+                drop: None,
+                lost_confirmation: None,
+                rpc_unavailable: None,
+            }),
+            base,
+            2,
+        );
+        let create = || {
+            let mut data = vec![0, 0, 0, 0];
+            data.extend_from_slice(&1_000_000u64.to_le_bytes());
+            data.extend_from_slice(&0u64.to_le_bytes());
+            data.extend_from_slice(SYSTEM.as_ref());
+            RawTransaction {
+                instructions: vec![RawInstruction {
+                    program: SYSTEM.to_string(),
+                    accounts: vec![
+                        account(AccountKey::Authority, true, true),
+                        account(AccountKey::Fresh(0), true, true),
+                    ],
+                    data,
+                }],
+                fresh_signers: 1,
+                ..RawTransaction::default()
+            }
+        };
+        sender.begin(0, None).await;
+        let made: Vec<Pubkey> = [sender.take(create()).await, sender.take(create()).await]
+            .into_iter()
+            .map(|r| r.unwrap().fresh_signers[0].parse().unwrap())
+            .collect();
+        sender.close();
+        let statuses = sender.flush(&world.bot).await;
+        assert_eq!(
+            statuses.iter().map(|s| &s.state).collect::<Vec<_>>(),
+            [&SendState::Delayed, &SendState::Delayed]
+        );
+        // Still held at the next step: no third send until they land.
+        sender.begin(1, None).await;
+        assert_eq!(
+            sender.take(create()).await,
+            Err(
+                "2 raw sends from earlier steps are still held: wait until they land or expire"
+                    .into()
+            )
+        );
+        sender.close();
+        for _ in 0..2 {
+            let slot = world.rpc.get_slot().unwrap();
+            world
+                ._world
+                .surfnet
+                .send_command(SimnetCommand::SlotForward(None))
+                .unwrap();
+            crate::session::wait_for_slot(&world.rpc, slot + 1)
+                .await
+                .unwrap();
+        }
+        world.guard.release(1).await;
+        sender.begin(2, None).await;
+        for key in &made {
+            assert_eq!(world.rpc.get_account(key).unwrap().lamports, 1_000_000);
+        }
+        assert!(sender.take(create()).await.is_ok());
     }
 
     /// The probe (`bots/raw-probe`, `just build`) as `MTX_TEST_RAW_PROBE_WASM`,
