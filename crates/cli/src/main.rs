@@ -133,6 +133,12 @@ enum Command {
         /// a loaded machine.
         #[arg(long, default_value_t = 0)]
         replay_load: usize,
+        /// Run the replays with this many sessions at once, the reference's
+        /// too (at most --anchor-jobs), instead of --jobs: `--jobs 16
+        /// --replay 2 --replay-jobs 1` checks a parallel grade against a
+        /// serial one.
+        #[arg(long, requires = "replay")]
+        replay_jobs: Option<usize>,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -931,6 +937,7 @@ async fn run() -> Result<()> {
             trusted,
             replay,
             replay_load,
+            replay_jobs,
             reward,
             report,
             details,
@@ -1016,12 +1023,12 @@ async fn run() -> Result<()> {
             if let Some(path) = &reward {
                 remove_if_present(path)?;
             }
-            let options = || GradeOptions {
+            let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
-                jobs: sessions.jobs,
+                jobs,
                 first_bot_user: sessions.first_bot_user,
                 reference_dir: reference.as_deref(),
                 anchor_jobs,
@@ -1035,13 +1042,17 @@ async fn run() -> Result<()> {
                 keys: &keys,
             };
             let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
-            let mut graded = grade::grade(options()).await?;
+            let mut graded = grade::grade(options(sessions.jobs, anchor_jobs)).await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
             if replay > 1 {
                 let first = replay::reports(&graded)?;
                 let mut differences = Vec::new();
                 for run in 2..=replay as usize {
-                    let mut again = grade::grade(options()).await?;
+                    let mut again = grade::grade(match replay_jobs {
+                        Some(jobs) => options(jobs, jobs.min(anchor_jobs)),
+                        None => options(sessions.jobs, anchor_jobs),
+                    })
+                    .await?;
                     again.eval_seed_sha256.clone_from(&graded.eval_seed_sha256);
                     differences.extend(replay::compare(&first, &replay::reports(&again)?, run));
                     eprintln!(
@@ -1056,6 +1067,7 @@ async fn run() -> Result<()> {
                 graded.replay = Some(replay::ReplayCheck {
                     runs: replay as usize,
                     load_threads: replay_load,
+                    jobs: replay_jobs,
                     reports: first.len(),
                     identical: differences.is_empty(),
                     differences,
