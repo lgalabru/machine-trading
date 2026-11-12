@@ -1,3 +1,10 @@
+# STATE (checkpoint 2026-11-12, resume from here)
+
+Done: scenario_v2.rs (types, per-section validate, v1<->v2 conversion, `parse`), Scenario::load/save/validate wired to it, Spot::validate removed, docs/scenario-format.md, unit tests, golden tests (crates/grader/tests/scenario_v2.rs + tests/golden/scenario_v2/*.json). Branch infra/02-scenario-v2 pushed to origin.
+Proof passed on runner-14 (rust:1.97.1): nightly fmt, clippy workspace -D warnings, kit --all-features clippy, wasm32-wasip2 clippy of 5 bots, cargo test --workspace (all ok).
+Running: byte-identical check of the 4 tasks vs origin/main = acceptance criterion 8, run id 20261112-030305-761b6731 on northpier-runner-12 (containers infra-00-acc-*). Check: `cd /Users/michaelcrystal/kt-wt/infra-00 && ./acceptance/run.sh --status 20261112-030305-761b6731 --box northpier-runner-12`, then `--fetch`.
+Next: read criterion 8 result from report; on PASS, send the final report. Clean up /data/builders/infra-02 on runner-14 (files are root-owned: remove through a docker run with the dir mounted).
+
 # Infra PR 02: Scenario v2
 
 ## Draft PR description
