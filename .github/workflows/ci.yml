@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Task to run `mtx gates` on (default: every task)"
+        description: "Task to run `mtx gates --fast` on (default: every task)"
         required: false
   schedule:
     # Weekly: catch a Surfpool or Phoenix change that breaks the task image.
@@ -68,11 +68,24 @@ jobs:
               || { echo "::error file=$f::missing reference_pnl_usd or path"; exit 1; }
           done
 
+  # The image the Rust jobs run in: built first when bench/ci changes, so no
+  # job races a stale one (see ci-image.yml).
+  ci-image:
+    uses: ./.github/workflows/ci-image.yml
+    permissions:
+      contents: read
+      packages: write
+
   rust:
+    needs: ci-image
     runs-on: ubuntu-latest
-    container: ghcr.io/solana-foundation/machine-trading-ci:latest
+    timeout-minutes: 90
+    container: ${{ needs.ci-image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain and libraries
+        if: needs.ci-image.outputs.prebuilt != 'true'
+        run: bash bench/ci/setup.sh
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo +nightly fmt --all -- --check
@@ -98,39 +111,56 @@ jobs:
           MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
 
   # The quality bar's cheap checks (`mtx gates --fast`: task files, a
-  # one-set ladder) for each task a pull request changes. Run by hand, it
-  # takes one task (or all) and uploads the reports. The image checks (a
-  # full `mtx gates`) need Docker and Harbor: run those on a dev machine.
+  # one-set ladder) for each task a pull request or a push to main changes;
+  # run by hand, for one task (or all), with the reports uploaded. The fast
+  # ladder takes about half an hour a task on 16 cores, so nothing else runs
+  # it. The image checks (a full `mtx gates`) need Docker and Harbor: run
+  # those on a dev machine.
   gates:
-    needs: rust
+    needs: [ci-image, rust]
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     container:
-      image: ghcr.io/solana-foundation/machine-trading-ci:latest
+      image: ${{ needs.ci-image.outputs.image }}
       # Bots run as their own users; the grader needs to switch to them.
       options: --user root
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Swatinem/rust-cache@v2
       - name: Which tasks
         id: tasks
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          TASK: ${{ inputs.task }}
         run: |
           git config --global --add safe.directory "$PWD"
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            base="origin/${{ github.base_ref }}"
+          case "$EVENT" in
+            pull_request) changed="$(git diff --name-only "origin/$BASE_REF...HEAD" -- bench/tasks)" ;;
+            push) git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+                    && changed="$(git diff --name-only "$BEFORE" HEAD -- bench/tasks)" || changed= ;;
+            *) changed= ;;
+          esac
+          if [ "$EVENT" = workflow_dispatch ]; then
+            candidates="${TASK:-$(ls bench/tasks)}"
           else
-            base=
+            candidates="$(echo "$changed" | sed -n 's|^bench/tasks/\([^/]*\)/.*|\1|p' | sort -u)"
           fi
-          if [ -n "${{ inputs.task }}" ]; then
-            tasks="${{ inputs.task }}"
-          elif [ -n "$base" ]; then
-            tasks="$(git diff --name-only "$base...HEAD" -- bench/tasks | sed -n 's|^bench/tasks/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ')"
-          else
-            tasks="$(ls bench/tasks | grep -- '-spcx$' | tr '\n' ' ')"
-          fi
+          # Deleted or renamed-away tasks have no task.toml left to gate.
+          tasks=
+          for task in $candidates; do
+            [ -f "bench/tasks/$task/task.toml" ] && tasks="$tasks $task"
+          done
           echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
-          echo "gating: ${tasks:-nothing changed}"
+          echo "gating:${tasks:- nothing changed}"
+      - name: Toolchain and libraries
+        if: steps.tasks.outputs.tasks != '' && needs.ci-image.outputs.prebuilt != 'true'
+        run: bash bench/ci/setup.sh
+      - uses: Swatinem/rust-cache@v2
+        if: steps.tasks.outputs.tasks != ''
       - name: Build mtx
         if: steps.tasks.outputs.tasks != ''
         run: cargo build --release --locked -p mtx-cli

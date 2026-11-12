@@ -1,11 +1,24 @@
 name: CI image
 
-# Builds bench/ci/Dockerfile and pushes it for ci.yml and specs.yml to run in
-# (`:latest`; the commit's tag is kept to roll back to).
+# The image ci.yml's Rust jobs run in (bench/ci/Dockerfile), tagged with a
+# hash of bench/ci and rust-toolchain, under this repository's owner:
+# ghcr.io/<owner>/machine-trading-ci:<hash>. ci.yml calls this first, so a
+# change to the image is built before the jobs that use it.
+#
+# The output `image` is the published image when anyone can pull it, else the
+# plain Rust image (`prebuilt` false): the jobs then run bench/ci/setup.sh
+# themselves. A fork's pull request can't push, so it uses the published image
+# or falls back. The package starts private: make it public once (see
+# docs/development.md) and every run, forks included, skips the setup.
 on:
-  push:
-    branches: [main]
-    paths: ["bench/ci/**", "rust-toolchain", ".github/workflows/ci-image.yml"]
+  workflow_call:
+    outputs:
+      image:
+        description: The image to run in
+        value: ${{ jobs.image.outputs.image }}
+      prebuilt:
+        description: "'true' if it is the CI image, else the jobs run setup.sh"
+        value: ${{ jobs.image.outputs.prebuilt }}
   workflow_dispatch:
 
 permissions:
@@ -15,19 +28,47 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.pick.outputs.image }}
+      prebuilt: ${{ steps.pick.outputs.prebuilt }}
     steps:
       - uses: actions/checkout@v4
+      - name: Name
+        id: name
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/$owner/machine-trading-ci:$(echo '${{ hashFiles('bench/ci/**', 'rust-toolchain') }}' | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "base=$(sed -n 's/^ARG RUST_IMAGE=//p' bench/ci/Dockerfile)" >> "$GITHUB_OUTPUT"
+      - name: Published already
+        id: published
+        run: |
+          if docker manifest inspect "${{ steps.name.outputs.image }}" > /dev/null 2>&1; then
+            echo "pullable=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: docker/setup-buildx-action@v3
+        if: steps.published.outputs.pullable != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       - uses: docker/login-action@v3
+        if: steps.published.outputs.pullable != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
-        id: tag
+        if: steps.published.outputs.pullable != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: |
-          tag="$(git rev-parse --short=8 HEAD)"
-          docker buildx build -f bench/ci/Dockerfile \
-            -t "ghcr.io/solana-foundation/machine-trading-ci:$tag" \
-            -t ghcr.io/solana-foundation/machine-trading-ci:latest --push bench/ci
-          echo "pushed machine-trading-ci:$tag"
+          docker buildx build -f bench/ci/Dockerfile -t "${{ steps.name.outputs.image }}" \
+            --cache-from type=gha --cache-to type=gha,mode=max --push bench/ci
+      - name: Pick
+        id: pick
+        # The jobs pull without credentials: only a public image will do.
+        run: |
+          docker logout ghcr.io > /dev/null 2>&1 || true
+          if docker manifest inspect "${{ steps.name.outputs.image }}" > /dev/null 2>&1; then
+            echo "image=${{ steps.name.outputs.image }}" >> "$GITHUB_OUTPUT"
+            echo "prebuilt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${{ steps.name.outputs.image }} isn't public; the jobs run bench/ci/setup.sh on ${{ steps.name.outputs.base }}"
+            echo "image=${{ steps.name.outputs.base }}" >> "$GITHUB_OUTPUT"
+            echo "prebuilt=false" >> "$GITHUB_OUTPUT"
+          fi

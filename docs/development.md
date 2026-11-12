@@ -184,7 +184,15 @@ just release     # push both images (amd64 + arm64, ~40 min on Apple silicon),
 ```
 
 Commit the pins and digests it writes. CI checks every push (fmt, clippy,
-tests, lint, calibrated scenarios) in a prebuilt image
-(`bench/ci/Dockerfile`, pushed by `ci-image.yml`), runs `mtx gates --fast` on
-the tasks a pull request changes, and once a week it builds the images and
-runs the oracle through Harbor.
+tests, lint, calibrated scenarios) and runs `mtx gates --fast` on the tasks a
+pull request or push changes. Once a week it builds the images and runs the
+oracle through Harbor.
+
+The Rust jobs run in a prebuilt image, `ghcr.io/<owner>/machine-trading-ci`
+(`bench/ci/Dockerfile`). `ci-image.yml` builds it at the start of a CI run
+whenever `bench/ci` or `rust-toolchain` changes, tagged with their hash.
+Until anyone can pull it, the jobs run `bench/ci/setup.sh` on the plain Rust
+image instead, which is slower but just as correct. One-time step after the
+first push to main: in the repository owner's GitHub packages, open
+`machine-trading-ci`, then Package settings, and change its visibility to
+public. Pull requests from forks use it from then on.
