@@ -2,11 +2,12 @@
 
 `mtx gates <task>` runs a task through the quality bar and writes one report,
 `target/gates/<task>/gates.json` and `gates.md` (`--out` moves it). It exits 1
-if any check fails. `not run` never fails it: a check whose tool isn't in the
-build, or needs the full run, says so.
+if any check fails. Two statuses never fail it. `not run` marks a check
+whose tool isn't in the build or that needs the full run. `inconclusive`
+marks a check whose sample was too small to decide.
 
 ```sh
-mtx gates flash-crash-spcx --fast   # task files + a one-set, 12-session ladder
+mtx gates flash-crash-spcx --fast   # task files + a one-set, 12-session public ladder
 mtx gates flash-crash-spcx          # + the image checks; 4 sets of the task's sessions
 ```
 
@@ -27,10 +28,25 @@ finished ladder) adjust a run.
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
 | | the agent's image holds no answer; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
-| Realistic | the family's market matches its asset's latest `calibration/market/<asset>.*.toml` (fast: 60 sessions) | `mtx market-cal check <family>`, when the build has it |
+| Realistic | the family's market matches its asset's latest `calibration/market/<asset>.*.toml` (its 300-session draw in both modes) | `mtx market-cal check <family>`, when the build has it |
 
-A fast ladder has 12 sessions, so its bootstrap floor drops to 0.5 (the order
-must still hold on the set itself); the full ladder keeps the task's floor.
+## Fast mode
+
+A fast ladder is one set of 12 sessions. It is drawn from a fixed public label
+(`gates-fast-v1`, the ladder's `--public-seed`) rather than a fresh secret, so
+every run grades the same sessions and a verdict doesn't flip with the draw.
+It is never a hidden set: hidden sets come from fresh 256-bit secrets, and
+`MTX_EVAL_SEED` is never used here.
+
+Twelve sessions can't carry the full ladder's thresholds, so fast mode
+loosens two of them. The bootstrap floor drops to 0.5: the order must still
+hold on the set itself. An exploit bot over a limit fails only when the
+sample shows it with 95% confidence. For its profitable share, that is a
+one-sided binomial test at the limit: at 12 sessions and a 75% limit, only
+12 of 12 fails. For its total against the `below` rung, it is a paired
+bootstrap over the sessions. Anything short of that is `inconclusive at fast
+size`, and the full ladder decides. The full ladder keeps the task's floor
+and limits as measured.
 
 ## The signal gate
 

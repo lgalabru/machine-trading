@@ -419,9 +419,10 @@ clock-probe task:
 # Run it before benchmarking any scenario change. `parallel` rungs are
 # graded at once, `jobs` sessions each: four in all at most, one bot user each.
 # `count` overrides the sessions per set, `min_odds` the bootstrap floor (for
-# short sets) and `out` the report directory (it keeps
-# `<out>/<task>/summary.json`, which `mtx gates` reads).
-ladder task="flash-crash" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="":
+# short sets), `out` the report directory (it keeps
+# `<out>/<task>/summary.json`, which `mtx gates` reads) and `public_seed`
+# draws fixed, public sets from a label instead of fresh hidden ones.
+ladder task="flash-crash" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="" public_seed="":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -q
@@ -431,6 +432,7 @@ ladder task="flash-crash" sets="4" jobs="4" parallel="1" count="" out="target/la
     count_args=()
     [ -n "{{count}}" ] && count_args+=(--count "{{count}}")
     [ -n "{{min_odds}}" ] && count_args+=(--min-rule-odds "{{min_odds}}")
+    [ -n "{{public_seed}}" ] && count_args+=(--public-seed "{{public_seed}}")
     mkdir -p bench/checks/ladder/bin
     for bin in blind momentum regime-oracle flow-oracle quoter; do
       cp "target/ladder-rungs/release/$bin" bench/checks/ladder/bin/

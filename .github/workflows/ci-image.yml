@@ -36,14 +36,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Name
         id: name
+        env:
+          OWNER: ${{ github.repository_owner }}
+          HASH: ${{ hashFiles('bench/ci/**', 'rust-toolchain') }}
         run: |
-          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/$owner/machine-trading-ci:$(echo '${{ hashFiles('bench/ci/**', 'rust-toolchain') }}' | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          owner="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/$owner/machine-trading-ci:${HASH:0:16}" >> "$GITHUB_OUTPUT"
           echo "base=$(sed -n 's/^ARG RUST_IMAGE=//p' bench/ci/Dockerfile)" >> "$GITHUB_OUTPUT"
       - name: Published already
         id: published
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
         run: |
-          if docker manifest inspect "${{ steps.name.outputs.image }}" > /dev/null 2>&1; then
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
             echo "pullable=true" >> "$GITHUB_OUTPUT"
           fi
       - uses: docker/setup-buildx-action@v3
@@ -56,19 +61,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         if: steps.published.outputs.pullable != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
         run: |
-          docker buildx build -f bench/ci/Dockerfile -t "${{ steps.name.outputs.image }}" \
+          docker buildx build -f bench/ci/Dockerfile -t "$IMAGE" \
             --cache-from type=gha --cache-to type=gha,mode=max --push bench/ci
       - name: Pick
         id: pick
         # The jobs pull without credentials: only a public image will do.
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          BASE: ${{ steps.name.outputs.base }}
         run: |
           docker logout ghcr.io > /dev/null 2>&1 || true
-          if docker manifest inspect "${{ steps.name.outputs.image }}" > /dev/null 2>&1; then
-            echo "image=${{ steps.name.outputs.image }}" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
             echo "prebuilt=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::${{ steps.name.outputs.image }} isn't public; the jobs run bench/ci/setup.sh on ${{ steps.name.outputs.base }}"
-            echo "image=${{ steps.name.outputs.base }}" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE isn't public; the jobs run bench/ci/setup.sh on $BASE"
+            echo "image=$BASE" >> "$GITHUB_OUTPUT"
             echo "prebuilt=false" >> "$GITHUB_OUTPUT"
           fi

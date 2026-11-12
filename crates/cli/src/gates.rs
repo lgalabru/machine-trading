@@ -41,8 +41,15 @@ const FAST_RULE_ODDS: f64 = 0.5;
 /// The replay check's sessions, runs and loaded threads: fast, then full.
 const REPLAY_FAST: (usize, u32, usize) = (2, 2, 0);
 const REPLAY_FULL: (usize, u32, usize) = (6, 3, 4);
-/// Fast mode draws this many sessions for the realism checks.
-const CALIBRATION_FAST_SESSIONS: usize = 60;
+/// Fast mode's ladder draws its set from this public label, never a hidden
+/// set's secret: the same sessions on every run, so a verdict doesn't flip
+/// with the draw.
+const FAST_PUBLIC_SEED: &str = "gates-fast-v1";
+/// On a fast set, an exploit bot fails only when it is over a limit with
+/// this much confidence (a one-sided binomial test on its profitable share,
+/// a paired bootstrap on its total against the `below` rung); otherwise the
+/// check is inconclusive at that size.
+const FAST_EXPLOIT_CONFIDENCE: f64 = 0.95;
 /// The snapshot when the Justfile doesn't name one.
 const DEFAULT_SNAPSHOT: &str = "phoenix-spcx-2026-10-29";
 /// How much of a failing command's output the report keeps.
@@ -61,6 +68,8 @@ pub enum Status {
     Fail,
     /// The check can't run here (a tool that isn't built yet, or full mode).
     NotRun,
+    /// It ran, but the sample is too small to decide: never fails the gate.
+    Inconclusive,
 }
 
 impl Status {
@@ -69,6 +78,7 @@ impl Status {
             Status::Pass => "PASS",
             Status::Fail => "FAIL",
             Status::NotRun => "not run",
+            Status::Inconclusive => "inconclusive",
         }
     }
 }
@@ -99,7 +109,6 @@ impl Check {
         }
     }
 
-    #[cfg(test)]
     fn pass(
         section: &'static str,
         id: &'static str,
@@ -162,6 +171,7 @@ impl Report {
                 Status::Pass => "pass",
                 Status::Fail => "fail",
                 Status::NotRun => "not_run",
+                Status::Inconclusive => "inconclusive",
             };
             *counts.entry(key).or_insert(0) += 1;
         }
@@ -179,13 +189,14 @@ impl Report {
     pub fn markdown(&self) -> String {
         let count = |k: &str| self.counts.get(k).copied().unwrap_or(0);
         let mut out = format!(
-            "# Gates: {}\n\n{} mode, commit `{}`. **{}**: {} passed, {} failed, {} not run.\n",
+            "# Gates: {}\n\n{} mode, commit `{}`. **{}**: {} passed, {} failed, {} inconclusive, {} not run.\n",
             self.task,
             self.mode,
             self.commit,
             if self.passed { "PASSED" } else { "FAILED" },
             count("pass"),
             count("fail"),
+            count("inconclusive"),
             count("not_run"),
         );
         for section in SECTIONS {
@@ -248,13 +259,31 @@ pub struct RuleResult {
     pub odds: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ExploitResult {
     pub bot: String,
     pub ok: bool,
     pub ratio: f64,
     pub profitable: f64,
     pub reasons: Vec<String>,
+    /// The sample behind the verdict (absent in older summaries).
+    #[serde(default)]
+    pub sessions: Option<usize>,
+    #[serde(default)]
+    pub profitable_sessions: Option<usize>,
+    #[serde(default)]
+    pub max_profitable: Option<f64>,
+    #[serde(default)]
+    pub total: Option<f64>,
+    #[serde(default)]
+    pub below: Option<String>,
+    #[serde(default)]
+    pub below_total: Option<f64>,
+    /// How often a resampled set puts it at or above the `below` rung.
+    #[serde(default)]
+    pub below_odds: Option<f64>,
+    #[serde(default)]
+    pub reached_bound: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,7 +367,7 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
 
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
-pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
+pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> Vec<Check> {
     let mut checks = Vec::new();
     let sets = summary.totals.len();
     let reference: Vec<f64> = summary
@@ -413,35 +442,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
         },
     ));
     checks.push(signal_gate(summary, gate));
-    let bad: Vec<String> = summary
-        .exploits
-        .iter()
-        .filter(|e| !e.ok)
-        .map(|e| format!("{} ({})", e.bot, e.reasons.join(", ")))
-        .collect();
-    checks.push(Check::from(
-        GRADED,
-        "exploit-bots",
-        "Exploit bots stay inside their limits",
-        bad.is_empty(),
-        if bad.is_empty() {
-            summary
-                .exploits
-                .iter()
-                .map(|e| {
-                    format!(
-                        "{} {:.2}x, profitable {:.0}%",
-                        e.bot,
-                        e.ratio,
-                        e.profitable * 100.0
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        } else {
-            bad.join("; ")
-        },
-    ));
+    checks.push(exploit_check(summary, fast));
     checks.push(Check::from(
         GRADED,
         "ladder-clean",
@@ -459,6 +460,104 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
         },
     ));
     checks
+}
+
+/// P(X >= k) for X ~ Binomial(n, p).
+fn binomial_tail(k: usize, n: usize, p: f64) -> f64 {
+    let mut choose = 1.0;
+    let mut tail = 0.0;
+    for i in 0..=n {
+        if i > 0 {
+            choose = choose * (n - i + 1) as f64 / i as f64;
+        }
+        if i >= k {
+            tail += choose * p.powi(i as i32) * (1.0 - p).powi((n - i) as i32);
+        }
+    }
+    tail
+}
+
+/// What an exploit bot broke: the reasons the ladder gave, each marked
+/// confident or not. On the full ladder every reason counts; on a fast set
+/// only those that hold with [`FAST_EXPLOIT_CONFIDENCE`].
+fn exploit_breaches(e: &ExploitResult, fast: bool) -> Vec<(bool, String)> {
+    let stats = (e.sessions, e.profitable_sessions, e.max_profitable);
+    let (Some(n), Some(k), Some(limit)) = stats else {
+        // An older summary carries no sample: take its verdict as it is.
+        return e.reasons.iter().map(|r| (true, r.clone())).collect();
+    };
+    let mut out = Vec::new();
+    if e.reached_bound == Some(true) {
+        out.push((true, "reached the bound".to_string()));
+    }
+    if e.profitable > limit {
+        let p = binomial_tail(k, n, limit);
+        out.push((
+            !fast || p < 1.0 - FAST_EXPLOIT_CONFIDENCE,
+            format!(
+                "profitable in {k}/{n} sessions, limit {:.0}% (p = {p:.2} at the limit)",
+                limit * 100.0
+            ),
+        ));
+    }
+    if let (Some(below), Some(total), Some(ceiling)) = (&e.below, e.total, e.below_total)
+        && total >= ceiling
+    {
+        let odds = e.below_odds.unwrap_or(1.0);
+        out.push((
+            !fast || odds >= FAST_EXPLOIT_CONFIDENCE,
+            format!("${total:.0}, at or above {below}'s ${ceiling:.0} (odds {odds:.2})"),
+        ));
+    }
+    out
+}
+
+/// The exploit bots stay inside their limits. A fast set is short, so a bot
+/// over a limit by less than the sample can tell is inconclusive, not failed.
+fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
+    let (id, title) = ("exploit-bots", "Exploit bots stay inside their limits");
+    let mut failed = Vec::new();
+    let mut unsure = Vec::new();
+    for e in &summary.exploits {
+        for (confident, reason) in exploit_breaches(e, fast) {
+            let line = format!("{} ({reason})", e.bot);
+            if confident {
+                failed.push(line);
+            } else {
+                unsure.push(line);
+            }
+        }
+    }
+    if !failed.is_empty() {
+        return Check::fail(GRADED, id, title, failed.join("; "));
+    }
+    if !unsure.is_empty() {
+        return Check::new(
+            GRADED,
+            id,
+            title,
+            Status::Inconclusive,
+            format!("inconclusive at fast size: {}", unsure.join("; ")),
+        );
+    }
+    Check::pass(
+        GRADED,
+        id,
+        title,
+        summary
+            .exploits
+            .iter()
+            .map(|e| {
+                format!(
+                    "{} {:.2}x, profitable {:.0}%",
+                    e.bot,
+                    e.ratio,
+                    e.profitable * 100.0
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 /// The last lines of a command's output, joined.
@@ -720,7 +819,7 @@ fn calibration_file(root: &Path, task: &str) -> Option<PathBuf> {
 /// The market matches its calibration: `mtx market-cal check <family>`
 /// against the task's asset calibration, which exits nonzero on a failed
 /// realism check.
-fn calibration_check(root: &Path, task: &str, family: &str, fast: bool) -> Check {
+fn calibration_check(root: &Path, task: &str, family: &str) -> Check {
     let (id, title) = (
         "market-calibration",
         "The market matches its calibration file",
@@ -736,18 +835,16 @@ fn calibration_check(root: &Path, task: &str, family: &str, fast: bool) -> Check
     let Some(file) = calibration_file(root, task) else {
         return Check::not_run(REALISTIC, id, title, "no calibration file for its asset");
     };
+    // Its own default draw (300 sessions) in both modes: fewer can't judge
+    // the stylized facts.
     let file = file.to_string_lossy().into_owned();
-    let count = CALIBRATION_FAST_SESSIONS.to_string();
-    let mut args = vec![
+    let args = [
         "market-cal",
         "check",
         family,
         "--calibration",
         file.as_str(),
     ];
-    if fast {
-        args.extend(["--count", count.as_str()]);
-    }
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
     let output = match Command::new(exe).args(&args).current_dir(root).output() {
         Ok(o) => o,
@@ -881,8 +978,10 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                 String::new()
             };
             let ladder_out = out.join("ladder");
-            // A failed ladder still writes its summary; a stale one mustn't be read.
-            let _ = std::fs::remove_file(ladder_out.join(&family).join("summary.json"));
+            // The ladder reuses any rung report it finds: an earlier run's,
+            // from another set, mustn't stand in for this one.
+            clear_dir(&ladder_out.join(&family))?;
+            let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
             // The ladder exits nonzero when a rule fails: the summary says which.
             run_in(
                 root,
@@ -896,6 +995,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                     &count,
                     &ladder_out.to_string_lossy(),
                     &odds,
+                    seed,
                 ],
                 true,
             )?;
@@ -906,7 +1006,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         Ok(text) => {
             let summary: LadderSummary =
                 serde_json::from_str(&text).with_context(|| summary_path.display().to_string())?;
-            checks.extend(ladder_checks(&summary, &signal));
+            checks.extend(ladder_checks(&summary, &signal, opts.fast));
         }
         Err(e) => checks.push(Check::fail(
             SOLVABLE,
@@ -993,7 +1093,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     }
 
     checks.push(replay_check(root, &family, &config, opts.fast, &out));
-    checks.push(calibration_check(root, task, &family, opts.fast));
+    checks.push(calibration_check(root, task, &family));
 
     let report = Report::new(
         task,
@@ -1082,6 +1182,65 @@ mod tests {
     }
 
     #[test]
+    fn the_binomial_tail_matches_its_closed_forms() {
+        assert!((binomial_tail(12, 12, 0.75) - 0.75f64.powi(12)).abs() < 1e-12);
+        let eleven = 12.0 * 0.75f64.powi(11) * 0.25 + 0.75f64.powi(12);
+        assert!((binomial_tail(11, 12, 0.75) - eleven).abs() < 1e-12);
+        assert!((binomial_tail(0, 12, 0.3) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_fast_set_fails_an_exploit_only_when_it_is_confidently_over() {
+        let bot = |k: usize, total: f64, odds: f64| ExploitResult {
+            bot: "fable".into(),
+            ok: false,
+            ratio: 0.9,
+            profitable: k as f64 / 12.0,
+            reasons: vec!["the ladder's own verdict".into()],
+            sessions: Some(12),
+            profitable_sessions: Some(k),
+            max_profitable: Some(0.75),
+            total: Some(total),
+            below: Some("regime-oracle".into()),
+            below_total: Some(100.0),
+            below_odds: Some(odds),
+            reached_bound: Some(false),
+        };
+        let check = |e: ExploitResult, fast: bool| {
+            let mut s = summary(&[]);
+            s.exploits.push(e);
+            exploit_check(&s, fast)
+        };
+        // 10/12 over a 75% limit: p = 0.39 at the limit, so a short set can't tell.
+        let c = check(bot(10, 50.0, 0.2), true);
+        assert_eq!(c.status, Status::Inconclusive, "{}", c.detail);
+        assert!(c.detail.contains("10/12"), "{}", c.detail);
+        // The full ladder takes the share as measured.
+        assert_eq!(check(bot(10, 50.0, 0.2), false).status, Status::Fail);
+        // 12/12: p = 0.03 at the limit.
+        assert_eq!(check(bot(12, 50.0, 0.2), true).status, Status::Fail);
+        // Above the oracle on this set, but not on most resamples of it.
+        assert_eq!(check(bot(6, 120.0, 0.6), true).status, Status::Inconclusive);
+        assert_eq!(check(bot(6, 120.0, 0.97), true).status, Status::Fail);
+        let mut bound = bot(6, 50.0, 0.2);
+        bound.reached_bound = Some(true);
+        assert_eq!(check(bound, true).status, Status::Fail);
+        assert_eq!(check(bot(6, 50.0, 0.2), true).status, Status::Pass);
+        // A summary without the sample keeps the ladder's verdict.
+        let old = ExploitResult {
+            bot: "old".into(),
+            reasons: vec!["profitable in 90% of sessions".into()],
+            ..Default::default()
+        };
+        assert_eq!(check(old, true).status, Status::Fail);
+        let mut s = summary(&[]);
+        s.exploits.push(bot(10, 50.0, 0.2));
+        let report = Report::new("t", "fast", "abc".into(), vec![exploit_check(&s, true)]);
+        assert!(report.passed);
+        assert!(report.markdown().contains("1 inconclusive"));
+    }
+
+    #[test]
     fn ladder_verdicts_become_checks() {
         let mut s = summary(&[&[
             ("nop", 0.0),
@@ -1102,8 +1261,9 @@ mod tests {
             ratio: 3.1,
             profitable: 0.9,
             reasons: vec!["profitable in 90% of sessions".into()],
+            ..Default::default()
         });
-        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]));
+        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]), false);
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("reference-scores-1"), Status::Pass);
         assert_eq!(status("nop-scores-0"), Status::Pass);
@@ -1116,7 +1276,7 @@ mod tests {
             rung: "reference".into(),
             scenarios: vec!["a".into()],
         });
-        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]));
+        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]), false);
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("nop-scores-0"), Status::Fail);
         assert_eq!(status("ladder-clean"), Status::Fail);
