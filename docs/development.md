@@ -44,11 +44,28 @@ that way counts as failed.
 <threads>` busy threads alongside) and fails at the first session report,
 the reference's included, that came out differently.
 
+Sessions run in parallel with `--jobs`, each isolated: its own surfnet and
+ports, RPC guard, directory and keys, and for a component its own store and
+fuel. A strategy component runs inside the grader, with no files and no
+network, so up to 32 of its sessions run at once; a process bot runs as one
+of four bot users, so at most four. The report doesn't depend on `--jobs`:
+`--replay-jobs` runs the replays with another number, so `--jobs 16 --replay
+2 --replay-jobs 1` checks a parallel grade against a serial one.
+
 ```sh
 MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
   --reference /opt/mtx/anchors/flash-crash --bot bots/reference \
   --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
 ```
+
+A finished grade can be scored again without running a session, when a
+scoring rule changes: `mtx rescore <report.json>` reads each session's
+report and scenario from the grade's detail files (`--details`; by default
+`sessions` beside the report, as the verifier writes them), scores them with
+the grader's current rules, prints the new report, and says on stderr where
+it differs from the old one. With nothing changed it is the same report
+(`--check` fails otherwise). `mtx bench rescore <batch or version>` does it
+for every trial of a batch or published release.
 
 ## Write a bot
 
@@ -140,11 +157,16 @@ model between two.
 - **The website:** every published release is on GitHub Pages at
   `/bench/`, as the same page with its data written out as files
   (`mtx bench export <dir>`; the browser inflates the gzipped ones).
-- **Published releases:** about 7 MB a trial, most of it the bot's
-  sessions step by step, which the review page draws. 0.11.0, 40 trials,
-  is 293 MB in the repository and about 450 MB on the website with 0.10.0.
-  GitHub Pages serves at most 1 GB, so the session files will have to move
-  out of the repository within a release or two.
+- **Published releases:** compacted (see
+  [bench/results](../bench/results/README.md)), 0.11.0's 40 trials take
+  75 MB, most of it sessions step by step, bot logs and trajectories.
+  `mtx bench publish --artifacts <dir>` keeps the full release outside the
+  repository, as `<dir>/<version>`, and publishes a slim one: the reports,
+  rewards, task files and bots, about 6 MB for 0.11.0. `mtx bench slim
+  <version> --artifacts <dir>` does the same to a release published before.
+  Readers (review, export, compare, rescore) use the full copy when
+  `MTX_ARTIFACTS=<dir>` holds it; without it, a slim release still shows the
+  leaderboard, comparisons and bots, but no timelines or logs.
 
 ## Author and play scenarios
 
