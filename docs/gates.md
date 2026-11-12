@@ -61,10 +61,11 @@ under the section of the bar they serve.
 
 ## CI
 
-`ci.yml` runs its Rust jobs in `ghcr.io/solana-foundation/machine-trading-ci`
-(`bench/ci/Dockerfile`: the pinned toolchain, clippy, nightly rustfmt,
-wasm32-wasip2, system libraries, `just`, Node, and the bot users), rebuilt by
-`ci-image.yml` when the Dockerfile or `rust-toolchain` changes. The `gates` job
-runs `mtx gates --fast` for each task a pull request changes and writes the
-reports to the job summary. Run by hand (`workflow_dispatch`, optionally with a
-`task`), it covers every task and uploads the reports as an artifact.
+The `gates` job in `ci.yml` runs `mtx gates --fast` on each task that a pull
+request or a push to main changes. Tasks that were deleted or renamed away are
+skipped. It writes the reports to the job summary. Run by hand
+(`workflow_dispatch`, optionally with a `task`), it covers every task and
+uploads the reports as an artifact. The fast ladder takes about half an hour a
+task on 16 cores, so the weekly run skips it, and the job stops after four
+hours. It runs in the CI image (see [development](development.md)) as root,
+because bots run as their own users.
