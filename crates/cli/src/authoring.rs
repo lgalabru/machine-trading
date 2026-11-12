@@ -248,7 +248,15 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     copy_dir(
         &from,
         &to,
-        &["practice", "README.md", "DESIGN.md", "instruction.md", "checks", "bin", "target"],
+        &[
+            "practice",
+            "README.md",
+            "DESIGN.md",
+            "instruction.md",
+            "checks",
+            "bin",
+            "target",
+        ],
     )?;
     let practice = to.join("environment/practice");
     std::fs::create_dir_all(&practice)?;
@@ -303,8 +311,8 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
 
     // The reference bot is the base's, under the family's name; the oracle is
     // a copy of it (the sync writes that).
-    let base_task = meta_of(root, base.task())
-        .map_err(|e| anyhow::anyhow!("{}: {e}", base.task()))?;
+    let base_task =
+        meta_of(root, base.task()).map_err(|e| anyhow::anyhow!("{}: {e}", base.task()))?;
     let bot_to = to.join("reference");
     let new_package = format!("mtx-bot-{family}");
     let new_bin = format!("mtx-{family}");
@@ -796,7 +804,8 @@ pub fn list(root: &Path) -> Vec<Value> {
                     l.strip_prefix("version = ")
                         .map(|v| v.trim_matches('"').to_string())
                 });
-            let family = meta_of(root, &name).map_or_else(|_| family_of(&name), |t| t.mtx.generator);
+            let family =
+                meta_of(root, &name).map_or_else(|_| family_of(&name), |t| t.mtx.generator);
             json!({ "name": name, "version": version, "family": family })
         })
         .collect()
