@@ -184,7 +184,12 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, String>> {
     let join = |f: &dyn Fn(&Task) -> String, sep: &str| -> String {
         tasks.iter().map(f).collect::<Vec<_>>().join(sep)
     };
-    let needles = unique(tasks.iter().flat_map(|t| t.mtx.leak_needles.iter().cloned())).join("|");
+    let needles = unique(
+        tasks
+            .iter()
+            .flat_map(|t| t.mtx.leak_needles.iter().cloned()),
+    )
+    .join("|");
     files.insert(
         PathBuf::from("bench/tasks/tasks.just"),
         format!(
