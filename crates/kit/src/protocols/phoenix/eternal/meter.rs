@@ -23,9 +23,7 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{PhoenixError, PhoenixExchange, PhoenixMarket};
 use crate::{
     chain::{ChainClient, token},
-    core::{
-        AccountMeter, Holding, InstrumentId, Measurement, MeterError, Position, RecordedFill,
-    },
+    core::{AccountMeter, Holding, InstrumentId, Measurement, MeterError, Position, RecordedFill},
     protocols::USDC_MINT,
 };
 
@@ -230,9 +228,12 @@ fn quote_lots(readings: &[Reading], unsettled_funding: bool) -> i64 {
 
 /// The position in `market`, netted across the trader accounts.
 fn position(market: &PhoenixMarket, readings: &[Reading]) -> Position {
-    let mut legs = readings
-        .iter()
-        .map(|r| market.position(r.asset.base_lots, r.asset.entry_price_quote_lots_per_base_lot));
+    let mut legs = readings.iter().map(|r| {
+        market.position(
+            r.asset.base_lots,
+            r.asset.entry_price_quote_lots_per_base_lot,
+        )
+    });
     let first = legs
         .next()
         .expect("the cross-margin account is always read");
@@ -400,6 +401,9 @@ mod tests {
         assert_eq!(outside(&sol, &[main], &universe), 1);
         // An isolated subaccount in a market outside the universe.
         let elsewhere = reading(0, 0, 100_000_000, 0, 1);
-        assert_eq!(outside(&sol, &[reading(0, 0, 1, 0, 0), elsewhere], &universe), 1);
+        assert_eq!(
+            outside(&sol, &[reading(0, 0, 1, 0, 0), elsewhere], &universe),
+            1
+        );
     }
 }
