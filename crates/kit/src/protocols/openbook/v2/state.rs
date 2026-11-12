@@ -11,7 +11,7 @@
 
 use solana_pubkey::Pubkey;
 
-use crate::chain::ChainError;
+use crate::protocols::DecodeError;
 
 /// Size of a `Market` account.
 pub const MARKET_SIZE: usize = 8 + 840;
@@ -24,8 +24,8 @@ const MAX_NODES: u32 = 1024;
 /// Where an `OpenOrdersAccount`'s position starts.
 const POSITION_OFFSET: usize = 8 + 32 * 4 + 4 + 1 + 1 + 2;
 
-fn decode_error(what: &'static str, detail: impl Into<String>) -> ChainError {
-    ChainError::Decode {
+fn decode_error(what: &'static str, detail: impl Into<String>) -> DecodeError {
+    DecodeError {
         what,
         detail: detail.into(),
     }
@@ -34,39 +34,39 @@ fn decode_error(what: &'static str, detail: impl Into<String>) -> ChainError {
 struct Bytes<'a>(&'a [u8], &'static str);
 
 impl Bytes<'_> {
-    fn array<const N: usize>(&self, at: usize) -> Result<[u8; N], ChainError> {
+    fn array<const N: usize>(&self, at: usize) -> Result<[u8; N], DecodeError> {
         self.0
             .get(at..at + N)
             .and_then(|b| b.try_into().ok())
             .ok_or_else(|| decode_error(self.1, format!("account ends before byte {}", at + N)))
     }
 
-    fn u8(&self, at: usize) -> Result<u8, ChainError> {
+    fn u8(&self, at: usize) -> Result<u8, DecodeError> {
         Ok(self.array::<1>(at)?[0])
     }
 
-    fn u32(&self, at: usize) -> Result<u32, ChainError> {
+    fn u32(&self, at: usize) -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(self.array(at)?))
     }
 
-    fn u64(&self, at: usize) -> Result<u64, ChainError> {
+    fn u64(&self, at: usize) -> Result<u64, DecodeError> {
         Ok(u64::from_le_bytes(self.array(at)?))
     }
 
-    fn i64(&self, at: usize) -> Result<i64, ChainError> {
+    fn i64(&self, at: usize) -> Result<i64, DecodeError> {
         Ok(i64::from_le_bytes(self.array(at)?))
     }
 
-    fn u128(&self, at: usize) -> Result<u128, ChainError> {
+    fn u128(&self, at: usize) -> Result<u128, DecodeError> {
         Ok(u128::from_le_bytes(self.array(at)?))
     }
 
-    fn key(&self, at: usize) -> Result<Pubkey, ChainError> {
+    fn key(&self, at: usize) -> Result<Pubkey, DecodeError> {
         Ok(Pubkey::new_from_array(self.array(at)?))
     }
 
     /// An optional key, stored as the zero key when absent.
-    fn optional_key(&self, at: usize) -> Result<Option<Pubkey>, ChainError> {
+    fn optional_key(&self, at: usize) -> Result<Option<Pubkey>, DecodeError> {
         let key = self.key(at)?;
         Ok((key != Pubkey::default()).then_some(key))
     }
@@ -121,7 +121,7 @@ pub struct MarketAccount {
 
 impl MarketAccount {
     /// Decodes a `Market` account.
-    pub fn decode(data: &[u8]) -> Result<Self, ChainError> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         if data.len() != MARKET_SIZE {
             return Err(decode_error(
                 "openbook v2 market",
@@ -189,7 +189,7 @@ impl LeafOrder {
 }
 
 /// The fixed-price orders of a `BookSide` account, in the tree's order.
-pub fn book_side_orders(data: &[u8]) -> Result<Vec<LeafOrder>, ChainError> {
+pub fn book_side_orders(data: &[u8]) -> Result<Vec<LeafOrder>, DecodeError> {
     let d = Bytes(data, "openbook v2 book side");
     if data.len() < NODES_OFFSET + NODE_SIZE * MAX_NODES as usize {
         return Err(decode_error(
@@ -285,7 +285,7 @@ impl OpenOrdersPosition {
     }
 
     /// Decodes an `OpenOrdersAccount`'s owner, market and position.
-    pub fn decode(data: &[u8]) -> Result<Self, ChainError> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let d = Bytes(data, "openbook v2 open orders account");
         let p = POSITION_OFFSET;
         Ok(Self {
@@ -319,7 +319,7 @@ pub struct OpenOrdersIndexer {
 
 impl OpenOrdersIndexer {
     /// Decodes an `OpenOrdersIndexer` account.
-    pub fn decode(data: &[u8]) -> Result<Self, ChainError> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let what = "openbook v2 open orders indexer";
         let d = Bytes(data, what);
         if d.array::<8>(0)? != OPEN_ORDERS_INDEXER_DISCRIMINATOR {
