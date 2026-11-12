@@ -142,6 +142,10 @@ mtx scenario play scenario.json                               # replays a saved 
 
 ## Change a task
 
+One command runs them all and writes one report: `mtx gates <task> --fast`
+for the cheap checks, `mtx gates <task>` for the full set (see
+[gates](gates.md)). The pieces, one by one:
+
 ```sh
 just ladder <family>                   # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
@@ -180,5 +184,7 @@ just release     # push both images (amd64 + arm64, ~40 min on Apple silicon),
 ```
 
 Commit the pins and digests it writes. CI checks every push (fmt, clippy,
-tests, lint, calibrated scenarios), and once a week it builds the images and
+tests, lint, calibrated scenarios) in a prebuilt image
+(`bench/ci/Dockerfile`, pushed by `ci-image.yml`), runs `mtx gates --fast` on
+the tasks a pull request changes, and once a week it builds the images and
 runs the oracle through Harbor.

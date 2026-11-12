@@ -25,6 +25,8 @@ concurrency:
 jobs:
   site:
     runs-on: ubuntu-latest
+    # bench/ci/Dockerfile: the Rust build's system libraries, preinstalled.
+    container: ghcr.io/solana-foundation/machine-trading-ci:latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,11 +39,6 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev clang libclang-dev
-      - name: Install the Rust toolchain
-        # rust-toolchain pins it.
-        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - name: Export the benchmark
         run: |
