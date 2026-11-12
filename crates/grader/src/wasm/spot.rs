@@ -68,7 +68,7 @@ impl Book {
                         .with_send_mode(mode),
                 ))
             }
-            _ => {
+            "openbook" => {
                 let named = openbook_v2::MARKETS[0];
                 Self::OpenBook(Box::new(
                     OpenBookV2Trader::connect(chain, named.address, "SOL", "USDC", owner)
@@ -76,6 +76,12 @@ impl Book {
                         .map_err(|e| error(&e))?
                         .with_send_mode(mode),
                 ))
+            }
+            other => {
+                return Err(crate::Error::Transaction {
+                    label: "a spot component's venue".into(),
+                    reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
+                });
             }
         })
     }
@@ -235,7 +241,7 @@ struct SpotMarket {
     quote_mint: String,
 }
 
-fn spot_venues(venues: &[String]) -> SpotVenues {
+fn spot_venues(venues: &[String]) -> crate::Result<SpotVenues> {
     let market = |venue: &str, program: &solana_pubkey::Pubkey, named: &NamedMarket| SpotMarket {
         venue: venue.into(),
         symbol: named.symbol.into(),
@@ -244,24 +250,32 @@ fn spot_venues(venues: &[String]) -> SpotVenues {
         base_mint: named.base_mint.to_string(),
         quote_mint: named.quote_mint.to_string(),
     };
-    SpotVenues {
+    Ok(SpotVenues {
         orders: venues.first().cloned().unwrap_or_default(),
         markets: venues
             .iter()
             .map(|venue| match venue.as_str() {
-                "phoenix" => market(venue, &phoenix_v1::PROGRAM_ID, &phoenix_v1::MARKETS[0]),
-                _ => market(venue, &openbook_v2::PROGRAM_ID, &openbook_v2::MARKETS[0]),
+                "phoenix" => Ok(market(venue, &phoenix_v1::PROGRAM_ID, &phoenix_v1::MARKETS[0])),
+                "openbook" => Ok(market(venue, &openbook_v2::PROGRAM_ID, &openbook_v2::MARKETS[0])),
+                other => Err(crate::Error::Transaction {
+                    label: "a spot component's venues".into(),
+                    reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
+                }),
             })
-            .collect(),
-    }
+            .collect::<crate::Result<_>>()?,
+    })
 }
 
-/// `x` on a grid of `step`, rounded down or up.
+/// `x` on a grid of `step`, rounded down or up; `None` for a value no grid
+/// can hold (not a number, or overflowing a `Decimal`): the order is
+/// refused. The value is first snapped to nine
+/// decimals, so float noise (`0.7 - 0.4` is 0.29999999999999993) doesn't
+/// cost a step.
 fn on_grid(x: f64, step: Decimal, up: bool) -> Option<Decimal> {
-    let x = Decimal::try_from(x).ok()?;
-    let steps = x / step;
+    let x = Decimal::try_from(x).ok()?.round_dp(9);
+    let steps = x.checked_div(step)?;
     let steps = if up { steps.ceil() } else { steps.floor() };
-    Some(steps * step)
+    steps.checked_mul(step)
 }
 
 fn core_side(side: mtx_kit::Side) -> CoreSide {
@@ -347,7 +361,7 @@ impl SpotWasmBot {
             cap: start.max_position,
             max_drawdown: start.max_drawdown_usd,
             mandate: serde_json::to_string(start.mandate)?,
-            venue: serde_json::to_string(&spot_venues(start.venues))?,
+            venue: serde_json::to_string(&spot_venues(start.venues)?)?,
             authority: owner.to_string(),
             vars,
             seed,
@@ -491,7 +505,7 @@ impl SpotWasmBot {
     /// ask's up). An order of no lots is skipped.
     async fn send(&mut self, action: &mtx_kit::Action) -> Result<(), String> {
         let (tick, lot) = self.book.grid();
-        let off_grid = || "a price or size that isn't a number".to_string();
+        let off_grid = || "a price or size no market grid can hold".to_string();
         match *action {
             mtx_kit::Action::Market { side, size, limit } => {
                 let size = on_grid(size, lot, false).ok_or_else(off_grid)?;
@@ -511,21 +525,27 @@ impl SpotWasmBot {
                 if size.is_zero() || price.is_zero() {
                     return Ok(());
                 }
+                // The setup is sent with the order, unconfirmed: count the
+                // account open only once it is seen, and send the setup again
+                // until then (a fault may drop it).
                 if !self.account_open {
-                    if !self.book.has_account().await {
+                    if self.book.has_account().await {
+                        self.account_open = true;
+                    } else {
                         self.book.open_account(&self.signer).await?;
                     }
-                    self.account_open = true;
                 }
                 self.book
                     .rest(core_side(side), price, size, &self.signer)
                     .await
             }
             mtx_kit::Action::CancelAll => {
-                if !self.account_open && !self.book.has_account().await {
-                    return Ok(());
+                if !self.account_open {
+                    if !self.book.has_account().await {
+                        return Ok(());
+                    }
+                    self.account_open = true;
                 }
-                self.account_open = true;
                 self.book.cancel_all(&self.signer).await
             }
         }
@@ -572,11 +592,20 @@ mod tests {
             Some(Decimal::ZERO)
         );
         assert_eq!(on_grid(f64::NAN, tick, false), None);
+        // Float noise doesn't cost a step.
+        assert_eq!(on_grid(0.7 - 0.4, tick, false), Some(Decimal::new(300, 3)));
+        assert_eq!(on_grid(0.1 + 0.2, tick, true), Some(Decimal::new(300, 3)));
+        // A price past what a Decimal holds is refused, not a panic.
+        assert_eq!(on_grid(1e27, tick, true), None);
+        assert_eq!(on_grid(1e27, tick, false), None);
+        assert_eq!(on_grid(1e30, tick, false), None);
+        assert_eq!(on_grid(-1e27, tick, false), None);
     }
 
     #[test]
     fn a_component_is_told_every_market_and_where_its_orders_go() {
-        let venues = spot_venues(&["openbook".into(), "phoenix".into()]);
+        let venues = spot_venues(&["openbook".into(), "phoenix".into()]).unwrap();
+        assert!(spot_venues(&["raydium".into()]).is_err());
         let json = serde_json::to_value(&venues).unwrap();
         assert_eq!(json["orders"], "openbook");
         assert_eq!(
@@ -621,8 +650,10 @@ mod tests {
                 10.0,
             ))
             .unwrap(),
-            venue: serde_json::to_string(&spot_venues(&["phoenix".into(), "openbook".into()]))
-                .unwrap(),
+            venue: serde_json::to_string(
+                &spot_venues(&["phoenix".into(), "openbook".into()]).unwrap(),
+            )
+            .unwrap(),
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
