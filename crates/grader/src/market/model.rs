@@ -234,6 +234,10 @@ pub struct MarketModel {
     pub spec: ModelSpec,
     calendar: SessionCalendar,
     fixed_regime: Option<usize>,
+    /// The median session's volatility multiplier before normalizing (see
+    /// [`median_level`]): sessions are scaled by its inverse, so the median
+    /// session runs at the calibration's `per_second_sd`.
+    level_norm: f64,
 }
 
 impl MarketModel {
@@ -266,7 +270,9 @@ impl MarketModel {
             }
             _ => {}
         }
+        let level_norm = median_level(&calibration);
         Ok(Self {
+            level_norm,
             calibration,
             spec,
             calendar,
@@ -392,7 +398,7 @@ impl<'a> Walker<'a> {
             .vol_mult
             .iter()
             .zip(&regimes.log_sd_within)
-            .map(|(mult, sd)| mult * (sd * rng.normal()).exp())
+            .map(|(mult, sd)| mult * (sd * rng.normal()).exp() / model.level_norm)
             .collect();
         let regime = model
             .fixed_regime
@@ -621,6 +627,72 @@ fn cholesky(a: &[Vec<f64>]) -> std::result::Result<Vec<Vec<f64>>, String> {
 
 fn kind_name(calendar: &SessionCalendar, unix: i64) -> String {
     calendar.kind_at(unix).unwrap_or("closed").to_string()
+}
+
+/// The median of a session's volatility multiplier, before normalizing:
+/// the regime's multiplier times its log-normal level draw, times the hour's
+/// intraday multiplier on a continuous calendar (sessions start at any
+/// hour), mixed by the regimes' shares. The calibration's `per_second_sd`
+/// is the median session's level, so the model divides by this.
+fn median_level(cal: &Calibration) -> f64 {
+    let regimes = &cal.fair_value.regimes;
+    let hours: Vec<f64> = match (&cal.fair_value.intraday_vol_mult_utc, cal.calendar.model) {
+        (Some(shape), CalendarModel::Continuous) => shape.iter().map(|m| m.ln()).collect(),
+        _ => vec![0.0],
+    };
+    // (weight, log-mean, log-sd) of each log-normal in the mixture.
+    let parts: Vec<(f64, f64, f64)> = (0..regimes.names.len())
+        .flat_map(|i| {
+            let hours = &hours;
+            hours.iter().map(move |h| {
+                (
+                    regimes.share[i] / hours.len() as f64,
+                    regimes.vol_mult[i].ln() + h,
+                    regimes.log_sd_within[i],
+                )
+            })
+        })
+        .collect();
+    let cdf = |x: f64| -> f64 {
+        parts
+            .iter()
+            .map(|(w, mu, sd)| {
+                let step = if x >= *mu { 1.0 } else { 0.0 };
+                w * if *sd > 0.0 {
+                    normal_cdf((x - mu) / sd)
+                } else {
+                    step
+                }
+            })
+            .sum()
+    };
+    let (mut lo, mut hi) = (-20.0, 20.0);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if cdf(mid) < 0.5 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (0.5 * (lo + hi)).exp()
+}
+
+/// The standard normal CDF, from Abramowitz and Stegun's 7.1.26 erf
+/// (error below 1.5e-7).
+fn normal_cdf(z: f64) -> f64 {
+    let x = z.abs() / std::f64::consts::SQRT_2;
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    let poly = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let erf = 1.0 - poly * (-x * x).exp();
+    if z >= 0.0 {
+        0.5 * (1.0 + erf)
+    } else {
+        0.5 * (1.0 - erf)
+    }
 }
 
 /// The intraday multiplier of a continuous calendar at a UTC instant.
