@@ -27,7 +27,8 @@ use mtx_kit::{Action, Intent, Session, Side};
 pub struct Run<'a> {
     pub dir: &'a Path,
     pub task: Option<&'a str>,
-    /// A practice scenario's name (`practice-3`) or a scenario file.
+    /// A scenario: the studio's (`practice-101`, the default, `practice-102`),
+    /// one of the task's practice set (`practice-3`), or a file.
     pub scenario: Option<&'a str>,
     pub build: bool,
     pub debug: bool,
@@ -60,7 +61,7 @@ pub async fn run(options: Run<'_>) -> Result<String> {
     let root = crate::bot::repo(options.repo)?;
     let task = crate::bot::resolve_task(&root, options.task)?;
     let snapshot = crate::bot::task_snapshot(&root, &task)?;
-    let path = scenario_path(&root, &task, options.scenario)?;
+    let path = scenario_path(&dir, &root, &task, options.scenario)?;
     let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
     let logs = dir.join("target/mtx-run-logs");
     std::fs::create_dir_all(&logs)?;
@@ -130,22 +131,31 @@ pub async fn run(options: Run<'_>) -> Result<String> {
 
 /// The scenario `mtx bot run` plays: a file, a practice scenario by name, or
 /// the task's first.
-fn scenario_path(root: &Path, task: &str, asked: Option<&str>) -> Result<PathBuf> {
-    let practice = crate::bot::practice_scenarios(root, task)?;
-    let Some(asked) = asked else {
-        return practice
-            .into_iter()
-            .next()
-            .with_context(|| format!("{task} has no practice scenarios"));
-    };
+fn scenario_path(dir: &Path, root: &Path, task: &str, asked: Option<&str>) -> Result<PathBuf> {
+    let asked = asked.unwrap_or(crate::studio::FIRST_SCENARIO);
     let path = PathBuf::from(asked);
     if path.is_file() {
         return Ok(path);
     }
-    practice
+    // The studio's own scenarios (practice-101, practice-102), written out
+    // where the run's logs go.
+    if let Some(bytes) = crate::studio::builtin_scenario(asked) {
+        let out = dir
+            .join("target/mtx-run-scenarios")
+            .join(format!("{asked}.json"));
+        std::fs::create_dir_all(out.parent().unwrap_or(dir))?;
+        std::fs::write(&out, bytes)?;
+        return Ok(out);
+    }
+    crate::bot::practice_scenarios(root, task)?
         .into_iter()
         .find(|p| p.file_stem().is_some_and(|s| s == asked))
-        .with_context(|| format!("no practice scenario {asked} in {task}, and no file {asked}"))
+        .with_context(|| {
+            format!(
+                "no scenario {asked}: the studio's are {}, and {task}'s practice set is practice-1 to practice-6; or pass a file",
+                crate::studio::builtin_scenarios().join(", ")
+            )
+        })
 }
 
 /// `--debug`'s console: a block a step, and a key to go on.
