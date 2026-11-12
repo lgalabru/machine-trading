@@ -60,7 +60,7 @@ snapshot-verify dir=("snapshots/" + snapshot):
 bots:
     #!/usr/bin/env bash
     set -euo pipefail
-    for bot in starter reference maker dip-buyer carry carry-gbm weekend; do
+    for bot in starter printer first-strategy reference maker dip-buyer carry carry-gbm weekend; do
       just --justfile "bots/$bot/Justfile" build
     done
 
