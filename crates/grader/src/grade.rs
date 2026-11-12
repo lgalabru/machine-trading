@@ -254,6 +254,8 @@ pub struct GradeOptions<'a> {
     /// The bot is trusted, as the reference is (an anchor or a ladder rung
     /// graded as the bot): see [`SessionOptions::trusted`].
     pub trusted: bool,
+    /// Watches a component's sessions step by step (`mtx bot run --debug`).
+    pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -319,6 +321,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             None,
             false,
             true,
+            None,
         )
         .await?;
         check_timing(&anchors)?;
@@ -341,6 +344,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.regimes,
         opts.stop_on_disqualify,
         opts.trusted,
+        opts.observer.clone(),
     )
     .await?;
     check_timing(&sessions)?;
@@ -611,6 +615,7 @@ pub async fn calibrate(
         None,
         false,
         true,
+        None,
     )
     .await?;
     check_timing(&sessions)?;
@@ -650,6 +655,7 @@ async fn run_sessions(
     regimes: Option<&[String]>,
     stop_on_disqualify: bool,
     trusted: bool,
+    observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
     if !(1..=session::BOT_USERS.len()).contains(&jobs) {
@@ -665,7 +671,9 @@ async fn run_sessions(
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
     raise_open_file_limit();
     let sessions = futures::stream::iter(scenarios.iter().enumerate())
-        .map(|(index, scenario)| async move {
+        .map(|(index, scenario)| {
+            let observer = observer.clone();
+            async move {
             // Stagger the first sessions so their surfnets don't race for
             // the same free ports.
             if index < jobs {
@@ -681,6 +689,7 @@ async fn run_sessions(
                     slot: first_bot_user + index % jobs,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
                     trusted,
+                    observer: observer.clone(),
                 })
             };
             // A session whose setup fails on the machine (a request to its
@@ -694,6 +703,7 @@ async fn run_sessions(
                 }
                 done => done,
             }
+        }
         })
         .buffered(jobs);
     let mut sessions = std::pin::pin!(sessions);
@@ -759,6 +769,7 @@ mod tests {
             annotations: None,
             components_only: true,
             trusted: false,
+            observer: None,
         })
         .await
         .unwrap();
@@ -1063,6 +1074,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
             )
         };
         assert!(matches!(

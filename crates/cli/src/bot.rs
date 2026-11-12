@@ -50,7 +50,7 @@ fn tasks(root: &Path) -> Vec<String> {
 
 /// The task asked for, or the flash-crash task when none is: a name the
 /// checkout has, so a task renamed in the bench stays reachable.
-fn resolve_task(root: &Path, asked: Option<&str>) -> Result<String> {
+pub(crate) fn resolve_task(root: &Path, asked: Option<&str>) -> Result<String> {
     let names = tasks(root);
     let found = match asked {
         Some(name) => names.iter().find(|n| *n == name),
@@ -71,7 +71,7 @@ fn resolve_task(root: &Path, asked: Option<&str>) -> Result<String> {
 
 /// The checkout to read tasks and snapshots from: `--repo` or `MTX_REPO`,
 /// else the one this `mtx` was built from.
-fn repo(given: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn repo(given: Option<&Path>) -> Result<PathBuf> {
     let root = given
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(BUILT_FROM));
@@ -89,7 +89,7 @@ fn repo(given: Option<&Path>) -> Result<PathBuf> {
 
 /// The snapshot a task's sessions start from, as its environment names it
 /// (`ENV MTX_SNAPSHOT=/opt/mtx/snapshots/<name>`).
-fn task_snapshot(root: &Path, task: &str) -> Result<PathBuf> {
+pub(crate) fn task_snapshot(root: &Path, task: &str) -> Result<PathBuf> {
     let dockerfile = root
         .join("bench/tasks")
         .join(task)
@@ -107,7 +107,7 @@ fn task_snapshot(root: &Path, task: &str) -> Result<PathBuf> {
 }
 
 /// A task's practice scenarios, in order.
-fn practice_scenarios(root: &Path, task: &str) -> Result<Vec<PathBuf>> {
+pub(crate) fn practice_scenarios(root: &Path, task: &str) -> Result<Vec<PathBuf>> {
     let dir = root
         .join("bench/tasks")
         .join(task)
@@ -199,7 +199,7 @@ path = "src/lib.rs"
     std::fs::write(dir.join("Justfile"), STARTER_JUSTFILE)?;
     std::fs::write(dir.join(".gitignore"), "/target\n/bot.wasm\n")?;
     Ok(format!(
-        "made a bot in {}\n\n  rustup target add wasm32-wasip2   # once: the bot builds into a wasm component\n  cd {}\n  mtx bot practice                  # build it, and grade it on the practice scenarios\n\nThe strategy goes in src/lib.rs. How to write it, and the rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
+        "made a bot in {}\n\n  rustup target add wasm32-wasip2   # once: the bot builds into a wasm component\n  cd {}\n  mtx bot run --debug               # build it, and watch it play one session, step by step\n  mtx bot practice                  # grade it on the practice scenarios\n\nThe strategy goes in src/lib.rs. A first strategy, step by step: https://lgalabru.github.io/machine-trading/guides/bots/first-strategy.html\nThe rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
         dir.display(),
         dir.display()
     ))
@@ -312,6 +312,28 @@ pub struct Practice<'a> {
     pub repo: Option<&'a Path>,
 }
 
+/// `just build`, in the bot's directory.
+pub(crate) fn build(dir: &Path) -> Result<()> {
+    if !["Justfile", "justfile"]
+        .iter()
+        .any(|name| dir.join(name).is_file())
+    {
+        bail!(
+            "no Justfile in {}: build the bot yourself and pass --no-build",
+            dir.display()
+        );
+    }
+    let status = Command::new("just")
+        .arg("build")
+        .current_dir(dir)
+        .status()
+        .context("running `just build` (is just installed? https://just.systems)")?;
+    if !status.success() {
+        bail!("`just build` failed");
+    }
+    Ok(())
+}
+
 /// `mtx bot practice`: build the bot, then grade it as the verifier grades
 /// hidden scenarios, on the task's practice scenarios.
 pub async fn practice(options: Practice<'_>) -> Result<String> {
@@ -320,23 +342,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         .canonicalize()
         .with_context(|| format!("no bot at {}", options.dir.display()))?;
     if options.build {
-        if !["Justfile", "justfile"]
-            .iter()
-            .any(|name| dir.join(name).is_file())
-        {
-            bail!(
-                "no Justfile in {}: build the bot yourself and pass --no-build",
-                dir.display()
-            );
-        }
-        let status = Command::new("just")
-            .arg("build")
-            .current_dir(&dir)
-            .status()
-            .context("running `just build` (is just installed? https://just.systems)")?;
-        if !status.success() {
-            bail!("`just build` failed");
-        }
+        build(&dir)?;
     }
     let checked = check(&dir);
     for note in &checked.notes {
@@ -381,6 +387,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         annotations: None,
         components_only: false,
         trusted: false,
+        observer: None,
     })
     .await?;
     if options.json {
