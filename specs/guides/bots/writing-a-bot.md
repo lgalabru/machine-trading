@@ -131,6 +131,12 @@ trading key's public key (`authority`), the task's variables
 | `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
 | `resting_bids`, `resting_asks` | What you have resting, in SPCX: every bid and ask the grader placed since your last cancel or quote, filled or not. |
 | `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
+| `sends` | What became of each order your last sheet planned: its line on the sheet, the venue, the order as sent, and its state: `Landed` with its signature, `Failed` with the venue's reason, or `NotSent` with why not. |
+| `notes` | What the grader cut or dropped from your last sheet, and why: the same notes it logs. |
+| `venues` | Each of the session's markets (`Session::venues`, yours first): its best bid and ask, its book and its trades since the last step when the scenario reports them, and your position there. |
+| `fills` | Your own trades since the last step, from the venues' tapes: empty where the scenario reports no tape, as SPCX's sessions don't. |
+| `tape`, `depth`, `unix_timestamp` | The step's trades and books on every venue, and the world's clock, when the scenario reports them. |
+| `rfqs` | Requests for quotes open at this step: none in today's tasks. |
 
 And three helpers: `room_to_buy()` and `room_to_sell()`, how much more you
 can trade each way before the cap if your resting orders all fill, and
@@ -168,6 +174,23 @@ resting:
 
 Each order is its own transaction. The grader sends them in order and stops
 at the first that fails: the rest of the sheet waits for the next step.
+
+**Each line can say more.** A call adds a line to the sheet; these change
+the line added last:
+
+| Call | What it does |
+| --- | --- |
+| `.post_only()` | A `bid`, `ask` or `quote` that takes nothing: Phoenix refuses one that would cross the book. |
+| `.ioc()` | A `bid` or `ask` that fills what it can now, at no worse than its price, and rests nothing: a market order bounded by the price. |
+| `.reduce_only()` | The line's orders are cut so that no fill can grow or flip your position, counting what rests on that side as filled. |
+| `.participation(share)` | A target trades at most `share` of the venue's volume since the last step. The volume is the venue's tape's: in a session without one, there is none to take a share of, and the target doesn't trade. |
+| `.at(venue)` | The line is for another of `Session::venues` (`openbook:spot:SOL-USDC`). A session trades only its own market for now: a line for another comes back `NotSent`. |
+| `.tx(TxOptions { … })` | A priority fee, a tip, a compute limit or a bundle id for the line's transactions. Accepted and counted, and changes nothing: no session applies them yet (`Session::applies_tx_options`). |
+
+`orders.bid(99.0, 5.0).post_only()` rests a post-only bid;
+`orders.sell(70.0, 98.0).reduce_only()` sells what you hold, and no more.
+`orders.respond(id, price)` answers a request for a quote in `rfqs`; no
+task sends requests yet, so it comes back `NotSent`.
 
 For what the market doesn't carry, `mtx_kit::rpc(method, params)` reads the
 chain: synchronously, as it is at this step, for any read in
@@ -221,10 +244,12 @@ is what the benchmark grades.
 
 ### The component
 
-The grader loads `bot.wasm`, a component of the WIT world `mtx:strategy`
-(`crates/kit/wit/strategy.wit`), with `wasmtime`. `mtx_kit::export!` writes
-the binding; another language that builds components can implement the
-world directly.
+The grader loads `bot.wasm`, a component of the WIT world
+`mtx:strategy@0.2.0` (`crates/kit/wit/strategy.wit`), with `wasmtime`.
+`mtx_kit::export!` writes the binding; another language that builds
+components can implement the world directly. A component built on 0.1.0
+(`crates/kit/wit/0.1.0/strategy.wit`) still loads, and plays as it did: it
+gets 0.1.0's market, and its sheet's lines have no options.
 
 - **No files, no environment, no network, and a clock that stands still.**
   Everything the strategy knows comes through `start`, `step` and `rpc`.
