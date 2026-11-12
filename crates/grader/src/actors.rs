@@ -1,6 +1,6 @@
 //! Actors: the participants the grader runs in a session besides the bot,
 //! each trading from accounts of its own through a [`Seat`](crate::venue::Seat)
-//! on any [`Venue`](crate::venue::Venue).
+//! on any [`Market`](crate::venue::Market) of any venue.
 //!
 //! A session's actors are its [`Cast`]. The session loop (see
 //! [`crate::session`]) has them act at fixed points of every step, so the
@@ -18,7 +18,7 @@
 //! Each acts at a [`Moment`]: the slot, and the scenario's prices there.
 //! Two actors come with the engine: [`takers`], the taker orders a scenario
 //! lists, and [`competitor`], a maker that competes with the bot's quotes.
-//! Both work on any venue whose seats take and rest orders.
+//! Both work on any market whose seats take and rest orders.
 
 pub mod competitor;
 pub mod takers;

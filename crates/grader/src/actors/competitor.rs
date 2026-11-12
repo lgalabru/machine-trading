@@ -6,7 +6,7 @@
 //! them collects the spread on every order, unopposed. This maker is the
 //! opposition. Funded at setup like the takers, it trades from its own seat
 //! through the grader's own RPC with ordinary orders, between the bot's
-//! turns, on whatever venue its seat is on.
+//! turns, on whatever market its seat is on.
 //!
 //! Every `react_slots` it reads the best bid and offer. A side where it
 //! isn't best means someone quotes inside it: it steps one tick inside them,

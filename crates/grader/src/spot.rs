@@ -28,20 +28,15 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use mtx_core::{
-    Decimal, Side,
+    Decimal, Holding, Holdings, Side,
     mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange, Term},
     turns::{self, BookLevels, Role, Step, Trade},
 };
 use mtx_kit::{
     BotEnv,
     chain::{ChainClient, RpcChainClient, token},
-    core::SpotBalances,
     protocols::{
-        USDC_MINT,
-        openbook::v2 as openbook_v2,
-        phoenix::v1 as phoenix_v1,
-        pyth,
-        spot::{MarketFill, value_usd},
+        USDC_MINT, openbook::v2 as openbook_v2, phoenix::v1 as phoenix_v1, pyth, spot::MarketFill,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -65,10 +60,7 @@ use crate::{
         SessionOptions, SessionReport, StepRecord, Timeline, World, grader_f64,
     },
     snapshot,
-    venue::{
-        Venue,
-        books::{self, SpotBook},
-    },
+    venue::{Market, books, price_usd, spot_venue, value_usd},
     wasm::{Desk, Reader},
 };
 
@@ -124,14 +116,14 @@ pub struct TurnData {
 pub const MAX_DEPTH_LEVELS: usize = 20;
 
 impl Spot {
-    /// The spot markets, as the mandate names them.
-    pub fn instruments(&self) -> Vec<InstrumentRef> {
+    /// The `symbol` spot markets, as the mandate names them.
+    pub fn instruments(&self, symbol: &str) -> Vec<InstrumentRef> {
         self.venues
             .iter()
             .map(|venue| InstrumentRef {
                 venue: venue.clone(),
                 kind: Kind::Spot,
-                symbol: SYMBOL.into(),
+                symbol: symbol.into(),
             })
             .collect()
     }
@@ -167,7 +159,7 @@ impl Spot {
         if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
             return Err("spot: bound_usd must be a number".into());
         }
-        let mut wanted = self.instruments();
+        let mut wanted = self.instruments(&scenario.symbol);
         let mut universe: Vec<InstrumentRef> = scenario
             .mandate
             .universe
@@ -303,12 +295,13 @@ pub struct SpotFill {
     pub base: f64,
 }
 
-/// The session's books, read through the grader's own client for the bot's
-/// account, in the profiles' order (Phoenix first).
+/// The session's markets, read through the grader's own client for the
+/// bot's account, in the profiles' order (Phoenix first), and the assets
+/// they trade.
 struct Venues {
     chain: Arc<dyn ChainClient>,
     owner: Pubkey,
-    books: Vec<SpotBook>,
+    markets: Vec<Box<dyn Market>>,
 }
 
 /// One reading of the account.
@@ -318,57 +311,97 @@ struct Reading {
 }
 
 impl Venues {
+    /// The `symbol` market of each of `venues`, as its venue offers it.
     async fn connect(
         chain: Arc<dyn ChainClient>,
+        rpc_url: &str,
         venues: &[String],
+        symbol: &str,
         owner: Pubkey,
     ) -> Result<Self> {
-        let mut books = Vec::new();
+        let mut markets = Vec::new();
         for venue in VENUES.iter().filter(|v| venues.iter().any(|w| w == *v)) {
-            books.push(SpotBook::connect(venue, chain.clone()).await?);
+            let instrument = InstrumentRef {
+                venue: (*venue).into(),
+                kind: Kind::Spot,
+                symbol: symbol.into(),
+            };
+            markets.push(spot_venue(venue, rpc_url)?.market(&instrument).await?);
         }
         Ok(Self {
             chain,
             owner,
-            books,
+            markets,
         })
     }
 
+    /// The market of `venue`.
+    fn market(&self, venue: &str) -> &dyn Market {
+        self.markets
+            .iter()
+            .find(|m| m.instrument().venue == venue)
+            .expect("a market on each of the session's venues")
+            .as_ref()
+    }
+
+    /// The account across the markets: each asset counted once in the
+    /// wallet and on every venue (the spot profile's position), and valued
+    /// at the reference prices, the base asset's also the session's price.
     async fn read(&self) -> Result<Reading> {
         let chain = self.chain.as_ref();
-        let mut held: Vec<(&InstrumentRef, SpotBalances)> = Vec::new();
-        for book in &self.books {
-            if let Some(balances) = book.balances(&self.owner).await? {
-                held.push((book.instrument(), balances));
+        let mut all: Vec<Holding> = Vec::new();
+        let mut open_orders = Vec::new();
+        for market in &self.markets {
+            let held = market.holdings(&self.owner).await?;
+            // An ask locks the base, a bid the quote.
+            for (holding, side) in held.iter().zip([Side::Sell, Side::Buy]) {
+                if let Holding::Spot(asset) = holding
+                    && asset.locked > Decimal::ZERO
+                {
+                    open_orders.push((market.instrument().clone(), side));
+                }
             }
+            all.extend(held);
         }
-        let all: Vec<SpotBalances> = held.iter().map(|(_, b)| b.clone()).collect();
         let value = value_usd(chain, &all).await?;
-        let price = pyth::read_price(chain, &pyth::SOL_USD_FEED_ID)
-            .await
-            .map_err(venue_error("pyth SOL/USD"))?;
+        let asset = |i: usize| -> Option<&Holdings> {
+            match all.get(i)? {
+                Holding::Spot(asset) => Some(asset),
+                _ => None,
+            }
+        };
+        let (Some(base), Some(quote)) = (asset(0), asset(1)) else {
+            return Err(Error::UnknownMarket(
+                "a spot session's markets hold no base and quote".into(),
+            ));
+        };
+        let price = price_usd(
+            chain,
+            &base
+                .base
+                .id
+                .0
+                .parse()
+                .map_err(|_| Error::UnknownMarket(format!("{} is not a mint", base.base.id)))?,
+        )
+        .await?;
         // The wallet is the same on every venue: count it once.
-        let total = |pick: &dyn Fn(&SpotBalances) -> &mtx_core::Holdings| -> Decimal {
-            let wallet = all.first().map_or(Decimal::ZERO, |b| pick(b).wallet);
-            wallet
+        let total = |of: &Holdings| -> Decimal {
+            of.wallet
                 + all
                     .iter()
-                    .map(|b| pick(b).free + pick(b).locked)
+                    .filter_map(|h| match h {
+                        Holding::Spot(asset) if asset.base.id == of.base.id => {
+                            Some(asset.free + asset.locked)
+                        }
+                        _ => None,
+                    })
                     .sum::<Decimal>()
         };
-        let mut open_orders = Vec::new();
-        for (instrument, balances) in &held {
-            if balances.base.locked > Decimal::ZERO {
-                open_orders.push(((*instrument).clone(), Side::Sell));
-            }
-            if balances.quote.locked > Decimal::ZERO {
-                open_orders.push(((*instrument).clone(), Side::Buy));
-            }
-        }
         Ok(Reading {
             wallet: Wallet {
-                base: grader_f64(total(&|b| &b.base)),
-                quote: grader_f64(total(&|b| &b.quote)),
+                base: grader_f64(total(base)),
+                quote: grader_f64(total(quote)),
                 price_usd: grader_f64(price),
                 value_usd: grader_f64(value),
             },
@@ -382,8 +415,8 @@ impl Venues {
     async fn scan(&self, ledger: &mut Ledger, after_slot: u64) -> Result<usize> {
         let first = ledger.fills.len();
         let mut found: Vec<(MarketFill, Vec<Pubkey>)> = Vec::new();
-        for book in &self.books {
-            found.extend(book.fills(after_slot, &self.owner).await?);
+        for market in &self.markets {
+            found.extend(market.fills(after_slot, &self.owner).await?);
         }
         for (fill, ids) in found {
             if ledger
@@ -415,8 +448,8 @@ impl Venues {
         unix_timestamp: i64,
     ) -> Result<Vec<BookLevels>> {
         let mut out = Vec::new();
-        for book in &self.books {
-            out.extend(book.depth(levels, slot, unix_timestamp).await?);
+        for market in &self.markets {
+            out.extend(market.depth(levels, slot, unix_timestamp).await?);
         }
         Ok(out)
     }
@@ -522,7 +555,7 @@ fn venue_of(fill: &MarketFill) -> String {
 fn trade(seen: &Seen, parties: bool) -> Trade {
     Trade {
         venue: venue_of(&seen.fill),
-        market: Some(format!("{}:spot:{SYMBOL}", venue_of(&seen.fill))),
+        market: Some(seen.fill.instrument.0.clone()),
         side: seen.fill.taker_side,
         price: grader_f64(seen.fill.price),
         base: grader_f64(seen.fill.quantity),
@@ -729,14 +762,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         spot.quote,
         scenario.order.is_some(),
     )?;
-    let venues = Venues::connect(chain.clone(), &spot.venues, bot.pubkey()).await?;
+    let venues = Venues::connect(
+        chain.clone(),
+        internal.url(),
+        &spot.venues,
+        &scenario.symbol,
+        bot.pubkey(),
+    )
+    .await?;
     let start = venues.read().await?;
-    let instruments = spot.instruments();
+    let instruments = spot.instruments(&scenario.symbol);
     // A tape's takers, each a funded wallet trading the session's first
     // venue.
     let mut cast = Cast::default();
     if !scenario.tape.is_empty() {
-        let first = SpotBook::connect(&spot.venues[0], chain.clone()).await?;
+        let first = venues.market(&spot.venues[0]);
         let mut seats = Vec::new();
         for i in 0..TAKER_ACCOUNTS {
             let keypair = opts.keys.keypair("taker", u32::from(i));
@@ -989,14 +1029,12 @@ impl Account for SpotAccount {
         let mut seats = Vec::new();
         let mut addresses = Vec::new();
         for venue in &self.spot.venues {
-            let book = self
-                .venues
-                .books
-                .iter()
-                .find(|b| &b.instrument().venue == venue)
-                .expect("a book for each of the session's venues");
-            seats.push(book.seat(bot.insecure_clone(), host_url).await?);
-            addresses.push((book.instrument().to_string(), book.address().to_string()));
+            let market = self.venues.market(venue);
+            seats.push(market.seat(bot.insecure_clone(), host_url).await?);
+            addresses.push((
+                market.instrument().to_string(),
+                market.address().to_string(),
+            ));
         }
         let mut venues = mtx_kit::VenueInfo::of_mandate(mandate, &self.instruments[0], |i| {
             self.instruments.contains(i)
@@ -1008,10 +1046,13 @@ impl Account for SpotAccount {
                 .map(|(_, address)| address.clone());
         }
         Ok(Desk {
-            venues,
+            markets: venues,
             seats,
             symbol: env.symbol.clone(),
-            venue: serde_json::to_string(&books::SessionVenues::of(&self.spot.venues)?)?,
+            venue: serde_json::to_string(&books::SessionVenues::of(
+                &self.spot.venues,
+                &self.scenario.symbol,
+            )?)?,
             authority: bot.pubkey().to_string(),
             reader: Reader::Wallet {
                 start: self.start.wallet.clone(),

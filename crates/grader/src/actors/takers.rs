@@ -1,6 +1,6 @@
 //! The grader's takers: the taker orders a scenario lists (a market-making
 //! session's flow, see [`crate::making`], an off-hours session's, a tape),
-//! on any venue.
+//! on any market.
 //!
 //! Before the cheatcodes lock, the session funds a pool of taker accounts,
 //! one seat each (on a perp, a Phoenix account with collateral; on a spot

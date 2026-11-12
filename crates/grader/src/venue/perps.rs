@@ -1,18 +1,24 @@
-//! Phoenix Eternal's perpetuals as a [`Venue`]: one market of the snapshot's
-//! exchange, read through Phoenix's Hawkeye views, and seats trading it as
-//! the kit's [`Trader`] does.
+//! Phoenix Eternal's perpetuals as [`Market`]s: one perp of the snapshot's
+//! exchange (`specs/instruments/perp.md`), read through Phoenix's Hawkeye
+//! views, and seats trading it as the kit's [`Trader`] does. Phoenix offers
+//! them ([`super::phoenix`]).
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use mtx_core::mandate::{InstrumentRef, Kind};
+use mtx_core::{
+    AccountMeter, Holding,
+    mandate::{InstrumentRef, Kind},
+};
 use mtx_kit::{
-    Action, BotEnv, Planned, Sent, Side, Trader, phoenix_rise::types::exchange::ExchangeResponse,
+    Action, BotEnv, Planned, Sent, Side, Trader, chain::RpcChainClient,
+    phoenix_rise::types::exchange::ExchangeResponse,
+    protocols::phoenix::eternal::PhoenixEternalMeter,
 };
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 
-use super::{MarketKind, Seat, SeatResult, Venue};
+use super::{Market, Seat, SeatResult};
 use crate::{
     Error, Result,
     phoenix::Phoenix,
@@ -20,16 +26,17 @@ use crate::{
 };
 
 /// One perpetual of a Phoenix Eternal exchange.
-pub struct PhoenixPerp {
+pub struct PerpMarket {
     instrument: InstrumentRef,
     phoenix: Phoenix,
     exchange_path: std::path::PathBuf,
+    rpc_url: String,
     market: Pubkey,
     /// The fee payer of its Hawkeye reads: an account that exists.
     reader: Pubkey,
 }
 
-impl PhoenixPerp {
+impl PerpMarket {
     /// `symbol`'s perpetual on the exchange the snapshot holds (its
     /// metadata, and the file it was read from), read through `rpc_url`
     /// with `reader`, an account that exists, as Hawkeye's fee payer.
@@ -57,6 +64,7 @@ impl PhoenixPerp {
             },
             phoenix: Phoenix::new(exchange, rpc_url),
             exchange_path,
+            rpc_url: rpc_url.to_string(),
             market: address,
             reader,
         })
@@ -82,13 +90,9 @@ impl PhoenixPerp {
 }
 
 #[async_trait]
-impl Venue for PhoenixPerp {
+impl Market for PerpMarket {
     fn instrument(&self) -> &InstrumentRef {
         &self.instrument
-    }
-
-    fn kind(&self) -> MarketKind {
-        MarketKind::Perp
     }
 
     fn address(&self) -> Pubkey {
@@ -104,6 +108,29 @@ impl Venue for PhoenixPerp {
             .value;
         let usd = |ticks| self.phoenix.ticks_to_usd(market, ticks);
         Ok((bbo.best_bid_ticks().map(usd), bbo.best_ask_ticks().map(usd)))
+    }
+
+    /// The account's position, as Phoenix's meter reads it.
+    async fn holdings(&self, owner: &Pubkey) -> Result<Vec<Holding>> {
+        let meter = PhoenixEternalMeter::new(
+            self.phoenix.exchange().clone(),
+            &self.rpc_url,
+            Arc::new(RpcChainClient::with_timeout(
+                &self.rpc_url,
+                INTERNAL_RPC_TIMEOUT,
+            )),
+            *owner,
+            &self.instrument.symbol,
+        )
+        .map_err(mtx_kit::Error::from)?;
+        let id = self.instrument.id();
+        let measured = patiently("the meter", || meter.measure(std::slice::from_ref(&id))).await?;
+        Ok(measured
+            .holdings
+            .into_iter()
+            .filter(|(held, _)| *held == id)
+            .map(|(_, holding)| holding)
+            .collect())
     }
 
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {
