@@ -48,9 +48,8 @@ use crate::{
 };
 
 /// The page. `MTX_STUDIO_PAGE` serves a file from disk instead, read on
-/// every load: for working on the page without rebuilding `mtx`. Until the
-/// studio's page lands, the protocol's test page.
-const PAGE: &str = include_str!("studio/dev.html");
+/// every load: for working on the page without rebuilding `mtx`.
+const PAGE: &str = include_str!("studio.html");
 /// The protocol's test page, at `/dev`: every request a button, every
 /// event in a log.
 const DEV_PAGE: &str = include_str!("studio/dev.html");
