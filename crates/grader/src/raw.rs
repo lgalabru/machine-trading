@@ -1689,4 +1689,120 @@ mod tests {
         );
         assert!(sender.flush(&world.bot).await.is_empty());
     }
+
+    /// The probe (`bots/raw-probe`, `just build`) as `MTX_TEST_RAW_PROBE_WASM`,
+    /// graded in its scenario twice: the grader answers each of its sends as
+    /// the scenario allows, sends what it takes, never disqualifies it for
+    /// trying, and the second grade is the first.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a built component"]
+    async fn the_raw_probe_is_answered_in_a_session_and_replays() {
+        let wasm = std::path::PathBuf::from(std::env::var("MTX_TEST_RAW_PROBE_WASM").unwrap());
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let scenario =
+            crate::scenario::Scenario::load(&root.join("bots/raw-probe/scenario.json")).unwrap();
+        let keys = SessionKeys::random();
+        let mut runs = Vec::new();
+        for run in 0..2 {
+            let dir =
+                std::env::temp_dir().join(format!("mtx-raw-probe-{}-{run}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::copy(&wasm, dir.join("bot.wasm")).unwrap();
+            let log = dir.join("bot.log");
+            let report = crate::session::run(crate::session::SessionOptions {
+                snapshot_dir: &root.join("snapshots/phoenix-spcx-2026-10-29"),
+                scenario: &scenario,
+                bot_dir: &dir,
+                bot_log: &log,
+                slot: 0,
+                regime: None,
+                trusted: false,
+                keys: keys.role("bot").session(0, &scenario.name),
+                observer: None,
+            })
+            .await
+            .unwrap();
+            let log = std::fs::read_to_string(&log).unwrap();
+            std::fs::remove_dir_all(&dir).unwrap();
+            runs.push((report, log));
+        }
+        let (report, log) = &runs[0];
+        let line = |what: &str| {
+            log.lines()
+                .find(|l| l.starts_with(&format!("{what}: ")))
+                .unwrap_or_else(|| panic!("no {what:?} in\n{log}"))
+                .to_string()
+        };
+        assert!(
+            log.contains(&format!("programs \"{SYSTEM},{TOKEN},{ASSOCIATED_TOKEN}\"")),
+            "{log}"
+        );
+        assert_eq!(
+            line("in start"),
+            r#"in start: Err("raw sends go out from `step` only")"#
+        );
+        assert!(
+            line("create").starts_with("create: Ok(RawReceipt { id: 0,"),
+            "{log}"
+        );
+        assert!(
+            line("pay").starts_with("pay: Ok(RawReceipt { id: 1,"),
+            "{log}"
+        );
+        assert!(line("unlisted").contains("isn't a program this session's raw sends may run"));
+        assert!(line("cpi").starts_with("cpi: Err("), "{}", line("cpi"));
+        assert!(
+            line("drain").contains("over the $50 limit"),
+            "{}",
+            line("drain")
+        );
+        assert!(
+            line("as another").contains("can't sign"),
+            "{}",
+            line("as another")
+        );
+        assert!(
+            line("too big").contains("a transaction is at most 1232"),
+            "{}",
+            line("too big")
+        );
+        assert!(line("not an address").contains("is not a base58 address"));
+        assert!(
+            line("long seed").contains("a seed of 33 bytes"),
+            "{}",
+            line("long seed")
+        );
+        assert_eq!(line("empty"), r#"empty: Err("no instructions")"#);
+        assert!(line("create again").starts_with("create again: Ok(RawReceipt { id: 0,"));
+        assert_ne!(
+            line("create").split("fresh_signers").nth(1),
+            line("create again").split("fresh_signers").nth(1)
+        );
+        for taken in [
+            "raw 0 of step 0: Landed(",
+            "raw 1 of step 0: Landed(",
+            "raw 0 of step 1: Landed(",
+        ] {
+            assert!(log.contains(taken), "no {taken:?} in\n{log}");
+        }
+        assert!(log.contains("fee Some(10000)"), "{log}");
+        assert_eq!(report.turns.stopped, None);
+        assert!(report.mandate.audit(&report.observed()).is_none());
+        assert!(report.timeline.transactions.len() >= 3);
+
+        // The second grade: the same log, the same transactions, the same
+        // report but for the wall clock.
+        let (again, again_log) = &runs[1];
+        assert_eq!(log, again_log);
+        let without_clock = |report: &crate::session::SessionReport| {
+            let mut value = serde_json::to_value(report).unwrap();
+            value["wall_ms"] = Value::Null;
+            value["turns"]["wall_ms"] = Value::Null;
+            (
+                value,
+                serde_json::to_value(&report.timeline.transactions).unwrap(),
+            )
+        };
+        assert_eq!(without_clock(report), without_clock(again));
+    }
 }

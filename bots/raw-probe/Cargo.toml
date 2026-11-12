@@ -1,0 +1,16 @@
+# A check, not a strategy: a component that tries every kind of raw send,
+# allowed and not, and logs what became of each (crates/grader/src/raw.rs's
+# tests; `just raw-probe` grades it in a session).
+[package]
+name = "mtx-bot-raw-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
