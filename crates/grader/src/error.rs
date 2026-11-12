@@ -46,6 +46,8 @@ pub enum Error {
     Setup(Box<Error>),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
+    #[error("invalid market calibration {}: {reason}", path.display())]
+    InvalidCalibration { path: PathBuf, reason: String },
     #[error("no bot at {}: a bot is a directory with a bot.wasm, or a Justfile whose `run` starts it", .0.display())]
     MissingBot(PathBuf),
     #[error("no bot.wasm in {}: this grade takes strategy components only, built into bot.wasm (`just build`)", .0.display())]
