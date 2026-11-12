@@ -714,25 +714,36 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
         };
         let logs = studio.dir.join("target/mtx-studio-logs");
         let _ = std::fs::create_dir_all(&logs);
-        let report = runtime.block_on(grade::grade(GradeOptions {
-            snapshot_dir: &studio.snapshot,
-            bot_dir: &studio.dir,
-            scenarios: std::slice::from_ref(&scenario),
-            log_dir: &logs,
-            jobs: 1,
-            first_bot_user: 0,
-            reference_dir: None,
-            anchor_jobs: 1,
-            regimes: None,
-            stop_on_disqualify: false,
-            detail_dir: None,
-            annotations: None,
-            components_only: true,
-            observer: Some(control.clone() as Arc<dyn StepObserver>),
-        }));
-        control.finish();
+        let report = runtime.block_on(async {
+            tokio::select! {
+                biased;
+                () = control.cancel.notified() => None,
+                report = grade::grade(GradeOptions {
+                    snapshot_dir: &studio.snapshot,
+                    bot_dir: &studio.dir,
+                    scenarios: std::slice::from_ref(&scenario),
+                    log_dir: &logs,
+                    jobs: 1,
+                    first_bot_user: 0,
+                    reference_dir: None,
+                    anchor_jobs: 1,
+                    regimes: None,
+                    stop_on_disqualify: false,
+                    detail_dir: None,
+                    annotations: None,
+                    components_only: true,
+                    observer: Some(control.clone() as Arc<dyn StepObserver>),
+                }) => Some(report),
+            }
+        });
         let body = match report {
-            Ok(report) => {
+            // Ended from the page: at the step it was on.
+            None => json!({
+                "scenario": scenario.name,
+                "terminated": true,
+                "k": control.lock().k,
+            }),
+            Some(Ok(report)) => {
                 let result = &report.scenarios[0];
                 json!({
                     "scenario": scenario.name,
@@ -744,7 +755,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
                     "not_graded": report.not_graded,
                 })
             }
-            Err(error) => json!({ "error": format!("{error:#}") }),
+            Some(Err(error)) => json!({ "error": format!("{error:#}") }),
         };
         control.event("terminated", body);
         control.finish();
@@ -760,6 +771,9 @@ struct Control {
     studio: Arc<Studio>,
     /// What `launch` was asked: `restart` asks it again.
     launch: Value,
+    /// Fired by `terminate`: the session's runtime drops the grader's future,
+    /// which stops its surfnet and its bot.
+    cancel: tokio::sync::Notify,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -778,6 +792,8 @@ enum Mode {
 
 struct ControlState {
     mode: Mode,
+    /// The strategy has started: before, the market is still being set up.
+    started: bool,
     /// The session's events so far, for a page that reloads: `started`,
     /// each `step`, each `stopped`, `terminated`.
     history: Vec<Value>,
@@ -817,6 +833,7 @@ impl Control {
         Self {
             state: Mutex::new(ControlState {
                 mode: Mode::Running,
+                started: false,
                 history: Vec::new(),
                 breakpoints: Breakpoints::from(&args["breakpoints"]),
                 ms_per_step: args["msPerStep"].as_u64().unwrap_or(0),
@@ -826,6 +843,7 @@ impl Control {
             wake: Condvar::new(),
             studio,
             launch: args.clone(),
+            cancel: tokio::sync::Notify::new(),
         }
     }
 
@@ -842,7 +860,10 @@ impl Control {
             "continue" => state.mode = Mode::Running,
             "next" => state.mode = Mode::Step,
             "pause" if state.mode == Mode::Running => state.mode = Mode::Pause,
-            "terminate" => state.mode = Mode::Terminating,
+            "terminate" => {
+                state.mode = Mode::Terminating;
+                self.cancel.notify_one();
+            }
             "setBreakpoints" => state.breakpoints = Breakpoints::from(args),
             "setSpeed" => state.ms_per_step = args["msPerStep"].as_u64().unwrap_or(0),
             _ => {}
@@ -856,6 +877,7 @@ impl Control {
             "state": match state.mode {
                 Mode::Stopped => "stopped",
                 Mode::Terminating | Mode::Finished => "terminated",
+                _ if !state.started => "starting",
                 _ => "running",
             },
             "k": state.k,
@@ -910,6 +932,7 @@ impl StepObserver for Control {
             .start_mark
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(session.start_mark);
+        self.lock().started = true;
         self.event(
             "started",
             json!({ "session": session_json(session), "printed": printed, "failed": failed }),
@@ -1080,7 +1103,9 @@ fn session_state(studio: &Studio) -> Value {
     };
     let mut status = control.status();
     status["scenario"] = control.launch["scenario"].clone();
-    status["breakpoints"] = control.launch["breakpoints"].clone();
+    if status["state"] != json!("terminated") {
+        status["breakpoints"] = control.launch["breakpoints"].clone();
+    }
     status
 }
 
