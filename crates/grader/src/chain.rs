@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_rpc_client_api::request::RpcRequest;
-use surfpool_sdk::{AccountSnapshot, SimnetEvent, Surfnet};
+use surfpool_sdk::{AccountSnapshot, SimnetCommand, SimnetEvent, Surfnet};
 use tracing::{debug, error, info, warn};
 
 use crate::{Error, Result};
@@ -80,6 +80,14 @@ pub fn export_snapshot(rpc: &RpcClient) -> Result<BTreeMap<String, Option<Accoun
     )?;
     // The RPC wraps the snapshot in `{ context, value }`; snapshot files hold `value`.
     Ok(serde_json::from_value(response["value"].clone())?)
+}
+
+/// Produce the next slot on a stepped surfnet, and wait until `rpc` sees
+/// it. Returns the slot.
+pub async fn next_slot(surfnet: &Surfnet, rpc: &RpcClient) -> Result<u64> {
+    let slot = rpc.get_slot()?;
+    surfnet.send_command(SimnetCommand::SlotForward(None))?;
+    crate::session::wait_for_slot(rpc, slot + 1).await
 }
 
 pub async fn wait_for<T>(
