@@ -138,7 +138,7 @@ mod bot {
         },
         run::run,
         trader::{Sent, Top, Trader},
-        tx::{rpc_client, send},
+        tx::{rpc_client, rpc_client_with_timeout, send},
     };
 }
 
