@@ -180,7 +180,8 @@ enum BotCommand {
         /// Grade the bot as it is, without running `just build`.
         #[arg(long)]
         no_build: bool,
-        /// Sessions to run at once, each on its own surfnet (1-4).
+        /// Sessions to run at once, each on its own surfnet: 1-4 for a
+        /// process bot, up to 32 for a strategy component.
         #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
         jobs: usize,
         /// Print the grader's full JSON report instead of a summary.
@@ -263,8 +264,10 @@ struct Sessions {
     /// Bot output goes to `<logs>/<scenario>.log`.
     #[arg(long, default_value = "logs")]
     logs: PathBuf,
-    /// Sessions to run at once, each on its own surfnet (1-4). A machine
-    /// that can't keep up grades slower, not differently.
+    /// Sessions to run at once, each on its own surfnet: 1-4 for a process
+    /// bot (one bot user each), up to 32 for a strategy component. The report
+    /// is the same whatever it is; a machine that can't keep up grades
+    /// slower, not differently.
     #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
     jobs: usize,
     /// The first bot user (0-3) sessions run their bots as, when run as

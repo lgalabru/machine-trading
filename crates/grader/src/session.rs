@@ -104,9 +104,11 @@ pub struct SessionOptions<'a> {
     pub bot_dir: &'a Path,
     /// Where the bot's stdout and stderr go.
     pub bot_log: &'a Path,
-    /// Which of [`BOT_USERS`] the bot runs as. Sessions that run at the same
-    /// time must use different slots.
-    pub slot: usize,
+    /// Which of [`BOT_USERS`] a process bot runs as. Sessions that run at the
+    /// same time must use different slots. `None` for a strategy component:
+    /// it runs inside the grader, with no files and no network, so it needs
+    /// no user, and any number of its sessions can run at once.
+    pub slot: Option<usize>,
     /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
@@ -511,7 +513,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    let user = opts.slot.map(|slot| BOT_USERS[slot]);
+    let workdir = SessionDir::create(&bot, user)?;
     let mut slot = rpc.get_slot()?;
     // Slots from the surfnet's start to the session's. Setup produces a few
     // of its own (each onboarding, one), the same ones every run; the world
@@ -657,6 +660,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot, end_slot, steps, "strategy component loaded"
         );
     } else {
+        if user.is_none() {
+            return Err(Error::NoBotUser);
+        }
         let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
         let child = spawn_bot(
             opts.bot_dir,
@@ -847,7 +853,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     send_flow(&mut flow, flow_due.take()).await;
     if let Some((mut child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
-        stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+        stop_bot(&mut child, workdir.bot_user.and(user)).await;
     }
     if let Some(bot) = wasm_bot.as_mut() {
         bot.end().await;
@@ -1301,7 +1307,9 @@ pub(crate) struct SessionDir {
 }
 
 impl SessionDir {
-    pub(crate) fn create(bot: &Keypair, user: &str) -> Result<Self> {
+    /// A directory for a bot that runs as `user` (when the grader runs as
+    /// root), or that only the grader enters.
+    pub(crate) fn create(bot: &Keypair, user: Option<&str>) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("mtx-session-{}", uuid::Uuid::new_v4()));
         // Only the bot's own user may enter: sessions graded at once run
         // their bots as different users in one container, and a bot must not
@@ -1311,7 +1319,7 @@ impl SessionDir {
             .map_err(io_error(&path))?;
         let dir = Self {
             path,
-            bot_user: bot_user(user),
+            bot_user: user.and_then(bot_user),
         };
         let keypair = serde_json::to_string(&bot.to_bytes().to_vec())?;
         let mut file = std::fs::OpenOptions::new();
@@ -1537,7 +1545,7 @@ mod tests {
 
     #[test]
     fn session_dir_and_its_files_are_private() {
-        let dir = SessionDir::create(&Keypair::new(), "mtx-bot-none").unwrap();
+        let dir = SessionDir::create(&Keypair::new(), Some("mtx-bot-none")).unwrap();
         assert_eq!(mode(&dir.path), 0o700);
         assert_eq!(mode(&dir.keypair_path()), 0o600);
         let mandate = dir
