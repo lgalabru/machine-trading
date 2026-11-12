@@ -175,7 +175,14 @@ pub async fn prepare_spot(out_dir: &Path, fork_rpc_url: &str) -> Result<Manifest
     chain::forward_surfnet_logs(&surfnet);
     let rpc = chain::rpc_client(&surfnet);
     let warmup = Keypair::new();
-    crate::spot::fund(&surfnet, &warmup, 10.0, 2_000.0, false)?;
+    crate::spot::fund(
+        &surfnet,
+        &chain::rpc_client(&surfnet),
+        &warmup,
+        10.0,
+        2_000.0,
+        false,
+    )?;
     let price = crate::spot::exercise(surfnet.rpc_url(), &warmup).await?;
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -258,11 +265,27 @@ async fn start_surfnet(build: impl Fn() -> SurfnetBuilder) -> Result<Surfnet> {
 }
 
 pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
+    start_offline_in(dir, access, BlockProductionMode::Clock).await
+}
+
+/// [`start_offline`] for a session: private, and with no clock. A slot
+/// passes only when the grader produces one, from the moment the surfnet
+/// starts, so setup lands every transaction and override on the same slot
+/// however long it takes (see [`crate::session`]).
+pub async fn start_offline_stepped(dir: &Path) -> Result<OfflineWorld> {
+    start_offline_in(dir, Access::Private, BlockProductionMode::Manual).await
+}
+
+async fn start_offline_in(
+    dir: &Path,
+    access: Access,
+    mode: BlockProductionMode,
+) -> Result<OfflineWorld> {
     // Absolute, because bots get `exchange_path` and run from their own directory.
     let dir = &dir.canonicalize().map_err(io_error(dir))?;
     let exchange_path = dir.join(EXCHANGE_FILE);
     let exchange = phoenix::load_exchange(&exchange_path)?;
-    let (surfnet, manifest) = start_snapshot(dir, access).await?;
+    let (surfnet, manifest) = start_snapshot_in(dir, access, mode).await?;
     Ok(OfflineWorld {
         surfnet,
         manifest,
@@ -274,6 +297,19 @@ pub async fn start_offline(dir: &Path, access: Access) -> Result<OfflineWorld> {
 /// Restore the snapshot in `dir` offline, of any kind: its surfnet, at the
 /// snapshot's slot and time.
 pub async fn start_snapshot(dir: &Path, access: Access) -> Result<(Surfnet, Manifest)> {
+    start_snapshot_in(dir, access, BlockProductionMode::Clock).await
+}
+
+/// [`start_snapshot`] with no clock, for a session: see [`start_offline_stepped`].
+pub async fn start_snapshot_stepped(dir: &Path) -> Result<(Surfnet, Manifest)> {
+    start_snapshot_in(dir, Access::Private, BlockProductionMode::Manual).await
+}
+
+async fn start_snapshot_in(
+    dir: &Path,
+    access: Access,
+    mode: BlockProductionMode,
+) -> Result<(Surfnet, Manifest)> {
     let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
     let accounts_file = surfnet_file(dir, &manifest)?;
     let surfnet = start_surfnet(|| {
@@ -288,7 +324,7 @@ pub async fn start_snapshot(dir: &Path, access: Access) -> Result<(Surfnet, Mani
         };
         builder
             .snapshot_file(accounts_file.clone())
-            .block_production_mode(BlockProductionMode::Clock)
+            .block_production_mode(mode.clone())
             .slot_time_ms(SLOT_TIME_MS)
             // Profiles re-execute every transaction instruction by instruction and
             // keep the accounts it touched, megabytes each for Phoenix's: a
@@ -511,5 +547,62 @@ mod tests {
         );
         let _ = std::fs::remove_file(&first);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One stepped world's setup: the slot it ends on and Phoenix's
+    /// PerpAssetMap after it (every market's oracle readings and EMA slots),
+    /// with the wall clock let run for `idle` before and during it.
+    async fn stepped_setup(dir: &Path, idle: Duration) -> (u64, Vec<u8>, u64) {
+        let world = start_offline_stepped(dir).await.unwrap();
+        let internal = crate::guard::Guard::internal(world.surfnet.rpc_url())
+            .await
+            .unwrap();
+        let rpc = mtx_kit::rpc_client(internal.url());
+        let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
+        let first = rpc.get_slot().unwrap();
+        tokio::time::sleep(idle).await;
+        // No clock: idle time produces no slot.
+        assert_eq!(rpc.get_slot().unwrap(), first);
+        let bot = Keypair::new();
+        phoenix::onboard_traders_stepped(&world.surfnet, &phoenix, &rpc, &[&bot], 100.0)
+            .await
+            .unwrap();
+        tokio::time::sleep(idle).await;
+        let takers = [Keypair::new(), Keypair::new()];
+        phoenix::onboard_traders_stepped(
+            &world.surfnet,
+            &phoenix,
+            &rpc,
+            &takers.iter().collect::<Vec<_>>(),
+            100.0,
+        )
+        .await
+        .unwrap();
+        let map = rpc.get_account(&phoenix.perp_asset_map().unwrap()).unwrap();
+        (
+            rpc.get_slot().unwrap() - first,
+            map.data,
+            world.surfnet.coalesced_slots(),
+        )
+    }
+
+    /// Setup on a stepped world lands on the same slots, and leaves Phoenix's
+    /// readings the same, however long the machine takes over it: Surfpool
+    /// restamps them with the slot each override plays at, and only the
+    /// grader produces slots.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stepped_setup_replays_whatever_the_wall_clock_does() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../snapshots/phoenix-spcx-2026-10-29");
+        let (slots, map, late) = stepped_setup(&dir, Duration::ZERO).await;
+        let (slots_idle, map_idle, late_idle) =
+            stepped_setup(&dir, Duration::from_millis(1_500)).await;
+        assert_eq!(slots, slots_idle);
+        assert!(slots <= crate::scenario::SETUP_SLOTS, "{slots} setup slots");
+        assert!(
+            map == map_idle,
+            "the PerpAssetMap differs after the same setup"
+        );
+        assert_eq!((late, late_idle), (0, 0));
     }
 }
