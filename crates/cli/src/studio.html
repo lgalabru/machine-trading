@@ -1017,10 +1017,10 @@ const intentText = (i) => ({
   limit: () => `limit ${i.side === "bid" ? "buy" : "sell"} <b>${units(i.size)}</b> at ${fix(i.price)}`,
   cancelAll: () => "cancel every resting order",
 }[i.kind] || (() => esc(JSON.stringify(i))))();
-const orderText = (a) => (a.kind === "cancelAll" ? "cancel every resting order" : `${a.side === "bid" ? "buy" : "sell"} <b>${units(a.size)}</b> ${a.kind === "market" ? "at market" : `at ${fix(a.price)}`}`);
+const orderText = (a) => (a.kind === "cancelAll" ? "cancel every resting order" : a.kind === "other" ? esc(a.text) : `${a.side === "bid" ? "buy" : "sell"} <b>${units(a.size)}</b> ${a.kind === "market" ? "at market" : `at ${fix(a.price)}`}`);
 // Orders sent in a step, grouped: "buy 10 + 10 + 10 + 5 at market".
 function sentLines(sent) {
-  const out = [], ok = sent.filter((x) => x.ok), bad = sent.filter((x) => !x.ok);
+  const out = [], ok = sent.filter((x) => x.ok && x.action.kind !== "other"), bad = sent.filter((x) => !x.ok && !x.pending);
   const groups = new Map();
   for (const x of ok) { const a = x.action, key = a.kind === "cancelAll" ? "cancel" : `${a.side}|${a.kind}|${a.kind === "limit" ? a.price : ""}`; groups.set(key, [...(groups.get(key) || []), a]); }
   for (const list of groups.values()) {
@@ -1029,6 +1029,8 @@ function sentLines(sent) {
     const total = list.reduce((sum, x) => sum + x.size, 0);
     out.push(`<div class="lg ok"><i>✓</i><span>sent ${a.side === "bid" ? "buy" : "sell"} <b>${units(total)}</b> ${a.kind === "market" ? "at market" : `at ${fix(a.price)}`}${list.length > 1 ? ` <span class="muted">in ${list.length} orders (${list.map((x) => units(x.size)).join(" + ")})</span>` : ""}</span></div>`);
   }
+  for (const x of sent.filter((x) => x.ok && x.action.kind === "other")) out.push(`<div class="lg ok"><i>✓</i><span>sent ${orderText(x.action)}</span></div>`);
+  for (const x of sent.filter((x) => x.pending)) out.push(`<div class="lg"><i>…</i><span>${orderText(x.action)} sent, landing in a later step</span></div>`);
   for (const x of bad) out.push(`<div class="lg bad"><i>✗</i><span>${orderText(x.action)} failed: ${esc(x.error)}</span></div>`);
   return out.join("");
 }
