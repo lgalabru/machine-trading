@@ -106,7 +106,7 @@ pub use mtx_core::{
 };
 /// The Solana types the kit's signatures use, so callers need not pin
 /// matching versions of the Solana crates themselves.
-#[cfg(feature = "chain")]
+#[cfg(any(feature = "chain", feature = "venue", feature = "spot-venue"))]
 pub use solana_pubkey::Pubkey;
 #[cfg(feature = "chain")]
 pub use solana_transaction::{Hash, Instruction, Signature};
