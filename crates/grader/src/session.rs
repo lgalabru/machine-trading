@@ -2,9 +2,9 @@
 //!
 //! 1. Restore the snapshot offline and put the RPC guard in front of it.
 //! 2. Onboard a fresh trader with [`DEPOSIT_USDC`] of collateral.
-//! 3. Stop the clock, register the scenario and lock the cheatcodes, then
-//!    start the bot (`just run`, from the `Justfile` in its directory) with
-//!    the [`BotEnv`] contract.
+//! 3. Step to the session's first slot, register the scenario and lock the
+//!    cheatcodes, then start the bot (`just run`, from the `Justfile` in its
+//!    directory) with the [`BotEnv`] contract.
 //! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
 //!    give the bot its turn (see [`mtx_core::turns`]): each step produces
 //!    its blocks, which land the scenario's move; then the grader's own
@@ -13,7 +13,10 @@
 //!
 //! Each session gets its own surfnet, so nothing a bot does carries over, and
 //! nothing moves while the bot thinks, so the same bot on the same scenario
-//! trades the same session every time.
+//! trades the same session every time. The surfnet has no clock at all,
+//! setup included: a slot passes only when the grader produces one, so every
+//! setup transaction and override lands on the same slot however long the
+//! machine takes over it.
 //!
 //! A bot that never answers the hello runs the old way: the world moves at
 //! the slot time, whatever the bot does.
@@ -41,7 +44,7 @@ use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
-use surfpool_sdk::{BlockProductionMode, CheatcodeFilter, SimnetCommand};
+use surfpool_sdk::{CheatcodeFilter, SimnetCommand};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
@@ -67,10 +70,23 @@ pub const SLOTS_PER_STEP: u64 = SLOTS_BETWEEN_STEPS;
 /// How long the world waits for the bot's `ready`, and for each `done`.
 pub(crate) const HELLO_WALL: Duration = Duration::from_secs(10);
 pub(crate) const TURN_WALL: Duration = Duration::from_secs(5);
+/// A trusted process bot's walls, for its hello and each turn, with no
+/// session budget (see [`SessionOptions::trusted`]): there only so a hung
+/// anchor can't hang the grade.
+pub(crate) const TRUSTED_WALL: Duration = Duration::from_secs(120);
 /// What all of a bot's turns in a session may take together, per step: the
 /// slot time, so a slow bot is no slower than the world used to be. Past it,
 /// the world stops waiting.
 pub(crate) const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
+
+/// How long each of the grader's own requests to its surfnet may take (the
+/// clients' default is 30 s). The world doesn't move while the grader waits,
+/// so a starved machine makes a request slow, never different: it is waited
+/// out, not failed. The bound is only for a surfnet that died.
+pub const INTERNAL_RPC_TIMEOUT: Duration = Duration::from_secs(600);
+/// How many times the grader makes one of its reads through a client it
+/// can't give a longer wait (Phoenix's Hawkeye simulations), before failing.
+const READ_ATTEMPTS: u32 = 5;
 
 /// Collateral each session's trader starts with.
 pub const DEPOSIT_USDC: f64 = 10_000.0;
@@ -94,6 +110,14 @@ pub struct SessionOptions<'a> {
     /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
+    /// A trusted process bot (an anchor, a ladder rung): the world waits for
+    /// each of its turns, up to [`TRUSTED_WALL`], rather than the turn wall
+    /// and the session's budget, so a loaded machine can't make it miss a
+    /// turn. Components run on fuel either way.
+    pub trusted: bool,
+    /// The session's keys: the bot's, the takers' and the maker's (see
+    /// [`crate::keys`]).
+    pub keys: crate::keys::SessionKeyring<'a>,
     /// Watches a component's session step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
@@ -114,10 +138,10 @@ pub struct SessionReport {
     pub refused_calls: Vec<String>,
     /// How the bot process ended, if it exited on its own before the session did.
     pub bot_exit: Option<String>,
-    /// Slots that arrived late while the bot ran: the surfnet's clock fell
-    /// behind (a starved machine) and stretched those slots. A bot polls on
-    /// the wall clock, so a session with many is not comparable to one
-    /// without; [`crate::grade`] refuses to score it.
+    /// Slots that arrived late while the bot ran: clock ticks Surfpool
+    /// coalesced. A session's surfnet has no clock (see
+    /// [`snapshot::start_offline_stepped`]), so this is always 0: kept so
+    /// reports keep their shape.
     pub late_slots: u64,
     /// The mandate the session ran under, with its term: what the bot was
     /// handed, and what [`SessionReport::observed`] is audited against.
@@ -326,24 +350,26 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
 async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result<SessionReport> {
     let began = Instant::now();
     let scenario = opts.scenario;
-    let world = snapshot::start_offline(opts.snapshot_dir, snapshot::Access::Private).await?;
+    let world = snapshot::start_offline_stepped(opts.snapshot_dir).await?;
     let surfnet = &world.surfnet;
     // The grader's own clients, served the way a stepped world needs: a
     // transaction is final once it executed (see [`Guard::internal`]).
     let internal = Guard::internal(surfnet.rpc_url()).await?;
-    let rpc = mtx_kit::rpc_client(internal.url());
+    let rpc = mtx_kit::rpc_client_with_timeout(internal.url(), INTERNAL_RPC_TIMEOUT);
     let setup_from = rpc.get_slot()?;
     let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
     let market = phoenix.market(&scenario.symbol)?;
 
-    let bot = Keypair::new();
-    let trader = phoenix::onboard_trader(surfnet, &phoenix, &bot, DEPOSIT_USDC).await?;
+    let bot = opts.keys.keypair("bot", 0);
+    let trader =
+        phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
     let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_mark_ticks = hawkeye
-        .view_bbo(&scenario.symbol)
-        .await?
-        .value
-        .mark_price_ticks;
+    let start_mark_ticks = patiently("the book", async || {
+        hawkeye.view_bbo(&scenario.symbol).await
+    })
+    .await?
+    .value
+    .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
     // A scenario that sets funding values it with the funding it has accrued
@@ -352,7 +378,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let meter = PhoenixEternalMeter::new(
         Arc::new(PhoenixExchange::new(world.exchange.clone())),
         internal.url(),
-        Arc::new(RpcChainClient::new(internal.url())),
+        Arc::new(RpcChainClient::with_timeout(
+            internal.url(),
+            INTERNAL_RPC_TIMEOUT,
+        )),
         bot.pubkey(),
         &scenario.symbol,
     )
@@ -371,7 +400,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .map(|allowance| allowance.instrument.id())
         .collect();
     let market_id = scenario.instrument().id();
-    let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
+    let start_value_usd = grader_f64(
+        patiently("the meter", async || meter.measure(&universe).await)
+            .await?
+            .value_usd,
+    );
     if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
         phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
     }
@@ -388,10 +421,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     making.competitor_bps,
                     start_mark_ticks,
                     internal.url(),
+                    &opts.keys,
                 )
                 .await?,
             ),
-            Some(Competitor::prepare(&world, &phoenix, scenario, internal.url()).await?),
+            Some(
+                Competitor::prepare(&world, &phoenix, scenario, internal.url(), &opts.keys).await?,
+            ),
         ),
         (None, Some(off)) => (
             Some(
@@ -402,13 +438,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     off.half_spread_bps,
                     start_mark_ticks,
                     internal.url(),
+                    &opts.keys,
                 )
                 .await?,
             ),
             None,
         ),
         (None, None) if !scenario.tape.is_empty() => (
-            Some(Takers::onboard(&world, &phoenix, scenario, internal.url()).await?),
+            Some(Takers::onboard(&world, &phoenix, scenario, internal.url(), &opts.keys).await?),
             None,
         ),
         (None, None) => (None, None),
@@ -432,34 +469,31 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             "book" => book_at(&scenario.path, at),
             _ => return Ok(value_usd),
         };
-        let mark = hawkeye
-            .view_bbo(&scenario.symbol)
-            .await?
-            .value
-            .mark_price_ticks;
+        let mark = patiently("the book", async || {
+            hawkeye.view_bbo(&scenario.symbol).await
+        })
+        .await?
+        .value
+        .mark_price_ticks;
         let price = start_mark_usd * (1.0 + level / 100.0);
         Ok(value_usd + units * (price - phoenix.ticks_to_usd(market, mark)))
     };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
-    // From here on, a slot passes only when the grader produces one.
-    surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
-        BlockProductionMode::Manual,
-    ))?;
-    let mut slot = manual_slot(&rpc).await?;
-    // Slots from the surfnet's start to the session's: setup runs on the
-    // wall clock and takes 10 to 15 of them, more on a loaded machine, and
-    // more again where it onboards takers. The world then steps to this one,
-    // so every session starts at the same slot however long its setup took:
-    // state that depends on the slot (Phoenix's funding, the oracle's age)
-    // replays the same.
+    let mut slot = rpc.get_slot()?;
+    // Slots from the surfnet's start to the session's. Setup produces a few
+    // of its own (each onboarding, one), the same ones every run; the world
+    // then steps to this one, so every session of a scenario kind starts at
+    // the same distance from the snapshot: state that depends on the slot
+    // (Phoenix's funding, the oracle's age) replays the same.
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
-        warn!(
-            slot,
-            first_slot, "setup ran past the session's first slot: this session won't replay"
-        );
+        return Err(Error::SetupSlots {
+            scenario: scenario.name.clone(),
+            used: slot - setup_from,
+            budget: scenario.setup_slots(),
+        });
     }
     // The market's funding parameters land on the session's first slot, so
     // they're in force, and their intervals start at the same point, before
@@ -479,12 +513,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     // Surfpool restamps Phoenix's oracle readings, and the slot its mark's
     // EMA last stepped at, with the current slot whenever it plays a Phoenix
-    // override. Setup's last one (a taker's onboarding) plays wherever the
-    // wall clock put it, and the EMA's next step runs from there: the mark
-    // comes out a tick apart run to run. One more on the session's first
-    // slot restamps them all to it. A funding scenario's own override,
-    // played there, does the same.
-    if scenario.funding.is_none() && (scenario.offhours.is_some() || !scenario.tape.is_empty()) {
+    // override (an onboarding's capabilities, say), and the EMA's next step
+    // runs from there. Setup's slots no longer move, but one more override on
+    // the session's first slot restamps them all to it, so the session's
+    // mark doesn't depend on how many onboardings setup ran either. A
+    // funding scenario's own override, played there, does the same.
+    if scenario.funding.is_none() {
         chain::register_scenario(
             &rpc,
             "readings",
@@ -552,6 +586,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .map(|off| start_slot + off.reopen_slot);
     *bot_started = true;
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
+    let walls = Walls::new(opts.trusted, steps);
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
@@ -617,12 +652,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             slots_per_step: SLOTS_PER_STEP,
             start_slot,
             end_slot,
-            turn_wall_ms: TURN_WALL.as_millis() as u64,
+            turn_wall_ms: walls.announced().as_millis() as u64,
             reports: None,
+            seed: Some(turns::scenario_seed(&scenario.name)),
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
             && matches!(
-                tokio::time::timeout(HELLO_WALL, next_message(&mut reader)).await,
+                tokio::time::timeout(walls.hello(), next_message(&mut reader)).await,
                 Ok(Some(Message::Ready))
             ));
         if legacy {
@@ -631,7 +667,6 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         process = Some((child, writer, reader));
     }
     turns.legacy = legacy;
-    let budget = TURN_BUDGET_PER_STEP * steps as u32;
     let mut spent = Duration::ZERO;
 
     let mut flow = takers.as_ref().map(|takers| takers.flow(orders));
@@ -696,14 +731,18 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 .await;
         }
 
-        let now = meter.measure(&universe).await?;
+        let now = patiently("the meter", async || meter.measure(&universe).await).await?;
         record(&mut observed, &now)?;
         let position = position_in(&now, &market_id);
         positions_outside_universe = positions_outside_universe.max(now.outside_universe);
         let value_usd = value(grader_f64(now.value_usd), position, slot, base_slot).await?;
         peak_value_usd = peak_value_usd.max(value_usd);
         max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
-        let bbo = hawkeye.view_bbo(&scenario.symbol).await?.value;
+        let bbo = patiently("the book", async || {
+            hawkeye.view_bbo(&scenario.symbol).await
+        })
+        .await?
+        .value;
         let usd = |ticks: u64| phoenix.ticks_to_usd(market, ticks);
         steps_seen.push(StepRecord {
             k,
@@ -781,8 +820,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         let started = Instant::now();
         let step = Step::new(k, slot, k + 1 == steps);
-        let wall = TURN_WALL.min(budget.saturating_sub(spent));
-        let answered = take_turn(writer, reader, step, wall).await;
+        let answered = take_turn(writer, reader, step, walls.turn(spent)).await;
         let took = started.elapsed();
         spent += took;
         if !answered {
@@ -826,7 +864,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         _ => None,
     };
 
-    let end = meter.measure(&universe).await?;
+    let end = patiently("the meter", async || meter.measure(&universe).await).await?;
     record(&mut observed, &end)?;
     let end_position = position_in(&end, &market_id);
     let end_value_usd = value(grader_f64(end.value_usd), end_position, end_slot, base_slot).await?;
@@ -837,11 +875,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         start_mark_usd,
         end_mark_usd: phoenix.ticks_to_usd(
             market,
-            hawkeye
-                .view_bbo(&scenario.symbol)
-                .await?
-                .value
-                .mark_price_ticks,
+            patiently("the book", async || {
+                hawkeye.view_bbo(&scenario.symbol).await
+            })
+            .await?
+            .value
+            .mark_price_ticks,
         ),
         start_value_usd,
         end_value_usd,
@@ -1064,6 +1103,98 @@ pub(crate) fn transactions(
         .collect()
 }
 
+/// The grader's own read, made again if it fails for want of an answer (a
+/// timeout, a lost connection: see [`is_transport`]), up to
+/// [`READ_ATTEMPTS`] times. On a starved machine a read can time out on the
+/// client's side, and reading again changes nothing, since nothing moves
+/// while the grader reads. Any other error is the answer, and comes back at
+/// once.
+pub(crate) async fn patiently<T, E: std::error::Error + 'static>(
+    what: &str,
+    mut read: impl AsyncFnMut() -> std::result::Result<T, E>,
+) -> std::result::Result<T, E> {
+    let mut attempt = 1;
+    loop {
+        match read().await {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < READ_ATTEMPTS && is_transport(&error) => {
+                warn!(what, attempt, %error, "a grader read got no answer; reading again");
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Whether `error` is a request that got no answer (it timed out, or its
+/// connection failed) rather than an answer. Errors that keep their source
+/// say so through reqwest's; some clients flatten theirs into text.
+pub(crate) fn is_transport(error: &(dyn std::error::Error + 'static)) -> bool {
+    const NO_ANSWER: [&str; 5] = [
+        "timed out",
+        "error sending request",
+        "connection refused",
+        "connection reset",
+        "connection closed",
+    ];
+    let mut next = Some(error);
+    while let Some(error) = next {
+        if let Some(http) = error.downcast_ref::<reqwest::Error>()
+            && (http.is_timeout() || http.is_connect() || http.is_request())
+        {
+            return true;
+        }
+        let text = error.to_string().to_lowercase();
+        if NO_ANSWER.iter().any(|sign| text.contains(sign)) {
+            return true;
+        }
+        next = error.source();
+    }
+    false
+}
+
+/// How long the world waits for a process bot: its hello, and each turn.
+pub(crate) struct Walls {
+    trusted: bool,
+    /// What all of an untrusted bot's turns may take together.
+    budget: Duration,
+}
+
+impl Walls {
+    pub(crate) fn new(trusted: bool, steps: u64) -> Self {
+        Self {
+            trusted,
+            budget: TURN_BUDGET_PER_STEP * steps as u32,
+        }
+    }
+
+    /// The turn wall the hello announces.
+    pub(crate) fn announced(&self) -> Duration {
+        if self.trusted {
+            TRUSTED_WALL
+        } else {
+            TURN_WALL
+        }
+    }
+
+    pub(crate) fn hello(&self) -> Duration {
+        if self.trusted {
+            TRUSTED_WALL
+        } else {
+            HELLO_WALL
+        }
+    }
+
+    /// The next turn's wall, after the bot's turns took `spent` so far.
+    pub(crate) fn turn(&self, spent: Duration) -> Duration {
+        if self.trusted {
+            TRUSTED_WALL
+        } else {
+            TURN_WALL.min(self.budget.saturating_sub(spent))
+        }
+    }
+}
+
 /// Hand the bot `step` and wait up to `wall` for its `done`; false if it
 /// didn't answer in time or its end is gone.
 pub(crate) async fn take_turn(
@@ -1087,35 +1218,11 @@ pub(crate) async fn take_turn(
         .unwrap_or(false)
 }
 
-/// Wait until the surfnet has produced `slot`.
-/// The slot once the switch to manual block production has taken: the
-/// runloop takes it in its own time, and until it does the clock can still
-/// produce a slot. Overrides registered next count from the slot they're
-/// registered at, so a slot produced after the read would land them a slot
-/// late, on a wall-clock race.
-pub(crate) async fn manual_slot(rpc: &RpcClient) -> Result<u64> {
-    let mut slot = rpc.get_slot()?;
-    for _ in 0..20 {
-        // Longer than two of the clock's slots.
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        let now = rpc.get_slot()?;
-        if now == slot {
-            return Ok(slot);
-        }
-        warn!(
-            from = slot,
-            to = now,
-            "the clock produced slots after the switch to manual"
-        );
-        slot = now;
-    }
-    Err(Error::Timeout(format!(
-        "block production still running at slot {slot}"
-    )))
-}
-
+/// Wait until the surfnet has produced `slot`: the grader asked for it,
+/// so it comes however loaded the machine; the wall is only for a surfnet
+/// that died.
 pub(crate) async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + SLOT_WALL;
     loop {
         let now = rpc.get_slot()?;
         if now >= slot {
@@ -1127,6 +1234,8 @@ pub(crate) async fn wait_for_slot(rpc: &RpcClient, slot: u64) -> Result<u64> {
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
+
+const SLOT_WALL: Duration = Duration::from_secs(60);
 
 /// Send one turn message; false if the bot's end is gone.
 pub(crate) async fn send(writer: &mut tokio::net::unix::OwnedWriteHalf, message: &Message) -> bool {
@@ -1377,6 +1486,43 @@ mod tests {
 
     fn mode(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("{0}")]
+    struct Failed(String);
+
+    #[tokio::test]
+    async fn only_unanswered_reads_are_made_again() {
+        let mut calls = 0;
+        let timed_out = patiently("x", async || {
+            calls += 1;
+            Err::<(), _>(Failed("error sending request: operation timed out".into()))
+        })
+        .await;
+        assert!(timed_out.is_err());
+        assert_eq!(calls, READ_ATTEMPTS);
+
+        let mut calls = 0;
+        let answered = patiently("x", async || {
+            calls += 1;
+            Err::<(), _>(Failed("no market SPCX".into()))
+        })
+        .await;
+        assert!(answered.is_err());
+        assert_eq!(calls, 1);
+
+        let mut calls = 0;
+        let second = patiently("x", async || {
+            calls += 1;
+            if calls == 1 {
+                Err(Failed("Connection refused (os error 111)".into()))
+            } else {
+                Ok(7)
+            }
+        })
+        .await;
+        assert_eq!(second.unwrap(), 7);
     }
 
     #[test]

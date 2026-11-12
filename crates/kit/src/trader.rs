@@ -77,6 +77,19 @@ impl Trader {
         })
     }
 
+    /// [`Trader::connect`], with every transaction it sends, and every
+    /// request on the way, allowed up to `timeout` (the default is 30 s).
+    /// Reads through Hawkeye ([`Trader::top`], [`Trader::position`]) keep
+    /// Hawkeye's own client.
+    pub fn connect_with_timeout(env: &BotEnv, timeout: std::time::Duration) -> Result<Self> {
+        let mut trader = Self::connect(env)?;
+        trader.inner = trader.inner.with_chain(std::sync::Arc::new(
+            crate::chain::RpcChainClient::with_timeout(&env.rpc_url, timeout),
+        ));
+        trader.rpc = crate::tx::rpc_client_with_timeout(&env.rpc_url, timeout);
+        Ok(trader)
+    }
+
     pub fn authority(&self) -> Pubkey {
         self.keypair.pubkey()
     }
