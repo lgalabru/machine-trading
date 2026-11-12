@@ -340,3 +340,18 @@ defend, no bot users, no keypair files.
   without trades; and turn data names its market (`turns::Trade::market`),
   venues carry their address, and an id is unique in the session (with
   `@<address>` where two pools would share one).
+- 2026-11-12: two planner bugs, and the last closed-type gaps. A line the
+  session won't execute (a swap on a perp) counted as filled and made
+  room under the cap for the lines after it: a session now plans with
+  what it executes (`plan_sheet_with`), and such a line counts for
+  nothing. A reduce-only line was only cut on the sheet: its orders now
+  carry Phoenix's reduce-only flag (a post-only one through the second
+  multiple-order packet), so a resting one can't open a position later.
+  A target whose `max_per_step` isn't positive panicked in `clamp`; it is
+  a note now. And, so 0.2.0 doesn't need a 0.3.0: adding to an existing
+  liquidity position and a bin shape; expiries on limit orders, quotes and
+  responses to requests for quotes (Phoenix's last valid slot; not yet on
+  a post-only order); a liquidation's minimum received; a failure's
+  signature; and fresh signers on raw transactions, named by index in the
+  instructions and returned by `send`, for accounts that sign their own
+  creation (a position's mint).
