@@ -54,7 +54,7 @@ specific to this task.
 | cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend a session |
 | sneaky | 0.0 | The surfnet's own port answers nothing without its secret path |
 
-`just ladder flash-crash` grades the ladder (`bench/checks/ladder`) on fresh
+`just ladder flash-crash-spcx` grades the ladder (`checks/`) on fresh
 hidden sets. Blind bets, a dip-buyer and momentum must score below the
 reference, a regime oracle above it, and the frozen exploit bots within
 their limits.

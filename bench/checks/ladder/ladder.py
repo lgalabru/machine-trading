@@ -1,6 +1,6 @@
 """The skill ladder: fixed bots, graded on fresh hidden sets, in a fixed order.
 
-Each task's rungs and rules are in `<task>.json`. For each set, the ladder
+Each task's rungs and rules are in its folder, `bench/tasks/<task>/checks/ladder.json`. For each set, the ladder
 draws a fresh secret (never printed), grades every rung on the hidden set it
 seeds with `mtx grade --draw`, and scores each rung's skill: its total PnL
 over the reference's. Then it checks:
@@ -144,7 +144,7 @@ def main():
     users = queue.Queue()
     for k in range(args.parallel):
         users.put(k * args.jobs)
-    with open(os.path.join(HERE, f"{args.task}.json")) as f:
+    with open(os.path.join(ROOT, "bench/tasks", args.task, "checks/ladder.json")) as f:
         config = json.load(f)
     count = args.count or config["count"]
     out = os.path.join(args.out, args.task)

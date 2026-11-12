@@ -24,8 +24,6 @@ practice_reference = false
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
 generator = "funding-carry"
-reference = "carry"
-ladder = "funding-carry"
 emoji = "💸"
 market = "Phoenix SPCX perp"
 summary = "earns the SPCX premium and its funding when positioning opened it, and follows when the index follows"

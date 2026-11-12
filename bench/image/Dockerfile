@@ -38,7 +38,10 @@ WORKDIR /src/mtx
 COPY Cargo.toml Cargo.lock rust-toolchain ./
 COPY crates crates
 COPY bots bots
-# The references the verifier scores against, one per task: `<anchor> <bot>`.
+# The tasks' reference bots and ladder bots (.dockerignore keeps the rest of
+# bench/tasks out), which are workspace members, and the list of the
+# references the verifier scores against: `<anchor> <package> <binary> <dir>`.
+COPY bench/tasks bench/tasks
 COPY bench/image/anchors.txt anchors.txt
 # One target cache per platform: a multi-platform build runs both at once.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -52,12 +55,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         'surfpool-core = { path = "/src/surfpool/crates/core" }' \
         'surfpool-types = { path = "/src/surfpool/crates/types" }' > .cargo/config.toml; \
     fi \
-    && cargo build --release --locked -p mtx-cli $(awk '!/^#/ { printf " -p mtx-bot-%s", $2 }' anchors.txt) \
+    && cargo build --release --locked -p mtx-cli $(awk '!/^#/ { printf " -p %s", $2 }' anchors.txt) \
     && cp target/release/mtx /usr/local/bin/mtx \
-    && grep -v '^#' anchors.txt | while read -r anchor bot; do \
+    && grep -v '^#' anchors.txt | while read -r anchor package bin dir; do \
       mkdir -p "/opt/mtx/anchors/$anchor/bin"; \
-      cp "bots/$bot/Justfile" "/opt/mtx/anchors/$anchor/Justfile"; \
-      cp "target/release/mtx-$bot" "/opt/mtx/anchors/$anchor/bin/bot"; \
+      cp "$dir/Justfile" "/opt/mtx/anchors/$anchor/Justfile"; \
+      cp "target/release/$bin" "/opt/mtx/anchors/$anchor/bin/bot"; \
     done
 
 # Verifiers: the grader, the snapshots, and one unprivileged user per

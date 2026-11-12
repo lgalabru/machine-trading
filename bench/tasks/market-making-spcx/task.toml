@@ -21,8 +21,6 @@ snapshot = "phoenix-spcx-2026-10-29"
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
 generator = "market-making"
-reference = "maker"
-ladder = "market-making"
 emoji = "⚖️"
 market = "Phoenix SPCX perp"
 summary = "earns the SPCX spread from noise, and steps back before informed flow"

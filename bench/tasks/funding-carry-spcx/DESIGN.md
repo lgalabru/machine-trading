@@ -311,13 +311,13 @@ differ from the public one in more than the wobble.
 ## Ladder and ceilings
 
 See the README for the numbers. Rungs
-(`bench/checks/ladder/funding-carry.json`): nop; blind long and short;
+(`checks/ladder.json`): nop; blind long and short;
 fader (fades every premium at once, full size) and follower (follows every
-premium at once), both from `bots/carry-gbm`; practice (g0's
+premium at once), both from `checks/bots/carry-gbm`; practice (g0's
 gradient-boosted reference, fitted on the practice family); nosession (the
 g1 gradient-boosted model trained without the session's history and
 wobble); gbm (g1's gradient-boosted model, fitted on the hidden family:
-g1's first reference); reference (`bots/carry`, the best g0 Sol bot,
+g1's first reference); reference (`reference/`, the best g0 Sol bot,
 frozen); told (the reference told each episode's kind); the other two
 frozen g0 Sol bots; hindsight.
 

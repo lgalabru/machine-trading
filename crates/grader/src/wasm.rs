@@ -815,7 +815,7 @@ mod tests {
     }
 
     /// The reference as a component: set `MTX_TEST_WASM` to
-    /// `bots/reference`'s component build (`just build`).
+    /// the flash-crash reference's component build (`just build`).
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "needs a built component"]
     async fn the_reference_component_rides_a_move() {

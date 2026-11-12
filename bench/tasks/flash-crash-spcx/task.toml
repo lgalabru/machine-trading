@@ -21,8 +21,6 @@ snapshot = "phoenix-spcx-2026-10-29"
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
 generator = "flash-crash"
-reference = "reference"
-ladder = "flash-crash"
 emoji = "📉"
 market = "Phoenix SPCX perp"
 summary = "fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't"
