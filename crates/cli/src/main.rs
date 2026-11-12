@@ -25,6 +25,7 @@ mod author;
 mod authoring;
 mod bot;
 mod charts;
+mod gates;
 mod mcp;
 mod play;
 mod publish;
@@ -75,6 +76,27 @@ enum Command {
     /// Make a new task, guided: scaffold it, then see what's left to do.
     #[command(subcommand)]
     Task(TaskCommand),
+    /// Run a task through the quality bar and write one report (JSON and
+    /// markdown): solvable and fair, graded correctly, realistic. `--fast`
+    /// runs the cheap checks; without it, the image checks too.
+    Gates {
+        task: String,
+        /// Task files and a one-set ladder on a few sessions; no image checks.
+        #[arg(long)]
+        fast: bool,
+        /// Hidden sets the ladder grades (fast: 1, full: 4).
+        #[arg(long)]
+        sets: Option<usize>,
+        /// Sessions per set (fast: 12, full: the task's own).
+        #[arg(long)]
+        sessions: Option<usize>,
+        /// Where the report goes (default target/gates/<task>).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Use a finished ladder's summary.json instead of running one.
+        #[arg(long)]
+        ladder_summary: Option<PathBuf>,
+    },
     /// Serve the task-authoring tools over MCP (stdio), for Claude Code:
     /// task_new (an interview with forms), task_status, task_guide, task_list.
     Mcp,
@@ -568,6 +590,29 @@ async fn run() -> Result<()> {
         Command::Mcp => {
             mcp::serve(authoring::repo_root()).await?;
             return Ok(());
+        }
+        Command::Gates {
+            task,
+            fast,
+            sets,
+            sessions,
+            out,
+            ladder_summary,
+        } => {
+            let opts = gates::Options {
+                fast,
+                sets,
+                sessions,
+                out,
+                ladder_summary,
+            };
+            let (report, dir) = gates::run(&authoring::repo_root(), &task, &opts)?;
+            eprintln!("{}\nreport: {}/gates.{{md,json}}", report.markdown(), dir.display());
+            if !report.passed {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                std::process::exit(1);
+            }
+            serde_json::to_string_pretty(&report)?
         }
         Command::Task(TaskCommand::New { spec: a }) => {
             let spec = authoring::TaskSpec {
