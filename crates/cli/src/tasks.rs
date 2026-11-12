@@ -190,11 +190,14 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
         );
     }
     let cargo = folder.join("reference/Cargo.toml");
-    let manifest: CargoToml = toml::from_str(
-        &std::fs::read_to_string(&cargo)
-            .with_context(|| format!("{}: a task's reference bot is its reference/ crate", cargo.display()))?,
-    )
-    .with_context(|| cargo.display().to_string())?;
+    let manifest: CargoToml =
+        toml::from_str(&std::fs::read_to_string(&cargo).with_context(|| {
+            format!(
+                "{}: a task's reference bot is its reference/ crate",
+                cargo.display()
+            )
+        })?)
+        .with_context(|| cargo.display().to_string())?;
     let reference = Reference {
         bin: manifest
             .bin
@@ -207,7 +210,12 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
         .flatten()
         .flatten()
         .filter(|e| e.path().join("Cargo.toml").is_file())
-        .map(|e| format!("bench/tasks/{dir}/checks/bots/{}", e.file_name().to_string_lossy()))
+        .map(|e| {
+            format!(
+                "bench/tasks/{dir}/checks/bots/{}",
+                e.file_name().to_string_lossy()
+            )
+        })
         .collect();
     check_bots.sort();
     Ok(Task {
@@ -239,7 +247,12 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     let join = |f: &dyn Fn(&Task) -> String, sep: &str| -> String {
         tasks.iter().map(f).collect::<Vec<_>>().join(sep)
     };
-    let needles = unique(tasks.iter().flat_map(|t| t.mtx.leak_needles.iter().cloned())).join("|");
+    let needles = unique(
+        tasks
+            .iter()
+            .flat_map(|t| t.mtx.leak_needles.iter().cloned()),
+    )
+    .join("|");
     let build: Vec<String> = tasks
         .iter()
         .flat_map(|t| std::iter::once(t.reference_dir()).chain(t.check_bots.iter().cloned()))
@@ -348,11 +361,19 @@ fn solution_files(root: &Path, task: &Task) -> Result<Vec<(PathBuf, PathBuf)>> {
         names
     };
     let mut out = Vec::new();
-    for name in list(&reference.join("src"), &|n| n.ends_with(".rs") && n != "main.rs") {
-        out.push((reference.join("src").join(&name), solution.join("src").join(&name)));
+    for name in list(&reference.join("src"), &|n| {
+        n.ends_with(".rs") && n != "main.rs"
+    }) {
+        out.push((
+            reference.join("src").join(&name),
+            solution.join("src").join(&name),
+        ));
     }
     for name in list(&reference.join("model"), &|n| n.ends_with(".json")) {
-        out.push((reference.join("model").join(&name), solution.join("model").join(&name)));
+        out.push((
+            reference.join("model").join(&name),
+            solution.join("model").join(&name),
+        ));
     }
     for name in list(&reference, &|n| n.starts_with("model.")) {
         out.push((reference.join(&name), solution.join(&name)));
@@ -481,10 +502,18 @@ mod tests {
         let tasks = load(&root).unwrap();
         assert!(tasks.len() >= 4);
         for task in &tasks {
-            assert!(task.mtx.leak_needles.iter().all(|n| !n.is_empty()), "{}", task.dir);
+            assert!(
+                task.mtx.leak_needles.iter().all(|n| !n.is_empty()),
+                "{}",
+                task.dir
+            );
             let folder = root.join("bench/tasks").join(&task.dir);
             assert!(folder.join("checks/ladder.json").is_file(), "{}", task.dir);
-            assert!(folder.join("reference/src/main.rs").is_file(), "{}", task.dir);
+            assert!(
+                folder.join("reference/src/main.rs").is_file(),
+                "{}",
+                task.dir
+            );
         }
     }
 
@@ -506,7 +535,10 @@ mod tests {
             let toml = std::fs::read_to_string(folder.join("task.toml")).unwrap();
             std::fs::write(
                 folder.join("task.toml"),
-                toml.replace("generator = \"market-making\"", "generator = \"flash-crash\""),
+                toml.replace(
+                    "generator = \"market-making\"",
+                    "generator = \"flash-crash\"",
+                ),
             )
             .unwrap();
         }
@@ -530,7 +562,9 @@ mod tests {
         let out = dataset_with(text, &[task("a"), task("b")]).unwrap();
         assert_eq!(
             out,
-            format!("[dataset]\nname = \"x/y\"\n\n\n[[tasks]]\nname = \"solana-foundation/a\"\ndigest = \"sha256:1\"\n\n[[tasks]]\nname = \"solana-foundation/b\"\ndigest = \"{PLACEHOLDER_DIGEST}\"\n\n")
+            format!(
+                "[dataset]\nname = \"x/y\"\n\n\n[[tasks]]\nname = \"solana-foundation/a\"\ndigest = \"sha256:1\"\n\n[[tasks]]\nname = \"solana-foundation/b\"\ndigest = \"{PLACEHOLDER_DIGEST}\"\n\n"
+            )
         );
         assert_eq!(dataset_with(&out, &[task("a"), task("b")]).unwrap(), out);
     }
