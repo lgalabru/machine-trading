@@ -1,15 +1,20 @@
-//! One trading session: a bot against one scenario on a fresh offline world.
+//! One trading session: a bot against one scenario on a fresh offline world,
+//! the same loop whatever the scenario trades.
 //!
-//! 1. Restore the snapshot offline and put the RPC guard in front of it.
-//! 2. Onboard a fresh trader with [`DEPOSIT_USDC`] of collateral.
-//! 3. Step to the session's first slot, register the scenario and lock the
-//!    cheatcodes, then start the bot (`just run`, from the `Justfile` in its
-//!    directory) with the [`BotEnv`] contract.
-//! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
-//!    give the bot its turn (see [`mtx_core::turns`]): each step produces
-//!    its blocks, which land the scenario's move; then the grader's own
-//!    traders act; then the bot gets the step and the world waits for it.
-//! 5. After the last step, stop the bot and mark the account to market.
+//! 1. The session's kind sets it up ([`crate::perp`], [`crate::spot`]):
+//!    restore the snapshot offline and put the RPC guard in front of it,
+//!    fund the bot's account (a perp's trader with [`DEPOSIT_USDC`] of
+//!    collateral, a spot wallet), ready the actors ([`crate::actors`]), step
+//!    to the session's first slot, register the scenario and lock the
+//!    cheatcodes.
+//! 2. Start the bot (`just run`, from the `Justfile` in its directory, with
+//!    the [`BotEnv`] contract), or load its component ([`crate::wasm`]).
+//! 3. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
+//!    give the bot its turn (see [`mtx_core::turns`]): the takers trade;
+//!    each step produces its blocks, which land the scenario's move; then
+//!    the actors that react act; the session measures the account
+//!    (its `Account`); then the bot gets the step and the world waits for it.
+//! 4. After the last step, stop the bot and mark the account to market.
 //!
 //! Each session gets its own surfnet, so nothing a bot does carries over, and
 //! nothing moves while the bot thinks, so the same bot on the same scenario
