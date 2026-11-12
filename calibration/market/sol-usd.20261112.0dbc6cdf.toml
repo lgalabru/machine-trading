@@ -1,23 +1,23 @@
-# Market calibration sol-usd.20261112.60758f84 (schema 1.0). Written by infra-calib/calib/export_v1.py
+# Market calibration sol-usd.20261112.0dbc6cdf (schema 1.0). Written by infra-calib/calib/export_v1.py
 # from sol-usd.20261111.19f35b87; never edited by hand. A refit is a new file with a new id.
-# Every input (url, sha256, bytes, fetch time) is in sol-usd.20261112.60758f84.inputs.json.
+# Every input (url, sha256, bytes, fetch time) is in sol-usd.20261112.0dbc6cdf.inputs.json.
 
 
 [meta]
 schema_version = "1.0"
-calibration_id = "sol-usd.20261112.60758f84"
+calibration_id = "sol-usd.20261112.0dbc6cdf"
 asset = "sol-usd"
 symbol = "SOL"
-fitted_at = "2026-11-12T15:45:33+00:00"
-exported_at = "2026-11-12T15:45:33+00:00"
+fitted_at = "2026-11-12T17:13:31+00:00"
+exported_at = "2026-11-12T17:13:31+00:00"
 fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
-fitter_code_sha256_12 = "5d9f8b9199b4"
+fitter_code_sha256_12 = "6c814d662f10"
 derived_from = "sol-usd.20261111.19f35b87"
-inputs_file = "sol-usd.20261112.60758f84.inputs.json"
+inputs_file = "sol-usd.20261112.0dbc6cdf.inputs.json"
 inputs_digest = "b3898486fce0e0e8"
 inputs_count = 134
 sources = ["Binance SOLUSDT 1 s and 1 m klines (data.binance.vision)", "Phoenix perp API /exchange and /candles", "Jupiter lite-api quotes", "Solana RPC getRecentPrioritizationFees", "Jito tip floor and stake-pool stats"]
-limits = ["Fair value is a CEX proxy (Binance SOLUSDT), not Pyth.", "Seconds-scale fit on 5 days; regimes and jumps on 6 months of 1 m bars that hold no crisis (calm/stressed differ by 1.5x).", "Book depth and impact are derived from one Jupiter routed-quote snapshot, not from a recorded Phoenix book.", "Phoenix trade sizes are per-minute means, not per-trade sizes.", "Fitted to the realism windows themselves (in-sample checks): per_second_sd (vol_level), df (kurtosis_within), the regimes' log-sd scale (vol_of_vol) and the mark's half-life (predictability), on the 2 held-out days; GARCH alpha and persistence (long_clustering_lag_1 and _5), on the 6 months of 1 m bars.", "Out of fit: tail_ratio, clustering_lag_1 to _3 and round_trips. The regimes' multipliers, shares and transitions come from 6 months of hourly realized vol; the jumps from 6 months of 1 m bars.", "long_clustering_lag_15 is reported, not gated: real 1 m volatility clustering decays more slowly than one GARCH(1,1) with regimes can follow (long memory), and the model reads about 0.01 below it.", "Realism bands are each statistic's sampling spread over the real windows of these days; other weeks would add week-to-week spread."]
+limits = ["Fair value is a CEX proxy (Binance SOLUSDT), not Pyth.", "The seconds-scale parameters are fitted to the 2 held-out days' realism windows (below), not to the 5 days before them that the 0.1 prototype used; regimes and jumps come from 6 months of 1 m bars that hold no crisis (calm/stressed differ by 1.5x).", "Book depth and impact are derived from one Jupiter routed-quote snapshot, not from a recorded Phoenix book.", "Phoenix trade sizes are per-minute means, not per-trade sizes.", "Fitted to the realism windows themselves (in-sample checks): per_second_sd (vol_level), df (kurtosis_within), the regimes' log-sd scale (vol_of_vol) and the mark's half-life (predictability), on the 2 held-out days; GARCH alpha and persistence (long_clustering_lag_1 and _5), on the 6 months of 1 m bars.", "Out of fit: tail_ratio, clustering_lag_1 to _3 and round_trips. The regimes' multipliers, shares and transitions come from 6 months of hourly realized vol; the jumps from 6 months of 1 m bars.", "long_clustering_lag_15 is reported, not gated: real 1 m volatility clustering decays more slowly than one GARCH(1,1) with regimes can follow (long memory), and the model reads about 0.01 below it.", "Realism bands are each statistic's sampling spread over the real windows of these days; other weeks would add week-to-week spread."]
 
 [meta.windows]
 seconds_fit = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]
