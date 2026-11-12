@@ -107,7 +107,12 @@ ladder = { levels = 5, half_spread_bps = 10, step_bps = 10, level_size = "20" }
   build with a message that says so.
 - Mints are written straight into the surfnet with no mint authority and no
   freeze authority, so nobody can mint more.
-- The market's creator is its authority and the maker of the ladder; it is
+- A Phoenix v1 market is handed over as mainnet's are: after the ladder is
+  posted, the creator names the Seat Manager's market PDA its successor and
+  the Seat Manager claims the authority. A bot then claims its seat with
+  the kit's `plan_claim_seat` and rests post-only orders like on mainnet
+  (`crates/grader/tests/recipe.rs` does exactly that).
+- The market's creator is the maker of the ladder; it is
   funded by cheatcode with both mints. Its key, the market keys and the
   mints' addresses derive from the build's **secret**, the recipe name and
   the market's name. The recipe name ships with the snapshot, so the secret
@@ -161,13 +166,15 @@ ProgramData account, deploy slot and a hash of its code (`programdata`,
 
 The two committed recipes pin to their own snapshots.
 
-**Clock.** A build from `fork.from_snapshot` copies the source's fork slot
+**Clock.** A build from `fork.from_snapshot` starts from the source's fork slot
 and time, makes a block for each transaction and none otherwise, and pins
 the clock to a fixed slot and time before each step of a simulated market
 (a surfnet finalizes blocks asynchronously, so the time between two
 transactions would otherwise vary with the machine and be written into
 the books), so nothing the warm-up writes depends on how long the machine
-takes. With the same secret it is byte-identical
+takes. The manifest's `fork_slot` and `created_at_unix` are then the slot and
+time after the last pinned step, which is where a session starts, so its
+clock is never before an order's recorded time. With the same secret it is byte-identical
 on every run (`crates/grader/tests/recipe.rs` checks this under parallel
 test threads). The surfnet's own payer and faucet, random on every start,
 are left out of the export. A build from a mainnet fork runs on the wall

@@ -161,6 +161,38 @@ async fn simulated_markets_are_made_seeded_and_flagged() {
         "within 1.2% of 41.5"
     );
 
+    // A fresh bot gets a seat from the Seat Manager and rests an order, with
+    // the kit's code and nothing special.
+    let detail = &manifest.created.iter().find(|c| c.name == "FAKE/USDC").unwrap().detail;
+    let mint = |key: &str| -> mtx_kit::Pubkey { detail[key].as_str().unwrap().parse().unwrap() };
+    let bot = solana_keypair::Keypair::new();
+    let bot_key = solana_signer::Signer::pubkey(&bot);
+    let cheats = surfnet.cheatcodes();
+    cheats.fund_sol(&bot_key, 10_000_000_000).unwrap();
+    cheats.fund_token(&bot_key, &mint("base_mint"), 1_000_000_000_000, None).unwrap();
+    cheats.fund_token(&bot_key, &mint("quote_mint"), 1_000_000_000, None).unwrap();
+    let chain2: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(surfnet.rpc_url()));
+    let theirs = PhoenixV1Trader::connect(chain2, address("FAKE/USDC"), "FAKE", "USDC", bot_key)
+        .await
+        .unwrap();
+    let seat = theirs.plan_claim_seat().unwrap();
+    theirs.send(&seat, &bot).await.expect("the seat manager seats a fresh bot");
+    let tick = theirs.market().instrument.tick_size;
+    theirs
+        .submit(
+            &mtx_kit::protocols::phoenix::v1::PhoenixV1Order::PostOnly {
+                side: mtx_core::Side::Buy,
+                price: Decimal::new(30, 0) + tick,
+                quantity: Decimal::new(1, 0),
+                amend_if_crossing: false,
+                last_valid_slot: None,
+            },
+            &bot,
+        )
+        .await
+        .expect("a resting order from a bot with a claimed seat");
+    assert_eq!(theirs.order_book().await.unwrap().bids.len(), 5);
+
     let openbook = OpenBookV2Trader::connect(chain, address("FAKE2/USDC"), "FAKE2", "USDC", owner)
         .await
         .unwrap();
