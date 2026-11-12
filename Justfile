@@ -68,16 +68,19 @@ bots:
 snapshot-prepare-spot out:
     cargo run --release -- snapshot prepare-spot --out {{out}}
 
-# A spot session end to end: a bot sells on both SOL/USDC books and passes
-# its sell-only mandate; the same bot buying too is disqualified.
+# A spot session end to end: the smoke component sells on SOL/USDC and passes
+# the mandate's audit; the buyer breaches it; the order smokes; OpenBook
+# alone; and the same smoke as a process bot, which spot sessions still run.
 spot-smoke:
     just --justfile bots/spot-smoke/Justfile build
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke bench/checks/spot/smoke.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-sell-order bench/checks/spot/smoke-sell-order.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
-    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --components-only --logs target/logs/spot-smoke bench/checks/spot/smoke.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --components-only --logs target/logs/spot-smoke-buyer bench/checks/spot/smoke.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --components-only --logs target/logs/spot-smoke-sell-order bench/checks/spot/smoke-sell-order.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --components-only --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --components-only --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --components-only --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --components-only --logs target/logs/spot-smoke-openbook bench/checks/spot/smoke-openbook.json
+    cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/process --logs target/logs/spot-smoke-process bench/checks/spot/smoke.json
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
