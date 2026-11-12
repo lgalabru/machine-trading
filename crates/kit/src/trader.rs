@@ -209,8 +209,8 @@ impl Trader {
             .await?)
     }
 
-    /// Rest an order on the book at `price_usd` that takes nothing: refused
-    /// if the price crosses.
+    /// Rest an order on the book at `price_usd` that takes nothing: not
+    /// placed if the price crosses.
     pub async fn place_post_only(
         &self,
         side: Side,

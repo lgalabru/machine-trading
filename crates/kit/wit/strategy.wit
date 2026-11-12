@@ -208,7 +208,8 @@ interface types {
     /// Rests until it fills or is cancelled, filling first against
     /// anything it crosses.
     gtc,
-    /// Rests without taking: an order that would cross the book is refused.
+    /// Rests without taking. On Phoenix an order that would cross the book
+    /// isn't placed: its transaction lands, and nothing rests.
     post-only,
     /// Fills what it can now, at no worse than its price, and rests nothing.
     ioc,

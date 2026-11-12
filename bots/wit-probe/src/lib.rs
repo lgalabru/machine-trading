@@ -34,7 +34,7 @@ pub fn first_sheet(market: &Market, orders: &mut Orders) {
         // Rests, far below the book.
         .bid(round(below), 1.0)
         .post_only()
-        // Would take the best bid: refused.
+        // Would take the best bid: not placed.
         .ask(round(crossing), 1.0)
         .post_only()
         // No tape in a perp session: no volume to take a share of.

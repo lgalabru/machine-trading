@@ -180,7 +180,7 @@ the line added last:
 
 | Call | What it does |
 | --- | --- |
-| `.post_only()` | A `bid`, `ask` or `quote` that takes nothing: Phoenix refuses one that would cross the book. |
+| `.post_only()` | A `bid`, `ask` or `quote` that takes nothing. Phoenix doesn't place one that would cross the book: its transaction lands, and nothing rests (`resting_bids` and `resting_asks` still count it until your next cancel). |
 | `.ioc()` | A `bid` or `ask` that fills what it can now, at no worse than its price, and rests nothing: a market order bounded by the price. |
 | `.reduce_only()` | The line's orders are cut so that no fill can grow or flip your position, counting what rests on that side as filled. |
 | `.participation(share)` | A target trades at most `share` of the venue's volume since the last step. The volume is the venue's tape's: in a session without one, there is none to take a share of, and the target doesn't trade. |
