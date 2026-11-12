@@ -1,6 +1,6 @@
 {
   "name": "smoke-rest",
-  "description": "A buy-only SOL-USDC session on Phoenix v1 whose first send is dropped and first read refused: a component rests bids, its seat claim sent again, then cancels them",
+  "description": "A buy-only SOL-USDC session on Phoenix v1 whose first send is dropped and first reads refused: a component rests bids, its seat claim sent again, then cancels them",
   "symbol": "SOL-USDC",
   "duration_slots": 40,
   "mandate": {
@@ -35,7 +35,7 @@
     "venues": [
       "phoenix"
     ],
-    "base": 0.0,
+    "base": 1.0,
     "quote": 1000.0
   }
 }
