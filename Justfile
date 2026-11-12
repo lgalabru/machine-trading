@@ -432,5 +432,5 @@ ladder task="flash-crash" sets="4" jobs="4" parallel="1":
     for bot in bench/checks/exploits/{{task}}-*/; do
       CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
-    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx target/release/mtx \
+    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}}
