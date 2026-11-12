@@ -94,6 +94,8 @@ pub struct SessionOptions<'a> {
     /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
+    /// Watches a component's session step by step (`mtx bot run --debug`).
+    pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -575,6 +577,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .collect(),
                 },
                 Box::new(log),
+                opts.observer.clone(),
             )
             .await?,
         );

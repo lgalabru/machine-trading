@@ -4917,7 +4917,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-first-strategy"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-maker"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-printer"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",
