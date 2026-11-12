@@ -261,13 +261,17 @@ impl Venues {
 
     /// The spot markets, as the mandate names them.
     fn spot_instruments(&self) -> Vec<InstrumentRef> {
-        self.spot.iter().flat_map(|s| &s.markets).map(spot_market).collect()
+        self.spot
+            .iter()
+            .flat_map(|s| &s.markets)
+            .map(|v| spot_market(v))
+            .collect()
     }
 }
 
-fn spot_market(venue: &String) -> InstrumentRef {
+fn spot_market(venue: &str) -> InstrumentRef {
     InstrumentRef {
-        venue: venue.clone(),
+        venue: venue.to_string(),
         kind: Kind::Spot,
         symbol: SYMBOL.into(),
     }
@@ -809,11 +813,7 @@ pub enum ParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        making::MakingFamily,
-        scenario::ShockFamily,
-        weekend::WeekendFamily,
-    };
+    use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
 
     fn v2(scenario: &Scenario) -> ScenarioV2 {
         ScenarioV2::try_from(scenario).unwrap()
@@ -880,7 +880,12 @@ mod tests {
         value["schema"] = 1.into();
         assert_eq!(parse(&value.to_string()).unwrap(), v1);
         value["schema"] = 3.into();
-        assert!(parse(&value.to_string()).unwrap_err().to_string().contains("schema"));
+        assert!(
+            parse(&value.to_string())
+                .unwrap_err()
+                .to_string()
+                .contains("schema")
+        );
         value["schema"] = "two".into();
         assert!(parse(&value.to_string()).is_err());
     }
@@ -908,11 +913,17 @@ mod tests {
     #[test]
     fn each_section_reports_its_own_errors() {
         let mut s = shock();
-        s.assets.wallet = Some(StartingWallet { base: 1.0, quote: 1.0 });
+        s.assets.wallet = Some(StartingWallet {
+            base: 1.0,
+            quote: 1.0,
+        });
         assert!(s.validate().unwrap_err().contains("are for spot"));
 
         let mut s = spot();
-        s.assets.wallet = Some(StartingWallet { base: -1.0, quote: 0.0 });
+        s.assets.wallet = Some(StartingWallet {
+            base: -1.0,
+            quote: 0.0,
+        });
         assert!(s.assets.validate().unwrap_err().contains("base"));
 
         let mut s = shock();
@@ -943,14 +954,29 @@ mod tests {
         );
         let mut s = shock();
         s.market_model.fair_path = Some(vec![Waypoint::at(s.duration_slots + 1, 1.0)]);
-        assert!(s.market_model.validate(s.duration_slots).unwrap_err().contains("fair value"));
+        assert!(
+            s.market_model
+                .validate(s.duration_slots)
+                .unwrap_err()
+                .contains("fair value")
+        );
 
         let mut s = making();
         s.actors.competitor.as_mut().unwrap().competitor_bps = 0.0;
-        assert!(s.actors.validate(s.duration_slots, "taker").unwrap_err().contains("competitor_bps"));
+        assert!(
+            s.actors
+                .validate(s.duration_slots, "taker")
+                .unwrap_err()
+                .contains("competitor_bps")
+        );
         let mut s = making();
         s.actors.takers[0].account = TAKER_ACCOUNTS;
-        assert!(s.actors.validate(s.duration_slots, "taker").unwrap_err().contains("malformed"));
+        assert!(
+            s.actors
+                .validate(s.duration_slots, "taker")
+                .unwrap_err()
+                .contains("malformed")
+        );
 
         let mut s = shock();
         s.faults = Some(Faults {
@@ -980,7 +1006,11 @@ mod tests {
             markets: vec!["phoenix".into()],
             turn_data: None,
         });
-        assert!(s.validate().unwrap_err().contains("exactly one of perp and spot"));
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("exactly one of perp and spot")
+        );
         s.venues = Venues::default();
         assert!(s.validate().unwrap_err().contains("exactly one"));
 
@@ -1014,6 +1044,9 @@ mod tests {
         let text = serde_json::to_string(&s).unwrap();
         assert!(text.contains("\"tx\":{}"));
         assert_eq!(serde_json::from_str::<ScenarioV2>(&text).unwrap(), s);
-        assert!(serde_json::from_str::<ScenarioV2>(&text.replace("\"tx\":{}", "\"tx\":{\"x\":1}")).is_err());
+        assert!(
+            serde_json::from_str::<ScenarioV2>(&text.replace("\"tx\":{}", "\"tx\":{\"x\":1}"))
+                .is_err()
+        );
     }
 }
