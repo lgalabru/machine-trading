@@ -526,6 +526,7 @@ fn bootstrap(windows: &[Vec<f64>], realism: &Realism) -> Spread {
         windows: n,
         draws: SPREAD_DRAWS,
         sigmas: realism.spread.sigmas,
+        sigmas_source: None,
         log_sd: LogSpread {
             vol_level: sd_of(&|d| d.vol_level.ln()),
             vol_of_vol: sd_of(&|d| d.vol_of_vol.ln()),
