@@ -204,10 +204,16 @@ never used in fitting.
 |---|---|---|---|---|
 | SOL | 300 | 2/300 (0.7%) | 300/300 | 300/300 |
 | SOL | 1000 | 0/300 | 300/300 | 300/300 |
-| SPCX | 300 | 0/300 | 300/300 | 289/300 (96.3%) |
+| SPCX | 300 | 0/300 | 300/300 | 289/300 (96.3%; not required) |
 | SPCX | 1000 | 1/300 (0.3%) | 300/300 | 300/300 |
 
-The test asserts at most 2% false fails and at least 95% catches.
+The test asserts at most 2% false fails and at least 95% catches, with one
+exception. At 300 sessions, SPCX can't reliably tell no GARCH from its
+calibrated model. Its GARCH is short-lived (a half-life of about 4
+minutes), and 300 sessions of 30 minutes catch its absence only 90-98% of
+the time, depending on the seeds. That detection is therefore required
+only at 1000 sessions, where it is 100%. To judge SPCX's volatility
+clustering, check at least 1000 sessions.
 
 Only the gap check, resting on about a hundred opens, keeps a stated band.
 
