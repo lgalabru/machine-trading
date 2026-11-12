@@ -1,0 +1,41 @@
+{
+  "name": "smoke-rest",
+  "description": "A buy-only SOL-USDC session on Phoenix v1 whose first send is dropped and first read refused: a component rests bids, its seat claim sent again, then cancels them",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "buy"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "faults": {
+    "seed": 7,
+    "drop": {
+      "sends": [
+        1
+      ]
+    },
+    "rpc_unavailable": {
+      "reads": [
+        1
+      ],
+      "count": 2
+    }
+  },
+  "spot": {
+    "venues": [
+      "phoenix"
+    ],
+    "base": 0.0,
+    "quote": 1000.0
+  }
+}
