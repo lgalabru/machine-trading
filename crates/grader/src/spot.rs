@@ -488,6 +488,7 @@ impl Venues {
             let (bids, asks) = top(market.order_book(&state, slot, unix));
             out.push(BookLevels {
                 venue: "phoenix".into(),
+                market: Some(format!("phoenix:spot:{SYMBOL}")),
                 bids,
                 asks,
             });
@@ -499,6 +500,7 @@ impl Venues {
             let (bids, asks) = top(market.order_book(&book.bids, &book.asks, unix, Some(slot)));
             out.push(BookLevels {
                 venue: "openbook".into(),
+                market: Some(format!("openbook:spot:{SYMBOL}")),
                 bids,
                 asks,
             });
@@ -607,6 +609,7 @@ fn venue_of(fill: &MarketFill) -> String {
 fn trade(seen: &Seen, parties: bool) -> Trade {
     Trade {
         venue: venue_of(&seen.fill),
+        market: Some(format!("{}:spot:{SYMBOL}", venue_of(&seen.fill))),
         side: seen.fill.taker_side,
         price: grader_f64(seen.fill.price),
         base: grader_f64(seen.fill.quantity),
@@ -672,7 +675,7 @@ pub fn fund(
 
 /// Trade a little on each venue as `trader` would: a Phoenix seat, a resting
 /// bid and its cancel, a small sell; an OpenBook open orders account, the
-/// same. Returns the Pyth SOL/USD price. For [`snapshot::prepare_spot`]:
+/// same. Returns the Pyth SOL/USD price. For a snapshot recipe's `spot-exercise` action ([`crate::recipe`]):
 /// every account these touch is then in the surfnet, and so in the export.
 pub async fn exercise(rpc_url: &str, trader: &Keypair) -> Result<f64> {
     use mtx_kit::protocols::{
@@ -872,6 +875,11 @@ pub(crate) async fn run_session(
         start_slot,
         end_slot,
         turn_wall_ms: walls.announced().as_millis() as u64,
+        reports: scenario.turn_data.as_ref().map(|data| turns::Reports {
+            tape: data.tape,
+            depth: data.depth_levels > 0,
+            timestamps: data.timestamps,
+        }),
         seed: Some(turns::scenario_seed(&scenario.name)),
     };
     let mut turns = TurnReport {
