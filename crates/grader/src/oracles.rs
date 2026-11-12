@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     Error, Result,
@@ -164,6 +164,12 @@ pub struct Publication {
     pub price: f64,
     /// The confidence interval as a fraction of the price.
     pub conf_fraction: f64,
+    /// The slow-moving average a consumer may read beside the price: the
+    /// path's own price as of `as_of_slot` and the healthy interval, which
+    /// a failure doesn't move (an average of the true feed wouldn't jump
+    /// with one bad report).
+    pub ema_price: f64,
+    pub ema_conf_fraction: f64,
 }
 
 /// What a writer needs to know about the world it writes into.
@@ -176,6 +182,8 @@ pub struct Context {
     pub slot_time_ms: u64,
     /// The feed's price in its source's unit when the session starts.
     pub start_price: f64,
+    /// The session's length, for writers that spill past it.
+    pub duration_slots: u64,
     /// Phoenix's perp asset map, for a Phoenix feed.
     pub perp_asset_map: Option<Pubkey>,
 }
@@ -230,7 +238,7 @@ impl Oracles {
                 if w.from_slot_max.is_some_and(|max| max < w.from_slot) || w.slots == Some(0) {
                     return Err(format!("oracles: {name}: a failure window is empty"));
                 }
-                if w.from_slot > duration_slots {
+                if w.from_slot.max(w.from_slot_max.unwrap_or(0)) > duration_slots {
                     return Err(format!(
                         "oracles: {name}: a failure starts after the session ends"
                     ));
@@ -248,19 +256,31 @@ impl Oracles {
                     _ => {}
                 }
             }
-            match &feed.source {
+            let target = match &feed.source {
                 Source::Pyth(p) => {
                     p.feed_id_bytes()
                         .map_err(|e| format!("oracles: {name}: {e}"))?;
-                    p.address().map_err(|e| format!("oracles: {name}: {e}"))?;
+                    format!(
+                        "pyth {}",
+                        p.address().map_err(|e| format!("oracles: {name}: {e}"))?
+                    )
                 }
-                Source::Scope(s) => {
-                    s.address().map_err(|e| format!("oracles: {name}: {e}"))?;
-                }
+                Source::Scope(s) => format!(
+                    "scope {} {}",
+                    s.address().map_err(|e| format!("oracles: {name}: {e}"))?,
+                    s.index
+                ),
+                Source::Phoenix(p) => format!("phoenix {}", p.symbol),
                 Source::Switchboard(_) => {
                     return Err(format!("oracles: {name}: Switchboard isn't wired yet"));
                 }
-                Source::Phoenix(_) => {}
+            };
+            // Two feeds writing one price would interleave and each undo
+            // the other's failures.
+            if self.feeds[..i].iter().any(|f| f.target() == target) {
+                return Err(format!(
+                    "oracles: {name} writes a price another feed writes"
+                ));
             }
         }
         Ok(())
@@ -268,6 +288,20 @@ impl Oracles {
 }
 
 impl Feed {
+    /// What the feed writes, to compare feeds by.
+    fn target(&self) -> String {
+        match &self.source {
+            Source::Pyth(p) => p
+                .address()
+                .map_or_else(|e| e, |address| format!("pyth {address}")),
+            Source::Scope(s) => s
+                .address()
+                .map_or_else(|e| e, |address| format!("scope {address} {}", s.index)),
+            Source::Phoenix(p) => format!("phoenix {}", p.symbol),
+            Source::Switchboard(w) => format!("switchboard {}", w.account),
+        }
+    }
+
     /// The path's price at `slot`.
     fn price_at(&self, start_price: f64, slot: u64) -> f64 {
         let level = match self.path.iter().position(|l| l.slot > slot) {
@@ -304,7 +338,7 @@ impl Feed {
                 (from, to, f.mode)
             })
             .collect();
-        let mut publications = Vec::new();
+        let mut publications: Vec<Publication> = Vec::new();
         let mut slot = 0;
         while slot <= duration_slots {
             let active = || {
@@ -322,7 +356,17 @@ impl Feed {
                     .max()
                     .unwrap_or(0);
                 let as_of_slot = slot.saturating_sub(lag);
-                let mut price = self.price_at(start_price, as_of_slot);
+                // Time doesn't run backwards: a delayed feed goes quiet
+                // until the lagged moment passes the last one it published.
+                if publications
+                    .last()
+                    .is_some_and(|last| as_of_slot <= last.as_of_slot)
+                {
+                    slot += self.cadence_slots;
+                    continue;
+                }
+                let truth = self.price_at(start_price, as_of_slot);
+                let mut price = truth;
                 let mut conf_fraction = self.conf_bps / 10_000.0;
                 for mode in active() {
                     match mode {
@@ -336,6 +380,8 @@ impl Feed {
                     as_of_slot,
                     price,
                     conf_fraction,
+                    ema_price: truth,
+                    ema_conf_fraction: self.conf_bps / 10_000.0,
                 });
             }
             slot += self.cadence_slots;
@@ -403,6 +449,12 @@ impl OracleSource for PhoenixOracle {
                     slot = slot.max(last + 1);
                 }
                 last_slot = Some(slot);
+                if slot > context.duration_slots {
+                    warn!(
+                        symbol = self.symbol,
+                        slot, "a Phoenix oracle step lands after the session ends"
+                    );
+                }
                 overrides.push(oracle_move(map, &self.symbol, ticks.round() as u64, slot));
             }
             previous = target;
@@ -446,7 +498,7 @@ impl PythOracle {
         Ok(id)
     }
 
-    fn address(&self) -> std::result::Result<Pubkey, String> {
+    pub(crate) fn address(&self) -> std::result::Result<Pubkey, String> {
         match &self.account {
             Some(account) => account
                 .parse()
@@ -474,6 +526,8 @@ impl OracleSource for PythOracle {
     fn lower(&self, context: &Context, publications: &[Publication]) -> Result<Vec<Override>> {
         let address = self.address().map_err(|e| oracle_error(&self.feed_id, e))?;
         let scale = 10f64.powi(-self.exponent);
+        // Publish times only go up (see [`Feed::plan`]); the first update
+        // follows the account's own last by a second.
         let mut previous_time = None;
         Ok(publications
             .iter()
@@ -491,9 +545,14 @@ impl OracleSource for PythOracle {
                         "price_message.exponent": self.exponent,
                         "price_message.publish_time": time,
                         "price_message.prev_publish_time": prev,
-                        "price_message.ema_price": price as i64,
-                        "price_message.ema_conf": conf as u64,
-                        "posted_slot": context.base_slot + p.as_of_slot,
+                        "price_message.ema_price": (p.ema_price * scale).round() as i64,
+                        "price_message.ema_conf": ((p.ema_price * scale).round()
+                            * p.ema_conf_fraction)
+                            .round()
+                            .max(1.0) as u64,
+                        // Where the write lands; only the publish time
+                        // carries a delay.
+                        "posted_slot": context.base_slot + p.slot,
                     }),
                     slot: p.slot,
                     label: format!(
@@ -534,7 +593,7 @@ const SCOPE_ENTRY_LEN: usize = 8 + 8 + 8 + 8 + 24;
 pub const SCOPE_ENTRIES: u16 = 512;
 
 impl ScopeOracle {
-    fn address(&self) -> std::result::Result<Pubkey, String> {
+    pub(crate) fn address(&self) -> std::result::Result<Pubkey, String> {
         if self.index >= SCOPE_ENTRIES {
             return Err(format!(
                 "index {} is past Scope's {SCOPE_ENTRIES}",
@@ -573,7 +632,7 @@ impl OracleSource for ScopeOracle {
                         (format!("prices.{i}.price.exp"), json!(self.exp)),
                         (
                             format!("prices.{i}.last_updated_slot"),
-                            json!(context.base_slot + p.as_of_slot),
+                            json!(context.base_slot + p.slot),
                         ),
                         (
                             format!("prices.{i}.unix_timestamp"),
@@ -642,6 +701,7 @@ pub fn overrides(
             start_unix,
             slot_time_ms: SLOT_TIME_MS,
             start_price,
+            duration_slots,
             perp_asset_map: world.phoenix.map(|(map, _)| map),
         };
         let publications = feed.plan(oracles.seed, index, duration_slots, start_price);
@@ -723,6 +783,7 @@ mod tests {
             start_unix: 1_800_000_000,
             slot_time_ms: 250,
             start_price: 100.0,
+            duration_slots: 40,
             perp_asset_map: Some(Pubkey::new_unique()),
         }
     }
@@ -778,18 +839,37 @@ mod tests {
     }
 
     #[test]
-    fn delayed_publishes_the_past_stamped_as_then() {
+    fn delayed_goes_quiet_then_publishes_the_past_stamped_as_then() {
         let f = feed(
             pyth(),
-            vec![failure(Mode::Delayed { lag_slots: 8 }, 20, Some(8))],
+            vec![failure(Mode::Delayed { lag_slots: 8 }, 20, Some(20))],
+        );
+        let plan = f.plan(1, 0, 48, 100.0);
+        let at = |slot| plan.iter().find(|p| p.slot == slot);
+        // The lagged moment (12, 16) hasn't passed the last published (16).
+        assert!(at(20).is_none() && at(24).is_none());
+        assert_eq!(at(28).unwrap().as_of_slot, 20);
+        assert!((at(28).unwrap().price - 95.0).abs() < 1e-9);
+        assert_eq!(at(36).unwrap().as_of_slot, 28);
+        // The window ends: the feed is current again, and time only went up.
+        assert_eq!(at(40).unwrap().as_of_slot, 40);
+        assert!(plan.windows(2).all(|w| w[1].as_of_slot > w[0].as_of_slot));
+    }
+
+    #[test]
+    fn an_average_does_not_follow_a_failure() {
+        let f = feed(
+            pyth(),
+            vec![
+                failure(Mode::OffPrice { bias_pct: 10.0 }, 8, Some(8)),
+                failure(Mode::WideConfidence { factor: 10.0 }, 8, Some(8)),
+            ],
         );
         let plan = f.plan(1, 0, 40, 100.0);
-        let at = |slot| plan.iter().find(|p| p.slot == slot).unwrap();
-        assert_eq!(at(16).as_of_slot, 16);
-        assert_eq!(at(20).as_of_slot, 12);
-        assert!((at(20).price - 97.0).abs() < 1e-9);
-        assert_eq!(at(24).as_of_slot, 16);
-        assert_eq!(at(28).as_of_slot, 28);
+        let bad = plan.iter().find(|p| p.slot == 8).unwrap();
+        assert!((bad.price - bad.ema_price * 1.1).abs() < 1e-9);
+        assert_eq!(bad.ema_conf_fraction, 0.0002);
+        assert!(bad.conf_fraction > bad.ema_conf_fraction);
     }
 
     #[test]
@@ -819,7 +899,7 @@ mod tests {
     fn pyth_lowers_to_the_price_update_template() {
         let f = feed(
             pyth(),
-            vec![failure(Mode::Delayed { lag_slots: 8 }, 20, Some(4))],
+            vec![failure(Mode::Delayed { lag_slots: 8 }, 20, Some(20))],
         );
         let plan = f.plan(1, 0, 40, 100.0);
         let writer = f.source.writer();
@@ -838,17 +918,24 @@ mod tests {
         assert_eq!(first["price_message.conf"], 2_000_000u64);
         assert_eq!(first["price_message.publish_time"], 1_800_000_000i64);
         assert_eq!(first["posted_slot"], 1_000u64);
-        // 20 slots in, the delayed update is stamped 12 slots in (3 s).
-        let delayed = overrides.iter().find(|o| o.slot == 20).unwrap();
+        // The delayed update lands at slot 28, as of slot 20 (5 s): the
+        // write is where it lands, the publish time carries the delay and
+        // follows the previous update's (slot 16, 4 s).
+        let delayed = overrides.iter().find(|o| o.slot == 28).unwrap();
+        assert_eq!(delayed.values["posted_slot"], 1_028u64);
         assert_eq!(
             delayed.values["price_message.publish_time"],
-            1_800_000_003i64
+            1_800_000_005i64
         );
-        assert_eq!(delayed.values["posted_slot"], 1_012u64);
         assert_eq!(
             delayed.values["price_message.prev_publish_time"],
             1_800_000_004i64
         );
+        let times: Vec<i64> = overrides
+            .iter()
+            .map(|o| o.values["price_message.publish_time"].as_i64().unwrap())
+            .collect();
+        assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
     }
 
     #[test]
@@ -925,6 +1012,28 @@ mod tests {
     }
 
     #[test]
+    fn feeds_that_write_one_price_are_refused() {
+        let twice = Oracles {
+            seed: 1,
+            feeds: vec![feed(pyth(), vec![]), {
+                let mut f = feed(pyth(), vec![]);
+                f.name = "g".into();
+                f
+            }],
+        };
+        assert!(twice.validate(40).unwrap_err().contains("another feed"));
+        let late = Oracles {
+            seed: 1,
+            feeds: vec![{
+                let mut f = feed(pyth(), vec![failure(Mode::Stale, 4, Some(4))]);
+                f.failures[0].window.from_slot_max = Some(80);
+                f
+            }],
+        };
+        assert!(late.validate(40).is_err());
+    }
+
+    #[test]
     fn switchboard_is_typed_but_refused() {
         let source = Source::Switchboard(SwitchboardOracle {
             account: "q".into(),
@@ -960,6 +1069,125 @@ mod tests {
             account: None,
         });
         assert!(bad.validate(40).is_err());
+    }
+
+    /// The one live run: a Pyth SOL/USD feed with all four failures, on the
+    /// spot snapshot, stepped slot by slot, decoding the account and the
+    /// clock. `MTX_LIVE_SNAPSHOT=snapshots/sol-usdc-spot-... cargo test -p
+    /// mtx-grader live_pyth -- --ignored --nocapture`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs the spot snapshot (MTX_LIVE_SNAPSHOT)"]
+    async fn live_pyth_feed_with_every_failure() {
+        use mtx_kit::protocols::pyth::{PriceUpdate, SOL_USD_FEED_ID};
+        use surfpool_sdk::{BlockProductionMode, SimnetCommand};
+
+        let dir = std::env::var("MTX_LIVE_SNAPSHOT").expect("MTX_LIVE_SNAPSHOT");
+        let (surfnet, _) = crate::snapshot::start_snapshot(
+            std::path::Path::new(&dir),
+            crate::snapshot::Access::Open,
+        )
+        .await
+        .unwrap();
+        let rpc = chain::rpc_client(&surfnet);
+        surfnet
+            .send_command(SimnetCommand::UpdateBlockProductionMode(
+                BlockProductionMode::Manual,
+            ))
+            .unwrap();
+        let mut slot = crate::session::manual_slot(&rpc).await.unwrap();
+        let sol: String = SOL_USD_FEED_ID.iter().map(|b| format!("{b:02x}")).collect();
+        let window = |from_slot, slots| Window {
+            from_slot,
+            from_slot_max: None,
+            slots: Some(slots),
+        };
+        let oracles = Oracles {
+            seed: 3,
+            feeds: vec![Feed {
+                name: "sol".into(),
+                source: Source::Pyth(PythOracle {
+                    feed_id: sol,
+                    shard: 0,
+                    exponent: -8,
+                    account: None,
+                }),
+                cadence_slots: 4,
+                path: vec![Level {
+                    slot: 80,
+                    level_pct: -10.0,
+                }],
+                conf_bps: 2.0,
+                failures: vec![
+                    failure_at(Mode::Stale, window(16, 16)),
+                    failure_at(Mode::WideConfidence { factor: 50.0 }, window(32, 16)),
+                    failure_at(Mode::OffPrice { bias_pct: 5.0 }, window(48, 16)),
+                    failure_at(Mode::Delayed { lag_slots: 8 }, window(64, 16)),
+                ],
+            }],
+        };
+        oracles.validate(96).unwrap();
+        let account = mtx_kit::protocols::pyth::feed_account(0, &SOL_USD_FEED_ID);
+        let read = |rpc: &RpcClient| {
+            let u = PriceUpdate::decode(&rpc.get_account(&account).unwrap().data).unwrap();
+            let clock = rpc
+                .get_account(&solana_pubkey::pubkey!(
+                    "SysvarC1ock11111111111111111111111111111111"
+                ))
+                .unwrap()
+                .data;
+            let unix = i64::from_le_bytes(clock[32..40].try_into().unwrap());
+            (u, unix)
+        };
+        let (before, _) = read(&rpc);
+        register(&rpc, &oracles, 96, &World::default()).unwrap();
+        let base = rpc.get_slot().unwrap();
+        let (_, unix0) = read(&rpc);
+        let mut rows = Vec::new();
+        for _ in 0..=96 {
+            let (u, unix) = read(&rpc);
+            rows.push((rows.len() as u64, unix - unix0, u));
+            surfnet
+                .send_command(SimnetCommand::SlotForward(None))
+                .unwrap();
+            slot = crate::session::wait_for_slot(&rpc, slot + 1).await.unwrap();
+        }
+        println!(
+            "start price {} publish_time {}",
+            before.price_f64(),
+            before.publish_time
+        );
+        println!("rel_slot clock_s price conf publish_time-clock0 posted_slot-base");
+        for (at, secs, u) in &rows {
+            println!(
+                "{at:4} {secs:3} {:9.4} {:7.4} {:5} {:5}",
+                u.price_f64(),
+                u.confidence_f64(),
+                u.publish_time - unix0,
+                u.posted_slot as i64 - base as i64
+            );
+        }
+        let at = |n: usize| &rows[n];
+        // The clock: 250 ms a slot.
+        assert!(
+            (at(96).1 - 24).abs() <= 1,
+            "clock seconds after 96 slots: {}",
+            at(96).1
+        );
+        // Stale (16..32): the last write before it stays.
+        assert_eq!(at(20).2.publish_time, at(31).2.publish_time);
+        // Wide confidence (32..48).
+        assert!(at(40).2.confidence_f64() > 10.0 * at(8).2.confidence_f64());
+        // Off price (48..64): about 5% above the path.
+        assert!(at(56).2.price_f64() > at(44).2.price_f64() * 1.03);
+        // Publish time never goes down, and the writes land where posted.
+        assert!(
+            rows.windows(2)
+                .all(|w| w[1].2.publish_time >= w[0].2.publish_time)
+        );
+    }
+
+    fn failure_at(mode: Mode, window: Window) -> Failure {
+        Failure { mode, window }
     }
 
     impl Feed {
