@@ -13,6 +13,7 @@ pub mod offhours;
 pub mod orders;
 pub mod phoenix;
 pub mod scenario;
+pub mod scenario_v2;
 pub mod session;
 pub mod snapshot;
 pub mod spot;
