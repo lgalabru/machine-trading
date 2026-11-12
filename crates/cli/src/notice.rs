@@ -1,10 +1,10 @@
 //! Notices: mtx's terminal output, in one style, as pay's CLI writes it. A
-//! colored rail (`│`) by level, a bold title, and dimmed lines beneath:
+//! colored rail (`┃`) by level, a bold title, and dimmed lines beneath:
 //!
 //! ```text
-//! │ mtx studio
-//! │ neo · flash-crash-spcx
-//! │ http://127.0.0.1:58468
+//! ┃ mtx studio
+//! ┃ neo · flash-crash-spcx
+//! ┃ http://127.0.0.1:58468
 //! ```
 //!
 //! [`NoticeFormat`] renders `tracing` events the same way: the rail by
@@ -63,7 +63,7 @@ fn rail(level: NoticeLevel) -> String {
         NoticeLevel::Warning => YELLOW,
         NoticeLevel::Error => RED,
     };
-    paint(&format!("{BOLD}{style}"), "│")
+    paint(&format!("{BOLD}{style}"), "┃")
 }
 
 /// A notice: the rail, the title in bold, each line of `body` dimmed.
@@ -182,7 +182,7 @@ mod tests {
         // Not a terminal under test: no colors.
         assert_eq!(
             notice(NoticeLevel::Info, "mtx studio", "neo\nhttp://127.0.0.1:1"),
-            "│ mtx studio\n│ neo\n│ http://127.0.0.1:1\n"
+            "┃ mtx studio\n┃ neo\n┃ http://127.0.0.1:1\n"
         );
     }
 
