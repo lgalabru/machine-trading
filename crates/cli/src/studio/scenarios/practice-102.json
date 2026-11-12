@@ -1,6 +1,6 @@
 {
   "name": "practice-102",
-  "description": "Ten steps: SPCX rises 3% at step 3 and is back at step 5, then falls 3% at step 7 and is back at step 9. A squeeze, then a dip.",
+  "description": "Ten steps: SPCX rises 3% at step 3 and is back at step 5; then it falls 3% at step 7, and 3% more at step 9, and doesn't come back.",
   "symbol": "SPCX",
   "duration_slots": 20,
   "mandate": {
@@ -29,8 +29,8 @@
       "level_pct": -3.0
     },
     {
-      "slot": 17,
-      "level_pct": 0.0
+      "slot": 16,
+      "level_pct": -6.0
     }
   ]
 }
