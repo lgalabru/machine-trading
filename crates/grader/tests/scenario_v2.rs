@@ -33,13 +33,12 @@ fn scenario_files() -> Vec<PathBuf> {
     for dir in dirs.into_iter().filter(|d| d.is_dir()) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
-            if path.extension().is_some_and(|e| e == "json") {
-                if std::fs::read_to_string(&path)
+            if path.extension().is_some_and(|e| e == "json")
+                && std::fs::read_to_string(&path)
                     .unwrap()
                     .contains("\"duration_slots\"")
-                {
-                    files.push(path);
-                }
+            {
+                files.push(path);
             }
         }
     }
