@@ -864,21 +864,37 @@ fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check
             return Check::fail(REALISTIC, id, title, format!("couldn't run it: {e}"));
         }
     };
-    // It prints its report either way and exits 2 when a check fails.
+    // It prints its report either way: exit 2 when a check fails, 3 when
+    // nothing failed but the market wasn't judged.
     match serde_json::from_slice::<Value>(&output.stdout) {
         Ok(report) if report["checks"].is_array() => {
             let name = Path::new(&file)
                 .file_name()
                 .map_or(file.clone(), |n| n.to_string_lossy().into_owned());
-            Check::from(
-                REALISTIC,
-                id,
-                title,
-                output.status.success() && report["passed"] == true,
-                format!("{name}: {}", realism_summary(&report)),
-            )
+            let status = realism_status(output.status.code(), &report);
+            let detail = format!("{name}: {}", realism_summary(&report));
+            let detail = if status == Status::Inconclusive {
+                format!("not judged: {detail}")
+            } else {
+                detail
+            };
+            Check::new(REALISTIC, id, title, status, detail)
         }
         _ => Check::fail(REALISTIC, id, title, tail(&output)),
+    }
+}
+
+/// What a realism report's exit code and verdict make of the check. A market
+/// not judged (exit 3, or verdict `not_judged`: the return checks didn't run)
+/// is neither a pass nor a failure; a failed check (exit 2) or any other
+/// error fails.
+fn realism_status(code: Option<i32>, report: &Value) -> Status {
+    match code {
+        Some(0) if report["passed"] == true && report["verdict"] != "not_judged" => Status::Pass,
+        Some(0) | Some(3) if report["verdict"] == "not_judged" || code == Some(3) => {
+            Status::Inconclusive
+        }
+        _ => Status::Fail,
     }
 }
 
@@ -1373,6 +1389,37 @@ mod tests {
         let oracle = &harbor_checks(&jobs, true, "")[0];
         assert_eq!(oracle.status, Status::Fail);
         assert!(oracle.detail.contains("missing"), "{}", oracle.detail);
+    }
+
+    #[test]
+    fn an_unjudged_market_is_inconclusive_and_a_failed_one_fails() {
+        let report = |passed: bool, verdict: &str| serde_json::json!({"sessions": 300, "checks": [], "passed": passed, "verdict": verdict});
+        assert_eq!(realism_status(Some(0), &report(true, "pass")), Status::Pass);
+        assert_eq!(
+            realism_status(Some(3), &report(true, "not_judged")),
+            Status::Inconclusive
+        );
+        assert_eq!(
+            realism_status(Some(0), &report(true, "not_judged")),
+            Status::Inconclusive
+        );
+        let unlabelled = serde_json::json!({"checks": [], "passed": true});
+        assert_eq!(realism_status(Some(3), &unlabelled), Status::Inconclusive);
+        assert_eq!(realism_status(Some(0), &unlabelled), Status::Pass);
+        assert_eq!(
+            realism_status(Some(2), &report(false, "fail")),
+            Status::Fail
+        );
+        assert_eq!(
+            realism_status(Some(2), &report(true, "not_judged")),
+            Status::Fail
+        );
+        assert_eq!(realism_status(Some(1), &report(true, "pass")), Status::Fail);
+        assert_eq!(realism_status(None, &report(true, "pass")), Status::Fail);
+        assert_eq!(
+            realism_status(Some(0), &report(false, "fail")),
+            Status::Fail
+        );
     }
 
     #[test]
