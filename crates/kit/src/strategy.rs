@@ -838,10 +838,13 @@ pub enum Intent {
     },
     /// Take `share` (in [0, 1]) of a liquidity position out and collect its
     /// fees ([`LiquidityPosition::id`]; `None` for the only one): a share of
-    /// 0 collects the fees only.
+    /// 0 collects the fees only. At least `min_base` and `min_quote`, if
+    /// given, fees included.
     RemoveLiquidity {
         position: Option<String>,
         share: f64,
+        min_base: Option<f64>,
+        min_quote: Option<f64>,
     },
     /// Supply to a lending reserve, or stake into a stake pool.
     Deposit {
@@ -1131,6 +1134,8 @@ impl Orders {
         self.add(Intent::RemoveLiquidity {
             position: position.map(str::to_string),
             share,
+            min_base: None,
+            min_quote: None,
         })
     }
 
@@ -1268,6 +1273,8 @@ pub enum Action {
     RemoveLiquidity {
         position: Option<String>,
         share: f64,
+        min_base: Option<f64>,
+        min_quote: Option<f64>,
     },
     Deposit {
         amount: Option<f64>,
@@ -1347,7 +1354,8 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
 /// - Cancels by client id, responses to requests for quotes, liquidity and
 ///   lending actions go through as they are.
 /// - A line that asks for what can't be done (a target with no positive
-///   pacing, a price or a size that isn't a number) is dropped, with a note.
+///   pacing, an amount or a price that isn't a number) is dropped, with a
+///   note.
 pub fn plan_sheet(orders: &Orders, market: &Market) -> (Vec<Planned>, Vec<String>) {
     plan_lines(orders.lines(), market, &|_, _| true)
 }
@@ -1481,6 +1489,12 @@ fn plan_lines<'a>(
                         size
                     }
                 };
+            if let Some(what) = not_a_number(intent) {
+                notes.push(format!(
+                    "{what} with an amount or a price that isn't a number: not sent"
+                ));
+                break 'line;
+            }
             match intent {
                 &Intent::Target {
                     position: target,
@@ -1699,9 +1713,16 @@ fn plan_lines<'a>(
                     position: position.clone(),
                     shape: *shape,
                 }),
-                Intent::RemoveLiquidity { position, share } => push(Action::RemoveLiquidity {
+                Intent::RemoveLiquidity {
+                    position,
+                    share,
+                    min_base,
+                    min_quote,
+                } => push(Action::RemoveLiquidity {
                     position: position.clone(),
                     share: *share,
+                    min_base: *min_base,
+                    min_quote: *min_quote,
                 }),
                 &Intent::Deposit { amount } => push(Action::Deposit { amount }),
                 &Intent::Withdraw { amount } => push(Action::Withdraw { amount }),
@@ -1760,6 +1781,59 @@ pub fn resting_after(bids: f64, asks: f64, actions: &[Action]) -> (f64, f64) {
             } => (bids, asks + size),
             _ => (bids, asks),
         })
+}
+
+/// What a line is, if one of its amounts or prices isn't a number (a
+/// target's position is checked where it's planned).
+fn not_a_number(intent: &Intent) -> Option<&'static str> {
+    let (what, numbers): (&str, Vec<f64>) = match intent {
+        Intent::Target { .. } | Intent::CancelAll | Intent::Cancel { .. } => return None,
+        &Intent::Market { size, limit, .. } => ("a market order", vec![size, limit]),
+        &Intent::Limit { price, size, .. } => ("a limit order", vec![price, size]),
+        &Intent::Quote { bid, ask, size } => ("a quote", vec![bid, ask, size]),
+        &Intent::Swap { amount, limit, .. } => ("a swap", vec![amount, limit]),
+        Intent::Respond { bid, ask, size, .. } => (
+            "a response",
+            [*bid, *ask, *size].into_iter().flatten().collect(),
+        ),
+        Intent::AddLiquidity {
+            base, quote, range, ..
+        } => (
+            "liquidity",
+            [*base, *quote]
+                .into_iter()
+                .chain(range.iter().flat_map(|r| [r.lower, r.upper]))
+                .collect(),
+        ),
+        Intent::RemoveLiquidity {
+            share,
+            min_base,
+            min_quote,
+            ..
+        } => (
+            "a liquidity removal",
+            [Some(*share), *min_base, *min_quote]
+                .into_iter()
+                .flatten()
+                .collect(),
+        ),
+        Intent::Deposit { amount }
+        | Intent::Withdraw { amount }
+        | Intent::Borrow { amount }
+        | Intent::Repay { amount } => ("a lending action", amount.iter().copied().collect()),
+        Intent::Liquidate {
+            repay,
+            min_received,
+            ..
+        } => (
+            "a liquidation",
+            [Some(*repay), *min_received]
+                .into_iter()
+                .flatten()
+                .collect(),
+        ),
+    };
+    numbers.iter().any(|n| n.is_nan()).then_some(what)
 }
 
 fn signed(side: Side, size: f64) -> f64 {
@@ -2532,6 +2606,29 @@ mod tests {
         };
         let (planned, _) = plan_sheet(&orders, &broken);
         assert!(planned.is_empty());
+    }
+
+    #[test]
+    fn an_amount_that_isnt_a_number_gets_a_note() {
+        let mut orders = Orders::new();
+        orders
+            .buy(f64::NAN, 101.0)
+            .sell(1.0, f64::NAN)
+            .bid(f64::NAN, 1.0)
+            .quote(99.0, 101.0, f64::NAN)
+            .swap(Side::Bid, f64::NAN, AmountUnit::Base, 101.0)
+            .respond("r", Some(f64::NAN), None)
+            .remove_liquidity(None, f64::NAN)
+            .deposit(f64::NAN)
+            .liquidate("o", "c", f64::NAN)
+            .buy(1.0, 101.0);
+        let (planned, notes) = plan_sheet(&orders, &market(0.0));
+        assert_eq!(planned.len(), 1, "only the last buy: {planned:?}");
+        assert_eq!(notes.len(), 9, "{notes:?}");
+        assert!(
+            notes.iter().all(|n| n.contains("isn't a number")),
+            "{notes:?}"
+        );
     }
 
     #[test]

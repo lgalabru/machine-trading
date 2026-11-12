@@ -72,6 +72,7 @@ pub mod core;
 pub mod lending;
 #[cfg(feature = "chain")]
 pub mod protocols;
+pub mod raw;
 mod strategy;
 #[cfg(feature = "venue")]
 pub mod venue;
@@ -100,6 +101,7 @@ pub use mtx_core::{
     rust_decimal::{self, Decimal},
     turns,
 };
+pub use raw::{RawReceipt, RawTransaction, send_raw};
 /// The Solana types the kit's signatures use, so callers need not pin
 /// matching versions of the Solana crates themselves.
 #[cfg(feature = "chain")]

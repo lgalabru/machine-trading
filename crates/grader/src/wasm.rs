@@ -71,8 +71,11 @@ pub const FUEL_PER_STEP: u64 = 2_000_000_000;
 /// The most linear memory a strategy may grow to, in bytes.
 pub const MEMORY_BYTES: usize = 1 << 30;
 
-/// The most `rpc` calls one step may make.
+/// The most `rpc` calls one step may make, and the most `send` calls.
 const RPC_CALLS_PER_STEP: u32 = 256;
+
+/// How many of a step's raw transactions the host keeps to show.
+const RAW_SENDS_KEPT: usize = 4;
 
 /// RPC methods a strategy may call: the kit's list, which `mtx_kit::rpc`
 /// checks on its side too.
@@ -173,6 +176,10 @@ struct Host {
     rpc_url: String,
     http: reqwest::Client,
     rpc_calls: u32,
+    /// The step's `send` calls, and the first few transactions they asked
+    /// for, as the kit has them: what a test or the debug view shows.
+    raw_calls: u32,
+    raw_sends: Vec<mtx_kit::RawTransaction>,
     limits: StoreLimits,
 }
 
@@ -236,11 +243,22 @@ impl v2::StrategyImports for Host {
     }
 
     /// Reserved for raw sends (the grader-signed `send`): no session enables
-    /// them yet.
+    /// them yet. A malformed transaction is refused for what is wrong with
+    /// it; any other, because raw sends are off.
     async fn send(
         &mut self,
-        _tx: v2::mtx::strategy::types::RawTransaction,
+        tx: v2::mtx::strategy::types::RawTransaction,
     ) -> std::result::Result<v2::mtx::strategy::types::RawReceipt, String> {
+        self.raw_calls += 1;
+        if self.raw_calls > RPC_CALLS_PER_STEP {
+            return Err(format!("more than {RPC_CALLS_PER_STEP} sends this step"));
+        }
+        let tx = wit2::raw_transaction(tx);
+        let checked = tx.check();
+        if self.raw_sends.len() < RAW_SENDS_KEPT {
+            self.raw_sends.push(tx);
+        }
+        checked?;
         Err("raw sends aren't enabled in this session".into())
     }
 }
@@ -371,6 +389,8 @@ impl WasmStrategy {
             rpc_url: rpc_url.to_string(),
             http: reqwest::Client::new(),
             rpc_calls: 0,
+            raw_calls: 0,
+            raw_sends: Vec::new(),
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY_BYTES)
                 .trap_on_grow_failure(true)
@@ -411,7 +431,10 @@ impl WasmStrategy {
     /// Fuel for the next call, from what the session has left: `false` if
     /// none is left.
     fn refuel(&mut self) -> bool {
-        self.store.data_mut().rpc_calls = 0;
+        let host = self.store.data_mut();
+        host.rpc_calls = 0;
+        host.raw_calls = 0;
+        host.raw_sends.clear();
         self.fuel_given = self.fuel_left.min(FUEL_PER_CALL);
         self.fuel_given > 0 && self.store.set_fuel(self.fuel_given).is_ok()
     }
@@ -430,6 +453,12 @@ impl WasmStrategy {
             let _ = writeln!(host.log, "{line}");
         }
         self.last_printed = lines;
+    }
+
+    /// The raw transactions the last call asked to send, the first few:
+    /// refused or not.
+    pub fn raw_sends(&self) -> &[mtx_kit::RawTransaction] {
+        &self.store.data().raw_sends
     }
 
     /// What the last call printed, its fuel, and its `rpc` calls.
@@ -899,7 +928,7 @@ impl WasmBot {
 mod wit2 {
     use mtx_kit::{
         Action, AmountUnit, Intent, LineOptions, LiquidityShape, Market, MarketKind, PriceRange,
-        Route, SendSource, SendState, Session, Side, TimeInForce, TxOptions,
+        Route, SendSource, SendState, Session, Side, TimeInForce, TxOptions, raw,
     };
 
     use super::v2::mtx::strategy::types as w;
@@ -1081,12 +1110,17 @@ mod wit2 {
                 position: position.clone(),
                 shape: s.map(shape),
             }),
-            Action::RemoveLiquidity { position, share } => {
-                w::Order::RemoveLiquidity(w::RemoveLiquidity {
-                    position: position.clone(),
-                    share: *share,
-                })
-            }
+            Action::RemoveLiquidity {
+                position,
+                share,
+                min_base,
+                min_quote,
+            } => w::Order::RemoveLiquidity(w::RemoveLiquidity {
+                position: position.clone(),
+                share: *share,
+                min_base: *min_base,
+                min_quote: *min_quote,
+            }),
             Action::Deposit { amount: a } => w::Order::Deposit(amount(a)),
             Action::Withdraw { amount: a } => w::Order::Withdraw(amount(a)),
             Action::Borrow { amount: a } => w::Order::Borrow(amount(a)),
@@ -1245,27 +1279,88 @@ mod wit2 {
         }
     }
 
+    fn tx_options(tx: w::TxOptions) -> TxOptions {
+        TxOptions {
+            cu_limit: tx.cu_limit,
+            cu_price: tx.cu_price,
+            tip: tx.tip,
+            bundle: tx.bundle,
+            route: tx.route.map(|route| match route {
+                w::Route::Rpc => Route::Rpc,
+                w::Route::Staked => Route::Staked,
+                w::Route::Jito(j) => Route::Jito {
+                    bundle_only: j.bundle_only,
+                    dont_front: j.dont_front,
+                },
+            }),
+            retry_until_slot: tx.retry_until_slot,
+        }
+    }
+
+    fn account_key(key: w::AccountKey) -> raw::AccountKey {
+        match key {
+            w::AccountKey::Address(address) => raw::AccountKey::Address(address),
+            w::AccountKey::Authority => raw::AccountKey::Authority,
+            w::AccountKey::Fresh(n) => raw::AccountKey::Fresh(n),
+            w::AccountKey::Derived(n) => raw::AccountKey::Derived(n),
+        }
+    }
+
+    /// A raw transaction, as the kit has it.
+    pub fn raw_transaction(tx: w::RawTransaction) -> raw::RawTransaction {
+        raw::RawTransaction {
+            instructions: tx
+                .instructions
+                .into_iter()
+                .map(|ix| raw::RawInstruction {
+                    program: ix.program,
+                    accounts: ix
+                        .accounts
+                        .into_iter()
+                        .map(|a| raw::RawAccount {
+                            key: account_key(a.key),
+                            signer: a.signer,
+                            writable: a.writable,
+                        })
+                        .collect(),
+                    data: ix.data,
+                })
+                .collect(),
+            lookup_tables: tx.lookup_tables,
+            fresh_signers: tx.fresh_signers,
+            derived: tx
+                .derived
+                .into_iter()
+                .map(|d| match d {
+                    w::Derivation::Pda(p) => raw::Derivation::Pda {
+                        program: account_key(p.program),
+                        seeds: p
+                            .seeds
+                            .into_iter()
+                            .map(|seed| match seed {
+                                w::Seed::Bytes(bytes) => raw::Seed::Bytes(bytes),
+                                w::Seed::Key(key) => raw::Seed::Key(account_key(key)),
+                            })
+                            .collect(),
+                    },
+                    w::Derivation::Ata(a) => raw::Derivation::Ata {
+                        owner: account_key(a.owner),
+                        mint: account_key(a.mint),
+                        token_program: account_key(a.token_program),
+                    },
+                })
+                .collect(),
+            tx: tx.tx.map(tx_options),
+        }
+    }
+
     /// A line of the sheet, as the kit plans it.
     pub fn line(intent: w::Intent) -> (Intent, LineOptions) {
         let mut options = LineOptions {
             venue: intent.venue,
             client_id: intent.client_id,
             reduce_only: intent.reduce_only,
-            tx: intent.tx.map(|tx| TxOptions {
-                cu_limit: tx.cu_limit,
-                cu_price: tx.cu_price,
-                tip: tx.tip,
-                bundle: tx.bundle,
-                route: tx.route.map(|route| match route {
-                    w::Route::Rpc => Route::Rpc,
-                    w::Route::Staked => Route::Staked,
-                    w::Route::Jito(j) => Route::Jito {
-                        bundle_only: j.bundle_only,
-                        dont_front: j.dont_front,
-                    },
-                }),
-                retry_until_slot: tx.retry_until_slot,
-            }),
+            tx: intent.tx.map(tx_options),
             ..LineOptions::default()
         };
         let intent = match intent.action {
@@ -1344,6 +1439,8 @@ mod wit2 {
             w::Action::RemoveLiquidity(o) => Intent::RemoveLiquidity {
                 position: o.position,
                 share: o.share,
+                min_base: o.min_base,
+                min_quote: o.min_quote,
             },
             w::Action::Deposit(a) => Intent::Deposit { amount: a.amount },
             w::Action::Withdraw(a) => Intent::Withdraw { amount: a.amount },
@@ -1825,7 +1922,15 @@ mod tests {
                 },
                 LineOptions::default(),
             )
-            .remove_liquidity(None, 0.0)
+            .push(
+                Intent::RemoveLiquidity {
+                    position: None,
+                    share: 0.0,
+                    min_base: Some(0.5),
+                    min_quote: None,
+                },
+                LineOptions::default(),
+            )
             .deposit(10.0)
             .withdraw(None)
             .borrow(5.0)
@@ -1840,6 +1945,68 @@ mod tests {
                 LineOptions::default(),
             );
         assert_eq!(lines, expected.clone().into_lines());
+
+        // The raw transactions it asked for came across whole, fresh
+        // signers and derived addresses included, and were refused: the
+        // well-formed one because raw sends are off, the cyclic one for its
+        // cycle.
+        use mtx_kit::raw::{AccountKey, Derivation, RawAccount, RawInstruction, Seed};
+        let clmm = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK";
+        let account = |key, signer, writable| RawAccount {
+            key,
+            signer,
+            writable,
+        };
+        let open_position = mtx_kit::RawTransaction {
+            instructions: vec![RawInstruction {
+                program: clmm.into(),
+                accounts: vec![
+                    account(AccountKey::Authority, true, true),
+                    account(AccountKey::Fresh(0), true, true),
+                    account(AccountKey::Derived(0), false, true),
+                    account(AccountKey::Derived(1), false, true),
+                ],
+                data: vec![77, 255, 0, 1],
+            }],
+            lookup_tables: vec!["AddressLookupTab1e1111111111111111111111111".into()],
+            fresh_signers: 1,
+            derived: vec![
+                Derivation::Pda {
+                    program: AccountKey::Address(clmm.into()),
+                    seeds: vec![
+                        Seed::Bytes(b"position".to_vec()),
+                        Seed::Key(AccountKey::Fresh(0)),
+                    ],
+                },
+                Derivation::Ata {
+                    owner: AccountKey::Authority,
+                    mint: AccountKey::Fresh(0),
+                    token_program: AccountKey::Address(
+                        "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb".into(),
+                    ),
+                },
+            ],
+            tx: Some(TxOptions {
+                cu_limit: Some(600_000),
+                ..TxOptions::default()
+            }),
+        };
+        let mut cyclic = open_position.clone();
+        cyclic.derived[0] = Derivation::Pda {
+            program: AccountKey::Derived(1),
+            seeds: vec![],
+        };
+        assert_eq!(strategy.raw_sends(), [open_position, cyclic]);
+        assert!(
+            log.text()
+                .contains(r#"send: Err("raw sends aren't enabled in this session")"#),
+            "{}",
+            log.text()
+        );
+        assert!(
+            log.text()
+                .contains(r#"send cyclic: Err("derived address 1 is named before it is made")"#)
+        );
 
         // Planned as the grader sends it, from a position of 4: the IOC buy
         // may not fill, so the reduce-only sell gets the 4 held, and the

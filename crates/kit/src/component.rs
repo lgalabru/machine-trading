@@ -26,7 +26,7 @@ use crate::{
     Action, AmountUnit, Book, Execution, FeeView, Intent, LendingPosition, LineOptions,
     LiquidityPosition, LiquidityShape, Market, MarketKind, OpenOrder, OwnFill, Position,
     PriceRange, Reports, Rfq, Role, Route, SendSource, SendState, SendStatus, Session, Side,
-    TimeInForce, VenueInfo, VenueView,
+    TimeInForce, TxOptions, VenueInfo, VenueView, raw,
 };
 
 /// The session, as the grader hands it to `start`.
@@ -302,6 +302,8 @@ fn send_status(s: wit::SendStatus) -> SendStatus {
             wit::Order::RemoveLiquidity(o) => Action::RemoveLiquidity {
                 position: o.position,
                 share: o.share,
+                min_base: o.min_base,
+                min_quote: o.min_quote,
             },
             wit::Order::Deposit(a) => Action::Deposit { amount: a.amount },
             wit::Order::Withdraw(a) => Action::Withdraw { amount: a.amount },
@@ -462,9 +464,17 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
                 LiquidityShape::BidAsk => wit::LiquidityShape::BidAsk,
             }),
         }),
-        Intent::RemoveLiquidity { position, share } => {
-            wit::Action::RemoveLiquidity(wit::RemoveLiquidity { position, share })
-        }
+        Intent::RemoveLiquidity {
+            position,
+            share,
+            min_base,
+            min_quote,
+        } => wit::Action::RemoveLiquidity(wit::RemoveLiquidity {
+            position,
+            share,
+            min_base,
+            min_quote,
+        }),
         Intent::Deposit { amount: a } => wit::Action::Deposit(amount(a)),
         Intent::Withdraw { amount: a } => wit::Action::Withdraw(amount(a)),
         Intent::Borrow { amount: a } => wit::Action::Borrow(amount(a)),
@@ -486,25 +496,99 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
         venue: options.venue,
         client_id: options.client_id,
         reduce_only: options.reduce_only,
-        tx: options.tx.map(|tx| wit::TxOptions {
-            cu_limit: tx.cu_limit,
-            cu_price: tx.cu_price,
-            tip: tx.tip,
-            bundle: tx.bundle,
-            route: tx.route.map(|route| match route {
-                Route::Rpc => wit::Route::Rpc,
-                Route::Staked => wit::Route::Staked,
-                Route::Jito {
-                    bundle_only,
-                    dont_front,
-                } => wit::Route::Jito(wit::JitoRoute {
-                    bundle_only,
-                    dont_front,
-                }),
-            }),
-            retry_until_slot: tx.retry_until_slot,
-        }),
+        tx: options.tx.map(tx_options),
     }
+}
+
+fn tx_options(tx: TxOptions) -> wit::TxOptions {
+    wit::TxOptions {
+        cu_limit: tx.cu_limit,
+        cu_price: tx.cu_price,
+        tip: tx.tip,
+        bundle: tx.bundle,
+        route: tx.route.map(|route| match route {
+            Route::Rpc => wit::Route::Rpc,
+            Route::Staked => wit::Route::Staked,
+            Route::Jito {
+                bundle_only,
+                dont_front,
+            } => wit::Route::Jito(wit::JitoRoute {
+                bundle_only,
+                dont_front,
+            }),
+        }),
+        retry_until_slot: tx.retry_until_slot,
+    }
+}
+
+fn account_key(key: &raw::AccountKey) -> wit::AccountKey {
+    match key {
+        raw::AccountKey::Address(address) => wit::AccountKey::Address(address.clone()),
+        raw::AccountKey::Authority => wit::AccountKey::Authority,
+        raw::AccountKey::Fresh(n) => wit::AccountKey::Fresh(*n),
+        raw::AccountKey::Derived(n) => wit::AccountKey::Derived(*n),
+    }
+}
+
+/// A raw transaction, as the grader's `send` takes it.
+#[doc(hidden)]
+pub fn raw_transaction(tx: &raw::RawTransaction) -> wit::RawTransaction {
+    wit::RawTransaction {
+        instructions: tx
+            .instructions
+            .iter()
+            .map(|ix| wit::Instruction {
+                program: ix.program.clone(),
+                accounts: ix
+                    .accounts
+                    .iter()
+                    .map(|a| wit::AccountMeta {
+                        key: account_key(&a.key),
+                        signer: a.signer,
+                        writable: a.writable,
+                    })
+                    .collect(),
+                data: ix.data.clone(),
+            })
+            .collect(),
+        lookup_tables: tx.lookup_tables.clone(),
+        fresh_signers: tx.fresh_signers,
+        derived: tx
+            .derived
+            .iter()
+            .map(|d| match d {
+                raw::Derivation::Pda { program, seeds } => wit::Derivation::Pda(wit::Pda {
+                    program: account_key(program),
+                    seeds: seeds
+                        .iter()
+                        .map(|seed| match seed {
+                            raw::Seed::Bytes(bytes) => wit::Seed::Bytes(bytes.clone()),
+                            raw::Seed::Key(key) => wit::Seed::Key(account_key(key)),
+                        })
+                        .collect(),
+                }),
+                raw::Derivation::Ata {
+                    owner,
+                    mint,
+                    token_program,
+                } => wit::Derivation::Ata(wit::Ata {
+                    owner: account_key(owner),
+                    mint: account_key(mint),
+                    token_program: account_key(token_program),
+                }),
+            })
+            .collect(),
+        tx: tx.tx.map(tx_options),
+    }
+}
+
+/// [`crate::send_raw`] in a component: the grader's `send`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn send(tx: &raw::RawTransaction) -> Result<raw::RawReceipt, String> {
+    bindings::send(&raw_transaction(tx)).map(|receipt| raw::RawReceipt {
+        id: receipt.id,
+        fresh_signers: receipt.fresh_signers,
+    })
 }
 
 pub use crate::log;
