@@ -5069,10 +5069,12 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "solana-keypair",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signer",
+ "solana-transaction 4.3.0",
  "surfpool-sdk",
  "thiserror 2.0.21",
  "tokio",
@@ -5080,6 +5082,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
+ "wincode",
 ]
 
 [[package]]
