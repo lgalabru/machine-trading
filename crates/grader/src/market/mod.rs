@@ -28,8 +28,8 @@ pub(crate) mod tests {
     use super::Calibration;
     use crate::scenario::{Scenario, VENUE};
 
-    const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261111.4ca59529.toml");
-    const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261111.000e88d5.toml");
+    const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261112.24db85c6.toml");
+    const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261112.2b3c40c1.toml");
 
     pub(crate) fn sol() -> Calibration {
         with_sha(Calibration::parse(SOL).unwrap(), SOL)
@@ -81,12 +81,7 @@ pub(crate) mod tests {
                 let inputs = dir.join(&cal.meta.inputs_file);
                 let inputs: Vec<serde_json::Value> =
                     serde_json::from_str(&std::fs::read_to_string(inputs).unwrap()).unwrap();
-                // The count leaves out Binance's .CHECKSUM files, which the
-                // manifest also lists.
-                let data = inputs
-                    .iter()
-                    .filter(|i| !i["name"].as_str().is_some_and(|n| n.ends_with(".CHECKSUM")));
-                assert_eq!(data.count() as u64, cal.meta.inputs_count);
+                assert_eq!(inputs.len() as u64, cal.meta.inputs_count);
                 assert!(
                     inputs
                         .iter()
@@ -110,7 +105,7 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .contains("schema_version")
         );
-        let df = SOL.replace("df = 5.72", "df = 1.5");
+        let df = SOL.replace("df = 4.301", "df = 1.5");
         assert!(Calibration::parse(&df).unwrap_err().contains("df"));
         let gap = SPCX.replace("into = \"regular\"", "into = \"lunch\"");
         assert!(Calibration::parse(&gap).unwrap_err().contains("lunch"));

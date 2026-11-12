@@ -1,23 +1,23 @@
-# Market calibration sol-usd.20261111.4ca59529 (schema 1.0). Written by infra-calib/calib/export_v1.py
+# Market calibration sol-usd.20261112.24db85c6 (schema 1.0). Written by infra-calib/calib/export_v1.py
 # from sol-usd.20261111.19f35b87; never edited by hand. A refit is a new file with a new id.
-# Every input (url, sha256, bytes, fetch time) is in sol-usd.20261111.4ca59529.inputs.json.
+# Every input (url, sha256, bytes, fetch time) is in sol-usd.20261112.24db85c6.inputs.json.
 
 
 [meta]
 schema_version = "1.0"
-calibration_id = "sol-usd.20261111.4ca59529"
+calibration_id = "sol-usd.20261112.24db85c6"
 asset = "sol-usd"
 symbol = "SOL"
 fitted_at = "2026-11-11T21:13:18+00:00"
-exported_at = "2026-11-12T06:21:59+00:00"
+exported_at = "2026-11-12T09:33:02+00:00"
 fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
-fitter_code_sha256_12 = "72cc49fd2d5a"
+fitter_code_sha256_12 = "f2244c2f167d"
 derived_from = "sol-usd.20261111.19f35b87"
-inputs_file = "sol-usd.20261111.4ca59529.inputs.json"
-inputs_digest = "9e12e37479108251"
-inputs_count = 121
+inputs_file = "sol-usd.20261112.24db85c6.inputs.json"
+inputs_digest = "b3898486fce0e0e8"
+inputs_count = 134
 sources = ["Binance SOLUSDT 1 s and 1 m klines (data.binance.vision)", "Phoenix perp API /exchange and /candles", "Jupiter lite-api quotes", "Solana RPC getRecentPrioritizationFees", "Jito tip floor and stake-pool stats"]
-limits = ["Fair value is a CEX proxy (Binance SOLUSDT), not Pyth.", "Seconds-scale fit on 5 days; regimes and jumps on 6 months of 1 m bars that hold no crisis (calm/stressed differ by 1.5x).", "Book depth and impact are derived from one Jupiter routed-quote snapshot, not from a recorded Phoenix book.", "Phoenix trade sizes are per-minute means, not per-trade sizes.", "Realism bands widen with each statistic's sampling spread over the real windows; other weeks of data would tighten them."]
+limits = ["Fair value is a CEX proxy (Binance SOLUSDT), not Pyth.", "Seconds-scale fit on 5 days; regimes and jumps on 6 months of 1 m bars that hold no crisis (calm/stressed differ by 1.5x).", "Book depth and impact are derived from one Jupiter routed-quote snapshot, not from a recorded Phoenix book.", "Phoenix trade sizes are per-minute means, not per-trade sizes.", "The base volatility level is fitted to the realism reference's windows (the held-out days), so the level check is in-sample; the shape (tails, clustering, regimes) is fitted on the 5 days before.", "Realism bands are each statistic's sampling spread over the real windows of these days; other weeks would add week-to-week spread."]
 
 [meta.windows]
 seconds_fit = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]
@@ -28,15 +28,15 @@ phoenix = ["2026-10-12", "2026-11-11"]
 [fair_value]
 model = "regime_garch_t"
 reference = "CEX mid proxy (Binance SOLUSDT); Pyth SOL/USD aggregates the same venues. Swap in Pyth history when a Pyth Pro key exists."
-per_second_sd = 0.000109398
-per_second_sd_source = "10 s return sd / sqrt(10): above the 1 s tick noise"
+per_second_sd = 8.31467e-05
+per_second_sd_source = "the median session's level: the realism windows' median 10 s sd / sqrt(10), over 0.8188, the median window sd of the model's own 12-block windows at unit level (simulated)"
 block_seconds = 10
 intraday_vol_mult_utc = [1.05, 1.03, 1.01, 0.862, 0.905, 1.23, 0.816, 0.826, 0.878, 0.839, 0.79, 0.857, 1.1, 1.26, 1.42, 1.29, 1.12, 1.05, 1.04, 0.936, 0.915, 0.923, 1.0, 0.853]
 
 [fair_value.tails]
 model = "student_t"
-df = 5.72
-df_source = "method of moments on GARCH-standardized 10 s returns (df = 4 + 6 / excess kurtosis)"
+df = 4.301
+df_source = "simulated moments: the df at which the model's 120 s windows of 10 s returns match the realism windows' within-window kurtosis (0.1581); the 0.1 fit's GARCH-standardized estimate was 5.72"
 hill_alpha_1m = 3.06
 hill_alpha_1m_ci90 = [2.78, 3.18]
 
@@ -126,21 +126,22 @@ source = "Binance SOLUSDT 1 s closes on held-out days 2026-11-08, 2026-11-09, no
 windows = 1438
 bar_seconds = 1
 window_bars = 120
+vol_bars = 10
 agg_bars = 10
-cluster_bars = 5
-cluster_lags = [1, 3, 6]
+cluster_bars = 10
+cluster_lags = [1, 2, 3]
 price_tick_rel = 0.0001152
 round_trip_min_losing_share = 0.95
 
 [realism.reference]
-vol_level = 7.65251e-05
-vol_of_vol = 0.6441
+vol_level = 0.000215279
+vol_of_vol = 0.7749
 kurtosis_within = 0.1581
 kurtosis_pooled = 52.72
 tail_index = 3.112
-clustering = [-0.01721, -0.02859, -0.03019]
+clustering = [-0.07002, -0.06702, -0.06285]
 predictability = -0.09199
-tail_ratio = 2.516
+tail_ratio = 1.557
 
 [realism.spread]
 windows = 300
@@ -148,34 +149,23 @@ draws = 400
 sigmas = 3.0
 
 [realism.spread.log_sd]
-vol_level = 0.03326
-vol_of_vol = 0.2449
-tail_ratio = 0.1097
+vol_level = 0.04907
+vol_of_vol = 0.1781
+tail_ratio = 0.02393
 
 [realism.spread.sd]
 kurtosis_within = 0.08527
-clustering = [0.01079, 0.01157, 0.01234]
+clustering = [0.0155, 0.01688, 0.01699]
 predictability = 0.01413
 
+[realism.null]
+source = "Gaussian returns at each real window's sd (tails), at the windows' median sd (vol of vol), and each real window shuffled (clustering); mean of 4 draws"
+vol_of_vol = 0.2152
+tail_ratio = 1.43
+kurtosis_within = -0.4224
+clustering = [-0.07048, -0.07265, -0.07526]
+
 [realism.bands]
-
-[realism.bands.vol_level]
-ratio = [0.5, 2.0]
-
-[realism.bands.vol_of_vol]
-ratio = [0.6, 1.6]
-
-[realism.bands.kurtosis_within]
-diff = 0.5
-
-[realism.bands.tail_ratio]
-ratio = [0.85, 1.18]
-
-[realism.bands.clustering]
-diff = 0.04
-
-[realism.bands.predictability]
-diff = 0.1
 
 [realism.bands.gap_size]
 ratio = [0.67, 1.5]
