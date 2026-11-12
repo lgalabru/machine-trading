@@ -54,6 +54,38 @@ const PAGE: &str = include_str!("studio/dev.html");
 /// The protocol's test page, at `/dev`: every request a button, every
 /// event in a log.
 const DEV_PAGE: &str = include_str!("studio/dev.html");
+/// The page's own files (bundled scripts), served at `/studio/<name>`; from
+/// disk, beside `MTX_STUDIO_PAGE`, when that is set.
+static ASSETS: include_dir::Dir<'static> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/studio");
+
+/// A request the server answers with `success: false`, a `message`, and a
+/// body the page acts on (a conflict's current file, a scenario's
+/// diagnostics).
+#[derive(Debug)]
+struct Rejected {
+    message: String,
+    body: Value,
+}
+
+impl std::fmt::Display for Rejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Rejected {}
+
+/// A file's version, as `file/read`, `file/changed` and `file/write` carry
+/// it: its content's hash.
+fn version(text: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(text.as_bytes())
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 /// Where the workspace's scenarios are.
 const SCENARIOS: &str = "scenarios";
 /// The studio's own state in the workspace: the agent picked.
@@ -95,6 +127,7 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
         debug: Mutex::new(None),
         agent: Mutex::new(AgentState::default()),
         written: Mutex::new(HashMap::new()),
+        start_mark: Mutex::new(None),
     });
     studio.load_settings();
     tokio::spawn(watch(studio.clone()));
@@ -102,6 +135,7 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
     let app = Router::new()
         .route("/", get(page))
         .route("/dev", get(|| async { Html(DEV_PAGE) }))
+        .route("/studio/{*path}", get(asset))
         .route("/ws", get(ws))
         .with_state(studio.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port)).await?;
@@ -143,6 +177,8 @@ struct Studio {
     agent: Mutex<AgentState>,
     /// What the server wrote itself, and when: the watcher doesn't echo it.
     written: Mutex<HashMap<PathBuf, SystemTime>>,
+    /// The mark the last session started at; before one, the snapshot's.
+    start_mark: Mutex<Option<f64>>,
 }
 
 impl Studio {
@@ -204,6 +240,35 @@ async fn page() -> impl IntoResponse {
     }
 }
 
+async fn asset(axum::extract::Path(path): axum::extract::Path<String>) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    let kind = match path.rsplit('.').next() {
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    };
+    let clean = Path::new(&path)
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)));
+    let bytes = if !clean {
+        None
+    } else if let Some(page) = std::env::var_os("MTX_STUDIO_PAGE") {
+        Path::new(&page)
+            .parent()
+            .and_then(|dir| std::fs::read(dir.join("studio").join(&path)).ok())
+    } else {
+        ASSETS.get_file(&path).map(|f| f.contents().to_vec())
+    };
+    match bytes {
+        Some(bytes) => ([(header::CONTENT_TYPE, kind)], bytes).into_response(),
+        None => (StatusCode::NOT_FOUND, format!("no {path}")).into_response(),
+    }
+}
+
 async fn ws(upgrade: WebSocketUpgrade, State(studio): State<Arc<Studio>>) -> impl IntoResponse {
     upgrade.on_upgrade(move |socket| connection(socket, studio))
 }
@@ -250,6 +315,7 @@ async fn connection(socket: WebSocket, studio: Arc<Studio>) {
                 Err(error) => json!({
                     "seq": studio.next_seq(), "type": "response", "request_seq": seq,
                     "command": command, "success": false, "message": format!("{error:#}"),
+                    "body": error.downcast_ref::<Rejected>().map(|r| r.body.clone()).unwrap_or(json!({})),
                 }),
             };
             let _ = replies.send(response.to_string());
@@ -272,20 +338,59 @@ async fn handle(studio: &Arc<Studio>, command: &str, args: &Value) -> Result<Val
             "files": workspace_files(&studio.dir),
             "scenarios": scenario_names(&studio.dir),
             "agent": agent_pick(studio),
-            "session": studio.debug.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|c| c.status()),
+            "session": session_state(studio),
+        })),
+        "session/history" => Ok(json!({
+            "events": studio
+                .debug
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .map(|c| c.history())
+                .unwrap_or_default(),
+        })),
+        "composer/history" => Ok(json!({
+            "messages": studio.agent.lock().unwrap_or_else(|e| e.into_inner()).history.clone(),
         })),
         "file/read" => {
             let path = studio.path(&str_arg("path")?)?;
-            Ok(
-                json!({ "text": std::fs::read_to_string(&path).with_context(|| path.display().to_string())? }),
-            )
+            let text =
+                std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
+            Ok(json!({ "version": version(&text), "text": text }))
         }
         "file/write" => {
-            let path = studio.path(&str_arg("path")?)?;
+            let rel = str_arg("path")?;
+            let path = studio.path(&rel)?;
+            let text = str_arg("text")?;
+            // Saved over a version the page didn't load: someone else wrote it.
+            if let (Some(base), Ok(current)) =
+                (args["baseVersion"].as_str(), std::fs::read_to_string(&path))
+                && version(&current) != base
+            {
+                return Err(Rejected {
+                    message: "conflict".into(),
+                    body: json!({ "conflict": true, "version": version(&current), "text": current }),
+                }
+                .into());
+            }
+            if rel.starts_with(&format!("{SCENARIOS}/"))
+                && rel.ends_with(".json")
+                && let Err(error) = serde_json::from_str::<Scenario>(&text)
+            {
+                return Err(Rejected {
+                    message: format!("{rel} isn't a scenario: {error}"),
+                    body: json!({ "diagnostics": [{
+                        "file": rel, "line": error.line(), "column": error.column(),
+                        "endLine": error.line(), "endColumn": error.column(),
+                        "severity": "error", "message": error.to_string(),
+                    }] }),
+                }
+                .into());
+            }
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            std::fs::write(&path, str_arg("text")?)?;
+            std::fs::write(&path, &text)?;
             if let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) {
                 studio
                     .written
@@ -293,19 +398,13 @@ async fn handle(studio: &Arc<Studio>, command: &str, args: &Value) -> Result<Val
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(path, modified);
             }
-            Ok(json!({}))
+            Ok(json!({ "version": version(&text) }))
         }
         "scenario/read" => {
             let name = str_arg("name")?;
             let path = studio.dir.join(SCENARIOS).join(format!("{name}.json"));
             let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
-            Ok(json!({
-                "scenario": serde_json::to_value(&scenario)?,
-                // The planned path, in slots from the start and percent of
-                // the starting mark: each waypoint's move begins at its slot.
-                "planned": scenario.path.iter().map(|w| json!([w.slot, w.level_pct])).collect::<Vec<_>>(),
-                "slots": scenario.duration_slots,
-            }))
+            plan_json(studio, &scenario)
         }
         "build" => {
             let studio = studio.clone();
@@ -342,7 +441,7 @@ async fn handle(studio: &Arc<Studio>, command: &str, args: &Value) -> Result<Val
             }
             Box::pin(launch(studio, &launch_args)).await
         }
-        "agents/list" => Ok(json!({ "agents": discover_agents(), "pick": agent_pick(studio) })),
+        "agents/list" => Ok(json!({ "selected": agent_pick(studio), "agents": discover_agents() })),
         "agents/select" => {
             let agent = agent_named(&str_arg("agent")?).context("no such agent")?;
             {
@@ -459,7 +558,7 @@ async fn watch(studio: Arc<Studio>) {
                 };
                 studio.event(
                     "file/changed",
-                    json!({ "path": rel, "text": text, "by": by }),
+                    json!({ "path": rel, "version": version(&text), "text": text, "by": by }),
                 );
             }
         }
@@ -648,7 +747,8 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
             }
             Err(error) => json!({ "error": format!("{error:#}") }),
         };
-        studio.event("terminated", body);
+        control.event("terminated", body);
+        control.finish();
     });
     Ok(json!({ "scenario": name }))
 }
@@ -679,6 +779,9 @@ enum Mode {
 
 struct ControlState {
     mode: Mode,
+    /// The session's events so far, for a page that reloads: `started`,
+    /// each `step`, each `stopped`, `terminated`.
+    history: Vec<Value>,
     breakpoints: Breakpoints,
     ms_per_step: u64,
     stop_on_entry: bool,
@@ -715,6 +818,7 @@ impl Control {
         Self {
             state: Mutex::new(ControlState {
                 mode: Mode::Running,
+                history: Vec::new(),
                 breakpoints: Breakpoints::from(&args["breakpoints"]),
                 ms_per_step: args["msPerStep"].as_u64().unwrap_or(0),
                 stop_on_entry: args["stopOnEntry"] == json!(true),
@@ -760,6 +864,18 @@ impl Control {
         })
     }
 
+    /// Send an event to the page, and keep it for `session/history`.
+    fn event(&self, event: &str, body: Value) {
+        self.lock()
+            .history
+            .push(json!({ "event": event, "body": body }));
+        self.studio.event(event, body);
+    }
+
+    fn history(&self) -> Vec<Value> {
+        self.lock().history.clone()
+    }
+
     fn finished(&self) -> bool {
         self.lock().mode == Mode::Finished
     }
@@ -777,8 +893,11 @@ impl Control {
         k: Option<u64>,
     ) {
         state.mode = Mode::Stopped;
-        self.studio
-            .event("stopped", json!({ "reason": reason, "k": k }));
+        let body = json!({ "reason": reason, "k": k });
+        state
+            .history
+            .push(json!({ "event": "stopped", "body": body }));
+        self.studio.event("stopped", body);
         while state.mode == Mode::Stopped {
             state = self.wake.wait(state).unwrap_or_else(|e| e.into_inner());
         }
@@ -787,7 +906,12 @@ impl Control {
 
 impl StepObserver for Control {
     fn started(&self, session: &Session, printed: &[String], failed: Option<&str>) {
-        self.studio.event(
+        *self
+            .studio
+            .start_mark
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(session.start_mark);
+        self.event(
             "started",
             json!({ "session": session_json(session), "printed": printed, "failed": failed }),
         );
@@ -805,7 +929,7 @@ impl StepObserver for Control {
         let k = trace.market.k;
         state.k = Some(k);
         drop(state);
-        self.studio.event("step", trace_json(trace));
+        self.event("step", trace_json(trace));
         let state = self.lock();
         let b = &state.breakpoints;
         let trapped = trace
@@ -936,7 +1060,71 @@ fn trace_json(trace: &StepTrace) -> Value {
         })).collect::<Vec<_>>(),
         "fuel": trace.fuel,
         "rpc_calls": trace.rpc_calls,
+        // As the session measured it at this step, before the strategy's
+        // turn: `position_change` is what filled during the step before.
+        "account": trace.account.map(|a| json!({
+            "value_usd": a.value_usd,
+            "pnl_usd": a.pnl_usd,
+            "drawdown_usd": a.drawdown_usd,
+            "position": a.position,
+            "position_change": a.position_change,
+            "level_usd": a.level_usd,
+        })),
     })
+}
+
+/// Where a session is, for a page that loads or reloads.
+fn session_state(studio: &Studio) -> Value {
+    let debug = studio.debug.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(control) = debug.as_ref() else {
+        return json!({ "state": "idle" });
+    };
+    let mut status = control.status();
+    status["scenario"] = control.launch["scenario"].clone();
+    status["breakpoints"] = control.launch["breakpoints"].clone();
+    status
+}
+
+/// A scenario as the market panel draws it before a session: its plan in
+/// steps, on the axis a session's steps share.
+fn plan_json(studio: &Studio, scenario: &Scenario) -> Result<Value> {
+    const SLOTS_PER_STEP: u64 = 2;
+    let measured = *studio.start_mark.lock().unwrap_or_else(|e| e.into_inner());
+    let snapshot = crate::review::read_json(&studio.snapshot.join("manifest.json"))
+        .and_then(|m| m["mark_price_usd"].as_f64());
+    let start = measured.or(snapshot).unwrap_or(100.0);
+    let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
+    let plan: Vec<Value> = (0..steps)
+        .map(|k| {
+            let at = (k + 1) * SLOTS_PER_STEP;
+            let level = mtx_grader::making::level_at(&scenario.path, at);
+            json!({ "k": k, "mark_usd": start * (1.0 + level / 100.0), "level_pct": level })
+        })
+        .collect();
+    let takers: Vec<Value> = scenario
+        .making
+        .iter()
+        .flat_map(|m| m.takers.iter())
+        .chain(scenario.tape.iter())
+        .map(|t| {
+            json!({
+                "k": (t.slot / SLOTS_PER_STEP).saturating_sub(1),
+                "side": serde_json::to_value(t.side).unwrap_or_default(),
+                "size": t.size,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "scenario": serde_json::to_value(scenario)?,
+        "steps": steps,
+        "slots_per_step": SLOTS_PER_STEP,
+        "start_mark_usd": start,
+        // Before a session has played, the snapshot's mark: a session starts
+        // a few cents from it.
+        "start_mark_estimated": measured.is_none(),
+        "plan": plan,
+        "takers": takers,
+    }))
 }
 
 #[derive(Default)]
@@ -946,6 +1134,11 @@ struct AgentState {
     client: Option<(Arc<AgentClient>, String)>,
     /// A turn is running: files changing now are the agent's.
     busy: bool,
+    /// The conversation, for a page that reloads: each message and tool
+    /// call as the page last saw it.
+    history: Vec<Value>,
+    /// The next message's number.
+    messages: u64,
 }
 
 fn agent_id(agent: Agent) -> &'static str {
@@ -984,21 +1177,41 @@ fn discover_agents() -> Vec<Value> {
                     "ANTHROPIC_API_KEY",
                     home.join(".claude"),
                     "claude",
-                    &["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5"],
+                    &[
+                        "claude-opus-5-5",
+                        "claude-sonnet-5-5",
+                        "claude-fable-5-1",
+                        "claude-haiku-5-5",
+                    ],
                 ),
-                Agent::Codex => ("OPENAI_API_KEY", home.join(".codex/auth.json"), "codex", &[]),
+                Agent::Codex => (
+                    "OPENAI_API_KEY",
+                    home.join(".codex/auth.json"),
+                    "codex",
+                    &[],
+                ),
             };
             let authenticated = std::env::var_os(key).is_some() || login.exists();
+            let available = (installed || npx) && authenticated;
+            let reason = if !(installed || npx) {
+                Some(format!(
+                    "install {program}: `npm install -g {package}` (or install Node for npx)"
+                ))
+            } else if !authenticated {
+                Some(format!("set {key}, or run `{cli}` once to log in"))
+            } else {
+                None
+            };
             json!({
                 "id": agent_id(agent),
                 "name": agent.name(),
+                "available": available,
+                "reason": reason,
                 "adapter": program,
-                "package": package,
-                "available": installed || npx,
                 "via": if installed { "path" } else if npx { "npx" } else { "missing" },
-                "authenticated": authenticated,
-                "auth": if std::env::var_os(key).is_some() { format!("{key} set") } else if login.exists() { format!("{cli} login") } else { format!("set {key} or run `{cli}` to log in") },
-                "models": models,
+                "models": std::iter::once(json!({ "id": "", "name": "default" }))
+                    .chain(models.iter().map(|m| json!({ "id": m, "name": m })))
+                    .collect::<Vec<_>>(),
             })
         })
         .collect()
@@ -1022,8 +1235,56 @@ errors, and the step the session stopped at.",
     )
 }
 
+/// Record a composer event, and send it: a message's chunks land on the
+/// message with its `id`, a tool call's updates on the call with its.
+fn composer_event(studio: &Studio, event: &str, body: Value) {
+    {
+        let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+        let id = body["id"].clone();
+        match state
+            .history
+            .iter_mut()
+            .rev()
+            .find(|m| m["id"] == id && m["kind"] == json!(event))
+        {
+            Some(entry) if event == "composer/message" => {
+                let text = format!(
+                    "{}{}",
+                    entry["text"].as_str().unwrap_or_default(),
+                    body["text"].as_str().unwrap_or_default()
+                );
+                entry["text"] = json!(text);
+                entry["done"] = body["done"].clone();
+            }
+            Some(entry) => {
+                let kind = entry["kind"].clone();
+                *entry = body.clone();
+                entry["kind"] = kind;
+            }
+            None => {
+                let mut entry = body.clone();
+                entry["kind"] = json!(event);
+                state.history.push(entry);
+            }
+        }
+    }
+    studio.event(event, body);
+}
+
+fn next_message_id(studio: &Studio) -> String {
+    let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
+    state.messages += 1;
+    format!("m{}", state.messages)
+}
+
 /// One prompt to the agent, its reply streamed to the page.
 fn compose(studio: &Studio, text: &str, context: &Value) -> Result<()> {
+    let user = next_message_id(studio);
+    composer_event(
+        studio,
+        "composer/message",
+        json!({ "id": user, "role": "user", "text": text, "done": true }),
+    );
     let (client, session) = {
         let mut state = studio.agent.lock().unwrap_or_else(|e| e.into_inner());
         if state.busy {
@@ -1088,15 +1349,19 @@ fn run(studio: &Studio, client: &Arc<AgentClient>, session: &str, prompt: &str) 
         // ACP updates a tool call by its id, often without its title: the
         // page gets the whole call each time.
         let mut calls: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        let reply = next_message_id(studio);
+        let thought = next_message_id(studio);
         loop {
             match turn.recv_timeout(Duration::from_secs(600))? {
-                TurnEvent::Text(chunk) => studio.event(
+                TurnEvent::Text(chunk) => composer_event(
+                    studio,
                     "composer/message",
-                    json!({ "role": "agent", "text": chunk, "done": false }),
+                    json!({ "id": reply, "role": "agent", "text": chunk, "done": false }),
                 ),
-                TurnEvent::Thought(chunk) => studio.event(
+                TurnEvent::Thought(chunk) => composer_event(
+                    studio,
                     "composer/message",
-                    json!({ "role": "thought", "text": chunk, "done": false }),
+                    json!({ "id": thought, "role": "thought", "text": chunk, "done": false }),
                 ),
                 TurnEvent::ToolCall { id, title, status } => {
                     let call = calls.entry(id.clone()).or_default();
@@ -1106,15 +1371,17 @@ fn run(studio: &Studio, client: &Arc<AgentClient>, session: &str, prompt: &str) 
                     if status.is_some() {
                         call.1 = status;
                     }
-                    studio.event(
+                    composer_event(
+                        studio,
                         "composer/tool",
                         json!({ "id": id, "title": call.0, "status": call.1.as_deref().unwrap_or("pending") }),
                     );
                 }
                 TurnEvent::Done(reason) => {
-                    studio.event(
+                    composer_event(
+                        studio,
                         "composer/message",
-                        json!({ "role": "agent", "text": "", "done": true, "stop": format!("{reason:?}") }),
+                        json!({ "id": reply, "role": "agent", "text": "", "done": true, "stop": format!("{reason:?}") }),
                     );
                     return Ok(());
                 }
