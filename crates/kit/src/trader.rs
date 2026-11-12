@@ -7,9 +7,9 @@ use solana_signer::Signer;
 use solana_transaction::Signature;
 
 use crate::{
-    Action, BotEnv, Decimal, Error, Phoenix, Position, Result, SendState, Side,
+    Action, BotEnv, Decimal, Error, Phoenix, Planned, Position, Result, SendState, Side,
     core::{Rounding, Side as CoreSide},
-    protocols::phoenix::eternal::PhoenixTrader,
+    protocols::phoenix::eternal::{PhoenixOrder, PhoenixOrderOptions, PhoenixTrader},
     rpc_client,
 };
 
@@ -224,6 +224,7 @@ impl Trader {
                 core_side(side),
                 self.price(side, price_usd)?,
                 self.quantity(base_units)?,
+                PhoenixOrderOptions::default(),
             )
             .await?)
     }
@@ -246,16 +247,52 @@ impl Trader {
             .await?)
     }
 
+    /// Whether [`Trader::send_planned`] executes `action`: market, limit
+    /// and post-only orders, and cancelling everything. A session plans its
+    /// sheets with this (`mtx_kit::plan_sheet_with`), so a line it won't
+    /// execute counts for nothing.
+    pub fn executes(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::Market { .. }
+                | Action::Limit { .. }
+                | Action::PostOnly { .. }
+                | Action::CancelAll
+        )
+    }
+
     /// Send one order a sheet planned for this market (`mtx_kit::plan_sheet`),
-    /// and say what became of it. A post-only order that would cross the
-    /// book as it is now (the world is paused) isn't placed, and fails
-    /// without reaching the chain. Actions this trader has no executor for
-    /// aren't sent.
-    pub async fn send_planned(&self, action: &Action) -> Sent {
-        let result = match *action {
-            Action::Market { side, size, limit } => self.place_market(side, size, limit).await,
-            Action::Limit { side, price, size } => self.place_limit(side, price, size).await,
+    /// and say what became of it. Its line's reduce-only flag and expiry go
+    /// on the order. A post-only order that would cross the book as it is
+    /// now (the world is paused) isn't placed, and fails without reaching
+    /// the chain. Actions this trader doesn't execute aren't sent.
+    pub async fn send_planned(&self, planned: &Planned) -> Sent {
+        let options = PhoenixOrderOptions {
+            reduce_only: planned.reduce_only,
+            last_valid_slot: planned.expires_slot,
+        };
+        let order = match planned.action {
+            Action::Market { side, size, limit } => self.order(size, |quantity| {
+                Ok(PhoenixOrder::Market {
+                    side: core_side(side),
+                    quantity,
+                    worst_price: Some(self.price(side, limit)?),
+                    all_or_none: false,
+                })
+            }),
+            Action::Limit { side, price, size } => self.order(size, |quantity| {
+                Ok(PhoenixOrder::Limit {
+                    side: core_side(side),
+                    price: self.price(side, price)?,
+                    quantity,
+                })
+            }),
             Action::PostOnly { side, price, size } => {
+                if planned.expires_slot.is_some() {
+                    return Sent::not_sent(
+                        "an expiry on a post-only order is unsupported in this session",
+                    );
+                }
                 let crosses = |top: Top| {
                     let price = self.price(side, price)?.to_string();
                     let price: f64 = price.parse().unwrap_or(f64::NAN);
@@ -265,7 +302,13 @@ impl Trader {
                     })
                 };
                 match self.top().await.and_then(crosses) {
-                    Ok(false) => self.place_post_only(side, price, size).await,
+                    Ok(false) => self.order(size, |quantity| {
+                        Ok(PhoenixOrder::PostOnly {
+                            side: core_side(side),
+                            price: self.price(side, price)?,
+                            quantity,
+                        })
+                    }),
                     Ok(true) => return Sent::checked("post-only would cross: not placed"),
                     Err(error) => {
                         return Sent::checked(&format!(
@@ -274,22 +317,33 @@ impl Trader {
                     }
                 }
             }
-            Action::CancelAll => self.cancel_all(),
+            Action::CancelAll => {
+                return Sent::reached(self.cancel_all());
+            }
             Action::Respond { .. } => {
                 return Sent::not_sent("no requests for quotes in this session");
             }
             _ => return Sent::not_sent("unsupported in this session"),
         };
-        match result {
-            Ok(signature) => Sent {
-                state: SendState::Landed(signature.to_string()),
-                sent: true,
-            },
-            Err(error) => Sent {
-                state: SendState::Failed(error.to_string()),
-                sent: true,
-            },
-        }
+        let result = match order {
+            Ok(order) => self
+                .inner
+                .submit_with(&order, options, &self.keypair)
+                .await
+                .map_err(Error::from),
+            Err(error) => Err(error),
+        };
+        Sent::reached(result)
+    }
+
+    /// A Phoenix order of `size` base units, built by `order` from its
+    /// quantity on the lot grid.
+    fn order(
+        &self,
+        size: f64,
+        order: impl FnOnce(Decimal) -> Result<PhoenixOrder>,
+    ) -> Result<PhoenixOrder> {
+        order(self.quantity(size)?)
     }
 
     pub fn cancel_all(&self) -> Result<Signature> {
@@ -347,9 +401,20 @@ pub struct Sent {
 }
 
 impl Sent {
+    /// What became of an order that was sent.
+    fn reached(result: Result<Signature>) -> Self {
+        Sent {
+            state: match result {
+                Ok(signature) => SendState::Landed(signature.to_string()),
+                Err(error) => SendState::failed(error.to_string()),
+            },
+            sent: true,
+        }
+    }
+
     fn checked(why: &str) -> Self {
         Sent {
-            state: SendState::Failed(why.to_string()),
+            state: SendState::failed(why),
             sent: false,
         }
     }
