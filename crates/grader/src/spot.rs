@@ -605,7 +605,7 @@ pub fn fund_mint(
 
 /// Trade a little on each venue as `trader` would: a Phoenix seat, a resting
 /// bid and its cancel, a small sell; an OpenBook open orders account, the
-/// same. Returns the Pyth SOL/USD price. For [`snapshot::prepare_spot`]:
+/// same. Returns the Pyth SOL/USD price. For a snapshot recipe's `spot-exercise` action ([`crate::recipe`]):
 /// every account these touch is then in the surfnet, and so in the export.
 pub async fn exercise(rpc_url: &str, trader: &Keypair) -> Result<f64> {
     use mtx_kit::protocols::{
