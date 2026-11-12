@@ -354,22 +354,7 @@ impl Scenario {
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
                 .map_err(|reason| format!("faults: {reason}"))?;
         }
-        let mut last = 0;
-        for (i, order) in self.tape.iter().enumerate() {
-            if order.slot < last || order.slot >= self.duration_slots {
-                return Err(format!(
-                    "tape order {i} at slot {} is out of order or past the session",
-                    order.slot
-                ));
-            }
-            if !(order.size.is_finite() && order.size > 0.0)
-                || !(order.limit_bps.is_finite() && order.limit_bps > 0.0)
-                || order.account >= crate::making::TAKER_ACCOUNTS
-            {
-                return Err(format!("tape order {i} is malformed: {order:?}"));
-            }
-            last = order.slot;
-        }
+        self.validate_tape()?;
         if free_from > self.duration_slots {
             return Err(format!(
                 "the last move runs until slot {free_from}, past the session end at {}",
@@ -530,6 +515,28 @@ impl Scenario {
         } else {
             "mark"
         }
+    }
+
+    /// The tape's orders are in slot order, within the session, and each a
+    /// positive size and limit from one of the takers' accounts.
+    pub(crate) fn validate_tape(&self) -> std::result::Result<(), String> {
+        let mut last = 0;
+        for (i, order) in self.tape.iter().enumerate() {
+            if order.slot < last || order.slot >= self.duration_slots {
+                return Err(format!(
+                    "tape order {i} at slot {} is out of order or past the session",
+                    order.slot
+                ));
+            }
+            if !(order.size.is_finite() && order.size > 0.0)
+                || !(order.limit_bps.is_finite() && order.limit_bps > 0.0)
+                || order.account >= crate::making::TAKER_ACCOUNTS
+            {
+                return Err(format!("tape order {i} is malformed: {order:?}"));
+            }
+            last = order.slot;
+        }
+        Ok(())
     }
 
     /// Slots the session's setup gets before the bot's first slot: setup
