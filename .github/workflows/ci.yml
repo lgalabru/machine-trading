@@ -88,7 +88,7 @@ jobs:
         # the flash-crash reference's component loads in the grader's host.
         run: |
           rustup target add wasm32-wasip2
-          for bot in starter $(just --evaluate reference_bots); do
+          for bot in starter printer first-strategy $(just --evaluate reference_bots); do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
           just --justfile bots/starter/Justfile build

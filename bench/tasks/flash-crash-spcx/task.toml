@@ -54,7 +54,21 @@ timeout_sec = 3600.0
 # Created in the base image; owns /app, the shared target dir and its cargo home.
 user = "agent"
 
+[verifier.environment]
+# The verifier's image, built by `just image` from tests/: the runtime
+# image with this task's tests in it. The rest as [environment].
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-flash-crash-spcx-verifier"
+network_mode = "public"
+build_timeout_sec = 1800.0
+cpus = 4
+memory_mb = 6144
+os = "linux"
+
 [environment]
+# Built by `just image` from environment/ (pinned by `just release`):
+# Harbor builds nothing when a trial starts. Building the tasks' images
+# there, at once, has put one task's files into another's image.
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-flash-crash-spcx"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"
@@ -62,3 +76,4 @@ build_timeout_sec = 1800.0
 cpus = 4
 memory_mb = 6144
 os = "linux"
+
