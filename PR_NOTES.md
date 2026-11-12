@@ -1,5 +1,10 @@
 # PR 10: market calibration, market model v2, realism checks
 
+## Current state (checkpoint 2026-11-12 03:45 UTC)
+- Done and pushed (origin/infra/10-market-model): 5 commits, fmt/clippy (workspace, mtx-kit all features, wasm32-wasip2 bots)/`cargo test --workspace` all green on runner-5.
+- Running: runner-5, container `infra-10-build` (rust:1.97.1, /data/builders/infra-10 mounted at /work): `/work/anchors.sh` grades the 4 reference anchors (6 drawn sessions, one private seed in /work/.seed, never printed) with `/work/mtx-main` (origin/main) and `/work/mtx-head`, writes /work/anchors/{main,head}/<family>/report.json and `<family> IDENTICAL|DIFFERS` lines to /work/anchors.log.
+- Next: read anchors.log (if DIFFERS, rerun main twice to tell wobble from change); CLI smoke (`/work/smoke.sh`); then report. Afterwards remove container `infra-10-build` and /data/builders/infra-10.
+
 Branch `infra/10-market-model`, from origin/main c80ca119.
 
 ## Draft PR description
