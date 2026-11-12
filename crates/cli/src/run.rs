@@ -282,7 +282,9 @@ impl StepObserver for Debugger {
                     action_text(action),
                     paint(DIM, why)
                 ),
-                SendState::Delayed => format!("… {} {}", action_text(action), paint(DIM, "delayed")),
+                SendState::Delayed => {
+                    format!("… {} {}", action_text(action), paint(DIM, "delayed"))
+                }
                 SendState::Expired => format!(
                     "{} {} {}",
                     paint(RED, "✗"),
