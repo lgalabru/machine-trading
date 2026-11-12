@@ -240,7 +240,7 @@ impl v2::StrategyImports for Host {
     async fn send(
         &mut self,
         _tx: v2::mtx::strategy::types::RawTransaction,
-    ) -> std::result::Result<u32, String> {
+    ) -> std::result::Result<v2::mtx::strategy::types::RawReceipt, String> {
         Err("raw sends aren't enabled in this session".into())
     }
 }
@@ -804,7 +804,10 @@ impl WasmBot {
             }
             orders.push(intent, options);
         }
-        let (planned, notes) = mtx_kit::plan_sheet(&orders, &market);
+        // Only what the session executes counts toward the cap.
+        let (planned, notes) = mtx_kit::plan_sheet_with(&orders, &market, |venue, action| {
+            venue.is_none() && mtx_kit::Trader::executes(action)
+        });
         for note in &notes {
             tracing::warn!(step = k, "{note}");
         }
@@ -819,29 +822,30 @@ impl WasmBot {
         // the ledger of what rests only over-counts.
         let mut tried = Vec::new();
         let mut failed = false;
-        for Planned {
-            line,
-            venue,
-            client_id,
-            action,
-            ..
-        } in planned
-        {
+        for planned in planned {
             let state = if failed {
                 SendState::NotSent("an earlier order of the step failed".into())
-            } else if let Some(venue) = &venue {
+            } else if let Some(venue) = &planned.venue {
                 SendState::NotSent(format!("{venue} isn't traded in this session"))
             } else {
-                let sent = self.trader.send_planned(&action).await;
+                let sent = self.trader.send_planned(&planned).await;
                 if sent.sent {
-                    tried.push(action.clone());
-                    if let SendState::Failed(error) = &sent.state {
-                        tracing::warn!(step = k, ?action, %error, "order failed; the step's other orders aren't sent");
+                    tried.push(planned.action.clone());
+                    if let SendState::Failed { reason, .. } = &sent.state {
+                        tracing::warn!(step = k, action = ?planned.action, error = %reason, "order failed; the step's other orders aren't sent");
                         failed = true;
                     }
                 }
                 sent.state
             };
+            let Planned {
+                line,
+                venue,
+                client_id,
+                action,
+                expires_slot,
+                ..
+            } = planned;
             if let Some(trace) = trace.as_mut() {
                 trace.sent.push((action.clone(), state.clone()));
             }
@@ -851,6 +855,7 @@ impl WasmBot {
                 venue: venue.unwrap_or_else(|| own.clone()),
                 client_id,
                 order: Some(action),
+                expires_slot,
                 state,
                 slot: None,
                 fee: None,
@@ -893,8 +898,8 @@ impl WasmBot {
 /// `mtx:strategy@0.2.0`'s side of the kit's types.
 mod wit2 {
     use mtx_kit::{
-        Action, AmountUnit, Intent, LineOptions, Market, MarketKind, PriceRange, Route, SendSource,
-        SendState, Session, Side, TimeInForce, TxOptions,
+        Action, AmountUnit, Intent, LineOptions, LiquidityShape, Market, MarketKind, PriceRange,
+        Route, SendSource, SendState, Session, Side, TimeInForce, TxOptions,
     };
 
     use super::v2::mtx::strategy::types as w;
@@ -1000,7 +1005,16 @@ mod wit2 {
             .collect()
     }
 
-    fn order(action: &Action) -> w::Order {
+    fn shape(shape: LiquidityShape) -> w::LiquidityShape {
+        match shape {
+            LiquidityShape::Spot => w::LiquidityShape::Spot,
+            LiquidityShape::Curve => w::LiquidityShape::Curve,
+            LiquidityShape::BidAsk => w::LiquidityShape::BidAsk,
+        }
+    }
+
+    /// An order as planned, with its line's expiry.
+    fn order(action: &Action, expires_slot: Option<u64>) -> w::Order {
         let amount = |amount: &Option<f64>| w::Amount { amount: *amount };
         match action {
             &Action::Market {
@@ -1021,6 +1035,7 @@ mod wit2 {
                 price,
                 size,
                 time_in_force: w::TimeInForce::Gtc,
+                expires_slot,
             }),
             &Action::PostOnly {
                 side: s,
@@ -1031,6 +1046,7 @@ mod wit2 {
                 price,
                 size,
                 time_in_force: w::TimeInForce::PostOnly,
+                expires_slot,
             }),
             Action::CancelAll => w::Order::CancelAll,
             &Action::Cancel { client_id } => w::Order::Cancel(client_id),
@@ -1039,6 +1055,7 @@ mod wit2 {
                 bid: *bid,
                 ask: *ask,
                 size: *size,
+                expiry_slot: expires_slot,
             }),
             &Action::Swap {
                 side: s,
@@ -1051,14 +1068,18 @@ mod wit2 {
                 unit: unit(u),
                 limit,
             }),
-            &Action::AddLiquidity {
+            Action::AddLiquidity {
                 base,
                 quote,
                 range: r,
+                position,
+                shape: s,
             } => w::Order::AddLiquidity(w::AddLiquidity {
-                base,
-                quote,
+                base: *base,
+                quote: *quote,
                 range: r.map(range),
+                position: position.clone(),
+                shape: s.map(shape),
             }),
             Action::RemoveLiquidity { position, share } => {
                 w::Order::RemoveLiquidity(w::RemoveLiquidity {
@@ -1074,10 +1095,12 @@ mod wit2 {
                 obligation,
                 collateral,
                 repay,
+                min_received,
             } => w::Order::Liquidate(w::Liquidate {
                 obligation: obligation.clone(),
                 collateral: collateral.clone(),
                 repay: *repay,
+                min_received: *min_received,
             }),
         }
     }
@@ -1172,10 +1195,15 @@ mod wit2 {
                     },
                     venue: s.venue.clone(),
                     client_id: s.client_id,
-                    order: s.order.as_ref().map(order),
+                    order: s.order.as_ref().map(|o| order(o, s.expires_slot)),
                     state: match &s.state {
                         SendState::Landed(signature) => w::SendState::Landed(signature.clone()),
-                        SendState::Failed(why) => w::SendState::Failed(why.clone()),
+                        SendState::Failed { reason, signature } => {
+                            w::SendState::Failed(w::Failure {
+                                reason: reason.clone(),
+                                signature: signature.clone(),
+                            })
+                        }
                         SendState::NotSent(why) => w::SendState::NotSent(why.clone()),
                         SendState::Delayed => w::SendState::Delayed,
                         SendState::Expired => w::SendState::Expired,
@@ -1257,6 +1285,7 @@ mod wit2 {
                 if q.post_only {
                     options.time_in_force = TimeInForce::PostOnly;
                 }
+                options.expires_slot = q.expires_slot;
                 Intent::Quote {
                     bid: q.bid,
                     ask: q.ask,
@@ -1274,6 +1303,7 @@ mod wit2 {
                     w::TimeInForce::PostOnly => TimeInForce::PostOnly,
                     w::TimeInForce::Ioc => TimeInForce::Ioc,
                 };
+                options.expires_slot = o.expires_slot;
                 Intent::Limit {
                     side: kit_side(o.side),
                     price: o.price,
@@ -1282,12 +1312,15 @@ mod wit2 {
             }
             w::Action::CancelAll => Intent::CancelAll,
             w::Action::Cancel(client_id) => Intent::Cancel { client_id },
-            w::Action::Respond(r) => Intent::Respond {
-                id: r.id,
-                bid: r.bid,
-                ask: r.ask,
-                size: r.size,
-            },
+            w::Action::Respond(r) => {
+                options.expires_slot = r.expiry_slot;
+                Intent::Respond {
+                    id: r.id,
+                    bid: r.bid,
+                    ask: r.ask,
+                    size: r.size,
+                }
+            }
             w::Action::Swap(o) => Intent::Swap {
                 side: kit_side(o.side),
                 amount: o.amount,
@@ -1301,6 +1334,12 @@ mod wit2 {
                 base: o.base,
                 quote: o.quote,
                 range: o.range.map(kit_range),
+                position: o.position,
+                shape: o.shape.map(|shape| match shape {
+                    w::LiquidityShape::Spot => LiquidityShape::Spot,
+                    w::LiquidityShape::Curve => LiquidityShape::Curve,
+                    w::LiquidityShape::BidAsk => LiquidityShape::BidAsk,
+                }),
             },
             w::Action::RemoveLiquidity(o) => Intent::RemoveLiquidity {
                 position: o.position,
@@ -1314,6 +1353,7 @@ mod wit2 {
                 obligation: o.obligation,
                 collateral: o.collateral,
                 repay: o.repay,
+                min_received: o.min_received,
             },
         };
         (intent, options)
@@ -1637,6 +1677,7 @@ mod tests {
                         price: 99.5,
                         size: 10.0,
                     }),
+                    expires_slot: Some(150),
                     state: SendState::Landed("sig".into()),
                     slot: Some(101),
                     fee: Some(5_000),
@@ -1653,6 +1694,7 @@ mod tests {
                         ask: None,
                         size: Some(2.0),
                     }),
+                    expires_slot: Some(104),
                     state: SendState::NotSent("no requests for quotes".into()),
                     slot: None,
                     fee: None,
@@ -1664,7 +1706,11 @@ mod tests {
                     venue: String::new(),
                     client_id: None,
                     order: None,
-                    state: SendState::Failed("raw sends aren't enabled".into()),
+                    expires_slot: None,
+                    state: SendState::Failed {
+                        reason: "failed on chain".into(),
+                        signature: Some("sig".into()),
+                    },
                     slot: None,
                     fee: None,
                     tip: None,
@@ -1750,11 +1796,15 @@ mod tests {
             .client_id(2)
             .ask(99.9, 1.0)
             .post_only()
+            .ask(110.0, 1.0)
+            .reduce_only()
+            .expires(202)
             .target_position(3.0)
             .participation(0.1)
             .buy(1.0, 102.0)
             .at("openbook:spot:SOL-USDC")
             .respond("rfq-1", Some(100.0), None)
+            .expires(107)
             .cancel(2)
             .swap(Side::Bid, 100.0, AmountUnit::Quote, 101.0)
             .add_liquidity(
@@ -1765,23 +1815,45 @@ mod tests {
                     upper: 110.0,
                 }),
             )
-            .remove_liquidity(None, 0.5)
+            .push(
+                Intent::AddLiquidity {
+                    base: 1.0,
+                    quote: 100.0,
+                    range: None,
+                    position: Some("position".into()),
+                    shape: Some(mtx_kit::LiquidityShape::BidAsk),
+                },
+                LineOptions::default(),
+            )
+            .remove_liquidity(None, 0.0)
             .deposit(10.0)
             .withdraw(None)
             .borrow(5.0)
             .repay(None)
-            .liquidate("11111111111111111111111111111111", "phoenix:perp:SPCX", 1.0);
+            .push(
+                Intent::Liquidate {
+                    obligation: "11111111111111111111111111111111".into(),
+                    collateral: "phoenix:perp:SPCX".into(),
+                    repay: 1.0,
+                    min_received: Some(0.9),
+                },
+                LineOptions::default(),
+            );
         assert_eq!(lines, expected.clone().into_lines());
 
         // Planned as the grader sends it, from a position of 4: the IOC buy
-        // may not fill, so the reduce-only sell gets the 4 held; the target
-        // may trade 10% of the 5.5 on the tape, less than its minimum trade.
+        // may not fill, so the reduce-only sell gets the 4 held, and the
+        // reduce-only ask nothing (the sell and the post-only ask could take
+        // the rest); the target may trade 10% of the 5.5 on the tape, less
+        // than its minimum trade.
         let (planned, notes) = mtx_kit::plan_sheet(&expected, &market);
         let lines: Vec<_> = planned.iter().map(|p| p.line).collect();
         assert_eq!(
             lines,
-            [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
         );
+        assert!(planned[2].reduce_only);
+        assert_eq!(planned[6].expires_slot, Some(107));
         assert_eq!(
             planned[2].action,
             Action::Market {
@@ -1797,6 +1869,7 @@ mod tests {
             notes,
             [
                 "reduce-only market order of 5 cut to 4, so as not to grow the position",
+                "reduce-only resting order of 1 cut to 0, so as not to grow the position",
                 "participation 0.1 of the step's volume: trading 0.55 of 1"
             ]
         );

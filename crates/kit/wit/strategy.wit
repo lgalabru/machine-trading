@@ -322,6 +322,8 @@ interface types {
     size: f64,
     /// Both are post-only.
     post-only: bool,
+    /// The last slot both rest in; none until cancelled.
+    expires-slot: option<u64>,
   }
 
   /// A market order: `size`, filling at no worse than `limit`.
@@ -337,6 +339,9 @@ interface types {
     price: f64,
     size: f64,
     time-in-force: time-in-force,
+    /// The last slot it rests in (Phoenix's `last_valid_slot`); none until
+    /// cancelled.
+    expires-slot: option<u64>,
   }
 
   /// A quote answering a request: a price for each side it answers, for
@@ -346,6 +351,9 @@ interface types {
     bid: option<f64>,
     ask: option<f64>,
     size: option<f64>,
+    /// The last slot the quote can be taken at; none until the request's
+    /// deadline.
+    expiry-slot: option<u64>,
   }
 
   /// What a swap's amount counts.
@@ -360,15 +368,25 @@ interface types {
     limit: f64,
   }
 
+  /// How liquidity spreads over a range of bins (Meteora DLMM's
+  /// strategies): evenly, peaked at the price, or heavier away from it.
+  enum liquidity-shape { spot, curve, bid-ask }
+
   /// Liquidity for a pool: up to `base` and `quote`, over `range`, or the
   /// whole curve.
   record add-liquidity {
     base: f64,
     quote: f64,
     range: option<price-range>,
+    /// A `liquidity-position`'s id to add to; none opens a new position (or,
+    /// in a pool without positions, adds to the pool share).
+    position: option<string>,
+    /// For a pool of bins; none is the venue's default.
+    shape: option<liquidity-shape>,
   }
 
-  /// Take out `share` (in (0, 1]) of a liquidity position, and its fees.
+  /// Take out `share` of a liquidity position, and collect its fees: a
+  /// share in [0, 1], where 0 collects the fees only.
   record remove-liquidity {
     /// A `liquidity-position`'s id; none for the only one.
     position: option<string>,
@@ -389,6 +407,9 @@ interface types {
     /// The venue id of the reserve whose collateral is taken.
     collateral: string,
     repay: f64,
+    /// The least collateral to receive, in its asset; none takes what the
+    /// venue gives.
+    min-received: option<f64>,
   }
 
   /// What a line of the sheet asks for.
@@ -437,7 +458,8 @@ interface types {
   /// the session says so (`session.applies-tx-options`): it is accepted and
   /// counted, and changes nothing.
   record tx-options {
-    /// Compute units the transaction asks for.
+    /// Compute units the transaction asks for; none is the simulation's
+    /// units plus a margin.
     cu-limit: option<u32>,
     /// The priority fee: micro-lamports per compute unit.
     cu-price: option<u64>,
@@ -446,7 +468,9 @@ interface types {
     /// Lines with the same bundle id are sent as one bundle.
     bundle: option<u32>,
     route: option<route>,
-    /// Send again each slot until this one, if it hasn't landed.
+    /// Send the same transaction again each slot until this one, if it
+    /// hasn't landed; once its blockhash expires, sign it again with a new
+    /// one, after checking it didn't land.
     retry-until-slot: option<u64>,
   }
 
@@ -486,8 +510,8 @@ interface types {
   variant send-state {
     /// It executed: its signature.
     landed(string),
-    /// It was sent, or checked, and failed: why.
-    failed(string),
+    /// It was sent, or checked, and failed.
+    failed(failure),
     /// It wasn't sent: why (an earlier order of the step failed, the
     /// session can't trade the venue, or doesn't support the action).
     not-sent(string),
@@ -495,6 +519,13 @@ interface types {
     delayed,
     /// Its blockhash expired before it landed.
     expired,
+  }
+
+  /// Why an order failed, and, if it was sent and ran on chain, its
+  /// signature (its fee is the send status's).
+  record failure {
+    reason: string,
+    signature: option<string>,
   }
 
   /// Where an order came from: a line of the sheet, or a raw transaction
@@ -523,10 +554,21 @@ interface types {
 
   /// One account of an instruction.
   record account-meta {
-    /// Base58.
-    pubkey: string,
+    key: account-key,
     signer: bool,
     writable: bool,
+  }
+
+  /// An account of a raw transaction.
+  variant account-key {
+    /// An account by its address, base58.
+    address(string),
+    /// The bot's authority, which signs every raw transaction.
+    authority,
+    /// One of the transaction's fresh signers, from 0: a key the grader
+    /// makes for this transaction alone, for an account that must sign its
+    /// own creation (a position's mint, a position account).
+    fresh(u8),
   }
 
   /// One instruction of a raw transaction.
@@ -542,25 +584,38 @@ interface types {
     instructions: list<instruction>,
     /// Address lookup tables to compile it with, base58.
     lookup-tables: list<string>,
+    /// How many fresh signers its instructions name (`account-key::fresh`).
+    fresh-signers: u8,
     tx: option<tx-options>,
+  }
+
+  /// A raw transaction `send` took.
+  record raw-receipt {
+    /// Its number within the step (`send-source::raw`).
+    id: u32,
+    /// The fresh signers' addresses, base58, in order: what the accounts
+    /// they created are called.
+    fresh-signers: list<string>,
   }
 }
 
 world strategy {
-  use types.{session, market, intent, raw-transaction};
+  use types.{session, market, intent, raw-transaction, raw-receipt};
 
   /// A line in the strategy's log.
   import log: func(line: string);
   /// A read-only JSON-RPC call against the session's chain, answered by the
   /// grader before it returns: `params` and the result are JSON.
   import rpc: func(method: string, params: string) -> result<string, string>;
-  /// Reserved: a transaction the grader simulates against the paused chain,
-  /// signs with the bot's key and sends after the step's sheet, in the
-  /// order sent. Returns its number within the step (`send-source::raw`),
+  /// Reserved: a transaction the grader makes its fresh signers for,
+  /// simulates against the paused chain, signs with the bot's key and the
+  /// fresh signers, and sends after the step's sheet, in the order sent.
+  /// Returns its number within the step and the fresh signers' addresses,
   /// or why it was refused: a program outside the session's allowlist, a
-  /// failed simulation, a breach of the mandate. Sessions that don't enable
-  /// raw sends refuse every one.
-  import send: func(tx: raw-transaction) -> result<u32, string>;
+  /// signer that is neither the authority nor a fresh one, a failed
+  /// simulation, a breach of the mandate. Sessions that don't enable raw
+  /// sends refuse every one.
+  import send: func(tx: raw-transaction) -> result<raw-receipt, string>;
 
   export start: func(session: session) -> result<_, string>;
   export step: func(market: market) -> result<list<intent>, string>;

@@ -29,7 +29,7 @@ use tracing::{info, warn};
 
 use crate::{
     Action, BotEnv, BotResult, Market, Orders, Planned, SendSource, SendStatus, Session, Strategy,
-    Trader, Turns, VenueInfo, phoenix_market_address, plan_sheet, resting_after, rpc_client,
+    Trader, Turns, VenueInfo, phoenix_market_address, plan_sheet_with, resting_after, rpc_client,
     venue_views,
 };
 
@@ -193,7 +193,9 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         match strategy.step(&market, &mut orders) {
             Ok(()) => {
                 let planned;
-                (planned, notes) = plan_sheet(&orders, &market);
+                (planned, notes) = plan_sheet_with(&orders, &market, |venue, action| {
+                    venue.is_none() && Trader::executes(action)
+                });
                 for note in &notes {
                     warn!(step = step.k, "{note}");
                 }
@@ -228,12 +230,12 @@ async fn send(
                 crate::SendState::NotSent(format!("{venue} isn't traded in this session"))
             }
             None => {
-                let sent = trader.send_planned(&planned.action).await;
+                let sent = trader.send_planned(planned).await;
                 if sent.sent {
                     tried.push(planned.action.clone());
                 }
-                if let crate::SendState::Failed(error) = &sent.state {
-                    warn!(action = ?planned.action, %error, "order failed");
+                if let crate::SendState::Failed { reason, .. } = &sent.state {
+                    warn!(action = ?planned.action, error = %reason, "order failed");
                 }
                 sent.state
             }
@@ -244,6 +246,7 @@ async fn send(
             venue: planned.venue.clone().unwrap_or_else(|| own.to_string()),
             client_id: planned.client_id,
             order: Some(planned.action.clone()),
+            expires_slot: planned.expires_slot,
             state,
             slot: None,
             fee: None,

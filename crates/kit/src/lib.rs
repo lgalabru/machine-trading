@@ -108,11 +108,11 @@ pub use solana_pubkey::Pubkey;
 pub use solana_transaction::{Hash, Instruction, Signature};
 pub use strategy::{
     Action, AmountUnit, Book, BotResult, Execution, FeeView, Intent, LendingPosition, LineOptions,
-    LiquidityPosition, Market, MarketKind, OpenOrder, Orders, OwnFill, Planned, Position,
-    PriceRange, RPC_METHODS, Reports, Rfq, Role, Route, SESSION_VARS, SendSource, SendState,
-    SendStatus, Session, Side, Strategy, TimeInForce, TxOptions, VenueInfo, VenueView, log,
-    phoenix_market_address, plan, plan_sheet, resting_after, rpc, rpc_account, rpc_accounts,
-    step_offline, venue_views,
+    LiquidityPosition, LiquidityShape, Market, MarketKind, OpenOrder, Orders, OwnFill, Planned,
+    Position, PriceRange, RPC_METHODS, Reports, Rfq, Role, Route, SESSION_VARS, SendSource,
+    SendState, SendStatus, Session, Side, Strategy, TimeInForce, TxOptions, VenueInfo, VenueView,
+    log, phoenix_market_address, plan, plan_sheet, plan_sheet_with, resting_after, rpc,
+    rpc_account, rpc_accounts, step_offline, venue_views,
 };
 
 #[cfg(feature = "phoenix")]

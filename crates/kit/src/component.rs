@@ -24,9 +24,9 @@ use mtx_core::turns;
 
 use crate::{
     Action, AmountUnit, Book, Execution, FeeView, Intent, LendingPosition, LineOptions,
-    LiquidityPosition, Market, MarketKind, OpenOrder, OwnFill, Position, PriceRange, Reports, Rfq,
-    Role, Route, SendSource, SendState, SendStatus, Session, Side, TimeInForce, VenueInfo,
-    VenueView,
+    LiquidityPosition, LiquidityShape, Market, MarketKind, OpenOrder, OwnFill, Position,
+    PriceRange, Reports, Rfq, Role, Route, SendSource, SendState, SendStatus, Session, Side,
+    TimeInForce, VenueInfo, VenueView,
 };
 
 /// The session, as the grader hands it to `start`.
@@ -241,7 +241,13 @@ fn venue_view(v: wit::VenueView) -> VenueView {
 }
 
 fn send_status(s: wit::SendStatus) -> SendStatus {
+    let expires_slot = match &s.order {
+        Some(wit::Order::Limit(o)) => o.expires_slot,
+        Some(wit::Order::Respond(r)) => r.expiry_slot,
+        _ => None,
+    };
     SendStatus {
+        expires_slot,
         step: s.step,
         source: match s.source {
             wit::SendSource::Line(n) => SendSource::Line(n),
@@ -290,6 +296,8 @@ fn send_status(s: wit::SendStatus) -> SendStatus {
                 base: o.base,
                 quote: o.quote,
                 range: o.range.map(range),
+                position: o.position,
+                shape: o.shape.map(kit_shape),
             },
             wit::Order::RemoveLiquidity(o) => Action::RemoveLiquidity {
                 position: o.position,
@@ -303,11 +311,15 @@ fn send_status(s: wit::SendStatus) -> SendStatus {
                 obligation: o.obligation,
                 collateral: o.collateral,
                 repay: o.repay,
+                min_received: o.min_received,
             },
         }),
         state: match s.state {
             wit::SendState::Landed(signature) => SendState::Landed(signature),
-            wit::SendState::Failed(why) => SendState::Failed(why),
+            wit::SendState::Failed(failure) => SendState::Failed {
+                reason: failure.reason,
+                signature: failure.signature,
+            },
             wit::SendState::NotSent(why) => SendState::NotSent(why),
             wit::SendState::Delayed => SendState::Delayed,
             wit::SendState::Expired => SendState::Expired,
@@ -329,6 +341,14 @@ fn side(side: Side) -> wit::Side {
     match side {
         Side::Bid => wit::Side::Bid,
         Side::Ask => wit::Side::Ask,
+    }
+}
+
+fn kit_shape(shape: wit::LiquidityShape) -> LiquidityShape {
+    match shape {
+        wit::LiquidityShape::Spot => LiquidityShape::Spot,
+        wit::LiquidityShape::Curve => LiquidityShape::Curve,
+        wit::LiquidityShape::BidAsk => LiquidityShape::BidAsk,
     }
 }
 
@@ -380,6 +400,7 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
             ask,
             size,
             post_only: options.time_in_force == TimeInForce::PostOnly,
+            expires_slot: options.expires_slot,
         }),
         Intent::Market {
             side: s,
@@ -399,12 +420,17 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
             price,
             size,
             time_in_force,
+            expires_slot: options.expires_slot,
         }),
         Intent::CancelAll => wit::Action::CancelAll,
         Intent::Cancel { client_id } => wit::Action::Cancel(client_id),
-        Intent::Respond { id, bid, ask, size } => {
-            wit::Action::Respond(wit::RfqResponse { id, bid, ask, size })
-        }
+        Intent::Respond { id, bid, ask, size } => wit::Action::Respond(wit::RfqResponse {
+            id,
+            bid,
+            ask,
+            size,
+            expiry_slot: options.expires_slot,
+        }),
         Intent::Swap {
             side: s,
             amount,
@@ -419,13 +445,23 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
             },
             limit,
         }),
-        Intent::AddLiquidity { base, quote, range } => {
-            wit::Action::AddLiquidity(wit::AddLiquidity {
-                base,
-                quote,
-                range: range.map(wit_range),
-            })
-        }
+        Intent::AddLiquidity {
+            base,
+            quote,
+            range,
+            position,
+            shape,
+        } => wit::Action::AddLiquidity(wit::AddLiquidity {
+            base,
+            quote,
+            range: range.map(wit_range),
+            position,
+            shape: shape.map(|shape| match shape {
+                LiquidityShape::Spot => wit::LiquidityShape::Spot,
+                LiquidityShape::Curve => wit::LiquidityShape::Curve,
+                LiquidityShape::BidAsk => wit::LiquidityShape::BidAsk,
+            }),
+        }),
         Intent::RemoveLiquidity { position, share } => {
             wit::Action::RemoveLiquidity(wit::RemoveLiquidity { position, share })
         }
@@ -437,10 +473,12 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
             obligation,
             collateral,
             repay,
+            min_received,
         } => wit::Action::Liquidate(wit::Liquidate {
             obligation,
             collateral,
             repay,
+            min_received,
         }),
     };
     wit::Intent {
