@@ -1,0 +1,24 @@
+name = "phoenix-spcx-2026-10-29"
+symbol = "SPCX"
+
+[[program]]
+name = "phoenix-eternal"
+expect_code_sha256 = "3de48ae58995504cdc439a179d2664a0c49f83809ad3f2ab93a6925b16ef70a0"
+pin_from = "."
+address = "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih"
+
+[[program]]
+name = "phoenix-ember"
+expect_code_sha256 = "cbf33bb02b0f6b30dcc8083e80ee7e3e9565647236b084074fc754aa6753ded0"
+pin_from = "."
+address = "EMBERpYNE6ehWmXymZZS2skiFmCa9V5dp14e1iduM5qy"
+
+[[program]]
+name = "phoenix-rise"
+expect_code_sha256 = "6e105fd7f484d8eeca7825ae13086cd14ed6f695b3fbdd1facb7d147c4cc89b2"
+pin_from = "."
+address = "RiSeVw3ZjNfsaXPRb4mgaqYaEEt41pNNJoDvVh7pgQj"
+
+[[warmup]]
+action = "phoenix-eternal"
+symbol = "SPCX"
