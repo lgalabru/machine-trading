@@ -626,25 +626,26 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         ),
     ));
 
-    let solution = read(&dir.join("solution/src/main.rs"));
     let bot_src = read(&dir.join("reference/src/main.rs"));
+    let generated = tasks::stale(root).unwrap_or_default();
+    let solution_prefix = format!("bench/tasks/{task}/solution/");
+    let solution_stale = generated.iter().any(|p| p.starts_with(&solution_prefix));
     steps.push(Step::new(
         "reference",
         "Reference bot and oracle",
-        meta.is_some() && !bot_src.is_empty() && solution == bot_src,
+        meta.is_some() && !bot_src.is_empty() && !solution_stale,
         if meta.is_none() {
             format!("the reference doesn't load: {problem}")
         } else if bot_src.is_empty() {
             "reference/src/main.rs is missing".into()
-        } else if solution != bot_src {
-            "solution/src/main.rs differs from reference/src/main.rs".into()
+        } else if solution_stale {
+            "solution/ differs from reference/".into()
         } else {
             "reference/, and the oracle matches it".to_string()
         },
         "Write the reference strategy in reference/ (task_guide step=reference), then `mtx task sync` to copy it into the oracle.".into(),
     ));
 
-    let generated = tasks::stale(root).unwrap_or_default();
     let anchored = meta.is_some() && !generated.iter().any(|p| p.ends_with("anchors.txt"));
     steps.push(Step::new(
         "anchor",
