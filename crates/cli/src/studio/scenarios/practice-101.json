@@ -1,0 +1,28 @@
+{
+  "name": "practice-101",
+  "description": "Five steps: SPCX falls 3% at step 2, holds at step 3, and is back where it started at step 4. Buy the dip, sell the recovery.",
+  "symbol": "SPCX",
+  "duration_slots": 10,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 3,
+      "level_pct": -3.0
+    },
+    {
+      "slot": 7,
+      "level_pct": 0.0
+    }
+  ]
+}

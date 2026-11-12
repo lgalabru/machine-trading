@@ -4,7 +4,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/market-making-spcx"
-version = "0.11.0"
+version = "0.12.0"
 description = "Write a bot that makes markets in Phoenix SPCX (SpaceX) perps against competing makers and informed taker flow, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "market-making", "surfpool", "rust"]
 
@@ -44,7 +44,7 @@ user = "agent"
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-market-making-spcx-verifier"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-market-making-spcx-verifier@sha256:db6b90ead90034747c997ac25bdd31fb2364e4e95f05048d786ab6c211dcc1ea"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -55,7 +55,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-market-making-spcx"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-market-making-spcx@sha256:5630457e526e1e694c3d1d6e51008fab7402e403ba19bc90e4486508e64affaa"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"
