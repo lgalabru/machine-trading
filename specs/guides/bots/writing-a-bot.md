@@ -229,12 +229,16 @@ the rules of their shape.
 
 The grader simulates each one at once, against the paused chain, and
 refuses it, with the reason, if it fails, runs a program off the list, or
-would leave the account breaking its mandate: over its position cap,
-holding another market, or past its drawdown limit. A refused send queues
-nothing. A taken one goes out after the sheet, in the order taken, once it
+writes a Phoenix trader account other than the bot's main one (a
+subaccount it registers or funds, or another trader's), or would leave the
+account breaking its mandate: over its position cap, holding another
+market, or past its drawdown limit. A step may have 16 raw sends
+simulated; the rest are refused. A refused send queues nothing. A taken one goes out after the sheet, in the order taken, once it
 has been checked again against the chain the sheet left; the next step's
 `sends` say what became of it (`SendSource::Raw(id)`, with its signature,
-slot and fee). Raw sends in one step don't see each other when they're
+slot and fee, or `Delayed` where the task's faults held it: it may still
+land, so don't send it again; until it lands, new sends are checked as if
+it had, and two held at once refuse a third). Raw sends in one step don't see each other when they're
 taken, so a transaction that needs an account another creates goes in the
 same transaction or a later step. The planner doesn't count orders a raw
 transaction rests on the book.
