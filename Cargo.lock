@@ -5004,6 +5004,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-wit-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-cli"
 version = "0.1.0"
 dependencies = [
@@ -5076,9 +5083,11 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signer",
+ "solana-transaction 4.3.0",
  "surfpool-sdk",
  "thiserror 2.0.21",
  "tokio",
+ "toml 1.2.1+spec-1.1.0",
  "tracing",
  "uuid",
  "wasmtime",

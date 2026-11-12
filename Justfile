@@ -1,4 +1,4 @@
-# Loads MTX_FORK_RPC_URL for snapshot-prepare.
+# Loads MTX_FORK_RPC_URL for snapshot-build.
 set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
@@ -48,9 +48,10 @@ install bin="mtx":
       *) echo "unknown binary {{bin}} (have: mtx)"; exit 1 ;;
     esac
 
-# Fork mainnet and write a pinned Phoenix snapshot.
-snapshot-prepare out:
-    cargo run --release -- snapshot prepare --out {{out}}
+# Build a snapshot from its recipe: fork mainnet, warm up, export.
+# Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+snapshot-build name *flags:
+    cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
 # Replay a snapshot offline and trade through a scripted crash.
 snapshot-verify dir=("snapshots/" + snapshot):
@@ -64,10 +65,6 @@ bots:
       just --justfile "bots/$bot/Justfile" build
     done
 
-# Fork mainnet and write a spot snapshot (Phoenix v1, OpenBook v2, Pyth SOL/USD).
-snapshot-prepare-spot out:
-    cargo run --release -- snapshot prepare-spot --out {{out}}
-
 # A spot session end to end: a bot sells on both SOL/USDC books and passes
 # its sell-only mandate; the same bot buying too is disqualified.
 spot-smoke:
@@ -78,6 +75,13 @@ spot-smoke:
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
+
+# The strategy interface end to end: the probe puts one line of each kind
+# on its first sheet in a flash-crash session, and its log
+# (target/logs/wit-probe) shows what it was handed and what became of each.
+wit-probe:
+    just --justfile bots/wit-probe/Justfile build
+    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-spcx/environment/practice/practice-1.json
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
