@@ -68,6 +68,10 @@ pub struct Hello {
     /// older graders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// What the session's steps carry beyond the clock, if anything: a step
+    /// of a session that reports a tape and has none had no trades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reports: Option<Reports>,
 }
 
 /// A scenario's seed for the strategy: the same in every run of it, and the
@@ -76,6 +80,17 @@ pub fn scenario_seed(scenario: &str) -> u64 {
     scenario.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
+}
+
+/// The turn data a session's steps carry.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reports {
+    #[serde(default)]
+    pub tape: bool,
+    #[serde(default)]
+    pub depth: bool,
+    #[serde(default)]
+    pub timestamps: bool,
 }
 
 /// One step: the world has moved to `slot`.
@@ -126,6 +141,10 @@ pub enum Role {
 pub struct Trade {
     /// Where it traded, as the mandate names venues: `phoenix` or `openbook`.
     pub venue: String,
+    /// The market it traded in, as the mandate names instruments
+    /// (`phoenix:spot:SOL-USDC`): what tells two markets of one venue apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market: Option<String>,
     /// The taker's side.
     pub side: Side,
     /// Price, quote units per base unit, before fees.
@@ -157,6 +176,9 @@ pub struct Level {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BookLevels {
     pub venue: String,
+    /// The market, as [`Trade::market`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market: Option<String>,
     pub bids: Vec<Level>,
     pub asks: Vec<Level>,
 }
@@ -216,6 +238,7 @@ impl Turns {
                 end_slot: 0,
                 turn_wall_ms: 0,
                 seed: None,
+                reports: None,
             },
             open: None,
             tape: Vec::new(),
@@ -328,6 +351,7 @@ mod tests {
             end_slot: 104,
             turn_wall_ms: 1_000,
             seed: Some(7),
+            reports: None,
         };
         let mut grader_reader = BufReader::new(grader.try_clone().unwrap());
         let mut grader = grader;
@@ -372,6 +396,7 @@ mod tests {
             end_slot: 104,
             turn_wall_ms: 1_000,
             seed: None,
+            reports: None,
         };
         let line = serde_json::to_string(&Message::Hello(hello.clone())).unwrap();
         assert_eq!(
@@ -419,6 +444,7 @@ mod tests {
             end_slot: 104,
             turn_wall_ms: 1_000,
             seed: None,
+            reports: None,
         });
         let line = |m: &Message| {
             let mut line = serde_json::to_string(m).unwrap();
@@ -443,6 +469,7 @@ mod tests {
         grader_reader.read_line(&mut ready).unwrap();
         let trade = Trade {
             venue: "phoenix".into(),
+            market: Some("phoenix:spot:SOL-USDC".into()),
             side: Side::Sell,
             price: 150.25,
             base: 2.0,
@@ -453,6 +480,7 @@ mod tests {
         };
         let book = BookLevels {
             venue: "openbook".into(),
+            market: None,
             bids: vec![Level {
                 price: 150.0,
                 base: 4.0,
