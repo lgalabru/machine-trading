@@ -60,7 +60,7 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    Error, Result, chain,
+    Error, Result,
     error::io_error,
     guard::Guard,
     orders::Traded,
@@ -1345,7 +1345,7 @@ mod tests {
     /// a block (the surfnet produces none until the grader steps it).
     #[tokio::test(flavor = "multi_thread")]
     async fn a_stepped_spot_setup_funds_the_wallet_without_a_block() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../snapshots/sol-usdc-spot-2026-11-11")
             .canonicalize()
             .unwrap();
