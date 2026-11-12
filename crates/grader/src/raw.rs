@@ -26,8 +26,11 @@
 //!    account) breaks no rule of the mandate: its position cap or floor,
 //!    its universe, its drawdown limit.
 //!
-//! A step has at most [`MAX_SIMULATED_PER_STEP`] sends simulated, so a
-//! strategy can't make a step cost the grader more than that. A refused
+//! A step has at most [`MAX_SIMULATED_PER_STEP`] sends simulated, and the
+//! audit copies out of a simulation only the accounts that matter to it
+//! (token accounts, the main trader account, new accounts), so a strategy
+//! can't make a step cost the grader more than that. A copy of a send the
+//! step already took is refused. A refused
 //! send queues nothing. A taken one gets its number within the
 //! step and its fresh signers' addresses. After the step's sheet has gone
 //! out, each taken transaction, in the order taken, is simulated and
@@ -348,6 +351,18 @@ impl RawSender {
         }
         self.simulated += 1;
         let tables = self.lookup_tables(&tx.lookup_tables).await?;
+        if let Some(same) = self.queue.iter().find(|q| {
+            q.instructions == instructions
+                && q.tables
+                    .iter()
+                    .map(|t| t.key)
+                    .eq(tables.iter().map(|t| t.key))
+        }) {
+            return Err(format!(
+                "duplicate of send {}: it would be the same transaction, with the same signature",
+                same.id
+            ));
+        }
         let start = match self.start {
             Some(start) => start,
             None => {
@@ -549,12 +564,13 @@ impl RawSender {
         // fails now would change nothing, so it is left out.
         let mut held: Vec<&Held> = self.held.iter().collect();
         let (results, ahead) = loop {
-            let mut watch: Vec<Pubkey> = Vec::new();
+            let mut keys: Vec<Pubkey> = Vec::new();
             for key in held.iter().flat_map(|h| &h.writable).chain(&writable) {
-                if !watch.contains(key) {
-                    watch.push(*key);
+                if !keys.contains(key) {
+                    keys.push(*key);
                 }
             }
+            let watch = self.worth_watching(&keys).await?;
             let mut bundle: Vec<String> = held.iter().map(|h| h.wire.clone()).collect();
             bundle.push(encode(&wire));
             bundle.extend(self.views()?);
@@ -596,9 +612,7 @@ impl RawSender {
         let after_tx = &result["postExecutionAccounts"];
         let main = self.phoenix.trader_account(&self.authority);
         if let Some(trader) = other_trader(&main, &ahead, &writable, before, after_tx) {
-            return Err(format!(
-                "it writes Phoenix trader account {trader}: raw sends may only trade from the main one, {main}"
-            ));
+            return Err(other_trader_refusal(&trader, &main));
         }
         let delta = wallet_change(&self.authority, &ahead, before, after_tx)?;
         let wallet_after = u64::try_from(i128::from(wallet) + delta).unwrap_or(0);
@@ -608,6 +622,70 @@ impl RawSender {
             Some(breach) => Err(format!("it would breach the mandate: {breach}")),
             None => Ok(()),
         }
+    }
+
+    /// Of `keys`, a send's writable accounts, the ones the audit reads
+    /// before and after it: token accounts, the main trader account, and
+    /// accounts that don't exist yet (which the send may create as either).
+    /// Any other account, however big, is never copied out of the
+    /// simulation: each is read only as far as its owner and first eight
+    /// bytes. Another trader account is refused here, before anything runs.
+    async fn worth_watching(&self, keys: &[Pubkey]) -> Result<Vec<Pubkey>, String> {
+        let trader = phoenix_rise::accounts::PhoenixAccount::Trader.discriminant();
+        let main = self.phoenix.trader_account(&self.authority);
+        let mut watch = Vec::new();
+        for chunk in keys.chunks(100) {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getMultipleAccounts",
+                "params": [
+                    chunk.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    {
+                        "encoding": "base64",
+                        "dataSlice": { "offset": 0, "length": 8 },
+                        "commitment": "processed",
+                    },
+                ],
+            });
+            let fail = |e: String| format!("reading its accounts: {e}");
+            let text = self
+                .http
+                .post(&self.rpc_url)
+                .timeout(crate::session::INTERNAL_RPC_TIMEOUT)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .map_err(|e| fail(e.to_string()))?
+                .text()
+                .await
+                .map_err(|e| fail(e.to_string()))?;
+            let answer: Value = serde_json::from_str(&text).map_err(|e| fail(e.to_string()))?;
+            let accounts = answer["result"]["value"]
+                .as_array()
+                .filter(|accounts| accounts.len() == chunk.len())
+                .ok_or_else(|| fail(answer["error"].to_string()))?;
+            for (key, account) in chunk.iter().zip(accounts) {
+                let owner = account["owner"]
+                    .as_str()
+                    .and_then(|o| Pubkey::from_str(o).ok());
+                let head = account["data"][0]
+                    .as_str()
+                    .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok());
+                let is_trader = head.is_some_and(|head| head == trader);
+                if is_trader && *key != main {
+                    return Err(other_trader_refusal(key, &main));
+                }
+                let matters = account.is_null()
+                    || is_trader
+                    || matches!(owner, Some(p) if p == TOKEN || p == TOKEN_2022);
+                if matters {
+                    watch.push(*key);
+                }
+            }
+        }
+        Ok(watch)
     }
 
     /// The account as the venue shows it now, before anything the step
@@ -974,6 +1052,12 @@ pub fn other_trader(
         .filter(|(_, key)| *key != main && writes.contains(key))
         .find(|(i, _)| is_trader(before, *i) || is_trader(after, *i))
         .map(|(_, key)| *key)
+}
+
+fn other_trader_refusal(trader: &Pubkey, main: &Pubkey) -> String {
+    format!(
+        "it writes Phoenix trader account {trader}: raw sends may only trade from the main one, {main}"
+    )
 }
 
 /// The USDC `owner` holds in one account, given as JSON-RPC returns it.
@@ -1764,7 +1848,7 @@ mod tests {
         );
         assert!(refusal(6).contains("can't sign"), "{}", refusal(6));
         assert!(
-            refusal(7).contains("the simulation failed"),
+            refusal(7).starts_with("it writes Phoenix trader account"),
             "{}",
             refusal(7)
         );
@@ -1868,6 +1952,12 @@ mod tests {
         let world = world().await;
         let buy = world.market_order(&world.bot, 70).await;
         let phoenix_program: Pubkey = buy.instructions[1].program.parse().unwrap();
+        // The program the scenario allowlist knows as Phoenix's.
+        assert!(
+            crate::scenario::RAW_SEND_PROGRAMS
+                .iter()
+                .any(|(name, p)| *name == "Phoenix" && *p == phoenix_program.to_string())
+        );
         let mut sender = world.sender(
             vec![phoenix_program, SYSTEM, TOKEN, ASSOCIATED_TOKEN],
             Mandate::perp("phoenix", SPCX, 70.0, 1_000.0),
@@ -2011,6 +2101,118 @@ mod tests {
             assert_eq!(world.rpc.get_account(key).unwrap().lamports, 1_000_000);
         }
         assert!(sender.take(create()).await.is_ok());
+    }
+
+    /// A send that only marks big accounts writable (a compute budget
+    /// instruction naming 28 of Phoenix's 1.2 MB accounts) costs a
+    /// simulation, never a copy of them: a step of 16 stays quick, and a
+    /// 17th is refused. Two identical sends would be one transaction: the
+    /// second is refused.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn heavy_and_duplicate_sends_cost_the_grader_little() {
+        let world = world().await;
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "getProgramAccounts",
+            "params": [
+                "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih",
+                {
+                    "encoding": "base64",
+                    "dataSlice": { "offset": 0, "length": 0 },
+                    "filters": [{ "dataSize": 1_185_216 }],
+                },
+            ],
+        });
+        let answer: Value = reqwest::Client::new()
+            .post(world._internal.url())
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let mut big: Vec<String> = answer["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["pubkey"].as_str().unwrap().to_string())
+            .collect();
+        big.sort();
+        assert!(big.len() >= 28, "{} big accounts", big.len());
+        let heavy = transaction(vec![RawInstruction {
+            program: COMPUTE_BUDGET.to_string(),
+            accounts: big[..28]
+                .iter()
+                .map(|k| account(AccountKey::Address(k.clone()), false, true))
+                .collect(),
+            data: [vec![2], 200_000u32.to_le_bytes().to_vec()].concat(),
+        }]);
+        let mut sender = world.sender(vec![SYSTEM], Mandate::perp("phoenix", SPCX, 70.0, 1_000.0));
+        sender.begin(0, None).await;
+        let started = std::time::Instant::now();
+        let first = sender.take(heavy.clone()).await;
+        assert!(first.is_ok(), "{first:?}");
+        assert_eq!(
+            sender.take(heavy.clone()).await,
+            Err(
+                "duplicate of send 0: it would be the same transaction, with the same signature"
+                    .into()
+            )
+        );
+        for _ in 2..MAX_SIMULATED_PER_STEP {
+            let mut other = heavy.clone();
+            other.instructions[0]
+                .accounts
+                .rotate_left(1 + sender.taken as usize);
+            assert!(sender.take(other).await.is_ok());
+        }
+        assert_eq!(
+            sender.take(heavy).await,
+            Err("more than 16 raw sends this step: the rest aren't simulated".into())
+        );
+        sender.close();
+        let statuses = sender.flush(&world.bot).await;
+        let took = started.elapsed();
+        assert_eq!(statuses.len(), 15);
+        assert!(
+            statuses
+                .iter()
+                .all(|s| matches!(s.state, SendState::Landed(_))),
+            "{statuses:?}"
+        );
+        assert!(
+            took < std::time::Duration::from_secs(30),
+            "the step took {took:?}"
+        );
+        eprintln!("16 heavy sends and their flush took {took:?}");
+    }
+
+    #[test]
+    fn only_programs_the_audit_measures_may_be_allowed() {
+        use crate::scenario::RawSends;
+        let allowed = |programs: &[&str]| {
+            RawSends {
+                programs: programs.iter().map(ToString::to_string).collect(),
+            }
+            .programs()
+        };
+        assert!(
+            allowed(&[
+                SYSTEM.to_string().as_str(),
+                "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih"
+            ])
+            .is_ok()
+        );
+        // OpenBook v2: its positions would go unmeasured.
+        let openbook = "opnb2LAfJYbRMAHHvqjCwQxanZn7ReEHp1k81EohpZb";
+        assert_eq!(
+            allowed(&[openbook]),
+            Err(format!(
+                "{openbook}: raw sends can't run it yet, since the audit can't measure what it holds; only the Phoenix, system, token, associated token, compute budget programs"
+            ))
+        );
+        assert!(allowed(&[TOKEN_2022.to_string().as_str()]).is_err());
     }
 
     /// The probe (`bots/raw-probe`, `just build`) as `MTX_TEST_RAW_PROBE_WASM`,
