@@ -213,15 +213,31 @@ a margin; `retry_until_slot` sends the same transaction again each slot,
 and signs it again with a new blockhash only once the old one has expired
 and the transaction hasn't landed.
 
-Raw transactions the grader signs (the world's `send` import) are
-reserved: every session refuses them for now. When they arrive, an
-instruction names its accounts by address, as the authority, as one of
-the transaction's fresh signers (`Fresh(n)`: keys the grader makes for
-that transaction alone, for accounts that must sign their own creation,
-whose addresses `send` returns), or as one of its derived addresses
-(`Derived(n)`: a PDA from a program and seeds, or an associated token
-account, which may name a fresh signer, as a new position's accounts do).
-`mtx_kit::raw` has the types, and `RawTransaction::check` the rules.
+For what the sheet can't say, a component can build a transaction itself
+and have the grader sign it: `mtx_kit::send_raw`, the world's `send`
+import, from `step`. A task opts in, and lists the programs raw
+transactions may run, directly or through another program, in the session
+variable `MTX_RAW_PROGRAMS` (comma-separated); every other session refuses
+them all. An instruction names its accounts by address, as the authority,
+as one of the transaction's fresh signers (`Fresh(n)`: keys the grader
+makes for that transaction alone, for accounts that must sign their own
+creation, whose addresses `send` returns), or as one of its derived
+addresses (`Derived(n)`: a PDA from a program and seeds, or an associated
+token account, which may name a fresh signer, as a new position's
+accounts do). `mtx_kit::raw` has the types, and `RawTransaction::check`
+the rules of their shape.
+
+The grader simulates each one at once, against the paused chain, and
+refuses it, with the reason, if it fails, runs a program off the list, or
+would leave the account breaking its mandate: over its position cap,
+holding another market, or past its drawdown limit. A refused send queues
+nothing. A taken one goes out after the sheet, in the order taken, once it
+has been checked again against the chain the sheet left; the next step's
+`sends` say what became of it (`SendSource::Raw(id)`, with its signature,
+slot and fee). Raw sends in one step don't see each other when they're
+taken, so a transaction that needs an account another creates goes in the
+same transaction or a later step. The planner doesn't count orders a raw
+transaction rests on the book.
 
 A line with an amount or a price that isn't a number (NaN) isn't sent,
 and a note says so.
