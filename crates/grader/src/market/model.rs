@@ -19,6 +19,11 @@
 //! - **Events.** Background jumps arrive as a Poisson process; when the
 //!   calendar enters a session kind that gaps (the open), the price gaps by
 //!   a draw from the fitted gap sizes. Both are recorded.
+//! - **Mark.** When the calibration's fair value is a venue's smoothed mark
+//!   (SPCX's Phoenix mark), the output trails the path: every
+//!   `update_seconds` it closes part of the gap, an exponential average with
+//!   the fitted half-life. That smoothing is what gives real 1 m marks their
+//!   small positive lag-1 autocorrelation.
 //!
 //! The path compiles to [`Waypoint`]s, which the existing machinery
 //! replays: [`MarketModel::scenario`] fills a template scenario's `path` and
@@ -370,6 +375,15 @@ impl MarketModel {
     }
 }
 
+/// A smoothed mark trailing the path (see
+/// [`crate::market::calibration::MarkSmoothing`]).
+struct SmoothedMark {
+    level: f64,
+    /// Slots between updates, and the share of the gap each closes.
+    every: u64,
+    weight: f64,
+}
+
 /// One asset's state through a draw, block by block.
 struct Walker<'a> {
     model: &'a MarketModel,
@@ -378,7 +392,10 @@ struct Walker<'a> {
     slot_seconds: f64,
     block_slots: u64,
     slot: u64,
+    /// The path's log level; the output is its mark when the calibration
+    /// has one.
     log_level: f64,
+    mark: Option<SmoothedMark>,
     log_levels: Vec<f64>,
     regime: usize,
     regime_vol: Vec<f64>,
@@ -406,6 +423,11 @@ impl<'a> Walker<'a> {
         let slot_seconds = SLOT_SECONDS;
         let block_slots = ((fv.block_seconds / slot_seconds).round() as u64).max(1);
         let kind = Some(kind_name(&model.calendar, start));
+        let mark = fv.mark.as_ref().map(|m| SmoothedMark {
+            level: 0.0,
+            every: ((m.update_seconds / slot_seconds).round() as u64).max(1),
+            weight: 1.0 - 0.5f64.powf(m.update_seconds / m.half_life_seconds),
+        });
         Self {
             model,
             start,
@@ -414,6 +436,7 @@ impl<'a> Walker<'a> {
             block_slots,
             slot: 0,
             log_level: 0.0,
+            mark,
             log_levels: vec![0.0],
             regime,
             regime_vol,
@@ -511,7 +534,15 @@ impl<'a> Walker<'a> {
                 });
             }
             self.log_level += step;
-            self.log_levels.push(self.log_level);
+            match &mut self.mark {
+                Some(mark) => {
+                    if slot.is_multiple_of(mark.every) {
+                        mark.level += mark.weight * (self.log_level - mark.level);
+                    }
+                    self.log_levels.push(mark.level);
+                }
+                None => self.log_levels.push(self.log_level),
+            }
         }
         let c = &fv.clustering;
         self.h = (1.0 - c.alpha - c.beta) + c.alpha * e * e + c.beta * self.h;
@@ -949,24 +980,27 @@ mod tests {
         let b = a.clone();
         let rho = 0.7;
         let corr = vec![vec![1.0, rho], vec![rho, 1.0]];
+        // Block returns' signs are the correlated normals' signs (each
+        // asset's t divisor is positive), so their concordance is
+        // 1/2 + asin(rho) / pi whatever the tails: about 0.747 at 0.7.
         let block = 40;
-        let (mut xy, mut xx, mut yy) = (0.0, 0.0, 0.0);
+        let (mut same, mut total) = (0, 0);
         for seed in 0..60 {
             let paths = draw_joint(&[&a, &b], &corr, seed, 4000).unwrap();
             assert_eq!(paths[0].record.start_unix, paths[1].record.start_unix);
             let ret =
                 |p: &ModelPath, i: usize| p.log_levels[(i + 1) * block] - p.log_levels[i * block];
             for i in 0..4000 / block {
-                let (x, y) = (ret(&paths[0], i), ret(&paths[1], i));
-                // Scale out each session's level so sessions weigh alike.
-                let (sx, sy) = (paths[0].record.regime_vol[0], paths[1].record.regime_vol[0]);
-                xy += x * y / (sx * sy);
-                xx += x * x / (sx * sx);
-                yy += y * y / (sy * sy);
+                same += usize::from((ret(&paths[0], i) > 0.0) == (ret(&paths[1], i) > 0.0));
+                total += 1;
             }
         }
-        let r = xy / (xx * yy).sqrt();
-        assert!((0.45..0.8).contains(&r), "realized correlation {r}");
+        let concordance = same as f64 / total as f64;
+        let expected = 0.5 + rho.asin() / std::f64::consts::PI;
+        assert!(
+            (concordance - expected).abs() < 0.03,
+            "sign concordance {concordance}, expected {expected}"
+        );
         assert!(draw_joint(&[&a, &b], &[vec![1.0, 1.2], vec![1.2, 1.0]], 1, 100).is_err());
         let spcx = MarketModel::new(spcx(), ModelSpec::default()).unwrap();
         assert!(draw_joint(&[&a, &spcx], &corr, 1, 100).is_err());
