@@ -19,7 +19,9 @@ clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Floats parse back to the exact value written: a grade scored again from
+# its reports (`mtx rescore`) must come out the same, to the last bit.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 solana-commitment-config = "3"
 solana-compute-budget-interface = "3"
 solana-keypair = "3"

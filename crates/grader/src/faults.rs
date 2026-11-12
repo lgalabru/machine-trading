@@ -158,7 +158,7 @@ impl Faults {
 }
 
 /// The spec resolved against the seed.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FaultPlan {
     seed: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,9 +166,9 @@ pub struct FaultPlan {
     /// Window and the floor drawn for it.
     #[serde(skip_serializing_if = "Option::is_none")]
     congestion: Option<(u64, u64, u64)>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     blockhash_expiry: Vec<u64>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drop: Vec<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lost_confirmation: Option<LostConfirmation>,
@@ -302,7 +302,7 @@ fn pick(draw: f64, (lo, hi): (u64, u64)) -> u64 {
 }
 
 /// What the session says of the faults at its end.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FaultsReport {
     pub plan: FaultPlan,
     /// Sends, landings and reads the bot made, as the plan counted them.
@@ -316,11 +316,12 @@ pub struct FaultsReport {
 }
 
 /// One fault that fired.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Fired {
     /// `latency`, `congestion`, `blockhash_expiry`, `drop`, `lost_confirmation`
     /// or `rpc_unavailable`.
-    pub fault: &'static str,
+    #[serde(deserialize_with = "crate::session::static_name")]
+    pub fault: crate::session::StaticName,
     /// The bot's turn it fired in.
     pub step: u64,
     /// The send, landing or read number it fired on.

@@ -116,7 +116,7 @@ impl ExecutionOrder {
 
 /// An order session's account of the order. The session's PnL is the bot's
 /// against doing nothing, which the broker would have done at its price.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OrderReport {
     pub side: Side,
     pub quantity: f64,
@@ -260,7 +260,7 @@ pub struct Traded {
 }
 
 /// What the participation charge came to.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParticipationReport {
     /// Base units charged, in all, and the charge in USD, which the PnL
     /// is net of.
@@ -271,7 +271,7 @@ pub struct ParticipationReport {
     pub venues: Vec<VenueShare>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VenueShare {
     pub venue: String,
     pub traded_base: f64,
@@ -401,7 +401,7 @@ impl NetScoring {
 }
 
 /// A net-scored session's account of its PnL.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetReport {
     pub value_change_usd: f64,
     /// What the starting holding gained from the price moving.

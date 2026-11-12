@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use mtx_kit::{BotEnv, Side, Trader};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
 use tracing::{info, warn};
 
@@ -32,7 +32,7 @@ use crate::{
 const TAKER_DEPOSIT_USDC: f64 = 100_000.0;
 
 /// What the grader's takers did in a session.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FlowReport {
     /// Orders the scenario lists, and how many of them were sent and failed.
     pub orders: usize,
