@@ -52,7 +52,7 @@ impl Agent {
     }
 
     /// The ACP adapter's executable and the npm package that ships it.
-    fn adapter(self) -> (&'static str, &'static str) {
+    pub(crate) fn adapter(self) -> (&'static str, &'static str) {
         match self {
             Self::ClaudeCode => ("claude-agent-acp", "@agentclientprotocol/claude-agent-acp"),
             Self::Codex => ("codex-acp", "@agentclientprotocol/codex-acp"),
@@ -61,7 +61,7 @@ impl Agent {
 
     /// The adapter from `PATH` if installed, otherwise through `npx`.
     /// `model` takes Harbor's `provider/model` form or a bare model name.
-    fn command(self, model: Option<&str>) -> Command {
+    pub(crate) fn command(self, model: Option<&str>) -> Command {
         let (program, package) = self.adapter();
         let mut command = if on_path(program) {
             Command::new(program)
@@ -85,7 +85,7 @@ impl Agent {
     }
 }
 
-fn on_path(program: &str) -> bool {
+pub(crate) fn on_path(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
