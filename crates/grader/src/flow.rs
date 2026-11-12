@@ -22,6 +22,7 @@ use crate::{
     making::{TAKER_ACCOUNTS, TakerOrder, TakerSide, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
+    session::INTERNAL_RPC_TIMEOUT,
     snapshot::OfflineWorld,
 };
 
@@ -99,7 +100,7 @@ impl Takers {
         phoenix::onboard_traders_stepped(
             &world.surfnet,
             phoenix,
-            &mtx_kit::rpc_client(rpc_url),
+            &mtx_kit::rpc_client_with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT),
             &keypairs.iter().collect::<Vec<_>>(),
             TAKER_DEPOSIT_USDC,
         )
@@ -109,7 +110,8 @@ impl Takers {
             let path = dir.join(format!("taker-{i}.json"));
             let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
             std::fs::write(&path, bytes).map_err(io_error(&path))?;
-            traders.push(Trader::connect(&BotEnv {
+            traders.push(Trader::connect_with_timeout(
+                &BotEnv {
                 rpc_url: rpc_url.to_string(),
                 keypair_path: path,
                 exchange_path: world.exchange_path.clone(),
@@ -118,7 +120,9 @@ impl Takers {
                 max_position: f64::MAX,
                 max_drawdown_usd: f64::MAX,
                 mandate_path: None,
-            })?);
+                },
+                INTERNAL_RPC_TIMEOUT,
+            )?);
         }
         Ok(Self {
             traders,

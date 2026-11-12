@@ -79,6 +79,15 @@ pub(crate) const TRUSTED_WALL: Duration = Duration::from_secs(120);
 /// the world stops waiting.
 pub(crate) const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
 
+/// How long each of the grader's own requests to its surfnet may take (the
+/// clients' default is 30 s). The world doesn't move while the grader waits,
+/// so a starved machine makes a request slow, never different: it is waited
+/// out, not failed. The bound is only for a surfnet that died.
+pub const INTERNAL_RPC_TIMEOUT: Duration = Duration::from_secs(600);
+/// How many times the grader makes one of its reads through a client it
+/// can't give a longer wait (Phoenix's Hawkeye simulations), before failing.
+const READ_ATTEMPTS: u32 = 5;
+
 /// Collateral each session's trader starts with.
 pub const DEPOSIT_USDC: f64 = 10_000.0;
 /// The unprivileged account bots run as when the grader runs as root.
@@ -339,7 +348,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // The grader's own clients, served the way a stepped world needs: a
     // transaction is final once it executed (see [`Guard::internal`]).
     let internal = Guard::internal(surfnet.rpc_url()).await?;
-    let rpc = mtx_kit::rpc_client(internal.url());
+    let rpc = mtx_kit::rpc_client_with_timeout(internal.url(), INTERNAL_RPC_TIMEOUT);
     let setup_from = rpc.get_slot()?;
     let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
     let market = phoenix.market(&scenario.symbol)?;
@@ -348,9 +357,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
     let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_mark_ticks = hawkeye
-        .view_bbo(&scenario.symbol)
-        .await?
+    let start_mark_ticks = patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?
         .value
         .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
@@ -361,7 +368,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let meter = PhoenixEternalMeter::new(
         Arc::new(PhoenixExchange::new(world.exchange.clone())),
         internal.url(),
-        Arc::new(RpcChainClient::new(internal.url())),
+        Arc::new(RpcChainClient::with_timeout(
+            internal.url(),
+            INTERNAL_RPC_TIMEOUT,
+        )),
         bot.pubkey(),
         &scenario.symbol,
     )
@@ -380,7 +390,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .map(|allowance| allowance.instrument.id())
         .collect();
     let market_id = scenario.instrument().id();
-    let start_value_usd = grader_f64(meter.measure(&universe).await?.value_usd);
+    let start_value_usd = grader_f64(patiently("the meter", async || meter.measure(&universe).await).await?.value_usd);
     if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
         phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
     }
@@ -441,9 +451,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             "book" => book_at(&scenario.path, at),
             _ => return Ok(value_usd),
         };
-        let mark = hawkeye
-            .view_bbo(&scenario.symbol)
-            .await?
+        let mark = patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?
             .value
             .mark_price_ticks;
         let price = start_mark_usd * (1.0 + level / 100.0);
@@ -700,14 +708,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 .await;
         }
 
-        let now = meter.measure(&universe).await?;
+        let now = patiently("the meter", async || meter.measure(&universe).await).await?;
         record(&mut observed, &now)?;
         let position = position_in(&now, &market_id);
         positions_outside_universe = positions_outside_universe.max(now.outside_universe);
         let value_usd = value(grader_f64(now.value_usd), position, slot, base_slot).await?;
         peak_value_usd = peak_value_usd.max(value_usd);
         max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
-        let bbo = hawkeye.view_bbo(&scenario.symbol).await?.value;
+        let bbo = patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?.value;
         let usd = |ticks: u64| phoenix.ticks_to_usd(market, ticks);
         steps_seen.push(StepRecord {
             k,
@@ -810,7 +818,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         _ => None,
     };
 
-    let end = meter.measure(&universe).await?;
+    let end = patiently("the meter", async || meter.measure(&universe).await).await?;
     record(&mut observed, &end)?;
     let end_position = position_in(&end, &market_id);
     let end_value_usd = value(grader_f64(end.value_usd), end_position, end_slot, base_slot).await?;
@@ -821,9 +829,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         start_mark_usd,
         end_mark_usd: phoenix.ticks_to_usd(
             market,
-            hawkeye
-                .view_bbo(&scenario.symbol)
-                .await?
+            patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?
                 .value
                 .mark_price_ticks,
         ),
@@ -1046,6 +1052,26 @@ pub(crate) fn transactions(
             record
         })
         .collect()
+}
+
+/// The grader's own read, made again if it fails, up to [`READ_ATTEMPTS`]
+/// times: on a starved machine a read can time out on the client's side, and
+/// reading again changes nothing, since nothing moves while the grader reads.
+pub(crate) async fn patiently<T, E: std::fmt::Display>(
+    what: &str,
+    mut read: impl AsyncFnMut() -> std::result::Result<T, E>,
+) -> std::result::Result<T, E> {
+    let mut attempt = 1;
+    loop {
+        match read().await {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < READ_ATTEMPTS => {
+                warn!(what, attempt, %error, "a grader read failed; reading again");
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// How long the world waits for a process bot: its hello, and each turn.

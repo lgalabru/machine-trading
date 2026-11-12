@@ -28,8 +28,13 @@ just test lint                                     # unit tests and clippy
 slows the grade.
 
 A grade replays exactly: the same bot, snapshot and scenarios give the same
-report, byte for byte but for wall times, however loaded the machine.
-`--replay N` checks it: it runs the grade N times (with
+report, byte for byte but for wall times. Load slows a grade, not its
+result: sessions run on no clock, trusted bots (the reference, `--trusted`)
+get their turns however long they take, and the grader's own requests wait
+up to ten minutes each, with its reads made again if one fails. The limit:
+a request that fails outright rather than slowly (a surfnet that died, a
+connection refused) still fails it, and a taker order lost that way counts
+as failed. `--replay N` checks it: it runs the grade N times (with
 `--replay-load <threads>` busy threads alongside) and fails at the first
 session report, the reference's included, that came out differently.
 
@@ -86,7 +91,8 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
    file, then prints the report (`bench/report.py`): skill by model and task,
    with 90% intervals.
    - **Machine:** any; an idle one is faster. Sessions run on no clock, so
-     load makes a grade slower, not different. A trial takes about 8 CPUs
+     load makes a grade slower, not different (see `--replay` above for the
+     limit). A trial takes about 8 CPUs
      while it grades; market-making's verifier alone runs about an hour.
    - **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for the providers
      it runs, from `.env` or `~/.machine-trading.env`.

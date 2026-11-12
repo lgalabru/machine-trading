@@ -4,6 +4,20 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **Unreleased.** Grades replay exactly: sessions run on no clock, setup
+  included, so the same bot on the same hidden set gets the same report
+  however loaded the machine (`mtx grade --replay` checks it).
+  - **`market-making-spcx`: sessions start on a fixed slot.** Its setup
+    (ten onboardings) used to overrun its 60 setup slots on the wall
+    clock, so each session started up to about 70 slots late, by however
+    long the machine took. Sessions now start exactly 60 slots after the snapshot.
+    Reports' `mandate.term.until_slot` moves, and a session's marks can
+    move by a tick; on the reference the total PnL is unchanged.
+  - The other three tasks' sessions are unchanged, byte for byte. A
+    `funding-carry-spcx` session no longer wobbles by cents to dollars
+    between grades.
+  - Process bots get the session's seed in the hello, as components do.
+
 - **0.12.0.** Bots are strategy components, and two new tasks on new
   scenario hooks in the engine (book premiums, a taker tape, per-session
   funding, off-hours markets; each opt-in, so flash-crash's and

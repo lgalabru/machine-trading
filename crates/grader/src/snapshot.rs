@@ -175,7 +175,14 @@ pub async fn prepare_spot(out_dir: &Path, fork_rpc_url: &str) -> Result<Manifest
     chain::forward_surfnet_logs(&surfnet);
     let rpc = chain::rpc_client(&surfnet);
     let warmup = Keypair::new();
-    crate::spot::fund(&surfnet, &warmup, 10.0, 2_000.0, false)?;
+    crate::spot::fund(
+        &surfnet,
+        &chain::rpc_client(&surfnet),
+        &warmup,
+        10.0,
+        2_000.0,
+        false,
+    )?;
     let price = crate::spot::exercise(surfnet.rpc_url(), &warmup).await?;
     tokio::time::sleep(Duration::from_secs(5)).await;
 

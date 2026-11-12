@@ -4,8 +4,11 @@
 //! Sessions run on no clock (see [`crate::snapshot::start_offline_stepped`]):
 //! the world moves only when the grader steps it, components run on fuel and
 //! trusted processes get all the time they need (see
-//! [`crate::session::SessionOptions::trusted`]). So a machine's load changes
-//! how long a grade takes, never what it says.
+//! [`crate::session::SessionOptions::trusted`]), and the grader's own
+//! requests wait out a slow surfnet (see
+//! [`crate::session::INTERNAL_RPC_TIMEOUT`]). So a machine's load changes how
+//! long a grade takes, not what it says; a request that fails outright (a
+//! surfnet that died) still fails it.
 //!
 //! `mtx grade --replay N` checks that: it runs the grade `N` times, with the
 //! machine loaded if asked ([`Load`]), and compares every session's report

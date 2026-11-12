@@ -50,6 +50,7 @@ use mtx_kit::{
 use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use surfpool_sdk::{CheatcodeFilter, SimnetCommand, Surfnet};
 use tokio::{
@@ -640,6 +641,7 @@ fn venue_error<E: std::fmt::Display>(what: &'static str) -> impl Fn(E) -> Error 
 /// account, or sells into the USDC one).
 pub fn fund(
     surfnet: &Surfnet,
+    rpc: &RpcClient,
     owner: &Keypair,
     base: f64,
     quote: f64,
@@ -663,7 +665,7 @@ pub fn fund(
                 token::create_ata_idempotent(&owner.pubkey(), &owner.pubkey(), &USDC_MINT),
             );
         }
-        mtx_kit::send(&chain::rpc_client(surfnet), owner, instructions, "wrap SOL")?;
+        mtx_kit::send(rpc, owner, instructions, "wrap SOL")?;
     }
     Ok(())
 }
@@ -776,13 +778,17 @@ pub(crate) async fn run_session(
         .map_err(io_error(opts.snapshot_dir))?;
     let (surfnet, _) = snapshot::start_snapshot_stepped(&snapshot_dir).await?;
     let internal = Guard::internal(surfnet.rpc_url()).await?;
-    let rpc = mtx_kit::rpc_client(internal.url());
+    let rpc = mtx_kit::rpc_client_with_timeout(internal.url(), session::INTERNAL_RPC_TIMEOUT);
     let setup_from = rpc.get_slot()?;
-    let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(internal.url()));
+    let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::with_timeout(
+        internal.url(),
+        session::INTERNAL_RPC_TIMEOUT,
+    ));
 
     let bot = Keypair::new();
     fund(
         &surfnet,
+        &rpc,
         &bot,
         spot.base,
         spot.quote,
@@ -1332,5 +1338,37 @@ mod tests {
             ..Observed::default()
         };
         assert!(mandate.audit(&observed).is_some());
+    }
+
+    /// A spot session's setup on a stepped surfnet: funding wraps SOL by a
+    /// transaction, which must land through the grader's own client without
+    /// a block (the surfnet produces none until the grader steps it).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stepped_spot_setup_funds_the_wallet_without_a_block() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../snapshots/sol-usdc-spot-2026-11-11")
+            .canonicalize()
+            .unwrap();
+        let (surfnet, _) = snapshot::start_snapshot_stepped(&dir).await.unwrap();
+        let internal = Guard::internal(surfnet.rpc_url()).await.unwrap();
+        let url = internal.url().to_string();
+        let first = mtx_kit::rpc_client(&url).get_slot().unwrap();
+        let owner = Keypair::new();
+        let wallet = owner.pubkey();
+        let funded = tokio::time::timeout(
+            Duration::from_secs(60),
+            tokio::task::spawn_blocking(move || {
+                let rpc = mtx_kit::rpc_client(&url);
+                fund(&surfnet, &rpc, &owner, 2.5, 100.0, true)?;
+                let wsol = token::ata(&wallet, &token::native_mint());
+                let balance = rpc.get_token_account_balance(&wsol)?;
+                Ok::<_, Error>((rpc.get_slot()?, balance.amount))
+            }),
+        )
+        .await
+        .expect("funding a stepped surfnet's wallet hung")
+        .unwrap()
+        .unwrap();
+        assert_eq!(funded, (first, "2500000000".to_string()));
     }
 }

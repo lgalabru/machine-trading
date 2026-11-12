@@ -27,6 +27,7 @@ use crate::{
     making::{Competition, Making, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
+    session::{INTERNAL_RPC_TIMEOUT, patiently},
     snapshot::OfflineWorld,
 };
 
@@ -83,7 +84,7 @@ impl Competitor {
         phoenix::onboard_traders_stepped(
             &world.surfnet,
             phoenix,
-            &mtx_kit::rpc_client(rpc_url),
+            &mtx_kit::rpc_client_with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT),
             &[&keypair],
             DEPOSIT_USDC,
         )
@@ -91,7 +92,8 @@ impl Competitor {
         let path = dir.join("competitor.json");
         let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
         std::fs::write(&path, bytes).map_err(io_error(&path))?;
-        let trader = Trader::connect(&BotEnv {
+        let trader = Trader::connect_with_timeout(
+            &BotEnv {
             rpc_url: rpc_url.to_string(),
             keypair_path: path,
             exchange_path: world.exchange_path.clone(),
@@ -100,7 +102,9 @@ impl Competitor {
             max_position: f64::MAX,
             max_drawdown_usd: f64::MAX,
             mandate_path: None,
-        })?;
+            },
+            INTERNAL_RPC_TIMEOUT,
+        )?;
         Ok(Self { trader, dir })
     }
 
@@ -151,7 +155,10 @@ impl Quoting {
         let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
         let tick_bps = TICK_USD / level * 10_000.0;
 
-        if let (Some((bid, ask)), Ok(bbo)) = (self.quoted, trader.inner.bbo().await) {
+        if let (Some((bid, ask)), Ok(bbo)) = (
+            self.quoted,
+            patiently("the competitor's book", async || trader.inner.bbo().await).await,
+        ) {
             let market = trader.inner.market();
             let usd = |ticks: Option<u64>| {
                 ticks.map(|t| {
@@ -186,7 +193,7 @@ impl Quoting {
         }
         self.report.tightest_bps = self.report.tightest_bps.min(self.bid_bps).min(self.ask_bps);
 
-        let held = match trader.position().await {
+        let held = match patiently("the competitor's position", async || trader.position().await).await {
             Ok(position) => position.size,
             Err(error) => {
                 warn!("competitor reading its position: {error}");
@@ -218,7 +225,10 @@ impl Quoting {
     }
 
     pub async fn report(mut self, competitor: &Competitor) -> CompeteReport {
-        self.report.end_position = competitor.trader.position().await.map_or(0.0, |p| p.size);
+        self.report.end_position =
+            patiently("the competitor's position", async || competitor.trader.position().await)
+                .await
+                .map_or(0.0, |p| p.size);
         info!(report = ?self.report, "competitor done");
         self.report
     }
