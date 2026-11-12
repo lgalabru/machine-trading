@@ -1790,6 +1790,36 @@ mod tests {
         assert!(report.mandate.audit(&report.observed()).is_none());
         assert!(report.timeline.transactions.len() >= 3);
 
+        // No fresh signer's secret, nor the bot's, is anywhere in what the
+        // session wrote or reported.
+        let keyring = keys.role("bot").session(0, &scenario.name);
+        let fresh = keyring.fresh();
+        let mut pairs = vec![keyring.keypair("bot", 0)];
+        for step in 0..report.turns.steps {
+            for id in 0..4 {
+                for n in 0..2 {
+                    pairs.push(fresh.keypair(step, id, n));
+                }
+            }
+        }
+        let written = format!(
+            "{log}{}{}",
+            serde_json::to_string(report).unwrap(),
+            serde_json::to_string(&report.timeline).unwrap()
+        )
+        .replace([' ', '\n'], "");
+        for pair in &pairs {
+            let hex: String = pair.secret_bytes().iter().map(|b| format!("{b:02x}")).collect();
+            for secret in [
+                pair.to_base58_string(),
+                hex,
+                format!("{:?}", pair.secret_bytes()).replace(' ', ""),
+                format!("{:?}", &pair.to_bytes()[..]).replace(' ', ""),
+            ] {
+                assert!(!written.contains(&secret), "a secret key in the session's output");
+            }
+        }
+
         // The second grade: the same log, the same transactions, the same
         // report but for the wall clock.
         let (again, again_log) = &runs[1];
