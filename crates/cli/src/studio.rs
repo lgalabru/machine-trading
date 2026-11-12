@@ -158,22 +158,37 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-/// A workspace without scenarios gets the task's practice set.
+/// The studio's own scenarios, a few steps long and plain to read: the
+/// first to play in a new workspace.
+const FIRST_SCENARIO: &str = "practice-101";
+
+/// A workspace without scenarios gets the task's practice set; every
+/// workspace gets the studio's own (`studio/scenarios/`) if it lacks them.
 fn seed_scenarios(dir: &Path, root: &Path, task: &str) -> Result<()> {
     let scenarios = dir.join(SCENARIOS);
-    if scenarios.is_dir() {
-        return Ok(());
+    if !scenarios.is_dir() {
+        std::fs::create_dir_all(&scenarios)?;
+        for file in crate::bot::practice_scenarios(root, task)? {
+            if let Some(name) = file.file_name() {
+                std::fs::copy(&file, scenarios.join(name))?;
+            }
+        }
+        eprintln!(
+            "copied {task}'s practice scenarios into {}",
+            scenarios.display()
+        );
     }
-    std::fs::create_dir_all(&scenarios)?;
-    for file in crate::bot::practice_scenarios(root, task)? {
-        if let Some(name) = file.file_name() {
-            std::fs::copy(&file, scenarios.join(name))?;
+    if let Some(own) = ASSETS.get_dir("scenarios") {
+        for file in own.files() {
+            let Some(name) = file.path().file_name() else {
+                continue;
+            };
+            let to = scenarios.join(name);
+            if !to.exists() {
+                std::fs::write(&to, file.contents())?;
+            }
         }
     }
-    eprintln!(
-        "copied {task}'s practice scenarios into {}",
-        scenarios.display()
-    );
     Ok(())
 }
 
@@ -347,6 +362,11 @@ async fn handle(studio: &Arc<Studio>, command: &str, args: &Value) -> Result<Val
             "task": studio.task,
             "files": workspace_files(&studio.dir),
             "scenarios": scenario_names(&studio.dir),
+            // What a new page opens: the studio's five-step scenario.
+            "defaultScenario": scenario_names(&studio.dir)
+                .into_iter()
+                .find(|n| n == FIRST_SCENARIO)
+                .or_else(|| scenario_names(&studio.dir).into_iter().next()),
             "agent": agent_pick(studio),
             "session": session_state(studio),
         })),
