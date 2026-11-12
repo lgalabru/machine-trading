@@ -19,17 +19,20 @@ phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Derives each session's keypairs from the grade's secret (see src/keys.rs).
+# Derives each session's keypairs from the grade's secret (see src/keys.rs), and
+# hashes a snapshot recipe.
 sha2 = "0.10"
 solana-keypair.workspace = true
 solana-pubkey.workspace = true
 solana-rpc-client.workspace = true
 solana-rpc-client-api.workspace = true
 solana-signer.workspace = true
+solana-transaction.workspace = true
 surfpool-sdk.workspace = true
 # For ClockCommand, which surfpool-sdk doesn't re-export.
 thiserror.workspace = true
 tokio.workspace = true
+toml = "1"
 futures.workspace = true
 tracing.workspace = true
 uuid.workspace = true
