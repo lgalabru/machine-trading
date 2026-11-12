@@ -377,6 +377,9 @@ pub struct Realism {
     /// One bar of a window's returns, in seconds.
     pub bar_seconds: f64,
     pub window_bars: usize,
+    /// Bars per return for the volatility statistics: coarse enough that
+    /// the tick doesn't dominate them.
+    pub vol_bars: usize,
     /// Bars per aggregated return (tails, predictability).
     pub agg_bars: usize,
     /// Bars per return in the clustering ACF, and its lags in those returns.
@@ -393,7 +396,23 @@ pub struct Realism {
     pub round_trip_min_losing_share: f64,
     pub reference: WindowStats,
     pub spread: Spread,
+    /// What the statistics read on the obviously wrong markets the checks
+    /// must reject. A check whose band holds its null has no power.
+    pub null: Nulls,
     pub bands: Bands,
+}
+
+/// The statistics on wrong versions of the real windows (built by the
+/// fitter): Gaussian returns at each window's own sd (thin tails), at one
+/// common sd (no vol of vol), and each window shuffled (no clustering).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Nulls {
+    pub source: String,
+    pub vol_of_vol: f64,
+    pub tail_ratio: f64,
+    pub kurtosis_within: f64,
+    pub clustering: Vec<f64>,
 }
 
 /// Stylized facts of a set of windows, computed the same way for real and
@@ -401,12 +420,14 @@ pub struct Realism {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct WindowStats {
-    /// Median over windows of the per-bar return sd.
+    /// Median over windows of the sd of their returns over `vol_bars`.
     pub vol_level: f64,
-    /// Coefficient of variation of the windows' sd: volatility clustering
+    /// Coefficient of variation of those windows' sd: volatility clustering
     /// across sessions.
     pub vol_of_vol: f64,
-    /// Excess kurtosis of aggregated returns, each window scaled to unit RMS.
+    /// Excess kurtosis of aggregated returns, each window scaled to unit
+    /// RMS: the shape of returns, not how volatility differs between
+    /// windows.
     pub kurtosis_within: f64,
     /// Excess kurtosis of all aggregated returns pooled. Reported, not
     /// gated: its sampling spread is too wide on a few hundred windows.
@@ -418,8 +439,9 @@ pub struct WindowStats {
     pub clustering: Vec<f64>,
     /// Mean over windows of the lag-1 ACF of aggregated returns.
     pub predictability: f64,
-    /// The 99th over the 90th percentile of the pooled aggregated |r|: the
-    /// gated tail statistic, robust where kurtosis and Hill's index aren't.
+    /// The 99th over the 90th percentile of |r| over the aggregated
+    /// returns, each window scaled to unit RMS: the gated tail statistic,
+    /// robust where kurtosis and Hill's index aren't.
     pub tail_ratio: f64,
 }
 
@@ -453,17 +475,12 @@ pub struct DiffSpread {
     pub predictability: f64,
 }
 
-/// The narrowest band of each gated check. A check widens it to the
-/// statistic's sampling spread at its own window count (see [`Spread`]).
+/// Stated bands. The return checks have none: each is its statistic's
+/// sampling spread (see [`Spread`]). The gap sizes, resting on a few dozen
+/// opens, keep one.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Bands {
-    pub vol_level: Band,
-    pub vol_of_vol: Band,
-    pub kurtosis_within: Band,
-    pub tail_ratio: Band,
-    pub clustering: Band,
-    pub predictability: Band,
     pub gap_size: Band,
 }
 
@@ -680,10 +697,19 @@ impl Calibration {
 impl Realism {
     fn validate(&self, calendar: &Calendar) -> std::result::Result<(), String> {
         positive("realism.bar_seconds", self.bar_seconds)?;
-        if self.agg_bars == 0 || self.cluster_bars == 0 || self.cluster_lags.is_empty() {
-            return Err("realism: agg_bars, cluster_bars and cluster_lags must be set".into());
+        if self.vol_bars == 0
+            || self.agg_bars == 0
+            || self.cluster_bars == 0
+            || self.cluster_lags.is_empty()
+        {
+            return Err(
+                "realism: vol_bars, agg_bars, cluster_bars and cluster_lags must be set".into(),
+            );
         }
-        if self.window_bars < 2 * self.agg_bars.max(self.cluster_bars) {
+        if self.null.clustering.len() != self.cluster_lags.len() {
+            return Err("realism.null.clustering needs one value per cluster lag".into());
+        }
+        if self.window_bars < 2 * self.agg_bars.max(self.cluster_bars).max(self.vol_bars) {
             return Err("realism: a window must hold at least two aggregated returns".into());
         }
         if self.reference.clustering.len() != self.cluster_lags.len()
@@ -724,15 +750,7 @@ impl Realism {
             return Err("realism.round_trip_min_losing_share is a share, in [0, 1]".into());
         }
         let b = &self.bands;
-        for (name, band) in [
-            ("vol_level", b.vol_level),
-            ("vol_of_vol", b.vol_of_vol),
-            ("kurtosis_within", b.kurtosis_within),
-            ("tail_ratio", b.tail_ratio),
-            ("clustering", b.clustering),
-            ("predictability", b.predictability),
-            ("gap_size", b.gap_size),
-        ] {
+        for (name, band) in [("gap_size", b.gap_size)] {
             match (band.ratio, band.diff) {
                 (Some([lo, hi]), None) if lo > 0.0 && lo <= hi => {}
                 (None, Some(d)) if d >= 0.0 => {}
