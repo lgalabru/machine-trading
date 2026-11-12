@@ -300,7 +300,12 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
         .collect();
     WindowStats {
         vol_level: median(&sd),
-        vol_of_vol: moments(&sd).sd / mean(&sd),
+        vol_of_vol: {
+            // The interquartile range of the log sds over 1.349 (an sd for a
+            // normal): a few wild or ticked-flat windows can't move it.
+            let logs: Vec<f64> = sd.iter().map(|v| v.max(1e-300).ln()).collect();
+            (quantile(&logs, 0.75) - quantile(&logs, 0.25)) / 1.349
+        },
         kurtosis_within: moments(&normalized).excess_kurtosis,
         kurtosis_pooled: moments(&pooled).excess_kurtosis,
         tail_index: hill(&pooled, 0.025),
@@ -1016,6 +1021,96 @@ mod tests {
                     .contains(&Status::Fail)
                 );
             }
+        }
+    }
+
+    /// The calibrated model's false-fail rate and the no-regimes market's
+    /// catch rate, on fresh seeds: 60 at 300 sessions and 60 at 1000, for
+    /// each file. The bar is at most 2% false fails and at least 95%
+    /// catches. In release: `cargo test --release -p mtx-grader --lib
+    /// false_fail_rates -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn false_fail_rates() {
+        let no_regimes = |c: &mut Calibration| {
+            let r = &mut c.fair_value.regimes;
+            r.log_sd_within.iter_mut().for_each(|s| *s = 0.0);
+            r.vol_mult.iter_mut().for_each(|m| *m = 1.0);
+        };
+        let run = |cal: &Calibration, count: usize, seeds: std::ops::Range<u64>| {
+            let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+            let seeds: Vec<u64> = seeds.collect();
+            let reports: Vec<Report> = std::thread::scope(|scope| {
+                let handles: Vec<_> = seeds
+                    .chunks(seeds.len().div_ceil(threads))
+                    .map(|chunk| {
+                        scope.spawn(move || {
+                            chunk
+                                .iter()
+                                .map(|&seed| {
+                                    check_model(cal, &ModelSpec::default(), count, seed).unwrap()
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|h| h.join().unwrap())
+                    .collect()
+            });
+            let count_of = |v: Verdict| reports.iter().filter(|r| r.verdict == v).count();
+            // Failed checks, and the required ones without power in
+            // reports that weren't judged.
+            let mut failed: Vec<String> = reports
+                .iter()
+                .flat_map(|r| {
+                    r.checks.iter().filter_map(move |c| match c.status {
+                        Status::Fail => Some(c.name.clone()),
+                        Status::NoPower
+                            if r.verdict == Verdict::NotJudged
+                                && REQUIRED.iter().any(|g| g.contains(&c.name.as_str())) =>
+                        {
+                            Some(format!("{} (no power)", c.name))
+                        }
+                        _ => None,
+                    })
+                })
+                .collect();
+            failed.sort();
+            failed.dedup();
+            (
+                count_of(Verdict::Pass),
+                count_of(Verdict::Fail),
+                count_of(Verdict::NotJudged),
+                failed.join(", "),
+            )
+        };
+        println!(
+            "| market | file | sessions | seeds | pass | fail | not judged | checks that failed |"
+        );
+        println!("|---|---|---|---|---|---|---|---|");
+        let mut false_fails = Vec::new();
+        for cal in [sol(), spcx()] {
+            let mut wrong = cal.clone();
+            no_regimes(&mut wrong);
+            for (count, seeds) in [(300, 1000..1060), (1000, 2000..2060)] {
+                let (pass, fail, unjudged, names) = run(&cal, count, seeds.clone());
+                println!(
+                    "| calibrated | {} | {count} | 60 | {pass} | {fail} | {unjudged} | {names} |",
+                    cal.meta.asset
+                );
+                false_fails.push((cal.meta.asset.clone(), count, fail));
+                let (pass, fail, unjudged, names) = run(&wrong, count, seeds);
+                println!(
+                    "| no regimes | {} | {count} | 60 | {pass} | {fail} | {unjudged} | {names} |",
+                    cal.meta.asset
+                );
+                assert!(fail >= 57, "no regimes caught {fail}/60");
+            }
+        }
+        for (asset, count, fail) in false_fails {
+            assert!(fail <= 1, "{asset} at {count}: {fail}/60 false fails");
         }
     }
 
