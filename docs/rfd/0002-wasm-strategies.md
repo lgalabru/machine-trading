@@ -321,3 +321,22 @@ defend, no bot users, no keypair files.
   reports a perp tape (so a perp strategy's fills come from its position),
   no session sends requests for quotes, and transaction options are
   counted, not applied, until the transaction layer.
+- 2026-11-12: 0.2.0 settled before it freezes, after review. WIT records
+  and variants are closed, so what the next venues need is in the world
+  now, answered `not-sent` until their executors land: market kinds for
+  pools, lending reserves and stake pools; swap, add- and
+  remove-liquidity (with a price range), deposit, withdraw, borrow, repay
+  and liquidate; client order ids and cancel by id; two-way requests for
+  quotes; a route and retries on transaction options; slot, fee and tip on
+  send status, and a fee view; liquidity positions, a lending account,
+  resting orders and the venue's own numbers in each venue's view; and the
+  grader-signed `send` import, reserved, which every session refuses until
+  raw sends land. Four fixes to what was there: reduce-only now counts
+  only the sheet's orders that shrink the position as filled, so an
+  unfilled buy can't let a sell open a short; a post-only order is checked
+  against the paused book and, if it would cross, reported failed and kept
+  out of the resting count (Phoenix's own post-only skips it silently);
+  the session says what its steps report, so an empty tape is a step
+  without trades; and turn data names its market (`turns::Trade::market`),
+  venues carry their address, and an id is unique in the session (with
+  `@<address>` where two pools would share one).
