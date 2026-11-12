@@ -789,13 +789,31 @@ struct Sniff {
 }
 
 /// A v1 file that states its version: `"schema": 1` is accepted, and the
-/// rest is the flat v1 scenario.
+/// rest is the flat v1 scenario. (A flattened struct can't deny unknown
+/// fields itself, so what it leaves over is collected and refused here.)
 #[derive(Deserialize)]
-struct V1Stated {
+#[serde(try_from = "V1Fields")]
+struct V1Stated(Scenario);
+
+#[derive(Deserialize)]
+struct V1Fields {
     #[allow(dead_code)]
     schema: u32,
     #[serde(flatten)]
     scenario: Scenario,
+    #[serde(flatten)]
+    left_over: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
+}
+
+impl TryFrom<V1Fields> for V1Stated {
+    type Error = String;
+
+    fn try_from(fields: V1Fields) -> Result<Self, String> {
+        match fields.left_over.keys().next() {
+            Some(field) => Err(format!("unknown field `{field}`")),
+            None => Ok(Self(fields.scenario)),
+        }
+    }
 }
 
 /// Read a scenario file's text: v2 if it says `"schema": 2`, v1 if it has no
@@ -807,7 +825,7 @@ pub fn parse(contents: &str) -> Result<Scenario, ParseError> {
     let Sniff { schema } = serde_json::from_str(contents)?;
     match schema {
         None => Ok(serde_json::from_str(contents)?),
-        Some(v) if v == 1 => Ok(serde_json::from_str::<V1Stated>(contents)?.scenario),
+        Some(v) if v == 1 => Ok(serde_json::from_str::<V1Stated>(contents)?.0),
         Some(v) if v == 2 => serde_json::from_str::<ScenarioV2>(contents)?
             .into_scenario()
             .map_err(ParseError::Invalid),
@@ -1096,10 +1114,12 @@ mod tests {
         assert_eq!(err(&m), "making: competitor_bps 0 must be positive");
 
         let mut w = WeekendFamily::spcx().sample("w", 3);
-        w.offhours.as_mut().unwrap().takers.push(TakerOrder {
-            slot: 0,
-            ..w.offhours.as_ref().unwrap().takers[0]
-        });
+        let first = w.offhours.as_ref().unwrap().takers[0];
+        w.offhours
+            .as_mut()
+            .unwrap()
+            .takers
+            .push(TakerOrder { slot: 0, ..first });
         let end = w.offhours.as_ref().unwrap().takers.len() - 1;
         assert_eq!(
             err(&w),
@@ -1146,15 +1166,28 @@ mod tests {
 
         // A repeated key is an error, in v1 and in v2.
         let repeated = text.replacen("\"name\"", "\"name\": \"x\",\n  \"name\"", 1);
-        assert!(parse(&repeated).unwrap_err().to_string().contains("duplicate field"));
+        assert!(
+            parse(&repeated)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate field")
+        );
         let text2 = serde_json::to_string_pretty(&v2(&v1)).unwrap();
         let repeated = text2.replacen("\"name\"", "\"name\": \"x\",\n  \"name\"", 1);
-        assert!(parse(&repeated).unwrap_err().to_string().contains("duplicate field"));
+        assert!(
+            parse(&repeated)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate field")
+        );
 
         // A syntax error points into the file.
         let broken = text.replacen("\"symbol\"", "\"symbol\" 1", 1);
         let message = parse(&broken).unwrap_err().to_string();
-        assert!(message.contains("line ") && message.contains("column "), "{message}");
+        assert!(
+            message.contains("line ") && message.contains("column "),
+            "{message}"
+        );
         let unknown = text.replacen("\"symbol\"", "\"nonsense\": 1,\n  \"symbol\"", 1);
         assert!(parse(&unknown).unwrap_err().to_string().contains("line "));
 
