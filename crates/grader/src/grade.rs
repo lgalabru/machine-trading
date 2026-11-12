@@ -18,13 +18,16 @@
 //! mandate (trades outside its market, goes over the position cap, or draws
 //! down past its limit), or ends liquidatable disqualifies the bot: the
 //! reward is 0. Risk is otherwise reported, not scored: see [`Risk`].
+//!
+//! A finished grade can be scored again from what it wrote, without
+//! running a session: see [`rescore`].
 
 use std::{collections::BTreeMap, path::Path};
 
 use futures::StreamExt;
 use mtx_core::MeterError;
 use mtx_kit::core::{Decomposition, MarkoutMeter, MarkoutSample};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
@@ -32,7 +35,7 @@ use crate::{
     error::io_error,
     keys::{RoleKeys, SessionKeys},
     scenario::Scenario,
-    session::{self, SessionOptions, SessionReport},
+    session::{self, SessionOptions, SessionReport, StepRecord, Timeline},
 };
 
 #[derive(Debug, Serialize)]
@@ -308,10 +311,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     if opts.components_only && crate::wasm::component_in(opts.bot_dir).is_none() {
         let reason = Error::NotAComponent(opts.bot_dir.to_path_buf()).to_string();
         tracing::warn!("{reason}: the reward is 0");
-        let mut report = score(Vec::new());
-        report.not_graded = Some(reason);
-        report.skill = Some(0.0);
-        return Ok(report);
+        return Ok(not_graded(reason));
     }
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
@@ -376,6 +376,89 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         "graded"
     );
     Ok(report)
+}
+
+/// The report of a bot that wasn't graded at all: 0.
+fn not_graded(reason: String) -> GradeReport {
+    let mut report = score(Vec::new());
+    report.not_graded = Some(reason);
+    report.skill = Some(0.0);
+    report
+}
+
+/// A session as its detail file holds it (see [`GradeOptions::detail_dir`]):
+/// what [`rescore`] reads back.
+#[derive(Debug, Deserialize)]
+pub struct StoredSession {
+    /// The scenario as the session played it, the reference's PnL in it.
+    pub scenario: Scenario,
+    pub report: SessionReport,
+    pub timeline: StoredTimeline,
+}
+
+/// The part of a session's timeline scoring reads: the market and the
+/// account at every step. The transactions and calls are left out.
+#[derive(Debug, Deserialize)]
+pub struct StoredTimeline {
+    pub start_slot: u64,
+    pub end_slot: u64,
+    pub slots_per_step: u64,
+    pub start_mark_usd: f64,
+    pub steps: Vec<StepRecord>,
+}
+
+impl StoredSession {
+    /// The session's report, its timeline's steps back in it, and its
+    /// scenario.
+    pub fn into_parts(self) -> (SessionReport, Scenario) {
+        let StoredTimeline {
+            start_slot,
+            end_slot,
+            slots_per_step,
+            start_mark_usd,
+            steps,
+        } = self.timeline;
+        let mut report = self.report;
+        report.timeline = Timeline {
+            start_slot,
+            end_slot,
+            slots_per_step,
+            start_mark_usd,
+            steps,
+            ..Timeline::default()
+        };
+        (report, self.scenario)
+    }
+}
+
+/// What a grade's report says beyond its sessions, read back from it for
+/// [`rescore`].
+#[derive(Debug, Default, Deserialize)]
+pub struct Verdict {
+    pub tampered: Option<String>,
+    pub not_graded: Option<String>,
+    pub eval_seed_sha256: Option<String>,
+}
+
+/// Score a finished grade again from what it wrote, without running a
+/// session: its bot's sessions, in the report's order, each with the
+/// scenario it played (see [`StoredSession`]), and what the report said
+/// beyond them. With the scoring rules unchanged, the result is the grade's
+/// report, but for a replay check's section and the reference's sessions;
+/// with them changed, the grade the same sessions get under the new ones.
+pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> GradeReport {
+    let mut report = match verdict.not_graded {
+        Some(reason) => not_graded(reason),
+        None => {
+            let (reports, scenarios): (Vec<_>, Vec<_>) = sessions.into_iter().unzip();
+            score(reports.into_iter().zip(&scenarios).collect())
+        }
+    };
+    report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    if let Some(reason) = verdict.tampered {
+        report.tamper(reason);
+    }
+    report
 }
 
 /// Lift this process's soft limit on open files to its hard limit. Every
@@ -974,6 +1057,91 @@ mod tests {
         let rewards = marked.rewards();
         assert!((rewards["edge_usd"] - 3.0).abs() < 1e-9);
         assert!((rewards["luck_usd"] - 10.0).abs() < 1e-9);
+    }
+
+    /// A grade's sessions as its detail files hold them, read back.
+    fn stored(dir: &Path, names: &[&str]) -> Vec<(SessionReport, Scenario)> {
+        use std::io::Read;
+        names
+            .iter()
+            .map(|name| {
+                let mut json = String::new();
+                flate2::read::GzDecoder::new(
+                    std::fs::File::open(dir.join(format!("bot/{name}.json.gz"))).unwrap(),
+                )
+                .read_to_string(&mut json)
+                .unwrap();
+                serde_json::from_str::<StoredSession>(&json)
+                    .unwrap()
+                    .into_parts()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_grade_scored_again_from_its_details_is_the_same_report() {
+        let dir = std::env::temp_dir().join(format!("mtx-rescore-{}", uuid::Uuid::new_v4()));
+        let mut marked = scenario(Some(200.37));
+        marked.name = "marked".into();
+        marked.fair_path = Some(vec![Waypoint {
+            slot: 15,
+            level_pct: 1.0,
+            premium_pct: 0.0,
+        }]);
+        let mut traded = traded_session();
+        traded.scenario = "marked".into();
+        // PnL as the meter computes it: not short decimals.
+        let mut odd = session(67.143_261_999_999_6);
+        odd.end_value_usd = 10_167.143_262;
+        odd.max_drawdown_usd = 39.389_592_999_999_88;
+        odd.turns.fuel_used = Some(43_524_702_445);
+        let mut breached = session(0.1 + 0.2);
+        breached.scenario = "breached".into();
+        breached.refused_calls = vec!["surfnet_setAccount".into()];
+        let mut plain = scenario(Some(-13.07));
+        plain.name = "breached".into();
+        let sessions = [
+            (odd, scenario(Some(2.0))),
+            (traded, marked),
+            (breached, plain),
+        ];
+        let scenarios: Vec<Scenario> = sessions.iter().map(|(_, s)| s.clone()).collect();
+        let reports: Vec<SessionReport> = sessions.iter().map(|(r, _)| r.clone()).collect();
+        write_details(&dir, "bot", &reports, &scenarios, None).unwrap();
+        let mut graded = score(reports.into_iter().zip(&scenarios).collect());
+        graded.eval_seed_sha256 = Some("ab".repeat(32));
+
+        let verdict = Verdict {
+            eval_seed_sha256: graded.eval_seed_sha256.clone(),
+            ..Verdict::default()
+        };
+        let again = rescore(stored(&dir, &["s", "marked", "breached"]), verdict);
+        assert_eq!(
+            serde_json::to_string_pretty(&again).unwrap(),
+            serde_json::to_string_pretty(&graded).unwrap()
+        );
+        assert!(again.markout.is_none() && again.scenarios[1].markout.is_some());
+        assert_eq!(again.reward, 0.0, "the breach still disqualifies");
+
+        // What the report said beyond its sessions carries over.
+        let tampered = rescore(
+            stored(&dir, &["s"]),
+            Verdict {
+                tampered: Some("a bot wrote reward.json".into()),
+                ..Verdict::default()
+            },
+        );
+        assert_eq!(tampered.reward, 0.0);
+        assert!(tampered.tampered.is_some());
+        let skipped = rescore(
+            Vec::new(),
+            Verdict {
+                not_graded: Some("no bot.wasm".into()),
+                ..Verdict::default()
+            },
+        );
+        assert_eq!(skipped.skill, Some(0.0));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
