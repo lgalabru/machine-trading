@@ -89,12 +89,18 @@ ladder = { levels = 5, half_spread_bps = 10, step_bps = 10, level_size = "20" }
 - The ladder posts `levels` post-only orders a side, each `level_size` base
   units, the first `half_spread_bps` from the price and the rest `step_bps`
   apart, on the market's tick and lot grid (bids round down, asks up).
-- `phoenix-v1-market` takes classic SPL mints (Phoenix v1 does not trade
-  Token-2022) and `bids_size`, `asks_size`, `num_seats`, `taker_fee_bps`;
-  its lots are `base_lot_atoms`, `quote_lot_atoms` and
+- `phoenix-v1-market` takes classic SPL mints and `bids_size`, `asks_size`,
+  `num_seats` (the program only runs the sizes it was compiled for; the
+  default, 4096 / 4096 / 8321, is the SOL/USDC market's), and
+  `taker_fee_bps`. Its lots are `base_lot_atoms`, `quote_lot_atoms` and
   `tick_quote_atoms_per_base_unit`, which must divide into whole lots.
-- `openbook-v2-market` takes the mints of either token program and
-  `maker_fee`, `taker_fee`.
+- `openbook-v2-market` takes classic SPL mints, `maker_fee` and `taker_fee`,
+  and needs `quote_lot_atoms = 1`: the kit's order builder leaves the quote
+  limit at `i64::MAX`, which the program rejects for a larger quote lot.
+- The deployed Phoenix v1 and OpenBook v2 programs do not trade Token-2022
+  mints. `create-mint` can still make one (`program = "token-2022"`), for
+  the AMM pool actions that follow; an order-book action on it fails the
+  build with a message that says so.
 - Mints are written straight into the surfnet. The market's creator, its
   accounts and the mints' addresses derive from the recipe name and the
   market's name, so a rebuild reproduces them. The keypairs are not
@@ -129,7 +135,9 @@ A build from a mainnet fork depends on mainnet at the fork slot, so two
 builds differ in prices, slots and times; the manifest's recipe hash,
 fork slot and sources say what was built and when. A build from
 `fork.from_snapshot` copies the source's fork slot and time and, with no
-random keypairs in its actions, is byte-identical on every run
+random keypairs in its actions, is byte-identical on every run (the
+surfnet's own payer and faucet, random on every start, are left out of the
+export)
 (`crates/grader/tests/recipe.rs` checks this). The committed snapshots stay
 as they were built; rebuilding one with `--out` leaves them alone.
 
