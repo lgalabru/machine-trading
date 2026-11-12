@@ -9,20 +9,25 @@
 //!
 //! The checks:
 //! - volatility level, and how much it varies between sessions;
-//! - fat tails: kurtosis within sessions and pooled, and the tail index;
+//! - fat tails: kurtosis within sessions, and the tail ratio (q99 / q90 of
+//!   |r|) pooled; pooled kurtosis and Hill's tail index are reported, not
+//!   gated, being too noisy on a few hundred windows;
 //! - volatility clustering within a session (ACF of |r|);
 //! - no linear predictability (lag-1 ACF);
 //! - gaps where the calendar opens a session, against the fitted gap sizes;
 //! - probe round trips through the book lose spread, impact and fees.
 //!
-//! Windows that hold a gap are left out of the return checks; the gaps are
-//! checked on their own. [`window_stats`] is the port of the fitter's
+//! Each band is the file's, widened to the statistic's sampling spread at
+//! the number of windows judged, so a fair generator passes whatever its
+//! seed. Windows that hold a gap are left out of the return checks; the
+//! gaps are checked on their own. A report whose return checks didn't run
+//! is [`Verdict::NotJudged`], never a pass. [`window_stats`] is the port of the fitter's
 //! `window_stats` (infra-calib `calib/export_v1.py`): keep the two in step.
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    calibration::{Band, Calibration, Realism, WindowStats},
+    calibration::{Band, Calibration, DiffSpread, LogSpread, Realism, Spread, WindowStats},
     model::{EventKind, MarketModel, ModelPath, ModelSpec, Start},
 };
 use crate::{
@@ -108,6 +113,21 @@ pub enum Status {
     Fail,
     /// Not enough data to judge, or nothing to judge it on.
     Skipped,
+    /// Reported for the record; never fails.
+    Info,
+}
+
+/// A report's outcome.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    /// Every check that ran passed, and the return checks ran.
+    Pass,
+    /// A check failed.
+    Fail,
+    /// Nothing failed, but the return checks didn't run (too few windows, or
+    /// no `[realism]`): the market wasn't judged. Not a pass.
+    NotJudged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,8 +169,24 @@ pub struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generated: Option<WindowStats>,
     pub checks: Vec<Check>,
-    /// No check failed (skipped checks don't fail).
+    pub verdict: Verdict,
+    /// The verdict is [`Verdict::Pass`].
     pub passed: bool,
+}
+
+impl Report {
+    /// Set the verdict from the checks: a failure fails; otherwise the
+    /// report passes only if the return checks ran.
+    fn decide(&mut self) {
+        self.verdict = if self.checks.iter().any(|c| c.status == Status::Fail) {
+            Verdict::Fail
+        } else if self.generated.is_none() {
+            Verdict::NotJudged
+        } else {
+            Verdict::Pass
+        };
+        self.passed = self.verdict == Verdict::Pass;
+    }
 }
 
 /// The per-bar returns of each window of `realism.window_bars` bars, from
@@ -253,44 +289,149 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
         tail_index: hill(&pooled, 0.025),
         clustering,
         predictability: mean(&lag1),
+        tail_ratio: {
+            let abs: Vec<f64> = pooled.iter().map(|v| v.abs()).collect();
+            quantile(&abs, 0.99) / quantile(&abs, 0.9)
+        },
     }
 }
 
-/// Compare generated statistics with the reference, band by band.
-pub fn compare(realism: &Realism, generated: &WindowStats) -> Vec<Check> {
-    let (r, g, b) = (&realism.reference, generated, &realism.bands);
+/// Bootstrap draws of the generated windows behind each band.
+const SPREAD_DRAWS: usize = 200;
+
+/// Compare generated windows' statistics with the reference. Each gated
+/// check's band is the file's, widened to `spread.sigmas` standard
+/// deviations of the difference's sampling error: the real statistic's
+/// (from the file, scaled to the real window count) and the generated
+/// one's (bootstrapped from the generated windows, and at least the real
+/// statistic's spread at that many windows), so a fair generator passes
+/// whatever its seed. Pooled kurtosis and Hill's index are
+/// reported, not gated.
+pub fn compare(realism: &Realism, windows: &[Vec<f64>]) -> (WindowStats, Vec<Check>) {
+    let (r, b, s) = (&realism.reference, &realism.bands, &realism.spread);
+    let g = window_stats(windows, realism);
+    let own = bootstrap(windows, realism);
+    // Spread sds are at `s.windows` windows: scale them to the real count
+    // and to the generated one. The generated statistic's own spread is its
+    // bootstrap's, or the real one's at its size when larger: a bootstrap of
+    // a small sample with no outlier in it understates a heavy-tailed
+    // statistic's spread.
+    let real = (s.windows as f64 / realism.windows.max(1) as f64).sqrt();
+    let at_n = (s.windows as f64 / windows.len().max(1) as f64).sqrt();
+    let width =
+        |real_sd: f64, own_sd: f64| s.sigmas * (real_sd * real).hypot(own_sd.max(real_sd * at_n));
+    let ratio = |band: Band, real_sd: f64, own_sd: f64| {
+        let [lo, hi] = band.ratio.unwrap_or([1.0, 1.0]);
+        let w = width(real_sd, own_sd).exp();
+        Band {
+            ratio: Some([lo.min(1.0 / w), hi.max(w)]),
+            diff: None,
+        }
+    };
+    let diff = |band: Band, real_sd: f64, own_sd: f64| Band {
+        ratio: None,
+        diff: Some(band.diff.unwrap_or(0.0).max(width(real_sd, own_sd))),
+    };
     let mut checks = vec![
-        judge("vol_level", r.vol_level, g.vol_level, b.vol_level),
-        judge("vol_of_vol", r.vol_of_vol, g.vol_of_vol, b.vol_of_vol),
+        judge(
+            "vol_level",
+            r.vol_level,
+            g.vol_level,
+            ratio(b.vol_level, s.log_sd.vol_level, own.log_sd.vol_level),
+        ),
+        judge(
+            "vol_of_vol",
+            r.vol_of_vol,
+            g.vol_of_vol,
+            ratio(b.vol_of_vol, s.log_sd.vol_of_vol, own.log_sd.vol_of_vol),
+        ),
         judge(
             "kurtosis_within",
             r.kurtosis_within,
             g.kurtosis_within,
-            b.kurtosis_within,
+            diff(
+                b.kurtosis_within,
+                s.sd.kurtosis_within,
+                own.sd.kurtosis_within,
+            ),
         ),
         judge(
-            "kurtosis_pooled",
-            r.kurtosis_pooled,
-            g.kurtosis_pooled,
-            b.kurtosis_pooled,
+            "tail_ratio",
+            r.tail_ratio,
+            g.tail_ratio,
+            ratio(b.tail_ratio, s.log_sd.tail_ratio, own.log_sd.tail_ratio),
         ),
-        judge("tail_index", r.tail_index, g.tail_index, b.tail_index),
+        info("kurtosis_pooled", r.kurtosis_pooled, g.kurtosis_pooled),
+        info("tail_index", r.tail_index, g.tail_index),
     ];
     for (i, lag) in realism.cluster_lags.iter().enumerate() {
         checks.push(judge(
             &format!("clustering_lag_{lag}"),
             r.clustering[i],
             g.clustering[i],
-            b.clustering,
+            diff(b.clustering, s.sd.clustering[i], own.sd.clustering[i]),
         ));
     }
     checks.push(judge(
         "predictability",
         r.predictability,
         g.predictability,
-        b.predictability,
+        diff(b.predictability, s.sd.predictability, own.sd.predictability),
     ));
-    checks
+    (g, checks)
+}
+
+/// The sampling spread of each gated statistic over `windows`: drawn with
+/// replacement, as many as there are, [`SPREAD_DRAWS`] times, from a fixed
+/// seed. In the file's terms (see [`Spread`]).
+fn bootstrap(windows: &[Vec<f64>], realism: &Realism) -> Spread {
+    let mut rng = SplitMix64(0x7370_7265_6164_0000 ^ windows.len() as u64);
+    let n = windows.len();
+    let draws: Vec<WindowStats> = (0..SPREAD_DRAWS)
+        .map(|_| {
+            let sample: Vec<Vec<f64>> = (0..n)
+                .map(|_| windows[(rng.next_u64() % n as u64) as usize].clone())
+                .collect();
+            window_stats(&sample, realism)
+        })
+        .collect();
+    let sd_of = |f: &dyn Fn(&WindowStats) -> f64| {
+        let xs: Vec<f64> = draws.iter().map(f).filter(|x| x.is_finite()).collect();
+        if xs.len() < 2 {
+            f64::INFINITY
+        } else {
+            moments(&xs).sd
+        }
+    };
+    Spread {
+        windows: n,
+        draws: SPREAD_DRAWS,
+        sigmas: realism.spread.sigmas,
+        log_sd: LogSpread {
+            vol_level: sd_of(&|d| d.vol_level.ln()),
+            vol_of_vol: sd_of(&|d| d.vol_of_vol.ln()),
+            tail_ratio: sd_of(&|d| d.tail_ratio.ln()),
+        },
+        sd: DiffSpread {
+            kurtosis_within: sd_of(&|d| d.kurtosis_within),
+            clustering: (0..realism.cluster_lags.len())
+                .map(|i| sd_of(&|d| d.clustering[i]))
+                .collect(),
+            predictability: sd_of(&|d| d.predictability),
+        },
+    }
+}
+
+/// A statistic reported beside the real one, never failing.
+fn info(name: &str, real: f64, generated: f64) -> Check {
+    Check {
+        name: name.into(),
+        status: Status::Info,
+        real: Some(real),
+        generated: Some(generated),
+        band: None,
+        detail: "reported, not gated: its sampling spread on a few hundred windows is wider than any useful band".into(),
+    }
 }
 
 fn judge(name: &str, real: f64, generated: f64, band: Band) -> Check {
@@ -560,7 +701,7 @@ pub fn check_model(
         report
             .checks
             .extend(check_gaps(calibration, &gaps, realism.bands.gap_size));
-        report.passed = report.checks.iter().all(|c| c.status != Status::Fail);
+        report.decide();
     }
     Ok(report)
 }
@@ -607,8 +748,8 @@ pub fn report(
                     ),
                 ));
             } else {
-                let stats = window_stats(&windows, realism);
-                checks.extend(compare(realism, &stats));
+                let (stats, compared) = compare(realism, &windows);
+                checks.extend(compared);
                 generated = Some(stats);
             }
             let gaps: Vec<f64> = sessions
@@ -627,7 +768,7 @@ pub fn report(
             }
         }
     }
-    Report {
+    let mut report = Report {
         calibration: calibration.meta.calibration_id.clone(),
         calibration_sha256: calibration.sha256.clone(),
         target: target.into(),
@@ -635,9 +776,12 @@ pub fn report(
         windows: used,
         masked_windows: masked,
         generated,
-        passed: checks.iter().all(|c| c.status != Status::Fail),
         checks,
-    }
+        verdict: Verdict::NotJudged,
+        passed: false,
+    };
+    report.decide();
+    report
 }
 
 struct Moments {
@@ -751,34 +895,46 @@ mod tests {
         assert!(close(s.kurtosis_pooled, &e["kurtosis_pooled"]));
         assert!(close(s.tail_index, &e["tail_index"]));
         assert!(close(s.predictability, &e["predictability"]));
+        assert!(close(s.tail_ratio, &e["tail_ratio"]));
         for (i, c) in s.clustering.iter().enumerate() {
             assert!(close(*c, &e["clustering"][i]));
         }
     }
 
     #[test]
-    fn the_calibrated_model_passes_its_own_checks() {
+    fn the_calibrated_model_passes_its_own_checks_whatever_the_seed() {
+        // Each check's band is its sampling spread, so a fair generator
+        // passes on every seed, at the default size and at gates' fast one.
         for cal in [sol(), spcx()] {
-            let report = check_model(&cal, &ModelSpec::default(), 300, 1).unwrap();
-            let failed: Vec<_> = report
-                .checks
-                .iter()
-                .filter(|c| c.status == Status::Fail)
-                .collect();
-            assert!(report.passed, "{}: {failed:#?}", cal.meta.calibration_id);
-            assert!(report.windows >= 250);
-            assert!(
-                report
-                    .checks
-                    .iter()
-                    .any(|c| c.name == "round_trips" && c.status == Status::Pass)
-            );
+            for (count, seeds) in [(300, 1..=4), (60, 1..=4)] {
+                for seed in seeds {
+                    let report = check_model(&cal, &ModelSpec::default(), count, seed).unwrap();
+                    let failed: Vec<_> = report
+                        .checks
+                        .iter()
+                        .filter(|c| c.status == Status::Fail)
+                        .collect();
+                    assert_eq!(
+                        report.verdict,
+                        Verdict::Pass,
+                        "{} at {count} sessions, seed {seed}: {failed:#?}",
+                        cal.meta.calibration_id
+                    );
+                    assert!(report.passed);
+                    assert!(report.windows >= count * 8 / 10);
+                }
+            }
         }
         let spcx = check_model(&spcx(), &ModelSpec::default(), 100, 2).unwrap();
         assert!(
             spcx.checks
                 .iter()
                 .any(|c| c.name == "gap_size_median" && c.status == Status::Pass)
+        );
+        assert!(
+            spcx.checks
+                .iter()
+                .any(|c| c.name == "round_trips" && c.status == Status::Pass)
         );
     }
 
@@ -789,7 +945,7 @@ mod tests {
         let realism = cal.realism.as_ref().unwrap();
         let mut rng = SplitMix64(9);
         let per_slot = realism.reference.vol_level / (realism.bar_seconds / SLOT_SECONDS).sqrt();
-        let sessions: Vec<SessionPath> = (0..300)
+        let sessions: Vec<SessionPath> = (0..1000)
             .map(|_| {
                 let mut level = 0.0;
                 let mut log_levels = vec![0.0];
@@ -815,7 +971,9 @@ mod tests {
         };
         assert_eq!(status("vol_level"), Status::Pass);
         assert_eq!(status("vol_of_vol"), Status::Fail);
-        assert_eq!(status("kurtosis_pooled"), Status::Fail);
+        assert_eq!(status("tail_ratio"), Status::Fail);
+        assert_eq!(status("kurtosis_pooled"), Status::Info);
+        assert_eq!(report.verdict, Verdict::Fail);
         assert!(!report.passed);
     }
 
@@ -823,13 +981,18 @@ mod tests {
     fn todays_making_family_is_too_hot_for_spcx() {
         let scenarios = crate::making::MakingFamily::spcx().sample_set("mm", 60, 3);
         let report = check_scenarios(&spcx(), "market-making", &scenarios);
-        // Sessions of minutes can't fill SPCX's hour-long windows.
+        // Sessions of minutes can't fill SPCX's hour-long windows: the
+        // round trips pass, but the market isn't judged, and that isn't a
+        // pass.
         assert!(
             report
                 .checks
                 .iter()
                 .any(|c| c.name == "returns" && c.status == Status::Skipped)
         );
+        assert_eq!(report.windows, 0);
+        assert_eq!(report.verdict, Verdict::NotJudged);
+        assert!(!report.passed);
         let report = check_scenarios(&sol(), "market-making", &scenarios);
         let vol = report
             .checks

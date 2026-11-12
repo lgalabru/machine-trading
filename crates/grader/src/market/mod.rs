@@ -28,8 +28,8 @@ pub(crate) mod tests {
     use super::Calibration;
     use crate::scenario::{Scenario, VENUE};
 
-    const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261111.7f960b0d.toml");
-    const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261111.8c2b4e5c.toml");
+    const SOL: &str = include_str!("../../../../calibration/market/sol-usd.20261111.4ca59529.toml");
+    const SPCX: &str = include_str!("../../../../calibration/market/spcx.20261111.000e88d5.toml");
 
     pub(crate) fn sol() -> Calibration {
         with_sha(Calibration::parse(SOL).unwrap(), SOL)
