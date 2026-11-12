@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mtx studio · protocol</title>
+<style>
+  body { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #141414; color: #ddd; margin: 0; display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
+  aside { padding: 12px; border-right: 1px solid #333; overflow: auto; }
+  main { overflow: auto; padding: 12px; }
+  h1 { font-size: 13px; color: #A2EF5B; margin: 0 0 8px; }
+  button { font: inherit; background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 8px; margin: 2px; cursor: pointer; }
+  button:hover { border-color: #A2EF5B; }
+  input, select, textarea { font: inherit; background: #1c1c1c; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; width: 100%; box-sizing: border-box; margin: 2px 0; }
+  .row { margin: 10px 0; }
+  .ev { white-space: pre-wrap; border-bottom: 1px solid #222; padding: 3px 0; }
+  .ev b { color: #A2EF5B; }
+  .ev.response b { color: #7fb4ff; }
+  .ev.fail b { color: #ff6b6b; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>mtx studio · protocol test page</h1>
+  <div class="row"><button onclick="req('initialize')">initialize</button><button onclick="req('agents/list')">agents/list</button><button onclick="req('build')">build</button></div>
+  <div class="row">scenario <select id="scenario"></select>
+    <button onclick="req('scenario/read', {name: v('scenario')})">scenario/read</button></div>
+  <div class="row">
+    <label><input type="checkbox" id="entry" checked style="width:auto"> stopOnEntry</label>
+    breakpoint steps <input id="steps" placeholder="e.g. 33, 40">
+    <label><input type="checkbox" id="orders" style="width:auto"> onOrders</label>
+    <label><input type="checkbox" id="fill" style="width:auto"> onFill</label>
+    <label><input type="checkbox" id="trap" checked style="width:auto"> onTrap</label>
+    <button onclick="launch()">launch</button><button onclick="req('setBreakpoints', bps())">setBreakpoints</button>
+  </div>
+  <div class="row">
+    <button onclick="req('continue')">continue</button><button onclick="req('pause')">pause</button><button onclick="req('next')">next</button><button onclick="req('restart')">restart</button><button onclick="req('terminate')">terminate</button>
+    ms/step <input id="speed" value="0" style="width:60px"><button onclick="req('setSpeed', {msPerStep: +v('speed')})">setSpeed</button>
+  </div>
+  <div class="row">file <select id="file"></select><button onclick="req('file/read', {path: v('file')})">file/read</button></div>
+  <div class="row">agent <select id="agent"></select> model <input id="model">
+    <button onclick="req('agents/select', {agent: v('agent'), model: v('model')})">agents/select</button></div>
+  <div class="row"><textarea id="prompt" rows="4" placeholder="a message for the agent"></textarea>
+    <button onclick="req('composer/send', {text: v('prompt'), context: {scenario: v('scenario')}})">composer/send</button><button onclick="req('composer/cancel')">cancel</button></div>
+  <div class="row"><label><input type="checkbox" id="quiet" checked style="width:auto"> fold step events</label> <button onclick="log.innerHTML=''">clear</button></div>
+</aside>
+<main id="log"></main>
+<script>
+const log = document.getElementById("log");
+const v = (id) => document.getElementById(id).value;
+let seq = 1;
+const ws = new WebSocket(`ws://${location.host}/ws`);
+function show(kind, title, body, fail) {
+  const div = document.createElement("div");
+  div.className = `ev ${kind}${fail ? " fail" : ""}`;
+  div.innerHTML = `<b>${title}</b> ${JSON.stringify(body)}`;
+  log.prepend(div);
+}
+function req(command, args = {}) {
+  ws.send(JSON.stringify({ seq: seq++, type: "request", command, arguments: args }));
+}
+const bps = () => ({
+  steps: v("steps").split(/[ ,]+/).filter(Boolean).map(Number),
+  onOrders: document.getElementById("orders").checked,
+  onFill: document.getElementById("fill").checked,
+  onTrap: document.getElementById("trap").checked,
+});
+const launch = () => req("launch", { scenario: v("scenario"), stopOnEntry: document.getElementById("entry").checked, breakpoints: bps() });
+function fill(id, items) {
+  document.getElementById(id).innerHTML = items.map((x) => `<option>${x}</option>`).join("");
+}
+ws.onopen = () => { req("initialize"); req("agents/list"); };
+ws.onmessage = (m) => {
+  const msg = JSON.parse(m.data);
+  if (msg.type === "response") {
+    if (msg.command === "initialize" && msg.success) { fill("scenario", msg.body.scenarios); fill("file", msg.body.files); }
+    if (msg.command === "agents/list" && msg.success) fill("agent", msg.body.agents.map((a) => a.id));
+    show("response", `← ${msg.command}`, msg.success ? msg.body : msg.message, !msg.success);
+    return;
+  }
+  if (msg.event === "step" && document.getElementById("quiet").checked) {
+    const b = msg.body, m2 = b.market;
+    show("event", `step ${b.k + 1}/${b.steps}`, { mark: m2.mark, position: m2.position.size, pnl: m2.pnl, intents: b.intents, sent: b.sent.length, printed: b.printed });
+    return;
+  }
+  show("event", msg.event, msg.body);
+};
+</script>
+</body>
+</html>
