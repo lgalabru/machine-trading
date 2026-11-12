@@ -1,0 +1,43 @@
+name = "sol-usdc-spot-2026-11-11"
+kind = "spot"
+symbol = "SOL-USDC"
+
+[[program]]
+name = "phoenix-v1"
+address = "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY"
+
+[[program]]
+name = "phoenix-seat-manager"
+address = "PSMxQbAoDWDbvd9ezQJgARyq6R9L5kJAasaLDVcZwf1"
+
+[[program]]
+name = "openbook-v2"
+address = "opnb2LAfJYbRMAHHvqjCwQxanZn7ReEHp1k81EohpZb"
+
+[[account]]
+name = "phoenix-v1 SOL/USDC"
+kind = "market"
+address = "4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg"
+
+[[account]]
+name = "openbook-v2 SOL/USDC"
+kind = "market"
+address = "CFSMrBssNG8Ud1edW59jNLnq2cwrQ9uY5cM3wXmqRJj3"
+
+[[account]]
+name = "wSOL"
+kind = "mint"
+address = "So11111111111111111111111111111111111111112"
+
+[[account]]
+name = "USDC"
+kind = "mint"
+address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[account]]
+name = "pyth SOL/USD"
+kind = "oracle"
+address = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE"
+
+[[warmup]]
+action = "spot-exercise"

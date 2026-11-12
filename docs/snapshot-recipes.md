@@ -1,0 +1,139 @@
+# Snapshot recipes
+
+A snapshot is the chain state a task trades on: a gzipped export of a
+Surfpool fork (`surfnet.json.gz`) and a `manifest.json`. A **recipe**
+(`snapshots/<name>/recipe.toml`) says what the snapshot holds and how to
+build it, and one command builds any of them:
+
+```sh
+just snapshot-build <name>                     # forks MTX_FORK_RPC_URL (or the public RPC)
+mtx snapshot build snapshots/<name>/recipe.toml --out /tmp/rebuilt
+```
+
+The build starts a surfnet (a mainnet fork, or another snapshot offline),
+fetches the declared programs and accounts, runs the warm-up actions in
+order, exports every account the surfnet holds and writes the manifest. It
+fails if the export lacks anything the recipe declares, so a recipe can't
+promise an account its warm-up never loads.
+
+## The file
+
+```toml
+name = "sol-usdc-spot-2026-11-11"   # the snapshot's name
+kind = "spot"                       # "spot", or absent for Phoenix Eternal
+symbol = "SOL-USDC"
+
+[fork]                              # optional
+from_snapshot = "../other"          # start offline from a snapshot instead of forking
+
+[[program]]                         # fetched, and checked executable
+name = "phoenix-v1"
+address = "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY"
+
+[[account]]                         # fetched: markets, pools, mints, oracles
+name = "phoenix-v1 SOL/USDC"
+kind = "market"                     # free text, kept in the manifest
+address = "4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg"
+
+[[warmup]]                          # run in order
+action = "spot-exercise"
+```
+
+Unknown keys and actions are errors.
+
+## Warm-up actions
+
+Real venues:
+
+| Action | What it does |
+|---|---|
+| `phoenix-eternal` (`symbol`, `phoenix_api`) | Onboards a throwaway trader, reads the market, rests and cancels an order, and replays the market-move scenario templates so the oracle and maker accounts load. Writes `exchange.json`. |
+| `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
+
+Simulated assets (see below): `create-mint`, `phoenix-v1-market`,
+`openbook-v2-market`. Pool creation for AMMs is left for the AMM venue
+modules; they add actions here.
+
+The account set depends on what the warm-up touches, which is why warm-up
+is part of the recipe: a path a session takes that no warm-up exercised
+would fetch from mainnet at run time, and the offline surfnet has no
+mainnet.
+
+## Simulated markets
+
+Mainnet has no depth for some assets a task needs (Ondo's tokens are
+empty, most SPCX liquidity sits in proprietary pools that can't be
+forked). A recipe can make a mint and a market on the real program
+instead, so a bot trades them with the code it uses on mainnet.
+
+```toml
+[[warmup]]
+action = "create-mint"
+name = "NVDAon"
+decimals = 9
+program = "token-2022"            # or "spl" (default)
+
+[[warmup]]
+action = "openbook-v2-market"
+name = "NVDAon/USDC"
+base = "NVDAon"                   # a created mint, a declared account's name, or an address
+quote = "USDC"
+base_lot_atoms = 1000000          # sizes are in token atoms: the grid is explicit
+quote_lot_atoms = 100
+price = { calibration = "calibration/nvda.toml", key = "fair_value.price" }
+ladder = { levels = 5, half_spread_bps = 10, step_bps = 10, level_size = "20" }
+```
+
+- `price` is `{ value = 12.5 }` or a calibration TOML (relative to the
+  recipe) plus the dotted key of a number in it.
+- The ladder posts `levels` post-only orders a side, each `level_size` base
+  units, the first `half_spread_bps` from the price and the rest `step_bps`
+  apart, on the market's tick and lot grid (bids round down, asks up).
+- `phoenix-v1-market` takes classic SPL mints (Phoenix v1 does not trade
+  Token-2022) and `bids_size`, `asks_size`, `num_seats`, `taker_fee_bps`;
+  its lots are `base_lot_atoms`, `quote_lot_atoms` and
+  `tick_quote_atoms_per_base_unit`, which must divide into whole lots.
+- `openbook-v2-market` takes the mints of either token program and
+  `maker_fee`, `taker_fee`.
+- Mints are written straight into the surfnet. The market's creator, its
+  accounts and the mints' addresses derive from the recipe name and the
+  market's name, so a rebuild reproduces them. The keypairs are not
+  secrets; they only control simulated accounts.
+- The creator is the market's authority and the maker of the ladder; it is
+  funded by cheatcode with both mints.
+
+## The manifest
+
+Alongside the fork slot and time, the manifest records:
+
+```json
+{
+  "recipe_sha256": "…",
+  "sources": [{ "role": "market", "name": "phoenix-v1 SOL/USDC", "address": "…" }],
+  "simulated": true,
+  "created": [
+    { "kind": "openbook-v2-market", "name": "NVDAon/USDC", "address": "…",
+      "program": "opnb2…", "simulated": true,
+      "detail": { "price": "…", "levels": 5, "base_mint": "…", "quote_mint": "…" } }
+  ]
+}
+```
+
+`simulated` is absent when the recipe made nothing. A task whose snapshot
+has `simulated: true` should say so in its instruction, and name the
+assets in `created`.
+
+## Reproducibility
+
+A build from a mainnet fork depends on mainnet at the fork slot, so two
+builds differ in prices, slots and times; the manifest's recipe hash,
+fork slot and sources say what was built and when. A build from
+`fork.from_snapshot` copies the source's fork slot and time and, with no
+random keypairs in its actions, is byte-identical on every run
+(`crates/grader/tests/recipe.rs` checks this). The committed snapshots stay
+as they were built; rebuilding one with `--out` leaves them alone.
+
+The two original `prepare` commands are the `phoenix-eternal` and
+`spot-exercise` actions. Their warm-up trader is a random keypair, as before,
+so a rebuild's trader accounts have different addresses than the committed
+snapshot's; everything else it touches is the same set.
