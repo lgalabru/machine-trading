@@ -263,6 +263,8 @@ impl Scenario {
         }
         let mut book = 0.0;
         let mut free_from = 0;
+        // The move before the waypoint: from, to, and the slot it started.
+        let mut before: Option<(f64, f64, u64)> = None;
         for (i, waypoint) in self.path.iter().enumerate() {
             if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
                 return Err(format!(
@@ -271,8 +273,14 @@ impl Scenario {
                 ));
             }
             if waypoint.slot < free_from {
+                let why = before.map_or(String::new(), |(from, to, at)| {
+                    let parts = move_slots(from, to) / SLOTS_BETWEEN_STEPS;
+                    format!(
+                        ": the move before it, from {from}% to {to}% at slot {at}, lands in {parts} of Phoenix's 4% steps of {SLOTS_BETWEEN_STEPS} slots each"
+                    )
+                });
                 return Err(format!(
-                    "waypoint {i} starts at slot {} while the previous move runs until {free_from}",
+                    "waypoint {i} starts at slot {} while the previous move runs until {free_from}{why}; start it at slot {free_from} or later, or make that move smaller",
                     waypoint.slot
                 ));
             }
@@ -290,6 +298,7 @@ impl Scenario {
                 }
                 _ => waypoint.slot + move_slots(book, waypoint.book_pct()) + 1,
             };
+            before = Some((book, waypoint.book_pct(), waypoint.slot));
             book = waypoint.book_pct();
         }
         if let Some(funding) = &self.funding
