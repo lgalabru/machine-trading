@@ -5,8 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
-use mtx_grader::scenario::Scenario;
-use mtx_grader::scenario_v2::{ScenarioV2, parse};
+use mtx_grader::{
+    scenario::Scenario,
+    scenario_v2::{ScenarioV2, parse},
+};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -18,7 +20,10 @@ fn scenario_files() -> Vec<PathBuf> {
         .unwrap()
         .flat_map(|task| {
             let task = task.unwrap().path();
-            [task.join("environment/practice"), task.join("tests/scenarios")]
+            [
+                task.join("environment/practice"),
+                task.join("tests/scenarios"),
+            ]
         })
         .collect();
     dirs.extend([
@@ -29,7 +34,10 @@ fn scenario_files() -> Vec<PathBuf> {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|e| e == "json") {
-                if std::fs::read_to_string(&path).unwrap().contains("\"duration_slots\"") {
+                if std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("\"duration_slots\"")
+                {
                     files.push(path);
                 }
             }
@@ -55,10 +63,22 @@ fn every_shipped_file_survives_the_trip_to_v2() {
 
 /// A v1 file of each kind and the v2 file it must write.
 const GOLDEN: [(&str, &str); 6] = [
-    ("bench/tasks/flash-crash-spcx/environment/practice/practice-1.json", "flash-crash.json"),
-    ("bench/tasks/market-making-spcx/environment/practice/practice-1.json", "market-making.json"),
-    ("bench/tasks/weekend-gap-spcx/environment/practice/practice-1.json", "weekend-gap.json"),
-    ("bench/tasks/funding-carry-spcx/environment/practice/practice-1.json", "funding-carry.json"),
+    (
+        "bench/tasks/flash-crash-spcx/environment/practice/practice-1.json",
+        "flash-crash.json",
+    ),
+    (
+        "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
+        "market-making.json",
+    ),
+    (
+        "bench/tasks/weekend-gap-spcx/environment/practice/practice-1.json",
+        "weekend-gap.json",
+    ),
+    (
+        "bench/tasks/funding-carry-spcx/environment/practice/practice-1.json",
+        "funding-carry.json",
+    ),
     ("bench/checks/spot/smoke-buy-order.json", "spot-order.json"),
     ("bench/checks/spot/smoke-net.json", "spot-net.json"),
 ];
