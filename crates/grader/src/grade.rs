@@ -795,6 +795,7 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            crank_refusals: Vec::new(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
