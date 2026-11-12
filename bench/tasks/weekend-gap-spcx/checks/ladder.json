@@ -1,0 +1,81 @@
+{
+  "family": "weekend-gap",
+  "count": 72,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "follow",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-follow",
+      "may_breach": true
+    },
+    {
+      "name": "fade",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-fade",
+      "may_breach": true
+    },
+    {
+      "name": "basis",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-basis",
+      "may_breach": true
+    },
+    {
+      "name": "fitted",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-fitted"
+    },
+    {
+      "name": "g0-reference",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-g0"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/weekend-gap-spcx/reference"
+    },
+    {
+      "name": "told",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-told",
+      "tell_regime": true
+    },
+    {
+      "name": "path-oracle",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-path-oracle",
+      "tell_regime": true
+    },
+    {
+      "name": "weekend-gap-sol-1",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-1"
+    },
+    {
+      "name": "weekend-gap-sol-2",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-2"
+    },
+    {
+      "name": "weekend-gap-sol-3",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-3"
+    }
+  ],
+  "gates": {
+    "informed": ["told"],
+    "non_reading": ["nop", "follow", "fade"]
+  },
+  "rules": [
+    "max(follow, fade) < reference",
+    "basis < reference",
+    "fitted < reference",
+    "g0-reference < reference",
+    "reference < told < path-oracle < hindsight"
+  ],
+  "exploits": {
+    "bots": [
+      "fitted",
+      "weekend-gap-sol-1",
+      "weekend-gap-sol-2",
+      "weekend-gap-sol-3"
+    ],
+    "max_profitable": 0.9,
+    "below": "told"
+  }
+}

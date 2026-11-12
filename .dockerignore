@@ -6,7 +6,13 @@
 .env
 .surfpool
 jobs
-bench/tasks
+# A task is a folder; the image builds the workspace members in it (the
+# reference and the ladder's bots) and nothing of what agents mustn't see.
+bench/tasks/*
+!bench/tasks/*/reference
+!bench/tasks/*/checks
+bench/tasks/*/checks/*
+!bench/tasks/*/checks/bots
 bench/checks
 skills
 docs

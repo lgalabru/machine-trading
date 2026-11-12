@@ -25,18 +25,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install Harbor
         run: uv tool install harbor==0.25.0
+      - uses: extractions/setup-just@v2
       - name: Each oracle is its task's reference bot
-        # Mirrors `references` and `check-solution` in the Justfile: every
-        # source file, and the model the bot reads, if any.
-        run: |
-          for pair in flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend; do
-            bot="bots/${pair#*=}"; solution="bench/tasks/${pair%%=*}/solution"
-            diff -ru -x main.rs "$bot/src" "$solution/src"
-            if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
-            for model in "$bot"/model.*; do
-              if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
-            done
-          done
+        # The Justfile's `check-solution`: every source file, and the model
+        # the bot reads, if any, for each task in bench/tasks/tasks.just.
+        run: just check-solution
       - name: Lint every task
         # Images are pinned by `just release`; between releases a task may
         # point at an unpinned local tag.
@@ -106,15 +99,15 @@ jobs:
         # grader's host, and the probe's sheet and market round-trip through
         # the interface.
         run: |
-          for bot in starter printer first-strategy reference maker carry weekend spot-smoke wit-probe; do
-            cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy $(just --evaluate reference_packages) mtx-bot-spot-smoke mtx-bot-wit-probe; do
+            cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
-          just --justfile bots/reference/Justfile build
+          just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
           just --justfile bots/spot-smoke/Justfile build
           just --justfile bots/wit-probe/Justfile build
-          MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
+          MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-grader wasm::tests -- --ignored
           MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
 

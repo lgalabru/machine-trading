@@ -28,7 +28,7 @@ use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Cli, authoring};
+use crate::{Cli, authoring, tasks};
 
 /// The ladder's extra gate: the best informed policy must make at least this
 /// many times the best one that doesn't read the task's signal.
@@ -950,7 +950,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     {
         bail!("no task `{task}` in bench/tasks (`mtx task list`)");
     }
-    let family = authoring::family_of(task);
+    let family = tasks::load_one(root, task.to_string())?.mtx.generator;
     let out = opts
         .out
         .clone()
@@ -963,9 +963,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let mut checks = task_checks(root, task)?;
 
     // The ladder: one hidden set of a few sessions in fast mode.
-    let ladder_file = root
-        .join("bench/checks/ladder")
-        .join(format!("{family}.json"));
+    let ladder_file = root.join("bench/tasks").join(task).join("checks/ladder.json");
     let config = read_json(&ladder_file)?;
     let signal: SignalGate = config
         .get("gates")
@@ -992,7 +990,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             let ladder_out = out.join("ladder");
             // The ladder reuses any rung report it finds: an earlier run's,
             // from another set, mustn't stand in for this one.
-            clear_dir(&ladder_out.join(&family))?;
+            clear_dir(&ladder_out.join(task))?;
             let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
             // The ladder exits nonzero when a rule fails: the summary says which.
             run_in(
@@ -1000,7 +998,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                 "just",
                 &[
                     "ladder",
-                    &family,
+                    task,
                     &sets,
                     "4",
                     "1",
@@ -1011,7 +1009,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                 ],
                 true,
             )?;
-            ladder_out.join(&family).join("summary.json")
+            ladder_out.join(task).join("summary.json")
         }
     };
     match std::fs::read_to_string(&summary_path) {
@@ -1415,18 +1413,18 @@ mod tests {
     #[test]
     fn every_task_declares_its_signal_and_names_real_rungs() {
         let root = authoring::repo_root();
-        for family in [
-            "flash-crash",
-            "market-making",
-            "funding-carry",
-            "weekend-gap",
+        for task in [
+            "flash-crash-spcx",
+            "market-making-spcx",
+            "funding-carry-spcx",
+            "weekend-gap-spcx",
         ] {
             let config =
-                read_json(&root.join(format!("bench/checks/ladder/{family}.json"))).unwrap();
+                read_json(&root.join(format!("bench/tasks/{task}/checks/ladder.json"))).unwrap();
             let gate: SignalGate = serde_json::from_value(config["gates"].clone()).unwrap();
             assert!(
                 !gate.informed.is_empty() && !gate.non_reading.is_empty(),
-                "{family}"
+                "{task}"
             );
             let rungs: Vec<&str> = config["rungs"]
                 .as_array()
@@ -1435,7 +1433,7 @@ mod tests {
                 .map(|r| r["name"].as_str().unwrap())
                 .collect();
             for name in gate.informed.iter().chain(&gate.non_reading) {
-                assert!(rungs.contains(&name.as_str()), "{family}: no rung {name}");
+                assert!(rungs.contains(&name.as_str()), "{task}: no rung {name}");
             }
         }
     }
