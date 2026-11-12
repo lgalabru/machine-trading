@@ -50,7 +50,9 @@ reward 0.000   (your PnL $0.00 over the hindsight bound $1028)
 skill  0.00    (your PnL over the reference bot's: 1 matches it)
 ```
 
-The starter doesn't trade, so it scores 0. The rest is yours.
+The starter doesn't trade, so it scores 0. The rest is yours. To watch a
+strategy play one session, step by step, run `mtx bot run --debug`; the
+[step-by-step guide](first-strategy.md) starts there.
 
 ## Your first strategy
 
@@ -107,8 +109,9 @@ Over one session:
 | At the end | Ends the session after its last step. | `end(Option<&Market>)`, optional. |
 
 If `step` returns an error, the grader logs it and sends nothing that step;
-the session goes on. If a read fails, it skips the step. `mtx_kit::log`
-writes a line to the session's log.
+the session goes on. If a read fails, it skips the step. What the strategy
+prints (`println!`, `eprintln!`, or `mtx_kit::log`) goes to the session's
+log, up to 1 MiB a call; `mtx bot run` shows it.
 
 `Session` holds what doesn't change: the clock (`steps`, `start_slot`,
 `end_slot`), the `symbol`, the `mandate` with its `cap` and `max_drawdown`,
@@ -230,6 +233,7 @@ can't show: fills, slippage, and the market moving.
 
 | Command | What it does |
 | --- | --- |
+| `mtx bot run` | Builds the bot and plays one practice session, showing what it printed. `--debug` stops at every step: the market, what it printed, its sheet, the orders sent (`--auto 200`, `--from 40`, `--scenario practice-4`). |
 | `mtx bot practice` | Builds the bot, then grades it on the task's practice scenarios. |
 | `mtx bot practice --task <name>` | Another task in `bench/tasks`, such as the market-making one. |
 | `mtx bot practice more/*.json` | Grades on scenarios `mtx scenario generate` drew. |
