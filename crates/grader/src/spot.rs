@@ -680,9 +680,7 @@ pub fn fund_mint(
     mint: &Pubkey,
     atoms: u64,
 ) -> Result<mtx_kit::token::Mint> {
-    let account = chain::rpc_client(surfnet)
-        .get_account(mint)
-        .map_err(|e| Error::UnknownMarket(format!("mint {mint}: {e}")))?;
+    let account = chain::rpc_client(surfnet).get_account(mint)?;
     let decoded =
         mtx_kit::token::Mint::decode(&account.owner, &account.data).map_err(venue_error("mint"))?;
     if let Some(why) = decoded.unsupported() {
