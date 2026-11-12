@@ -240,7 +240,7 @@ impl Spot {
 }
 
 /// A spot session's account of the bot's wallet and trading.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SpotReport {
     /// SOL and USDC held at the start and the end: wallet and venues.
     pub start: Wallet,
@@ -251,12 +251,12 @@ pub struct SpotReport {
     pub open_orders: Vec<(InstrumentRef, Side)>,
     /// For a scenario with a tape or a participation charge: each venue's
     /// traded base volume at each step, the bot's own fills included.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub volume: Vec<VenueVolume>,
 }
 
 /// One venue's traded base volume, step by step.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VenueVolume {
     pub venue: String,
     pub per_step: Vec<f64>,
@@ -277,7 +277,7 @@ impl SpotReport {
 }
 
 /// What the account holds, and what it's worth.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Wallet {
     /// SOL and USDC, in the wallet and on every venue, free or locked.
     pub base: f64,
@@ -288,7 +288,7 @@ pub struct Wallet {
 }
 
 /// One of the bot's fills.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpotFill {
     /// Slots into the session it landed at (or, waiting in OpenBook's event
     /// heap, was read at).
@@ -296,7 +296,8 @@ pub struct SpotFill {
     pub instrument: InstrumentRef,
     /// The bot's side, and whether it took or made.
     pub side: Side,
-    pub role: &'static str,
+    #[serde(deserialize_with = "session::static_name")]
+    pub role: session::StaticName,
     /// Price in USDC per SOL, before fees, and size in SOL.
     pub price: f64,
     pub base: f64,

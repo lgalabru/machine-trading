@@ -39,7 +39,7 @@ use mtx_kit::{
     chain::RpcChainClient,
     protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
 };
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
@@ -122,7 +122,10 @@ pub struct SessionOptions<'a> {
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A session's outcome, as the grade reports it. It reads back from the
+/// report, so a grade can be scored again from what it wrote (see
+/// [`crate::grade::rescore`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionReport {
     pub scenario: String,
     pub start_mark_usd: f64,
@@ -161,7 +164,8 @@ pub struct SessionReport {
     /// The price the account's position was valued at: the `mark`, or for
     /// market making the `oracle` the scenario sets, which a bot's own
     /// quotes can't move.
-    pub valuation: &'static str,
+    #[serde(deserialize_with = "static_name")]
+    pub valuation: StaticName,
     /// Market making: what the grader's takers sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<FlowReport>,
@@ -217,7 +221,7 @@ pub struct Timeline {
 
 /// The world and the account after a step's blocks landed, before the bot's
 /// turn.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepRecord {
     pub k: u64,
     pub at: u64,
@@ -282,7 +286,7 @@ pub struct TxRecord {
 }
 
 /// How a session's turns went.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TurnReport {
     /// The bot never answered the hello: the world moved at the slot time.
     pub legacy: bool,
@@ -341,6 +345,37 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
         Err(error) if !bot_started => Err(Error::Setup(Box::new(error))),
         done => done,
     }
+}
+
+/// A name the grader writes from its own set (a valuation, a fill's role, a
+/// fault), as a report field: read back with [`static_name`]. An alias, so
+/// that serde doesn't take the field for one borrowed from its input.
+pub type StaticName = &'static str;
+
+/// Reads back a [`StaticName`]: each distinct name is allocated once and
+/// kept for the life of the process.
+pub(crate) fn static_name<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<&'static str, D::Error> {
+    static NAMES: std::sync::Mutex<std::collections::BTreeSet<&'static str>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let name = String::deserialize(deserializer)?;
+    let mut names = NAMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(known) = names.get(name.as_str()) {
+        return Ok(known);
+    }
+    let name: &'static str = Box::leak(name.into_boxed_str());
+    names.insert(name);
+    Ok(name)
+}
+
+/// Whether a session of `scenario` plays `bot_dir`'s strategy component
+/// inside the grader, rather than starting the bot's process: it does for a
+/// bot with a `bot.wasm`, except in a spot session, which runs processes.
+pub fn plays_component(bot_dir: &Path, scenario: &Scenario) -> bool {
+    scenario.spot.is_none() && crate::wasm::component_in(bot_dir).is_some()
 }
 
 async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result<SessionReport> {
