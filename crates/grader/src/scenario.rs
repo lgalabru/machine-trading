@@ -88,6 +88,10 @@ pub struct Scenario {
     /// Not with an `order`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetScoring>,
+    /// The prices venues read, written by the grader over the session, and
+    /// how they fail (see [`crate::oracles`]). Without it, none are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracles: Option<crate::oracles::Oracles>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,6 +232,17 @@ impl Scenario {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(oracles) = &self.oracles {
+            oracles.validate(self.duration_slots)?;
+            if self.spot.is_some()
+                && oracles
+                    .feeds
+                    .iter()
+                    .any(|f| matches!(f.source, crate::oracles::Source::Phoenix(_)))
+            {
+                return Err("oracles: a Phoenix oracle is for perp scenarios".into());
+            }
+        }
         if let Some(spot) = &self.spot {
             if let Some(faults) = &self.faults {
                 faults
@@ -904,6 +919,7 @@ impl ShockFamily {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1616,6 +1632,7 @@ mod tests {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1680,6 +1697,7 @@ mod tests {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
