@@ -1093,7 +1093,7 @@ impl StepObserver for Control {
                 && trace
                     .sent
                     .iter()
-                    .any(|(a, r)| r.is_ok() && !matches!(a, Action::CancelAll)))
+                    .any(|(a, r)| r.landed() && !matches!(a, Action::CancelAll)))
             || (b.on_trap && trapped);
         match state.mode {
             Mode::Step => self.stop(state, "step", Some(k)),
@@ -1165,6 +1165,8 @@ fn intent_json(intent: &Intent) -> Value {
             size,
         } => json!({ "kind": "limit", "side": side(*s), "price": price, "size": size }),
         Intent::CancelAll => json!({ "kind": "cancelAll" }),
+        // What the studio doesn't draw yet, as the kit writes it.
+        other => json!({ "kind": "other", "text": format!("{other:?}") }),
     }
 }
 
@@ -1180,7 +1182,15 @@ fn action_json(action: &Action) -> Value {
             price,
             size,
         } => json!({ "kind": "limit", "side": side(*s), "price": price, "size": size }),
+        Action::PostOnly {
+            side: s,
+            price,
+            size,
+        } => json!({
+            "kind": "limit", "side": side(*s), "price": price, "size": size, "postOnly": true,
+        }),
         Action::CancelAll => json!({ "kind": "cancelAll" }),
+        other => json!({ "kind": "other", "text": format!("{other:?}") }),
     }
 }
 
@@ -1206,8 +1216,8 @@ fn trace_json(trace: &StepTrace) -> Value {
         "notes": trace.notes,
         "sent": trace.sent.iter().map(|(a, r)| json!({
             "action": action_json(a),
-            "ok": r.is_ok(),
-            "error": r.as_ref().err(),
+            "ok": r.landed(),
+            "error": r.reason(),
         })).collect::<Vec<_>>(),
         "fuel": trace.fuel,
         "rpc_calls": trace.rpc_calls,

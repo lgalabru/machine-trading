@@ -704,6 +704,21 @@ pub enum SendState {
 }
 
 impl SendState {
+    /// Whether it executed.
+    pub fn landed(&self) -> bool {
+        matches!(self, SendState::Landed(_))
+    }
+
+    /// Why it failed or wasn't sent, if it did either.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            SendState::Failed { reason, .. } | SendState::NotSent(reason) => Some(reason),
+            SendState::Landed(_) => None,
+            SendState::Delayed => Some("delayed"),
+            SendState::Expired => Some("expired"),
+        }
+    }
+
     /// A failure that didn't reach the chain.
     pub fn failed(reason: impl Into<String>) -> Self {
         SendState::Failed {
