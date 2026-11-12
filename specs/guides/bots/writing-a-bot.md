@@ -134,7 +134,7 @@ trading key's public key (`authority`), the task's variables
 | `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
 | `resting_bids`, `resting_asks` | What you have resting, in SPCX: every bid and ask the grader placed since your last cancel or quote, filled or not. |
 | `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
-| `sends` | What became of each order your last sheet planned: its line on the sheet, the venue, your client id, the order as planned, and its state: `Landed` with its signature, `Failed` with the reason (the venue's, or a post-only order that would have crossed), or `NotSent` with why not. Slot, fee and tip are there for sessions that know them. |
+| `sends` | What became of each order your last sheet planned: its line on the sheet, the venue, your client id, the order as planned, and its state: `Landed` with its signature, `Failed` with the reason (the venue's, or a post-only order that would have crossed) and, for a transaction that ran on chain and failed, its signature, or `NotSent` with why not. Slot, fee and tip are there for sessions that know them. |
 | `notes` | What the grader cut or dropped from your last sheet, and why: the same notes it logs. |
 | `venues` | Each of the session's markets (`Session::venues`, yours first, each with a unique id and its account's address): its best bid and ask, its book and its trades since the last step where the session reports them (`Session::reports`; a reported tape that's empty is a step without trades), your position there, and, as venues arrive, your resting orders, liquidity positions, lending account and the venue's own numbers (`stats`). |
 | `fills` | Your own trades since the last step, from the venues' tapes: empty where the scenario reports no tape, as SPCX's sessions don't. |
@@ -186,7 +186,8 @@ the line added last:
 | --- | --- |
 | `.post_only()` | A `bid`, `ask` or `quote` that takes nothing. One that would cross the book as it is when it's sent (the world is paused, so that includes your own earlier fills) isn't sent: it comes back `Failed("post-only would cross: not placed")` and doesn't count as resting. |
 | `.ioc()` | A `bid` or `ask` that fills what it can now, at no worse than its price, and rests nothing: a market order bounded by the price. |
-| `.reduce_only()` | The line's orders are cut so that no fill can grow or flip your position, whatever else fills: the sheet's earlier orders that shrink it, and what rests on its side, count as filled; earlier orders that grow it count as not filled. Flat, `bid(…).ioc()` then `sell(5, …).reduce_only()` sells nothing: the buy may not fill. |
+| `.reduce_only()` | The line's orders are cut so that no fill can grow or flip your position, whatever else fills: the sheet's earlier orders that shrink it, and what rests on its side, count as filled; earlier orders that grow it count as not filled. Flat, `bid(…).ioc()` then `sell(5, …).reduce_only()` sells nothing: the buy may not fill. The orders also carry Phoenix's reduce-only flag, so a resting one can't open a position however the book moves. |
+| `.expires(slot)` | A `bid`, `ask` or `quote` rests until `slot` (Phoenix's last valid slot); a response to a request for a quote can be taken until then. A post-only order can't expire yet: it comes back `NotSent`. |
 | `.participation(share)` | A target trades at most `share` of the venue's volume since the last step. The volume is the venue's tape's: in a session without one, there is none to take a share of, and the target doesn't trade. |
 | `.at(venue)` | The line is for another of `Session::venues` (`openbook:spot:SOL-USDC`). A session trades only its own market for now: a line for another comes back `NotSent`. |
 | `.client_id(id)` | Your own id for the line's orders: in their `sends`, and what `cancel(id)` names. |
@@ -202,9 +203,21 @@ The sheet also takes what the next venues will execute: `cancel(id)`,
 `remove_liquidity(position, share)`, `deposit`, `withdraw`, `borrow`,
 `repay` and `liquidate`, each with `.at(venue)`. A session without an
 executor for one answers it `NotSent("unsupported in this session")`; on
-SPCX today that is all of them. A swap is cut to the cap like a market
-order. Raw transactions the grader signs (the world's `send` import) are
-reserved: every session refuses them for now.
+SPCX today that is all of them. A line the session won't execute counts
+for nothing: it doesn't make room under the cap for the lines after it.
+Where a venue executes them, a swap is cut to the cap like a market
+order, `remove_liquidity(position, 0.0)` collects a position's fees only,
+and a `TxOptions` without `cu_limit` asks for the simulation's units plus
+a margin; `retry_until_slot` sends the same transaction again each slot,
+and signs it again with a new blockhash only once the old one has expired
+and the transaction hasn't landed.
+
+Raw transactions the grader signs (the world's `send` import) are
+reserved: every session refuses them for now. When they arrive, an
+instruction names its accounts by address, as the authority, or as one of
+the transaction's fresh signers (`fresh(n)`): keys the grader makes for
+that transaction alone, for accounts that must sign their own creation,
+whose addresses `send` returns.
 
 For what the market doesn't carry, `mtx_kit::rpc(method, params)` reads the
 chain: synchronously, as it is at this step, for any read in
