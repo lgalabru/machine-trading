@@ -28,8 +28,8 @@ use solana_rpc_client_api::request::RpcRequest;
 use tracing::{info, warn};
 
 use crate::{
-    Action, BotEnv, BotResult, Market, Orders, Session, Strategy, Trader, Turns, plan,
-    resting_after, rpc_client,
+    Action, BotEnv, BotResult, Market, Orders, Planned, SendState, SendStatus, Session, Strategy,
+    Trader, Turns, VenueInfo, plan_sheet, resting_after, rpc_client, venue_views,
 };
 
 /// The endpoint [`crate::rpc`] calls in a process: the session's.
@@ -106,7 +106,7 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         start_oracle,
         cap: env.max_position,
         max_drawdown: env.max_drawdown_usd,
-        mandate,
+        mandate: mandate.clone(),
         venue: std::fs::read_to_string(&env.exchange_path)?,
         authority: trader.authority().to_string(),
         vars: crate::SESSION_VARS
@@ -114,6 +114,8 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             .filter_map(|name| Some((name.to_string(), std::env::var(name).ok()?)))
             .collect(),
         seed: hello.start_slot,
+        venues: VenueInfo::of_perp_session(&mandate, &env.symbol),
+        applies_tx_options: false,
     };
     strategy.start(&session)?;
     info!(authority = %trader.authority(), end_slot = session.end_slot, "started");
@@ -122,6 +124,8 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     let mut last_market: Option<Market> = None;
     // What the loop has resting: see [`Market::resting_bids`].
     let (mut resting_bids, mut resting_asks) = (0.0, 0.0);
+    // What became of the last sheet, for the next step's market.
+    let (mut sends, mut notes) = (Vec::new(), Vec::new());
     while let Some(step) = turns.next()? {
         let (top, oracle, position) = match (
             trader.top().await,
@@ -140,6 +144,14 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         }
         last_mark = Some(mark);
         peak_pnl = peak_pnl.max(pnl);
+        let (venues, fills) = venue_views(
+            &session.venues,
+            top.best_bid,
+            top.best_ask,
+            position,
+            &step.tape,
+            &step.depth,
+        );
         let market = Market {
             k: step.k,
             slot: step.slot,
@@ -162,17 +174,28 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             tape: step.tape,
             depth: step.depth,
             unix_timestamp: step.unix_timestamp,
+            venues,
+            sends: std::mem::take(&mut sends),
+            fills,
+            rfqs: Vec::new(),
+            notes: std::mem::take(&mut notes),
         };
         let mut orders = Orders::new();
         match strategy.step(&market, &mut orders) {
             Ok(()) => {
-                let (actions, notes) = plan(orders.intents(), &market);
-                for note in notes {
+                let planned;
+                (planned, notes) = plan_sheet(&orders, &market);
+                for note in &notes {
                     warn!(step = step.k, "{note}");
                 }
-                send(&trader, &actions).await;
+                sends = send(&trader, step.k, &session.venues[0].id, &planned).await;
                 // A resting order that failed to send counts anyway: the
                 // ledger only ever over-counts.
+                let actions: Vec<Action> = planned
+                    .into_iter()
+                    .filter(|p| p.venue.is_none())
+                    .map(|p| p.action)
+                    .collect();
                 (resting_bids, resting_asks) = resting_after(resting_bids, resting_asks, &actions);
             }
             Err(error) => warn!(step = step.k, %error, "the strategy failed; no orders this step"),
@@ -183,21 +206,47 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     Ok(())
 }
 
-/// Send planned orders, in order. A failed order is logged, and the rest of
-/// the step's orders still go: each is its own transaction.
-async fn send(trader: &Trader, actions: &[Action]) {
-    for action in actions {
-        let result = match *action {
-            Action::Market { side, size, limit } => {
-                trader.place_market(side, size, limit).await.map(|_| ())
+/// Send planned orders, in order, and say what became of each. A failed
+/// order is logged, and the rest of the step's orders still go: each is its
+/// own transaction. Only the session's own market is traded.
+async fn send(trader: &Trader, k: u64, own: &str, planned: &[Planned]) -> Vec<SendStatus> {
+    let mut sends = Vec::with_capacity(planned.len());
+    for planned in planned {
+        let result = match (&planned.venue, &planned.action) {
+            (Some(venue), _) => Err(format!("{venue} isn't traded in this session")),
+            (None, &Action::Market { side, size, limit }) => trader
+                .place_market(side, size, limit)
+                .await
+                .map_err(|e| e.to_string()),
+            (None, &Action::Limit { side, price, size }) => trader
+                .place_limit(side, price, size)
+                .await
+                .map_err(|e| e.to_string()),
+            (None, &Action::PostOnly { side, price, size }) => trader
+                .place_post_only(side, price, size)
+                .await
+                .map_err(|e| e.to_string()),
+            (None, Action::CancelAll) => trader.cancel_all().map_err(|e| e.to_string()),
+            (None, Action::Respond { .. }) => {
+                Err("no requests for quotes in this session".to_string())
             }
-            Action::Limit { side, price, size } => {
-                trader.place_limit(side, price, size).await.map(|_| ())
-            }
-            Action::CancelAll => trader.cancel_all().map(|_| ()),
         };
-        if let Err(error) = result {
-            warn!(?action, %error, "order failed");
-        }
+        let sent = planned.venue.is_none() && !matches!(planned.action, Action::Respond { .. });
+        let state = match result {
+            Ok(signature) => SendState::Landed(signature.to_string()),
+            Err(error) if sent => {
+                warn!(action = ?planned.action, %error, "order failed");
+                SendState::Failed(error)
+            }
+            Err(why) => SendState::NotSent(why),
+        };
+        sends.push(SendStatus {
+            step: k,
+            line: planned.line as u32,
+            venue: planned.venue.clone().unwrap_or_else(|| own.to_string()),
+            order: planned.action.clone(),
+            state,
+        });
     }
+    sends
 }

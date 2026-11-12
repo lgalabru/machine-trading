@@ -209,6 +209,25 @@ impl Trader {
             .await?)
     }
 
+    /// Rest an order on the book at `price_usd` that takes nothing: refused
+    /// if the price crosses.
+    pub async fn place_post_only(
+        &self,
+        side: Side,
+        price_usd: f64,
+        base_units: f64,
+    ) -> Result<Signature> {
+        Ok(self
+            .inner
+            .place_post_only(
+                &self.keypair,
+                core_side(side),
+                self.price(side, price_usd)?,
+                self.quantity(base_units)?,
+            )
+            .await?)
+    }
+
     /// Fill against the book, at no worse than `limit_usd`.
     pub async fn place_market(
         &self,
