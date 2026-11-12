@@ -326,16 +326,17 @@ impl RawSender {
             Ok(signature) => signature,
             Err(e) => return status(q.step, q.id, failed(e.to_string(), None)),
         };
-        let mut sent = match self.chain.get_transaction(&signature).await {
+        match self.chain.get_transaction(&signature).await {
             Ok(Some(summary)) => {
                 let state = match summary.error {
                     None => SendState::Landed(signature.to_string()),
                     Some(error) => failed(error.to_string(), Some(signature)),
                 };
-                let mut sent = status(q.step, q.id, state);
-                sent.slot = Some(summary.slot);
-                sent.fee = Some(summary.fee_lamports);
-                sent
+                SendStatus {
+                    slot: Some(summary.slot),
+                    fee: Some(summary.fee_lamports),
+                    ..status(q.step, q.id, state)
+                }
             }
             Ok(None) => status(
                 q.step,
@@ -343,9 +344,7 @@ impl RawSender {
                 failed("it didn't land".into(), Some(signature)),
             ),
             Err(e) => status(q.step, q.id, failed(e.to_string(), Some(signature))),
-        };
-        sent.step = q.step;
-        sent
+        }
     }
 
     /// The transaction, signed by the authority and those of its fresh
