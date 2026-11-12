@@ -96,7 +96,7 @@ pub struct Session {
     /// [`Session::var`].
     pub vars: Vec<(String, String)>,
     /// A seed, for a strategy that wants randomness: the same in every run
-    /// of the session.
+    /// of the session, as a component or as a process.
     pub seed: u64,
 }
 
