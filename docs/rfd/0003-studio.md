@@ -159,3 +159,25 @@ Events (server → page):
   tool call in the composer.
 
 ## What we learned
+- 2026-11-12: the server, end to end (`crates/cli/src/studio.rs`). On a
+  workspace `mtx bot new` made, with the tutorial's first strategy and
+  flash-crash's practice set seeded into `scenarios/`, a script drove the
+  protocol: `launch` with `stopOnEntry` stopped at entry, `next` at step 1,
+  `continue` at the breakpoint at step 33 (the strategy's buy: a `target`
+  of 35, four orders sent, its printed line), and the session ran to its
+  end, +$124.03 as `mtx bot run` gives, with every step's event. The
+  composer, through Claude Code over ACP, answered a question about the
+  strategy, then changed `DIP_PCT` on request, and the page got
+  `file/changed` (`by: agent`). Details for the page:
+  - a session runs on its own thread and runtime: the grader's session
+    isn't `Send`, and the observer blocks a worker while the page decides;
+  - ACP updates a tool call by its id, mostly without its title:
+    `composer/tool` carries the whole call (`id`, `title`, `status`) each
+    time, so the page replaces the line with that `id`;
+  - a `target`'s `maxPerStep` is `null` when it is unlimited;
+  - the build is cargo's, for its diagnostics (`file` relative to the
+    workspace, `line`, `column`, `endLine`, `endColumn`, `severity`,
+    `message`), and copies the component to `bot.wasm`;
+  - `/dev` serves a test page with a button per request; until the
+    studio's page lands, `/` serves it too. `MTX_STUDIO_PAGE=<file>` serves
+    a page from disk, read on each load.
