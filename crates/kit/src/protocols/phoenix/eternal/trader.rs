@@ -51,8 +51,8 @@ pub enum PhoenixOrder {
         all_or_none: bool,
     },
     /// Rests on the book at `price` without taking: Phoenix's multiple-order
-    /// packet, which places post-only orders and, not sliding, refuses one
-    /// that would cross.
+    /// packet, which places post-only orders and, not sliding, skips one
+    /// that would cross: the transaction succeeds and nothing rests.
     PostOnly {
         /// Buy or sell.
         side: Side,
@@ -415,7 +415,7 @@ impl PhoenixTrader {
         .await
     }
 
-    /// Rests a post-only order at `price`: refused if it would cross.
+    /// Rests a post-only order at `price`: skipped if it would cross.
     pub async fn place_post_only(
         &self,
         signer: &dyn TransactionSigner,

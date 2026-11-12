@@ -617,7 +617,8 @@ pub enum TimeInForce {
     /// it crosses.
     #[default]
     Gtc,
-    /// Rests without taking: refused if it would cross the book.
+    /// Rests without taking: on Phoenix, one that would cross the book
+    /// isn't placed.
     PostOnly,
     /// Fills what it can now, at no worse than its price, and rests nothing.
     Ioc,
@@ -796,8 +797,8 @@ impl Orders {
         self.last(|o| o.venue = Some(venue.to_string()))
     }
 
-    /// The last line's resting orders take nothing: one that would cross
-    /// the book is refused.
+    /// The last line's resting orders take nothing: on Phoenix, one that
+    /// would cross the book isn't placed.
     pub fn post_only(&mut self) -> &mut Self {
         self.last(|o| o.time_in_force = TimeInForce::PostOnly)
     }
@@ -844,7 +845,7 @@ pub enum Action {
         price: f64,
         size: f64,
     },
-    /// A resting order that takes nothing: refused if it would cross.
+    /// A resting order that takes nothing: not placed if it would cross.
     PostOnly {
         side: Side,
         price: f64,
