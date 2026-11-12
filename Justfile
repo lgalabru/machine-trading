@@ -60,7 +60,7 @@ snapshot-verify dir=("snapshots/" + snapshot):
 bots:
     #!/usr/bin/env bash
     set -euo pipefail
-    for bot in starter reference maker dip-buyer carry carry-gbm weekend; do
+    for bot in starter printer first-strategy reference maker dip-buyer carry carry-gbm weekend; do
       just --justfile "bots/$bot/Justfile" build
     done
 
@@ -106,6 +106,45 @@ image surfpool="":
         -t {{registry}}/{{image}}:{{tag}}-runtime --load .
     docker buildx build -f bench/image/Dockerfile --target dev ${context[@]+"${context[@]}"} \
         -t {{registry}}/{{image}}:{{tag}} --load .
+    just task-images
+
+# Each task's own images, one at a time, from its environment/ and tests/:
+# `<tag>-<task>` for the agent and `<tag>-<task>-verifier`, which task.toml
+# names. Harbor then builds nothing when a trial starts. `push` pushes them,
+# for both platforms, instead of loading them here.
+#
+# Each context is a fresh copy, under a name of its own. BuildKit keeps a
+# context's files between builds by the directory's name, and a file with
+# the same size and mtime counts as unchanged: every task's context is
+# `tests` (or `environment`), and a checkout gives their files one mtime,
+# so two tasks whose files have the same sizes got each other's (2026-11-12:
+# flash-crash's verifier held weekend-gap's tests). A loaded image is then
+# checked against its own files.
+task-images push="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    stage="$(mktemp -d)"
+    trap 'rm -rf "$stage"' EXIT
+    # The files of a context, as `sha256sum` lists them, sorted.
+    files() { (cd "$1" && find . -type f ! -name Dockerfile | sort | xargs sha256sum); }
+    for dir in {{tasks}}/*/; do
+      task="$(basename "$dir")"
+      for part in environment:"":/opt/mtx/practice:practice tests:-verifier:/tests:.; do
+        IFS=: read -r src suffix inside sub <<< "$part"
+        ref="{{registry}}/{{image}}:{{tag}}-$task$suffix"
+        context="$stage/$task-$src"
+        cp -R "$dir$src" "$context"
+        if [ -n "{{push}}" ]; then
+          docker buildx build --platform linux/amd64,linux/arm64 -t "$ref" --push "$context"
+        else
+          docker buildx build -t "$ref" --load "$context"
+          want="$(files "$context/$sub")"
+          got="$(docker run --rm --entrypoint sh "$ref" -c "cd $inside && find . -type f ! -name Dockerfile | sort | xargs sha256sum")"
+          [ "$want" = "$got" ] || { echo "$ref doesn't hold $task's $src: Docker built it from another context"; exit 1; }
+          echo "$ref holds $task's $src"
+        fi
+      done
+    done
 
 # Build both images for amd64 and arm64 and push them. Pin the tasks to the
 # pushed digests afterwards (`just pin-image`).
@@ -137,6 +176,23 @@ pin-image:
     }
     pin {{registry}}/{{image}}:{{tag}} {{tasks}}/*/environment/Dockerfile
     pin {{registry}}/{{image}}:{{tag}}-runtime {{tasks}}/*/tests/Dockerfile
+    # The tasks' own images, built on the pins just made, then pinned in
+    # each task.toml.
+    just task-images push
+    for dir in {{tasks}}/*/; do
+      task="$(basename "$dir")"
+      for suffix in "" -verifier; do
+        ref="{{registry}}/{{image}}:{{tag}}-$task$suffix"
+        digest=""
+        for attempt in 1 2 3 4 5; do
+          digest="$(docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:/ { print $2; exit }')" && [ -n "$digest" ] && break
+          sleep $((attempt * 5))
+        done
+        [ -n "$digest" ] || { echo "no digest for $ref"; exit 1; }
+        echo "$ref@$digest"
+        sed -i '' -E "s|^docker_image = \"{{registry}}/{{image}}:[^\"]*-$task$suffix(@sha256:[0-9a-f]+)?\"|docker_image = \"$ref@$digest\"|" "$dir/task.toml"
+      done
+    done
 
 # Release: push the image, pin every task to it, check, and publish the
 # dataset. Bump `tag` first. Run `just harbor-checks` on the new image before
