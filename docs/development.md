@@ -19,7 +19,7 @@
 
 ```sh
 just bots                                          # build every bot's bin/bot
-just grade bots/reference bench/tasks/flash-crash-spcx/environment/practice/*.json
+just grade bench/tasks/flash-crash-spcx/reference bench/tasks/flash-crash-spcx/environment/practice/*.json
 just test lint                                     # unit tests and clippy
 ```
 
@@ -143,15 +143,16 @@ mtx scenario play scenario.json                               # replays a saved 
 ## Change a task
 
 ```sh
-just ladder <family>                   # the skill ladder on fresh hidden sets
+just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
 just leak-audit                        # the agent's image holds no answer
 just keypair-probe                     # a bot can't read the grader's keypairs
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
 
-After changing `bots/reference`, run `just solution` and recalibrate the
-practice scenarios (`just calibrate bots/reference FILES`). Hidden sets need
+After changing a task's `reference/`, run `mtx task sync` (it copies the
+reference into the task's `solution/`) and recalibrate the practice
+scenarios (`just calibrate bench/tasks/<task>/reference FILES`). Hidden sets need
 no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
@@ -159,9 +160,29 @@ time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
 It's guided. In Claude Code, in this repository, ask for a new task: the
 `mtx` MCP server (`.mcp.json`; `just install mtx` first) interviews you
-with forms, scaffolds the task and its reference bot, then reports what's
+with forms, scaffolds the task and its reference crate, then reports what's
 left after every step (`task_status`). From a terminal: `mtx task new`
 (every answer is a flag), `mtx task status <name>`, `mtx task guide <step>`.
+
+A task is one folder, `bench/tasks/<name>/`:
+
+| | |
+| --- | --- |
+| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
+| `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
+| `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
+| `checks/` | `ladder.json`, `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates) and `exploits/` (the frozen exploit bots) |
+| `environment/`, `tests/`, `instruction.md`, `README.md`, `DESIGN.md` | As the [task template](../bench/tasks/README.md#task-readmes) |
+
+A task that draws an existing generator touches no shared file: copy a
+task's folder, edit it, and run `mtx task sync`. It writes every list that
+names the tasks (`bench/tasks/tasks.just` that the Justfile imports,
+`bench/image/anchors.txt` that the image build reads, the dataset's
+`[[tasks]]`, the README tables, each `solution/`), and `mtx task check` (and
+`cargo test`) fails when one is stale. A new generator is a family in
+`crates/grader` and one entry in `GENERATORS` (`generators.rs`). `harbor sync`
+rewrites the dataset's digests at release; run `mtx task sync` after it, and
+commit.
 
 Pick an issue labelled
 [`new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22),

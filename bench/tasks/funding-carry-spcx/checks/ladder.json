@@ -1,0 +1,78 @@
+{
+  "family": "funding-carry",
+  "count": 72,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "blind-long",
+      "dir": "bench/checks/ladder/blind-long",
+      "may_breach": true
+    },
+    {
+      "name": "blind-short",
+      "dir": "bench/checks/ladder/blind-short",
+      "may_breach": true
+    },
+    {
+      "name": "fader",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-fader",
+      "may_breach": true
+    },
+    {
+      "name": "follower",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-follower",
+      "may_breach": true
+    },
+    {
+      "name": "practice",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-practice"
+    },
+    {
+      "name": "nosession",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-nosession"
+    },
+    {
+      "name": "gbm",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-gbm"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/funding-carry-spcx/reference"
+    },
+    {
+      "name": "told",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-told",
+      "tell_regime": true
+    },
+    {
+      "name": "funding-carry-sol-1",
+      "dir": "bench/tasks/funding-carry-spcx/checks/exploits/funding-carry-sol-1"
+    },
+    {
+      "name": "funding-carry-sol-2",
+      "dir": "bench/tasks/funding-carry-spcx/checks/exploits/funding-carry-sol-2"
+    }
+  ],
+  "rules": [
+    "max(blind-long, blind-short) < reference",
+    "fader < reference",
+    "follower < reference",
+    "practice < reference",
+    "gbm < reference",
+    "reference < told < hindsight"
+  ],
+  "exploits": {
+    "bots": [
+      "practice",
+      "gbm",
+      "funding-carry-sol-1",
+      "funding-carry-sol-2"
+    ],
+    "max_profitable": 0.99,
+    "below": "told"
+  }
+}

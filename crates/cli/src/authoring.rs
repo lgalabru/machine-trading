@@ -46,12 +46,6 @@ impl Base {
             Base::Making => "market-making",
         }
     }
-    fn bot(self) -> &'static str {
-        match self {
-            Base::Shocks => "reference",
-            Base::Making => "maker",
-        }
-    }
 }
 
 /// What the interview collects: enough to scaffold a task and start its
@@ -175,9 +169,12 @@ impl TaskSpec {
                 ));
             } else if root.join("bench/tasks").join(name).exists() {
                 out.push(format!("`name` is `{name}`, but bench/tasks/{name} already exists: pick another, or run task_status on it."));
-            } else if root.join("bots").join(family_of(name)).exists() {
+            } else if tasks::load(root).is_ok_and(|ts| {
+                ts.iter()
+                    .any(|t| t.reference.package == format!("mtx-bot-{}", family_of(name)))
+            }) {
                 out.push(format!(
-                    "`name` is `{name}`, whose bot directory bots/{} already exists: pick another name.",
+                    "`name` is `{name}`, whose reference package mtx-bot-{} a task already has: pick another name.",
                     family_of(name)
                 ));
             }
@@ -229,8 +226,8 @@ pub fn repo_root() -> PathBuf {
 
 const TODO: &str = "TODO";
 
-/// Create bench/tasks/<name> and bots/<family> from the spec's base, and
-/// register the pair in the Justfile. Returns what it wrote.
+/// Create bench/tasks/<name>, with its reference crate, from the spec's base,
+/// and write the lists that name the task. Returns what it wrote.
 pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     let problems = spec.problems(root);
     if !problems.is_empty() {
@@ -251,7 +248,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     copy_dir(
         &from,
         &to,
-        &["practice", "README.md", "DESIGN.md", "instruction.md"],
+        &["practice", "README.md", "DESIGN.md", "instruction.md", "checks", "bin", "target"],
     )?;
     let practice = to.join("environment/practice");
     std::fs::create_dir_all(&practice)?;
@@ -304,27 +301,32 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     std::fs::write(to.join("DESIGN.md"), design(spec))?;
     written.push(format!("bench/tasks/{name}/ (from {})", base.task()));
 
-    // The reference bot: the base's, under the family's name, so it builds
-    // beside it; the oracle is a copy of it.
-    let bot_from = root.join("bots").join(base.bot());
-    let bot_to = root.join("bots").join(&family);
-    copy_dir(&bot_from, &bot_to, &["bin", "target"])?;
-    let old_bin = format!("mtx-{}", base.bot());
+    // The reference bot is the base's, under the family's name; the oracle is
+    // a copy of it (the sync writes that).
+    let base_task = meta_of(root, base.task())
+        .map_err(|e| anyhow::anyhow!("{}: {e}", base.task()))?;
+    let bot_to = to.join("reference");
+    let new_package = format!("mtx-bot-{family}");
     let new_bin = format!("mtx-{family}");
     let cargo = std::fs::read_to_string(bot_to.join("Cargo.toml"))?
         .replace(
-            &format!("\"mtx-bot-{}\"", base.bot()),
-            &format!("\"mtx-bot-{family}\""),
+            &format!("\"{}\"", base_task.reference.package),
+            &format!("\"{new_package}\""),
         )
-        .replace(&format!("\"{old_bin}\""), &format!("\"{new_bin}\""));
+        .replace(
+            &format!("\"{}\"", base_task.reference.bin),
+            &format!("\"{new_bin}\""),
+        );
     std::fs::write(bot_to.join("Cargo.toml"), cargo)?;
-    let justfile = std::fs::read_to_string(bot_to.join("Justfile"))?
-        .replace(&format!("--bin {old_bin}"), &format!("--bin {new_bin}"));
+    let justfile = std::fs::read_to_string(bot_to.join("Justfile"))?.replace(
+        &format!("--bin {}", base_task.reference.bin),
+        &format!("--bin {new_bin}"),
+    );
     std::fs::write(bot_to.join("Justfile"), justfile)?;
+    std::fs::create_dir_all(to.join("solution/src"))?;
     std::fs::copy(bot_to.join("src/main.rs"), to.join("solution/src/main.rs"))?;
     written.push(format!(
-        "bots/{family}/ (from bots/{}, package mtx-bot-{family})",
-        base.bot()
+        "bench/tasks/{name}/reference (package {new_package}; run `cargo update -w` to lock it)"
     ));
 
     // Everything that lists the task is written from its task.toml.
@@ -334,14 +336,12 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     Ok(json!({ "task": name, "family": family, "written": written, "status": status(root, name)? }))
 }
 
-/// A task's `[metadata.mtx]`, for the scaffold: the base's reference and
-/// ladder until the author's exist.
+/// A task's `[metadata.mtx]`, for the scaffold: the base's generator until
+/// the author's exists.
 fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
     format!(
-        "generator = {}\nreference = {}\nanchor = {}\nladder = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\n",
+        "generator = {}\nanchor = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\n",
         toml_string(base.generator()),
-        toml_string(family),
-        toml_string(family),
         toml_string(family),
         toml_string(&format!(
             "{TODO}: venue and instrument ({} base)",
@@ -538,9 +538,10 @@ fn todos(text: &str) -> usize {
     text.matches(TODO).count()
 }
 
-/// The task's `[metadata.mtx]`, if its task.toml has one.
-fn meta_of(root: &Path, task: &str) -> Option<tasks::Task> {
-    tasks::load(root).ok()?.into_iter().find(|t| t.dir == task)
+/// The task as the lists read it: its `[metadata.mtx]` and reference crate,
+/// or what is wrong with them.
+fn meta_of(root: &Path, task: &str) -> Result<tasks::Task, String> {
+    tasks::load_one(root, task.to_string()).map_err(|e| format!("{e:#}"))
 }
 
 /// Which steps are done for a task, and what to do next.
@@ -557,6 +558,8 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         );
     }
     let meta = meta_of(root, task);
+    let problem = meta.as_ref().err().cloned().unwrap_or_default();
+    let meta = meta.ok();
     let family = meta
         .as_ref()
         .map_or_else(|| family_of(task), |t| t.mtx.generator.clone());
@@ -588,48 +591,49 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         .and_then(|r| r.split_whitespace().next())
         .unwrap_or("")
         .to_string();
-    let families: Vec<&str> = mtx_grader::generators::names();
+    // The task's generator is one a task already draws or one of its own: it
+    // is done when task.toml names a registered generator that test.sh draws.
     let own = family_of(task);
-    let exists = families.contains(&own.as_str());
-    let drawn = family == own && draw == family && !test.contains("TODO(family)");
+    let base_todo = test.contains("TODO(family)");
+    let drawn = meta.is_some() && draw == family && !base_todo;
     let anchor = meta
         .as_ref()
         .map_or_else(|| family.clone(), |t| t.mtx.anchor().to_string());
     steps.push(Step::new(
         "family",
         "Scenario family",
-        exists && drawn,
-        if !exists {
-            format!("no `{own}` family in mtx yet (families: {}); test.sh draws `{draw}`", families.join(", "))
-        } else if !drawn {
-            format!("the `{own}` family exists, but task.toml's generator is `{family}` and tests/test.sh draws `{draw}`")
+        drawn,
+        if meta.is_none() {
+            format!("task.toml's [metadata.mtx] doesn't load: {problem}")
+        } else if base_todo {
+            format!("tests/test.sh still grades on the base's `{draw}` family")
+        } else if draw != family {
+            format!("task.toml's generator is `{family}`, but tests/test.sh draws `{draw}`")
         } else {
             format!("test.sh draws `{family}`")
         },
-        if !exists {
-            format!("Write the `{own}` family in crates/grader (task_guide step=family), register it in `GENERATORS` (crates/grader/src/generators.rs), then set `generator` in task.toml and make tests/test.sh draw it.")
-        } else {
-            format!("Set `generator = \"{own}\"` in bench/tasks/{task}/task.toml; in tests/test.sh, draw `--draw {own}` and point --reference at /opt/mtx/anchors/{anchor}; drop the TODO there.")
-        },
+        format!(
+            "Either reuse a registered generator ({}) or write the `{own}` family in crates/grader (task_guide step=family) and register it in `GENERATORS` (crates/grader/src/generators.rs). Then set `generator` in bench/tasks/{task}/task.toml, make tests/test.sh draw it with `--draw`, point --reference at /opt/mtx/anchors/{anchor}, and drop the TODO there.",
+            mtx_grader::generators::names().join(", ")
+        ),
     ));
 
-    let bot = meta.as_ref().map(|t| t.mtx.reference.clone());
     let solution = read(&dir.join("solution/src/main.rs"));
-    let bot_src = bot
-        .as_ref()
-        .map(|b| read(&root.join("bots").join(b).join("src/main.rs")))
-        .unwrap_or_default();
+    let bot_src = read(&dir.join("reference/src/main.rs"));
     steps.push(Step::new(
         "reference",
         "Reference bot and oracle",
-        bot.is_some() && !bot_src.is_empty() && solution == bot_src,
-        match &bot {
-            None => "task.toml has no [metadata.mtx] naming the reference bot".into(),
-            Some(b) if bot_src.is_empty() => format!("bots/{b}/src/main.rs is missing"),
-            Some(b) if solution != bot_src => format!("solution/src/main.rs differs from bots/{b}/src/main.rs"),
-            Some(b) => format!("bots/{b}, and the oracle matches it"),
+        meta.is_some() && !bot_src.is_empty() && solution == bot_src,
+        if meta.is_none() {
+            format!("the reference doesn't load: {problem}")
+        } else if bot_src.is_empty() {
+            "reference/src/main.rs is missing".into()
+        } else if solution != bot_src {
+            "solution/src/main.rs differs from reference/src/main.rs".into()
+        } else {
+            "reference/, and the oracle matches it".to_string()
         },
-        "Write the reference strategy in its bot (task_guide step=reference), then `just solution` to copy it into the oracle.".into(),
+        "Write the reference strategy in reference/ (task_guide step=reference), then `mtx task sync` to copy it into the oracle.".into(),
     ));
 
     let generated = tasks::stale(root).unwrap_or_default();
@@ -638,7 +642,7 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         "anchor",
         "The verifier's reference (image anchor)",
         anchored,
-        if anchored { format!("the image builds mtx-bot-{} into /opt/mtx/anchors/{family}", bot.clone().unwrap_or_default()) } else { "bench/image/anchors.txt doesn't list this task's reference yet".into() },
+        if anchored { format!("the image builds {} into /opt/mtx/anchors/{anchor}", meta.as_ref().map(|t| t.reference.package.clone()).unwrap_or_default()) } else { "bench/image/anchors.txt doesn't list this task's reference yet".into() },
         "Run `mtx task sync` (the image builds what bench/image/anchors.txt lists), then `just image`.".to_string(),
     ));
 
@@ -658,7 +662,7 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         "Practice scenarios, calibrated",
         !practice.is_empty() && calibrated == practice.len(),
         format!("{} practice scenario{}, {calibrated} calibrated", practice.len(), if practice.len() == 1 { "" } else { "s" }),
-        format!("Draw a practice set from the family (`mtx scenario generate --family {family} --out bench/tasks/{task}/environment/practice --prefix practice --count 6 --seed <any number>`), then `just calibrate bots/{} <files>`.", bot.clone().unwrap_or_default()),
+        format!("Draw a practice set from the family (`mtx scenario generate --family {family} --out bench/tasks/{task}/environment/practice --prefix practice --count 6 --seed <any number>`), then `just calibrate bench/tasks/{task}/reference <files>`."),
     ));
 
     let instr = read(&dir.join("instruction.md"));
@@ -710,7 +714,9 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         "registry",
         "Generated lists",
         meta.is_some() && generated.is_empty(),
-        if generated.is_empty() {
+        if meta.is_none() {
+            format!("task.toml doesn't load: {problem}")
+        } else if generated.is_empty() {
             "the Justfile, image, dataset and READMEs list every task".into()
         } else {
             format!(
@@ -760,7 +766,7 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         state: "manual",
         detail: "needs the image and real runs; can't be read from files".into(),
         next: format!(
-            "`just image && just harbor-checks` (oracle at skill 1, nop/cheater/sneaky 0), `just ladder {family}`, `just leak-audit`, `harbor check bench/tasks/{task}`, then real agents (task_guide step=verify)."
+            "`just image && just harbor-checks` (oracle at skill 1, nop/cheater/sneaky 0), `just ladder {task}`, `just leak-audit`, `harbor check bench/tasks/{task}`, then real agents (task_guide step=verify)."
         ),
     });
     Ok(steps)
@@ -790,7 +796,7 @@ pub fn list(root: &Path) -> Vec<Value> {
                     l.strip_prefix("version = ")
                         .map(|v| v.trim_matches('"').to_string())
                 });
-            let family = meta_of(root, &name).map_or_else(|| family_of(&name), |t| t.mtx.generator);
+            let family = meta_of(root, &name).map_or_else(|_| family_of(&name), |t| t.mtx.generator);
             json!({ "name": name, "version": version, "family": family })
         })
         .collect()
@@ -827,7 +833,7 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "`harbor lint bench/tasks/<task> --select ALL --ignore unpinned-image` checks the task's files against Harbor's rules; images are pinned at release."
         }
         "verify" => {
-            "On the image: `just image && just harbor-checks` (oracle at skill 1, nop 0, cheater 0, sneaky 0), `just ladder <family>` (the order rule on fresh hidden sets), `just leak-audit` (the agent's image holds no answer), `harbor check bench/tasks/<task>` (an LLM review against Harbor's rubric). Then real agents, k runs each, and `harbor analyze`. Read the winning bots: agents state their edge in doc comments. Treat a too-clean risk profile (worst session near 0, 90%+ profitable) as a leak. Target: the best model's mean reward between 0.2 and 0.7. Deeper: SKILL.md steps 7 and 8."
+            "On the image: `just image && just harbor-checks` (oracle at skill 1, nop 0, cheater 0, sneaky 0), `just ladder <task>` (the order rule on fresh hidden sets), `just leak-audit` (the agent's image holds no answer), `harbor check bench/tasks/<task>` (an LLM review against Harbor's rubric). Then real agents, k runs each, and `harbor analyze`. Read the winning bots: agents state their edge in doc comments. Treat a too-clean risk profile (worst session near 0, 90%+ profitable) as a leak. Target: the best model's mean reward between 0.2 and 0.7. Deeper: SKILL.md steps 7 and 8."
         }
         _ => return None,
     })
@@ -887,14 +893,12 @@ mod tests {
         let real = repo_root();
         let root =
             std::env::temp_dir().join(format!("mtx-author-{}", uuid::Uuid::new_v4().simple()));
-        for dir in ["bench/tasks/flash-crash-spcx", "bots/reference"] {
-            copy_dir(
-                &real.join(dir),
-                &root.join(dir),
-                &["bin", "target", "practice"],
-            )
-            .unwrap();
-        }
+        copy_dir(
+            &real.join("bench/tasks/flash-crash-spcx"),
+            &root.join("bench/tasks/flash-crash-spcx"),
+            &["bin", "target", "practice", "checks"],
+        )
+        .unwrap();
         std::fs::copy(real.join("Justfile"), root.join("Justfile")).unwrap();
         for file in [
             "README.md",
@@ -913,15 +917,14 @@ mod tests {
         assert!(read(&task.join("task.toml")).contains("version = \"0.1.0\""));
         assert!(read(&task.join("instruction.md")).contains("## The bot contract"));
         assert!(read(&task.join("README.md")).contains("harvests the carry"));
-        assert!(
-            read(&root.join("bots/funding-squeeze/Cargo.toml")).contains("mtx-bot-funding-squeeze")
-        );
+        assert!(read(&task.join("reference/Cargo.toml")).contains("mtx-bot-funding-squeeze"));
         assert!(
             read(&root.join("bench/tasks/tasks.just"))
-                .contains("funding-squeeze-spcx=funding-squeeze")
+                .contains("funding-squeeze-spcx=bench/tasks/funding-squeeze-spcx/reference")
         );
         assert!(
-            read(&root.join("bench/image/anchors.txt")).contains("funding-squeeze funding-squeeze")
+            read(&root.join("bench/image/anchors.txt"))
+                .contains("funding-squeeze mtx-bot-funding-squeeze mtx-funding-squeeze bench/tasks/funding-squeeze-spcx/reference")
         );
         assert!(
             read(&root.join("bench/tasks/dataset.toml"))
@@ -939,6 +942,21 @@ mod tests {
         assert_eq!(state("reference"), "done");
         assert_eq!(state("verify"), "manual");
         assert!(scaffold(&root, &spec()).is_err(), "exists");
+        // A task that reuses a registered generator is done with the family
+        // once task.toml names it and test.sh draws it.
+        let toml = read(&task.join("task.toml"));
+        std::fs::write(
+            task.join("task.toml"),
+            toml.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\""),
+        )
+        .unwrap();
+        let test = read(&task.join("tests/test.sh"))
+            .replace("--draw flash-crash", "--draw weekend-gap")
+            .replace("TODO(family)", "note");
+        std::fs::write(task.join("tests/test.sh"), test).unwrap();
+        let steps = status(&root, "funding-squeeze-spcx").unwrap();
+        let family = steps.iter().find(|s| s.id == "family").unwrap();
+        assert_eq!(family.state, "done", "{}", family.detail);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

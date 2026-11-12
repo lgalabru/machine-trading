@@ -11,12 +11,14 @@ keywords = [ "solana", "trading", "defi", "perpetuals", "surfpool",]
 name = "Ludo Galabru"
 email = "ludo.galabru@solana.org"
 
+
 [[tasks]]
 name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:b9931ba1c2bf75a830845ca9c58af1a14a2da6db36b6ddbb68576e35fbc7963f"
 
 [[tasks]]
 name = "solana-foundation/funding-carry-spcx"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]
 name = "solana-foundation/market-making-spcx"
@@ -24,3 +26,5 @@ digest = "sha256:7bcea10a066ae00811723aefa51679d018bc5212d54836d10fdd677392a04cf
 
 [[tasks]]
 name = "solana-foundation/weekend-gap-spcx"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+

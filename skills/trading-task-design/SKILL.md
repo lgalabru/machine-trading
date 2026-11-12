@@ -55,7 +55,7 @@ them from the repository's `.mcp.json` (run `just install mtx` once):
 
 | Tool (MCP) | CLI | What it does |
 | --- | --- | --- |
-| `task_new` | `mtx task new --name … --base shocks\|making …` | Interviews the author with forms (what the task is, the skill it measures, the mandate), then scaffolds `bench/tasks/<name>` from the closest task, its reference bot `bots/<family>`, and the Justfile pair |
+| `task_new` | `mtx task new --name … --base shocks\|making …` | Interviews the author with forms (what the task is, the skill it measures, the mandate), then scaffolds `bench/tasks/<name>` from the closest task, its `reference/` crate, and the lists that name the task (`mtx task sync`) |
 | `task_status` | `mtx task status <name>` | Each step to publication as done, todo or manual, read from the files, with the next action |
 | `task_guide` | `mtx task guide <step>` | The procedure for one step, and where this skill goes deeper |
 | `task_list` | `mtx task list` | The tasks and their families |
@@ -112,7 +112,7 @@ pin what doesn't. In this repo, see `ShockFamily` in `crates/grader/src/scenario
 
 - The reference sets the 1.0 line. Make it a reasonable, simple strategy, not an optimum: a ceiling the agent can only match leaves no headroom. Calibrate it on every scored scenario with `just calibrate`.
 - Record the reference's PnL on every scenario, losses included: with set-level scoring only the set's total must be positive. Check that the reference profits over the family as a whole (calibrate a large sample), not just on average draws.
-- Keep the oracle (`solution/`) identical to `bots/reference` (`just check-solution`).
+- Keep the oracle (`solution/`) identical to the task's `reference/` (`mtx task sync` writes it; `just check-solution` checks it).
 - **Build the ladder with it.** Fixed rungs from harmful to ideal (nop, a blind bet, a naive strategy, earlier model bots, the reference, hindsight), an order rule written as strict inequalities, and the rule checked on every fresh hidden set. A family change that reorders the ladder fails. Add the ceilings (hindsight, a regime oracle, a Bayes filter over the generator) to know how much headroom the reference leaves. See [references/ladder-and-ceilings.md](references/ladder-and-ceilings.md).
 - **Size the cap in notional, not units.** When a task moves to another market, re-derive the cap from collateral and the new price (100 SOL at $101 and 70 SPCX at $143 are both ~1× collateral), take a new snapshot, and let calibration confirm the book is deep enough to fill the reference at the cap.
 
@@ -151,7 +151,7 @@ see "Task READMEs" in `bench/tasks/README.md`.
 4. Run `harbor analyze jobs/<job>` to flag reward hacking and underspecified instructions.
 5. **Read the winning bots.** Agents explain their edge in the bot's doc comments: on machine-trading, every exploit so far was stated outright there ("Short from the start: the crash is certain", "every move is split into equal steps"). Treat a jump between model tiers as an exploit until the source says otherwise.
 6. **Treat a too-clean risk profile as a leak.** Real edges have losing sessions. A worst session near zero, 90%+ of sessions profitable, or a Sharpe several times the reference's says the bot knows the script.
-7. **Port the winners into the ladder** as frozen rungs (`bench/checks/exploits/`), and design the next generation so they drop while the reference holds. Ports understate the next real run: re-screen after every generation.
+7. **Port the winners into the ladder** as frozen rungs (`bench/tasks/<task>/checks/exploits/`), and design the next generation so they drop while the reference holds. Ports understate the next real run: re-screen after every generation.
 8. **Target spread:** the best model mean should land roughly between 0.2 and 0.7, with visible variance across models. If everything sits at 0 or 1, the task teaches nothing. When every agent fails, suspect the task first.
 
 ### 8. Size the scored set for statistical power
