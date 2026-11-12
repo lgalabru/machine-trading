@@ -313,7 +313,10 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         .replace(&format!("--bin {old_bin}"), &format!("--bin {new_bin}"));
     std::fs::write(bot_to.join("Justfile"), justfile)?;
     for name in strategy_sources(&bot_to) {
-        std::fs::copy(bot_to.join("src").join(&name), to.join("solution/src").join(&name))?;
+        std::fs::copy(
+            bot_to.join("src").join(&name),
+            to.join("solution/src").join(&name),
+        )?;
     }
     written.push(format!(
         "bots/{family}/ (from bots/{}, package mtx-bot-{family})",
@@ -615,7 +618,11 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
     let drift: Vec<String> = sources
         .iter()
         .filter(|name| {
-            let bot_file = root.join("bots").join(bot.as_deref().unwrap_or("")).join("src").join(name);
+            let bot_file = root
+                .join("bots")
+                .join(bot.as_deref().unwrap_or(""))
+                .join("src")
+                .join(name);
             read(&bot_file) != read(&dir.join("solution/src").join(name))
         })
         .cloned()

@@ -28,7 +28,7 @@ use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{authoring, Cli};
+use crate::{Cli, authoring};
 
 /// The ladder's extra gate: the best informed policy must make at least this
 /// many times the best one that doesn't read the task's signal.
@@ -92,15 +92,30 @@ impl Check {
         }
     }
 
-    fn pass(section: &'static str, id: &'static str, title: &'static str, d: impl Into<String>) -> Self {
+    fn pass(
+        section: &'static str,
+        id: &'static str,
+        title: &'static str,
+        d: impl Into<String>,
+    ) -> Self {
         Self::new(section, id, title, Status::Pass, d)
     }
 
-    fn fail(section: &'static str, id: &'static str, title: &'static str, d: impl Into<String>) -> Self {
+    fn fail(
+        section: &'static str,
+        id: &'static str,
+        title: &'static str,
+        d: impl Into<String>,
+    ) -> Self {
         Self::new(section, id, title, Status::Fail, d)
     }
 
-    fn not_run(section: &'static str, id: &'static str, title: &'static str, d: impl Into<String>) -> Self {
+    fn not_run(
+        section: &'static str,
+        id: &'static str,
+        title: &'static str,
+        d: impl Into<String>,
+    ) -> Self {
         Self::new(section, id, title, Status::NotRun, d)
     }
 
@@ -111,7 +126,13 @@ impl Check {
         ok: bool,
         detail: impl Into<String>,
     ) -> Self {
-        Self::new(section, id, title, if ok { Status::Pass } else { Status::Fail }, detail)
+        Self::new(
+            section,
+            id,
+            title,
+            if ok { Status::Pass } else { Status::Fail },
+            detail,
+        )
     }
 }
 
@@ -160,11 +181,17 @@ impl Report {
             count("not_run"),
         );
         for section in SECTIONS {
-            let rows: Vec<&Check> = self.checks.iter().filter(|c| c.section == section).collect();
+            let rows: Vec<&Check> = self
+                .checks
+                .iter()
+                .filter(|c| c.section == section)
+                .collect();
             if rows.is_empty() {
                 continue;
             }
-            out.push_str(&format!("\n## {section}\n\n| | Check | Detail |\n| --- | --- | --- |\n"));
+            out.push_str(&format!(
+                "\n## {section}\n\n| | Check | Detail |\n| --- | --- | --- |\n"
+            ));
             for c in rows {
                 out.push_str(&format!(
                     "| {} | {} | {} |\n",
@@ -250,7 +277,10 @@ fn total(summary: &LadderSummary, rung: &str) -> Option<f64> {
 /// The best informed policy against the best that doesn't read the signal,
 /// by total PnL over every set.
 pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
-    let (id, title) = ("informed-vs-non-reading", "Informed beats the best non-reading policy");
+    let (id, title) = (
+        "informed-vs-non-reading",
+        "Informed beats the best non-reading policy",
+    );
     if gate.informed.is_empty() || gate.non_reading.is_empty() {
         return Check::not_run(
             SOLVABLE,
@@ -303,7 +333,11 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
 pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
     let mut checks = Vec::new();
     let sets = summary.totals.len();
-    let reference: Vec<f64> = summary.totals.iter().filter_map(|s| s.get("reference").copied()).collect();
+    let reference: Vec<f64> = summary
+        .totals
+        .iter()
+        .filter_map(|s| s.get("reference").copied())
+        .collect();
     checks.push(Check::from(
         SOLVABLE,
         "reference-scores-1",
@@ -311,10 +345,18 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
         reference.len() == sets && reference.iter().all(|r| *r > 0.0),
         format!(
             "reference total PnL per set: {}",
-            reference.iter().map(|r| format!("${r:.0}")).collect::<Vec<_>>().join(", ")
+            reference
+                .iter()
+                .map(|r| format!("${r:.0}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     ));
-    let nop: Vec<f64> = summary.totals.iter().filter_map(|s| s.get("nop").copied()).collect();
+    let nop: Vec<f64> = summary
+        .totals
+        .iter()
+        .filter_map(|s| s.get("nop").copied())
+        .collect();
     checks.push(Check::from(
         SOLVABLE,
         "nop-scores-0",
@@ -322,10 +364,18 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
         nop.len() == sets && nop.iter().all(|n| n.abs() < 1e-6),
         format!(
             "nop total PnL per set: {}",
-            nop.iter().map(|n| format!("${n:.2}")).collect::<Vec<_>>().join(", ")
+            nop.iter()
+                .map(|n| format!("${n:.2}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     ));
-    let broken: Vec<&str> = summary.rules.iter().filter(|r| !r.ok).map(|r| r.rule.as_str()).collect();
+    let broken: Vec<&str> = summary
+        .rules
+        .iter()
+        .filter(|r| !r.ok)
+        .map(|r| r.rule.as_str())
+        .collect();
     checks.push(Check::from(
         SOLVABLE,
         "ladder-order",
@@ -444,8 +494,18 @@ fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
         let d = format!("`just harbor-checks` failed: {detail}");
         return vec![
             Check::fail(SOLVABLE, "oracle", title_oracle, d.clone()),
-            Check::fail(SOLVABLE, "nop-harbor", "Nop scores 0 under Harbor", d.clone()),
-            Check::fail(GRADED, "cheaters", "Cheaters are disqualified, sneaky is clean", d),
+            Check::fail(
+                SOLVABLE,
+                "nop-harbor",
+                "Nop scores 0 under Harbor",
+                d.clone(),
+            ),
+            Check::fail(
+                GRADED,
+                "cheaters",
+                "Cheaters are disqualified, sneaky is clean",
+                d,
+            ),
         ];
     }
     let get = |agent: &str, key: &str| reward(&jobs.join(agent)).and_then(|r| r.get(key).copied());
@@ -456,7 +516,10 @@ fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
         "oracle",
         title_oracle,
         skill.is_some_and(|s| (0.999..=1.001).contains(&s)),
-        format!("oracle skill {}", skill.map_or("missing".into(), |s| format!("{s:.4}"))),
+        format!(
+            "oracle skill {}",
+            skill.map_or("missing".into(), |s| format!("{s:.4}"))
+        ),
     ));
     let nop = get("nop", "reward");
     checks.push(Check::from(
@@ -464,12 +527,21 @@ fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
         "nop-harbor",
         "Nop scores 0 under Harbor",
         nop == Some(0.0),
-        format!("nop reward {}", nop.map_or("missing".into(), |s| format!("{s}"))),
+        format!(
+            "nop reward {}",
+            nop.map_or("missing".into(), |s| format!("{s}"))
+        ),
     ));
     // The component cheater is graded and must score 0 with its grade
     // complete; the process cheaters and the sneaky bot aren't graded at all.
-    let wasm = (get("component-cheater", "reward"), get("component-cheater", "tampered"));
-    let process: Vec<_> = ["cheater", "sneaky"].iter().map(|a| get(a, "not_graded")).collect();
+    let wasm = (
+        get("component-cheater", "reward"),
+        get("component-cheater", "tampered"),
+    );
+    let process: Vec<_> = ["cheater", "sneaky"]
+        .iter()
+        .map(|a| get(a, "not_graded"))
+        .collect();
     let ok = wasm.0 == Some(0.0) && wasm.1 == Some(0.0) && process.iter().all(|p| *p == Some(1.0));
     checks.push(Check::from(
         GRADED,
@@ -511,7 +583,13 @@ fn optional_subcommand(
     let mut args: Vec<&str> = path.to_vec();
     args.push(task);
     match run_in(root, &exe.to_string_lossy(), &args, false) {
-        Ok((ok, out)) => Check::from(section, id, title, ok, if out.is_empty() { "ok".into() } else { out }),
+        Ok((ok, out)) => Check::from(
+            section,
+            id,
+            title,
+            ok,
+            if out.is_empty() { "ok".into() } else { out },
+        ),
         Err(e) => Check::fail(section, id, title, e.to_string()),
     }
 }
@@ -523,7 +601,9 @@ fn commit(root: &Path) -> String {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map_or("unknown".into(), |o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .map_or("unknown".into(), |o| {
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        })
 }
 
 /// The task-files checks, from `mtx task status`: every step but the manual
@@ -544,7 +624,11 @@ fn task_checks(root: &Path, task: &str) -> Result<Vec<Check>> {
             step.id,
             step.title,
             step.state == "done",
-            if step.state == "done" { step.detail } else { format!("{} Next: {}", step.detail, step.next) },
+            if step.state == "done" {
+                step.detail
+            } else {
+                format!("{} Next: {}", step.detail, step.next)
+            },
         ));
     }
     Ok(checks)
@@ -553,16 +637,26 @@ fn task_checks(root: &Path, task: &str) -> Result<Vec<Check>> {
 /// Run the gates for `task`, write `gates.json` and `gates.md` under the out
 /// directory, and return the report.
 pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)> {
-    if !root.join("bench/tasks").join(task).join("task.toml").is_file() {
+    if !root
+        .join("bench/tasks")
+        .join(task)
+        .join("task.toml")
+        .is_file()
+    {
         bail!("no task `{task}` in bench/tasks (`mtx task list`)");
     }
     let family = authoring::family_of(task);
-    let out = opts.out.clone().unwrap_or_else(|| root.join("target/gates").join(task));
+    let out = opts
+        .out
+        .clone()
+        .unwrap_or_else(|| root.join("target/gates").join(task));
     std::fs::create_dir_all(&out)?;
     let mut checks = task_checks(root, task)?;
 
     // The ladder: one hidden set of a few sessions in fast mode.
-    let ladder_file = root.join("bench/checks/ladder").join(format!("{family}.json"));
+    let ladder_file = root
+        .join("bench/checks/ladder")
+        .join(format!("{family}.json"));
     let config = read_json(&ladder_file)?;
     let signal: SignalGate = config
         .get("gates")
@@ -572,9 +666,20 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let summary_path = match &opts.ladder_summary {
         Some(p) => p.clone(),
         None => {
-            let sets = opts.sets.unwrap_or(if opts.fast { 1 } else { 4 }).to_string();
-            let count = opts.sessions.or(opts.fast.then_some(FAST_SESSIONS)).map(|c| c.to_string()).unwrap_or_default();
-            let odds = if opts.fast { FAST_RULE_ODDS.to_string() } else { String::new() };
+            let sets = opts
+                .sets
+                .unwrap_or(if opts.fast { 1 } else { 4 })
+                .to_string();
+            let count = opts
+                .sessions
+                .or(opts.fast.then_some(FAST_SESSIONS))
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+            let odds = if opts.fast {
+                FAST_RULE_ODDS.to_string()
+            } else {
+                String::new()
+            };
             let ladder_out = out.join("ladder");
             // A failed ladder still writes its summary; a stale one mustn't be read.
             let _ = std::fs::remove_file(ladder_out.join(&family).join("summary.json"));
@@ -582,7 +687,16 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             run_in(
                 root,
                 "just",
-                &["ladder", &family, &sets, "4", "1", &count, &ladder_out.to_string_lossy(), &odds],
+                &[
+                    "ladder",
+                    &family,
+                    &sets,
+                    "4",
+                    "1",
+                    &count,
+                    &ladder_out.to_string_lossy(),
+                    &odds,
+                ],
                 true,
             )?;
             ladder_out.join(&family).join("summary.json")
@@ -590,7 +704,8 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     };
     match std::fs::read_to_string(&summary_path) {
         Ok(text) => {
-            let summary: LadderSummary = serde_json::from_str(&text).with_context(|| summary_path.display().to_string())?;
+            let summary: LadderSummary =
+                serde_json::from_str(&text).with_context(|| summary_path.display().to_string())?;
             checks.extend(ladder_checks(&summary, &signal));
         }
         Err(e) => checks.push(Check::fail(
@@ -602,26 +717,75 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     }
 
     // Full mode: the image checks.
-    let full_only = |section, id, title| Check::not_run(section, id, title, "full mode only (needs the task image)");
+    let full_only = |section, id, title| {
+        Check::not_run(section, id, title, "full mode only (needs the task image)")
+    };
     if opts.fast {
-        checks.push(full_only(SOLVABLE, "oracle", "Oracle scores the reference's 1.0"));
-        checks.push(full_only(SOLVABLE, "nop-harbor", "Nop scores 0 under Harbor"));
-        checks.push(full_only(GRADED, "cheaters", "Cheaters are disqualified, sneaky is clean"));
-        checks.push(full_only(GRADED, "leak-audit", "The agent's image holds no answers"));
-        checks.push(full_only(GRADED, "keypair-probe", "A bot can't read the grader's keypairs"));
+        checks.push(full_only(
+            SOLVABLE,
+            "oracle",
+            "Oracle scores the reference's 1.0",
+        ));
+        checks.push(full_only(
+            SOLVABLE,
+            "nop-harbor",
+            "Nop scores 0 under Harbor",
+        ));
+        checks.push(full_only(
+            GRADED,
+            "cheaters",
+            "Cheaters are disqualified, sneaky is clean",
+        ));
+        checks.push(full_only(
+            GRADED,
+            "leak-audit",
+            "The agent's image holds no answers",
+        ));
+        checks.push(full_only(
+            GRADED,
+            "keypair-probe",
+            "A bot can't read the grader's keypairs",
+        ));
     } else {
         let jobs = out.join("jobs");
-        let (ran, detail) = run_in(root, "just", &["harbor-checks", task, "", &jobs.to_string_lossy()], true)?;
+        let (ran, detail) = run_in(
+            root,
+            "just",
+            &["harbor-checks", task, "", &jobs.to_string_lossy()],
+            true,
+        )?;
         checks.extend(harbor_checks(&jobs, ran, &detail));
         let (ok, d) = run_in(root, "just", &["leak-audit"], false)?;
-        checks.push(Check::from(GRADED, "leak-audit", "The agent's image holds no answers", ok, if ok { "no answer in the image".into() } else { d }));
+        checks.push(Check::from(
+            GRADED,
+            "leak-audit",
+            "The agent's image holds no answers",
+            ok,
+            if ok {
+                "no answer in the image".into()
+            } else {
+                d
+            },
+        ));
         let (ok, d) = run_in(root, "just", &["keypair-probe"], false)?;
-        checks.push(Check::from(GRADED, "keypair-probe", "A bot can't read the grader's keypairs", ok, if ok { "no keypair readable".into() } else { d }));
+        checks.push(Check::from(
+            GRADED,
+            "keypair-probe",
+            "A bot can't read the grader's keypairs",
+            ok,
+            if ok { "no keypair readable".into() } else { d },
+        ));
         if std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
             .is_ok_and(|t| t.contains("MTX_AGENT_TIMEOUT_SEC"))
         {
             let (ok, d) = run_in(root, "just", &["clock-probe", task], false)?;
-            checks.push(Check::from(GRADED, "clock-probe", "time-left reads the agent's clock", ok, d));
+            checks.push(Check::from(
+                GRADED,
+                "clock-probe",
+                "time-left reads the agent's clock",
+                ok,
+                d,
+            ));
         }
     }
 
@@ -642,8 +806,16 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         task,
     ));
 
-    let report = Report::new(task, if opts.fast { "fast" } else { "full" }, commit(root), checks);
-    std::fs::write(out.join("gates.json"), serde_json::to_string_pretty(&report)?)?;
+    let report = Report::new(
+        task,
+        if opts.fast { "fast" } else { "full" },
+        commit(root),
+        checks,
+    );
+    std::fs::write(
+        out.join("gates.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
     std::fs::write(out.join("gates.md"), report.markdown())?;
     Ok((report, out))
 }
@@ -687,14 +859,23 @@ mod tests {
     #[test]
     fn a_losing_baseline_is_unbounded_but_the_informed_policy_must_profit() {
         let s = summary(&[&[("told", 10.0), ("fade", -5.0)]]);
-        assert_eq!(signal_gate(&s, &gate(&["told"], &["fade"])).status, Status::Pass);
+        assert_eq!(
+            signal_gate(&s, &gate(&["told"], &["fade"])).status,
+            Status::Pass
+        );
         let s = summary(&[&[("told", -1.0), ("fade", -5.0)]]);
-        assert_eq!(signal_gate(&s, &gate(&["told"], &["fade"])).status, Status::Fail);
+        assert_eq!(
+            signal_gate(&s, &gate(&["told"], &["fade"])).status,
+            Status::Fail
+        );
     }
 
     #[test]
     fn the_gate_sums_every_set_and_names_a_missing_rung() {
-        let s = summary(&[&[("told", 50.0), ("fade", 40.0)], &[("told", 150.0), ("fade", 10.0)]]);
+        let s = summary(&[
+            &[("told", 50.0), ("fade", 40.0)],
+            &[("told", 150.0), ("fade", 10.0)],
+        ]);
         let check = signal_gate(&s, &gate(&["told"], &["fade"]));
         assert_eq!(check.status, Status::Pass, "{}", check.detail);
         let check = signal_gate(&s, &gate(&["told"], &["gone"]));
@@ -705,14 +886,34 @@ mod tests {
     #[test]
     fn an_undeclared_signal_is_not_run_rather_than_failed() {
         let s = summary(&[&[("told", 1.0)]]);
-        assert_eq!(signal_gate(&s, &SignalGate::default()).status, Status::NotRun);
+        assert_eq!(
+            signal_gate(&s, &SignalGate::default()).status,
+            Status::NotRun
+        );
     }
 
     #[test]
     fn ladder_verdicts_become_checks() {
-        let mut s = summary(&[&[("nop", 0.0), ("reference", 50.0), ("told", 120.0), ("fade", 10.0)]]);
-        s.rules.push(RuleResult { rule: "fade < reference".into(), ok: true, sets_holding: 1, sets: 1, odds: 0.9 });
-        s.exploits.push(ExploitResult { bot: "x".into(), ok: false, ratio: 3.1, profitable: 0.9, reasons: vec!["profitable in 90% of sessions".into()] });
+        let mut s = summary(&[&[
+            ("nop", 0.0),
+            ("reference", 50.0),
+            ("told", 120.0),
+            ("fade", 10.0),
+        ]]);
+        s.rules.push(RuleResult {
+            rule: "fade < reference".into(),
+            ok: true,
+            sets_holding: 1,
+            sets: 1,
+            odds: 0.9,
+        });
+        s.exploits.push(ExploitResult {
+            bot: "x".into(),
+            ok: false,
+            ratio: 3.1,
+            profitable: 0.9,
+            reasons: vec!["profitable in 90% of sessions".into()],
+        });
         let checks = ladder_checks(&s, &gate(&["told"], &["fade"]));
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("reference-scores-1"), Status::Pass);
@@ -722,7 +923,10 @@ mod tests {
         assert_eq!(status("exploit-bots"), Status::Fail);
         assert_eq!(status("ladder-clean"), Status::Pass);
         s.totals[0].insert("nop".into(), 3.0);
-        s.disqualified.push(Disqualified { rung: "reference".into(), scenarios: vec!["a".into()] });
+        s.disqualified.push(Disqualified {
+            rung: "reference".into(),
+            scenarios: vec!["a".into()],
+        });
         let checks = ladder_checks(&s, &gate(&["told"], &["fade"]));
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("nop-scores-0"), Status::Fail);
@@ -741,7 +945,12 @@ mod tests {
         let md = report.markdown();
         assert!(md.contains("## Solvable and fair") && md.contains("## Realistic"));
         assert!(md.contains("| not run | B | not built |"));
-        let bad = Report::new("t", "fast", "abc".into(), vec![Check::fail(GRADED, "c", "C", "a | b")]);
+        let bad = Report::new(
+            "t",
+            "fast",
+            "abc".into(),
+            vec![Check::fail(GRADED, "c", "C", "a | b")],
+        );
         assert!(!bad.passed);
         assert!(bad.markdown().contains("a \\| b"));
     }
@@ -760,27 +969,55 @@ mod tests {
         put("cheater", r#"{"reward": 0.0, "not_graded": 1.0}"#);
         put("sneaky", r#"{"reward": 0.0, "not_graded": 1.0}"#);
         let checks = harbor_checks(&dir, true, "");
-        assert!(checks.iter().all(|c| c.status == Status::Pass), "{checks:?}");
+        assert!(
+            checks.iter().all(|c| c.status == Status::Pass),
+            "{checks:?}"
+        );
         put("sneaky", r#"{"reward": 0.4, "not_graded": 0.0}"#);
         assert_eq!(harbor_checks(&dir, true, "")[2].status, Status::Fail);
-        assert!(harbor_checks(&dir, false, "boom").iter().all(|c| c.status == Status::Fail));
+        assert!(
+            harbor_checks(&dir, false, "boom")
+                .iter()
+                .all(|c| c.status == Status::Fail)
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn a_missing_subcommand_is_not_run() {
-        let c = optional_subcommand(Path::new("."), GRADED, "x", "X", &["no-such-tool", "check"], "t");
+        let c = optional_subcommand(
+            Path::new("."),
+            GRADED,
+            "x",
+            "X",
+            &["no-such-tool", "check"],
+            "t",
+        );
         assert_eq!(c.status, Status::NotRun);
     }
 
     #[test]
     fn every_task_declares_its_signal_and_names_real_rungs() {
         let root = authoring::repo_root();
-        for family in ["flash-crash", "market-making", "funding-carry", "weekend-gap"] {
-            let config = read_json(&root.join(format!("bench/checks/ladder/{family}.json"))).unwrap();
+        for family in [
+            "flash-crash",
+            "market-making",
+            "funding-carry",
+            "weekend-gap",
+        ] {
+            let config =
+                read_json(&root.join(format!("bench/checks/ladder/{family}.json"))).unwrap();
             let gate: SignalGate = serde_json::from_value(config["gates"].clone()).unwrap();
-            assert!(!gate.informed.is_empty() && !gate.non_reading.is_empty(), "{family}");
-            let rungs: Vec<&str> = config["rungs"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+            assert!(
+                !gate.informed.is_empty() && !gate.non_reading.is_empty(),
+                "{family}"
+            );
+            let rungs: Vec<&str> = config["rungs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["name"].as_str().unwrap())
+                .collect();
             for name in gate.informed.iter().chain(&gate.non_reading) {
                 assert!(rungs.contains(&name.as_str()), "{family}: no rung {name}");
             }
