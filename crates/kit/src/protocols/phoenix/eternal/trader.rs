@@ -297,8 +297,9 @@ impl PhoenixTrader {
         self.plan_with(order, PhoenixOrderOptions::default()).await
     }
 
-    /// [`plan`](Self::plan), with options. A post-only order's expiry isn't
-    /// supported: Phoenix's multiple-order packet builder sets none.
+    /// [`plan`](Self::plan), with options: Phoenix's reduce-only flag, and
+    /// an expiry (a post-only order's goes in the second multiple-order
+    /// packet, built from its parameters).
     pub async fn plan_with(
         &self,
         order: &PhoenixOrder,
