@@ -1875,8 +1875,9 @@ fn dedupe(v: Vec<Action>) -> Vec<Action> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn cmd(c: &str) -> String {
         describe_line(&format!("`{c}`"), Some("execute"), &json!({ "command": c }))
