@@ -209,6 +209,16 @@
   .compose textarea { display: block; flex: 1; width: 100%; min-height: 38px; max-height: 180px; resize: none; border: 0; outline: 0; background: none; padding: 10px 14px 4px; font: 13px/1.5 var(--sans); }
   .composer-body:not(.has-thread) .compose textarea { max-height: none; }
   .compose textarea::placeholder { color: var(--text-4); }
+  .shots { flex: none; display: flex; gap: 8px; padding: 10px 14px 0; overflow-x: auto; scrollbar-width: none; }
+  .shot { position: relative; flex: none; }
+  .shot img, .msg .pics img { display: block; height: 54px; max-width: 120px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #000; }
+  .shot button { position: absolute; top: -6px; right: -6px; width: 17px; height: 17px; border-radius: 99px; border: 1px solid var(--line); background: var(--raise-2); color: var(--text-2); font: 600 10px/1 var(--sans); cursor: pointer; padding: 0; }
+  .shot button:hover { color: var(--text); background: #3a3a40; }
+  .msg .pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+  .msg .pics .count { font: 11px var(--mono); color: var(--text-3); }
+  .msg.studio { align-self: stretch; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; padding: 7px 10px; border-radius: 8px; border: 1px dashed rgba(245, 183, 74, .45); background: rgba(245, 183, 74, .06); color: #e9d6ab; font: 12px/1.55 var(--mono); white-space: pre-wrap; }
+  .msg.studio::before { content: "!"; font-weight: 700; color: var(--warn); text-align: center; }
+  #p-composer.drop { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft) inset; }
   .compose .foot { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px 12px; min-width: 0; }
   .ctx { display: flex; gap: 5px; min-width: 0; overflow: hidden; flex: 1; }
   .ctx button { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line); background: none; border-radius: 99px; padding: 1px 8px; font: 11px var(--mono); color: var(--text-2); cursor: pointer; }
@@ -265,8 +275,9 @@
       </div>
       <div class="body composer-body">
         <div class="scroll" id="thread-scroll"><div id="thread"></div></div>
-        <div class="compose">
-          <textarea id="prompt" rows="1" placeholder="Ask the agent to change the strategy or the scenario. It gets the open file, the scenario and the step on screen with each message."></textarea>
+        <div class="compose" id="compose">
+          <div class="shots" id="shots" hidden></div>
+          <textarea id="prompt" rows="1" placeholder="Ask for a change, or paste a screenshot of a market and ask for a strategy for it."></textarea>
           <div class="foot">
             <div class="ctx" id="ctx" title="What goes with the message. Click one to leave it out."></div>
             <button class="btn" id="cancel" hidden>Stop</button>
@@ -1025,7 +1036,16 @@ function showMessage(m) {
     thread.appendChild(el); texts.set(m.id, "");
   }
   const text = texts.get(m.id) + (m.text ?? ""); texts.set(m.id, text);
-  if (m.role === "user") el.textContent = text;
+  if (m.role === "user") {
+    // The server echoes how many images went with it; the page still has
+    // the ones it just sent.
+    const count = m.images ?? Number(el.dataset.images || 0);
+    el.dataset.images = count;
+    const mine = count && sentShots?.length === count ? sentShots : el.shots;
+    if (mine) { el.shots = mine; sentShots = null; }
+    el.innerHTML = esc(text) + (count ? `<div class="pics">${mine ? mine.map((x) => `<img src="${x.url}" alt="">`).join("") : `<span class="count">${count} image${count > 1 ? "s" : ""}</span>`}</div>` : "");
+  }
+  else if (m.role === "studio") el.textContent = text;
   else if (m.role === "thought") { const open = el.open; el.innerHTML = `<summary>thinking</summary>${md(text)}`; el.open = open; if (!text.trim()) el.remove(); }
   else el.innerHTML = md(text);
   if (stick) threadScroll.scrollTop = threadScroll.scrollHeight;
@@ -1091,9 +1111,51 @@ function setBusy(on) {
 }
 const typingLast = () => { const el = document.getElementById("typing"); if (el) thread.appendChild(el); };
 link.on("composer/message", typingLast); link.on("composer/tool", typingLast);
+// Screenshots to send with the next message: pasted, or dropped on the pane.
+let shots = [], sentShots = null;
+const MAX_EDGE = 1568;
+function renderShots() {
+  $("shots").hidden = !shots.length;
+  $("shots").innerHTML = shots.map((x, i) => `<div class="shot"><img src="${x.url}" alt="screenshot ${i + 1}"><button data-i="${i}" title="Remove">×</button></div>`).join("");
+}
+$("shots").addEventListener("click", (e) => { if (e.target.dataset.i) { shots.splice(Number(e.target.dataset.i), 1); renderShots(); } });
+async function addImages(files) {
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) continue;
+    try {
+      const url = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(r.error); r.readAsDataURL(file); });
+      const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error("that image doesn't load")); i.src = url; });
+      const scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+      let out = url;
+      // Agents take PNG, JPEG, GIF and WebP, up to a size: redraw the rest.
+      if (scale < 1 || !/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.naturalWidth * scale); canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        out = canvas.toDataURL("image/png");
+      }
+      const [head, data] = out.split(",");
+      shots.push({ mimeType: head.slice(5, head.indexOf(";")), data, url: out });
+    } catch (e) { tell(e); }
+  }
+  renderShots(); $("prompt").focus();
+}
+$("prompt").addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (files.length) { e.preventDefault(); addImages(files); }
+});
+const composerPane = $("p-composer");
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+composerPane.addEventListener("dragover", (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; composerPane.classList.add("drop"); } });
+composerPane.addEventListener("dragleave", (e) => { if (!composerPane.contains(e.relatedTarget)) composerPane.classList.remove("drop"); });
+composerPane.addEventListener("drop", (e) => { if (hasFiles(e)) { e.preventDefault(); composerPane.classList.remove("drop"); addImages([...e.dataTransfer.files]); } });
+// A file dropped anywhere else would replace the page: don't let it.
+addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });
+
 async function sendPrompt() {
   const box = $("prompt"), text = box.value.trim();
-  if (!text || S.busy) return;
+  if ((!text && !shots.length) || S.busy) return;
   if (!S.pick.agent) {
     const first = S.agents.find((g) => g.available);
     if (!first) return toast("No coding agent found. Install claude-agent-acp or codex-acp, or Node for npx.");
@@ -1101,9 +1163,12 @@ async function sendPrompt() {
   }
   // The agent reads files from disk: save what's on screen first.
   if (!(await saveAll())) return;
+  const images = shots; shots = []; renderShots();
   box.value = ""; grow(); setBusy(true);
-  try { await link.send("composer/send", { text, context: context() }); } catch (e) { tell(e); }
-  setBusy(false);
+  sentShots = images.length ? images : null;
+  try { await link.send("composer/send", { text: text || "Look at this.", context: context(), ...(images.length ? { images: images.map(({ mimeType, data }) => ({ mimeType, data })) } : {}) }); }
+  catch (e) { tell(e); }
+  sentShots = null; setBusy(false);
 }
 const grow = () => { const b = $("prompt"); b.style.height = "auto"; b.style.height = Math.min(180, b.scrollHeight) + "px"; };
 $("prompt").addEventListener("input", grow);
@@ -1172,7 +1237,7 @@ link.onOpen(async () => {
   } catch (e) { tell(e); }
 });
 // For the console, and for scripts that drive the page.
-window.studio = { state: S, view, link, openFile, save };
+window.studio = { state: S, view, link, openFile, save, addImages };
 $("mock-tag").hidden = !MOCK;
 $("steps").innerHTML = EMPTY; threadEmpty();
 renderSpeed(); renderBps(); renderControls(); renderBuild(); setView("session");

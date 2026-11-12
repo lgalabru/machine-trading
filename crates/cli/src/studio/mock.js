@@ -64,40 +64,7 @@ mtx-kit = "0.12"
 
 const START = 143.05;
 
-function rng(seed) {
-  let s = seed >>> 0;
-  return () => { s = (s + 0x6d2b79f5) >>> 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-
-// A scenario file: a wobble, a shock, an aftermath.
-function scenario(n) {
-  const r = rng(n * 7919);
-  const duration = 400 + Math.floor(r() * 240);
-  const sign = r() < 0.5 ? -1 : 1;
-  const depth = 1.2 + r() * 4.5;
-  const at = 60 + Math.floor(r() * 140);
-  const hold = 40 + Math.floor(r() * 100);
-  const after = [0.25, 0.5, 0.95, 1.3][Math.floor(r() * 4)];
-  const end = sign * depth * after;
-  const path = [];
-  let level = 0;
-  for (let slot = 6; slot < duration - 4; slot += 4 + Math.floor(r() * 9)) {
-    const base = slot < at ? 0 : slot < at + hold ? sign * depth : end;
-    level = base + (level - base) * 0.4 + (r() - 0.5) * 0.24;
-    path.push({ slot, level_pct: Math.round(level * 1000) / 1000 });
-  }
-  const verb = sign < 0 ? "drops" : "spikes";
-  const then = after < 0.4 ? "rebounds" : after < 0.8 ? "fades" : after < 1.1 ? "stalls" : "extends";
-  return {
-    name: `practice-${n}`,
-    description: `SPCX ${verb} ${depth.toFixed(1)}% at once from around slot ${at}, then ${then} to ${end >= 0 ? "+" : ""}${end.toFixed(2)}% of its starting mark`,
-    symbol: "SPCX",
-    duration_slots: duration,
-    mandate: { version: "v0", universe: [{ instrument: "phoenix:perp:SPCX", max_position: 70 }], limits: { max_drawdown_usd: 1000 } },
-    path,
-    reference_pnl_usd: Math.round((r() - 0.3) * 20000) / 100,
-  };
-}
+const MANDATE = { version: "v0", universe: [{ instrument: "phoenix:perp:SPCX", max_position: 70 }], limits: { max_drawdown_usd: 1000 } };
 
 function levels(sc) {
   const steps = Math.ceil(sc.duration_slots / 2);
@@ -114,10 +81,9 @@ const hash = (text) => { let h = 2166136261; for (let i = 0; i < text.length; i+
 
 export function mock(deliver) {
   const files = new Map([["Cargo.toml", CARGO], ["src/lib.rs", STRATEGY]]);
-  for (let n = 1; n <= 6; n++) files.set(`scenarios/practice-${n}.json`, JSON.stringify(scenario(n), null, 2) + "\n");
-  const obvious = (name, description, duration_slots, path) => files.set(`scenarios/${name}.json`, JSON.stringify({ name, description, symbol: "SPCX", duration_slots, mandate: scenario(1).mandate, path }, null, 2) + "\n");
+  const obvious = (name, description, duration_slots, path) => files.set(`scenarios/${name}.json`, JSON.stringify({ name, description, symbol: "SPCX", duration_slots, mandate: MANDATE, path }, null, 2) + "\n");
   obvious("practice-101", "Five steps: SPCX falls 3% at step 2, holds at step 3, and is back where it started at step 4. Buy the dip, sell the recovery.", 10, [{ slot: 3, level_pct: -3 }, { slot: 7, level_pct: 0 }]);
-  obvious("practice-102", "Ten steps: SPCX rises 3% at step 3 and is back at step 5, then falls 3% at step 7 and is back at step 9.", 20, [{ slot: 5, level_pct: 3 }, { slot: 9, level_pct: 0 }, { slot: 13, level_pct: -3 }, { slot: 17, level_pct: 0 }]);
+  obvious("practice-102", "Ten steps: SPCX rises 3% at step 3 and is back at step 5, then falls 3% at step 7 and 3% more at step 9: this dip doesn't come back.", 20, [{ slot: 5, level_pct: 3 }, { slot: 9, level_pct: 0 }, { slot: 13, level_pct: -3 }, { slot: 17, level_pct: -6 }]);
   let seq = 0;
   let pick = { agent: "claude-code", model: null, busy: false };
   let session = null; // {scenario, state, k, bps, ms, timer, events, args, sim}
@@ -217,7 +183,7 @@ export function mock(deliver) {
     if (!trace) {
       s.state = "terminated";
       const sc = read(s.scenario);
-      event("terminated", { scenario: s.scenario, pnl_usd: s.sim.pnl, bound_pnl_usd: 1124.39, reference_pnl_usd: sc.reference_pnl_usd, disqualified: null, stopped: null, not_graded: null });
+      event("terminated", { scenario: s.scenario, pnl_usd: s.sim.pnl, bound_pnl_usd: 1124.39, reference_pnl_usd: sc.reference_pnl_usd ?? null, disqualified: null, stopped: null, not_graded: null });
       return;
     }
     s.k = trace.k;
@@ -246,7 +212,7 @@ export function mock(deliver) {
     return { scenario: name };
   }
 
-  async function compose(text) {
+  async function compose(text, images = []) {
     pick.busy = true; cancelled = false;
     const say = (id, role, chunk, done = false) => {
       const m = messages.find((x) => x.id === id) || messages[messages.push({ id, role, text: "" }) - 1];
@@ -259,7 +225,9 @@ export function mock(deliver) {
       event("composer/tool", { id, title, status: st });
     };
     const stream = async (id, role, words) => { for (const w of words.split(/(?<= )/)) { if (cancelled) break; say(id, role, w); await sleep(24); } say(id, role, "", true); };
-    say(`m${++mid}`, "user", text, true);
+    const id = `m${++mid}`;
+    const echo = messages[messages.push({ id, role: "user", text, done: true, images: images.length }) - 1];
+    event("composer/message", echo);
     const reply = `m${++mid}`, thought = `m${++mid}`;
     await sleep(300);
     await stream(thought, "thought", "The strategy buys once the mark is DIP_PCT below the start and sells at half the way back. Let me look at the file before changing anything. ");
@@ -272,6 +240,10 @@ export function mock(deliver) {
       event("file/changed", { path: "src/lib.rs", version: hash(next), text: next, by: "agent" });
       tool("e" + mid, "Edit src/lib.rs", "completed");
       await stream(reply, "agent", `I set \`DIP_PCT\` to **${Number(number[1]).toFixed(1)}** in \`src/lib.rs\`: the strategy now waits for a ${Number(number[1]).toFixed(1)}% fall before buying.\n\nPress play to see where it buys on this scenario. A deeper threshold skips the small dips, and misses the shocks that stop short of it.`);
+    } else if (!cancelled && images.length) {
+      await stream(reply, "agent", `I can see ${images.length === 1 ? "the screenshot" : `${images.length} screenshots`}. A real agent would read the market off the chart, write a scenario that plays it, and sketch a strategy for it; this mock only shows how that turn looks.`);
+      say(`m${++mid}`, "studio", "mtx refused a scenario:\n- scenarios/from-screenshot.json: a 5% move needs two steps, and the next waypoint comes one step later", true);
+      await stream(`m${++mid}`, "agent", "Fixed: the waypoint after the 5% move now waits for it to land.");
     } else if (!cancelled) {
       await stream(reply, "agent", "This is the studio's mock agent: it only knows one trick. Ask it to *buy at a 2% dip* and it edits `DIP_PCT` in `src/lib.rs`.\n\n```rust\nconst DIP_PCT: f64 = 2.0;\n```\n\nWith a real agent (Claude Code or Codex over ACP), the message goes with the file, the scenario and the step on screen.");
     }
@@ -318,7 +290,7 @@ export function mock(deliver) {
         if (command === "setBreakpoints") s.bps = a;
         if (command === "setSpeed") s.ms = a.msPerStep ?? 0;
         if (command === "pause" && s.state === "running") s.pausing = true;
-        if (command === "terminate" && s.state !== "terminated") { clearTimeout(s.timer); s.state = "terminated"; event("terminated", { scenario: s.scenario, pnl_usd: s.sim.steps[Math.max(0, s.k)].account.pnl_usd, bound_pnl_usd: 1124.39, reference_pnl_usd: read(s.scenario).reference_pnl_usd, disqualified: null, stopped: "terminated", not_graded: "the session was stopped" }); }
+        if (command === "terminate" && s.state !== "terminated") { clearTimeout(s.timer); s.state = "terminated"; event("terminated", { scenario: s.scenario, pnl_usd: s.sim.steps[Math.max(0, s.k)].account.pnl_usd, bound_pnl_usd: 1124.39, reference_pnl_usd: read(s.scenario).reference_pnl_usd ?? null, disqualified: null, stopped: "terminated", not_graded: "the session was stopped" }); }
         if ((command === "continue" || command === "next") && s.state === "stopped") {
           s.once = command === "next"; s.state = "running";
           if (command === "continue") event("continued", {});
@@ -335,7 +307,7 @@ export function mock(deliver) {
         ],
       };
       case "agents/select": pick = { ...pick, agent: a.agent, model: a.model || null }; return pick;
-      case "composer/send": return compose(a.text);
+      case "composer/send": return compose(a.text, a.images || []);
       case "composer/cancel": cancelled = true; return {};
       default: throw reject(`unknown command ${command}`);
     }
