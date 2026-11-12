@@ -1016,6 +1016,7 @@ const intentText = (i) => ({
   market: () => `market ${i.side === "bid" ? "buy" : "sell"} <b>${units(i.size)}</b> <span class="muted">limit ${fix(i.limit)}</span>`,
   limit: () => `limit ${i.side === "bid" ? "buy" : "sell"} <b>${units(i.size)}</b> at ${fix(i.price)}`,
   cancelAll: () => "cancel every resting order",
+  other: () => esc(i.text),
 }[i.kind] || (() => esc(JSON.stringify(i))))();
 const orderText = (a) => (a.kind === "cancelAll" ? "cancel every resting order" : a.kind === "other" ? esc(a.text) : `${a.side === "bid" ? "buy" : "sell"} <b>${units(a.size)}</b> ${a.kind === "market" ? "at market" : `at ${fix(a.price)}`}`);
 // Orders sent in a step, grouped: "buy 10 + 10 + 10 + 5 at market".
