@@ -31,6 +31,13 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     solutions, and as processes (`mtx_kit::run`) the anchors hidden sets are
     scored against and the ladder's rungs. On each task's practice set, both
     earn the old process reference's PnL to the cent.
+  - **Watch a strategy play.** `mtx bot run` plays one practice session and
+    shows what the strategy printed: a component's `println!` and
+    `eprintln!` now reach the session's log, like `mtx_kit::log`, up to 1
+    MiB a call. `--debug` stops at every step and shows the market it was
+    handed, what it printed, its order sheet and the orders sent. A new
+    guide, "Your first strategy, step by step", builds `bots/printer` and
+    `bots/first-strategy` with it.
   - **What a component reads.** `Session` gains the venue's metadata
     (`venue`, read with `mtx_kit::venue::PhoenixVenue`, feature `venue`),
     the starting oracle, the trading key's public key (`authority`) and the

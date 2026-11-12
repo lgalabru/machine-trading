@@ -643,7 +643,7 @@ async function staticAlias(path) {
 async function api(path, text = false) {
   const key = (text ? "t:" : "j:") + path;
   if (STATIC && !cache.has(key)) {
-    const resolved = path.includes("/reference/") ? await staticAlias(path) : path;
+    const resolved = path.includes("/reference/") || path.startsWith("/api/file/") ? await staticAlias(path) : path;
     const { url, gz } = staticUrl(resolved);
     cache.set(key, fetch(url).then(async (r) => {
       if (!r.ok) throw new Error(`${path}: not in this export`);
@@ -2619,7 +2619,7 @@ async function renderSession(n, name) {
       { key: "what", label: "Instructions", sort: describeTx, fmt: (x) => esc(describeTx(x)) },
       { key: "compute_units", label: "CU", r: true, fmt: (x) => int(x.compute_units) },
       { key: "error", label: "Error", fmt: (x) => x.error ? `<span class="neg" title="${esc(x.error)}">${esc(String(x.error).slice(0, 80))}</span>` : "" },
-      { key: "signature", label: "Signature", mono: true, fmt: (x) => `<span class="muted" title="${esc(x.signature || "")}">${esc(String(x.signature || "").slice(0, 16))}${x.signature ? "…" : ""}</span>` },
+      { key: "signature", label: "Signature", mono: true, fmt: (x) => x.signature ? `<span class="muted" title="${esc(x.signature)}">${esc(String(x.signature).slice(0, 16))}…</span>` : `<span class="muted">—</span>` },
     ], { maxHeight: "460px", limit: 300 });
     const failedRows = list.filter((x) => !x.ok && (x.logs || []).length).slice(0, 5);
     if (failedRows.length) {
