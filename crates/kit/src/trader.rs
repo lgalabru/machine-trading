@@ -59,7 +59,12 @@ fn decimal(value: f64, what: &str) -> Result<Decimal> {
 
 impl Trader {
     pub fn connect(env: &BotEnv) -> Result<Self> {
-        let keypair = env.keypair()?;
+        Self::with_keypair(env, env.keypair()?)
+    }
+
+    /// [`Trader::connect`], signing with `keypair` rather than the file
+    /// `env` names: for a grader that holds its accounts' keys itself.
+    pub fn with_keypair(env: &BotEnv, keypair: Keypair) -> Result<Self> {
         let phoenix = Phoenix::new(env.exchange()?, &env.rpc_url);
         let inner = PhoenixTrader::new(
             phoenix.exchange().clone(),
@@ -82,12 +87,17 @@ impl Trader {
     /// Reads through Hawkeye ([`Trader::top`], [`Trader::position`]) keep
     /// Hawkeye's own client.
     pub fn connect_with_timeout(env: &BotEnv, timeout: std::time::Duration) -> Result<Self> {
-        let mut trader = Self::connect(env)?;
-        trader.inner = trader.inner.with_chain(std::sync::Arc::new(
-            crate::chain::RpcChainClient::with_timeout(&env.rpc_url, timeout),
+        Ok(Self::connect(env)?.with_timeout(timeout))
+    }
+
+    /// This trader with every transaction it sends, and every request on
+    /// the way, allowed up to `timeout`, as [`Trader::connect_with_timeout`].
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.inner = self.inner.with_chain(std::sync::Arc::new(
+            crate::chain::RpcChainClient::with_timeout(&self.env.rpc_url, timeout),
         ));
-        trader.rpc = crate::tx::rpc_client_with_timeout(&env.rpc_url, timeout);
-        Ok(trader)
+        self.rpc = crate::tx::rpc_client_with_timeout(&self.env.rpc_url, timeout);
+        self
     }
 
     pub fn authority(&self) -> Pubkey {
