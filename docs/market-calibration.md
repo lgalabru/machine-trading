@@ -33,8 +33,8 @@ public data pulled on 2026-11-11.
 
 | File | Fair value from | Main limits |
 |---|---|---|
-| `sol-usd.20261111.7f960b0d` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
-| `spcx.20261111.8c2b4e5c` | Phoenix SPCX perp mark, 1 m, 30 days | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 22 opens. Book and impact are defaults. |
+| `sol-usd.20261111.4ca59529` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
+| `spcx.20261111.000e88d5` | Phoenix SPCX perp mark, 1 m, 30 days | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 22 opens. Book and impact are defaults. |
 
 Each file lists its sources and limits under `[meta]`.
 
@@ -51,7 +51,7 @@ Each file lists its sources and limits under `[meta]`.
 | `[calendar]` | `continuous`, or `sessions`: a timezone, session kinds (`pre`, `regular`, `post`, `overnight`) by weekday and local hours with volatility multipliers, closed-hours multiplier (weekends, holidays), holidays, gaps at a kind's open, the draw range | model |
 | `[venues.<venue>]` | fees, tick, trades per minute and dispersion, trade-size distribution, premium (trade over mark), funding parameters | actors (PR 11), funding families |
 | `[book]` | half-spread, depth by distance, impact `k q^γ` with permanent share and decay; each with a `*_source` saying fitted or default | realism round trips; actors |
-| `[realism]` | stylized facts of real session-length windows, and the bands generated sessions must fall in | realism checks |
+| `[realism]` | stylized facts of real session-length windows, their sampling spread, and the narrowest bands generated sessions must fall in | realism checks |
 
 ## The market model (v2)
 
@@ -100,8 +100,8 @@ lead_seconds = 60
 ```
 
 ```sh
-mtx market-cal show calibration/market/spcx.20261111.8c2b4e5c.toml
-mtx market-cal generate --calibration calibration/market/spcx.20261111.8c2b4e5c.toml \
+mtx market-cal show calibration/market/spcx.20261111.000e88d5.toml
+mtx market-cal generate --calibration calibration/market/spcx.20261111.000e88d5.toml \
   --template bench/tasks/<task>/environment/practice/<one>.json \
   --spec open.toml --out /tmp/drawn --prefix open --count 6 --seed 7
 ```
@@ -120,29 +120,58 @@ the path, the fair value and the record.
   comparing like with like cancels the bias. A single session is never
   judged alone.
 
-| Check | Statistic | Band (shipped files) |
+| Check | Statistic | Narrowest band (shipped files) |
 |---|---|---|
 | `vol_level` | median per-bar sd over windows | ratio [0.5, 2] |
 | `vol_of_vol` | coefficient of variation of window sd: clustering across sessions | ratio [0.6, 1.6] |
 | `kurtosis_within` | kurtosis of aggregated returns, each window scaled to unit RMS | diff 0.5 |
-| `kurtosis_pooled` | kurtosis of all aggregated returns | ratio [0.33, 3] |
-| `tail_index` | Hill α of pooled aggregated returns (top 2.5%) | ratio [0.67, 1.5] |
+| `tail_ratio` | 99th over 90th percentile of pooled aggregated \|r\|: fat tails | ratio [0.85, 1.18] |
 | `clustering_lag_<n>` | ACF of \|r\| within windows at each lag | diff 0.04 (SOL), 0.08 (SPCX) |
 | `predictability` | mean lag-1 ACF of aggregated returns | diff 0.1 (SOL), 0.15 (SPCX) |
+| `kurtosis_pooled`, `tail_index` | kurtosis and Hill α of pooled aggregated returns | `info`: reported, never gated |
 | `gap_size_median`, `gap_size_p90` | \|gap\| at session opens vs the calendar's fitted gap | ratio [0.67, 1.5] |
 | `round_trips` | probe buy-then-sell (and the reverse) one slot apart, through the book plus impact plus taker fees, at the p50/p90/p99 flow sizes | mean < 0 and ≥ 95% lose |
+
+**Bands follow the sampling spread.** The fitter records each gated
+statistic's spread over the real windows (`[realism.spread]`): windows
+drawn with replacement, 300 at a time, with the sd of the statistic's log,
+or of the statistic itself for those near zero. A check combines two
+sampling errors:
+- the real reference's, from that spread scaled to the real window count;
+- the generated statistic's, bootstrapped from the generated windows
+  (200 draws, fixed seed), and at least the real spread at that many
+  windows.
+
+It then widens the file's band to 3 standard deviations of the
+difference. So a fair generator passes whatever its seed: the shipped
+model passes both files on seeds 1-8 at 60, 300 and 1000 sessions. A wrong
+one still fails: a constant-volatility Gaussian walk fails `vol_of_vol`
+and `tail_ratio`, and today's families fail SOL's `vol_level`. Small
+samples get wide bands, so judge on a few hundred windows.
+
+Pooled kurtosis and Hill's index vary by a factor of 3 or more between
+samples of a few hundred real windows (SOL's pooled kurtosis: about 6 to
+140), so they are reported (`info`), not gated.
 
 Windows holding a gap are left out of the return checks, and gaps are
 checked on their own. Round trips go through a market-making scenario's
 competing makers, or else the calibration's default book. A check with too
-little data is reported `skipped`, which isn't a failure. That covers fewer
-than 30 windows, fewer than 20 gaps, or sessions shorter than the reference
-window. SPCX's reference windows are an hour of 1 m bars, so minutes-long
-task sessions can only be checked against them on gaps and round trips.
+little data is reported `skipped`: fewer than 30 windows, fewer than 20
+gaps, or sessions shorter than the reference window. SPCX's reference
+windows are an hour of 1 m bars, so minutes-long task sessions can't be
+judged against them on returns.
+
+**Verdict.** The report's `verdict` is one of:
+- `pass`: every check that ran passed, and the return checks ran;
+- `fail`: a check failed;
+- `not_judged`: nothing failed, but the return checks didn't run. It is
+  not a pass.
+
+`passed` is true only on `pass`.
 
 ```sh
-mtx market-cal check model --calibration calibration/market/sol-usd.20261111.7f960b0d.toml
-mtx market-cal check market-making --calibration calibration/market/sol-usd.20261111.7f960b0d.toml
+mtx market-cal check model --calibration calibration/market/sol-usd.20261111.4ca59529.toml
+mtx market-cal check market-making --calibration calibration/market/sol-usd.20261111.4ca59529.toml
 mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file>
 ```
 
@@ -151,8 +180,10 @@ mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file
   come from), a task family (`flash-crash`, `market-making`,
   `funding-carry`, `weekend-gap`, drawn with `--count` and `--seed`), or
   scenario files.
-- **Output.** It prints a JSON report and exits 2 if any check fails.
-  `mtx gates` calls it.
+- **Output.** It prints a JSON report and exits 0 on `pass`, 2 on `fail`
+  and 3 on `not_judged`. `mtx gates` calls it.
 
-The bands are first guesses. Before gating on them, set each band from the
-real-vs-real spread: the same statistic on other weeks of the same asset.
+The bands' floors are the prototype's first guesses. More weeks of real
+data would give real-vs-real spreads across weeks, not only within the
+fitted window. SPCX's realism reference is in-sample: its windows come
+from the same 30 days the model is fitted on.
