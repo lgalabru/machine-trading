@@ -68,11 +68,92 @@ pub fn component_in(bot_dir: &Path) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// The most a strategy may print in one call, in bytes: past it, output is
+/// dropped (and a note says so), so printing can't exhaust memory or fail.
+pub const PRINTED_BYTES_PER_CALL: usize = 1 << 20;
+
+/// What a strategy writes during a call, in order: its standard output and
+/// error (`println!`, `eprintln!`) and `mtx_kit::log`'s lines. The host
+/// drains it after each call into the session's log.
+#[derive(Clone, Default)]
+struct Printed(std::sync::Arc<std::sync::Mutex<PrintedBuffer>>);
+
+#[derive(Default)]
+struct PrintedBuffer {
+    bytes: Vec<u8>,
+    dropped: bool,
+}
+
+impl Printed {
+    fn write(&self, bytes: &[u8]) {
+        let mut buffer = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let room = PRINTED_BYTES_PER_CALL.saturating_sub(buffer.bytes.len());
+        if bytes.len() > room {
+            buffer.dropped = true;
+        }
+        buffer
+            .bytes
+            .extend_from_slice(&bytes[..bytes.len().min(room)]);
+    }
+
+    /// The lines written since the last call, and a note if some were dropped.
+    fn take(&self) -> Vec<String> {
+        let mut buffer = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let text = String::from_utf8_lossy(&buffer.bytes).into_owned();
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        if std::mem::take(&mut buffer.dropped) {
+            lines.push(format!(
+                "(output past {PRINTED_BYTES_PER_CALL} bytes in one call was dropped)"
+            ));
+        }
+        buffer.bytes.clear();
+        lines
+    }
+}
+
+impl wasmtime_wasi::cli::IsTerminal for Printed {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl wasmtime_wasi::cli::StdoutStream for Printed {
+    fn async_stream(&self) -> Box<dyn tokio::io::AsyncWrite + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+impl tokio::io::AsyncWrite for Printed {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.write(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
 /// What the strategy's host side holds.
 struct Host {
     wasi: WasiCtx,
     table: ResourceTable,
     log: Box<dyn Write + Send>,
+    printed: Printed,
     rpc_url: String,
     http: reqwest::Client,
     rpc_calls: u32,
@@ -92,7 +173,7 @@ impl mtx::strategy::types::Host for Host {}
 
 impl StrategyImports for Host {
     async fn log(&mut self, line: String) {
-        let _ = writeln!(self.log, "{line}");
+        self.printed.write(format!("{line}\n").as_bytes());
     }
 
     async fn rpc(&mut self, method: String, params: String) -> std::result::Result<String, String> {
@@ -174,6 +255,8 @@ pub struct WasmStrategy {
     fuel_given: u64,
     pub fuel_used: u64,
     pub fuel_max_call: u64,
+    last_call_fuel: u64,
+    last_printed: Vec<String>,
 }
 
 impl WasmStrategy {
@@ -195,7 +278,10 @@ impl WasmStrategy {
         let mut linker: Linker<Host> = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(wasm_error)?;
         Strategy::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host).map_err(wasm_error)?;
+        let printed = Printed::default();
         let wasi = WasiCtxBuilder::new()
+            .stdout(printed.clone())
+            .stderr(printed.clone())
             .wall_clock(Stopped)
             .monotonic_clock(Stopped)
             .secure_random(rand::rngs::StdRng::seed_from_u64(seed))
@@ -209,6 +295,7 @@ impl WasmStrategy {
             wasi,
             table: ResourceTable::new(),
             log,
+            printed,
             rpc_url: rpc_url.to_string(),
             http: reqwest::Client::new(),
             rpc_calls: 0,
@@ -235,6 +322,8 @@ impl WasmStrategy {
             fuel_given: 0,
             fuel_used: used,
             fuel_max_call: used,
+            last_call_fuel: used,
+            last_printed: Vec::new(),
         })
     }
 
@@ -246,12 +335,29 @@ impl WasmStrategy {
         self.fuel_given > 0 && self.store.set_fuel(self.fuel_given).is_ok()
     }
 
-    /// What the last call spent, out of the session's fuel.
+    /// What the last call spent, out of the session's fuel; and what it
+    /// printed, into the session's log.
     fn charge(&mut self) {
         let used = self.fuel_given - self.store.get_fuel().unwrap_or(0).min(self.fuel_given);
         self.fuel_left -= used;
         self.fuel_used += used;
         self.fuel_max_call = self.fuel_max_call.max(used);
+        self.last_call_fuel = used;
+        let host = self.store.data_mut();
+        let lines = host.printed.take();
+        for line in &lines {
+            let _ = writeln!(host.log, "{line}");
+        }
+        self.last_printed = lines;
+    }
+
+    /// What the last call printed, its fuel, and its `rpc` calls.
+    pub fn last_call(&self) -> (&[String], u64, u32) {
+        (
+            &self.last_printed,
+            self.last_call_fuel,
+            self.store.data().rpc_calls,
+        )
     }
 
     fn spent() -> String {
@@ -297,6 +403,35 @@ impl WasmStrategy {
     }
 }
 
+/// One step of a component's session, as `mtx bot run --debug` shows it:
+/// what the strategy was handed, what it printed and asked for, and what the
+/// grader sent.
+#[derive(Debug, Clone)]
+pub struct StepTrace {
+    pub steps: u64,
+    pub market: mtx_kit::Market,
+    pub printed: Vec<String>,
+    /// The strategy's error or trap, if `step` didn't return a sheet.
+    pub failed: Option<String>,
+    pub intents: Vec<mtx_kit::Intent>,
+    /// Where `plan()` cut the sheet to the cap.
+    pub notes: Vec<String>,
+    /// Each order sent, and how it went; the grader stops at the first that
+    /// fails.
+    pub sent: Vec<(mtx_kit::Action, std::result::Result<(), String>)>,
+    pub fuel: u64,
+    pub rpc_calls: u32,
+}
+
+/// Watches a component's session step by step: `mtx bot run --debug`. It
+/// may block (to wait for a key): the world waits for the strategy.
+pub trait StepObserver: Send + Sync {
+    /// After `start`: the session, and what `start` printed or failed with.
+    fn started(&self, session: &mtx_kit::Session, printed: &[String], failed: Option<&str>);
+    /// After each step's orders are sent.
+    fn step(&self, trace: &StepTrace);
+}
+
 /// A session's clock, as a component's `start` sees it, and its scenario.
 pub struct Clock<'a> {
     pub steps: u64,
@@ -323,6 +458,7 @@ pub struct WasmBot {
     /// Why the strategy plays no more of the session, if it doesn't: it
     /// didn't load, or it trapped (Wasmtime won't enter its instance again).
     pub stopped: Option<String>,
+    observer: Option<std::sync::Arc<dyn StepObserver>>,
 }
 
 impl WasmBot {
@@ -334,6 +470,7 @@ impl WasmBot {
         mandate: &mtx_core::Mandate,
         clock: Clock<'_>,
         log: Box<dyn Write + Send>,
+        observer: Option<std::sync::Arc<dyn StepObserver>>,
     ) -> crate::Result<Self> {
         let Clock {
             steps,
@@ -375,17 +512,45 @@ impl WasmBot {
             vars,
             seed,
         };
+        let observed = observer.as_ref().map(|_| mtx_kit::Session {
+            steps: session.steps,
+            slots_per_step: session.slots_per_step,
+            start_slot: session.start_slot,
+            end_slot: session.end_slot,
+            symbol: session.symbol.clone(),
+            start_mark: session.start_mark,
+            start_oracle: session.start_oracle,
+            cap: session.cap,
+            max_drawdown: session.max_drawdown,
+            mandate: mandate.clone(),
+            venue: session.venue.clone(),
+            authority: session.authority.clone(),
+            vars: session.vars.clone(),
+            seed: session.seed,
+        });
         if let Some(strategy) = strategy.as_mut() {
-            match strategy.start(&session).await {
-                Outcome::Done(()) => {}
+            let failed = match strategy.start(&session).await {
+                Outcome::Done(()) => None,
                 Outcome::Failed(e) => {
                     tracing::warn!(error = %e, "the strategy's start failed; it plays on");
+                    Some(e)
                 }
                 Outcome::Trapped(e) => {
                     tracing::warn!(error = %e, "the strategy's start trapped; it plays no more of the session");
                     stopped = Some(format!("trapped in start: {e}"));
+                    Some(format!("trapped: {e}"))
                 }
+            };
+            if let (Some(observer), Some(observed)) = (&observer, &observed) {
+                let printed = strategy.last_call().0.to_vec();
+                tokio::task::block_in_place(|| {
+                    observer.started(observed, &printed, failed.as_deref())
+                });
             }
+        } else if let (Some(observer), Some(observed), Some(reason)) =
+            (&observer, &observed, &stopped)
+        {
+            tokio::task::block_in_place(|| observer.started(observed, &[], Some(reason)));
         }
         Ok(Self {
             strategy,
@@ -397,6 +562,7 @@ impl WasmBot {
             resting: (0.0, 0.0),
             last: None,
             stopped,
+            observer,
         })
     }
 
@@ -472,22 +638,49 @@ impl WasmBot {
         let Some(strategy) = self.strategy.as_mut() else {
             return false;
         };
-        let intents = match strategy.step(&market).await {
+        let outcome = strategy.step(&market).await;
+        let mut trace = self.observer.as_ref().map(|_| {
+            let (printed, fuel, rpc_calls) = strategy.last_call();
+            StepTrace {
+                steps: self.session.steps,
+                market: kit.clone(),
+                printed: printed.to_vec(),
+                failed: None,
+                intents: Vec::new(),
+                notes: Vec::new(),
+                sent: Vec::new(),
+                fuel,
+                rpc_calls,
+            }
+        });
+        let intents = match outcome {
             Outcome::Done(intents) => intents,
             Outcome::Failed(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy failed; no orders this step");
+                self.observe(trace.map(|t| StepTrace {
+                    failed: Some(e),
+                    ..t
+                }));
                 return true;
             }
             Outcome::Trapped(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy trapped; it plays no more of the session");
                 self.stopped = Some(format!("trapped at step {k}: {e}"));
+                self.observe(trace.map(|t| StepTrace {
+                    failed: Some(format!("trapped: {e}; it plays no more of the session")),
+                    ..t
+                }));
                 return false;
             }
         };
         let intents: Vec<mtx_kit::Intent> = intents.into_iter().map(kit_intent).collect();
         let (actions, notes) = mtx_kit::plan(&intents, &kit);
-        for note in notes {
+        for note in &notes {
             tracing::warn!(step = k, "{note}");
+        }
+        if let Some(trace) = trace.as_mut() {
+            trace.intents = intents.clone();
+            trace.notes = notes;
         }
         let mut sent = 0;
         for action in &actions {
@@ -502,6 +695,12 @@ impl WasmBot {
                 }
                 mtx_kit::Action::CancelAll => self.trader.cancel_all().map(|_| ()),
             };
+            if let Some(trace) = trace.as_mut() {
+                trace.sent.push((
+                    action.clone(),
+                    result.as_ref().map(|_| ()).map_err(|e| e.to_string()),
+                ));
+            }
             if let Err(error) = result {
                 tracing::warn!(step = k, ?action, %error, "order failed; the step's other orders aren't sent");
                 break;
@@ -514,7 +713,15 @@ impl WasmBot {
             self.resting.1,
             &actions[..(sent + 1).min(actions.len())],
         );
+        self.observe(trace);
         true
+    }
+
+    /// Hand a step's trace to the observer, if there is one.
+    fn observe(&self, trace: Option<StepTrace>) {
+        if let (Some(observer), Some(trace)) = (&self.observer, trace) {
+            tokio::task::block_in_place(|| observer.step(&trace));
+        }
     }
 
     /// The session is over: the strategy's `end`.
