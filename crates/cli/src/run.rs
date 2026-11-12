@@ -22,7 +22,7 @@ use mtx_grader::{
     scenario::Scenario,
     wasm::{StepObserver, StepTrace},
 };
-use mtx_kit::{Action, Intent, Session, Side};
+use mtx_kit::{Action, AmountUnit, Intent, LineOptions, SendState, Session, Side, TimeInForce};
 
 pub struct Run<'a> {
     pub dir: &'a Path,
@@ -91,7 +91,9 @@ pub async fn run(options: Run<'_>) -> Result<String> {
         detail_dir: None,
         annotations: None,
         components_only: false,
+        trusted: false,
         observer,
+        keys: &mtx_grader::keys::SessionKeys::random(),
     })
     .await?;
     let log = logs.join(format!("{}.log", scenario.name));
@@ -267,9 +269,10 @@ impl StepObserver for Debugger {
             out.push_str(&row("sheet", &paint(DIM, "empty: no orders")));
         } else {
             for (i, intent) in trace.intents.iter().enumerate() {
+                let options = trace.options.get(i).map(options_text).unwrap_or_default();
                 out.push_str(&row(
                     if i == 0 { "sheet" } else { "" },
-                    &intent_text(intent),
+                    &format!("{}{options}", intent_text(intent)),
                 ));
             }
         }
@@ -278,12 +281,27 @@ impl StepObserver for Debugger {
         }
         for (i, (action, result)) in trace.sent.iter().enumerate() {
             let line = match result {
-                Ok(()) => format!("{} {}", paint(ACCENT, "✓"), action_text(action)),
-                Err(e) => format!(
+                SendState::Landed(_) => format!("{} {}", paint(ACCENT, "✓"), action_text(action)),
+                SendState::Failed { reason: e, .. } => format!(
                     "{} {} {}",
                     paint(RED, "✗"),
                     action_text(action),
                     paint(DIM, e)
+                ),
+                SendState::NotSent(why) => format!(
+                    "{} {} {}",
+                    paint(DIM, "–"),
+                    action_text(action),
+                    paint(DIM, why)
+                ),
+                SendState::Delayed => {
+                    format!("… {} {}", action_text(action), paint(DIM, "delayed"))
+                }
+                SendState::Expired => format!(
+                    "{} {} {}",
+                    paint(RED, "✗"),
+                    action_text(action),
+                    paint(DIM, "expired")
                 ),
             };
             out.push_str(&row(if i == 0 { "sent" } else { "" }, &line));
@@ -401,7 +419,63 @@ fn intent_text(intent: &Intent) -> String {
             Side::Ask => format!("ask {} @ {}", units(*size), price(*p)),
         },
         Intent::CancelAll => "cancel_all".into(),
+        Intent::Cancel { client_id } => format!("cancel({client_id})"),
+        Intent::Respond { id, bid, ask, .. } => respond_text(id, *bid, *ask),
+        Intent::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        } => swap_text(*side, *amount, *unit, *limit),
+        // Liquidity and lending: as the sheet holds them.
+        other => format!("{other:?}"),
     }
+}
+
+fn respond_text(id: &str, bid: Option<f64>, ask: Option<f64>) -> String {
+    let side = |name: &str, p: Option<f64>| p.map(|p| format!(" {name} {}", price(p)));
+    format!(
+        "respond {id}:{}{}",
+        side("bid", bid).unwrap_or_default(),
+        side("ask", ask).unwrap_or_default()
+    )
+}
+
+fn swap_text(side: Side, amount: f64, unit: AmountUnit, limit: f64) -> String {
+    let unit = match unit {
+        AmountUnit::Base => "base",
+        AmountUnit::Quote => "quote",
+    };
+    match side {
+        Side::Bid => format!("swap buy, {} {unit} ≤ {}", units(amount), price(limit)),
+        Side::Ask => format!("swap sell, {} {unit} ≥ {}", units(amount), price(limit)),
+    }
+}
+
+/// A line's options, as calls on the sheet would write them.
+fn options_text(options: &LineOptions) -> String {
+    let mut text = String::new();
+    match options.time_in_force {
+        TimeInForce::Gtc => {}
+        TimeInForce::PostOnly => text.push_str(" .post_only()"),
+        TimeInForce::Ioc => text.push_str(" .ioc()"),
+    }
+    if options.reduce_only {
+        text.push_str(" .reduce_only()");
+    }
+    if let Some(share) = options.participation {
+        text.push_str(&format!(" .participation({share})"));
+    }
+    if let Some(venue) = &options.venue {
+        text.push_str(&format!(" .at({venue})"));
+    }
+    if let Some(id) = options.client_id {
+        text.push_str(&format!(" .client_id({id})"));
+    }
+    if options.tx.is_some() {
+        text.push_str(" .tx(…)");
+    }
+    text
 }
 
 fn action_text(action: &Action) -> String {
@@ -418,7 +492,24 @@ fn action_text(action: &Action) -> String {
             Side::Bid => format!("bid {} @ {}", units(*size), price(*p)),
             Side::Ask => format!("ask {} @ {}", units(*size), price(*p)),
         },
+        Action::PostOnly {
+            side,
+            price: p,
+            size,
+        } => match side {
+            Side::Bid => format!("post-only bid {} @ {}", units(*size), price(*p)),
+            Side::Ask => format!("post-only ask {} @ {}", units(*size), price(*p)),
+        },
         Action::CancelAll => "cancel all".into(),
+        Action::Cancel { client_id } => format!("cancel {client_id}"),
+        Action::Respond { id, bid, ask, .. } => respond_text(id, *bid, *ask),
+        Action::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        } => swap_text(*side, *amount, *unit, *limit),
+        other => format!("{other:?}"),
     }
 }
 

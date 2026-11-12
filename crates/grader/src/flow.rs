@@ -19,9 +19,11 @@ use tracing::{info, warn};
 use crate::{
     Result,
     error::io_error,
+    keys::SessionKeyring,
     making::{TAKER_ACCOUNTS, TakerOrder, TakerSide, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
+    session::INTERNAL_RPC_TIMEOUT,
     snapshot::OfflineWorld,
 };
 
@@ -66,12 +68,13 @@ impl Takers {
         half_spread_bps: f64,
         start_mark_ticks: u64,
         rpc_url: &str,
+        keys: &SessionKeyring<'_>,
     ) -> Result<Self> {
         let half_spread_ticks =
             (start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
         let widened_ticks =
             phoenix::widen_makers(&world.surfnet, phoenix, &scenario.symbol, half_spread_ticks)?;
-        let mut takers = Self::onboard(world, phoenix, scenario, rpc_url).await?;
+        let mut takers = Self::onboard(world, phoenix, scenario, rpc_url, keys).await?;
         takers.widened_ticks = widened_ticks;
         info!(
             takers = takers.traders.len(),
@@ -80,13 +83,15 @@ impl Takers {
         Ok(takers)
     }
 
-    /// Onboard the taker pool, leaving the makers as they are. Setup:
-    /// cheatcodes must still be unlocked. The takers trade through `rpc_url`.
+    /// Onboard the taker pool, leaving the makers as they are. Setup, on a
+    /// stepped surfnet: cheatcodes must still be unlocked. The takers trade
+    /// through `rpc_url`, the grader's own.
     pub async fn onboard(
         world: &OfflineWorld,
         phoenix: &Phoenix,
         scenario: &Scenario,
         rpc_url: &str,
+        keys: &SessionKeyring<'_>,
     ) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("mtx-takers-{}", uuid::Uuid::new_v4()));
         // Root's alone: bots run in the same container, and these keypairs
@@ -94,27 +99,35 @@ impl Takers {
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
             .create(&dir)
             .map_err(io_error(&dir))?;
-        let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS).map(|_| Keypair::new()).collect();
-        let onboarded = futures::future::join_all(keypairs.iter().map(|keypair| {
-            phoenix::onboard_trader(&world.surfnet, phoenix, keypair, TAKER_DEPOSIT_USDC)
-        }))
-        .await;
+        let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
+            .map(|i| keys.keypair("taker", i as u32))
+            .collect();
+        phoenix::onboard_traders_stepped(
+            &world.surfnet,
+            phoenix,
+            &mtx_kit::rpc_client_with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT),
+            &keypairs.iter().collect::<Vec<_>>(),
+            TAKER_DEPOSIT_USDC,
+        )
+        .await?;
         let mut traders = Vec::with_capacity(keypairs.len());
-        for (i, (keypair, onboarded)) in keypairs.iter().zip(onboarded).enumerate() {
-            onboarded?;
+        for (i, keypair) in keypairs.iter().enumerate() {
             let path = dir.join(format!("taker-{i}.json"));
             let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
             std::fs::write(&path, bytes).map_err(io_error(&path))?;
-            traders.push(Trader::connect(&BotEnv {
-                rpc_url: rpc_url.to_string(),
-                keypair_path: path,
-                exchange_path: world.exchange_path.clone(),
-                symbol: scenario.symbol.clone(),
-                end_slot: u64::MAX,
-                max_position: f64::MAX,
-                max_drawdown_usd: f64::MAX,
-                mandate_path: None,
-            })?);
+            traders.push(Trader::connect_with_timeout(
+                &BotEnv {
+                    rpc_url: rpc_url.to_string(),
+                    keypair_path: path,
+                    exchange_path: world.exchange_path.clone(),
+                    symbol: scenario.symbol.clone(),
+                    end_slot: u64::MAX,
+                    max_position: f64::MAX,
+                    max_drawdown_usd: f64::MAX,
+                    mandate_path: None,
+                },
+                INTERNAL_RPC_TIMEOUT,
+            )?);
         }
         Ok(Self {
             traders,
