@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use surfpool_sdk::{BlockProductionMode, CheatcodeFilter, SimnetCommand, Surfnet};
+use surfpool_sdk::{CheatcodeFilter, SimnetCommand, Surfnet};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::UnixStream,
@@ -65,9 +65,8 @@ use crate::{
     orders::Traded,
     scenario::Scenario,
     session::{
-        self, BOT_USERS, HELLO_WALL, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions,
-        SessionReport, StepRecord, TURN_BUDGET_PER_STEP, TURN_WALL, Timeline, TurnReport,
-        grader_f64,
+        self, BOT_USERS, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions, SessionReport,
+        StepRecord, TURN_BUDGET_PER_STEP, Timeline, TurnReport, grader_f64,
     },
     snapshot,
 };
@@ -775,7 +774,7 @@ pub(crate) async fn run_session(
         .snapshot_dir
         .canonicalize()
         .map_err(io_error(opts.snapshot_dir))?;
-    let (surfnet, _) = snapshot::start_snapshot(&snapshot_dir, snapshot::Access::Private).await?;
+    let (surfnet, _) = snapshot::start_snapshot_stepped(&snapshot_dir).await?;
     let internal = Guard::internal(surfnet.rpc_url()).await?;
     let rpc = mtx_kit::rpc_client(internal.url());
     let setup_from = rpc.get_slot()?;
@@ -795,16 +794,14 @@ pub(crate) async fn run_session(
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
-    surfnet.send_command(SimnetCommand::UpdateBlockProductionMode(
-        BlockProductionMode::Manual,
-    ))?;
-    let mut slot = session::manual_slot(&rpc).await?;
+    let mut slot = rpc.get_slot()?;
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
-        warn!(
-            slot,
-            first_slot, "setup ran past the session's first slot: this session won't replay"
-        );
+        return Err(Error::SetupSlots {
+            scenario: scenario.name.clone(),
+            used: slot - setup_from,
+            budget: scenario.setup_slots(),
+        });
     }
     while slot < first_slot {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
@@ -856,6 +853,7 @@ pub(crate) async fn run_session(
     let (reader, mut writer) = socket.into_split();
     let mut reader = BufReader::new(reader).lines();
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
+    let walls = session::Walls::new(opts.trusted, steps);
     info!(
         scenario = scenario.name,
         start_slot, end_slot, steps, "spot bot started"
@@ -867,7 +865,8 @@ pub(crate) async fn run_session(
         slots_per_step: SLOTS_PER_STEP,
         start_slot,
         end_slot,
-        turn_wall_ms: TURN_WALL.as_millis() as u64,
+        turn_wall_ms: walls.announced().as_millis() as u64,
+        seed: Some(turns::scenario_seed(&scenario.name)),
     };
     let mut turns = TurnReport {
         steps,
@@ -875,14 +874,13 @@ pub(crate) async fn run_session(
     };
     let legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
         && matches!(
-            tokio::time::timeout(HELLO_WALL, session::next_message(&mut reader)).await,
+            tokio::time::timeout(walls.hello(), session::next_message(&mut reader)).await,
             Ok(Some(Message::Ready))
         ));
     if legacy {
         info!("the bot didn't answer the hello: the world moves at the slot time");
     }
     turns.legacy = legacy;
-    let budget = TURN_BUDGET_PER_STEP * steps as u32;
     let mut spent = Duration::ZERO;
 
     // Every spot market bounds the same SOL, held from the start.
@@ -999,7 +997,7 @@ pub(crate) async fn run_session(
                 step.unix_timestamp = clock;
             }
         }
-        let wall = TURN_WALL.min(budget.saturating_sub(spent));
+        let wall = walls.turn(spent);
         let answered = session::take_turn(&mut writer, &mut reader, step, wall).await;
         let took = started.elapsed();
         spent += took;

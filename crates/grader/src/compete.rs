@@ -65,8 +65,8 @@ impl Drop for Competitor {
 }
 
 impl Competitor {
-    /// Onboard the maker. Setup: cheatcodes must still be unlocked. It
-    /// trades through `rpc_url`.
+    /// Onboard the maker. Setup, on a stepped surfnet: cheatcodes must still
+    /// be unlocked. It trades through `rpc_url`, the grader's own.
     pub async fn prepare(
         world: &OfflineWorld,
         phoenix: &Phoenix,
@@ -80,7 +80,14 @@ impl Competitor {
             .create(&dir)
             .map_err(io_error(&dir))?;
         let keypair = Keypair::new();
-        phoenix::onboard_trader(&world.surfnet, phoenix, &keypair, DEPOSIT_USDC).await?;
+        phoenix::onboard_traders_stepped(
+            &world.surfnet,
+            phoenix,
+            &mtx_kit::rpc_client(rpc_url),
+            &[&keypair],
+            DEPOSIT_USDC,
+        )
+        .await?;
         let path = dir.join("competitor.json");
         let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
         std::fs::write(&path, bytes).map_err(io_error(&path))?;
