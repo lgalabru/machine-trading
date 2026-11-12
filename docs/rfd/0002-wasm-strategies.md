@@ -385,3 +385,12 @@ defend, no bot users, no keypair files.
   scenario's faults is `delayed`, not failed, and stays ahead of every new
   send's simulation until it lands or its blockhash expires (two at most).
   A step may have 16 raw sends simulated.
+- 2026-11-13: raw sends, after a second review. The audit reads only the
+  writable accounts that can matter to it (token accounts, the main trader
+  account, accounts a send creates), each first read as far as its owner
+  and first eight bytes, so marking big accounts writable costs a
+  simulation and no copies; another trader account is refused before
+  anything runs. A copy of a send the step already took is refused. A
+  scenario may allow only the programs the audit measures (Phoenix,
+  system, token, associated token, compute budget) until a venue adds
+  its own.

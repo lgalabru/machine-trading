@@ -233,7 +233,11 @@ writes a Phoenix trader account other than the bot's main one (a
 subaccount it registers or funds, or another trader's), or would leave the
 account breaking its mandate: over its position cap, holding another
 market, or past its drawdown limit. A step may have 16 raw sends
-simulated; the rest are refused. A refused send queues nothing. A taken one goes out after the sheet, in the order taken, once it
+simulated; the rest are refused, and so is a copy of a send the step
+already took (it would be the same transaction). A task may allow only the
+programs whose effects the grader measures: Phoenix, the system, token,
+associated token and compute budget programs. A refused send queues
+nothing. A taken one goes out after the sheet, in the order taken, once it
 has been checked again against the chain the sheet left; the next step's
 `sends` say what became of it (`SendSource::Raw(id)`, with its signature,
 slot and fee, or `Delayed` where the task's faults held it: it may still
