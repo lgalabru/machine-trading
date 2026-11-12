@@ -29,7 +29,7 @@ pub use market::{DEFAULT_QUOTE_LOT_DECIMALS, PhoenixMarket};
 pub use meter::PhoenixEternalMeter;
 /// Phoenix's SDK, re-exported so dependents do not have to pin it.
 pub use phoenix_rise;
-pub use trader::{PhoenixOrder, PhoenixTrader};
+pub use trader::{PhoenixOrder, PhoenixOrderOptions, PhoenixTrader};
 
 pub use super::VENUE;
 
