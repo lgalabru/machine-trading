@@ -108,14 +108,16 @@ pub fn describe(difference: &Difference) -> String {
 
 /// Every trial under `root` scored again: per trial, its reward and skill
 /// as reported and as scored now, and the first field that differs. A trial
-/// with no report (it never graded) is listed as skipped.
+/// with no report (it never graded) is listed as skipped, and one whose
+/// files don't read back (a release from before reports had their present
+/// shape) as failed, with why.
 pub fn rescore_trials(root: &Root) -> Result<Value> {
     let trials = crate::review::discover(&root.path);
     if trials.is_empty() {
         bail!("no Harbor trials under {}", root.path.display());
     }
     let mut rows = Vec::new();
-    let (mut same, mut changed, mut skipped) = (0, 0, 0);
+    let (mut same, mut changed, mut skipped, mut failed) = (0, 0, 0, 0);
     for trial in &trials {
         let name = trial
             .strip_prefix(&root.path)
@@ -130,12 +132,18 @@ pub fn rescore_trials(root: &Root) -> Result<Value> {
         }
         // A published trial is <release>/<job>/<trial>.
         let release: Option<PathBuf> = trial.parent().and_then(Path::parent).map(Path::to_path_buf);
-        let rescored = rescore(
+        let rescored = match rescore(
             &report,
             &trial.join("verifier/sessions"),
             release.as_deref(),
-        )
-        .with_context(|| name.clone())?;
+        ) {
+            Ok(rescored) => rescored,
+            Err(error) => {
+                failed += 1;
+                rows.push(json!({ "trial": name, "failed": format!("{error:#}") }));
+                continue;
+            }
+        };
         let original = crate::review::read_json(&report).unwrap_or(Value::Null);
         if rescored.differences.is_empty() {
             same += 1;
@@ -157,6 +165,24 @@ pub fn rescore_trials(root: &Root) -> Result<Value> {
         "same": same,
         "changed": changed,
         "skipped": skipped,
+        "failed": failed,
         "rescored": rows,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    /// A rescore compares the floats it reads back with the ones in the
+    /// report, so a float must parse to the value it was written from,
+    /// bit for bit, even where its shortest form has 17 digits.
+    #[test]
+    fn floats_read_back_to_the_bit() {
+        for x in [141.89000000000001_f64, 10095.836356485199, 0.1 + 0.2] {
+            let text = serde_json::to_string(&x).unwrap();
+            let back: f64 = serde_json::from_str(&text).unwrap();
+            assert_eq!(back.to_bits(), x.to_bits(), "{text}");
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value.as_f64().unwrap().to_bits(), x.to_bits(), "{text}");
+        }
+    }
 }
