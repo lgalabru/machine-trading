@@ -27,7 +27,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    calibration::{Band, Calibration, DiffSpread, LogSpread, Realism, Spread, WindowStats},
+    calibration::{
+        Band, Calibration, DiffSpread, LogSpread, LongClustering, Realism, Spread, WindowStats,
+    },
     model::{EventKind, MarketModel, ModelPath, ModelSpec, Start},
 };
 use crate::{
@@ -214,8 +216,26 @@ pub fn windows(
     realism: &Realism,
     slot_seconds: f64,
 ) -> (Vec<Vec<f64>>, usize) {
-    let bar = ((realism.bar_seconds / slot_seconds).round() as usize).max(1);
-    let span = realism.window_bars * bar;
+    cut(
+        sessions,
+        realism.bar_seconds,
+        realism.window_bars,
+        realism.price_tick_rel,
+        slot_seconds,
+    )
+}
+
+/// Windows of `window_bars` returns over `bar_seconds` bars, prices
+/// rounded to `tick` (relative), dropping windows that hold a masked slot.
+fn cut(
+    sessions: &[SessionPath],
+    bar_seconds: f64,
+    window_bars: usize,
+    tick_rel: Option<f64>,
+    slot_seconds: f64,
+) -> (Vec<Vec<f64>>, usize) {
+    let bar = ((bar_seconds / slot_seconds).round() as usize).max(1);
+    let span = window_bars * bar;
     let mut out = Vec::new();
     let mut masked = 0;
     for session in sessions {
@@ -230,13 +250,8 @@ pub fn windows(
             {
                 masked += 1;
             } else {
-                let prices: Vec<f64> = (0..=realism.window_bars)
-                    .map(|i| {
-                        tick(
-                            session.log_levels[from + i * bar].exp(),
-                            realism.price_tick_rel,
-                        )
-                    })
+                let prices: Vec<f64> = (0..=window_bars)
+                    .map(|i| tick(session.log_levels[from + i * bar].exp(), tick_rel))
                     .collect();
                 out.push(prices.windows(2).map(|p| (p[1] / p[0]).ln()).collect());
             }
@@ -270,34 +285,7 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
         lag1.push(acf(&ra, 1));
         pooled.extend(ra);
     }
-    let scaled: Vec<Vec<f64>> = windows
-        .iter()
-        .filter_map(|r| {
-            let rb = aggregate(r, cluster);
-            let rms = (mean(&rb.iter().map(|v| v * v).collect::<Vec<_>>())).sqrt();
-            (rms > 0.0).then(|| rb.iter().map(|v| v.abs() / rms).collect())
-        })
-        .collect();
-    let flat: Vec<f64> = scaled.iter().flatten().copied().collect();
-    let m = mean(&flat);
-    let c0 = mean(&flat.iter().map(|v| (v - m).powi(2)).collect::<Vec<_>>());
-    let clustering = realism
-        .cluster_lags
-        .iter()
-        .map(|&lag| {
-            let num: Vec<f64> = scaled
-                .iter()
-                .flat_map(|x| {
-                    (0..x.len().saturating_sub(lag)).map(move |i| (x[i] - m) * (x[i + lag] - m))
-                })
-                .collect();
-            if num.is_empty() || c0 == 0.0 {
-                0.0
-            } else {
-                mean(&num) / c0
-            }
-        })
-        .collect();
+    let clustering = abs_acf(windows, cluster, &realism.cluster_lags);
     WindowStats {
         vol_level: median(&sd),
         vol_of_vol: {
@@ -316,6 +304,86 @@ pub fn window_stats(windows: &[Vec<f64>], realism: &Realism) -> WindowStats {
             quantile(&abs, 0.99) / quantile(&abs, 0.9)
         },
     }
+}
+
+/// The ACF of |r| over `bars`-bar returns at `lags`, each window scaled to
+/// unit RMS (so volatility differing between windows doesn't count) and
+/// lag pairs taken within a window.
+fn abs_acf(windows: &[Vec<f64>], bars: usize, lags: &[usize]) -> Vec<f64> {
+    let scaled: Vec<Vec<f64>> = windows
+        .iter()
+        .filter_map(|r| {
+            let rb = aggregate(r, bars);
+            let rms = (mean(&rb.iter().map(|v| v * v).collect::<Vec<_>>())).sqrt();
+            (rms > 0.0).then(|| rb.iter().map(|v| v.abs() / rms).collect())
+        })
+        .collect();
+    let flat: Vec<f64> = scaled.iter().flatten().copied().collect();
+    let m = mean(&flat);
+    let c0 = mean(&flat.iter().map(|v| (v - m).powi(2)).collect::<Vec<_>>());
+    lags.iter()
+        .map(|&lag| {
+            let num: Vec<f64> = scaled
+                .iter()
+                .flat_map(|x| {
+                    (0..x.len().saturating_sub(lag)).map(move |i| (x[i] - m) * (x[i + lag] - m))
+                })
+                .collect();
+            if num.is_empty() || c0 == 0.0 {
+                0.0
+            } else {
+                mean(&num) / c0
+            }
+        })
+        .collect()
+}
+
+/// Volatility clustering within longer windows (see
+/// [`LongClustering`]): each lag gated like the other clustering checks,
+/// its band from the real and the generated windows' sampling spread.
+fn long_checks(long: &LongClustering, windows: &[Vec<f64>], sigmas: f64) -> Vec<Check> {
+    let n = windows.len();
+    let own: Vec<f64> = {
+        let mut rng = SplitMix64(0x6c6f_6e67_0000_0000 ^ n as u64);
+        let draws: Vec<Vec<f64>> = (0..SPREAD_DRAWS)
+            .map(|_| {
+                let sample: Vec<Vec<f64>> = (0..n)
+                    .map(|_| windows[(rng.next_u64() % n as u64) as usize].clone())
+                    .collect();
+                abs_acf(&sample, 1, &long.cluster_lags)
+            })
+            .collect();
+        (0..long.cluster_lags.len())
+            .map(|i| moments(&draws.iter().map(|d| d[i]).collect::<Vec<_>>()).sd)
+            .collect()
+    };
+    let generated = abs_acf(windows, 1, &long.cluster_lags);
+    let real_scale = (long.spread_windows as f64 / long.windows.max(1) as f64).sqrt();
+    let at_n = (long.spread_windows as f64 / n.max(1) as f64).sqrt();
+    long.cluster_lags
+        .iter()
+        .enumerate()
+        .map(|(i, lag)| {
+            let name = format!("long_clustering_lag_{lag}");
+            if long.info_lags.contains(lag) {
+                return info(&name, long.reference[i], generated[i]);
+            }
+            let sd = long.spread_sd[i];
+            let d = sigmas * (sd * real_scale).hypot(own[i].max(sd * at_n));
+            let held = ((long.null[i] - long.reference[i]).abs() <= d).then_some(long.null[i]);
+            let band = Band {
+                ratio: None,
+                diff: Some(d),
+            };
+            gate(
+                &name,
+                long.reference[i],
+                generated[i],
+                band,
+                held,
+            )
+        })
+        .collect()
 }
 
 /// Bootstrap draws of the generated windows behind each band.
@@ -661,13 +729,17 @@ pub fn check_scenarios(calibration: &Calibration, target: &str, scenarios: &[Sce
             books.iter().copied().fold(0.0, f64::max)
         )
     };
-    report(
+let mut report = report(
         calibration,
         target,
         &sessions,
         SLOT_SECONDS,
         Some((trips, book)),
-    )
+    );
+    if let Some(realism) = &calibration.realism {
+        add_long(&mut report, realism, &sessions);
+    }
+    report
 }
 
 /// Draw `count` sessions from the calibration's own model and check them:
@@ -721,6 +793,20 @@ pub fn check_model(
         SLOT_SECONDS,
         Some((trips, book)),
     );
+    if let Some(long) = &realism.long {
+        // Sessions as long as the long windows, drawn the same way.
+        let duration = (long.bar_seconds * long.window_bars as f64 / SLOT_SECONDS).round() as u64;
+        let long_sessions: Vec<SessionPath> = (0..count)
+            .map(|i| {
+                let draw = seed
+                    .wrapping_add(0x6c6f_6e67)
+                    .wrapping_mul(1_000_003)
+                    .wrapping_add(i as u64);
+                SessionPath::from_model(&model.draw(draw, duration))
+            })
+            .collect();
+        add_long(&mut report, realism, &long_sessions);
+    }
     if let Some(gap) = calibration.calendar.gaps.first() {
         let opens = MarketModel::new(
             calibration.clone(),
@@ -755,6 +841,36 @@ pub fn check_model(
         report.decide();
     }
     Ok(report)
+}
+
+/// Add the long-window clustering checks (if the calibration has them) on
+/// `sessions`, skipped when they hold too few long windows.
+fn add_long(report: &mut Report, realism: &Realism, sessions: &[SessionPath]) {
+    let Some(long) = &realism.long else {
+        return;
+    };
+    let (windows, _) = cut(
+        sessions,
+        long.bar_seconds,
+        long.window_bars,
+        realism.price_tick_rel,
+        SLOT_SECONDS,
+    );
+    if windows.len() < MIN_WINDOWS {
+        report.checks.push(Check::skipped(
+            "long_clustering",
+            format!(
+                "{} windows of {} s, fewer than {MIN_WINDOWS}: sessions shorter than the long reference window, or too few",
+                windows.len(),
+                long.bar_seconds * long.window_bars as f64
+            ),
+        ));
+    } else {
+        report
+            .checks
+            .extend(long_checks(long, &windows, realism.spread.sigmas));
+    }
+    report.decide();
 }
 
 /// Sizes the probe trades without a scenario's flow: the median and the
@@ -1024,19 +1140,35 @@ mod tests {
         }
     }
 
-    /// The calibrated model's false-fail rate and the no-regimes market's
-    /// catch rate, on fresh seeds: 60 at 300 sessions and 60 at 1000, for
-    /// each file. The bar is at most 2% false fails and at least 95%
-    /// catches. In release: `cargo test --release -p mtx-grader --lib
-    /// false_fail_rates -- --ignored --nocapture`.
+    /// The calibrated model's false-fail rate, and the no-regimes and
+    /// no-GARCH markets' catch rates, on fresh seeds at 300 and at 1000
+    /// sessions, for each file. The bar is at most 2% false fails and at
+    /// least 95% catches. In release: `FFR_SEEDS=60 FFR_OFFSET=0 cargo test
+    /// --release -p mtx-grader --lib false_fail_rates -- --ignored
+    /// --nocapture`.
     #[test]
     #[ignore]
     fn false_fail_rates() {
-        let no_regimes = |c: &mut Calibration| {
-            let r = &mut c.fair_value.regimes;
-            r.log_sd_within.iter_mut().for_each(|s| *s = 0.0);
-            r.vol_mult.iter_mut().for_each(|m| *m = 1.0);
+        type Wrong = fn(&mut Calibration);
+        let wrongs: [(&str, Wrong); 2] = [
+            ("no regimes", |c| {
+                let r = &mut c.fair_value.regimes;
+                r.log_sd_within.iter_mut().for_each(|s| *s = 0.0);
+                r.vol_mult.iter_mut().for_each(|m| *m = 1.0);
+            }),
+            ("no GARCH", |c| {
+                c.fair_value.clustering.alpha = 0.0;
+                c.fair_value.clustering.beta = 0.0;
+            }),
+        ];
+        // Seeds per row, and where they start: FFR_SEEDS, FFR_OFFSET.
+        let env = |name: &str, default: u64| {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
         };
+        let (seeds, offset) = (env("FFR_SEEDS", 60), env("FFR_OFFSET", 0));
         let run = |cal: &Calibration, count: usize, seeds: std::ops::Range<u64>| {
             let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
             let seeds: Vec<u64> = seeds.collect();
@@ -1089,9 +1221,33 @@ mod tests {
                     .collect();
                 format!("{name} {:.2}", median(&ratios))
             };
-            let centres = ["vol_level", "vol_of_vol", "tail_ratio", "predictability"]
+            // And for the ACFs, the median of generated - real.
+            let offset = |name: &str| {
+                let diffs: Vec<f64> = reports
+                    .iter()
+                    .filter_map(|r| r.checks.iter().find(|c| c.name == name))
+                    .filter_map(|c| Some(c.generated? - c.real?))
+                    .collect();
+                (!diffs.is_empty()).then(|| format!("{name} {:+.4}", median(&diffs)))
+            };
+            let mut centres = ["vol_level", "vol_of_vol", "tail_ratio", "predictability"]
                 .map(centre)
                 .join(", ");
+            for name in [
+                "kurtosis_within",
+                "clustering_lag_1",
+                "clustering_lag_2",
+                "clustering_lag_3",
+                "clustering_lag_5",
+                "clustering_lag_10",
+                "long_clustering_lag_1",
+                "long_clustering_lag_5",
+                "long_clustering_lag_15",
+            ] {
+                if let Some(o) = offset(name) {
+                    centres = format!("{centres}, {o}");
+                }
+            }
             (
                 count_of(Verdict::Pass),
                 count_of(Verdict::Fail),
@@ -1105,25 +1261,34 @@ mod tests {
         println!("|---|---|---|---|---|---|---|---|");
         let mut false_fails = Vec::new();
         for cal in [sol(), spcx()] {
-            let mut wrong = cal.clone();
-            no_regimes(&mut wrong);
-            for (count, seeds) in [(300, 1000..1060), (1000, 2000..2060)] {
-                let (pass, fail, unjudged, names) = run(&cal, count, seeds.clone());
+            for (count, base) in [(300, 1000), (1000, 2000)] {
+                let range = base * 1000 + offset..base * 1000 + offset + seeds;
+                let (pass, fail, unjudged, names) = run(&cal, count, range.clone());
                 println!(
-                    "| calibrated | {} | {count} | 60 | {pass} | {fail} | {unjudged} | {names} |",
+                    "| calibrated | {} | {count} | {seeds} | {pass} | {fail} | {unjudged} | {names} |",
                     cal.meta.asset
                 );
                 false_fails.push((cal.meta.asset.clone(), count, fail));
-                let (pass, fail, unjudged, names) = run(&wrong, count, seeds);
-                println!(
-                    "| no regimes | {} | {count} | 60 | {pass} | {fail} | {unjudged} | {names} |",
-                    cal.meta.asset
-                );
-                assert!(fail >= 57, "no regimes caught {fail}/60");
+                for (name, wrong) in wrongs {
+                    let mut c = cal.clone();
+                    wrong(&mut c);
+                    let (pass, fail, unjudged, names) = run(&c, count, range.clone());
+                    println!(
+                        "| {name} | {} | {count} | {seeds} | {pass} | {fail} | {unjudged} | {names} |",
+                        cal.meta.asset
+                    );
+                    assert!(
+                        fail as f64 >= 0.95 * seeds as f64,
+                        "{name} caught {fail}/{seeds}"
+                    );
+                }
             }
         }
         for (asset, count, fail) in false_fails {
-            assert!(fail <= 1, "{asset} at {count}: {fail}/60 false fails");
+            assert!(
+                fail as f64 <= 0.02 * seeds as f64,
+                "{asset} at {count}: {fail}/{seeds} false fails"
+            );
         }
     }
 
@@ -1134,7 +1299,7 @@ mod tests {
     #[ignore]
     fn adversarial_table() {
         type Wrong = fn(&mut Calibration, &mut ModelSpec);
-        let cases: [(&str, Wrong); 10] = [
+        let cases: [(&str, Wrong); 11] = [
             ("calibrated", |_, _| {}),
             ("gaussian, constant vol", |c, _| {
                 let fv = &mut c.fair_value;
@@ -1153,6 +1318,10 @@ mod tests {
                 let r = &mut c.fair_value.regimes;
                 r.log_sd_within.iter_mut().for_each(|s| *s = 0.0);
                 r.vol_mult.iter_mut().for_each(|m| *m = 1.0);
+            }),
+            ("no GARCH", |c, _| {
+                c.fair_value.clustering.alpha = 0.0;
+                c.fair_value.clustering.beta = 0.0;
             }),
             ("thin tails (df 1e6)", |c, _| c.fair_value.tails.df = 1e6),
             ("tails too heavy (df 2.5)", |c, _| {

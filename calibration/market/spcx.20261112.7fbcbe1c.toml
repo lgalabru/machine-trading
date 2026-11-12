@@ -1,23 +1,23 @@
-# Market calibration spcx.20261112.35b73974 (schema 1.0). Written by infra-calib/calib/export_v1.py
+# Market calibration spcx.20261112.7fbcbe1c (schema 1.0). Written by infra-calib/calib/export_v1.py
 # from spcx.20261111.ebab5e7c; never edited by hand. A refit is a new file with a new id.
-# Every input (url, sha256, bytes, fetch time) is in spcx.20261112.35b73974.inputs.json.
+# Every input (url, sha256, bytes, fetch time) is in spcx.20261112.7fbcbe1c.inputs.json.
 
 
 [meta]
 schema_version = "1.0"
-calibration_id = "spcx.20261112.35b73974"
+calibration_id = "spcx.20261112.7fbcbe1c"
 asset = "spcx"
 symbol = "SPCX"
-fitted_at = "2026-11-12T12:22:45+00:00"
-exported_at = "2026-11-12T12:22:45+00:00"
+fitted_at = "2026-11-12T15:48:28+00:00"
+exported_at = "2026-11-12T15:48:28+00:00"
 fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
-fitter_code_sha256_12 = "59cb2d552696"
+fitter_code_sha256_12 = "5d9f8b9199b4"
 derived_from = "spcx.20261111.ebab5e7c"
-inputs_file = "spcx.20261112.35b73974.inputs.json"
+inputs_file = "spcx.20261112.7fbcbe1c.inputs.json"
 inputs_digest = "38bd97b308ebbffd"
 inputs_count = 272
 sources = ["Phoenix perp API /exchange and /candles (SPCX mark, 1 m, since the IPO week)", "Solana RPC getRecentPrioritizationFees and getSignaturesForAddress", "Jito tip floor", "NYSE holiday calendar"]
-limits = ["Fair value is Phoenix's SPCX mark (the oracle plus the perp's premium), 2026-06-15 to 2026-11-11, not the underlying's tape.", "Only regular hours vs everything else is fitted: pre, post, overnight and weekend share the closed-hours volatility.", "The realism reference is in-sample: its windows come from the same regular-hours history the model is fitted on, and the base level is fitted to them.", "Venue numbers (trades, sizes, premium) come from 30 days (2026-10-12 to 2026-11-11).", "Book depth and impact are defaults: no SPCX book or fill tape has been recorded.", "Realism bands are each statistic's sampling spread over these windows; other periods would add period-to-period spread."]
+limits = ["Fair value is Phoenix's SPCX mark (the oracle plus the perp's premium), 2026-06-15 to 2026-11-11, not the underlying's tape.", "Only regular hours vs everything else is fitted: pre, post, overnight and weekend share the closed-hours volatility.", "Fitted to the realism windows themselves (in-sample checks): per_second_sd (vol_level), df (kurtosis_within), the level's log-sd (vol_of_vol), GARCH alpha and persistence (clustering_lag_1 and _5) and the mark's half-life (predictability); the gap sizes are the fitted open gaps (gap_size). The realism windows are the history the model is fitted on.", "Out of fit: tail_ratio, clustering_lag_10 and round_trips.", "Venue numbers (trades, sizes, premium) come from 30 days (2026-10-12 to 2026-11-11).", "Book depth and impact are defaults: no SPCX book or fill tape has been recorded.", "Realism bands are each statistic's sampling spread over these windows; other periods would add period-to-period spread."]
 
 [meta.windows]
 phoenix_fair_value = ["2026-06-15", "2026-11-11"]
@@ -177,6 +177,8 @@ cluster_bars = 1
 cluster_lags = [1, 5, 10]
 session_kind = "regular"
 round_trip_min_losing_share = 0.95
+fitted = ["vol_level", "vol_of_vol", "kurtosis_within", "predictability", "clustering_lag_1", "clustering_lag_5", "gap_size_median", "gap_size_p90"]
+out_of_fit = ["tail_ratio", "clustering_lag_10", "round_trips"]
 
 [realism.reference]
 vol_level = 0.00107732
@@ -191,7 +193,8 @@ tail_ratio = 1.73
 [realism.spread]
 windows = 300
 draws = 400
-sigmas = 3.0
+sigmas = 3.226
+sigmas_source = "Sidak: each of the 8 gated return checks at 1% family-wise false fails"
 
 [realism.spread.log_sd]
 vol_level = 0.04945
