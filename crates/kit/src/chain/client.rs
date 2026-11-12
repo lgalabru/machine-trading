@@ -241,6 +241,20 @@ impl RpcChainClient {
         }
     }
 
+    /// Connects to `url`, waiting up to `timeout` for each request (the
+    /// default is 30 s).
+    pub fn with_timeout(url: impl Into<String>, timeout: std::time::Duration) -> Self {
+        let url = url.into();
+        Self {
+            rpc: RpcClient::new_with_timeout_and_commitment(
+                url.clone(),
+                timeout,
+                CommitmentConfig::confirmed(),
+            ),
+            url,
+        }
+    }
+
     /// The endpoint URL.
     pub fn url(&self) -> &str {
         &self.url

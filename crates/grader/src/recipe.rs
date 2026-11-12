@@ -417,9 +417,9 @@ async fn phoenix_eternal(
 
 /// Trade SOL/USDC on both spot venues with a throwaway trader. Returns the
 /// Pyth SOL/USD price.
-async fn spot_exercise(surfnet: &Surfnet, _rpc: &RpcClient) -> Result<f64> {
+async fn spot_exercise(surfnet: &Surfnet, rpc: &RpcClient) -> Result<f64> {
     let warmup = Keypair::new();
-    crate::spot::fund(surfnet, &warmup, 10.0, 2_000.0, false)?;
+    crate::spot::fund(surfnet, rpc, &warmup, 10.0, 2_000.0, false)?;
     let price = crate::spot::exercise(surfnet.rpc_url(), &warmup).await?;
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(price)

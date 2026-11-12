@@ -17,6 +17,13 @@ pub fn rpc_client(url: impl Into<String>) -> RpcClient {
     RpcClient::new_with_commitment(url.into(), CommitmentConfig::confirmed())
 }
 
+/// [`rpc_client`] whose requests may take up to `timeout` (the default is
+/// 30 s): for a caller that would rather wait out a starved server than
+/// treat a slow answer as a failure.
+pub fn rpc_client_with_timeout(url: impl Into<String>, timeout: std::time::Duration) -> RpcClient {
+    RpcClient::new_with_timeout_and_commitment(url.into(), timeout, CommitmentConfig::confirmed())
+}
+
 /// Sign, simulate, send and confirm `instructions` with a raised compute
 /// limit, on the blocking RPC client.
 ///
