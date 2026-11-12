@@ -94,40 +94,46 @@ rewrite:
 {"seq": 10, "type": "event", "event": "stopped", "body": {...}}
 ```
 
-Requests (page → server):
+Requests (page → server). A failed request answers `success: false`, a
+`message`, and a `body` the page can act on:
 
-| Command | Arguments | Does |
+| Command | Arguments | Answers |
 | --- | --- | --- |
-| `initialize` | | Answers the workspace: its files, scenarios, tasks, the agent pick |
-| `file/read` | `path` | The file's text |
-| `file/write` | `path`, `text` | Saves it |
-| `scenario/read` | `name` | The scenario, and its planned path as the chart draws it |
-| `build` | | `just build`; streams `output` (category `build`) and ends with `built` |
-| `launch` | `scenario`, `stopOnEntry`, `breakpoints` | Builds if stale, starts a session |
-| `continue` / `pause` | | Runs, or stops at the next step |
-| `next` | | One step, then stops |
-| `setBreakpoints` | `steps: [k]`, `onOrders`, `onFill`, `onTrap` | Where a running session stops |
-| `setSpeed` | `msPerStep` (0: as fast as it goes) | Pace while running |
+| `initialize` | | `workspace`, `task`, `files`, `scenarios`, `agent`, and `session`: `{state: idle\|running\|stopped\|terminated, k, scenario, breakpoints}` |
+| `file/read` | `path` | `text`, `version` (its content's hash) |
+| `file/write` | `path`, `text`, `baseVersion` | `version`; or `conflict` with the current `text` and `version` when `baseVersion` is stale; a scenario that doesn't parse fails with `diagnostics` |
+| `scenario/read` | `name` | `scenario`, `steps`, `slots_per_step`, `start_mark_usd` (`start_mark_estimated` until a session has played), `plan: [{k, mark_usd, level_pct}]`, `takers: [{k, side, size}]` |
+| `build` | | `ok`, `diagnostics`; streams `output` (category `build`) and sends `built` |
+| `launch` | `scenario`, `stopOnEntry`, `breakpoints`, `msPerStep` | Builds if the strategy changed, starts a session |
+| `continue` / `pause` / `next` | | The session's status |
+| `setBreakpoints` | `steps: [k]` (counting from 1), `onOrders`, `onFill`, `onTrap` | |
+| `setSpeed` | `msPerStep` (0: as fast as it goes) | |
 | `restart` / `terminate` | | |
-| `agents/list` | `refresh` | The agents discovery found |
-| `agents/select` | `agent`, `model` | Picks one; saved in the workspace |
-| `composer/send` | `text`, `context` | A prompt to the agent |
-| `composer/cancel` | | Stops the agent's turn |
+| `session/history` | | `events`: the session's `started`, `step`, `stopped`, `terminated` so far |
+| `agents/list` | | `selected: {agent, model}`, `agents: [{id, name, available, reason, models: [{id, name}]}]` |
+| `agents/select` | `agent`, `model` | Saved in the workspace |
+| `composer/send` | `text`, `context` | When the turn ends |
+| `composer/cancel` | | |
+| `composer/history` | | `messages`: each message and tool call as last sent |
 
 Events (server → page):
 
 | Event | Body |
 | --- | --- |
 | `output` | `category` (`build`, `strategy`, `grader`, `agent`), `text` |
-| `built` | `ok`, `diagnostics: [{file, line, column, severity, message}]` |
-| `started` | the `Session` the strategy got, and the scenario's step count |
-| `step` | one step's trace: `mtx_grader::wasm::StepTrace` as JSON (market, printed, sheet, cuts, sent, fuel, rpc) |
+| `built` | `ok`, `diagnostics: [{file, line, column, endLine, endColumn, severity, message}]` |
+| `started` | `session` (the `Session` the strategy got), `printed`, `failed` |
+| `step` | `k`, `steps`, `market`, `printed`, `failed`, `intents`, `notes`, `sent: [{action, ok, error}]`, `fuel`, `rpc_calls`, and `account: {value_usd, pnl_usd, drawdown_usd, position, position_change, level_usd}` as the session measured it at the step, before the strategy's turn: `position_change` is what filled during the step before |
 | `stopped` | `reason` (`entry`, `step`, `breakpoint`, `pause`, `trap`), `k` |
 | `continued` | |
-| `terminated` | the session's report: PnL, bound, reference, why it stopped |
-| `file/changed` | `path`, `text`, `by` (`agent` or `disk`) |
-| `composer/message` | `role`, `text` chunk, `done` |
-| `composer/tool` | the agent's tool call: `title`, `status`, `path` if it touched a file |
+| `terminated` | `scenario`, `pnl_usd`, `bound_pnl_usd`, `reference_pnl_usd`, `disqualified`, `stopped`, `not_graded`; or `error` |
+| `file/changed` | `path`, `version`, `text`, `by` (`agent` or `disk`) |
+| `composer/message` | `id`, `role` (`user`, `agent`, `thought`), `text` (a chunk, appended to the message with that `id`), `done` |
+| `composer/tool` | `id`, `title`, `status`: the whole call each time, to replace the line with that `id` |
+
+The page's own files (a bundled CodeMirror) live in `crates/cli/src/studio/`
+and are served at `/studio/<name>`. The agent's permission requests are
+granted (v1); every tool call shows in the composer.
 
 ### Pieces that exist
 
@@ -181,3 +187,13 @@ Events (server → page):
   - `/dev` serves a test page with a button per request; until the
     studio's page lands, `/` serves it too. `MTX_STUDIO_PAGE=<file>` serves
     a page from disk, read on each load.
+- 2026-11-12: fable's changes for the page, in the server. A step carries
+  the session's own account, measured before the strategy's turn, so the
+  chart and `terminated` agree; fills are the position's change since the
+  step before, not each fill with its price, which would need Phoenix's
+  fill events parsed (later, if the chart needs them). Files carry versions
+  and a stale write is a conflict. A scenario saved through `file/write` is
+  checked; the plan comes in steps, from the snapshot's mark until a
+  session gives the real one (143.05 against 143.11 on flash-crash). A page
+  that reloads gets the session's state and its history, and the
+  composer's.
