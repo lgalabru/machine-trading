@@ -1,0 +1,81 @@
+{
+  "schema": 2,
+  "name": "practice-1",
+  "description": "SPCX spikes 3.6% at once from around slot 190, then fades to +1.22% of its starting mark",
+  "duration_slots": 560,
+  "assets": {
+    "symbol": "SPCX"
+  },
+  "venues": {
+    "perp": {}
+  },
+  "oracles": {
+    "seed": 7,
+    "feeds": [
+      {
+        "name": "spcx",
+        "source": {
+          "kind": "phoenix",
+          "symbol": "SPCX"
+        },
+        "cadence_slots": 8,
+        "path": [
+          {
+            "slot": 400,
+            "level_pct": -6.0
+          }
+        ],
+        "conf_bps": 2.0,
+        "failures": [
+          {
+            "mode": {
+              "kind": "stale"
+            },
+            "window": {
+              "from_slot": 100,
+              "from_slot_max": 200,
+              "slots": 40
+            }
+          }
+        ]
+      },
+      {
+        "name": "sol",
+        "source": {
+          "kind": "pyth",
+          "feed_id": "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
+          "shard": 0,
+          "exponent": -8
+        },
+        "cadence_slots": 4,
+        "conf_bps": 2.0,
+        "failures": [
+          {
+            "mode": {
+              "kind": "off_price",
+              "bias_pct": 3.0
+            },
+            "window": {
+              "from_slot": 300
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "scoring": {
+    "reference_pnl_usd": 531.67
+  }
+}

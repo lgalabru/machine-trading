@@ -27,6 +27,7 @@ docs together.
 | `assets` | `symbol`; a spot session's starting `wallet` |
 | `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
 | `market_model` | `path`, `fair_path`, and a `closed_period` with Phoenix's index through it |
+| `oracles` | Price `feeds` the grader writes (Phoenix, Pyth, Scope) and their `failures` |
 | `actors` | The `competitor` maker and the grader's `takers` |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer (a placeholder) |
@@ -38,11 +39,13 @@ Optional sections are left out when empty. Unknown fields are errors in
 every section.
 
 Each section checks only itself (`Assets::validate`, `Venues::validate`,
-`MarketModel::validate`, `Actors::validate`, `Scoring::validate`, and the
-leaf types' own). A few rules join sections and are listed, one function
-each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
-having no path or flow, the mandate covering exactly the scenario's markets,
-a sell order fitting the wallet.
+`MarketModel::validate`, `Actors::validate`, `Oracles::validate`,
+`Scoring::validate`, and the leaf types' own). A few rules join sections and
+are listed, one function each, at the end of `ScenarioV2::validate`: one
+venue kind, spot scenarios having no path or flow, oracle feeds fitting the
+market (a Phoenix feed writes the perp market's own oracle in place of a
+path; a spot session's valuation feed may move but not fail), the mandate
+covering exactly the scenario's markets, a sell order fitting the wallet.
 
 ## Example
 
@@ -63,6 +66,7 @@ a sell order fitting the wallet.
 ## Adding to the format
 
 A new capability adds a section, or a field to the section it belongs to,
-with its own `validate`. v1 never gains fields; the conversion in
-`ScenarioV2::try_from` and `into_scenario` carries what the session needs
-until the session reads v2 directly.
+with its own `validate`. The conversion in `ScenarioV2::try_from` and
+`into_scenario` carries what the session needs until the session reads v2
+directly. While `Scenario::save` writes v1, a field the session reads is
+also a v1 field (as `oracles` is), so a saved scenario keeps it.
