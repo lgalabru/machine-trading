@@ -6,8 +6,8 @@
 //! doesn't need:
 //! - `result.json`, `config.json`, the verifier's report and reward, and the
 //!   per-session detail files;
-//! - the bot's per-session logs, each cut to its first 16 KiB and last
-//!   48 KiB, and the verifier's stdout, gzipped (the reference's logs are
+//! - the bot's per-session logs, each cut to its first 8 KiB and last
+//!   24 KiB, and the verifier's stdout, gzipped (the reference's logs are
 //!   left out: the page never shows them);
 //! - each of the reference bot's session files once per task: the trials of
 //!   a batch are graded on one hidden set, so the reference plays the same
@@ -18,8 +18,10 @@
 //! - the agent's trajectory, gzipped.
 //!
 //! It leaves out the batch's `.seed`, the agent's raw logs and sessions,
-//! anything hidden, links, and any file over 1 MiB. Before the release is
-//! written, every file is checked for the batch's seed and for API keys.
+//! anything hidden, links, and any file over 1 MiB. Then it compacts the
+//! release ([`crate::compact`]): no transaction signatures, sessions' tables
+//! as columns, each scenario and each source file once. Before the release
+//! is written, every file is checked for the batch's seed and for API keys.
 
 use std::{
     io::{Read, Write},
@@ -38,8 +40,8 @@ const MAX_FILE_BYTES: u64 = 1 << 20;
 const VERIFIER_FILES: &[&str] = &["report.json", "reward.json"];
 /// How much of a bot's session log a release keeps: its start and its end,
 /// where a bot says what it is and how it failed.
-const LOG_HEAD_BYTES: usize = 16 << 10;
-const LOG_TAIL_BYTES: usize = 48 << 10;
+pub(crate) const LOG_HEAD_BYTES: usize = 8 << 10;
+pub(crate) const LOG_TAIL_BYTES: usize = 24 << 10;
 /// Fields that differ between two runs of the same session by wall clock or
 /// chance alone: turn times, compute units (keypairs are random) and
 /// signatures. Two reference sessions equal but for these are one.
@@ -182,7 +184,9 @@ pub fn publish(batch: &Path, version: &str, results: &Path, force: bool) -> Resu
         std::fs::remove_dir_all(&staging)?;
     }
     std::fs::create_dir_all(&staging)?;
-    let written = copy_release(&batch, &trials, &staging, version).and_then(|summary| {
+    let written = copy_release(&batch, &trials, &staging, version).and_then(|mut summary| {
+        let compacted = crate::compact::compact_release(&staging)?;
+        summary["compacted"] = json!(compacted);
         check_secrets(&batch, &trials, &staging)?;
         Ok(summary)
     });
@@ -393,7 +397,7 @@ fn gzip_logs(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<()> {
 
 /// A log cut to its first [`LOG_HEAD_BYTES`] and last [`LOG_TAIL_BYTES`],
 /// with a line saying how much was left out.
-fn cut_log(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn cut_log(bytes: &[u8]) -> Vec<u8> {
     if bytes.len() <= LOG_HEAD_BYTES + LOG_TAIL_BYTES {
         return bytes.to_vec();
     }
@@ -599,7 +603,7 @@ fn scan(root: &Path, dir: &Path, needles: &[(String, &str)], hits: &mut Vec<Stri
     Ok(())
 }
 
-fn dir_bytes(dir: &Path) -> u64 {
+pub(crate) fn dir_bytes(dir: &Path) -> u64 {
     std::fs::read_dir(dir)
         .into_iter()
         .flatten()
