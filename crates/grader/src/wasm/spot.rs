@@ -24,6 +24,7 @@ use std::{io::Write, path::Path, sync::Arc};
 
 use mtx_core::{Decimal, Side as CoreSide};
 use mtx_kit::{
+    Market, Position, Session,
     chain::{ChainClient, FireAndForgetOptions, RpcChainClient, SendMode},
     protocols::{
         NamedMarket,
@@ -33,8 +34,6 @@ use mtx_kit::{
 };
 use solana_keypair::Keypair;
 use solana_signer::Signer;
-
-use mtx_kit::{Market, Position, Session};
 
 use super::{Clock, FUEL_PER_STEP, Outcome, WasmStrategy};
 use crate::spot::Wallet;

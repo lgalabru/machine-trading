@@ -866,12 +866,24 @@ fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check
             let name = Path::new(&file)
                 .file_name()
                 .map_or(file.clone(), |n| n.to_string_lossy().into_owned());
+            let detail = format!("{name}: {}", realism_summary(&report));
+            // Nothing failed but the market wasn't judged (the return
+            // checks didn't run): not a pass, and not a failure either.
+            if report["verdict"] == "not_judged" {
+                return Check::new(
+                    REALISTIC,
+                    id,
+                    title,
+                    Status::Inconclusive,
+                    format!("not judged: {detail}"),
+                );
+            }
             Check::from(
                 REALISTIC,
                 id,
                 title,
                 output.status.success() && report["passed"] == true,
-                format!("{name}: {}", realism_summary(&report)),
+                detail,
             )
         }
         _ => Check::fail(REALISTIC, id, title, tail(&output)),
@@ -963,7 +975,10 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let mut checks = task_checks(root, task)?;
 
     // The ladder: one hidden set of a few sessions in fast mode.
-    let ladder_file = root.join("bench/tasks").join(task).join("checks/ladder.json");
+    let ladder_file = root
+        .join("bench/tasks")
+        .join(task)
+        .join("checks/ladder.json");
     let config = read_json(&ladder_file)?;
     let signal: SignalGate = config
         .get("gates")
