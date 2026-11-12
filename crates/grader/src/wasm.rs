@@ -846,10 +846,11 @@ impl WasmBot {
             &step.tape,
             &step.depth,
         );
-        // A measured wallet's other markets: each seat's own top, where the
-        // step's depth didn't give one.
+        // A measured wallet's other markets: the same SOL held, and each
+        // seat's own top, where the step's depth didn't give one.
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
             for view in venues.iter_mut().skip(1) {
+                view.position = Some(position);
                 if view.best_bid.is_some() || view.best_ask.is_some() {
                     continue;
                 }

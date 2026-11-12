@@ -160,7 +160,7 @@ next step's `sends`. The market reads as follows:
 |-------|-------------------|
 | `mark`, `oracle`, `index` | the Pyth SOL/USD price the session values the account at |
 | `best-bid`, `best-ask` | the book of the scenario's first venue |
-| `venues` | each market's best bid and ask; its depth and tape, keyed by market, where the scenario reports them |
+| `venues` | each market's best bid and ask, and the SOL held as `position`; its depth and tape, keyed by market, where the scenario reports them |
 | `position.size` | SOL held, in the wallet and on every venue, as the profiles count it |
 | `position.entry-usd` | the Pyth price when the session started |
 | `pnl`, `peak-pnl`, `drawdown` | the account's value in USD since the start, as the session measures it |
