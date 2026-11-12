@@ -677,6 +677,7 @@ async fn run_sessions(
                     bot_log: &bot_log,
                     slot: first_bot_user + index % jobs,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
+                    cranks: None,
                     observer: observer.clone(),
                 })
             };
@@ -794,6 +795,7 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            crank_refusals: Vec::new(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -846,6 +848,7 @@ mod tests {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,

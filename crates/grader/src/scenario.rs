@@ -88,6 +88,10 @@ pub struct Scenario {
     /// Not with an `order`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetScoring>,
+    /// The prices venues read, written by the grader over the session, and
+    /// how they fail (see [`crate::oracles`]). Without it, none are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracles: Option<crate::oracles::Oracles>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -783,6 +787,7 @@ impl ShockFamily {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1495,6 +1500,7 @@ mod tests {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1559,12 +1565,77 @@ mod tests {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
         }
+    }
+
+    fn oracles_with(source: crate::oracles::Source, failing: bool) -> crate::oracles::Oracles {
+        use crate::oracles::*;
+        Oracles {
+            seed: 1,
+            feeds: vec![Feed {
+                name: "f".into(),
+                source,
+                cadence_slots: 4,
+                path: Vec::new(),
+                conf_bps: 2.0,
+                failures: if failing {
+                    vec![Failure {
+                        mode: Mode::Stale,
+                        window: Window {
+                            from_slot: 10,
+                            from_slot_max: None,
+                            slots: Some(10),
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                },
+            }],
+        }
+    }
+
+    fn phoenix_feed(symbol: &str) -> crate::oracles::Source {
+        crate::oracles::Source::Phoenix(crate::oracles::PhoenixOracle {
+            symbol: symbol.into(),
+        })
+    }
+
+    #[test]
+    fn a_phoenix_feed_needs_the_scenarios_market_and_no_path_of_its_own() {
+        let quiet = Scenario {
+            path: Vec::new(),
+            oracles: Some(oracles_with(phoenix_feed("SPCX"), true)),
+            ..plain()
+        };
+        quiet.validate().unwrap();
+        let other = Scenario {
+            oracles: Some(oracles_with(phoenix_feed("AAPL"), false)),
+            ..quiet.clone()
+        };
+        assert!(other.validate().unwrap_err().contains("AAPL"));
+        let pathed = Scenario {
+            path: vec![Waypoint::at(10, -2.0)],
+            ..quiet.clone()
+        };
+        assert!(pathed.validate().unwrap_err().contains("own path"));
+    }
+
+    #[test]
+    fn a_scenario_with_oracles_round_trips() {
+        let scenario = Scenario {
+            path: Vec::new(),
+            oracles: Some(oracles_with(phoenix_feed("SPCX"), true)),
+            ..plain()
+        };
+        let again: Scenario =
+            serde_json::from_str(&serde_json::to_string(&scenario).unwrap()).unwrap();
+        assert_eq!(scenario, again);
     }
 
     #[test]

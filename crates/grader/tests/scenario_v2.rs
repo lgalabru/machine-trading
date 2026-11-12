@@ -101,3 +101,81 @@ fn golden_v2_files_are_what_v1_files_write() {
         assert_eq!(Scenario::load(&golden.join(name)).unwrap(), v1, "{name}");
     }
 }
+
+/// A perp scenario whose oracle is written by feeds: no shipped file has
+/// one yet, so the v1 side is built here from a shipped file.
+#[test]
+fn golden_v2_oracles_file_is_what_a_v1_scenario_with_feeds_writes() {
+    use mtx_grader::oracles::{
+        Failure, Feed, Level, Mode, Oracles, PhoenixOracle, PythOracle, Source, Window,
+    };
+    let mut v1 = Scenario::load(
+        &root().join("bench/tasks/flash-crash-spcx/environment/practice/practice-1.json"),
+    )
+    .unwrap();
+    v1.path.clear();
+    v1.oracles = Some(Oracles {
+        seed: 7,
+        feeds: vec![
+            Feed {
+                name: "spcx".into(),
+                source: Source::Phoenix(PhoenixOracle {
+                    symbol: v1.symbol.clone(),
+                }),
+                cadence_slots: 8,
+                path: vec![Level {
+                    slot: 400,
+                    level_pct: -6.0,
+                }],
+                conf_bps: 2.0,
+                failures: vec![Failure {
+                    mode: Mode::Stale,
+                    window: Window {
+                        from_slot: 100,
+                        from_slot_max: Some(200),
+                        slots: Some(40),
+                    },
+                }],
+            },
+            Feed {
+                name: "sol".into(),
+                source: Source::Pyth(PythOracle {
+                    feed_id: "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+                        .into(),
+                    shard: 0,
+                    exponent: -8,
+                    account: None,
+                }),
+                cadence_slots: 4,
+                path: Vec::new(),
+                conf_bps: 2.0,
+                failures: vec![Failure {
+                    mode: Mode::OffPrice { bias_pct: 3.0 },
+                    window: Window {
+                        from_slot: 300,
+                        from_slot_max: None,
+                        slots: None,
+                    },
+                }],
+            },
+        ],
+    });
+    assert_eq!(v1.validate(), Ok(()));
+    let name = "oracles.json";
+    let golden = root().join("crates/grader/tests/golden/scenario_v2");
+    let tmp = std::env::temp_dir().join(format!("mtx-v2-{}-{name}", std::process::id()));
+    v1.save_v2(&tmp).unwrap();
+    let written = std::fs::read_to_string(&tmp).unwrap();
+    std::fs::remove_file(&tmp).unwrap();
+    if std::env::var_os("MTX_BLESS").is_some() {
+        std::fs::write(golden.join(name), &written).unwrap();
+    }
+    let expected = std::fs::read_to_string(golden.join(name))
+        .unwrap_or_else(|e| panic!("{name}: {e}; bless it"));
+    assert_eq!(written, expected);
+    assert_eq!(Scenario::load(&golden.join(name)).unwrap(), v1);
+    assert_eq!(
+        ScenarioV2::try_from(&v1).unwrap().into_scenario().unwrap(),
+        v1
+    );
+}

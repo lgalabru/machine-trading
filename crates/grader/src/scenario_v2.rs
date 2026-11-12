@@ -10,6 +10,7 @@
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
 //! | `venues`       | the perp venue's funding, the spot markets and their data    |
 //! | `market_model` | the price path, the fair value, a closed period              |
+//! | `oracles`      | the price feeds the grader writes, and how they fail         |
 //! | `actors`       | the competing maker and the grader's taker flow              |
 //! | `faults`       | execution faults on the bot's sends and reads                |
 //! | `tx`           | the transaction layer (a placeholder; nothing to set yet)    |
@@ -36,6 +37,7 @@ use crate::{
     faults::Faults,
     making::{Competition, Making, TAKER_ACCOUNTS, TakerOrder},
     offhours::OffHours,
+    oracles::{Oracles, Source},
     orders::{ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, Scenario, VENUE, Waypoint, move_slots},
@@ -59,6 +61,10 @@ pub struct ScenarioV2 {
     pub venues: Venues,
     #[serde(default, skip_serializing_if = "MarketModel::is_empty")]
     pub market_model: MarketModel,
+    /// The prices venues read, written by the grader over the session, and
+    /// how they fail (see [`crate::oracles`]). Without it, none are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracles: Option<Oracles>,
     #[serde(default, skip_serializing_if = "Actors::is_empty")]
     pub actors: Actors,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -460,6 +466,9 @@ impl ScenarioV2 {
             self.duration_slots,
             self.market_model.closed_period.is_some(),
         )?;
+        if let Some(oracles) = &self.oracles {
+            oracles.validate(self.duration_slots)?;
+        }
         if let Some(faults) = &self.faults {
             faults
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
@@ -469,6 +478,7 @@ impl ScenarioV2 {
             order.validate()?;
         }
         self.scoring.validate()?;
+        self.oracles_fit_the_market()?;
         self.mandate_covers_the_market()?;
         self.order_fits_the_wallet()
     }
@@ -581,6 +591,63 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// A Phoenix oracle feed writes the perp market's own oracle, so it is
+    /// for a perp scenario on that market and replaces its path; a spot
+    /// session's valuation feed may move but not fail.
+    fn oracles_fit_the_market(&self) -> Result<(), String> {
+        let Some(oracles) = &self.oracles else {
+            return Ok(());
+        };
+        for feed in &oracles.feeds {
+            match &feed.source {
+                Source::Phoenix(phoenix) => {
+                    if self.venues.spot.is_some() {
+                        return Err("oracles: a Phoenix oracle is for perp scenarios".into());
+                    }
+                    // The feed's start price is the scenario market's mark.
+                    if phoenix.symbol != self.assets.symbol {
+                        return Err(format!(
+                            "oracles: {} writes {}'s oracle, and the scenario's market is {}",
+                            feed.name, phoenix.symbol, self.assets.symbol
+                        ));
+                    }
+                    // The path and an off-hours reopen move this same oracle
+                    // in steps sized from the level they know; a feed beside
+                    // them would break those steps.
+                    if !self.market_model.path.is_empty()
+                        || self.market_model.closed_period.is_some()
+                    {
+                        return Err(format!(
+                            "oracles: {} moves the oracle the scenario's own path moves; \
+                             use one or the other",
+                            feed.name
+                        ));
+                    }
+                }
+                // A spot session values the account at the chain's Pyth
+                // SOL/USD. That is the grader's yardstick, not the bot's
+                // market: a path on it is the market moving, but a failure
+                // (stale, off price, delayed, wide) would change the score
+                // without changing anything the bot did.
+                Source::Pyth(pyth) if self.venues.spot.is_some() && !feed.failures.is_empty() => {
+                    let valuation = mtx_kit::protocols::pyth::feed_account(
+                        0,
+                        &mtx_kit::protocols::pyth::SOL_USD_FEED_ID,
+                    );
+                    if pyth.address().ok() == Some(valuation) {
+                        return Err(format!(
+                            "oracles: {} is the feed a spot session values the account at; \
+                             it can move but not fail",
+                            feed.name
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// A sell order can't be bigger than the wallet; a net-scored session
     /// has no order.
     fn order_fits_the_wallet(&self) -> Result<(), String> {
@@ -610,6 +677,7 @@ impl ScenarioV2 {
             assets,
             venues,
             market_model,
+            oracles,
             actors,
             faults,
             mandate,
@@ -665,6 +733,7 @@ impl ScenarioV2 {
             order,
             participation: scoring.participation,
             net: scoring.net,
+            oracles,
             reference_pnl_usd: scoring.reference_pnl_usd,
             fair_path,
         })
@@ -766,6 +835,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 fair_path: v1.fair_path.clone(),
                 closed_period,
             },
+            oracles: v1.oracles.clone(),
             actors: Actors { competitor, takers },
             faults: v1.faults.clone(),
             tx: None,
@@ -1079,6 +1149,126 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    fn feed(source: Source, failing: bool) -> crate::oracles::Feed {
+        use crate::oracles::*;
+        Feed {
+            name: "f".into(),
+            source,
+            cadence_slots: 4,
+            path: vec![Level {
+                slot: 40,
+                level_pct: -5.0,
+            }],
+            conf_bps: 2.0,
+            failures: if failing {
+                vec![Failure {
+                    mode: Mode::Stale,
+                    window: Window {
+                        from_slot: 10,
+                        from_slot_max: None,
+                        slots: Some(10),
+                    },
+                }]
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    fn phoenix(symbol: &str) -> Source {
+        Source::Phoenix(crate::oracles::PhoenixOracle {
+            symbol: symbol.into(),
+        })
+    }
+
+    fn pyth(feed_id: &str) -> Source {
+        Source::Pyth(crate::oracles::PythOracle {
+            feed_id: feed_id.into(),
+            shard: 0,
+            exponent: -8,
+            account: None,
+        })
+    }
+
+    const SOL_USD: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+
+    /// A shock scenario whose Phoenix oracle is moved by a feed, not a path.
+    fn fed() -> ScenarioV2 {
+        let mut s = shock();
+        s.market_model.path.clear();
+        s.oracles = Some(Oracles {
+            seed: 1,
+            feeds: vec![feed(phoenix("SPCX"), true)],
+        });
+        s
+    }
+
+    #[test]
+    fn oracles_round_trip_through_v2_and_json() {
+        let as_v2 = fed();
+        assert_eq!(as_v2.validate(), Ok(()));
+        let v1 = as_v2.clone().into_scenario().unwrap();
+        assert_eq!(v1.oracles, as_v2.oracles);
+        assert_eq!(v1.validate(), Ok(()));
+        assert_eq!(v2(&v1), as_v2);
+        let text = serde_json::to_string_pretty(&as_v2).unwrap();
+        assert!(text.contains("\"oracles\""));
+        assert_eq!(parse(&text).unwrap(), v1);
+        assert_eq!(serde_json::from_str::<ScenarioV2>(&text).unwrap(), as_v2);
+        let v1_text = serde_json::to_string(&v1).unwrap();
+        assert_eq!(parse(&v1_text).unwrap(), v1);
+
+        let mut value = serde_json::to_value(&as_v2).unwrap();
+        value["oracles"]["feeds"][0]["nonsense"] = 1.into();
+        assert!(parse(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn the_oracles_section_reports_its_own_errors() {
+        let mut s = fed();
+        let feeds = &mut s.oracles.as_mut().unwrap().feeds;
+        feeds.push(feeds[0].clone());
+        assert!(s.validate().unwrap_err().contains("appears twice"));
+        let mut s = fed();
+        s.oracles.as_mut().unwrap().feeds[0].cadence_slots = 0;
+        assert!(s.validate().unwrap_err().contains("cadence_slots"));
+        let mut s = fed();
+        s.oracles.as_mut().unwrap().feeds[0].failures[0]
+            .window
+            .from_slot = s.duration_slots + 1;
+        assert!(s.validate().unwrap_err().contains("after the session ends"));
+    }
+
+    #[test]
+    fn oracles_fit_the_market_they_write() {
+        let mut s = fed();
+        s.oracles.as_mut().unwrap().feeds[0] = feed(phoenix("AAPL"), false);
+        assert!(s.validate().unwrap_err().contains("AAPL"));
+
+        let mut s = fed();
+        s.market_model.path = shock().market_model.path;
+        assert!(s.validate().unwrap_err().contains("own path"));
+        let mut s = weekend();
+        s.oracles = fed().oracles;
+        assert!(s.validate().unwrap_err().contains("own path"));
+
+        let mut s = spot();
+        s.oracles = fed().oracles;
+        assert!(s.validate().unwrap_err().contains("for perp scenarios"));
+
+        let mut s = spot();
+        let with = |feed| Oracles {
+            seed: 1,
+            feeds: vec![feed],
+        };
+        s.oracles = Some(with(feed(pyth(SOL_USD), false)));
+        assert_eq!(s.validate(), Ok(()));
+        s.oracles = Some(with(feed(pyth(&"ea".repeat(32)), true)));
+        assert_eq!(s.validate(), Ok(()));
+        s.oracles = Some(with(feed(pyth(SOL_USD), true)));
+        assert!(s.validate().unwrap_err().contains("values the account"));
     }
 
     #[test]
