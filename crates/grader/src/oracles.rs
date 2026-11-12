@@ -1079,22 +1079,18 @@ mod tests {
     #[ignore = "needs the spot snapshot (MTX_LIVE_SNAPSHOT)"]
     async fn live_pyth_feed_with_every_failure() {
         use mtx_kit::protocols::pyth::{PriceUpdate, SOL_USD_FEED_ID};
-        use surfpool_sdk::{BlockProductionMode, SimnetCommand};
+        use surfpool_sdk::SimnetCommand;
 
         let dir = std::env::var("MTX_LIVE_SNAPSHOT").expect("MTX_LIVE_SNAPSHOT");
-        let (surfnet, _) = crate::snapshot::start_snapshot(
-            std::path::Path::new(&dir),
-            crate::snapshot::Access::Open,
-        )
-        .await
-        .unwrap();
-        let rpc = chain::rpc_client(&surfnet);
-        surfnet
-            .send_command(SimnetCommand::UpdateBlockProductionMode(
-                BlockProductionMode::Manual,
-            ))
+        // A session's surfnet: no clock, a slot only when the test makes one.
+        let (surfnet, _) = crate::snapshot::start_snapshot_stepped(std::path::Path::new(&dir))
+            .await
             .unwrap();
-        let mut slot = crate::session::manual_slot(&rpc).await.unwrap();
+        let internal = crate::guard::Guard::internal(surfnet.rpc_url())
+            .await
+            .unwrap();
+        let rpc = mtx_kit::rpc_client(internal.url());
+        let mut slot = rpc.get_slot().unwrap();
         let sol: String = SOL_USD_FEED_ID.iter().map(|b| format!("{b:02x}")).collect();
         let window = |from_slot, slots| Window {
             from_slot,

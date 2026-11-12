@@ -12,6 +12,7 @@ use phoenix_rise::{
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use surfpool_sdk::Surfnet;
 use tracing::{info, warn};
@@ -47,8 +48,8 @@ pub async fn fetch_exchange(api_url: &str) -> Result<ExchangeResponse> {
     Ok(PhoenixHttpClient::new(api_url)?.get_exchange().await?)
 }
 
-/// Fund, register, enable and capitalise a fresh cross-margin trader.
-/// Returns the trader account (PDA).
+/// Fund, register, enable and capitalise a fresh cross-margin trader, on a
+/// surfnet whose clock runs. Returns the trader account (PDA).
 pub async fn onboard_trader(
     surfnet: &Surfnet,
     phoenix: &Phoenix,
@@ -57,15 +58,7 @@ pub async fn onboard_trader(
 ) -> Result<Pubkey> {
     let rpc = chain::rpc_client(surfnet);
     let owner = authority.pubkey();
-    let trader = phoenix.trader_account(&owner);
-    let cheats = surfnet.cheatcodes();
-    cheats.fund_sol(&owner, 10_000_000_000)?;
-    // USDC has 6 decimals.
-    let usdc_units = ((deposit_usdc + WALLET_USDC_BUFFER) * 1e6) as u64;
-    cheats.fund_token(&owner, &USDC_MINT, usdc_units, None)?;
-
-    let register = phoenix.tx().build_register_trader(owner, 0, 0)?;
-    mtx_kit::send(&rpc, authority, register, "register trader")?;
+    let trader = register_trader(surfnet, phoenix, &rpc, authority, deposit_usdc)?;
 
     let enable = || chain::register_scenario(&rpc, "enable trader", vec![enable_trader(trader, 1)]);
     enable()?;
@@ -93,6 +86,79 @@ pub async fn onboard_trader(
     }
     info!(%owner, %trader, deposit_usdc, "trader onboarded");
     Ok(trader)
+}
+
+/// Slots a stepped onboarding produces, at most, waiting for the traders'
+/// capabilities to land.
+const ENABLE_SLOTS: u32 = 4;
+
+/// Onboard fresh traders, in order, on a stepped surfnet (see
+/// [`crate::snapshot::start_offline_stepped`]), through `rpc`, which must
+/// treat an executed transaction as final (see
+/// [`crate::guard::Guard::internal`]). One override enables them all, and
+/// the grader produces the slot it lands on: no wall clock, so the same
+/// traders onboard on the same slots in every run. Returns the trader
+/// accounts.
+pub async fn onboard_traders_stepped(
+    surfnet: &Surfnet,
+    phoenix: &Phoenix,
+    rpc: &RpcClient,
+    authorities: &[&Keypair],
+    deposit_usdc: f64,
+) -> Result<Vec<Pubkey>> {
+    let traders = authorities
+        .iter()
+        .map(|authority| register_trader(surfnet, phoenix, rpc, authority, deposit_usdc))
+        .collect::<Result<Vec<_>>>()?;
+    chain::register_scenario(
+        rpc,
+        "enable traders",
+        traders
+            .iter()
+            .map(|trader| enable_trader(*trader, 1))
+            .collect(),
+    )?;
+    chain::next_slot(surfnet, rpc).await?;
+    for (authority, trader) in authorities.iter().zip(&traders) {
+        let owner = authority.pubkey();
+        let mut slots = 0;
+        loop {
+            let deposit = phoenix
+                .tx()
+                .build_deposit_funds(owner, *trader, deposit_usdc)?;
+            match mtx_kit::send(rpc, authority, deposit, "deposit collateral") {
+                Ok(_) => break,
+                Err(error)
+                    if slots < ENABLE_SLOTS && error.to_string().contains("TraderFrozen") =>
+                {
+                    slots += 1;
+                    chain::next_slot(surfnet, rpc).await?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        info!(%owner, %trader, deposit_usdc, "trader onboarded");
+    }
+    Ok(traders)
+}
+
+/// Fund `authority`'s wallet and register its trader account.
+fn register_trader(
+    surfnet: &Surfnet,
+    phoenix: &Phoenix,
+    rpc: &RpcClient,
+    authority: &Keypair,
+    deposit_usdc: f64,
+) -> Result<Pubkey> {
+    let owner = authority.pubkey();
+    let cheats = surfnet.cheatcodes();
+    cheats.fund_sol(&owner, 10_000_000_000)?;
+    // USDC has 6 decimals.
+    let usdc_units = ((deposit_usdc + WALLET_USDC_BUFFER) * 1e6) as u64;
+    cheats.fund_token(&owner, &USDC_MINT, usdc_units, None)?;
+    let register = phoenix.tx().build_register_trader(owner, 0, 0)?;
+    mtx_kit::send(rpc, authority, register, "register trader")?;
+    Ok(phoenix.trader_account(&owner))
 }
 
 /// An override that gives `trader` the capabilities a fresh account needs,

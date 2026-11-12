@@ -482,7 +482,7 @@ impl WasmBot {
         let trader = mtx_kit::Trader::connect(env)?;
         let start_mark = trader.mark_usd().await?;
         let start_oracle = trader.oracle_usd().await?;
-        let seed = seed_of(scenario);
+        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, &env.rpc_url, log, seed, session_fuel)
@@ -776,14 +776,6 @@ fn kit_intent(intent: Intent) -> mtx_kit::Intent {
         },
         Intent::CancelAll => mtx_kit::Intent::CancelAll,
     }
-}
-
-/// A scenario's seed for the strategy: the same in every run of it (FNV-1a
-/// of its name).
-fn seed_of(scenario: &str) -> u64 {
-    scenario.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 #[cfg(test)]

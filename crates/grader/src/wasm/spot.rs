@@ -35,7 +35,7 @@ use solana_keypair::Keypair;
 use solana_signer::Signer;
 
 use super::{
-    Clock, FUEL_PER_STEP, Market, Outcome, Position, Session, WasmStrategy, kit_intent, seed_of,
+    Clock, FUEL_PER_STEP, Market, Outcome, Position, Session, WasmStrategy, kit_intent,
 };
 use crate::spot::Wallet;
 
@@ -345,7 +345,7 @@ impl SpotWasmBot {
         let owner = start.signer.pubkey();
         let venue = start.venues.first().map_or("phoenix", String::as_str);
         let book = Book::connect(venue, chain, owner).await?;
-        let seed = seed_of(scenario);
+        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, start.rpc_url, log, seed, session_fuel)
