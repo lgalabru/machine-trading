@@ -23,12 +23,11 @@ practice_reference = false
 
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
-# reference on the same sessions first (four at a time). The world moves
-# only between the bot's turns, so a session takes as long as the bot
-# thinks: under a minute for most bots, under four at worst (half a second
-# a step over 400 steps). A bot that never answers the turn protocol runs
-# each session in real time, one at a time: about 2.7 h for 72. A
-# disqualified bot stops at its first breach.
+# reference on the same sessions first, four sessions at a time each. The
+# world moves only between the bot's turns, so a session takes as long as
+# the bot thinks: under a minute for most bots, under four at worst (half a
+# second a step over 400 steps). A disqualified bot stops at its first
+# breach.
 timeout_sec = 18000.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and
