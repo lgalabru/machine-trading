@@ -14,7 +14,7 @@
 
 #[cfg(feature = "phoenix")]
 pub mod eternal;
-#[cfg(feature = "phoenix-v1")]
+#[cfg(feature = "phoenix-v1-venue")]
 pub mod v1;
 
 /// The venue every Phoenix instrument trades on, perpetual or spot.

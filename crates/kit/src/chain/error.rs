@@ -37,6 +37,9 @@ pub enum PlanError {
     /// Nothing to do.
     #[error("plan has no instructions")]
     Empty,
+    /// A v0 message didn't compile against its lookup tables.
+    #[error("transaction {label:?} doesn't compile to a v0 message: {detail}")]
+    Compile { label: String, detail: String },
 }
 
 /// Errors from talking to the chain or executing a plan.
@@ -74,6 +77,15 @@ pub enum ChainError {
     /// Packing failed.
     #[error(transparent)]
     Plan(#[from] PlanError),
+}
+
+impl From<crate::protocols::DecodeError> for ChainError {
+    fn from(err: crate::protocols::DecodeError) -> Self {
+        Self::Decode {
+            what: err.what,
+            detail: err.detail,
+        }
+    }
 }
 
 impl From<solana_rpc_client_api::client_error::Error> for ChainError {

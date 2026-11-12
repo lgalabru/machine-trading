@@ -19,9 +19,13 @@ chain = [
     "dep:solana-account-decoder-client-types",
     "dep:solana-commitment-config",
     "dep:solana-compute-budget-interface",
+    "dep:solana-instruction",
     "dep:solana-keypair",
+    "dep:solana-message",
+    "dep:solana-address-lookup-table-interface",
     "dep:solana-program-pack",
     "dep:solana-pubkey",
+    "solana-pubkey/curve25519",
     "dep:solana-rpc-client",
     "dep:solana-rpc-client-api",
     "dep:solana-signer",
@@ -50,12 +54,24 @@ venue = ["dep:phoenix-rise", "phoenix-rise/sdk", "dep:solana-pubkey", "solana-pu
 # Phoenix v1 spot order books, as the Phoenix venue profile's spot markets:
 # market and seat decoding, exact tick/lot conversions, the trader's
 # instructions, its holdings, a trader and an ExecutionDriver.
-phoenix-v1 = ["chain", "pyth"]
+phoenix-v1 = ["chain", "pyth", "phoenix-v1-venue"]
+# What a strategy reads of Phoenix v1 without the chain: market and seat
+# decoding, exact tick/lot conversions, the book, and the trader's
+# instructions. Builds for wasm32-wasip2.
+phoenix-v1-venue = ["spot-venue"]
 # OpenBook v2 spot order books, as the OpenBook venue profile defines them:
 # market, book side, open orders and indexer decoding, exact lot
 # conversions, the trader's instructions, its holdings, a trader and an
 # ExecutionDriver.
-openbook-v2 = ["chain", "pyth"]
+openbook-v2 = ["chain", "pyth", "openbook-v2-venue"]
+# What a strategy reads of OpenBook v2 without the chain: market, book side
+# and open orders decoding, exact lot conversions, the book, and the
+# trader's instructions. Builds for wasm32-wasip2.
+openbook-v2-venue = ["spot-venue"]
+# What both spot venues share without the chain: named markets, token
+# program addresses and associated token accounts, and Token-2022 mint and
+# account decoding.
+spot-venue = ["dep:solana-pubkey", "solana-pubkey/curve25519", "dep:solana-instruction"]
 # Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses;
 # the spot venues value their base assets at them.
 pyth = ["chain"]
@@ -82,7 +98,10 @@ solana-account = { version = "4", optional = true }
 solana-account-decoder-client-types = { version = "4.3", optional = true }
 solana-commitment-config = { version = "3", optional = true }
 solana-compute-budget-interface = { version = "3", optional = true }
+solana-instruction = { version = "3.5", optional = true }
 solana-keypair = { version = "3", optional = true }
+solana-message = { version = "4.6", optional = true }
+solana-address-lookup-table-interface = { version = "3.2", features = ["bincode"], optional = true }
 solana-program-pack = { version = "3", optional = true }
 solana-pubkey = { version = "4", optional = true }
 solana-rpc-client = { version = "4.3", optional = true }
@@ -103,3 +122,5 @@ serde_json = "1"
 solana-transaction = { version = "4.3", features = ["wincode", "verify"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 wincode = "0.6"
+# Checks the kit's own Token-2022 decoding against the program's crate.
+spl-token-2022-interface = "3.1"
