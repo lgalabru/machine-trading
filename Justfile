@@ -1,4 +1,4 @@
-# Loads MTX_FORK_RPC_URL for snapshot-prepare.
+# Loads MTX_FORK_RPC_URL for snapshot-build.
 set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
@@ -48,9 +48,10 @@ install bin="mtx":
       *) echo "unknown binary {{bin}} (have: mtx)"; exit 1 ;;
     esac
 
-# Fork mainnet and write a pinned Phoenix snapshot.
-snapshot-prepare out:
-    cargo run --release -- snapshot prepare --out {{out}}
+# Build a snapshot from its recipe: fork mainnet, warm up, export.
+# Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+snapshot-build name *flags:
+    cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
 # Replay a snapshot offline and trade through a scripted crash.
 snapshot-verify dir=("snapshots/" + snapshot):
@@ -63,10 +64,6 @@ bots:
     for bot in starter printer first-strategy reference maker dip-buyer carry carry-gbm weekend; do
       just --justfile "bots/$bot/Justfile" build
     done
-
-# Fork mainnet and write a spot snapshot (Phoenix v1, OpenBook v2, Pyth SOL/USD).
-snapshot-prepare-spot out:
-    cargo run --release -- snapshot prepare-spot --out {{out}}
 
 # A spot session end to end: the smoke component sells on SOL/USDC and passes
 # the mandate's audit; the buyer breaches it; the order smokes; OpenBook

@@ -13,7 +13,8 @@
   (`snapshots/<name>/surfnet.json.gz`, under 3 MB), and `mtx` decompresses
   them into a temp-directory cache the first time a surfnet starts. To fork
   a fresh one, put a mainnet RPC URL in `.env` as `MTX_FORK_RPC_URL` and run
-  `just snapshot-prepare snapshots/<name>`, which writes the `.gz`.
+  `just snapshot-build <name>`, which rebuilds the `.gz` from
+  `snapshots/<name>/recipe.toml` ([snapshot recipes](snapshot-recipes.md)).
 
 ## Everyday loop
 
