@@ -94,6 +94,9 @@ pub struct SessionOptions<'a> {
     /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
+    /// Upkeep for the venues the session trades on, called every step
+    /// (see [`crate::crank`]).
+    pub cranks: Option<&'a crate::crank::CrankFactory>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -509,6 +512,16 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World {
+                phoenix: Some((perp_asset_map, start_mark_ticks)),
+            },
+        )?;
+    }
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let start_slot = base_slot;
@@ -658,6 +671,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
     };
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
+    let mut cranks = crate::crank::Cranks::new(opts.cranks);
     let mut slot = start_slot;
     for k in 0..steps {
         // A step: the last step's takers trade against the quotes the bot
@@ -677,6 +691,17 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         flow_due = Some(at);
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
+        cranks
+            .step(
+                &rpc,
+                &crate::crank::CrankStep {
+                    k,
+                    slot,
+                    at,
+                    last: k + 1 == steps,
+                },
+            )
+            .await?;
         if let (Some(quoting), Some(competitor), Some(making)) = (
             quoting.as_mut(),
             competitor.as_ref(),

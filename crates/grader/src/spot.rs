@@ -810,6 +810,14 @@ pub(crate) async fn run_session(
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World::default(),
+        )?;
+    }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let start_slot = base_slot;
@@ -919,6 +927,7 @@ pub(crate) async fn run_session(
         ledger.before = ledger.fills.len();
     }
     let mut bot_exit = None;
+    let mut cranks = crate::crank::Cranks::new(opts.cranks);
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     for k in 0..steps {
         guard.set_turn(legacy);
@@ -930,6 +939,17 @@ pub(crate) async fn run_session(
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
+        cranks
+            .step(
+                &rpc,
+                &crate::crank::CrankStep {
+                    k,
+                    slot,
+                    at,
+                    last: k + 1 == steps,
+                },
+            )
+            .await?;
         let now = venues.read().await?;
         note(&mut observed, &now);
         let first_new = if tracking {
@@ -1177,6 +1197,7 @@ mod tests {
             faults: None,
             fair_path: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,

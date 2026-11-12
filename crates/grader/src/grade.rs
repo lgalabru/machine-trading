@@ -668,6 +668,7 @@ async fn run_sessions(
                     bot_log: &bot_log,
                     slot: first_bot_user + index % jobs,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
+                    cranks: None,
                 })
             };
             // A session whose setup fails on the machine (a request to its
@@ -834,6 +835,7 @@ mod tests {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
