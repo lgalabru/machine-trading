@@ -27,6 +27,18 @@ just test lint                                     # unit tests and clippy
 `target/logs/`. Don't run heavy builds while grading: a starved machine
 slows the grade.
 
+A grade replays exactly: the same bot, snapshot and scenarios give the same
+report, byte for byte but for wall times, however loaded the machine.
+`--replay N` checks it: it runs the grade N times (with
+`--replay-load <threads>` busy threads alongside) and fails at the first
+session report, the reference's included, that came out differently.
+
+```sh
+mtx grade --draw flash-crash --count 6 --reference /opt/mtx/anchors/flash-crash \
+  --bot /opt/mtx/anchors/flash-crash --trusted --snapshot snapshots/phoenix-spcx-2026-10-29 \
+  --replay 5 --replay-load 16
+```
+
 ## Write a bot
 
 `mtx bot` is the developer's side of grading, without Harbor or Docker:
@@ -73,8 +85,8 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
    secret inside the verifier. At the end it checks the secret is in no job
    file, then prints the report (`bench/report.py`): skill by model and task,
    with 90% intervals.
-   - **Machine:** an idle one. Load slows the surfnets' clocks, and the
-     grader fails sessions it can't run on time. A trial takes about 8 CPUs
+   - **Machine:** any; an idle one is faster. Sessions run on no clock, so
+     load makes a grade slower, not different. A trial takes about 8 CPUs
      while it grades; market-making's verifier alone runs about an hour.
    - **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for the providers
      it runs, from `.env` or `~/.machine-trading.env`.
@@ -87,7 +99,7 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      cache.
    - **A void trial:** rerun it on the same set with the batch's secret.
 2. **Review.** Look at what stands out before you publish: read a winning
-   run's bot, and check its report for refused calls and late slots. A score
+   run's bot, and check its report for refused calls. A score
    far above the others is a leak until it isn't.
 3. **Publish.** `just publish <batch> <version>` writes
    `bench/results/<version>/` and refuses if any file holds the batch's
