@@ -726,7 +726,14 @@ fn secret() -> Result<String> {
 
 /// Replays are byte-identical: the reference graded `runs` times on a fresh
 /// hidden set (`mtx grade --replay`), the machine loaded in full mode.
-fn replay_check(root: &Path, family: &str, ladder: &Value, fast: bool, out: &Path) -> Check {
+fn replay_check(
+    root: &Path,
+    exe: &Path,
+    family: &str,
+    ladder: &Value,
+    fast: bool,
+    out: &Path,
+) -> Check {
     let (id, title) = ("replay-determinism", "Replays are byte-identical");
     if !has_command(&["grade"], Some("replay")) {
         return Check::not_run(
@@ -752,7 +759,6 @@ fn replay_check(root: &Path, family: &str, ladder: &Value, fast: bool, out: &Pat
         Ok(s) => s,
         Err(e) => return Check::fail(GRADED, id, title, format!("no eval secret: {e}")),
     };
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
     let output = Command::new(exe)
         .args(["grade", "--draw", family, "--jobs", "4", "--bot", bot])
         .args(["--count", &count.to_string(), "--snapshot", &snapshot(root)])
@@ -822,7 +828,7 @@ fn calibration_file(root: &Path, task: &str) -> Option<PathBuf> {
 /// The market matches its calibration: `mtx market-cal check <family>`
 /// against the task's asset calibration, which exits nonzero on a failed
 /// realism check.
-fn calibration_check(root: &Path, task: &str, family: &str) -> Check {
+fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check {
     let (id, title) = (
         "market-calibration",
         "The market matches its calibration file",
@@ -848,7 +854,6 @@ fn calibration_check(root: &Path, task: &str, family: &str) -> Check {
         "--calibration",
         file.as_str(),
     ];
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
     let output = match Command::new(exe).args(args).current_dir(root).output() {
         Ok(o) => o,
         Err(e) => {
@@ -951,6 +956,10 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         .clone()
         .unwrap_or_else(|| root.join("target/gates").join(task));
     std::fs::create_dir_all(&out)?;
+    // This binary, named before the ladder runs: the ladder rebuilds the
+    // workspace, which can replace the file, and `current_exe` then names a
+    // deleted one.
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
     let mut checks = task_checks(root, task)?;
 
     // The ladder: one hidden set of a few sessions in fast mode.
@@ -1095,8 +1104,8 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         }
     }
 
-    checks.push(replay_check(root, &family, &config, opts.fast, &out));
-    checks.push(calibration_check(root, task, &family));
+    checks.push(replay_check(root, &exe, &family, &config, opts.fast, &out));
+    checks.push(calibration_check(root, &exe, task, &family));
 
     let report = Report::new(
         task,
