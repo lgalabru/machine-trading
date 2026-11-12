@@ -513,6 +513,16 @@ fn reward(dir: &Path) -> Option<BTreeMap<String, f64>> {
     serde_json::from_str(&std::fs::read_to_string(found.last()?).ok()?).ok()
 }
 
+/// Remove `dir` and everything under it, if it's there.
+fn clear_dir(dir: &Path) -> Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).with_context(|| format!("clear {}", dir.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// What a Harbor check run should have scored, read from its `reward.json`.
 fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
     let title_oracle = "Oracle scores the reference's 1.0";
@@ -937,7 +947,10 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             "A bot can't read the grader's keypairs",
         ));
     } else {
+        // Harbor adds a job directory per run and the checks read the last
+        // reward.json: a stale one would stand in for a run that broke.
         let jobs = out.join("jobs");
+        clear_dir(&jobs)?;
         let (ran, detail) = run_in(
             root,
             "just",
@@ -1164,6 +1177,20 @@ mod tests {
         assert!(has_command(&["grade"], Some("report")));
         assert!(!has_command(&["grade"], Some("no-such-flag")));
         assert!(!has_command(&["no-such-tool", "check"], None));
+    }
+
+    #[test]
+    fn an_earlier_runs_rewards_are_cleared_before_harbor_runs() {
+        let jobs = std::env::temp_dir().join(format!("mtx-gates-stale-{}", std::process::id()));
+        let oracle = jobs.join("oracle/2026-11-01__00-00-00/trial");
+        std::fs::create_dir_all(&oracle).unwrap();
+        std::fs::write(oracle.join("reward.json"), r#"{"skill": 1.0}"#).unwrap();
+        assert_eq!(harbor_checks(&jobs, true, "")[0].status, Status::Pass);
+        clear_dir(&jobs).unwrap();
+        clear_dir(&jobs).unwrap();
+        let oracle = &harbor_checks(&jobs, true, "")[0];
+        assert_eq!(oracle.status, Status::Fail);
+        assert!(oracle.detail.contains("missing"), "{}", oracle.detail);
     }
 
     #[test]
