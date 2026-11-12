@@ -112,14 +112,14 @@ impl Takers {
             std::fs::write(&path, bytes).map_err(io_error(&path))?;
             traders.push(Trader::connect_with_timeout(
                 &BotEnv {
-                rpc_url: rpc_url.to_string(),
-                keypair_path: path,
-                exchange_path: world.exchange_path.clone(),
-                symbol: scenario.symbol.clone(),
-                end_slot: u64::MAX,
-                max_position: f64::MAX,
-                max_drawdown_usd: f64::MAX,
-                mandate_path: None,
+                    rpc_url: rpc_url.to_string(),
+                    keypair_path: path,
+                    exchange_path: world.exchange_path.clone(),
+                    symbol: scenario.symbol.clone(),
+                    end_slot: u64::MAX,
+                    max_position: f64::MAX,
+                    max_drawdown_usd: f64::MAX,
+                    mandate_path: None,
                 },
                 INTERNAL_RPC_TIMEOUT,
             )?);

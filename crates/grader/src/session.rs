@@ -357,9 +357,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
     let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_mark_ticks = patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?
-        .value
-        .mark_price_ticks;
+    let start_mark_ticks = patiently("the book", async || {
+        hawkeye.view_bbo(&scenario.symbol).await
+    })
+    .await?
+    .value
+    .mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
     // A scenario that sets funding values it with the funding it has accrued
@@ -390,7 +393,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .map(|allowance| allowance.instrument.id())
         .collect();
     let market_id = scenario.instrument().id();
-    let start_value_usd = grader_f64(patiently("the meter", async || meter.measure(&universe).await).await?.value_usd);
+    let start_value_usd = grader_f64(
+        patiently("the meter", async || meter.measure(&universe).await)
+            .await?
+            .value_usd,
+    );
     if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
         phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
     }
@@ -451,9 +458,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             "book" => book_at(&scenario.path, at),
             _ => return Ok(value_usd),
         };
-        let mark = patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?
-            .value
-            .mark_price_ticks;
+        let mark = patiently("the book", async || {
+            hawkeye.view_bbo(&scenario.symbol).await
+        })
+        .await?
+        .value
+        .mark_price_ticks;
         let price = start_mark_usd * (1.0 + level / 100.0);
         Ok(value_usd + units * (price - phoenix.ticks_to_usd(market, mark)))
     };
@@ -715,7 +725,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         let value_usd = value(grader_f64(now.value_usd), position, slot, base_slot).await?;
         peak_value_usd = peak_value_usd.max(value_usd);
         max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
-        let bbo = patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?.value;
+        let bbo = patiently("the book", async || {
+            hawkeye.view_bbo(&scenario.symbol).await
+        })
+        .await?
+        .value;
         let usd = |ticks: u64| phoenix.ticks_to_usd(market, ticks);
         steps_seen.push(StepRecord {
             k,
@@ -829,9 +843,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         start_mark_usd,
         end_mark_usd: phoenix.ticks_to_usd(
             market,
-            patiently("the book", async || hawkeye.view_bbo(&scenario.symbol).await).await?
-                .value
-                .mark_price_ticks,
+            patiently("the book", async || {
+                hawkeye.view_bbo(&scenario.symbol).await
+            })
+            .await?
+            .value
+            .mark_price_ticks,
         ),
         start_value_usd,
         end_value_usd,
