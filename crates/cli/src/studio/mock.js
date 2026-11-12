@@ -115,6 +115,9 @@ const hash = (text) => { let h = 2166136261; for (let i = 0; i < text.length; i+
 export function mock(deliver) {
   const files = new Map([["Cargo.toml", CARGO], ["src/lib.rs", STRATEGY]]);
   for (let n = 1; n <= 6; n++) files.set(`scenarios/practice-${n}.json`, JSON.stringify(scenario(n), null, 2) + "\n");
+  const obvious = (name, description, duration_slots, path) => files.set(`scenarios/${name}.json`, JSON.stringify({ name, description, symbol: "SPCX", duration_slots, mandate: scenario(1).mandate, path }, null, 2) + "\n");
+  obvious("practice-101", "Five steps: SPCX falls 3% at step 2, holds at step 3, and is back where it started at step 4. Buy the dip, sell the recovery.", 10, [{ slot: 3, level_pct: -3 }, { slot: 7, level_pct: 0 }]);
+  obvious("practice-102", "Ten steps: SPCX rises 3% at step 3 and is back at step 5, then falls 3% at step 7 and is back at step 9.", 20, [{ slot: 5, level_pct: 3 }, { slot: 9, level_pct: 0 }, { slot: 13, level_pct: -3 }, { slot: 17, level_pct: 0 }]);
   let seq = 0;
   let pick = { agent: "claude-code", model: null, busy: false };
   let session = null; // {scenario, state, k, bps, ms, timer, events, args, sim}
@@ -278,7 +281,7 @@ export function mock(deliver) {
 
   async function handle(command, a) {
     switch (command) {
-      case "initialize": return { workspace: "/mock/bot", task: "flash-crash-spcx", files: [...files.keys()].sort(), scenarios: scenarios(), agent: pick, session: status() };
+      case "initialize": return { workspace: "/mock/bot", task: "flash-crash-spcx", files: [...files.keys()].sort(), scenarios: scenarios(), defaultScenario: "practice-101", agent: pick, session: status() };
       case "session/history": return { events: session ? session.events : [] };
       case "composer/history": return { messages };
       case "file/read": {
