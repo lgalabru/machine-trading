@@ -1,7 +1,6 @@
-# STATE (checkpoint)
-- Code done and pushed to origin/infra/08-oracles-crank (commit 4ea04af7): fmt, clippy (workspace, kit all-features, wasm), `cargo test --workspace` (0 failed) all passed on runner-14.
-- Running now on runner-14 (container infra-08-anchor2, dir /data/builders/infra-08): byte-identical anchor check. run.sh grades each of the 4 families (6 sessions, one private seed generated on the box) with the origin/main binary (/target/main) and the head binary (/target/head); reports in /data/builders/infra-08/out/rep/{main,head}/<family>/report.json, progress in run.log (ALLDONE at end).
-- Next: diff main vs head reports per family (ignore wall_ms-type fields), record result here, clean /data/builders/infra-08, send final report.
+# STATE: complete (box scratch removed)
+- Pushed to origin/infra/08-oracles-crank. fmt (nightly), clippy (workspace, kit all-features, wasm32-wasip2 bots), `cargo test --workspace` all pass (runner-14, rust:1.97.1).
+- Anchors: 4 tasks x 6 hidden sessions (one private seed per family generated on the box, not printed), reference as bot and reference, origin/main vs this head. Reports match field for field (scores, PnL, positions, steps, marks) except wall_ms and wasm fuel counters; per-step details also differ only in turn_ms, tx signatures and compute units (each session draws a random bot keypair, so the same holds between two runs of one binary).
 
 # PR 8: Oracle writers, failure modes, venue crank
 
