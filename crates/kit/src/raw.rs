@@ -13,7 +13,9 @@ use crate::TxOptions;
 /// may have, and the most bytes in a seed.
 pub const MAX_FRESH_SIGNERS: u8 = 8;
 pub const MAX_DERIVED: usize = 32;
-pub const MAX_SEEDS: usize = 16;
+/// 15 seeds: `find_program_address` adds the bump as a 16th, Solana's
+/// most.
+pub const MAX_SEEDS: usize = 15;
 pub const MAX_SEED_BYTES: usize = 32;
 
 /// A transaction of raw instructions.
@@ -73,7 +75,7 @@ pub enum Seed {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Derivation {
     /// The program's address from `seeds`, with the bump
-    /// `find_program_address` finds.
+    /// `try_find_program_address` finds; one with none is refused.
     Pda {
         program: AccountKey,
         seeds: Vec<Seed>,
@@ -244,6 +246,20 @@ mod tests {
     #[test]
     fn a_fresh_mint_and_what_derives_from_it_check() {
         assert_eq!(open_position().check(), Ok(()));
+    }
+
+    #[test]
+    fn fifteen_seeds_check_and_sixteen_are_refused() {
+        let seeds = |n| {
+            let mut tx = open_position();
+            tx.derived[0] = Derivation::Pda {
+                program: AccountKey::Authority,
+                seeds: vec![Seed::Bytes(vec![1; 32]); n],
+            };
+            tx.check()
+        };
+        assert_eq!(seeds(15), Ok(()));
+        assert!(seeds(16).unwrap_err().contains("16 seeds, at most 15"));
     }
 
     #[test]
