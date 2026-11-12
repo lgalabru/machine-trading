@@ -759,6 +759,9 @@ fn replay_check(
         Ok(s) => s,
         Err(e) => return Check::fail(GRADED, id, title, format!("no eval secret: {e}")),
     };
+    // The reference is an anchor: trusted, as the ladder grades it, so a
+    // loaded machine can't push it into its turn's time wall.
+    let trusted = has_command(&["grade"], Some("trusted"));
     let output = Command::new(exe)
         .args(["grade", "--draw", family, "--jobs", "4", "--bot", bot])
         .args(["--count", &count.to_string(), "--snapshot", &snapshot(root)])
@@ -768,6 +771,7 @@ fn replay_check(
             "--replay-load",
             &load.to_string(),
         ])
+        .args(trusted.then_some("--trusted"))
         .arg("--report")
         .arg(&report)
         .env("MTX_EVAL_SEED", secret)
