@@ -92,6 +92,7 @@ impl Check {
         }
     }
 
+    #[cfg(test)]
     fn pass(
         section: &'static str,
         id: &'static str,
@@ -390,7 +391,18 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
                 summary.sessions
             )
         } else {
-            format!("broken: {}", broken.join("; "))
+            summary
+                .rules
+                .iter()
+                .filter(|r| !r.ok)
+                .map(|r| {
+                    format!(
+                        "{} (holds on {}/{} sets, odds {:.2})",
+                        r.rule, r.sets_holding, r.sets, r.odds
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
         },
     ));
     checks.push(signal_gate(summary, gate));
@@ -409,7 +421,14 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
             summary
                 .exploits
                 .iter()
-                .map(|e| format!("{} {:.2}x", e.bot, e.ratio))
+                .map(|e| {
+                    format!(
+                        "{} {:.2}x, profitable {:.0}%",
+                        e.bot,
+                        e.ratio,
+                        e.profitable * 100.0
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         } else {
