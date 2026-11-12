@@ -94,7 +94,7 @@ tasks-check:
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
 
-# Record a reference bot's PnL in each scenario file: just calibrate bots/maker FILES...
+# Record a reference bot's PnL in each scenario file: just calibrate bench/tasks/market-making-spcx/reference FILES...
 calibrate bot +files: bots
     cargo run --release -- calibrate --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/calibrate {{files}}
 
