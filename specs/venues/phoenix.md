@@ -128,5 +128,11 @@ PnL is the change in the account's value. It gets the mandate in
 first venue the scenario lists if it names none. RFD 0002's "Spot
 sessions" covers the rest.
 
+The grader trades a component's lines on Phoenix v1 as market (immediate
+or cancel), limit, post-only and cancel-all orders. A post-only order's
+expiry (`expires_slot`) goes on the order as its last valid slot, which
+Phoenix v1 enforces. Sizes round down to whole lots, prices away from a
+worse fill.
+
 Separately, the benchmark gates the RPC methods a bot may call. That is a
 rule of the benchmark's sandbox, not part of the mandate.

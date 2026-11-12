@@ -188,6 +188,20 @@ The host reads the market and its account through the bot's guard on the
 bot's behalf, at a path of its own: those reads count toward none of the
 scenario's numbered faults, which fire on the bot's own calls.
 
+### Market kinds and instruments
+
+The interface's market kinds name what a market is to the strategy; the
+grader keys what it does on the instrument kinds of `specs/instruments/`,
+which hold across venues (`<venue>:<kind>:<symbol>`):
+
+| `market-kind` | Instrument kind | Profile |
+|---|---|---|
+| `perp` | `perp` | `specs/instruments/perp.md` |
+| `spot` | `spot` | `specs/instruments/spot.md` |
+| `lending` | `money-market` | `specs/instruments/money-market.md` |
+| `amm` | `amm` | `specs/instruments/amm.md` (draft, proposed) |
+| `stake-pool` | `stake-pool` | `specs/instruments/stake-pool.md` (draft, proposed) |
+
 ### The tasks
 
 The task's instruction says the bot is a component built with `mtx bot
