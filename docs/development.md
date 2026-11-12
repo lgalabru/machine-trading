@@ -48,7 +48,11 @@ Sessions run in parallel with `--jobs`, each isolated: its own surfnet and
 ports, RPC guard, directory and keys, and for a component its own store and
 fuel. A strategy component runs inside the grader, with no files and no
 network, so up to 32 of its sessions run at once; a process bot runs as one
-of four bot users, so at most four. The report doesn't depend on `--jobs`:
+of four bot users, so at most four. Grades running at once on one machine
+never run bots as the same user at the same time (a session's end kills
+everything its user runs): a session waits for its user, and
+`--first-bot-user` ranges that don't overlap keep them from waiting. A
+session starts whenever another ends. The report doesn't depend on `--jobs`:
 `--replay-jobs` runs the replays with another number, so `--jobs 16 --replay
 2 --replay-jobs 1` checks a parallel grade against a serial one.
 
