@@ -19,6 +19,11 @@ over the reference's. Then it checks:
 
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
+       [--min-rule-odds P]
+
+It also writes `<out>/<task>/summary.json`, which `mtx gates` reads: each
+set's totals per rung (as graded), and every rule, exploit and clean-run
+verdict.
 
 `--parallel N` grades N rungs at once. Each grade's bots run as its own
 range of the grader's bot users (`--first-bot-user`): a session's end kills
@@ -136,6 +141,7 @@ def main():
     parser.add_argument("--count", type=int)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--parallel", type=int, default=1, help="rungs graded at once")
+    parser.add_argument("--min-rule-odds", type=float, help="override the task's bootstrap floor")
     parser.add_argument("--out", default=os.path.join(ROOT, "target", "ladder"))
     args = parser.parse_args()
     if args.parallel < 1 or args.parallel * args.jobs > BOT_USERS:
@@ -178,6 +184,16 @@ def main():
         ), flush=True)
 
     failed = []
+    min_rule_odds = args.min_rule_odds if args.min_rule_odds is not None else config["min_rule_odds"]
+    summary = {
+        "task": args.task,
+        "sessions": count,
+        "min_rule_odds": min_rule_odds,
+        "totals": [totals(reports) for reports in sets],
+        "rules": [],
+        "exploits": [],
+        "disqualified": [],
+    }
     print("\nskill by set (reference = 1, hindsight = the bound; a disqualified rung is 0):")
     names = [r["name"] for r in config["rungs"]] + ["hindsight"]
     table = [skills(reports) for reports in sets]
@@ -199,7 +215,9 @@ def main():
             per_set.append((holds(rule, totals(reports)), hits / BOOTSTRAP_DRAWS))
         every = all(h for h, _ in per_set)
         odds = sum(p for _, p in per_set) / len(per_set)
-        ok = every and odds >= config["min_rule_odds"]
+        ok = every and odds >= min_rule_odds
+        summary["rules"].append({"rule": rule, "ok": ok, "sets_holding": sum(h for h, _ in per_set),
+                                 "sets": len(per_set), "odds": odds})
         print(f"  {'ok  ' if ok else 'FAIL'} {rule}: holds on {sum(h for h, _ in per_set)}"
               f"/{len(per_set)} sets, bootstrap odds per set {odds:.3f} "
               f"({', '.join(f'{p:.3f}' for _, p in per_set)})")
@@ -225,6 +243,8 @@ def main():
                 reasons.append(f"${sum(all_pnls):.0f}, at or above {below}'s ${ceiling:.0f}")
         if reward > 0.999:
             reasons.append("reached the bound")
+        summary["exploits"].append({"bot": name, "ok": not reasons, "ratio": ratio,
+                                    "profitable": profitable, "reasons": reasons})
         print(f"  {'FAIL' if reasons else 'ok  '} {name}: {ratio:.2f}x the reference, "
               f"profitable {profitable:.0%}, worst ${min(all_pnls):.0f}"
               + (f" ({'; '.join(reasons)})" if reasons else ""))
@@ -241,10 +261,14 @@ def main():
                    if s.get("disqualified") or s["refused_calls"]]
             if bad:
                 print(f"  FAIL {name}: disqualified in {', '.join(bad)}")
+                summary["disqualified"].append({"rung": name, "scenarios": bad})
                 failed.append(f"{name} disqualified")
     if not any("disqualified" in f for f in failed):
         print("  ok   no rung was refused or disqualified")
 
+    summary["failed"] = failed
+    with open(os.path.join(out, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
     print("\nladder " + ("FAILED: " + "; ".join(failed) if failed else "holds"))
     sys.exit(1 if failed else 0)
 

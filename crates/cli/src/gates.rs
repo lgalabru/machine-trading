@@ -1,0 +1,797 @@
+//! `mtx gates <task>`: the quality bar as one report.
+//!
+//! The checks a task must pass already exist as pieces: `task status`, the
+//! Harbor checks, the skill ladder, the leak audit and the probes. This module
+//! runs them and folds the results into one report under the quality bar's
+//! headings (JSON and markdown):
+//!
+//! - **Solvable and fair**: the reference scores 1.0 and doing nothing 0, the
+//!   skill ladder keeps its order, and a policy that reads what the task is
+//!   about beats the best one that doesn't by a margin.
+//! - **Graded correctly**: the exploit bots stay within their limits, the
+//!   cheaters are disqualified, nothing leaks, replays are exact.
+//! - **Realistic**: the market matches its calibration file.
+//!
+//! `--fast` runs the cheap ones (files, a one-set ladder on a few sessions);
+//! the full run adds the image checks. A check whose tool isn't in this build
+//! yet (replay, market calibration) reports `not_run`, which never fails the
+//! gate: `mtx gates` grows as those land.
+
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use anyhow::{Context, Result, bail};
+use clap::CommandFactory;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::{authoring, Cli};
+
+/// The ladder's extra gate: the best informed policy must make at least this
+/// many times the best one that doesn't read the task's signal.
+const DEFAULT_MIN_RATIO: f64 = 2.0;
+/// Fast mode: one hidden set of this many sessions per rung.
+const FAST_SESSIONS: usize = 12;
+/// A short set can't carry the full run's bootstrap floor; the order must
+/// still hold on the set itself.
+const FAST_RULE_ODDS: f64 = 0.5;
+/// How much of a failing command's output the report keeps.
+const TAIL_LINES: usize = 6;
+
+const SOLVABLE: &str = "Solvable and fair";
+const GRADED: &str = "Graded correctly";
+const REALISTIC: &str = "Realistic";
+const COMPLETE: &str = "Task files";
+const SECTIONS: [&str; 4] = [COMPLETE, SOLVABLE, GRADED, REALISTIC];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Pass,
+    Fail,
+    /// The check can't run here (a tool that isn't built yet, or full mode).
+    NotRun,
+}
+
+impl Status {
+    fn label(self) -> &'static str {
+        match self {
+            Status::Pass => "PASS",
+            Status::Fail => "FAIL",
+            Status::NotRun => "not run",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Check {
+    pub id: &'static str,
+    pub section: &'static str,
+    pub title: &'static str,
+    pub status: Status,
+    pub detail: String,
+}
+
+impl Check {
+    fn new(
+        section: &'static str,
+        id: &'static str,
+        title: &'static str,
+        status: Status,
+        detail: impl Into<String>,
+    ) -> Self {
+        Check {
+            id,
+            section,
+            title,
+            status,
+            detail: detail.into(),
+        }
+    }
+
+    fn pass(section: &'static str, id: &'static str, title: &'static str, d: impl Into<String>) -> Self {
+        Self::new(section, id, title, Status::Pass, d)
+    }
+
+    fn fail(section: &'static str, id: &'static str, title: &'static str, d: impl Into<String>) -> Self {
+        Self::new(section, id, title, Status::Fail, d)
+    }
+
+    fn not_run(section: &'static str, id: &'static str, title: &'static str, d: impl Into<String>) -> Self {
+        Self::new(section, id, title, Status::NotRun, d)
+    }
+
+    fn from(
+        section: &'static str,
+        id: &'static str,
+        title: &'static str,
+        ok: bool,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::new(section, id, title, if ok { Status::Pass } else { Status::Fail }, detail)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Report {
+    pub task: String,
+    pub mode: &'static str,
+    pub commit: String,
+    pub passed: bool,
+    pub counts: BTreeMap<&'static str, usize>,
+    pub checks: Vec<Check>,
+}
+
+impl Report {
+    fn new(task: &str, mode: &'static str, commit: String, checks: Vec<Check>) -> Self {
+        let mut counts = BTreeMap::new();
+        for c in &checks {
+            let key = match c.status {
+                Status::Pass => "pass",
+                Status::Fail => "fail",
+                Status::NotRun => "not_run",
+            };
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        Report {
+            task: task.to_string(),
+            mode,
+            commit,
+            passed: !checks.iter().any(|c| c.status == Status::Fail),
+            counts,
+            checks,
+        }
+    }
+
+    /// The report for people: one table per section of the quality bar.
+    pub fn markdown(&self) -> String {
+        let count = |k: &str| self.counts.get(k).copied().unwrap_or(0);
+        let mut out = format!(
+            "# Gates: {}\n\n{} mode, commit `{}`. **{}**: {} passed, {} failed, {} not run.\n",
+            self.task,
+            self.mode,
+            self.commit,
+            if self.passed { "PASSED" } else { "FAILED" },
+            count("pass"),
+            count("fail"),
+            count("not_run"),
+        );
+        for section in SECTIONS {
+            let rows: Vec<&Check> = self.checks.iter().filter(|c| c.section == section).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            out.push_str(&format!("\n## {section}\n\n| | Check | Detail |\n| --- | --- | --- |\n"));
+            for c in rows {
+                out.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    c.status.label(),
+                    c.title,
+                    c.detail.replace('|', "\\|").replace('\n', " ")
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// How a run is sized and where it keeps its files.
+#[derive(Debug, Clone)]
+pub struct Options {
+    pub fast: bool,
+    /// Hidden sets and sessions per set for the ladder; unset is the mode's
+    /// default (fast: one of 12; full: four, the task's own count).
+    pub sets: Option<usize>,
+    pub sessions: Option<usize>,
+    pub out: Option<PathBuf>,
+    /// Read a finished ladder's `summary.json` instead of running one.
+    pub ladder_summary: Option<PathBuf>,
+}
+
+/// What `ladder.py` leaves in `summary.json`.
+#[derive(Debug, Deserialize)]
+pub struct LadderSummary {
+    #[serde(default)]
+    pub sessions: usize,
+    /// Per set, each rung's total PnL as graded (0 if disqualified), and the
+    /// set's `hindsight` bound.
+    pub totals: Vec<BTreeMap<String, f64>>,
+    pub rules: Vec<RuleResult>,
+    pub exploits: Vec<ExploitResult>,
+    pub disqualified: Vec<Disqualified>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RuleResult {
+    pub rule: String,
+    pub ok: bool,
+    pub sets_holding: usize,
+    pub sets: usize,
+    pub odds: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExploitResult {
+    pub bot: String,
+    pub ok: bool,
+    pub ratio: f64,
+    pub profitable: f64,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Disqualified {
+    pub rung: String,
+    pub scenarios: Vec<String>,
+}
+
+/// A task's declaration of what its signal is, in its ladder file: rungs that
+/// read it (`informed`) and rungs that trade without it (`non_reading`).
+#[derive(Debug, Default, Deserialize)]
+pub struct SignalGate {
+    #[serde(default)]
+    pub informed: Vec<String>,
+    #[serde(default)]
+    pub non_reading: Vec<String>,
+    pub min_ratio: Option<f64>,
+}
+
+fn total(summary: &LadderSummary, rung: &str) -> Option<f64> {
+    let mut sum = 0.0;
+    for set in &summary.totals {
+        sum += set.get(rung)?;
+    }
+    Some(sum)
+}
+
+/// The best informed policy against the best that doesn't read the signal,
+/// by total PnL over every set.
+pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
+    let (id, title) = ("informed-vs-non-reading", "Informed beats the best non-reading policy");
+    if gate.informed.is_empty() || gate.non_reading.is_empty() {
+        return Check::not_run(
+            SOLVABLE,
+            id,
+            title,
+            "the task's ladder file declares no `gates.informed` / `gates.non_reading` rungs",
+        );
+    }
+    let ratio = gate.min_ratio.unwrap_or(DEFAULT_MIN_RATIO);
+    let best = |names: &[String]| -> Result<(String, f64), String> {
+        let mut top: Option<(String, f64)> = None;
+        for n in names {
+            let t = total(summary, n).ok_or_else(|| format!("no rung `{n}` in the ladder"))?;
+            if top.as_ref().is_none_or(|(_, b)| t > *b) {
+                top = Some((n.clone(), t));
+            }
+        }
+        top.ok_or_else(|| "no rungs".to_string())
+    };
+    let (informed, baseline) = match (best(&gate.informed), best(&gate.non_reading)) {
+        (Ok(i), Ok(b)) => (i, b),
+        (Err(e), _) | (_, Err(e)) => return Check::fail(SOLVABLE, id, title, e),
+    };
+    let floor = baseline.1.max(0.0);
+    let ok = informed.1 > 0.0 && informed.1 >= ratio * floor;
+    let multiple = if floor > 0.0 {
+        format!("{:.1}x", informed.1 / floor)
+    } else {
+        "unbounded".to_string()
+    };
+    Check::from(
+        SOLVABLE,
+        id,
+        title,
+        ok,
+        format!(
+            "{} ${:.0} vs {} ${:.0}: {multiple}, need {ratio:.0}x ({} set{})",
+            informed.0,
+            informed.1,
+            baseline.0,
+            baseline.1,
+            summary.totals.len(),
+            if summary.totals.len() == 1 { "" } else { "s" },
+        ),
+    )
+}
+
+/// The checks the ladder answers: the reference and nop anchors, the order,
+/// the signal gate, the exploit bots, clean runs.
+pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate) -> Vec<Check> {
+    let mut checks = Vec::new();
+    let sets = summary.totals.len();
+    let reference: Vec<f64> = summary.totals.iter().filter_map(|s| s.get("reference").copied()).collect();
+    checks.push(Check::from(
+        SOLVABLE,
+        "reference-scores-1",
+        "Reference is the 1.0 line (makes money on every set)",
+        reference.len() == sets && reference.iter().all(|r| *r > 0.0),
+        format!(
+            "reference total PnL per set: {}",
+            reference.iter().map(|r| format!("${r:.0}")).collect::<Vec<_>>().join(", ")
+        ),
+    ));
+    let nop: Vec<f64> = summary.totals.iter().filter_map(|s| s.get("nop").copied()).collect();
+    checks.push(Check::from(
+        SOLVABLE,
+        "nop-scores-0",
+        "Doing nothing scores 0",
+        nop.len() == sets && nop.iter().all(|n| n.abs() < 1e-6),
+        format!(
+            "nop total PnL per set: {}",
+            nop.iter().map(|n| format!("${n:.2}")).collect::<Vec<_>>().join(", ")
+        ),
+    ));
+    let broken: Vec<&str> = summary.rules.iter().filter(|r| !r.ok).map(|r| r.rule.as_str()).collect();
+    checks.push(Check::from(
+        SOLVABLE,
+        "ladder-order",
+        "Skill ladder keeps its order",
+        broken.is_empty() && !summary.rules.is_empty(),
+        if broken.is_empty() {
+            format!(
+                "{} rule{} hold on {sets} set{} of {} sessions",
+                summary.rules.len(),
+                if summary.rules.len() == 1 { "" } else { "s" },
+                if sets == 1 { "" } else { "s" },
+                summary.sessions
+            )
+        } else {
+            format!("broken: {}", broken.join("; "))
+        },
+    ));
+    checks.push(signal_gate(summary, gate));
+    let bad: Vec<String> = summary
+        .exploits
+        .iter()
+        .filter(|e| !e.ok)
+        .map(|e| format!("{} ({})", e.bot, e.reasons.join(", ")))
+        .collect();
+    checks.push(Check::from(
+        GRADED,
+        "exploit-bots",
+        "Exploit bots stay inside their limits",
+        bad.is_empty(),
+        if bad.is_empty() {
+            summary
+                .exploits
+                .iter()
+                .map(|e| format!("{} {:.2}x", e.bot, e.ratio))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            bad.join("; ")
+        },
+    ));
+    checks.push(Check::from(
+        GRADED,
+        "ladder-clean",
+        "No rung was refused or disqualified",
+        summary.disqualified.is_empty(),
+        if summary.disqualified.is_empty() {
+            "every rung graded clean".to_string()
+        } else {
+            summary
+                .disqualified
+                .iter()
+                .map(|d| format!("{} in {}", d.rung, d.scenarios.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ")
+        },
+    ));
+    checks
+}
+
+/// The last lines of a command's output, joined.
+fn tail(out: &std::process::Output) -> String {
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(TAIL_LINES)..].join(" · ")
+}
+
+/// Run `cmd` from the repo root; stderr is left on the terminal's stderr for
+/// the long ones (`stream`), else captured.
+fn run_in(root: &Path, program: &str, args: &[&str], stream: bool) -> Result<(bool, String)> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).current_dir(root);
+    if stream {
+        let status = cmd
+            .stdout(std::process::Stdio::null())
+            .status()
+            .with_context(|| format!("run {program}"))?;
+        return Ok((status.success(), String::new()));
+    }
+    match cmd.output() {
+        Ok(out) => Ok((out.status.success(), tail(&out))),
+        Err(e) => Ok((false, format!("couldn't run `{program}`: {e}"))),
+    }
+}
+
+fn read_json(path: &Path) -> Result<Value> {
+    let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+    serde_json::from_str(&text).with_context(|| path.display().to_string())
+}
+
+/// A job directory's `reward.json`, the last one Harbor wrote under `dir`.
+fn reward(dir: &Path) -> Option<BTreeMap<String, f64>> {
+    fn find(dir: &Path, found: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                find(&p, found);
+            } else if p.file_name().is_some_and(|n| n == "reward.json") {
+                found.push(p);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    find(dir, &mut found);
+    found.sort();
+    serde_json::from_str(&std::fs::read_to_string(found.last()?).ok()?).ok()
+}
+
+/// What a Harbor check run should have scored, read from its `reward.json`.
+fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
+    let title_oracle = "Oracle scores the reference's 1.0";
+    if !ran {
+        let d = format!("`just harbor-checks` failed: {detail}");
+        return vec![
+            Check::fail(SOLVABLE, "oracle", title_oracle, d.clone()),
+            Check::fail(SOLVABLE, "nop-harbor", "Nop scores 0 under Harbor", d.clone()),
+            Check::fail(GRADED, "cheaters", "Cheaters are disqualified, sneaky is clean", d),
+        ];
+    }
+    let get = |agent: &str, key: &str| reward(&jobs.join(agent)).and_then(|r| r.get(key).copied());
+    let mut checks = Vec::new();
+    let skill = get("oracle", "skill");
+    checks.push(Check::from(
+        SOLVABLE,
+        "oracle",
+        title_oracle,
+        skill.is_some_and(|s| (0.999..=1.001).contains(&s)),
+        format!("oracle skill {}", skill.map_or("missing".into(), |s| format!("{s:.4}"))),
+    ));
+    let nop = get("nop", "reward");
+    checks.push(Check::from(
+        SOLVABLE,
+        "nop-harbor",
+        "Nop scores 0 under Harbor",
+        nop == Some(0.0),
+        format!("nop reward {}", nop.map_or("missing".into(), |s| format!("{s}"))),
+    ));
+    // The component cheater is graded and must score 0 with its grade
+    // complete; the process cheaters and the sneaky bot aren't graded at all.
+    let wasm = (get("component-cheater", "reward"), get("component-cheater", "tampered"));
+    let process: Vec<_> = ["cheater", "sneaky"].iter().map(|a| get(a, "not_graded")).collect();
+    let ok = wasm.0 == Some(0.0) && wasm.1 == Some(0.0) && process.iter().all(|p| *p == Some(1.0));
+    checks.push(Check::from(
+        GRADED,
+        "cheaters",
+        "Cheaters are disqualified, sneaky is clean",
+        ok,
+        format!(
+            "component cheater reward {:?}, tampered {:?}; process cheater and sneaky not_graded {:?}",
+            wasm.0, wasm.1, process
+        ),
+    ));
+    checks
+}
+
+/// A subcommand of this binary another PR adds: run it when it exists.
+fn optional_subcommand(
+    root: &Path,
+    section: &'static str,
+    id: &'static str,
+    title: &'static str,
+    path: &[&str],
+    task: &str,
+) -> Check {
+    let mut cmd = Cli::command();
+    for name in path {
+        match cmd.find_subcommand(name) {
+            Some(sub) => cmd = sub.clone(),
+            None => {
+                return Check::not_run(
+                    section,
+                    id,
+                    title,
+                    format!("`mtx {}` isn't in this build yet", path.join(" ")),
+                );
+            }
+        }
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
+    let mut args: Vec<&str> = path.to_vec();
+    args.push(task);
+    match run_in(root, &exe.to_string_lossy(), &args, false) {
+        Ok((ok, out)) => Check::from(section, id, title, ok, if out.is_empty() { "ok".into() } else { out }),
+        Err(e) => Check::fail(section, id, title, e.to_string()),
+    }
+}
+
+fn commit(root: &Path) -> String {
+    Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map_or("unknown".into(), |o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// The task-files checks, from `mtx task status`: every step but the manual
+/// one must be done. `harbor lint` needs Harbor, which the report doesn't
+/// require.
+fn task_checks(root: &Path, task: &str) -> Result<Vec<Check>> {
+    let mut checks = Vec::new();
+    for step in authoring::status(root, task)? {
+        if step.state == "manual" {
+            continue;
+        }
+        if step.id == "lint" && step.detail.contains("isn't installed") {
+            checks.push(Check::not_run(COMPLETE, step.id, step.title, step.detail));
+            continue;
+        }
+        checks.push(Check::from(
+            COMPLETE,
+            step.id,
+            step.title,
+            step.state == "done",
+            if step.state == "done" { step.detail } else { format!("{} Next: {}", step.detail, step.next) },
+        ));
+    }
+    Ok(checks)
+}
+
+/// Run the gates for `task`, write `gates.json` and `gates.md` under the out
+/// directory, and return the report.
+pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)> {
+    if !root.join("bench/tasks").join(task).join("task.toml").is_file() {
+        bail!("no task `{task}` in bench/tasks (`mtx task list`)");
+    }
+    let family = authoring::family_of(task);
+    let out = opts.out.clone().unwrap_or_else(|| root.join("target/gates").join(task));
+    std::fs::create_dir_all(&out)?;
+    let mut checks = task_checks(root, task)?;
+
+    // The ladder: one hidden set of a few sessions in fast mode.
+    let ladder_file = root.join("bench/checks/ladder").join(format!("{family}.json"));
+    let config = read_json(&ladder_file)?;
+    let signal: SignalGate = config
+        .get("gates")
+        .map(|g| serde_json::from_value(g.clone()))
+        .transpose()?
+        .unwrap_or_default();
+    let summary_path = match &opts.ladder_summary {
+        Some(p) => p.clone(),
+        None => {
+            let sets = opts.sets.unwrap_or(if opts.fast { 1 } else { 4 }).to_string();
+            let count = opts.sessions.or(opts.fast.then_some(FAST_SESSIONS)).map(|c| c.to_string()).unwrap_or_default();
+            let odds = if opts.fast { FAST_RULE_ODDS.to_string() } else { String::new() };
+            let ladder_out = out.join("ladder");
+            // A failed ladder still writes its summary; a stale one mustn't be read.
+            let _ = std::fs::remove_file(ladder_out.join(&family).join("summary.json"));
+            // The ladder exits nonzero when a rule fails: the summary says which.
+            run_in(
+                root,
+                "just",
+                &["ladder", &family, &sets, "4", "1", &count, &ladder_out.to_string_lossy(), &odds],
+                true,
+            )?;
+            ladder_out.join(&family).join("summary.json")
+        }
+    };
+    match std::fs::read_to_string(&summary_path) {
+        Ok(text) => {
+            let summary: LadderSummary = serde_json::from_str(&text).with_context(|| summary_path.display().to_string())?;
+            checks.extend(ladder_checks(&summary, &signal));
+        }
+        Err(e) => checks.push(Check::fail(
+            SOLVABLE,
+            "ladder",
+            "Skill ladder ran",
+            format!("no {}: {e}", summary_path.display()),
+        )),
+    }
+
+    // Full mode: the image checks.
+    let full_only = |section, id, title| Check::not_run(section, id, title, "full mode only (needs the task image)");
+    if opts.fast {
+        checks.push(full_only(SOLVABLE, "oracle", "Oracle scores the reference's 1.0"));
+        checks.push(full_only(SOLVABLE, "nop-harbor", "Nop scores 0 under Harbor"));
+        checks.push(full_only(GRADED, "cheaters", "Cheaters are disqualified, sneaky is clean"));
+        checks.push(full_only(GRADED, "leak-audit", "The agent's image holds no answers"));
+        checks.push(full_only(GRADED, "keypair-probe", "A bot can't read the grader's keypairs"));
+    } else {
+        let jobs = out.join("jobs");
+        let (ran, detail) = run_in(root, "just", &["harbor-checks", task, "", &jobs.to_string_lossy()], true)?;
+        checks.extend(harbor_checks(&jobs, ran, &detail));
+        let (ok, d) = run_in(root, "just", &["leak-audit"], false)?;
+        checks.push(Check::from(GRADED, "leak-audit", "The agent's image holds no answers", ok, if ok { "no answer in the image".into() } else { d }));
+        let (ok, d) = run_in(root, "just", &["keypair-probe"], false)?;
+        checks.push(Check::from(GRADED, "keypair-probe", "A bot can't read the grader's keypairs", ok, if ok { "no keypair readable".into() } else { d }));
+        if std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
+            .is_ok_and(|t| t.contains("MTX_AGENT_TIMEOUT_SEC"))
+        {
+            let (ok, d) = run_in(root, "just", &["clock-probe", task], false)?;
+            checks.push(Check::from(GRADED, "clock-probe", "time-left reads the agent's clock", ok, d));
+        }
+    }
+
+    checks.push(optional_subcommand(
+        root,
+        GRADED,
+        "replay-determinism",
+        "Replays are byte-identical",
+        &["replay", "check"],
+        task,
+    ));
+    checks.push(optional_subcommand(
+        root,
+        REALISTIC,
+        "market-calibration",
+        "The market matches its calibration file",
+        &["market-cal", "check"],
+        task,
+    ));
+
+    let report = Report::new(task, if opts.fast { "fast" } else { "full" }, commit(root), checks);
+    std::fs::write(out.join("gates.json"), serde_json::to_string_pretty(&report)?)?;
+    std::fs::write(out.join("gates.md"), report.markdown())?;
+    Ok((report, out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary(sets: &[&[(&str, f64)]]) -> LadderSummary {
+        LadderSummary {
+            sessions: 12,
+            totals: sets
+                .iter()
+                .map(|s| s.iter().map(|(k, v)| (k.to_string(), *v)).collect())
+                .collect(),
+            rules: vec![],
+            exploits: vec![],
+            disqualified: vec![],
+        }
+    }
+
+    fn gate(informed: &[&str], non_reading: &[&str]) -> SignalGate {
+        SignalGate {
+            informed: informed.iter().map(|s| s.to_string()).collect(),
+            non_reading: non_reading.iter().map(|s| s.to_string()).collect(),
+            min_ratio: None,
+        }
+    }
+
+    #[test]
+    fn informed_must_double_the_best_non_reading_policy() {
+        let s = summary(&[&[("told", 100.0), ("fade", 40.0), ("follow", -20.0)]]);
+        let check = signal_gate(&s, &gate(&["told"], &["fade", "follow"]));
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        assert!(check.detail.contains("2.5x"), "{}", check.detail);
+        let s = summary(&[&[("told", 100.0), ("fade", 60.0)]]);
+        let check = signal_gate(&s, &gate(&["told"], &["fade"]));
+        assert_eq!(check.status, Status::Fail, "{}", check.detail);
+    }
+
+    #[test]
+    fn a_losing_baseline_is_unbounded_but_the_informed_policy_must_profit() {
+        let s = summary(&[&[("told", 10.0), ("fade", -5.0)]]);
+        assert_eq!(signal_gate(&s, &gate(&["told"], &["fade"])).status, Status::Pass);
+        let s = summary(&[&[("told", -1.0), ("fade", -5.0)]]);
+        assert_eq!(signal_gate(&s, &gate(&["told"], &["fade"])).status, Status::Fail);
+    }
+
+    #[test]
+    fn the_gate_sums_every_set_and_names_a_missing_rung() {
+        let s = summary(&[&[("told", 50.0), ("fade", 40.0)], &[("told", 150.0), ("fade", 10.0)]]);
+        let check = signal_gate(&s, &gate(&["told"], &["fade"]));
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        let check = signal_gate(&s, &gate(&["told"], &["gone"]));
+        assert_eq!(check.status, Status::Fail);
+        assert!(check.detail.contains("gone"));
+    }
+
+    #[test]
+    fn an_undeclared_signal_is_not_run_rather_than_failed() {
+        let s = summary(&[&[("told", 1.0)]]);
+        assert_eq!(signal_gate(&s, &SignalGate::default()).status, Status::NotRun);
+    }
+
+    #[test]
+    fn ladder_verdicts_become_checks() {
+        let mut s = summary(&[&[("nop", 0.0), ("reference", 50.0), ("told", 120.0), ("fade", 10.0)]]);
+        s.rules.push(RuleResult { rule: "fade < reference".into(), ok: true, sets_holding: 1, sets: 1, odds: 0.9 });
+        s.exploits.push(ExploitResult { bot: "x".into(), ok: false, ratio: 3.1, profitable: 0.9, reasons: vec!["profitable in 90% of sessions".into()] });
+        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]));
+        let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        assert_eq!(status("reference-scores-1"), Status::Pass);
+        assert_eq!(status("nop-scores-0"), Status::Pass);
+        assert_eq!(status("ladder-order"), Status::Pass);
+        assert_eq!(status("informed-vs-non-reading"), Status::Pass);
+        assert_eq!(status("exploit-bots"), Status::Fail);
+        assert_eq!(status("ladder-clean"), Status::Pass);
+        s.totals[0].insert("nop".into(), 3.0);
+        s.disqualified.push(Disqualified { rung: "reference".into(), scenarios: vec!["a".into()] });
+        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]));
+        let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        assert_eq!(status("nop-scores-0"), Status::Fail);
+        assert_eq!(status("ladder-clean"), Status::Fail);
+    }
+
+    #[test]
+    fn not_run_never_fails_the_report_and_a_failure_does() {
+        let ok = vec![
+            Check::pass(SOLVABLE, "a", "A", "fine"),
+            Check::not_run(REALISTIC, "b", "B", "not built"),
+        ];
+        let report = Report::new("t", "fast", "abc".into(), ok);
+        assert!(report.passed);
+        assert_eq!(report.counts["not_run"], 1);
+        let md = report.markdown();
+        assert!(md.contains("## Solvable and fair") && md.contains("## Realistic"));
+        assert!(md.contains("| not run | B | not built |"));
+        let bad = Report::new("t", "fast", "abc".into(), vec![Check::fail(GRADED, "c", "C", "a | b")]);
+        assert!(!bad.passed);
+        assert!(bad.markdown().contains("a \\| b"));
+    }
+
+    #[test]
+    fn harbor_rewards_are_read_per_agent() {
+        let dir = std::env::temp_dir().join(format!("mtx-gates-{}", uuid::Uuid::new_v4().simple()));
+        let put = |agent: &str, json: &str| {
+            let d = dir.join(agent).join("job/trial/verifier");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("reward.json"), json).unwrap();
+        };
+        put("oracle", r#"{"reward": 1.0, "skill": 1.0}"#);
+        put("nop", r#"{"reward": 0.0}"#);
+        put("component-cheater", r#"{"reward": 0.0, "tampered": 0.0}"#);
+        put("cheater", r#"{"reward": 0.0, "not_graded": 1.0}"#);
+        put("sneaky", r#"{"reward": 0.0, "not_graded": 1.0}"#);
+        let checks = harbor_checks(&dir, true, "");
+        assert!(checks.iter().all(|c| c.status == Status::Pass), "{checks:?}");
+        put("sneaky", r#"{"reward": 0.4, "not_graded": 0.0}"#);
+        assert_eq!(harbor_checks(&dir, true, "")[2].status, Status::Fail);
+        assert!(harbor_checks(&dir, false, "boom").iter().all(|c| c.status == Status::Fail));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_missing_subcommand_is_not_run() {
+        let c = optional_subcommand(Path::new("."), GRADED, "x", "X", &["no-such-tool", "check"], "t");
+        assert_eq!(c.status, Status::NotRun);
+    }
+
+    #[test]
+    fn every_task_declares_its_signal_and_names_real_rungs() {
+        let root = authoring::repo_root();
+        for family in ["flash-crash", "market-making", "funding-carry", "weekend-gap"] {
+            let config = read_json(&root.join(format!("bench/checks/ladder/{family}.json"))).unwrap();
+            let gate: SignalGate = serde_json::from_value(config["gates"].clone()).unwrap();
+            assert!(!gate.informed.is_empty() && !gate.non_reading.is_empty(), "{family}");
+            let rungs: Vec<&str> = config["rungs"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+            for name in gate.informed.iter().chain(&gate.non_reading) {
+                assert!(rungs.contains(&name.as_str()), "{family}: no rung {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn status_reads_the_component_layout() {
+        let root = authoring::repo_root();
+        let steps = authoring::status(&root, "flash-crash-spcx").unwrap();
+        let reference = steps.iter().find(|s| s.id == "reference").unwrap();
+        assert_eq!(reference.state, "done", "{}", reference.detail);
+    }
+}
