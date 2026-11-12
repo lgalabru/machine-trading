@@ -38,6 +38,8 @@ WORKDIR /src/mtx
 COPY Cargo.toml Cargo.lock rust-toolchain ./
 COPY crates crates
 COPY bots bots
+# The references the verifier scores against, one per task: `<anchor> <bot>`.
+COPY bench/image/anchors.txt anchors.txt
 # One target cache per platform: a multi-platform build runs both at once.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
@@ -50,13 +52,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         'surfpool-core = { path = "/src/surfpool/crates/core" }' \
         'surfpool-types = { path = "/src/surfpool/crates/types" }' > .cargo/config.toml; \
     fi \
-    && cargo build --release --locked -p mtx-cli -p mtx-bot-reference -p mtx-bot-maker -p mtx-bot-carry -p mtx-bot-weekend \
+    && cargo build --release --locked -p mtx-cli $(awk '!/^#/ { printf " -p mtx-bot-%s", $2 }' anchors.txt) \
     && cp target/release/mtx /usr/local/bin/mtx \
-    && for anchor in flash-crash:reference market-making:maker funding-carry:carry weekend-gap:weekend; do \
-      family="${anchor%%:*}"; bot="${anchor##*:}"; \
-      mkdir -p "/opt/mtx/anchors/$family/bin"; \
-      cp "bots/$bot/Justfile" "/opt/mtx/anchors/$family/Justfile"; \
-      cp "target/release/mtx-$bot" "/opt/mtx/anchors/$family/bin/bot"; \
+    && grep -v '^#' anchors.txt | while read -r anchor bot; do \
+      mkdir -p "/opt/mtx/anchors/$anchor/bin"; \
+      cp "bots/$bot/Justfile" "/opt/mtx/anchors/$anchor/Justfile"; \
+      cp "target/release/mtx-$bot" "/opt/mtx/anchors/$anchor/bin/bot"; \
     done
 
 # Verifiers: the grader, the snapshots, and one unprivileged user per
