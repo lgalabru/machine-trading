@@ -40,8 +40,8 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           HASH: ${{ hashFiles('bench/ci/**', 'rust-toolchain') }}
         run: |
-          owner="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/$owner/machine-trading-ci:${HASH:0:16}" >> "$GITHUB_OUTPUT"
+          namespace="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/$namespace/machine-trading-ci:${HASH:0:16}" >> "$GITHUB_OUTPUT"
           echo "base=$(sed -n 's/^ARG RUST_IMAGE=//p' bench/ci/Dockerfile)" >> "$GITHUB_OUTPUT"
       - name: Published already
         id: published
