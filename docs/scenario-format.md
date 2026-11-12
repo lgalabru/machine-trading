@@ -8,9 +8,16 @@ PnL, and `Scenario::load` reads them. The code is
 ## Versions
 
 A file says which version it is in `schema`. Without it, it is v1: the flat
-layout every file shipped before v2 uses. Both load into the same
-in-memory scenario, and `Scenario::save` writes v2. A v1 file keeps loading
-unchanged; the two convert into each other without loss.
+layout every shipped file uses. `"schema": 1` is accepted and means the same.
+Both load into the same in-memory scenario, and the two convert into each
+other without loss. A file is parsed once, as the version it names, so
+errors point into the file and a repeated key is an error.
+
+`Scenario::save`, and with it `mtx scenario generate` and `mtx calibrate`,
+still writes v1: the task images, CI and the practice files read that
+layout. `Scenario::save_v2` writes v2. Moving what is written to v2 is a
+separate change that migrates the practice files, CI, the images and these
+docs together.
 
 ## v2 sections
 
