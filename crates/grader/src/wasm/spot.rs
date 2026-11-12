@@ -24,6 +24,7 @@ use std::{io::Write, path::Path, sync::Arc};
 
 use mtx_core::{Decimal, Side as CoreSide};
 use mtx_kit::{
+    Market, Position, Session,
     chain::{ChainClient, FireAndForgetOptions, RpcChainClient, SendMode},
     protocols::{
         NamedMarket,
@@ -34,9 +35,7 @@ use mtx_kit::{
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 
-use super::{
-    Clock, FUEL_PER_STEP, Market, Outcome, Position, Session, WasmStrategy, kit_intent, seed_of,
-};
+use super::{Clock, FUEL_PER_STEP, Outcome, WasmStrategy};
 use crate::spot::Wallet;
 
 /// The book a component's orders go to, and the grader's trader on it.
@@ -274,6 +273,17 @@ fn spot_venues(venues: &[String]) -> crate::Result<SpotVenues> {
     })
 }
 
+/// The session's markets as a component's `start` lists them: the
+/// mandate's universe, with the venue its orders go to first.
+fn spot_venue_infos(mandate: &mtx_core::Mandate, venues: &[String]) -> Vec<mtx_kit::VenueInfo> {
+    let own = mtx_core::mandate::InstrumentRef {
+        venue: venues.first().cloned().unwrap_or_default(),
+        kind: mtx_core::mandate::Kind::Spot,
+        symbol: crate::spot::SYMBOL.into(),
+    };
+    mtx_kit::VenueInfo::of_mandate(mandate, &own, |instrument| *instrument == own)
+}
+
 /// `x` on a grid of `step`, rounded down or up; `None` for a value no grid
 /// can hold (not a number, or overflowing a `Decimal`): the order is
 /// refused. The value is first snapped to nine
@@ -340,12 +350,13 @@ impl SpotWasmBot {
             start_slot,
             scenario,
             vars,
+            reports,
         } = clock;
         let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(start.rpc_url));
         let owner = start.signer.pubkey();
         let venue = start.venues.first().map_or("phoenix", String::as_str);
         let book = Book::connect(venue, chain, owner).await?;
-        let seed = seed_of(scenario);
+        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, start.rpc_url, log, seed, session_fuel)
@@ -368,11 +379,14 @@ impl SpotWasmBot {
             start_oracle: start.wallet.price_usd,
             cap: start.max_position,
             max_drawdown: start.max_drawdown_usd,
-            mandate: serde_json::to_string(start.mandate)?,
+            mandate: start.mandate.clone(),
             venue: serde_json::to_string(&spot_venues(start.venues)?)?,
             authority: owner.to_string(),
             vars,
             seed,
+            venues: spot_venue_infos(start.mandate, start.venues),
+            reports,
+            applies_tx_options: false,
         };
         if let Some(strategy) = strategy.as_mut() {
             match strategy.start(&session).await {
@@ -445,13 +459,14 @@ impl SpotWasmBot {
             pnl,
             peak_pnl: self.peak_pnl,
             drawdown: self.peak_pnl - pnl,
+            ..Market::default()
         };
-        self.last = Some(market);
+        self.last = Some(market.clone());
         let Some(strategy) = self.strategy.as_mut() else {
             return false;
         };
-        let intents = match strategy.step(&market).await {
-            Outcome::Done(intents) => intents,
+        let intents: Vec<mtx_kit::Intent> = match strategy.step(&market).await {
+            Outcome::Done(lines) => lines.into_iter().map(|(intent, _)| intent).collect(),
             Outcome::Failed(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy failed; no orders this step");
                 return true;
@@ -462,31 +477,7 @@ impl SpotWasmBot {
                 return false;
             }
         };
-        let intents: Vec<mtx_kit::Intent> = intents.into_iter().map(kit_intent).collect();
-        let kit = mtx_kit::Market {
-            k,
-            slot,
-            last,
-            steps_left: market.steps_left,
-            slots_left: market.slots_left,
-            mark: price,
-            oracle: price,
-            index: price,
-            best_bid,
-            best_ask,
-            position: mtx_kit::Position {
-                size: wallet.base,
-                entry_usd: self.start_price_usd,
-            },
-            cap: market.cap,
-            max_drawdown: market.max_drawdown,
-            resting_bids: market.resting_bids,
-            resting_asks: market.resting_asks,
-            pnl,
-            peak_pnl: self.peak_pnl,
-            drawdown: market.drawdown,
-            ..mtx_kit::Market::default()
-        };
+        let kit = market;
         let (actions, notes) = mtx_kit::plan(&intents, &kit);
         for note in notes {
             tracing::warn!(step = k, "{note}");
@@ -556,12 +547,13 @@ impl SpotWasmBot {
                 }
                 self.book.cancel_all(&self.signer).await
             }
+            _ => Err("not executed in a spot session".into()),
         }
     }
 
     /// The session is over: the strategy's `end`.
     pub async fn end(&mut self) {
-        let last = self.last;
+        let last = self.last.take();
         if self.stopped.is_some() {
             return;
         }
@@ -652,12 +644,7 @@ mod tests {
             start_oracle: 150.0,
             cap: 10.0,
             max_drawdown: 1_500.0,
-            mandate: serde_json::to_string(&mtx_core::Mandate::spot(
-                &crate::spot::VENUES,
-                crate::spot::SYMBOL,
-                10.0,
-            ))
-            .unwrap(),
+            mandate: mtx_core::Mandate::spot(&crate::spot::VENUES, crate::spot::SYMBOL, 10.0),
             venue: serde_json::to_string(
                 &spot_venues(&["phoenix".into(), "openbook".into()]).unwrap(),
             )
@@ -665,6 +652,9 @@ mod tests {
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
+            venues: Vec::new(),
+            reports: mtx_kit::Reports::default(),
+            applies_tx_options: false,
         };
         assert!(matches!(strategy.start(&session).await, Outcome::Done(())));
         let market = |k| Market {
@@ -689,20 +679,21 @@ mod tests {
             pnl: 0.0,
             peak_pnl: 0.0,
             drawdown: 0.0,
+            ..Market::default()
         };
         // It reads the books through rpc, which this test doesn't answer,
         // and trades anyway: a sell, and the buyer's buy.
         let Outcome::Done(first) = strategy.step(&market(0)).await else {
             panic!()
         };
-        let sides: Vec<crate::wasm::Side> = first
+        let sides: Vec<mtx_kit::Side> = first
             .iter()
-            .map(|i| match i {
-                crate::wasm::Intent::Market((side, _, _)) => *side,
+            .map(|(intent, _)| match intent {
+                mtx_kit::Intent::Market { side, .. } => *side,
                 other => panic!("{other:?}"),
             })
             .collect();
-        assert_eq!(sides, [crate::wasm::Side::Ask, crate::wasm::Side::Bid]);
+        assert_eq!(sides, [mtx_kit::Side::Ask, mtx_kit::Side::Bid]);
         let Outcome::Done(second) = strategy.step(&market(1)).await else {
             panic!()
         };
