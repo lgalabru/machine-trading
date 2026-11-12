@@ -1,23 +1,23 @@
-# Market calibration spcx.20261111.8c2b4e5c (schema 1.0). Written by infra-calib/calib/export_v1.py
+# Market calibration spcx.20261111.000e88d5 (schema 1.0). Written by infra-calib/calib/export_v1.py
 # from spcx.20261111.ebab5e7c; never edited by hand. A refit is a new file with a new id.
-# Every input (url, sha256, bytes, fetch time) is in spcx.20261111.8c2b4e5c.inputs.json.
+# Every input (url, sha256, bytes, fetch time) is in spcx.20261111.000e88d5.inputs.json.
 
 
 [meta]
 schema_version = "1.0"
-calibration_id = "spcx.20261111.8c2b4e5c"
+calibration_id = "spcx.20261111.000e88d5"
 asset = "spcx"
 symbol = "SPCX"
 fitted_at = "2026-11-11T21:13:18+00:00"
-exported_at = "2026-11-12T03:01:33+00:00"
+exported_at = "2026-11-12T06:22:05+00:00"
 fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
-fitter_code_sha256_12 = "73cdde2d8478"
+fitter_code_sha256_12 = "72cc49fd2d5a"
 derived_from = "spcx.20261111.ebab5e7c"
-inputs_file = "spcx.20261111.8c2b4e5c.inputs.json"
+inputs_file = "spcx.20261111.000e88d5.inputs.json"
 inputs_digest = "943cd5865ee07928"
 inputs_count = 92
 sources = ["Phoenix perp API /exchange and /candles (SPCX mark, 1 m)", "Solana RPC getRecentPrioritizationFees and getSignaturesForAddress", "Jito tip floor", "NYSE holiday calendar"]
-limits = ["Fair value is Phoenix's SPCX mark (the oracle plus the perp's premium), 30 days, not the underlying's tape.", "Only regular hours vs everything else is fitted: pre, post, overnight and weekend share the closed-hours volatility.", "The open gap rests on 22 opens; the closed-hours fit includes one oracle wick (2026-10-21 06:32 UTC).", "Book depth and impact are defaults: no SPCX book or fill tape has been recorded.", "Realism bands are first guesses, not set from real-vs-real spread yet."]
+limits = ["Fair value is Phoenix's SPCX mark (the oracle plus the perp's premium), 30 days, not the underlying's tape.", "Only regular hours vs everything else is fitted: pre, post, overnight and weekend share the closed-hours volatility.", "The open gap rests on 22 opens; the closed-hours fit includes one oracle wick (2026-10-21 06:32 UTC).", "Book depth and impact are defaults: no SPCX book or fill tape has been recorded.", "The realism reference is in-sample: its windows come from the same 30 days the model is fitted on.", "Realism bands widen with each statistic's sampling spread over the real windows; other weeks of data would tighten them."]
 
 [meta.windows]
 phoenix = ["2026-10-12", "2026-11-11"]
@@ -178,6 +178,22 @@ kurtosis_pooled = 6.818
 tail_index = 2.782
 clustering = [0.04831, 0.004637, 0.00388]
 predictability = -0.1054
+tail_ratio = 2.631
+
+[realism.spread]
+windows = 300
+draws = 400
+sigmas = 3.0
+
+[realism.spread.log_sd]
+vol_level = 0.02437
+vol_of_vol = 0.04498
+tail_ratio = 0.08153
+
+[realism.spread.sd]
+kurtosis_within = 0.05536
+clustering = [0.008107, 0.007271, 0.007428]
+predictability = 0.01436
 
 [realism.bands]
 
@@ -190,11 +206,8 @@ ratio = [0.6, 1.6]
 [realism.bands.kurtosis_within]
 diff = 0.5
 
-[realism.bands.kurtosis_pooled]
-ratio = [0.33, 3.0]
-
-[realism.bands.tail_index]
-ratio = [0.67, 1.5]
+[realism.bands.tail_ratio]
+ratio = [0.85, 1.18]
 
 [realism.bands.clustering]
 diff = 0.08

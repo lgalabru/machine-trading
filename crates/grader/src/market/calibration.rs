@@ -392,6 +392,7 @@ pub struct Realism {
     /// Probe round trips: at least this share must lose.
     pub round_trip_min_losing_share: f64,
     pub reference: WindowStats,
+    pub spread: Spread,
     pub bands: Bands,
 }
 
@@ -407,24 +408,60 @@ pub struct WindowStats {
     pub vol_of_vol: f64,
     /// Excess kurtosis of aggregated returns, each window scaled to unit RMS.
     pub kurtosis_within: f64,
-    /// Excess kurtosis of all aggregated returns pooled.
+    /// Excess kurtosis of all aggregated returns pooled. Reported, not
+    /// gated: its sampling spread is too wide on a few hundred windows.
     pub kurtosis_pooled: f64,
     /// Hill's tail index of the pooled aggregated returns (top 2.5%).
+    /// Reported, not gated, for the same reason.
     pub tail_index: f64,
     /// ACF of |r| at `cluster_lags`, within windows, each window scaled.
     pub clustering: Vec<f64>,
     /// Mean over windows of the lag-1 ACF of aggregated returns.
     pub predictability: f64,
+    /// The 99th over the 90th percentile of the pooled aggregated |r|: the
+    /// gated tail statistic, robust where kurtosis and Hill's index aren't.
+    pub tail_ratio: f64,
 }
 
+/// How much each gated statistic varies between samples of real windows:
+/// windows drawn with replacement, `windows` at a time, `draws` times.
+/// Ratio statistics carry the sd of their log, the rest the sd itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Spread {
+    pub windows: usize,
+    pub draws: usize,
+    /// How many standard deviations of the difference a band spans.
+    pub sigmas: f64,
+    pub log_sd: LogSpread,
+    pub sd: DiffSpread,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LogSpread {
+    pub vol_level: f64,
+    pub vol_of_vol: f64,
+    pub tail_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DiffSpread {
+    pub kurtosis_within: f64,
+    pub clustering: Vec<f64>,
+    pub predictability: f64,
+}
+
+/// The narrowest band of each gated check. A check widens it to the
+/// statistic's sampling spread at its own window count (see [`Spread`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Bands {
     pub vol_level: Band,
     pub vol_of_vol: Band,
     pub kurtosis_within: Band,
-    pub kurtosis_pooled: Band,
-    pub tail_index: Band,
+    pub tail_ratio: Band,
     pub clustering: Band,
     pub predictability: Band,
     pub gap_size: Band,
@@ -649,8 +686,32 @@ impl Realism {
         if self.window_bars < 2 * self.agg_bars.max(self.cluster_bars) {
             return Err("realism: a window must hold at least two aggregated returns".into());
         }
-        if self.reference.clustering.len() != self.cluster_lags.len() {
-            return Err("realism.reference.clustering needs one value per cluster lag".into());
+        if self.reference.clustering.len() != self.cluster_lags.len()
+            || self.spread.sd.clustering.len() != self.cluster_lags.len()
+        {
+            return Err(
+                "realism: reference.clustering and spread.sd.clustering need one value per cluster lag"
+                    .into(),
+            );
+        }
+        let spread = &self.spread;
+        let sds = [
+            spread.log_sd.vol_level,
+            spread.log_sd.vol_of_vol,
+            spread.log_sd.tail_ratio,
+            spread.sd.kurtosis_within,
+            spread.sd.predictability,
+        ];
+        if spread.windows == 0
+            || !(spread.sigmas.is_finite() && spread.sigmas > 0.0)
+            || sds
+                .iter()
+                .chain(&spread.sd.clustering)
+                .any(|v| !(v.is_finite() && *v >= 0.0))
+        {
+            return Err(
+                "realism.spread needs windows, positive sigmas and non-negative sds".into(),
+            );
         }
         if let Some(kind) = &self.session_kind
             && !calendar.sessions.iter().any(|s| &s.kind == kind)
@@ -667,8 +728,7 @@ impl Realism {
             ("vol_level", b.vol_level),
             ("vol_of_vol", b.vol_of_vol),
             ("kurtosis_within", b.kurtosis_within),
-            ("kurtosis_pooled", b.kurtosis_pooled),
-            ("tail_index", b.tail_index),
+            ("tail_ratio", b.tail_ratio),
             ("clustering", b.clustering),
             ("predictability", b.predictability),
             ("gap_size", b.gap_size),

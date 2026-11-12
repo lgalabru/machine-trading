@@ -1,23 +1,23 @@
-# Market calibration sol-usd.20261111.7f960b0d (schema 1.0). Written by infra-calib/calib/export_v1.py
+# Market calibration sol-usd.20261111.4ca59529 (schema 1.0). Written by infra-calib/calib/export_v1.py
 # from sol-usd.20261111.19f35b87; never edited by hand. A refit is a new file with a new id.
-# Every input (url, sha256, bytes, fetch time) is in sol-usd.20261111.7f960b0d.inputs.json.
+# Every input (url, sha256, bytes, fetch time) is in sol-usd.20261111.4ca59529.inputs.json.
 
 
 [meta]
 schema_version = "1.0"
-calibration_id = "sol-usd.20261111.7f960b0d"
+calibration_id = "sol-usd.20261111.4ca59529"
 asset = "sol-usd"
 symbol = "SOL"
 fitted_at = "2026-11-11T21:13:18+00:00"
-exported_at = "2026-11-12T03:01:33+00:00"
+exported_at = "2026-11-12T06:21:59+00:00"
 fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
-fitter_code_sha256_12 = "73cdde2d8478"
+fitter_code_sha256_12 = "72cc49fd2d5a"
 derived_from = "sol-usd.20261111.19f35b87"
-inputs_file = "sol-usd.20261111.7f960b0d.inputs.json"
+inputs_file = "sol-usd.20261111.4ca59529.inputs.json"
 inputs_digest = "9e12e37479108251"
 inputs_count = 121
 sources = ["Binance SOLUSDT 1 s and 1 m klines (data.binance.vision)", "Phoenix perp API /exchange and /candles", "Jupiter lite-api quotes", "Solana RPC getRecentPrioritizationFees", "Jito tip floor and stake-pool stats"]
-limits = ["Fair value is a CEX proxy (Binance SOLUSDT), not Pyth.", "Seconds-scale fit on 5 days; regimes and jumps on 6 months of 1 m bars that hold no crisis (calm/stressed differ by 1.5x).", "Book depth and impact are derived from one Jupiter routed-quote snapshot, not from a recorded Phoenix book.", "Phoenix trade sizes are per-minute means, not per-trade sizes.", "Realism bands are first guesses, not set from real-vs-real spread yet."]
+limits = ["Fair value is a CEX proxy (Binance SOLUSDT), not Pyth.", "Seconds-scale fit on 5 days; regimes and jumps on 6 months of 1 m bars that hold no crisis (calm/stressed differ by 1.5x).", "Book depth and impact are derived from one Jupiter routed-quote snapshot, not from a recorded Phoenix book.", "Phoenix trade sizes are per-minute means, not per-trade sizes.", "Realism bands widen with each statistic's sampling spread over the real windows; other weeks of data would tighten them."]
 
 [meta.windows]
 seconds_fit = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]
@@ -140,6 +140,22 @@ kurtosis_pooled = 52.72
 tail_index = 3.112
 clustering = [-0.01721, -0.02859, -0.03019]
 predictability = -0.09199
+tail_ratio = 2.516
+
+[realism.spread]
+windows = 300
+draws = 400
+sigmas = 3.0
+
+[realism.spread.log_sd]
+vol_level = 0.03326
+vol_of_vol = 0.2449
+tail_ratio = 0.1097
+
+[realism.spread.sd]
+kurtosis_within = 0.08527
+clustering = [0.01079, 0.01157, 0.01234]
+predictability = 0.01413
 
 [realism.bands]
 
@@ -152,11 +168,8 @@ ratio = [0.6, 1.6]
 [realism.bands.kurtosis_within]
 diff = 0.5
 
-[realism.bands.kurtosis_pooled]
-ratio = [0.33, 3.0]
-
-[realism.bands.tail_index]
-ratio = [0.67, 1.5]
+[realism.bands.tail_ratio]
+ratio = [0.85, 1.18]
 
 [realism.bands.clustering]
 diff = 0.04
