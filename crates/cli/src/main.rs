@@ -33,6 +33,7 @@ mod publish;
 mod rescore;
 mod review;
 mod run;
+mod slim;
 mod ui;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
@@ -402,6 +403,23 @@ enum BenchCommand {
         /// Replace a release already published under that name.
         #[arg(long)]
         force: bool,
+        /// Keep the full release here, as <artifacts>/<version>, outside the
+        /// repository, and publish its slim release: the reports, rewards
+        /// and bots, without the sessions step by step, logs or
+        /// trajectories. Readers find the full copy through MTX_ARTIFACTS.
+        #[arg(long)]
+        artifacts: Option<PathBuf>,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Make a published release slim: move it whole to
+    /// <artifacts>/<version>, outside the repository, and keep only its
+    /// slim release in bench/results (see `mtx bench publish --artifacts`).
+    Slim {
+        /// The release's version (bench/results/<version>).
+        version: String,
+        #[arg(long)]
+        artifacts: PathBuf,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -798,15 +816,30 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&summary)?
         }
+        Command::Bench(BenchCommand::Slim {
+            version,
+            artifacts,
+            results,
+        }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let release = results.join(&version);
+            if !release.join("release.json").is_file() {
+                anyhow::bail!("no release {version} in {}", results.display());
+            }
+            let summary = slim::slim_in_place(&release, &artifacts)?;
+            serde_json::to_string_pretty(&summary)?
+        }
         Command::Bench(BenchCommand::Publish {
             batch,
             version,
             force,
+            artifacts,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             ui::start(format!("Publishing {} as {version}", batch.display()));
-            let summary = publish::publish(&batch, &version, &results, force)?;
+            let summary =
+                publish::publish(&batch, &version, &results, force, artifacts.as_deref())?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
                 summary["summary"]["trials"],
