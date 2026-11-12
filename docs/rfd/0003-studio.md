@@ -209,3 +209,11 @@ granted (v1); every tool call shows in the composer.
   and the history keeps the steps played. Between `launch` and `started`,
   while the market is set up (about 4 s), the session's state is
   `starting`; breakpoints are reported only for a live session.
+- 2026-11-12: from an iPad. The studio listened on 127.0.0.1 only, so an
+  iPad on the same network couldn't reach it; WebKit (Playwright's, as
+  an iPad Pro 11) renders the page with no errors, so it's the network,
+  not the page. `mtx studio --host 0.0.0.0` listens on the network. The
+  studio is someone's editor, builds and agent, so off loopback every
+  request needs a random token: the printed URL carries it (with a QR code
+  of it for the iPad's camera), and the page keeps it in an HttpOnly,
+  SameSite=Strict cookie. Without it, every route answers 401.
