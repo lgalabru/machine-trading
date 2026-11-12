@@ -512,7 +512,11 @@ fn phoenix_seat_ix(market: &Pubkey, authority: &Pubkey, trader: &Pubkey) -> Inst
 }
 
 /// Phoenix's `NameSuccessor`: the authority hands the market to `successor`.
-fn phoenix_name_successor_ix(market: &Pubkey, authority: &Pubkey, successor: &Pubkey) -> Instruction {
+fn phoenix_name_successor_ix(
+    market: &Pubkey,
+    authority: &Pubkey,
+    successor: &Pubkey,
+) -> Instruction {
     let mut data = vec![102];
     data.extend_from_slice(successor.as_ref());
     Instruction {

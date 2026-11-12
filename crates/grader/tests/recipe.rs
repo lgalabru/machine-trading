@@ -163,20 +163,32 @@ async fn simulated_markets_are_made_seeded_and_flagged() {
 
     // A fresh bot gets a seat from the Seat Manager and rests an order, with
     // the kit's code and nothing special.
-    let detail = &manifest.created.iter().find(|c| c.name == "FAKE/USDC").unwrap().detail;
+    let detail = &manifest
+        .created
+        .iter()
+        .find(|c| c.name == "FAKE/USDC")
+        .unwrap()
+        .detail;
     let mint = |key: &str| -> mtx_kit::Pubkey { detail[key].as_str().unwrap().parse().unwrap() };
     let bot = solana_keypair::Keypair::new();
     let bot_key = solana_signer::Signer::pubkey(&bot);
     let cheats = surfnet.cheatcodes();
     cheats.fund_sol(&bot_key, 10_000_000_000).unwrap();
-    cheats.fund_token(&bot_key, &mint("base_mint"), 1_000_000_000_000, None).unwrap();
-    cheats.fund_token(&bot_key, &mint("quote_mint"), 1_000_000_000, None).unwrap();
+    cheats
+        .fund_token(&bot_key, &mint("base_mint"), 1_000_000_000_000, None)
+        .unwrap();
+    cheats
+        .fund_token(&bot_key, &mint("quote_mint"), 1_000_000_000, None)
+        .unwrap();
     let chain2: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(surfnet.rpc_url()));
     let theirs = PhoenixV1Trader::connect(chain2, address("FAKE/USDC"), "FAKE", "USDC", bot_key)
         .await
         .unwrap();
     let seat = theirs.plan_claim_seat().unwrap();
-    theirs.send(&seat, &bot).await.expect("the seat manager seats a fresh bot");
+    theirs
+        .send(&seat, &bot)
+        .await
+        .expect("the seat manager seats a fresh bot");
     let tick = theirs.market().instrument.tick_size;
     theirs
         .submit(
