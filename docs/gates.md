@@ -26,8 +26,8 @@ finished ladder) adjust a run.
 | Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
 | | the agent's image holds no answer; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit`, `keypair-probe`, `clock-probe` |
-| | replays are byte-identical | `mtx replay check <task>`, when the build has it |
-| Realistic | the market matches its calibration file | `mtx market-cal check <task>`, when the build has it |
+| | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
+| Realistic | the family's market matches its asset's latest `calibration/market/<asset>.*.toml` (fast: 60 sessions) | `mtx market-cal check <family>`, when the build has it |
 
 A fast ladder has 12 sessions, so its bootstrap floor drops to 0.5 (the order
 must still hold on the set itself); the full ladder keeps the task's floor.
@@ -53,10 +53,10 @@ testing the signal.
 
 ## Adding a check
 
-`mtx gates` calls any subcommand another change adds under the names above
-(`mtx replay check <task>`, `mtx market-cal check <task>`) when
-`mtx --help` shows it: exit 0 passes, anything else fails and the output's
-last lines go in the report. Other checks go in `crates/cli/src/gates.rs`,
+The replay and calibration checks run only when this build has
+`mtx grade --replay` and `mtx market-cal check`; until then they report
+`not run`. A failed realism check exits nonzero and its last lines go in the
+report. Other checks go in `crates/cli/src/gates.rs`,
 under the section of the bar they serve.
 
 ## CI

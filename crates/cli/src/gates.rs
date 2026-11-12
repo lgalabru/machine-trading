@@ -38,6 +38,13 @@ const FAST_SESSIONS: usize = 12;
 /// A short set can't carry the full run's bootstrap floor; the order must
 /// still hold on the set itself.
 const FAST_RULE_ODDS: f64 = 0.5;
+/// The replay check's sessions, runs and loaded threads: fast, then full.
+const REPLAY_FAST: (usize, u32, usize) = (2, 2, 0);
+const REPLAY_FULL: (usize, u32, usize) = (6, 3, 4);
+/// Fast mode draws this many sessions for the realism checks.
+const CALIBRATION_FAST_SESSIONS: usize = 60;
+/// The snapshot when the Justfile doesn't name one.
+const DEFAULT_SNAPSHOT: &str = "phoenix-spcx-2026-10-29";
 /// How much of a failing command's output the report keeps.
 const TAIL_LINES: usize = 6;
 
@@ -575,41 +582,155 @@ fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
     checks
 }
 
-/// A subcommand of this binary another PR adds: run it when it exists.
-fn optional_subcommand(
-    root: &Path,
-    section: &'static str,
-    id: &'static str,
-    title: &'static str,
-    path: &[&str],
-    task: &str,
-) -> Check {
+/// Whether this binary has the subcommand at `path` (and, if named, its
+/// argument `arg`): the replay and calibration checks land in other changes.
+fn has_command(path: &[&str], arg: Option<&str>) -> bool {
     let mut cmd = Cli::command();
     for name in path {
         match cmd.find_subcommand(name) {
             Some(sub) => cmd = sub.clone(),
-            None => {
-                return Check::not_run(
-                    section,
-                    id,
-                    title,
-                    format!("`mtx {}` isn't in this build yet", path.join(" ")),
-                );
-            }
+            None => return false,
         }
     }
+    arg.is_none_or(|arg| cmd.get_arguments().any(|a| a.get_id() == arg))
+}
+
+/// The snapshot the Justfile grades on (`snapshot := "..."`).
+fn snapshot(root: &Path) -> String {
+    let justfile = std::fs::read_to_string(root.join("Justfile")).unwrap_or_default();
+    let name = justfile
+        .lines()
+        .find_map(|l| l.strip_prefix("snapshot := "))
+        .map_or(DEFAULT_SNAPSHOT, |v| v.trim().trim_matches('"'));
+    format!("snapshots/{name}")
+}
+
+/// A fresh eval secret for one check, never printed.
+fn secret() -> Result<String> {
+    let mut bytes = [0u8; 32];
+    std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom")?, &mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Replays are byte-identical: the reference graded `runs` times on a fresh
+/// hidden set (`mtx grade --replay`), the machine loaded in full mode.
+fn replay_check(root: &Path, family: &str, ladder: &Value, fast: bool, out: &Path) -> Check {
+    let (id, title) = ("replay-determinism", "Replays are byte-identical");
+    if !has_command(&["grade"], Some("replay")) {
+        return Check::not_run(
+            GRADED,
+            id,
+            title,
+            "`mtx grade --replay` isn't in this build yet",
+        );
+    }
+    let reference = ladder["rungs"].as_array().and_then(|rungs| {
+        rungs
+            .iter()
+            .find(|r| r["name"] == "reference")
+            .and_then(|r| r["dir"].as_str())
+    });
+    let Some(bot) = reference else {
+        return Check::fail(GRADED, id, title, "the ladder file has no `reference` rung");
+    };
+    let (count, runs, load) = if fast { REPLAY_FAST } else { REPLAY_FULL };
+    let report = out.join("replay.json");
+    let _ = std::fs::remove_file(&report);
+    let secret = match secret() {
+        Ok(s) => s,
+        Err(e) => return Check::fail(GRADED, id, title, format!("no eval secret: {e}")),
+    };
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
-    let mut args: Vec<&str> = path.to_vec();
-    args.push(task);
+    let output = Command::new(exe)
+        .args(["grade", "--draw", family, "--jobs", "4", "--bot", bot])
+        .args(["--count", &count.to_string(), "--snapshot", &snapshot(root)])
+        .args(["--replay", &runs.to_string(), "--replay-load", &load.to_string()])
+        .arg("--report")
+        .arg(&report)
+        .env("MTX_EVAL_SEED", secret)
+        .current_dir(root)
+        .output();
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => return Check::fail(GRADED, id, title, format!("couldn't run `mtx grade`: {e}")),
+    };
+    let replay = read_json(&report).ok().map(|r| r["replay"].clone());
+    match replay {
+        Some(r) if r.is_object() => {
+            let identical = output.status.success() && r["identical"] == true;
+            let detail = if identical {
+                format!(
+                    "{} reports identical over {} runs of {count} sessions ({} threads loaded)",
+                    r["reports"], r["runs"], r["load_threads"]
+                )
+            } else {
+                let differences = r["differences"].as_array().map_or(0, Vec::len);
+                format!("{differences} reports differed; first: {}", r["differences"][0])
+            };
+            Check::from(GRADED, id, title, identical, detail)
+        }
+        _ => {
+            let err = std::process::Output {
+                stdout: Vec::new(),
+                ..output
+            };
+            Check::fail(GRADED, id, title, tail(&err))
+        }
+    }
+}
+
+/// The task's asset calibration (`calibration/market/<asset>.<date>.<hash>.toml`,
+/// the latest), the asset being the instrument in the task's name.
+fn calibration_file(root: &Path, task: &str) -> Option<PathBuf> {
+    let asset = task.rsplit_once('-').map_or(task, |(_, asset)| asset);
+    let prefix = format!("{asset}.");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("calibration/market"))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "toml")
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&prefix))
+        })
+        .collect();
+    files.sort();
+    files.pop()
+}
+
+/// The market matches its calibration: `mtx market-cal check <family>`
+/// against the task's asset calibration, which exits nonzero on a failed
+/// realism check.
+fn calibration_check(root: &Path, task: &str, family: &str, fast: bool) -> Check {
+    let (id, title) = ("market-calibration", "The market matches its calibration file");
+    if !has_command(&["market-cal", "check"], None) {
+        return Check::not_run(
+            REALISTIC,
+            id,
+            title,
+            "`mtx market-cal check` isn't in this build yet",
+        );
+    }
+    let Some(file) = calibration_file(root, task) else {
+        return Check::not_run(REALISTIC, id, title, "no calibration file for its asset");
+    };
+    let file = file.to_string_lossy().into_owned();
+    let count = CALIBRATION_FAST_SESSIONS.to_string();
+    let mut args = vec!["market-cal", "check", family, "--calibration", file.as_str()];
+    if fast {
+        args.extend(["--count", count.as_str()]);
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mtx"));
     match run_in(root, &exe.to_string_lossy(), &args, false) {
         Ok((ok, out)) => Check::from(
-            section,
+            REALISTIC,
             id,
             title,
             ok,
-            if out.is_empty() { "ok".into() } else { out },
+            if ok { format!("{file}: {out}") } else { out },
         ),
-        Err(e) => Check::fail(section, id, title, e.to_string()),
+        Err(e) => Check::fail(REALISTIC, id, title, e.to_string()),
     }
 }
 
@@ -808,22 +929,8 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         }
     }
 
-    checks.push(optional_subcommand(
-        root,
-        GRADED,
-        "replay-determinism",
-        "Replays are byte-identical",
-        &["replay", "check"],
-        task,
-    ));
-    checks.push(optional_subcommand(
-        root,
-        REALISTIC,
-        "market-calibration",
-        "The market matches its calibration file",
-        &["market-cal", "check"],
-        task,
-    ));
+    checks.push(replay_check(root, &family, &config, opts.fast, &out));
+    checks.push(calibration_check(root, task, &family, opts.fast));
 
     let report = Report::new(
         task,
@@ -1003,16 +1110,30 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_subcommand_is_not_run() {
-        let c = optional_subcommand(
-            Path::new("."),
-            GRADED,
-            "x",
-            "X",
-            &["no-such-tool", "check"],
-            "t",
-        );
-        assert_eq!(c.status, Status::NotRun);
+    fn checks_from_other_changes_are_found_by_name() {
+        assert!(has_command(&["grade"], Some("report")));
+        assert!(!has_command(&["grade"], Some("no-such-flag")));
+        assert!(!has_command(&["no-such-tool", "check"], None));
+    }
+
+    #[test]
+    fn the_snapshot_and_calibration_come_from_the_repo() {
+        let root = authoring::repo_root();
+        assert!(root.join(snapshot(&root)).is_dir(), "{}", snapshot(&root));
+        let dir = std::env::temp_dir().join(format!("mtx-gates-cal-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("calibration/market")).unwrap();
+        for f in [
+            "spcx.20261101.aa.toml",
+            "spcx.20261111.bb.toml",
+            "spcx.20261111.bb.inputs.json",
+            "sol-usd.20261201.cc.toml",
+        ] {
+            std::fs::write(dir.join("calibration/market").join(f), "").unwrap();
+        }
+        let file = calibration_file(&dir, "flash-crash-spcx").unwrap();
+        assert!(file.ends_with("spcx.20261111.bb.toml"), "{}", file.display());
+        assert!(calibration_file(&dir, "flash-crash-btc").is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
