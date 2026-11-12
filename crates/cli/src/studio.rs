@@ -99,6 +99,10 @@ pub struct StudioOptions<'a> {
     pub repo: Option<&'a Path>,
     pub port: u16,
     pub open: bool,
+    /// The address to listen on: loopback by default. Any other address
+    /// (`0.0.0.0` for the local network) requires a token, which the URL
+    /// the studio prints carries.
+    pub host: &'a str,
 }
 
 /// `mtx studio`.
@@ -143,26 +147,61 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
     studio.load_settings();
     tokio::spawn(watch(studio.clone()));
 
+    let host: std::net::IpAddr = options
+        .host
+        .parse()
+        .with_context(|| format!("--host {} isn't an IP address", options.host))?;
+    // Off loopback, the studio is someone's editor, files and agent: only
+    // with the token.
+    let token = (!host.is_loopback()).then(|| uuid::Uuid::new_v4().simple().to_string());
     let app = Router::new()
         .route("/", get(page))
         .route("/dev", get(|| async { Html(DEV_PAGE) }))
         .route("/studio/{*path}", get(asset))
         .route("/ws", get(ws))
+        .layer(axum::middleware::from_fn_with_state(
+            token.clone(),
+            require_token,
+        ))
         .with_state(studio.clone());
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port)).await?;
-    let url = format!("http://{}", listener.local_addr()?);
-    notice::print(
-        NoticeLevel::Success,
-        "mtx studio",
-        &format!(
-            "{} · {}\n{url}",
-            dir.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            studio.task
+    let listener = tokio::net::TcpListener::bind((host, options.port)).await?;
+    let port = listener.local_addr()?.port();
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let local = format!("http://127.0.0.1:{port}");
+    match &token {
+        None => notice::print(
+            NoticeLevel::Success,
+            "mtx studio",
+            &format!("{name} · {}\n{local}", studio.task),
         ),
-    );
+        Some(token) => {
+            let lan = if host.is_unspecified() {
+                lan_address()
+            } else {
+                Some(host)
+            };
+            let remote = lan.map(|ip| format!("http://{ip}:{port}/?token={token}"));
+            let mut body = format!("{name} · {}\n{local}/?token={token}", studio.task);
+            if let Some(remote) = &remote {
+                body.push_str(&format!("\n{remote}"));
+            }
+            body.push_str("\nthe token opens the studio: its files, builds and agent");
+            notice::print(NoticeLevel::Success, "mtx studio, on the network", &body);
+            if let Some(remote) = &remote
+                && let Some(qr) = qr(remote)
+            {
+                eprintln!("{qr}");
+            }
+        }
+    }
     if options.open {
+        let url = match &token {
+            Some(token) => format!("{local}/?token={token}"),
+            None => local,
+        };
         crate::play::open_browser(&url);
     }
     axum::serve(listener, app).await?;
@@ -274,6 +313,88 @@ impl Studio {
         )?;
         Ok(())
     }
+}
+
+/// The cookie the page keeps the token in, once it has opened with it.
+const TOKEN_COOKIE: &str = "mtx_studio";
+
+/// Off loopback, every request carries the token: in the URL (`?token=`),
+/// which sets the cookie, or in the cookie.
+async fn require_token(
+    State(token): State<Option<String>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    let Some(token) = token else {
+        return next.run(request).await;
+    };
+    let in_query = request
+        .uri()
+        .query()
+        .into_iter()
+        .flat_map(|q| q.split('&'))
+        .any(|pair| pair == format!("token={token}"));
+    let in_cookie = request
+        .headers()
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .any(|c| c.trim() == format!("{TOKEN_COOKIE}={token}"));
+    if !in_query && !in_cookie {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "mtx studio: open the URL it printed, with its token",
+        )
+            .into_response();
+    }
+    let mut response = next.run(request).await;
+    if in_query
+        && let Ok(cookie) =
+            format!("{TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict").parse()
+    {
+        response.headers_mut().insert(header::SET_COOKIE, cookie);
+    }
+    response
+}
+
+/// This machine's address on its local network: the one its default
+/// route uses (a UDP socket's, connected; nothing is sent).
+fn lan_address() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    socket.local_addr().ok().map(|a| a.ip())
+}
+
+/// A QR code of `text`, for a phone or a tablet's camera, in half blocks.
+fn qr(text: &str) -> Option<String> {
+    let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
+    let width = code.width();
+    let dark = |x: i64, y: i64| {
+        x >= 0
+            && y >= 0
+            && (x as usize) < width
+            && (y as usize) < width
+            && code[(x as usize, y as usize)] == qrcode::Color::Dark
+    };
+    let mut out = String::new();
+    // A quiet zone of two modules, and two rows of modules a line.
+    let (from, to) = (-2i64, width as i64 + 2);
+    let mut y = from;
+    while y < to {
+        for x in from..to {
+            out.push(match (dark(x, y), dark(x, y + 1)) {
+                (true, true) => ' ',
+                (true, false) => '▄',
+                (false, true) => '▀',
+                (false, false) => '█',
+            });
+        }
+        out.push('\n');
+        y += 2;
+    }
+    Some(out)
 }
 
 async fn page() -> impl IntoResponse {
