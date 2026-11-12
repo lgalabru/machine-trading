@@ -288,11 +288,6 @@ impl Trader {
                 })
             }),
             Action::PostOnly { side, price, size } => {
-                if planned.expires_slot.is_some() {
-                    return Sent::not_sent(
-                        "an expiry on a post-only order is unsupported in this session",
-                    );
-                }
                 let crosses = |top: Top| {
                     let price = self.price(side, price)?.to_string();
                     let price: f64 = price.parse().unwrap_or(f64::NAN);

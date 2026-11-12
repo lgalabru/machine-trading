@@ -391,6 +391,10 @@ interface types {
     /// A `liquidity-position`'s id; none for the only one.
     position: option<string>,
     share: f64,
+    /// The least of each asset to receive, fees included; none takes what
+    /// the venue gives.
+    min-base: option<f64>,
+    min-quote: option<f64>,
   }
 
   /// An amount of a lending reserve's or a stake pool's asset: none is all
@@ -569,6 +573,38 @@ interface types {
     /// makes for this transaction alone, for an account that must sign its
     /// own creation (a position's mint, a position account).
     fresh(u8),
+    /// One of the transaction's derived addresses (`raw-transaction.derived`),
+    /// from 0: an account whose address comes from others, such as a fresh
+    /// mint's position or token account. It never signs.
+    derived(u16),
+  }
+
+  /// One seed of a program-derived address.
+  variant seed {
+    bytes(list<u8>),
+    /// A key's 32 bytes.
+    key(account-key),
+  }
+
+  /// A program-derived address: the program's, from `seeds`, with the bump
+  /// `find_program_address` finds.
+  record pda {
+    program: account-key,
+    seeds: list<seed>,
+  }
+
+  /// An associated token account: `owner`'s for `mint`, under
+  /// `token-program` (SPL Token or Token-2022).
+  record ata {
+    owner: account-key,
+    mint: account-key,
+    token-program: account-key,
+  }
+
+  /// How a derived address is made.
+  variant derivation {
+    pda(pda),
+    ata(ata),
   }
 
   /// One instruction of a raw transaction.
@@ -586,6 +622,13 @@ interface types {
     lookup-tables: list<string>,
     /// How many fresh signers its instructions name (`account-key::fresh`).
     fresh-signers: u8,
+    /// Its derived addresses (`account-key::derived`), resolved in order
+    /// after the fresh signers are made: each may name the authority, an
+    /// address, a fresh signer, or a derived address before it in the list,
+    /// never one at or after it. A list that breaks that, or the limits
+    /// (8 fresh signers, 32 derived addresses, 16 seeds of at most 32 bytes
+    /// each), is refused.
+    derived: list<derivation>,
     tx: option<tx-options>,
   }
 

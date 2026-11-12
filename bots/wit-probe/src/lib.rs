@@ -10,7 +10,10 @@
 //! of each line on the chain.
 
 use mtx_kit::{
-    AmountUnit, Intent, LineOptions, LiquidityShape, PriceRange, Route, log, prelude::*,
+    AmountUnit, Intent, LineOptions, LiquidityShape, PriceRange, Route, log,
+    prelude::*,
+    raw::{AccountKey, Derivation, RawAccount, RawInstruction, RawTransaction, Seed},
+    send_raw,
 };
 
 #[derive(Default)]
@@ -84,7 +87,15 @@ pub fn first_sheet(market: &Market, orders: &mut Orders) {
             },
             LineOptions::default(),
         )
-        .remove_liquidity(None, 0.0)
+        .push(
+            Intent::RemoveLiquidity {
+                position: None,
+                share: 0.0,
+                min_base: Some(0.5),
+                min_quote: None,
+            },
+            LineOptions::default(),
+        )
         .deposit(10.0)
         .withdraw(None)
         .borrow(5.0)
@@ -100,6 +111,53 @@ pub fn first_sheet(market: &Market, orders: &mut Orders) {
         );
 }
 
+/// A raw transaction shaped like Raydium CLMM's `open_position_v2`: a
+/// fresh NFT mint, the position PDA and the authority's token account for
+/// the mint, both derived from it. The grader refuses it (raw sends are
+/// off), after taking it whole.
+pub fn open_position() -> RawTransaction {
+    let clmm = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK";
+    let account = |key, signer, writable| RawAccount {
+        key,
+        signer,
+        writable,
+    };
+    RawTransaction {
+        instructions: vec![RawInstruction {
+            program: clmm.into(),
+            accounts: vec![
+                account(AccountKey::Authority, true, true),
+                account(AccountKey::Fresh(0), true, true),
+                account(AccountKey::Derived(0), false, true),
+                account(AccountKey::Derived(1), false, true),
+            ],
+            data: vec![77, 255, 0, 1],
+        }],
+        lookup_tables: vec!["AddressLookupTab1e1111111111111111111111111".into()],
+        fresh_signers: 1,
+        derived: vec![
+            Derivation::Pda {
+                program: AccountKey::Address(clmm.into()),
+                seeds: vec![
+                    Seed::Bytes(b"position".to_vec()),
+                    Seed::Key(AccountKey::Fresh(0)),
+                ],
+            },
+            Derivation::Ata {
+                owner: AccountKey::Authority,
+                mint: AccountKey::Fresh(0),
+                token_program: AccountKey::Address(
+                    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb".into(),
+                ),
+            },
+        ],
+        tx: Some(TxOptions {
+            cu_limit: Some(600_000),
+            ..TxOptions::default()
+        }),
+    }
+}
+
 /// Step 3's sheet: a reduce-only ask resting above the book; a swap the
 /// session can't execute, which mustn't make room under the cap; and a buy
 /// of 80, which the cap of 70 cuts to what is left after the position and
@@ -111,7 +169,13 @@ pub fn reduce_only_and_unexecuted(market: &Market, orders: &mut Orders) {
         .reduce_only()
         .expires(market.slot + 100)
         .swap(Side::Ask, market.cap, AmountUnit::Base, round(mark * 0.9))
-        .buy(80.0, round(mark * 1.02));
+        .buy(80.0, round(mark * 1.02))
+        // A post-only ask, far above the book, that lasts 100 slots.
+        .ask(round(mark * 1.2), 1.0)
+        .post_only()
+        .expires(market.slot + 100)
+        // Not a number: a note, nothing sent.
+        .sell(f64::NAN, round(mark * 0.98));
 }
 
 fn round(usd: f64) -> f64 {
@@ -127,7 +191,16 @@ impl Strategy for Probe {
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         log(&format!("market {market:?}"));
         match market.k {
-            0 => first_sheet(market, orders),
+            0 => {
+                first_sheet(market, orders);
+                log(&format!("send: {:?}", send_raw(&open_position())));
+                let mut cyclic = open_position();
+                cyclic.derived[0] = Derivation::Pda {
+                    program: AccountKey::Derived(1),
+                    seeds: vec![],
+                };
+                log(&format!("send cyclic: {:?}", send_raw(&cyclic)));
+            }
             3 => reduce_only_and_unexecuted(market, orders),
             4 => {
                 orders.cancel_all().target_position(0.0);
