@@ -107,9 +107,10 @@ pub use solana_pubkey::Pubkey;
 #[cfg(feature = "chain")]
 pub use solana_transaction::{Hash, Instruction, Signature};
 pub use strategy::{
-    Action, BotResult, Execution, Intent, Market, Orders, Position, RPC_METHODS, SESSION_VARS,
-    Session, Side, Strategy, log, plan, resting_after, rpc, rpc_account, rpc_accounts,
-    step_offline,
+    Action, Book, BotResult, Execution, Intent, LineOptions, Market, Orders, OwnFill, Planned,
+    Position, RPC_METHODS, Rfq, Role, SESSION_VARS, SendState, SendStatus, Session, Side, Strategy,
+    TimeInForce, TxOptions, VenueInfo, VenueView, log, plan, plan_sheet, resting_after, rpc,
+    rpc_account, rpc_accounts, step_offline, venue_views,
 };
 
 #[cfg(feature = "phoenix")]
@@ -140,7 +141,7 @@ mod bot {
 /// What a strategy needs: `use mtx_kit::prelude::*;`.
 pub mod prelude {
     pub use crate::{
-        Action, BotResult, Execution, Intent, Market, Orders, Position, Session, Side, Strategy,
-        plan, rpc, step_offline,
+        Action, BotResult, Execution, Intent, Market, Orders, Position, SendState, Session, Side,
+        Strategy, TxOptions, plan, plan_sheet, rpc, step_offline,
     };
 }

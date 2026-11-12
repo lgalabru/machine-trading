@@ -50,6 +50,17 @@ pub enum PhoenixOrder {
         /// Fill all of `quantity` or nothing.
         all_or_none: bool,
     },
+    /// Rests on the book at `price` without taking: Phoenix's multiple-order
+    /// packet, which places post-only orders and, not sliding, refuses one
+    /// that would cross.
+    PostOnly {
+        /// Buy or sell.
+        side: Side,
+        /// Limit price, USDC per base unit, on the tick grid.
+        price: Decimal,
+        /// Base units, on the lot grid.
+        quantity: Decimal,
+    },
 }
 
 impl PhoenixOrder {
@@ -95,6 +106,7 @@ impl PhoenixOrder {
         match self {
             Self::Limit { .. } => "limit order",
             Self::Market { .. } => "market order",
+            Self::PostOnly { .. } => "post-only order",
         }
     }
 }
@@ -313,6 +325,26 @@ impl PhoenixTrader {
                     .place_market_order(ticket.build()?)
                     .await?
             }
+            PhoenixOrder::PostOnly {
+                side,
+                price,
+                quantity,
+            } => {
+                let order = vec![(self.ticket_price(price)?, self.lots(quantity)?)];
+                let none = Vec::new();
+                let (bids, asks) = match side {
+                    Side::Buy => (&order, &none),
+                    Side::Sell => (&none, &order),
+                };
+                self.exchange.tx().build_multi_limit_order(
+                    self.authority,
+                    self.account,
+                    symbol,
+                    bids,
+                    asks,
+                    false,
+                )?
+            }
         };
         self.pack(order.label(), instructions)
     }
@@ -374,6 +406,25 @@ impl PhoenixTrader {
     ) -> Result<Signature, PhoenixError> {
         self.submit(
             &PhoenixOrder::Limit {
+                side,
+                price,
+                quantity,
+            },
+            signer,
+        )
+        .await
+    }
+
+    /// Rests a post-only order at `price`: refused if it would cross.
+    pub async fn place_post_only(
+        &self,
+        signer: &dyn TransactionSigner,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+    ) -> Result<Signature, PhoenixError> {
+        self.submit(
+            &PhoenixOrder::PostOnly {
                 side,
                 price,
                 quantity,

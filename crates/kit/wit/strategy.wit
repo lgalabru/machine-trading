@@ -3,7 +3,16 @@
 /// The grader calls `start` once, `step` once per step of the session, and
 /// `end` after the last. The world is paused while a call runs: what the
 /// strategy reads through `rpc` is the chain as it is at that step.
-package mtx:strategy@0.1.0;
+///
+/// 0.2.0 keeps 0.1.0's fields and meanings, and adds: the session's venues,
+/// and a view of each at every step (its book, its tape, the position held
+/// there); intents that name a venue and say how their orders are placed
+/// (post-only, immediate-or-cancel, reduce-only, a participation cap); what
+/// became of every order the previous step's sheet sent, and the strategy's
+/// own fills; requests for quotes, and quotes answering them; and
+/// transaction options. The grader still loads a 0.1.0 component, and hands
+/// it 0.1.0's market.
+package mtx:strategy@0.2.0;
 
 interface types {
   /// The session, as `start` sees it.
@@ -37,12 +46,105 @@ interface types {
     /// A seed, for a strategy that wants randomness: the same in every run
     /// of the session.
     seed: u64,
+    /// The markets of the mandate's universe, the session's own first: an
+    /// intent that names no venue is for it.
+    venues: list<venue-info>,
+    /// Whether the session applies intents' transaction options. None does
+    /// yet: they are accepted and counted, and every order is sent as it
+    /// would be without them.
+    applies-tx-options: bool,
   }
+
+  /// A market the session knows.
+  record venue-info {
+    /// The market as the mandate's universe writes it,
+    /// `<venue>:<kind>:<symbol>`: `phoenix:perp:SPCX`.
+    id: string,
+    kind: market-kind,
+    /// Whether the grader can send orders there in this session. An intent
+    /// for a venue it can't comes back as `not-sent`.
+    tradable: bool,
+  }
+
+  enum market-kind { perp, spot }
 
   /// The position: signed, in base units, and its average entry.
   record position {
     size: f64,
     entry-usd: f64,
+  }
+
+  /// One price level of a book.
+  record level {
+    price: f64,
+    /// Base units resting at the price.
+    size: f64,
+  }
+
+  /// The top of a book, best first.
+  record book {
+    bids: list<level>,
+    asks: list<level>,
+  }
+
+  /// Which side of a trade the strategy was on.
+  enum role { taker, maker }
+
+  /// One trade on a venue's tape.
+  record trade {
+    /// The slot it landed in.
+    slot: u64,
+    /// The taker's side.
+    side: side,
+    price: f64,
+    size: f64,
+    /// Who took and who made, as the venue names them, when the scenario
+    /// reports it.
+    taker: option<string>,
+    maker: option<string>,
+    /// Which side of it the strategy was on, if it was one of them.
+    role: option<role>,
+  }
+
+  /// A venue at one step.
+  record venue-view {
+    /// As `venue-info` names it.
+    id: string,
+    /// The book's best bid and ask, if any.
+    best-bid: option<f64>,
+    best-ask: option<f64>,
+    /// The top levels of the book, when the scenario reports depth.
+    depth: option<book>,
+    /// Every trade there since the previous step, oldest first, when the
+    /// scenario reports a tape: an empty list is a step without trades.
+    tape: option<list<trade>>,
+    /// The strategy's position there, if the grader reads it.
+    position: option<position>,
+  }
+
+  /// One of the strategy's fills since the previous step.
+  record fill {
+    venue: string,
+    slot: u64,
+    /// The strategy's side: `bid` bought.
+    side: side,
+    price: f64,
+    size: f64,
+    role: role,
+  }
+
+  /// A request for a quote, open at this step.
+  record rfq {
+    /// The request's id, which a response names.
+    id: string,
+    venue: string,
+    /// The requester's side: `bid` wants to buy, so a quote answering it
+    /// sells.
+    side: side,
+    /// Base units wanted.
+    size: f64,
+    /// The last slot a response is taken at.
+    deadline-slot: u64,
   }
 
   /// The market at one step, as `mtx_kit::Market` has it.
@@ -70,6 +172,20 @@ interface types {
     pnl: f64,
     peak-pnl: f64,
     drawdown: f64,
+    /// The world's clock, in Unix seconds, when the scenario reports it.
+    unix-timestamp: option<s64>,
+    /// Each of the session's venues, in `session.venues`' order.
+    venues: list<venue-view>,
+    /// What became of every order the previous step's sheet planned.
+    sends: list<send-status>,
+    /// The strategy's own trades since the previous step, from the venues'
+    /// tapes: empty where the scenario reports no tape.
+    fills: list<fill>,
+    /// Requests for quotes open at this step.
+    rfqs: list<rfq>,
+    /// What the grader cut or dropped from the previous step's sheet, and
+    /// why: an order cut to stay within the cap, say.
+    notes: list<string>,
   }
 
   enum side { bid, ask }
@@ -80,20 +196,129 @@ interface types {
     slice: f64,
     slippage-bps: f64,
     min-trade: f64,
+    /// The most of the venue's traded volume since the previous step to
+    /// trade this step, as a share in (0, 1]. The volume is the venue's
+    /// tape's: where the session reports none, there is none to take a
+    /// share of, and the target doesn't trade.
+    participation: option<f64>,
   }
 
-  /// One line of the order sheet, as `mtx_kit::Intent`.
-  variant intent {
+  /// How long a limit order lives.
+  enum time-in-force {
+    /// Rests until it fills or is cancelled, filling first against
+    /// anything it crosses.
+    gtc,
+    /// Rests without taking: an order that would cross the book is refused.
+    post-only,
+    /// Fills what it can now, at no worse than its price, and rests nothing.
+    ioc,
+  }
+
+  record target {
+    /// Signed, in base units.
+    position: f64,
+    execution: execution,
+  }
+
+  /// Cancel what rests, then rest a bid and an ask of `size`.
+  record quote {
+    bid: f64,
+    ask: f64,
+    size: f64,
+    /// Both are post-only.
+    post-only: bool,
+  }
+
+  /// A market order: `size`, filling at no worse than `limit`.
+  record market-order {
+    side: side,
+    size: f64,
+    limit: f64,
+  }
+
+  /// A limit order of `size` at `price`.
+  record limit-order {
+    side: side,
+    price: f64,
+    size: f64,
+    time-in-force: time-in-force,
+  }
+
+  /// A quote answering a request: `price` for `size`, or the whole request.
+  record rfq-response {
+    id: string,
+    price: f64,
+    size: option<f64>,
+  }
+
+  /// What a line of the sheet asks for.
+  variant action {
     /// Market orders toward a position.
-    target(tuple<f64, execution>),
-    /// Cancel what rests, then rest a bid and an ask: `(bid, ask, size)`.
-    quote(tuple<f64, f64, f64>),
-    /// A market order: `(side, size, worst price)`.
-    market(tuple<side, f64, f64>),
-    /// A resting order: `(side, price, size)`.
-    limit(tuple<side, f64, f64>),
+    target(target),
+    quote(quote),
+    market(market-order),
+    limit(limit-order),
     /// Cancel every resting order.
     cancel-all,
+    respond(rfq-response),
+  }
+
+  /// How the line's transactions are sent. None of this is applied unless
+  /// the session says so (`session.applies-tx-options`): it is accepted and
+  /// counted, and changes nothing.
+  record tx-options {
+    /// Compute units the transaction asks for.
+    cu-limit: option<u32>,
+    /// The priority fee: micro-lamports per compute unit.
+    cu-price: option<u64>,
+    /// A tip to the block builder, in lamports.
+    tip: option<u64>,
+    /// Lines with the same bundle id are sent as one bundle.
+    bundle: option<u32>,
+  }
+
+  /// One line of the order sheet, as `mtx_kit::Orders` records it.
+  record intent {
+    action: action,
+    /// One of `session.venues`' ids; none is the first.
+    venue: option<string>,
+    /// Orders it plans may only shrink the position, never grow or flip it.
+    reduce-only: bool,
+    tx: option<tx-options>,
+  }
+
+  /// One order the grader planned from a line.
+  variant order {
+    market(market-order),
+    limit(limit-order),
+    cancel-all,
+    respond(rfq-response),
+  }
+
+  /// What became of an order.
+  variant send-state {
+    /// It executed: its signature.
+    landed(string),
+    /// It was sent and failed: why.
+    failed(string),
+    /// It wasn't sent: why (an earlier order of the step failed, or the
+    /// session can't trade the venue).
+    not-sent(string),
+    /// It is held, and may land in a later step.
+    delayed,
+    /// Its blockhash expired before it landed.
+    expired,
+  }
+
+  /// An order of the previous step's sheet, and what became of it.
+  record send-status {
+    /// The step whose sheet planned it, its line on the sheet (from 0),
+    /// and the venue it went to.
+    step: u64,
+    line: u32,
+    venue: string,
+    order: order,
+    state: send-state,
   }
 }
 
