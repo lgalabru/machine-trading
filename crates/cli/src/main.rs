@@ -91,9 +91,10 @@ enum Command {
     /// the strategy, ask an agent to change it or the scenario, play it step
     /// by step against the market's chart.
     Studio {
-        /// The strategy's directory, as `mtx bot new` makes it.
-        #[arg(default_value = ".")]
-        dir: PathBuf,
+        /// The strategy, as `mtx bot new` makes it: its directory, or its
+        /// Cargo.toml.
+        #[arg(long, default_value = ".")]
+        bot_path: PathBuf,
         /// The task its scenarios come from, as named in bench/tasks
         /// (default: the flash-crash task).
         #[arg(long)]
@@ -1048,14 +1049,14 @@ async fn run() -> Result<()> {
             json
         }
         Command::Studio {
-            dir,
+            bot_path,
             task,
             port,
             no_open,
             repo,
         } => {
             studio::studio(studio::StudioOptions {
-                dir: &dir,
+                dir: &bot_path,
                 task: task.as_deref(),
                 repo: repo.as_deref(),
                 port,

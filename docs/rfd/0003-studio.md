@@ -19,7 +19,9 @@ session step by step against the market's chart.
 
 ### The page
 
-`mtx studio [DIR]` serves a web UI on localhost and opens it. `DIR` is a
+`mtx studio` serves a web UI on localhost and opens it, for the bot in the
+current directory (`--bot-path` for another: its directory or its
+`Cargo.toml`). The bot is a
 workspace: a strategy crate (`mtx bot new`'s layout: `Cargo.toml`,
 `Justfile`, `src/lib.rs`) and the scenarios it plays (`scenarios/*.json`,
 seeded from a task's practice set). Four resizable panels, as Rex lays
