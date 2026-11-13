@@ -171,7 +171,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 .map(|(role, n)| opts.keys.keypair(role, n))
                 .collect();
             let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
-            let seats = onboard(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
+            let seats =
+                onboard_unique(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
             tracing::info!(wallets = seats.len(), "library actors ready");
             let seats: Vec<WalletSeat> = pubkeys
                 .into_iter()
@@ -267,7 +268,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         // RFQ fills settle through a seat trading as the bot; front-runners
         // read the bot's trading through another.
         let bot_seat = match &library.rfq_clients {
-            Some(_) => Some(perp.seat(bot.insecure_clone(), internal.url()).await?),
+            Some(_) => Some(perp.unique_seat(bot.insecure_clone(), internal.url())?),
             None => None,
         };
         if !library.front_runners.is_empty() {
@@ -379,6 +380,30 @@ async fn onboard(
         seats.push(perp.seat(keypair, rpc_url).await?);
     }
     Ok(seats)
+}
+
+/// As [`onboard`], with seats whose every transaction is unique among their
+/// own ([`crate::venue::perps::UniquePerpSeat`]): the library's actors'.
+async fn onboard_unique(
+    world: &snapshot::OfflineWorld,
+    phoenix: &Phoenix,
+    perp: &PerpMarket,
+    rpc: &solana_rpc_client::rpc_client::RpcClient,
+    rpc_url: &str,
+    keypairs: Vec<Keypair>,
+) -> Result<Vec<Box<dyn Seat>>> {
+    phoenix::onboard_traders_stepped(
+        &world.surfnet,
+        phoenix,
+        rpc,
+        &keypairs.iter().collect::<Vec<_>>(),
+        ACTOR_DEPOSIT_USDC,
+    )
+    .await?;
+    keypairs
+        .into_iter()
+        .map(|keypair| perp.unique_seat(keypair, rpc_url))
+        .collect()
 }
 
 /// A perp session's account: the bot's Phoenix trader account, metered.
