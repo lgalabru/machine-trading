@@ -47,6 +47,8 @@ wasmtime-wasi = "50.0.1"
 rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
 
 [dev-dependencies]
+# Hand-built pool instructions a bot may or may not run (src/spot.rs).
+solana-instruction = "3.5"
 # A Token-2022 mint with a transfer fee, and v0 transactions, on a surfnet
 # behind the guard (tests/tokens_and_v0.rs).
 solana-system-interface = { version = "3", features = ["wincode"] }

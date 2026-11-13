@@ -2198,7 +2198,306 @@ mod tests {
                 );
             }
 
+            // Everything so far is a seat's or a token transfer: nothing a bot
+            // may not run, where the session takes its liquidity. Where it
+            // doesn't, the positions are breaches.
+            assert_eq!(
+                spot.unsupported(start, &me, true).await.unwrap(),
+                Vec::<String>::new(),
+                "{venue}"
+            );
+            let spot_only = spot.unsupported(start, &me, false).await.unwrap();
+            assert!(
+                !spot_only.is_empty()
+                    && spot_only.iter().all(|b| b
+                        .ends_with(&format!(", and the session takes no liquidity on {venue}"))),
+                "{venue}: {spot_only:?}"
+            );
+
+            if venue == "meteora" {
+                meteora_extras(
+                    &rpc,
+                    &chain,
+                    &owner,
+                    &*pool,
+                    &*spot,
+                    &*amm,
+                    held.id,
+                    below.pubkey(),
+                )
+                .await;
+            }
         }
+    }
+
+    /// The part of [`pool_moves_are_read_per_instruction_and_per_owner`]
+    /// only Meteora's program has: a position's account grown past its 70
+    /// bins and back, which a bot may do, and a limit order and a rebalance,
+    /// which it may not.
+    #[allow(clippy::too_many_arguments)]
+    async fn meteora_extras(
+        rpc: &RpcClient,
+        chain: &Arc<dyn ChainClient>,
+        owner: &Keypair,
+        pool: &dyn crate::venue::pools::Pool,
+        spot: &dyn Market,
+        amm: &dyn Market,
+        held: Pubkey,
+        below: Pubkey,
+    ) {
+        use mtx_kit::protocols::meteora::dlmm;
+        use solana_instruction::AccountMeta;
+
+        use crate::venue::pools::Deposit;
+
+        let me = owner.pubkey();
+        let address = pool.assets().address;
+        let pair =
+            || dlmm::LbPair::decode(address, &rpc.get_account(&address).unwrap().data).unwrap();
+        let slot = || rpc.get_slot().unwrap();
+        let instruction = |accounts: Vec<AccountMeta>, data: Vec<u8>| mtx_kit::Instruction {
+            program_id: dlmm::PROGRAM_ID,
+            accounts,
+            data,
+        };
+        let tail = || {
+            [
+                AccountMeta::new_readonly(dlmm::event_authority(), false),
+                AccountMeta::new_readonly(dlmm::PROGRAM_ID, false),
+            ]
+        };
+        // `increase_position_length` or `decrease_position_length`: 100 bins
+        // on the position's upper side.
+        let resize = |grow: bool| {
+            let (mut data, mut accounts) = if grow {
+                (
+                    vec![80, 83, 117, 211, 66, 13, 33, 149],
+                    vec![
+                        AccountMeta::new(me, true),
+                        AccountMeta::new_readonly(address, false),
+                    ],
+                )
+            } else {
+                (
+                    vec![194, 219, 136, 32, 25, 96, 105, 37],
+                    vec![AccountMeta::new(me, false)],
+                )
+            };
+            data.extend(100u16.to_le_bytes());
+            data.push(1);
+            accounts.extend([
+                AccountMeta::new(held, false),
+                AccountMeta::new_readonly(me, true),
+                AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            ]);
+            accounts.extend(tail());
+            instruction(accounts, data)
+        };
+        // Each position's amounts and fees, whatever its range.
+        let amounts = |holdings: &[Holding]| {
+            holdings
+                .iter()
+                .filter_map(|h| match h {
+                    Holding::Amm(p) => Some((
+                        p.id.clone(),
+                        p.base_amount,
+                        p.quote_amount,
+                        p.fees_base,
+                        p.fees_quote,
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let start = slot();
+
+        // Grown by 100 bins: the same positions, worth the same; shrunk back,
+        // exactly as before.
+        let before = amm.holdings(&me).await.unwrap();
+        let value = amm.value_usd(chain.as_ref(), &before).await.unwrap();
+        land(rpc, owner, &[], vec![resize(true)]);
+        assert!(rpc.get_account(&held).unwrap().data.len() > dlmm::Position::LEN);
+        let grown = amm.holdings(&me).await.unwrap();
+        assert_eq!(amounts(&grown), amounts(&before));
+        assert_eq!(amm.value_usd(chain.as_ref(), &grown).await.unwrap(), value);
+        land(rpc, owner, &[], vec![resize(false)]);
+        assert_eq!(
+            rpc.get_account(&held).unwrap().data.len(),
+            dlmm::Position::LEN
+        );
+        assert_eq!(amm.holdings(&me).await.unwrap(), before);
+
+        // Grown again, a deposit across all of it, and the extension's bins
+        // count: the position gains what the wallet gave.
+        land(rpc, owner, &[], vec![resize(true)]);
+        let wallet = || async {
+            spot.holdings(&me)
+                .await
+                .unwrap()
+                .iter()
+                .filter_map(|h| match h {
+                    Holding::Spot(h) => Some(h.wallet),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let position = || async {
+            pool.position(chain.as_ref(), &me, &held)
+                .await
+                .unwrap()
+                .expect("the grown position is the owner's")
+        };
+        let (wallet0, position0) = (wallet().await, position().await);
+        let (ixs, _) = pool
+            .deposit(
+                chain.as_ref(),
+                &me,
+                Some(&held),
+                &Keypair::new().pubkey(),
+                &Deposit {
+                    base: 0.01,
+                    quote: 1.0,
+                    range: None,
+                    shape: None,
+                },
+            )
+            .await
+            .unwrap();
+        land(rpc, owner, &[], ixs);
+        let (wallet1, position1) = (wallet().await, position().await);
+        let near = |a: f64, b: f64| (a - b).abs() <= 1e-3 * b.abs().max(1e-9);
+        let gave_base = f64::try_from(wallet0[0] - wallet1[0]).unwrap();
+        let gave_quote = f64::try_from(wallet0[1] - wallet1[1]).unwrap();
+        assert!(gave_base > 0.0 && gave_quote > 0.0);
+        assert!(
+            near(position1.base - position0.base, gave_base)
+                && near(position1.quote - position0.quote, gave_quote),
+            "{position0:?} -> {position1:?}, the wallet gave {gave_base} and {gave_quote}"
+        );
+        // And all of it out again.
+        let ixs = pool
+            .withdraw(chain.as_ref(), &me, &position1, 1.0, None, None)
+            .await
+            .unwrap();
+        land(rpc, owner, &[], ixs);
+        let emptied = pool
+            .position(chain.as_ref(), &me, &held)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!emptied.live && emptied.base == 0.0, "{emptied:?}");
+        assert_eq!(
+            spot.unsupported(start, &me, true).await.unwrap(),
+            Vec::<String>::new()
+        );
+
+        let open = Mandate::spot(&["meteora"], "SPCX-USDC", 100.0);
+        let breach = |breaches: Vec<String>| {
+            open.audit(&Observed {
+                unsupported: breaches,
+                ..Observed::default()
+            })
+        };
+
+        // A limit order: base resting outside any position, which the cap
+        // and the value would miss. Disqualified.
+        let state = pair();
+        let (x, y) = dlmm::ix::token_accounts(&state, &me);
+        let order = Keypair::new();
+        let bin = state.active_id + 1;
+        let mut data = vec![108, 176, 33, 186, 146, 229, 1, 197, 1];
+        data.extend([0u8; 16]);
+        data.push(0);
+        data.extend(1u32.to_le_bytes());
+        data.extend(bin.to_le_bytes());
+        data.extend(1_000_000u64.to_le_bytes());
+        data.extend(0u32.to_le_bytes());
+        let mut accounts = vec![
+            AccountMeta::new(address, false),
+            AccountMeta::new_readonly(dlmm::PROGRAM_ID, false),
+            AccountMeta::new(state.reserve_x, false),
+            AccountMeta::new_readonly(state.mint_x, false),
+            AccountMeta::new(order.pubkey(), true),
+            AccountMeta::new(me, true),
+            AccountMeta::new_readonly(me, false),
+            AccountMeta::new(x, false),
+            AccountMeta::new_readonly(me, true),
+            AccountMeta::new_readonly(state.program_x, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        accounts.extend(tail());
+        accounts.push(AccountMeta::new(
+            dlmm::bin_array_address(&address, dlmm::bin_array_index(bin)),
+            false,
+        ));
+        let after = slot();
+        land(rpc, owner, &[&order], vec![instruction(accounts, data)]);
+        let breaches = spot.unsupported(after, &me, true).await.unwrap();
+        assert_eq!(
+            breaches,
+            ["ran meteora PlaceLimitOrder, which this benchmark doesn't support"]
+        );
+        assert_eq!(
+            breach(breaches).map(|b| b.to_string()).as_deref(),
+            Some("ran meteora PlaceLimitOrder, which this benchmark doesn't support")
+        );
+
+        // A rebalance of the position below the price, half of it taken out:
+        // a position's liquidity moved by an instruction the audit doesn't
+        // read. Disqualified.
+        let state = pair();
+        let lower = dlmm::Position::decode(below, &rpc.get_account(&below).unwrap().data).unwrap();
+        let mut data = vec![92, 4, 176, 193, 119, 185, 83, 9];
+        data.extend(state.active_id.to_le_bytes());
+        data.extend(70u16.to_le_bytes());
+        data.extend([0, 0]);
+        data.extend([0u8; 32]);
+        data.push(0);
+        data.extend([0u8; 31]);
+        data.extend(1u32.to_le_bytes());
+        data.push(1);
+        data.extend(lower.lower_bin_id.to_le_bytes());
+        data.push(1);
+        data.extend(lower.upper_bin_id.to_le_bytes());
+        data.extend(5_000u16.to_le_bytes());
+        data.extend([0u8; 16]);
+        data.extend(0u32.to_le_bytes());
+        data.extend(0u32.to_le_bytes());
+        let mut accounts = vec![
+            AccountMeta::new(below, false),
+            AccountMeta::new(address, false),
+            AccountMeta::new_readonly(dlmm::PROGRAM_ID, false),
+            AccountMeta::new(x, false),
+            AccountMeta::new(y, false),
+            AccountMeta::new(state.reserve_x, false),
+            AccountMeta::new(state.reserve_y, false),
+            AccountMeta::new_readonly(state.mint_x, false),
+            AccountMeta::new_readonly(state.mint_y, false),
+            AccountMeta::new_readonly(me, true),
+            AccountMeta::new(me, true),
+            AccountMeta::new_readonly(state.program_x, false),
+            AccountMeta::new_readonly(state.program_y, false),
+            AccountMeta::new_readonly(dlmm::ix::MEMO_PROGRAM_ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        accounts.extend(tail());
+        accounts.extend(
+            lower
+                .bin_arrays()
+                .into_iter()
+                .map(|i| AccountMeta::new(dlmm::bin_array_address(&address, i), false)),
+        );
+        let after = slot();
+        land(rpc, owner, &[], vec![instruction(accounts, data)]);
+        let breaches = spot.unsupported(after, &me, true).await.unwrap();
+        assert_eq!(
+            breaches,
+            ["ran meteora RebalanceLiquidity, which this benchmark doesn't support"]
+        );
+        assert!(matches!(
+            breach(breaches),
+            Some(mtx_core::mandate::Breach::Unsupported { .. })
+        ));
     }
 
     /// A spot session's setup on a stepped surfnet: funding wraps SOL by a
