@@ -215,6 +215,15 @@ struct GuardState {
 }
 
 impl GuardState {
+    /// Take back `n` router calls of this step, whose answers the bot never
+    /// got to use.
+    fn refund_router_calls(&self, n: usize) {
+        let mut calls = self.router_calls.lock().expect("guard lock");
+        if calls.0 == self.step().unwrap_or(NO_STEP) {
+            calls.1 = calls.1.saturating_sub(n as u32);
+        }
+    }
+
     fn step(&self) -> Option<u64> {
         Some(self.step.load(Ordering::SeqCst)).filter(|k| *k != NO_STEP)
     }
@@ -955,18 +964,27 @@ async fn mixed_batch(state: &GuardState, calls: &[&Value], host: bool) -> axum::
             rest.push((*call).clone());
         }
     }
+    if rest.is_empty() {
+        return reply(Value::Array(replies));
+    }
     let served = serve(state, Value::Array(rest), host).await;
     let (parts, body) = served.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
         return StatusCode::BAD_GATEWAY.into_response();
     };
-    match serde_json::from_slice::<Value>(&bytes) {
-        Ok(Value::Array(served)) => {
-            replies.extend(served);
-            (parts.status, axum::Json(Value::Array(replies))).into_response()
-        }
-        _ => axum::response::Response::from_parts(parts, axum::body::Body::from(bytes)),
+    // A read the faults rate-limit fails the whole batch, and the bot retries
+    // it: the router calls it will send again don't count twice.
+    if parts.status == StatusCode::TOO_MANY_REQUESTS {
+        state.refund_router_calls(replies.len());
     }
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Array(served)) => replies.extend(served),
+        // The upstream refused the batch as a whole, with one error object.
+        Ok(error @ Value::Object(_)) => replies.push(error),
+        // Nothing to add: notifications alone are answered with no body.
+        _ => {}
+    }
+    (parts.status, axum::Json(Value::Array(replies))).into_response()
 }
 
 /// A router call over HTTP, as Jupiter's API answers: the JSON, or 400 with
@@ -1319,6 +1337,123 @@ mod tests {
             ["surfnet_setAccount", "surfnet_setAccount"]
         );
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// A surfnet that answers any request with one error object and a body of
+    /// nothing at all for a request of notifications only.
+    async fn rejecting_upstream() -> String {
+        let app = Router::new().route(
+            "/",
+            post(|body: Bytes| async move {
+                let calls = serde_json::from_slice::<Value>(&body).unwrap();
+                let silent = calls
+                    .as_array()
+                    .is_some_and(|c| c.iter().all(|c| c.get("id").is_none()));
+                if silent {
+                    return Bytes::new().into_response();
+                }
+                axum::Json(error_response(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    "Invalid request",
+                ))
+                .into_response()
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    #[tokio::test]
+    async fn a_batch_of_router_calls_alone_is_answered_without_the_surfnet() {
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url.clone()).await.unwrap();
+        guard.set_router(bare_router(&url));
+        let batch = json!([router_call_body(1), router_call_body(2)]);
+        let check = |reply: Value| {
+            let replies = reply.as_array().expect("a batch reply").clone();
+            assert_eq!(replies.len(), 2);
+            for id in [1, 2] {
+                let r = replies.iter().find(|r| r["id"] == id).unwrap();
+                assert_ne!(r["error"]["code"], METHOD_NOT_FOUND);
+            }
+        };
+        let (status, reply) = call(&guard, batch.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        check(reply);
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.rpc_unavailable = Some(crate::faults::RpcUnavailable {
+                    reads: vec![1],
+                    count: 5,
+                })
+            })),
+            100,
+            2,
+        );
+        guard.set_step(0);
+        let (status, reply) = call(&guard, batch).await;
+        assert_eq!(status, StatusCode::OK);
+        check(reply);
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_router_call_beside_a_notification_is_still_answered() {
+        let url = rejecting_upstream().await;
+        let guard = Guard::start(url.clone()).await.unwrap();
+        guard.set_router(bare_router(&url));
+        let notification = json!({ "jsonrpc": "2.0", "method": "getSlot" });
+        let (status, reply) = call(&guard, json!([router_call_body(1), notification])).await;
+        assert_eq!(status, StatusCode::OK);
+        let replies = reply.as_array().expect("a batch reply");
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0]["id"], 1);
+    }
+
+    #[tokio::test]
+    async fn router_answers_survive_an_upstream_that_rejects_the_rest() {
+        let url = rejecting_upstream().await;
+        let guard = Guard::start(url.clone()).await.unwrap();
+        guard.set_router(bare_router(&url));
+        let read = json!({ "jsonrpc": "2.0", "id": 2, "method": "getSlot" });
+        let (_, reply) = call(&guard, json!([router_call_body(1), read])).await;
+        let replies = reply.as_array().expect("a batch reply");
+        assert_eq!(replies.len(), 2);
+        assert!(replies.iter().any(|r| r["id"] == 1));
+        assert!(
+            replies
+                .iter()
+                .any(|r| r["id"].is_null() && r["error"]["code"] == INVALID_REQUEST)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_mixed_batch_does_not_spend_the_router_cap() {
+        let (url, _) = upstream().await;
+        let guard = Guard::start(url.clone()).await.unwrap();
+        guard.set_router(bare_router(&url));
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.rpc_unavailable = Some(crate::faults::RpcUnavailable {
+                    reads: vec![1],
+                    count: 3,
+                })
+            })),
+            100,
+            2,
+        );
+        guard.set_step(0);
+        let read = json!({ "jsonrpc": "2.0", "id": 2, "method": "getSlot" });
+        let (status, reply) = call(&guard, json!([router_call_body(1), read])).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(reply.as_array().unwrap().iter().any(|r| r["id"] == 1));
+        assert_eq!(guard.state.router_calls.lock().unwrap().1, 0);
+        let (status, _) = call(&guard, router_call_body(3)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(guard.state.router_calls.lock().unwrap().1, 1);
     }
 
     async fn call(guard: &Guard, body: Value) -> (StatusCode, Value) {
