@@ -8,3 +8,4 @@ change a decision, supersede its record rather than editing it.
 | # | Decision | Status |
 | --- | --- | --- |
 | [0001](0001-public-and-held-out-scenarios.md) | Public scenarios for development, a private held-out set for rankings | Accepted |
+| [0002](0002-bench-machine-over-ssh.md) | GitHub reaches the bench machine over SSH, through one command | Accepted |

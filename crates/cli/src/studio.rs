@@ -132,6 +132,7 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
     let task = crate::bot::resolve_task(&root, options.task)?;
     let snapshot = crate::bot::task_snapshot(&root, &task)?;
     seed_scenarios(&dir)?;
+    seed_agents(&dir)?;
     let (events, _) = broadcast::channel(4096);
     let studio = Arc::new(Studio {
         dir: dir.clone(),
@@ -235,6 +236,16 @@ pub(crate) fn builtin_scenario(name: &str) -> Option<&'static [u8]> {
         .map(|f| f.contents())
 }
 
+/// A workspace without an `AGENTS.md` gets the starter's: the rules the
+/// agent reads on every turn (every line documented). One it has is its own.
+fn seed_agents(dir: &Path) -> Result<()> {
+    let to = dir.join("AGENTS.md");
+    if !to.exists() {
+        std::fs::write(&to, crate::bot::STARTER_AGENTS)?;
+    }
+    Ok(())
+}
+
 /// Every workspace gets the studio's own scenarios (`studio/scenarios/`)
 /// that it lacks.
 fn seed_scenarios(dir: &Path) -> Result<()> {
@@ -262,7 +273,7 @@ struct Studio {
     /// What the server wrote itself, and when: the watcher doesn't echo it.
     written: Mutex<HashMap<PathBuf, SystemTime>>,
     /// The mark the last session started at; before one, the snapshot's.
-    start_mark: Mutex<Option<f64>>,
+    start_mark: Mutex<Option<(String, f64)>>,
 }
 
 impl Studio {
@@ -883,6 +894,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
         .to_string();
     let path = studio.dir.join(SCENARIOS).join(format!("{name}.json"));
     let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
+    let snapshot = crate::bot::snapshot_for(&studio.snapshot, &scenario.symbol)?;
     if stale(&studio.dir) {
         let builder = studio.clone();
         let built = tokio::task::spawn_blocking(move || build(&builder)).await??;
@@ -920,7 +932,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
                 biased;
                 () = control.cancel.notified() => None,
                 report = grade::grade(GradeOptions {
-                    snapshot_dir: &studio.snapshot,
+                    snapshot_dir: &snapshot,
                     bot_dir: &studio.dir,
                     scenarios: std::slice::from_ref(&scenario),
                     log_dir: &logs,
@@ -1027,6 +1039,11 @@ struct Control {
     /// Fired by `terminate`: the session's runtime drops the grader's future,
     /// which stops its surfnet and its bot.
     cancel: tokio::sync::Notify,
+    /// The session's RPC: its transactions' explorer links read from it.
+    rpc: Mutex<Option<String>>,
+    /// The session's chain once it's over, kept so its RPC stays up for the
+    /// explorer until the next session replaces this one.
+    world: Mutex<Option<Box<dyn std::any::Any + Send>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1097,6 +1114,8 @@ impl Control {
             studio,
             launch: args.clone(),
             cancel: tokio::sync::Notify::new(),
+            rpc: Mutex::new(None),
+            world: Mutex::new(None),
         }
     }
 
@@ -1179,16 +1198,26 @@ impl Control {
 }
 
 impl StepObserver for Control {
+    fn rpc(&self, url: &str) {
+        *self.rpc.lock().unwrap_or_else(|e| e.into_inner()) = Some(url.to_string());
+    }
+
+    fn keep(&self, world: Box<dyn std::any::Any + Send>) {
+        *self.world.lock().unwrap_or_else(|e| e.into_inner()) = Some(world);
+    }
+
     fn started(&self, session: &Session, printed: &[String], failed: Option<&str>) {
         *self
             .studio
             .start_mark
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(session.start_mark);
+            .unwrap_or_else(|e| e.into_inner()) =
+            Some((session.symbol.clone(), session.start_mark));
         self.lock().started = true;
+        let rpc = self.rpc.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.event(
             "started",
-            json!({ "session": session_json(session), "printed": printed, "failed": failed }),
+            json!({ "session": session_json(session), "printed": printed, "failed": failed, "rpc": rpc }),
         );
         let state = self.lock();
         if state.stop_on_entry && state.mode == Mode::Running {
@@ -1344,6 +1373,11 @@ fn trace_json(trace: &StepTrace) -> Value {
             // Held, to land in a later step: not a failure.
             "pending": matches!(r, mtx_kit::SendState::Delayed),
             "error": r.reason(),
+            "signature": match r {
+                mtx_kit::SendState::Landed(signature) => Some(signature.as_str()),
+                mtx_kit::SendState::Failed { signature, .. } => signature.as_deref(),
+                _ => None,
+            },
         })).collect::<Vec<_>>(),
         "fuel": trace.fuel,
         "rpc_calls": trace.rpc_calls,
@@ -1378,9 +1412,17 @@ fn session_state(studio: &Studio) -> Value {
 /// steps, on the axis a session's steps share.
 fn plan_json(studio: &Studio, scenario: &Scenario) -> Result<Value> {
     const SLOTS_PER_STEP: u64 = 2;
-    let measured = *studio.start_mark.lock().unwrap_or_else(|e| e.into_inner());
-    let snapshot = crate::review::read_json(&studio.snapshot.join("manifest.json"))
-        .and_then(|m| m["mark_price_usd"].as_f64());
+    // The last session's start, when it traded this market.
+    let measured = studio
+        .start_mark
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .filter(|(symbol, _)| *symbol == scenario.symbol)
+        .map(|(_, mark)| mark);
+    let snapshot = mtx_grader::snapshot::holding(&studio.snapshot, &scenario.symbol)
+        .and_then(|dir| mtx_grader::snapshot::Manifest::load(&dir).ok())
+        .and_then(|m| m.mark_of(&scenario.symbol));
     let start = measured.or(snapshot).unwrap_or(100.0);
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
     let plan: Vec<Value> = (0..steps)
@@ -1520,19 +1562,40 @@ fn primer(studio: &Studio) -> String {
 The strategy is a Rust crate (src/lib.rs) on mtx-kit, built into a WebAssembly component: `impl Strategy` with `start(&Session)`, `step(&Market, &mut Orders)` and `end`, and `mtx_kit::export!`. `step` reads the market (mark, oracle, best bid and ask, position, pnl) and fills an order sheet: `orders.target_position(units)`, `orders.buy(size, limit)`, `orders.sell(..)`, `orders.bid(price, size)`, `orders.ask(..)`, `orders.quote(bid, ask, size)`, `orders.cancel_all()`. `println!` shows in the session's log. The guide: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html
 
 Scenarios are JSON files in scenarios/, one market session each (the {task} task's format):
-- `name` (the file's name, without .json), `description` (one plain sentence of what happens), `symbol` "SPCX".
+- `name` (the file's name, without .json), `description` (one plain sentence of what happens), `symbol`: the market, a Phoenix perp. The ones a session can move, at their price: {marks}. Use the ticker the person means when it's there (NVDA for an NVIDIA chart), and set the mandate's instrument to match (`phoenix:perp:NVDA`). A session starts at that market's real price.
 - `duration_slots`: the session's length. A step is 2 slots: 10 slots is 5 steps.
 - `path`: waypoints `{{"slot": s, "level_pct": p}}`. At slot s the market starts to move to p% from its starting mark (-3.0 is 3% below it, 0.0 back to the start), and holds there until the next waypoint.
 - Phoenix moves its price at most 4% at once: a move larger than that lands in parts, one 4% step every 2 slots. The next waypoint must start after the move ends: at or after slot s + 2 * ceil(|move| / 4%) + 1. From 0% to +5% at slot 5 takes 2 steps, so the next waypoint starts at slot 10 or later.
-- `mandate`: keep it as it is (`max_position` is the position cap, `max_drawdown_usd` the loss limit).
+- `mandate`: its instrument is `phoenix:perp:<symbol>`; keep `max_drawdown_usd` (the loss limit) as it is. `max_position` is the position cap, in units of the market: the account holds $10,000 of collateral, so size the cap to about $10,000 of the market at its price above: about 70 SPCX, 5 ETH, 0.15 BTC. Sizes in a strategy are in those units too: a rule like "trade only when the change is at least 1 unit" never trades BTC; size it from the cap (`market.cap`) instead.
 - After writing or changing a scenario, check it: `{mtx} scenario check scenarios/<name>.json`. It says what's wrong and how to fix it. The studio also checks every scenario you touched when your turn ends, and sends you its problems.
 
 To try the strategy yourself: `{mtx} bot run --bot {dir} --scenario scenarios/<name>.json`. It builds, plays one session, and prints what the strategy printed and its PnL (and `--debug --auto 0` for every step). The person can also press Play on the page.
 
-When you're asked to design a strategy for a situation (a market described, or a screenshot of a chart): first write a scenario that reproduces it, as a new file with a plain name, and check it. Then reason about what would trade it well, change src/lib.rs, run it on that scenario, and say what it made and why. Keep changes small and explained; each message may carry the page's context (the open file, the scenario, the step on screen, the last build's errors)."#,
+When a message carries an image, the image is the market the person means, even when they say "this scenario": the page's open scenario is only context.
+
+When you're asked about a situation (a market described, or a screenshot of a chart):
+1. Reproduce it as a new scenario, named after it: a chart of NVDA falling into earnings is `nvda-earnings-selloff`, and its description names NVDA and the day. Copy the chart, not its gist: read the line at 20 to 40 points along the session (the opening move, each leg and bounce, the low, where it closes) and make each a waypoint, with each level as the chart has it. The sizes are the chart's: read them off its price axis; when it has none, find the day's real move (the ticker's open, low and close; search the web if you can) and scale the line to it. Say where the numbers came from. Check the scenario. The page switches to it when you create it.
+2. Run the current strategy on it, then change src/lib.rs for it, run it again, and run it on the other scenarios to show what the change costs there.
+3. Teach as you answer: the person wants to understand the market, not just get a bot. Open with what the chart shows and why markets do that (who is selling, why bounces fail, what an earnings date does to positioning), in plain words with the chart's own numbers. Then the idea that trades it and why it works here; what the strategy made, step by step at the moments that matter; when the same idea loses (the day that looks like this and isn't). Keep changes small and explained; each message may carry the page's context (the open file, the scenario, the step on screen, the last build's errors)."#,
         dir = studio.dir.display(),
         task = studio.task,
+        marks = held_marks(&studio.snapshot),
     )
+}
+
+/// Each market a session can move and its price, for the agent: `NVDA $159`.
+fn held_marks(task_snapshot: &Path) -> String {
+    mtx_grader::snapshot::held_symbols(task_snapshot)
+        .iter()
+        .filter_map(|symbol| {
+            let dir = mtx_grader::snapshot::holding(task_snapshot, symbol)?;
+            let mark = mtx_grader::snapshot::Manifest::load(&dir)
+                .ok()?
+                .mark_of(symbol)?;
+            Some(format!("{symbol} ${mark:.2}"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The workspace's scenario files, and when each last changed.
@@ -1886,13 +1949,25 @@ fn run(
         // `describe_line`), and the run of calls it belongs to, summed up
         // (`summarize`): calls between two of the agent's messages are a run.
         let mut calls: HashMap<String, Call> = HashMap::new();
-        let reply = next_message_id(studio);
+        let mut reply = next_message_id(studio);
         let thought = next_message_id(studio);
         let mut run_id: Option<String> = None;
         let mut run_calls: Vec<String> = Vec::new();
+        // Whether `reply` has text yet: text after a run of calls is a new
+        // message, below the run, not more of the one above it.
+        let mut spoken = false;
         loop {
             match turn.recv_timeout(Duration::from_secs(600))? {
                 TurnEvent::Text(chunk) => {
+                    if run_id.is_some() && spoken {
+                        composer_event(
+                            studio,
+                            "composer/message",
+                            json!({ "id": reply, "role": "agent", "text": "", "done": true }),
+                        );
+                        reply = next_message_id(studio);
+                    }
+                    spoken = true;
                     // The agent speaks: the next calls start a new run.
                     run_id = None;
                     run_calls.clear();

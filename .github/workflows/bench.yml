@@ -1,0 +1,169 @@
+name: Bench
+
+# Run, follow and publish a benchmark on the bench machine (sunburst), from
+# the Actions tab or `gh workflow run bench.yml -f action=start -f version=…`.
+#
+# - start: `just bench` on main's commit, against the dataset version given
+#   (released already, see release.yml). Prints the batch's name.
+# - status: how far a batch is, and its report once it's done.
+# - publish: `mtx bench publish` on the machine (it uploads the release to
+#   the results dataset), then its release.json pushed to a branch
+#   `results/<version>` to merge.
+#
+# The machine runs only what its dispatcher allows (ops/sunburst/
+# bench-dispatch): each environment's SSH key is pinned to it, and the API
+# keys never leave the machine. `sunburst` (start, publish) asks a reviewer
+# first; `sunburst-status` holds a key that can only ask for status. Both
+# deploy from main only. See docs/development.md, "Automation".
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [status, start, publish]
+        default: status
+      version:
+        description: "Dataset version, as in 0.12.0 (start, publish)"
+        required: false
+      models:
+        description: "Models, space-separated (start); openai/<model> runs in Codex"
+        required: false
+        default: "claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1"
+      attempts:
+        description: Attempts per model and task (start)
+        required: false
+        default: "5"
+      concurrent:
+        description: Trials at a time (start)
+        required: false
+        default: "10"
+      limit:
+        description: The agent's time, times the task's (start)
+        required: false
+        default: "1"
+      batch:
+        description: "The batch, as in 20261113-143040-x1 (status: default the latest; publish)"
+        required: false
+      force:
+        description: Replace a release published under that version (publish)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ inputs.action }}
+  cancel-in-progress: false
+
+jobs:
+  status:
+    if: inputs.action == 'status' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: sunburst-status
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Status
+        env:
+          SUNBURST_KEY: ${{ secrets.SUNBURST_KEY }}
+          SUNBURST_KNOWN_HOSTS: ${{ vars.SUNBURST_KNOWN_HOSTS }}
+          SUNBURST_HOST: ${{ vars.SUNBURST_HOST }}
+          BATCH: ${{ inputs.batch }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BATCH" ]; then
+            [[ "$BATCH" =~ ^[0-9]{8}-[0-9]{6}-x[0-9]+$ ]] || { echo "::error::bad batch"; exit 1; }
+          fi
+          ops/sunburst/ssh.sh status ${BATCH:+"$BATCH"} | tee "$RUNNER_TEMP/status.txt"
+          { echo '```'; cat "$RUNNER_TEMP/status.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  start:
+    if: inputs.action == 'start' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sunburst
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Start
+        env:
+          SUNBURST_KEY: ${{ secrets.SUNBURST_KEY }}
+          SUNBURST_KNOWN_HOSTS: ${{ vars.SUNBURST_KNOWN_HOSTS }}
+          SUNBURST_HOST: ${{ vars.SUNBURST_HOST }}
+          VERSION: ${{ inputs.version }}
+          MODELS: ${{ inputs.models }}
+          K: ${{ inputs.attempts }}
+          N: ${{ inputs.concurrent }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          # Checked here and again on the machine.
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version is X.Y.Z"; exit 1; }
+          for v in "$K" "$N" "$LIMIT"; do [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::attempts, concurrent and limit are numbers"; exit 1; }; done
+          read -r -a models <<< "$MODELS"
+          for m in "${models[@]}"; do
+            [[ "$m" =~ ^((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "::error::bad model: $m"; exit 1; }
+          done
+          ops/sunburst/ssh.sh start "$GITHUB_SHA" "$VERSION" "$K" "$N" "$LIMIT" "${models[@]}" | tee "$RUNNER_TEMP/start.txt"
+          batch="$(sed -n 's/^batch=//p' "$RUNNER_TEMP/start.txt")"
+          {
+            echo "## Started $batch"
+            echo
+            echo "${models[*]} on \`solana-foundation/machine-trading@$VERSION\`: $K attempts, $N at a time, from \`${GITHUB_SHA:0:8}\`."
+            echo
+            echo "Follow it: \`gh workflow run bench.yml -f action=status -f batch=$batch\`"
+            echo "Publish it: \`gh workflow run bench.yml -f action=publish -f batch=$batch -f version=$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: inputs.action == 'publish' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: sunburst
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Publish on the machine
+        env:
+          SUNBURST_KEY: ${{ secrets.SUNBURST_KEY }}
+          SUNBURST_KNOWN_HOSTS: ${{ vars.SUNBURST_KNOWN_HOSTS }}
+          SUNBURST_HOST: ${{ vars.SUNBURST_HOST }}
+          VERSION: ${{ inputs.version }}
+          BATCH: ${{ inputs.batch }}
+          FORCE: ${{ inputs.force && 'force' || '' }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version is X.Y.Z"; exit 1; }
+          [[ "$BATCH" =~ ^[0-9]{8}-[0-9]{6}-x[0-9]+$ ]] || { echo "::error::bad batch"; exit 1; }
+          ops/sunburst/ssh.sh publish "$BATCH" "$VERSION" ${FORCE:+"$FORCE"} > "$RUNNER_TEMP/publish.txt"
+          sed -n '/^release_json<<EOF_RELEASE_JSON$/,/^EOF_RELEASE_JSON$/p' "$RUNNER_TEMP/publish.txt" | sed '1d;$d' > "$RUNNER_TEMP/release.json"
+          # Only a release in the results dataset, for this version.
+          jq -e --arg v "$VERSION" '.version == $v and .store.repo == "solana-foundation/machine-trading-results" and (.store.sha256 | test("^[0-9a-f]{64}$"))' \
+            "$RUNNER_TEMP/release.json" > /dev/null || { echo "::error::the machine's release.json isn't a stored $VERSION release"; exit 1; }
+          mkdir -p "bench/results/$VERSION"
+          cp "$RUNNER_TEMP/release.json" "bench/results/$VERSION/release.json"
+      - name: Push release.json to results/<version>
+        env:
+          VERSION: ${{ inputs.version }}
+          BATCH: ${{ inputs.batch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="results/$VERSION-$BATCH"
+          git switch -c "$branch"
+          git add "bench/results/$VERSION/release.json"
+          git commit -m "bench: publish $VERSION from $BATCH"
+          git push origin "$branch"
+          {
+            echo "## Published $VERSION from $BATCH"
+            echo
+            echo "- Files: [the results dataset](https://huggingface.co/datasets/solana-foundation/machine-trading-results/tree/main/$VERSION)"
+            echo "- Repo: [open a pull request](https://github.com/$GITHUB_REPOSITORY/compare/main...$branch?expand=1) from \`$branch\`; merging it republishes the site"
+          } >> "$GITHUB_STEP_SUMMARY"

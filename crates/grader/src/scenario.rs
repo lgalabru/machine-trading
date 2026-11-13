@@ -69,6 +69,11 @@ pub struct Scenario {
     /// forwards at once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faults: Option<crate::faults::Faults>,
+    /// The market's other participants, from the actor library (see
+    /// [`crate::actors::library`]). Without it, only the takers and maker
+    /// the scenario lists elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actors: Option<crate::actors::Library>,
     /// For a spot session: what each step message carries beyond the clock
     /// (see [`crate::spot::TurnData`]). Without it, none of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -478,12 +483,16 @@ impl Scenario {
     /// same slot every time). Onboarding takers takes longer, and longer
     /// still under load.
     pub fn setup_slots(&self) -> u64 {
-        if !self.tape.is_empty() {
+        let slots = if !self.tape.is_empty() {
             TAPE_SETUP_SLOTS
         } else if self.offhours.is_some() {
             OFFHOURS_SETUP_SLOTS
         } else {
             SETUP_SLOTS
+        };
+        match &self.actors {
+            Some(_) => slots.max(LIBRARY_SETUP_SLOTS),
+            None => slots,
         }
     }
 
@@ -571,6 +580,8 @@ pub const SETUP_SLOTS: u64 = 60;
 pub const OFFHOURS_SETUP_SLOTS: u64 = 240;
 /// A session that also onboards a taker tape.
 pub const TAPE_SETUP_SLOTS: u64 = 600;
+/// A session with library actors also onboards their wallets.
+pub const LIBRARY_SETUP_SLOTS: u64 = 120;
 
 /// The largest part of an at-once move, in percent of the level it starts
 /// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
@@ -852,6 +863,7 @@ impl ShockFamily {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            actors: None,
             turn_data: None,
             oracles: None,
             order: None,
@@ -1568,6 +1580,7 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            actors: None,
             turn_data: None,
             oracles: None,
             order: None,
@@ -1635,6 +1648,7 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            actors: None,
             turn_data: None,
             oracles: None,
             order: None,

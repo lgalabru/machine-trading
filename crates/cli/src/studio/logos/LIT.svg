@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <defs>
+    <filter id="blur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur/>
+    </filter>
+  </defs>
+  <g filter="url(#blur)" opacity="0.7">
+    <polygon points="191.88 274.47 135.98 326.47 135.98 123.22 191.88 71.22 191.88 274.47" fill="white"/>
+    <polygon points="264.73 275.62 208.82 327.62 208.82 250.85 264.73 194.85 264.73 275.62" fill="white"/>
+  </g>
+  <g>
+    <polygon points="191.88 274.47 135.98 326.47 135.98 123.22 191.88 71.22 191.88 274.47" fill="white"/>
+    <polygon points="264.73 275.62 208.82 327.62 208.82 250.85 264.73 194.85 264.73 275.62" fill="white"/>
+  </g>
+</svg>
