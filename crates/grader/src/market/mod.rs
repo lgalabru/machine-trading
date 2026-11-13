@@ -73,6 +73,7 @@ pub(crate) mod tests {
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
+            stop_out: None,
             oracles: None,
             lending: None,
             warps: Vec::new(),

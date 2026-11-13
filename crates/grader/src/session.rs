@@ -222,6 +222,10 @@ pub struct SessionReport {
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
+    /// Closes the grader made on the bot's behalf: a stop-out, where the
+    /// scenario prices a breach (see [`crate::risk`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forced_closes: Vec<crate::risk::ForcedClose>,
     /// Each anchored oracle feed's start, against its account's own price.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
@@ -358,7 +362,7 @@ impl SessionReport {
         Observed {
             positions: self.positions.clone(),
             positions_outside_universe: self.positions_outside_universe,
-            max_drawdown_usd: self.max_drawdown_usd,
+            max_drawdown_usd: self.audited_drawdown_usd(),
             fills: match (&self.spot, &self.stake) {
                 (Some(spot), _) => spot.observed_fills(),
                 (None, Some(stake)) => stake.observed_fills(),
@@ -379,6 +383,27 @@ impl SessionReport {
                 .into_iter()
                 .chain(self.perp_open_orders.iter().cloned())
                 .collect(),
+        }
+    }
+}
+
+impl SessionReport {
+    /// The drawdown the mandate's audit reads: the deepest one measured,
+    /// unless the risk desk closed the account for drawing down past the
+    /// limit, which prices the breach instead (the scenario's
+    /// `scoring.stop_out`). Then it is at most the limit; every other rule
+    /// is audited as ever.
+    fn audited_drawdown_usd(&self) -> f64 {
+        use crate::{risk::ForcedCloseReason, scenario::StopRule};
+        let stopped_out = self.forced_closes.iter().any(|close| {
+            close.reason
+                == ForcedCloseReason::StopOut {
+                    rule: StopRule::Drawdown,
+                }
+        });
+        match self.mandate.limits.max_drawdown_usd {
+            Some(limit) if stopped_out => self.max_drawdown_usd.min(limit),
+            _ => self.max_drawdown_usd,
         }
     }
 }
@@ -501,6 +526,25 @@ pub(crate) trait Account: Send + Sync {
         tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<crate::wasm::Desk>;
 
+    /// Close the account for the grader's risk desk, `at` slots in: cancel
+    /// its orders and send market orders against its position, signed with
+    /// `bot` through `rpc_url` (the grader's own), at most `slice` base
+    /// units each, until it is flat or
+    /// [`crate::risk::MAX_CLOSE_ORDERS_PER_STEP`] have gone. Only accounts
+    /// that hold positions a book can close take it.
+    async fn force_close(
+        &mut self,
+        _bot: &Keypair,
+        _rpc_url: &str,
+        _slice: Option<f64>,
+        _at: u64,
+    ) -> Result<crate::risk::Closing> {
+        Err(Error::InvalidScenario {
+            path: "stop_out".into(),
+            reason: "this kind of session can't close its account".into(),
+        })
+    }
+
     /// One instruction of a bot's transaction, as the report shows it.
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
 
@@ -524,6 +568,7 @@ pub(crate) struct Done {
     pub calls: CallLog,
     pub actors: ActorsReport,
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
+    pub forced_closes: Vec<crate::risk::ForcedClose>,
 }
 
 /// The one session loop, for every kind of session: perp, spot, and
@@ -628,6 +673,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
         .into_iter()
         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
+        // The risk desk closes on a breach instead of disqualifying (the
+        // scenario's `stop_out`).
+        .chain(
+            scenario
+                .stop_out
+                .as_ref()
+                .map(|_| ("MTX_STOP_OUT".to_string(), "1".to_string())),
+        )
         .collect();
     let mut turns = TurnReport {
         steps,
@@ -751,6 +804,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         cranks.push(crank);
     }
     let mut slot = start_slot;
+    // The risk desk (a scenario's `stop_out`): the account's running peak,
+    // the close under way, and the slot the session ends at once the
+    // account is flat.
+    let mut peak_usd = account.start_value_usd();
+    let mut closing: Option<crate::risk::ForcedClose> = None;
+    let mut session_end = end_slot;
     for k in 0..steps {
         // A step: the takers trade against the quotes the bot left; then the
         // world's blocks land (and with them the scenario's move); the
@@ -805,7 +864,57 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             record.value_usd += paid;
             record.pnl_usd += paid;
         }
-        steps_seen.push(record);
+        let measured = record;
+        peak_usd = peak_usd.max(measured.value_usd);
+        if closing.is_none()
+            && scenario
+                .stop_out
+                .as_ref()
+                .is_some_and(|stop| stop.covers(crate::scenario::StopRule::Drawdown))
+            && peak_usd - measured.value_usd > env.max_drawdown_usd
+        {
+            info!(
+                scenario = scenario.name,
+                k,
+                drawdown_usd = peak_usd - measured.value_usd,
+                "drawdown past the limit: the risk desk closes the account"
+            );
+            // The bot is stopped before the desk sends anything, so it
+            // can't race the close: a process is ended, a component isn't
+            // called again.
+            if let Some((mut child, mut writer, _)) = process.take() {
+                let _ = send(&mut writer, &Message::End).await;
+                stop_bot(&mut child, workdir.bot_user.and(user)).await;
+            }
+            closing = Some(crate::risk::ForcedClose {
+                reason: crate::risk::ForcedCloseReason::StopOut {
+                    rule: crate::scenario::StopRule::Drawdown,
+                },
+                step: k,
+                at,
+                value_before_usd: measured.value_usd,
+                peak_usd,
+                value_after_usd: measured.value_usd,
+                position_before: measured.position,
+                orders: Vec::new(),
+                flat: false,
+            });
+        }
+        steps_seen.push(measured);
+        if let Some(close) = closing.as_mut() {
+            let slice = scenario.stop_out.as_ref().and_then(|stop| stop.slice_base);
+            let done = account
+                .force_close(&bot_key, internal.url(), slice, at)
+                .await?;
+            close.orders.extend(done.orders);
+            if crate::risk::is_flat(done.position) {
+                close.flat = true;
+                session_end = slot;
+                break;
+            }
+            // Not flat yet: the next step closes more. The bot has no turn.
+            continue;
+        }
         if bot_exit.is_none()
             && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
@@ -894,7 +1003,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         stop_bot(&mut child, workdir.bot_user.and(user)).await;
     }
     if let Some(bot) = wasm_bot.as_mut() {
-        bot.end().await;
+        if closing.is_none() {
+            bot.end().await;
+        }
         let (used, max_call) = bot.fuel();
         turns.fuel_used = Some(used);
         turns.fuel_max_call = Some(max_call);
@@ -907,6 +1018,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     if account.reads_fills() {
         crate::chain::next_slot(surfnet, &rpc).await?;
     }
+    if let Some(close) = &closing
+        && turns.stopped.is_none()
+    {
+        turns.stopped = Some(format!("stopped out at step {}", close.step));
+    }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
     let calls = guard.call_log();
@@ -918,7 +1034,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .finish(Done {
             began,
             start_slot,
-            end_slot,
+            end_slot: session_end,
             mandate,
             refused_calls: guard.refused(),
             bot_exit,
@@ -930,6 +1046,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             calls,
             actors,
             crank_refusals: cranks.into_refusals(),
+            forced_closes: closing.into_iter().collect(),
         })
         .await?;
     if let Some((engine, layer, start)) = &tx {
@@ -941,6 +1058,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 end.value_change_usd(start, engine.route_fees(), sol_usd),
             );
         }
+    }
+    let (end_value_usd, end_position) = (report.end_value_usd, report.end_position);
+    for close in &mut report.forced_closes {
+        close.value_after_usd = end_value_usd;
+        close.flat = crate::risk::is_flat(end_position);
     }
     info!(
         scenario = report.scenario,
