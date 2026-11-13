@@ -54,12 +54,51 @@ a sell order fitting the wallet, and, on a perp (`positions_fit_the_market`):
 - the order's market has no `close_out`: the order's broker already takes
   what is left of it.
 
+A perp session can trade several markets of one cross-margin Phoenix
+account (see [Several perp markets](#several-perp-markets)).
+
 A perp order and close-outs price the close at the scenario's own level at
 the last slot (the index, not Phoenix's mark, which quotes can push), and
 the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup.
+
+## Several perp markets
+
+A perp session on several markets of one account names them in keyed maps,
+one per section, and leaves that section's one-market fields out:
+
+| Map | Holds, per market symbol |
+| --- | --- |
+| `venues.perp.markets` | `funding`, as `venues.perp.funding` (not with it) |
+| `market_model.markets` | `path`, `fair_path` and `record`, as the section's own fields (not with them); no `closed_period` |
+| `market_model.joint` | Optional: a joint draw of the markets' paths: `matrix_source` (`design` for a matrix the author states, or a correlation file's id, with its `matrix_sha256`), `assets` in the matrix's order, the correlation `matrix`, and each asset's draw in `records`. Like a single draw's record, never its seed |
+| `actors.markets` | `competitor`, `takers` and `takers_pricing`, as the section's own fields (not with them). One pool of taker accounts trades every market, so `account` numbers are shared |
+
+`assets.symbol` is the primary market, one of the maps' keys: it is the one
+`MTX_SYMBOL` names and the report's one-market fields describe. The actor
+library, if any, trades it.
+
+One rule joins the maps (`markets_agree`): `venues.perp.markets` names at
+least two markets, and `market_model.markets` and `actors.markets`, where
+given, name the same ones. The mandate's universe is exactly their perps,
+each with its own cap. Each market's funding, path and flow are checked as
+a one-market scenario's, and an error names the market. A Phoenix oracle
+feed may write any market's oracle, but not one whose market has a path.
+`start_positions` and `close_out` may name any of the markets, and an
+`order` may be on any of them; each is checked against its market's range.
+
+Each market's position is valued by its own rule (`oracle`, `book` or
+`mark`, as a one-market scenario's), and the bound is each market's at its
+own cap and start mark, summed. A session's report lists each market
+(`markets`: start and end marks, positions, valuation, flow), and each step
+records each market (`markets` in the timeline's steps).
+
+There is no v1 form: `Scenario::save` refuses such a scenario and
+`save_v2` writes it. `mtx market-cal generate` draws one from a template
+on several markets, given `--calibration SYMBOL=FILE` per market and
+`--correlation`.
 
 ## Example
 

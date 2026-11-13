@@ -63,6 +63,19 @@ cross-margin account.
 - **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
   order it left on the book, its side the sign of its `quantity`.
 
+### Several markets
+
+One cross-margin trader account trades every perpetual market, and Phoenix
+margins them together. On a universe of several perpetual markets, an
+enforcer measures each market's position from `view_margin_for_asset` for
+that market, and the account's collateral, unrealized PnL and
+`position_count` from `view_margin` once, for every market. Markets the
+account holds outside the universe are its `position_count` less the
+universe markets it holds a position or orders in. Each fill names its
+market by the `Header` event's `asset_id`; a market's sequence numbers are
+its own, so an enforcer tells two markets' fills apart by the market as
+well as the sequence number.
+
 ## Spot markets
 
 ### Account
@@ -117,6 +130,9 @@ such as the authority's USDC, are counted once, as the
   and the deepest drawdown, and disqualifies the session on any breach.
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
+- A session on several perpetual markets measures the one account on each
+  of them, and lists them in `MTX_MARKETS`; a component gets a seat on
+  each, every one tradable at its market address.
 
 It audits spot sessions on the spot market this profile names, alone or
 with OpenBook's:

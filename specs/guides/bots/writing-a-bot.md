@@ -393,6 +393,14 @@ The grader clears the environment, then sets exactly:
 An off-hours scenario, whose underlying's market is closed, also sets
 `MTX_REOPEN_SLOT`: the slot that market reopens at.
 
+A session on several perp markets also sets `MTX_MARKETS`: the markets
+the session can trade, comma separated, `MTX_SYMBOL`'s first. One
+cross-margin account trades them all. `MTX_SYMBOL` and `MTX_MAX_POSITION`
+stay the first market's; the mandate lists every market with its own cap.
+A strategy component gets each market in `session.venues`, tradable, and
+sends a line to one with `.at("phoenix:perp:<SYMBOL>")`; each step's
+`market.venues` carries its position and top.
+
 A perp scenario that starts the bot holding a position, or gives it an
 order to work, says so:
 
