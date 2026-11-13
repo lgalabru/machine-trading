@@ -619,6 +619,14 @@ impl ScenarioV2 {
         if self.venues.spot.is_none() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
         }
+        // Only a perp session prices the account at each measurement.
+        if self.venues.spot.is_some() && self.mandate.checks_samples() {
+            return Err(
+                "mandate: notional limits and hedges are for perp scenarios; \
+                 a spot session doesn't check them"
+                    .into(),
+            );
+        }
         Ok(())
     }
 
@@ -1231,6 +1239,16 @@ mod tests {
         let mut s = shock();
         s.mandate.limits.max_drawdown_usd = None;
         assert!(s.validate().unwrap_err().contains("drawdown"));
+
+        // A perp session checks notional limits; a spot session doesn't yet.
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert!(s.validate().unwrap_err().contains("notional"));
 
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);

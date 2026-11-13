@@ -29,7 +29,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use mtx_core::{
     Decimal, Holding, Holdings, Side,
-    mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange, Term},
+    mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange},
     turns::{self, BookLevels, Role, Step, Trade},
 };
 use mtx_kit::{
@@ -768,12 +768,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots;
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -1106,6 +1101,7 @@ impl Account for SpotAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            notional_breach: None,
             valuation: "pyth",
             flow: done.actors.flow,
             competitor: done.actors.competitor,
