@@ -4905,6 +4905,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-amm-smoke"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-carry"
 version = "0.1.0"
 dependencies = [

@@ -49,6 +49,7 @@ Real venues:
 |---|---|
 | `phoenix-eternal` (`symbol`, `phoenix_api`) | Onboards a throwaway trader, reads the market, rests and cancels an order, and replays the market-move scenario templates so the oracle and maker accounts load. Writes `exchange.json`. |
 | `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
+| `pools-exercise` | Reads every tick array (Raydium CLMM) and bin array (Meteora DLMM) that holds liquidity in each pool the two profiles name, then funds a throwaway trader and takes the paths a pool session takes on each: a sale, a purchase, a taker's swap to a price, and a position opened, half taken out and closed, each transaction confirmed. |
 
 Real accounts a build that starts from a snapshot can't fetch:
 
@@ -63,8 +64,9 @@ source's, byte for byte. A recipe that only adds accounts reports the source's
 `mark_price_usd` and `marks`.
 
 Simulated assets (see below): `create-mint`, `phoenix-v1-market`,
-`openbook-v2-market`. Pool creation for AMMs is left for the AMM venue
-modules; they add actions here.
+`openbook-v2-market`. The pools are copied, not simulated
+(`snapshots/spcx-pools-2026-11-13`); simulated pools would be actions
+here.
 
 The account set depends on what the warm-up touches, which is why warm-up
 is part of the recipe: a path a session takes that no warm-up exercised

@@ -153,15 +153,20 @@ orders until it sees the account. Sizes round down to whole lots, and
 prices round away from a worse fill. An order no market grid can hold is
 refused. Market, limit, post-only and cancel-all orders are executed;
 a post-only order's expiry holds on Phoenix, and OpenBook refuses one, as
-its orders expire by the clock. Every line's send status comes back in the
+its orders expire by the clock. On a pool (Raydium, Meteora;
+`crates/grader/src/venue/pools.rs`) a line names the pool's spot market for
+swaps and market orders, each one swap, and its amm market for
+`add-liquidity` and `remove-liquidity`; the amm market's view carries the
+bot's positions (`liquidity`) and the pool's numbers (`stats`), and both
+markets read as kind `amm`. Every line's send status comes back in the
 next step's `sends`. The market reads as follows:
 
 | Field | In a spot session |
 |-------|-------------------|
-| `mark`, `oracle`, `index` | the Pyth SOL/USD price the session values the account at |
+| `mark`, `oracle`, `index` | the Pyth price of the base (SOL/USD, SPCX/USD) the session values the account at |
 | `best-bid`, `best-ask` | the book of the scenario's first venue |
 | `venues` | each market's best bid and ask, and the SOL held as `position`; its depth and tape, keyed by market, where the scenario reports them |
-| `position.size` | SOL held, in the wallet and on every venue, as the profiles count it |
+| `position.size` | the base held, in the wallet and on every venue, as the profiles count it (a pool position's base is its amm market's position) |
 | `position.entry-usd` | the Pyth price when the session started |
 | `pnl`, `peak-pnl`, `drawdown` | the account's value in USD since the start, as the session measures it |
 | `cap`, `max-drawdown` | the mandate's position cap, and its drawdown limit (or the account's starting value) |

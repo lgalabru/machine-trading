@@ -6,6 +6,8 @@
 //! | [`phoenix`] | [`phoenix::eternal`] | `PhoenixDriver` | perp `Position` | `PhoenixEternalMeter` |
 //! | [`phoenix`] | [`phoenix::v1`] | `PhoenixV1Driver` | `SpotBalances` | `PhoenixV1Meter` |
 //! | [`openbook`] | [`openbook::v2`] | `OpenBookV2Driver` | `SpotBalances` | `OpenBookV2Meter` |
+//! | `raydium` | `raydium::clmm` | the grader's pool seats | `SpotBalances`, liquidity positions | the grader |
+//! | `meteora` | `meteora::dlmm` | the grader's pool seats | `SpotBalances`, liquidity positions | the grader |
 //!
 //! An adapter maps its program onto the [`core`](crate::core) model, as
 //! `docs/rfd/0001-instrument-traits.md` lays out: its markets become
@@ -18,12 +20,16 @@
 //! trader and its meter read the account with the same function.
 //! Transactions go through [`chain`](crate::chain).
 
+#[cfg(feature = "meteora-dlmm")]
+pub mod meteora;
 #[cfg(feature = "openbook-v2-venue")]
 pub mod openbook;
 #[cfg(any(feature = "phoenix", feature = "phoenix-v1-venue"))]
 pub mod phoenix;
 #[cfg(feature = "pyth")]
 pub mod pyth;
+#[cfg(feature = "raydium-clmm")]
+pub mod raydium;
 #[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 pub mod spot;
 
@@ -43,6 +49,75 @@ impl DecodeError {
             what,
             detail: detail.into(),
         }
+    }
+}
+
+/// An Anchor account's fields, read at fixed offsets: its 8-byte
+/// discriminator checked, and each read bounds-checked.
+#[cfg(any(feature = "raydium-clmm", feature = "meteora-dlmm"))]
+pub(crate) struct Fields<'a> {
+    what: &'static str,
+    data: &'a [u8],
+}
+
+#[cfg(any(feature = "raydium-clmm", feature = "meteora-dlmm"))]
+impl<'a> Fields<'a> {
+    /// `data`, if it starts with `discriminator` and holds at least `len`
+    /// bytes.
+    pub(crate) fn new(
+        what: &'static str,
+        data: &'a [u8],
+        discriminator: [u8; 8],
+        len: usize,
+    ) -> Result<Self, DecodeError> {
+        if data.len() < len {
+            return Err(DecodeError::new(
+                what,
+                format!("{} bytes, not {len}", data.len()),
+            ));
+        }
+        if data[..8] != discriminator {
+            return Err(DecodeError::new(what, "not this account type"));
+        }
+        Ok(Self { what, data })
+    }
+
+    fn bytes<const N: usize>(&self, at: usize) -> Result<[u8; N], DecodeError> {
+        self.data
+            .get(at..at + N)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| DecodeError::new(self.what, format!("ends before byte {}", at + N)))
+    }
+
+    pub(crate) fn u8(&self, at: usize) -> Result<u8, DecodeError> {
+        Ok(self.bytes::<1>(at)?[0])
+    }
+    pub(crate) fn u16(&self, at: usize) -> Result<u16, DecodeError> {
+        self.bytes(at).map(u16::from_le_bytes)
+    }
+    pub(crate) fn i32(&self, at: usize) -> Result<i32, DecodeError> {
+        self.bytes(at).map(i32::from_le_bytes)
+    }
+    pub(crate) fn u32(&self, at: usize) -> Result<u32, DecodeError> {
+        self.bytes(at).map(u32::from_le_bytes)
+    }
+    #[cfg(feature = "meteora-dlmm")]
+    pub(crate) fn i64(&self, at: usize) -> Result<i64, DecodeError> {
+        self.bytes(at).map(i64::from_le_bytes)
+    }
+    pub(crate) fn u64(&self, at: usize) -> Result<u64, DecodeError> {
+        self.bytes(at).map(u64::from_le_bytes)
+    }
+    pub(crate) fn u128(&self, at: usize) -> Result<u128, DecodeError> {
+        self.bytes(at).map(u128::from_le_bytes)
+    }
+    #[cfg(feature = "raydium-clmm")]
+    pub(crate) fn i128(&self, at: usize) -> Result<i128, DecodeError> {
+        self.bytes(at).map(i128::from_le_bytes)
+    }
+    pub(crate) fn pubkey(&self, at: usize) -> Result<solana_pubkey::Pubkey, DecodeError> {
+        self.bytes::<32>(at)
+            .map(solana_pubkey::Pubkey::new_from_array)
     }
 }
 
@@ -109,9 +184,14 @@ pub(crate) fn holdings_from_atoms(
 
 /// Wrapped SOL's mint. A profile counts SOL held in its token account, not
 /// the wallet's native SOL, which pays the transaction fees.
-#[cfg(feature = "spot-venue")]
+#[cfg(any(feature = "phoenix-v1-venue", feature = "openbook-v2-venue"))]
 pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
+
+/// SPCX's mint (Backpack Securities' tokenized SpaceX share, Token-2022):
+/// the base of the pools the Raydium and Meteora profiles name.
+pub const SPCX_MINT: solana_pubkey::Pubkey =
+    solana_pubkey::pubkey!("SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb");
 
 /// USDC's mint: the quote of every spot market the profiles name, and what
 /// Phoenix Eternal's deposits are made from (Phoenix wraps it into its own
