@@ -329,7 +329,7 @@ mod tests {
     }
 
     /// Raw sends per step the leak check covers.
-    const RAW_IDS: u32 = 8;
+    const RAW_IDS: u32 = 16;
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
