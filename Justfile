@@ -110,7 +110,8 @@ spot-smoke:
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
-# SOL-USDC book, every order from its account's own seat.
+# SOL-USDC book, every order from its account's own seat. Then every actor
+# of the library on the SPCX perp (docs/actors.md).
 actors-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -129,6 +130,49 @@ actors-smoke:
     }
     takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
     takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
+    # The library: every actor beside a bot that sells and answers requests
+    # for quotes, in six sessions of fresh wallets. In each, every actor
+    # acts, none acting on its own fails, and RFQ fills settle; over the
+    # six, reading the chain pays: told makes at least twice what a careful
+    # blind strategy does.
+    just --justfile bots/actors-smoke/Justfile build
+    just --justfile bots/rfq-desk/Justfile build
+    just --justfile bots/rfq-dust/Justfile build
+    library() {
+      local name=$1 bot=$2 scenario=${3:-everyone}
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/{{snapshot}}" --bot "$bot" \
+        --logs "target/logs/$name" --report "target/logs/$name.json" --details "target/logs/$name-details" \
+        "bench/checks/actors/$scenario.json" > /dev/null
+    }
+    sessions=()
+    for i in 1 2 3 4 5 6; do
+      name=actors-library-$i report=target/logs/actors-library-$i.json
+      library "$name" bots/actors-smoke
+      jq -e '.scenarios[0].actors | ([.actors[] | select(.reacts_to_bot | not) | .actions.failed] | add) == 0
+        and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)
+        and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)
+        and any(.actors[]; .kind == "rfq-client" and .counts.fills > 0)' "$report" > /dev/null \
+        || { echo "$name: an actor didn't act, or failed: $(jq -c '.scenarios[0].actors.actions' "$report")"; exit 1; }
+      sessions+=("$report" "target/logs/$name-details/bot/actors-everyone.json.gz")
+    done
+    python3 bench/checks/actors/read.py --require-edge "${sessions[@]}" > target/logs/actors-library-read.json
+    echo "actors-library: $(jq -c .edge target/logs/actors-library-read.json)"
+    # The RFQ desk's accounting: an idle bot's PnL is its desk asset's move
+    # at the index, and a bot that only answers requests changes by what
+    # its fills earn against the index, no more.
+    library actors-desk-idle bots/starter
+    python3 bench/checks/actors/desk.py --idle target/logs/actors-desk-idle.json > /dev/null
+    library actors-desk bots/rfq-desk
+    python3 bench/checks/actors/desk.py target/logs/actors-desk.json > /dev/null
+    echo "actors-desk: idle $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk-idle.json) USD, answering $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk.json) USD, both the desk's own"
+    # Answers too small to settle are no answers: a bot that sends nothing
+    # else grades (its session isn't voided), and no client acts on them.
+    library actors-rfq-dust bots/rfq-dust rfq-dust
+    jq -e '.scenarios[0].actors.actors[] | select(.kind == "rfq-client")
+        | .counts.requests > 0 and (.counts.answered // 0) == 0 and (.counts.fills // 0) == 0
+          and .actions == {placed: 0, cancelled: 0, took: 0, failed: 0}' target/logs/actors-rfq-dust.json > /dev/null \
+      || { echo "actors-rfq-dust: a client acted on dust: $(jq -c '.scenarios[0].actors.actors' target/logs/actors-rfq-dust.json)"; exit 1; }
+    echo "actors-rfq-dust: $(jq -c '[.scenarios[0].actors.actors[] | select(.kind == "rfq-client") | .counts] | .[0]' target/logs/actors-rfq-dust.json), graded"
 
 # Write the lists kept from the task folders (bench/tasks/*/task.toml), or
 # fail if they are stale: the Justfile's, the image's, the dataset's, the READMEs'.
