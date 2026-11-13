@@ -24,8 +24,12 @@ Named pools:
 | Symbol | Pool address | Base (X) | Quote (Y) | Fee |
 | --- | --- | --- | --- | --- |
 | `SPCX-USDC` | `7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu` | SPCX (`SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb`, Token-2022) | USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) | 0.75% base, plus the variable fee; bins 75 bps apart |
+| `SPCX-SOL` | `3h9GhSUzozu2eRQ9MCLCeHWYshywm4mqbzPtz2h1zGMF` | SPCX | wrapped SOL (`So11111111111111111111111111111111111111112`) | 0.1% base, plus the variable fee; bins 10 bps apart |
+| `SOL-USDC` | `5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6` | wrapped SOL | USDC | 0.04% base, plus the variable fee; bins 4 bps apart |
 
-A named pool's X is its base and Y its quote.
+A named pool's X is its base and Y its quote. The SOL pools are the second
+hop of a [route](router.md) through SOL; a session trades them only where
+its scenario lists them.
 
 SPCX is a Token-2022 mint: its transfers go through Token-2022's
 `transfer_checked` (the `v2`/`2` instructions), its transfer-hook extension

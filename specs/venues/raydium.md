@@ -23,6 +23,11 @@ Named pools:
 | Symbol | Pool address | Base | Quote | Fee |
 | --- | --- | --- | --- | --- |
 | `SPCX-USDC` | `FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza` | SPCX (`SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb`, Token-2022) | USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) | 0.25%, ticks 60 apart |
+| `SPCX-SOL` | `7tJVK2uEaK1tKEykDHQ8KHdaV3aXrVuSH1J4u3xgkS7U` | SPCX | wrapped SOL (`So11111111111111111111111111111111111111112`) | 0.6%, ticks 60 apart |
+| `SOL-USDC` | `3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv` | wrapped SOL | USDC | 0.04%, ticks 1 apart |
+
+The SOL pools are the second hop of a [route](router.md) through SOL; a
+session trades them only where its scenario lists them.
 
 A pool orders its two tokens by mint address (`token_mint_0`,
 `token_mint_1`); the symbol says which is the base, whatever that order.
