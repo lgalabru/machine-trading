@@ -2,11 +2,11 @@
 //! what became of each of the bot's sends, and what it paid. The blocks are
 //! in the session report, so a replay compares ordering too.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{RouteKind, fees::FeeLedger};
 
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TxLayerReport {
     pub calibration: String,
     /// The slots where something landed or was refused, or the leader
@@ -20,26 +20,26 @@ pub struct TxLayerReport {
 }
 
 /// One slot's block.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BlockRecord {
     /// Slots from the session's start.
     pub at: u64,
-    pub regime: &'static str,
+    pub regime: String,
     /// What the block cleared at, in micro-lamports per compute unit.
     pub price: u64,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skipped: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub jito: bool,
     /// What landed, in order.
     pub landed: Vec<Landed>,
     /// Bundles refused or not committed, with why.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refused: Vec<Refused>,
 }
 
 /// One transaction of a block.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Landed {
     pub sender: String,
     /// Lamports: its fee and tip; its requested compute units.
@@ -52,30 +52,31 @@ pub struct Landed {
     pub bundle: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Refused {
     pub sender: String,
     pub reason: String,
 }
 
 /// One of the bot's entries.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SendRecord {
     /// The step it was sent in, and its sequence in the step.
     pub step: u64,
     pub seq: u64,
     pub route: RouteKind,
     pub transactions: usize,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bundle: bool,
-    /// `landed`, `failed`, `expired`, `lost` or `pending`.
-    pub state: &'static str,
+    /// `landed`, `failed`, `expired`, `lost`, `pending`, or `merged` (signed
+    /// again into another of its sends).
+    pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at: Option<u64>,
     pub fee: u64,
     pub tip: u64,
     pub attempts: u64,
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub resigned: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -83,4 +84,56 @@ pub struct SendRecord {
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A grade's report reads back (see [`crate::grade::rescore`]), fields
+    /// it leaves out included.
+    #[test]
+    fn the_report_reads_back_what_it_wrote() {
+        let report = TxLayerReport {
+            calibration: "fixture".into(),
+            blocks: vec![BlockRecord {
+                at: 3,
+                regime: "calm".into(),
+                price: 0,
+                skipped: false,
+                jito: false,
+                landed: vec![Landed {
+                    sender: "bot".into(),
+                    fee: 5_000,
+                    tip: 0,
+                    cu: 10_000,
+                    ok: true,
+                    bundle: None,
+                }],
+                refused: Vec::new(),
+            }],
+            sends: vec![SendRecord {
+                step: 1,
+                seq: 0,
+                route: RouteKind::Rpc,
+                transactions: 1,
+                bundle: false,
+                state: "landed".into(),
+                at: Some(3),
+                fee: 5_000,
+                tip: 0,
+                attempts: 1,
+                resigned: 0,
+                reason: None,
+            }],
+            fees: FeeLedger::default(),
+            pending_at_end: 0,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("refused") && !json.contains("resigned"));
+        assert_eq!(
+            serde_json::from_str::<TxLayerReport>(&json).unwrap(),
+            report
+        );
+    }
 }

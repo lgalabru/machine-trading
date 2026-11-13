@@ -67,9 +67,14 @@ The code is in `crates/grader/src/txlayer/`.
       block (100M) and of each account it writes (12M). With the calibrated
       small chance, two adjacent conflicting transactions swap places.
    5. A **signature lands once.** A transaction sent alone and inside a
-      bundle (or in two bundles) lands with whichever the builder takes
-      first; the other send then fails, unpaid. Sent again after it landed,
-      it is refused as already processed.
+      bundle (or in two bundles, or alone twice) lands with whichever the
+      builder takes first; the other send then fails, unpaid. Sent again
+      after it landed, it is refused as already processed, and a bundle that
+      holds the same transaction twice is refused when sent. Signing is
+      deterministic, so a send the grader signs again can come out as a
+      transaction the bot already sent itself: the two are then one send
+      (the first shows as `merged`, and its status follows the other), and
+      it runs once.
 3. **Commit.** The session sends the picks to the surfnet one at a time, in
    order, each awaited: bundles through `sendBundle`, which is all or
    nothing, and transactions through `sendTransaction`. Then it produces the

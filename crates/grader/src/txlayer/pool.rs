@@ -185,6 +185,9 @@ pub enum EntryState {
     Failed { slot: u64, reason: String },
     /// Its blockhash expired before it landed.
     Expired { height: u64 },
+    /// Signed again, it became the same transactions as entry `into`, which
+    /// stands for it from then on: the same signature runs once.
+    Merged { into: u64 },
 }
 
 /// When it was sent: the bot's turn and its sequence in it.
@@ -291,7 +294,7 @@ impl Pool {
     }
 
     /// The entry holding a transaction with `signature`, if any: the one
-    /// it landed in, if it did.
+    /// it landed in, if it did, and the one that stands for it if it merged.
     pub fn find(&self, signature: &str) -> Option<&Entry> {
         let holds = |e: &&Entry| {
             e.txs.iter().any(|t| t.signature == signature)
@@ -302,6 +305,7 @@ impl Pool {
             .filter(holds)
             .find(|e| matches!(e.state, EntryState::Landed { .. }))
             .or_else(|| self.entries.iter().find(holds))
+            .map(|e| self.resolve(e))
     }
 
     /// The signatures of every transaction that has landed.
@@ -311,6 +315,17 @@ impl Pool {
             .filter(|e| matches!(e.state, EntryState::Landed { .. }))
             .flat_map(|e| e.txs.iter().map(|t| t.signature.clone()))
             .collect()
+    }
+
+    /// The entry that stands for `entry`: itself, or the one it merged into.
+    pub fn resolve<'a>(&'a self, mut entry: &'a Entry) -> &'a Entry {
+        while let EntryState::Merged { into } = entry.state {
+            match self.entries.iter().find(|e| e.id == into) {
+                Some(next) => entry = next,
+                None => break,
+            }
+        }
+        entry
     }
 
     pub fn find_mut(&mut self, signature: &str) -> Option<&mut Entry> {

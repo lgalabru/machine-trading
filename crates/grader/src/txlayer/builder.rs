@@ -176,6 +176,7 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
         {
             continue;
         }
+        taken.insert(tx.signature.as_str());
         block_left -= tx.cu_limit;
         for w in &tx.writable {
             *account_used.entry(*w).or_default() += tx.cu_limit;
@@ -520,6 +521,25 @@ mod tests {
             build(&slot(&g, quiet, &tip), &[&alone, &bundled]).picks,
             [1]
         );
+    }
+
+    #[test]
+    fn a_transaction_in_two_plain_entries_is_taken_once() {
+        let g = ghost(false);
+        let tip = |_: &Pubkey| 0;
+        let quiet = (950..1_000).find(|s| g.block(*s).price == 0).unwrap();
+        let x = signed(
+            &Keypair::new(),
+            &[Pubkey::new_unique()],
+            Some(10_000),
+            Some(10),
+            None,
+            b"x",
+            Hash::new_unique(),
+        );
+        let first = entry(0, "bot", 0, x.clone(), 0);
+        let again = entry(1, "bot", 1, x, 0);
+        assert_eq!(build(&slot(&g, quiet, &tip), &[&first, &again]).picks, [0]);
     }
 
     #[test]

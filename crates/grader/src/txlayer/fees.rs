@@ -2,7 +2,7 @@
 //! chain's own record of each landed transaction, checked against the
 //! wallet's SOL.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
@@ -59,7 +59,7 @@ impl Wallet {
 }
 
 /// Lamports the bot paid, by kind.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FeeLedger {
     /// Base fees (per signature) and priority fees of its landed
     /// transactions that succeeded.

@@ -288,7 +288,7 @@ async fn a_fee_spike_lands_who_pays_and_the_cheap_send_never_lands() {
     assert_eq!(w.balance(&w.bot.pubkey()), start - SOL - fee);
     let report = w.engine.report(None);
     assert_eq!((report.fees.base, report.fees.priority), (5_000, 200_000));
-    let states: Vec<&str> = report.sends.iter().map(|s| s.state).collect();
+    let states: Vec<&str> = report.sends.iter().map(|s| s.state.as_str()).collect();
     assert_eq!(states[0], "landed");
     assert!(matches!(states[1], "expired" | "lost"), "{states:?}");
     // What the guard says of fees shows the spike.
@@ -445,7 +445,7 @@ async fn retries_rebroadcast_and_sign_again_only_after_expiry() {
     assert_eq!(w.balance(&q), SOL, "it ran once");
     let report = w.engine.report(None);
     let resent = &report.sends[0];
-    assert_eq!((resent.state, resent.resigned), ("landed", 1));
+    assert_eq!((resent.state.as_str(), resent.resigned), ("landed", 1));
     assert_eq!(report.sends.len(), 3);
     // Signed again before expiry, both ran.
     assert!(w.landed(&first_sig) && w.landed(&second_sig));
@@ -686,6 +686,295 @@ async fn sends_outside_the_turn_are_refused_and_pending_ones_cant_be_read() {
     assert_eq!(w.engine.report(None).sends.len(), sends);
 }
 
+/// The layer's report with its ledger checked against the bot's wallet
+/// since `start`, counting what it moved to `moved` as its own.
+fn reconciled(w: &World, start: u64, moved: &[Pubkey]) -> crate::txlayer::report::TxLayerReport {
+    let moved: u64 = moved.iter().map(|k| w.balance(k)).sum();
+    let change = w.balance(&w.bot.pubkey()) as i64 - start as i64 + moved as i64;
+    let report = w.engine.report(Some((change, 0)));
+    let rows = report.blocks.iter().flat_map(|b| &b.landed).count() as u64;
+    assert_eq!(report.fees.transactions, rows, "{:?}", report.blocks);
+    assert_eq!(report.fees.unexplained, Some(0), "{:?}", report.fees);
+    report
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transaction_sent_many_ways_runs_and_is_charged_once() {
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let h = w.blockhash();
+    let (x_to, t1_to, t2_to, y_to, z_to, f_to, u_to) = (
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+    );
+    // One transaction in two bundles.
+    let (x, x_sig) = transfer(&w.bot, &[(x_to, SOL)], Some(10_000), None, None, h);
+    let (t1, _) = transfer(&w.bot, &[(t1_to, SOL)], Some(10_000), None, Some(5_000), h);
+    let (t2, _) = transfer(&w.bot, &[(t2_to, SOL)], Some(10_000), None, Some(6_000), h);
+    for t in [&t1, &t2] {
+        let sent = jito(
+            &w,
+            "sendBundle",
+            json!([[b64(t), b64(&x)], { "encoding": "base64" }]),
+        )
+        .await;
+        assert!(sent["result"].is_string(), "{sent}");
+    }
+    // One transaction twice in a bundle: refused.
+    let (y, _) = transfer(&w.bot, &[(y_to, SOL)], Some(10_000), None, Some(5_000), h);
+    let twice = jito(
+        &w,
+        "sendBundle",
+        json!([[b64(&y), b64(&y)], { "encoding": "base64" }]),
+    )
+    .await;
+    assert!(
+        twice["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("each transaction once")),
+        "{twice}"
+    );
+    // A bundle of one, and the same transaction alone.
+    let (z, z_sig) = transfer(
+        &w.bot,
+        &[(z_to, SOL)],
+        Some(10_000),
+        Some(10),
+        Some(5_000),
+        h,
+    );
+    jito(
+        &w,
+        "sendBundle",
+        json!([[b64(&z)], { "encoding": "base64" }]),
+    )
+    .await;
+    send(w.guard.url(), &z, json!({ "encoding": "base64" })).await;
+    // A transfer it can't afford, in a bundle and alone; then again, alone
+    // and in a new bundle, after it failed.
+    let (f, f_sig) = transfer(
+        &w.bot,
+        &[(Pubkey::new_unique(), 1_000 * SOL)],
+        Some(10_000),
+        Some(10),
+        None,
+        h,
+    );
+    let (tf, _) = transfer(&w.bot, &[(f_to, SOL)], Some(10_000), None, Some(5_000), h);
+    jito(
+        &w,
+        "sendBundle",
+        json!([[b64(&tf), b64(&f)], { "encoding": "base64" }]),
+    )
+    .await;
+    send(w.guard.url(), &f, json!({ "encoding": "base64" })).await;
+    w.slots(10).await;
+    assert!(w.landed(&f_sig), "{:?}", w.engine.fate(&f_sig));
+    // The same bytes again are a rebroadcast of what landed: no new send.
+    // In a new bundle, they are refused as processed.
+    let sends = w.engine.report(None).sends.len();
+    let again = send(w.guard.url(), &f, json!({ "encoding": "base64" })).await;
+    assert_eq!(again["result"], f_sig, "{again}");
+    assert_eq!(w.engine.report(None).sends.len(), sends);
+    let (u, _) = transfer(&w.bot, &[(u_to, SOL)], Some(10_000), None, Some(5_000), h);
+    let again = jito(
+        &w,
+        "sendBundle",
+        json!([[b64(&u), b64(&f)], { "encoding": "base64" }]),
+    )
+    .await;
+    assert!(
+        again["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("already been processed")),
+        "{again}"
+    );
+    w.slots(10).await;
+    assert!(w.landed(&x_sig) && w.landed(&z_sig));
+    assert_eq!(
+        (w.balance(&x_to), w.balance(&z_to)),
+        (SOL, SOL),
+        "each ran once"
+    );
+    assert_eq!(w.balance(&y_to), 0);
+    reconciled(&w, start, &[x_to, t1_to, t2_to, y_to, z_to, f_to, u_to]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transaction_that_already_ran_is_never_sent_or_charged_again() {
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let h = w.blockhash();
+    let (x_to, t_to) = (Pubkey::new_unique(), Pubkey::new_unique());
+    let (x, _) = transfer(&w.bot, &[(x_to, SOL)], Some(10_000), Some(10), None, h);
+    let (t, _) = transfer(&w.bot, &[(t_to, SOL)], Some(10_000), None, Some(5_000), h);
+    send(w.guard.url(), &x, json!({ "encoding": "base64" })).await;
+    jito(
+        &w,
+        "sendBundle",
+        json!([[b64(&t), b64(&x)], { "encoding": "base64" }]),
+    )
+    .await;
+    // Both picked for one block, whatever the builder would say: the
+    // bundle runs x, then x alone comes after it.
+    let next = w.slot + 1;
+    w.engine.plan(next);
+    let picks = vec![(1, true, vec![t, x.clone()]), (0, false, vec![x])];
+    for signature in w.engine.commit(next, picks).await {
+        w.guard.landed(&signature, 0);
+    }
+    w.slots(4).await;
+    assert_eq!((w.balance(&x_to), w.balance(&t_to)), (SOL, SOL));
+    let report = reconciled(&w, start, &[x_to, t_to]);
+    let states: Vec<&str> = report.sends.iter().map(|s| s.state.as_str()).collect();
+    assert_eq!(states, ["failed", "landed"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_send_signed_again_as_the_bots_own_copy_runs_once() {
+    // A floor long enough that the first blockhash expires.
+    let mut w = world(layer(false), Some((0, 100, 200_000))).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let q = Pubkey::new_unique();
+    let (x0, x0_sig) = transfer(
+        &w.bot,
+        &[(q, SOL / 100)],
+        Some(10_000),
+        None,
+        None,
+        w.blockhash(),
+    );
+    let retry = json!({ "encoding": "base64", "mtx": { "route": "rpc", "retryUntilSlot": w.slot + 400, "resign": true } });
+    let sent = send(&w.guard.host_url(), &x0, retry).await;
+    assert!(sent["result"].is_string(), "{sent}");
+    // Near its expiry, the bot signs the same transfer itself on the latest
+    // blockhash every slot: one of its copies is what the grader signs.
+    let mut copies = Vec::new();
+    for i in 0..230u64 {
+        if i >= 135 && ["pending", "lost"].contains(&w.engine.report(None).sends[0].state.as_str())
+        {
+            let (copy, copy_sig) = transfer(
+                &w.bot,
+                &[(q, SOL / 100)],
+                Some(10_000),
+                None,
+                None,
+                w.blockhash(),
+            );
+            let sent = send(w.guard.url(), &copy, json!({ "encoding": "base64" })).await;
+            assert!(sent["result"].is_string(), "{sent}");
+            copies.push(copy_sig);
+        }
+        w.slot().await;
+    }
+    w.slots(10).await;
+    let report = reconciled(&w, start, &[q]);
+    assert_eq!(report.sends[0].state, "merged", "{:?}", report.sends[0]);
+    let Some(Fate::Landed {
+        signature: landed_as,
+        ok: true,
+        ..
+    }) = w.engine.fate(&x0_sig)
+    else {
+        panic!("{:?}", w.engine.fate(&x0_sig));
+    };
+    assert!(copies.contains(&landed_as), "it landed as the bot's copy");
+    assert!(!w.landed(&x0_sig));
+    let ran = copies.iter().filter(|s| w.landed(s)).count() as u64;
+    assert_eq!(w.balance(&q), ran * (SOL / 100), "no transfer ran twice");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn what_a_congested_block_takes_is_charged_as_it_landed() {
+    let mut w = world(layer(false), Some((0, 150, 200_000))).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let h = w.blockhash();
+    let mut moved = Vec::new();
+    let mut to = || {
+        let key = Pubkey::new_unique();
+        moved.push(key);
+        key
+    };
+    // Bundles of one with the least tip: 1,000 units, and fewer units than
+    // the transfer uses.
+    let (tiny, _) = transfer(
+        &w.bot,
+        &[(to(), SOL / 100)],
+        Some(1_000),
+        None,
+        Some(jito::MIN_TIP),
+        h,
+    );
+    let (under, _) = transfer(
+        &w.bot,
+        &[(to(), SOL / 100)],
+        Some(100),
+        None,
+        Some(jito::MIN_TIP),
+        h,
+    );
+    // Five 200,000-unit bundles with the least tip.
+    let split: Vec<Vec<u8>> = (0..5)
+        .map(|_| {
+            transfer(
+                &w.bot,
+                &[(to(), SOL / 100)],
+                Some(200_000),
+                None,
+                Some(jito::MIN_TIP),
+                h,
+            )
+            .0
+        })
+        .collect();
+    // A priority fee only on a transaction that writes nothing but its payer.
+    let (a, _) = transfer(&w.bot, &[(to(), SOL / 100)], Some(200_000), None, None, h);
+    let (rich, _) = transfer(
+        &w.bot,
+        &[],
+        Some(1_000),
+        Some(60_000_000),
+        Some(jito::MIN_TIP),
+        h,
+    );
+    let (a2, _) = transfer(&w.bot, &[(to(), SOL / 100)], Some(200_000), None, None, h);
+    let (poor, _) = transfer(
+        &w.bot,
+        &[],
+        Some(1_000),
+        Some(20_000_000),
+        Some(jito::MIN_TIP),
+        h,
+    );
+    let (plain, _) = transfer(
+        &w.bot,
+        &[(to(), SOL / 100)],
+        Some(1_000),
+        Some(250_000),
+        None,
+        h,
+    );
+    let bundles = [vec![tiny], vec![under], vec![a, rich], vec![a2, poor]]
+        .into_iter()
+        .chain(split.into_iter().map(|wire| vec![wire]));
+    for wires in bundles {
+        let encoded: Vec<String> = wires.iter().map(|w| b64(w)).collect();
+        jito(&w, "sendBundle", json!([encoded, { "encoding": "base64" }])).await;
+    }
+    send(w.guard.url(), &plain, json!({ "encoding": "base64" })).await;
+    w.slots(20).await;
+    reconciled(&w, start, &moved);
+}
+
 /// Every slot's block for a scripted session: the same sends in a fresh
 /// world build the same blocks, with or without congestion.
 async fn scripted(spike: bool) -> crate::txlayer::report::TxLayerReport {
@@ -746,7 +1035,7 @@ async fn the_tx_probe_pays_for_what_it_lands_and_replays() {
             scenario,
             bot_dir: &dir,
             bot_log: &log,
-            slot: 0,
+            slot: None,
             regime: None,
             cranks: None,
             trusted: false,

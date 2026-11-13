@@ -290,6 +290,13 @@ impl TxEngine {
                 .collect::<Result<Vec<_>, String>>()
                 .map_err(|e| refuse(INVALID_PARAMS, e))?
         };
+        let mut signatures = std::collections::BTreeSet::new();
+        if !txs.iter().all(|t| signatures.insert(&t.signature)) {
+            return Err(refuse(
+                INVALID_PARAMS,
+                "a bundle holds each transaction once".into(),
+            ));
+        }
         // A blockhash the session hasn't seen is checked with the chain.
         let unknown: Vec<Hash> = {
             let state = self.state();
@@ -376,7 +383,7 @@ impl TxEngine {
         let jito_leader = state.leaders.leader(slot).jito;
         let mut record = BlockRecord {
             at: slot.saturating_sub(state.base_slot),
-            regime: state.ghost.regime(slot),
+            regime: state.ghost.regime(slot).to_string(),
             price: state.ghost.block(slot).price,
             skipped,
             jito: jito_leader,
@@ -422,6 +429,33 @@ impl TxEngine {
         let mut landed_bot = Vec::new();
         let mut bundles = 0u32;
         for (id, is_bundle, wires) in picks {
+            // A transaction that already ran isn't sent again: it would be
+            // charged, and counted as landed, twice.
+            {
+                let mut state = self.state();
+                let landed = state.pool.landed();
+                let entry = state
+                    .pool
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    .expect("picked");
+                if entry.holds_any(&landed) {
+                    if matches!(entry.state, EntryState::Landed { .. }) {
+                        continue;
+                    }
+                    let reason = "a transaction in it already landed".to_string();
+                    let sender = entry.sender.clone();
+                    entry.state = EntryState::Failed {
+                        slot,
+                        reason: reason.clone(),
+                    };
+                    if let Some(record) = state.blocks.last_mut() {
+                        record.refused.push(Refused { sender, reason });
+                    }
+                    continue;
+                }
+            }
             let encoded: Vec<String> = wires
                 .iter()
                 .map(|w| base64::engine::general_purpose::STANDARD.encode(w))
@@ -543,9 +577,9 @@ impl TxEngine {
         let entry = state
             .pool
             .find(signature)
-            .or_else(|| state.pool.bundle(signature))?;
+            .or_else(|| state.pool.bundle(signature).map(|e| state.pool.resolve(e)))?;
         Some(match &entry.state {
-            EntryState::Pending | EntryState::Lost => Fate::Pending,
+            EntryState::Pending | EntryState::Lost | EntryState::Merged { .. } => Fate::Pending,
             EntryState::Landed { slot, .. } => {
                 let tx = entry
                     .txs
@@ -661,7 +695,7 @@ impl TxEngine {
         let state = self.state();
         let value: Vec<Value> = ids
             .iter()
-            .map(|id| match state.pool.bundle(id) {
+            .map(|id| match state.pool.bundle(id).map(|e| state.pool.resolve(e)) {
                 Some(entry) => match entry.state {
                     EntryState::Landed { slot, .. } => json!({
                         "bundle_id": id,
@@ -684,17 +718,23 @@ impl TxEngine {
         let state = self.state();
         let value: Vec<Value> = ids
             .iter()
-            .map(|id| match state.pool.bundle(id) {
-                Some(entry) => {
-                    let (status, slot) = match &entry.state {
-                        EntryState::Landed { slot, .. } => ("Landed", Some(*slot)),
-                        EntryState::Pending | EntryState::Lost => ("Pending", None),
-                        EntryState::Failed { .. } | EntryState::Expired { .. } => ("Failed", None),
-                    };
-                    json!({ "bundle_id": id, "status": status, "landed_slot": slot })
-                }
-                None => json!({ "bundle_id": id, "status": "Invalid", "landed_slot": null }),
-            })
+            .map(
+                |id| match state.pool.bundle(id).map(|e| state.pool.resolve(e)) {
+                    Some(entry) => {
+                        let (status, slot) = match &entry.state {
+                            EntryState::Landed { slot, .. } => ("Landed", Some(*slot)),
+                            EntryState::Pending | EntryState::Lost | EntryState::Merged { .. } => {
+                                ("Pending", None)
+                            }
+                            EntryState::Failed { .. } | EntryState::Expired { .. } => {
+                                ("Failed", None)
+                            }
+                        };
+                        json!({ "bundle_id": id, "status": status, "landed_slot": slot })
+                    }
+                    None => json!({ "bundle_id": id, "status": "Invalid", "landed_slot": null }),
+                },
+            )
             .collect();
         json!({ "context": { "slot": state.slot }, "value": value })
     }
@@ -738,6 +778,13 @@ impl TxEngine {
                         Some(reason.clone()),
                     ),
                     EntryState::Expired { .. } => ("expired", None, None),
+                    EntryState::Merged { into } => (
+                        "merged",
+                        None,
+                        Some(format!(
+                            "signed again, it became the transactions of pool entry {into}"
+                        )),
+                    ),
                 };
                 let landed = matches!(e.state, EntryState::Landed { .. });
                 SendRecord {
@@ -746,7 +793,7 @@ impl TxEngine {
                     route: e.route,
                     transactions: e.txs.len(),
                     bundle: e.is_bundle(),
-                    state: state_name,
+                    state: state_name.to_string(),
                     at,
                     fee: if landed { e.fee() } else { 0 },
                     tip: if matches!(e.state, EntryState::Landed { ok: true, .. }) {
@@ -925,7 +972,8 @@ impl State {
             .get(&latest)
             .copied()
             .unwrap_or(height + BLOCKHASH_BLOCKS);
-        for entry in &mut self.pool.entries {
+        for i in 0..self.pool.entries.len() {
+            let entry = &self.pool.entries[i];
             if !entry.is_pending() {
                 continue;
             }
@@ -936,6 +984,45 @@ impl State {
                     // Signed again on the latest blockhash, now that the old
                     // one can no longer land.
                     if let Some(resigned) = resign(&entry.txs, &self.signer, latest) {
+                        // Signing is deterministic: the bot may have sent
+                        // these very transactions itself. Then they are one
+                        // send, which runs once: this entry merges into it,
+                        // and sending the same bytes again rebroadcasts it.
+                        let id = entry.id;
+                        let same = |e: &Entry| {
+                            e.id != id
+                                && (e.is_pending() || matches!(e.state, EntryState::Landed { .. }))
+                                && e.txs
+                                    .iter()
+                                    .map(|t| &t.signature)
+                                    .eq(resigned.iter().map(|t| &t.signature))
+                        };
+                        if let Some(j) = self.pool.entries.iter().position(same) {
+                            let old: Vec<String> =
+                                entry.txs.iter().map(|t| t.signature.clone()).collect();
+                            let twin = &mut self.pool.entries[j];
+                            twin.resigned_from.extend(old);
+                            if twin.state == EntryState::Lost || twin.dropped {
+                                twin.attempts += 1;
+                                twin.state = EntryState::Pending;
+                                twin.delivered = false;
+                                twin.dropped = false;
+                                twin.ready_slot = slot
+                                    + latency(
+                                        seed,
+                                        &routes[&twin.route],
+                                        &twin.sender,
+                                        twin.sender_seq,
+                                        twin.attempts,
+                                    );
+                            }
+                            let into = twin.id;
+                            let entry = &mut self.pool.entries[i];
+                            entry.state = EntryState::Merged { into };
+                            entry.dropped = false;
+                            continue;
+                        }
+                        let entry = &mut self.pool.entries[i];
                         entry
                             .resigned_from
                             .extend(entry.txs.iter().map(|t| t.signature.clone()));
@@ -953,9 +1040,10 @@ impl State {
                         continue;
                     }
                 }
-                entry.state = EntryState::Expired { height };
+                self.pool.entries[i].state = EntryState::Expired { height };
                 continue;
             }
+            let entry = &mut self.pool.entries[i];
             // A lost delivery, rebroadcast each slot while it retries.
             if entry.state == EntryState::Lost
                 && entry.retry_until_slot.is_some_and(|until| slot <= until)
