@@ -303,6 +303,10 @@ pub struct SignalGate {
     #[serde(default)]
     pub non_reading: Vec<String>,
     pub min_ratio: Option<f64>,
+    /// The public label fast mode draws its set from, for a task whose
+    /// reference edge is too thin for the default sample (a 12-session set
+    /// can lose money by chance).
+    pub fast_seed: Option<String>,
 }
 
 fn total(summary: &LadderSummary, rung: &str) -> Option<f64> {
@@ -1015,7 +1019,11 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             // The ladder reuses any rung report it finds: an earlier run's,
             // from another set, mustn't stand in for this one.
             clear_dir(&ladder_out.join(task))?;
-            let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
+            let seed = if opts.fast {
+                signal.fast_seed.as_deref().unwrap_or(FAST_PUBLIC_SEED)
+            } else {
+                ""
+            };
             // The ladder exits nonzero when a rule fails: the summary says which.
             run_in(
                 root,
