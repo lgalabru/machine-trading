@@ -1,0 +1,19 @@
+# The flash-crash probes that wrap its reference (bench/checks/probes). Outside
+# the repository's workspace and out of the task image, like the other rungs.
+[package]
+name = "mtx-probe-flash-crash"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "bot"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-reference = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }
+mtx-probes = { path = "../../../../../checks/probes" }
+
+[workspace]
