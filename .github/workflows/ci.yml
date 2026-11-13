@@ -100,16 +100,16 @@ jobs:
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
       - name: Strategy components
-        # The starter, the references and the spot smoke build for
+        # The starter, the references and the spot and pool smokes build for
         # wasm32-wasip2 too, as do the kit's spot venue decoders; the
         # flash-crash reference's and the spot smoke's components load in the
         # grader's host, and the probe's sheet and market round-trip through
         # the interface.
         run: |
-          for bot in starter printer first-strategy reference maker carry weekend spot-smoke wit-probe; do
+          for bot in starter printer first-strategy reference maker carry weekend spot-smoke amm-smoke wit-probe; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
-          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
+          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
           just --justfile bots/reference/Justfile build
           just --justfile bots/wit-probe/Justfile build

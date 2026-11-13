@@ -3,6 +3,7 @@ set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
 spot_snapshot := "sol-usdc-spot-2026-11-11"
+pool_snapshot := "spcx-pools-2026-11-13"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
@@ -104,6 +105,33 @@ spot-smoke:
     grade spot-smoke-rest spot-smoke/rest smoke-rest rested --components-only
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
+
+# Pools end to end, on SPCX-USDC in Raydium's CLMM pool and Meteora's DLMM
+# pool: the smoke component swaps both ways on each and opens, halves and
+# closes a position on each, among the grader's takers and arbitrageur. The
+# grade must come out clean, with the bot's swaps read back as fills on both
+# pools, both positions seen and gone by the end, and the actors' orders
+# sent.
+amm-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/amm-smoke/Justfile build
+    cargo build --release
+    report=target/logs/amm-smoke.json
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/{{pool_snapshot}} \
+      --bot bots/amm-smoke --logs target/logs/amm-smoke --report "$report" bench/checks/pools/smoke.json > /dev/null
+    spot='[.. | objects | select(has("pools"))][0]'
+    jq -e '[.. | objects | select(has("disqualified")) | .disqualified | select(. != null)] | length == 0' "$report" > /dev/null \
+      || { echo "amm-smoke: disqualified"; exit 1; }
+    jq -e "$spot | [.fills[].instrument] | (index(\"raydium:spot:SPCX-USDC\") != null) and (index(\"meteora:spot:SPCX-USDC\") != null)" "$report" > /dev/null \
+      || { echo "amm-smoke: the bot's swaps didn't read back as fills on both pools"; exit 1; }
+    jq -e "$spot | .pools | length == 2 and all(.[]; .at_end == false and .first_step != null and .value_usd >= 0)" "$report" > /dev/null \
+      || { echo "amm-smoke: a position wasn't opened and taken out: $(jq -c "$spot | .pools" "$report")"; exit 1; }
+    jq -e '[.. | objects | select(has("makers_widened_ticks"))][0] | .sent == .orders and .failed == 0' "$report" > /dev/null \
+      || { echo "amm-smoke: the takers' orders didn't all go"; exit 1; }
+    jq -e "$spot | .arbitrage.failed == 0" "$report" > /dev/null \
+      || { echo "amm-smoke: the arbitrageur's orders failed"; exit 1; }
+    echo "amm-smoke: clean, $(jq -c "$spot | {fills: (.fills | length), positions: (.pools | length), arbitrage}" "$report")"
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
