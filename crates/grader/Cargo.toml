@@ -14,7 +14,7 @@ bs58 = "0.5"
 flate2 = "1"
 libc.workspace = true
 mtx-core.workspace = true
-mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2", "raydium-clmm", "meteora-dlmm"] }
+mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2", "raydium-clmm", "meteora-dlmm", "orca-whirlpool"] }
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true

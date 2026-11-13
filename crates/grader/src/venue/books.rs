@@ -62,13 +62,14 @@ pub struct BookMarket {
 }
 
 /// The markets `venue`'s profile names: `phoenix`'s or `openbook`'s books,
-/// or `raydium`'s or `meteora`'s pools.
+/// or `raydium`'s, `meteora`'s or `orca`'s pools.
 pub fn named_markets(venue: &str) -> Result<&'static [NamedMarket]> {
     match venue {
         "phoenix" => Ok(phoenix_v1::MARKETS),
         "openbook" => Ok(openbook_v2::MARKETS),
         "raydium" => Ok(mtx_kit::protocols::raydium::clmm::POOLS),
         "meteora" => Ok(mtx_kit::protocols::meteora::dlmm::POOLS),
+        "orca" => Ok(mtx_kit::protocols::orca::whirlpool::POOLS),
         other => Err(not_a_book(other)),
     }
 }
@@ -678,6 +679,7 @@ impl SessionVenues {
                         "openbook" => openbook_v2::PROGRAM_ID,
                         "raydium" => mtx_kit::protocols::raydium::clmm::PROGRAM_ID,
                         "meteora" => mtx_kit::protocols::meteora::dlmm::PROGRAM_ID,
+                        "orca" => mtx_kit::protocols::orca::whirlpool::PROGRAM_ID,
                         other => return Err(not_a_book(other)),
                     };
                     let named = named_markets(venue)?
@@ -788,11 +790,19 @@ mod tests {
     fn a_component_is_told_every_market_and_where_its_orders_go() {
         let venues = SessionVenues::of(&["openbook".into(), "phoenix".into()], "SOL-USDC").unwrap();
         assert!(SessionVenues::of(&["raydium".into()], "SOL-USDC").is_err());
-        let pools = SessionVenues::of(&["raydium".into(), "meteora".into()], "SPCX-USDC").unwrap();
+        let pools = SessionVenues::of(
+            &["raydium".into(), "meteora".into(), "orca".into()],
+            "SPCX-USDC",
+        )
+        .unwrap();
         let pools = serde_json::to_value(&pools).unwrap();
         assert_eq!(
             pools["markets"][1]["program"],
             mtx_kit::protocols::meteora::dlmm::PROGRAM_ID.to_string()
+        );
+        assert_eq!(
+            pools["markets"][2]["program"],
+            mtx_kit::protocols::orca::whirlpool::PROGRAM_ID.to_string()
         );
         let json = serde_json::to_value(&venues).unwrap();
         assert_eq!(json["orders"], "openbook");

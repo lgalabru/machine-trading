@@ -1,5 +1,5 @@
 //! Spot sessions: a bot trading SOL/USDC on Phoenix v1 and OpenBook v2, or
-//! SPCX/USDC in Raydium's and Meteora's pools, as the venue profiles in
+//! SPCX/USDC in Raydium's, Meteora's and Orca's pools, as the venue profiles in
 //! `specs/venues/` define them.
 //!
 //! A scenario with a [`Spot`] runs here instead of on Phoenix's perpetuals.
@@ -71,9 +71,9 @@ use crate::{
 /// The pair the book venues' profiles name.
 pub const SYMBOL: &str = "SOL-USDC";
 /// Venues a spot session can trade on: books, then pools.
-pub const VENUES: [&str; 4] = ["phoenix", "openbook", "raydium", "meteora"];
+pub const VENUES: [&str; 5] = ["phoenix", "openbook", "raydium", "meteora", "orca"];
 /// The pool venues, whose markets offer liquidity too.
-pub const POOLS: [&str; 2] = ["raydium", "meteora"];
+pub const POOLS: [&str; 3] = ["raydium", "meteora", "orca"];
 /// SOL the bot's wallet holds for fees and account rent, on top of the
 /// scenario's wrapped SOL. The profiles don't count it.
 const FEE_SOL: f64 = 1.0;
@@ -83,7 +83,7 @@ const FEE_SOL: f64 = 1.0;
 #[serde(deny_unknown_fields)]
 pub struct Spot {
     /// The venues whose spot market of the symbol the bot may trade: books
-    /// (`phoenix`, `openbook`) for SOL-USDC, pools (`raydium`, `meteora`)
+    /// (`phoenix`, `openbook`) for SOL-USDC, pools (`raydium`, `meteora`, `orca`)
     /// for SPCX-USDC. The mandate's universe is exactly these, and the
     /// amm instruments of `liquidity`.
     pub venues: Vec<String>,
@@ -278,6 +278,10 @@ pub struct SpotReport {
     pub fills: Vec<SpotFill>,
     /// Each side the bot was seen resting an order on, per market.
     pub open_orders: Vec<(InstrumentRef, Side)>,
+    /// Each side the bot's liquidity deposits and withdrawals moved base
+    /// on, per amm market, which the mandate's sides rule counts as trades.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub liquidity_moves: Vec<(InstrumentRef, Side)>,
     /// For a scenario with a tape or a participation charge: each venue's
     /// traded base volume at each step, the bot's own fills included.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -377,8 +381,10 @@ struct Reading {
 }
 
 impl Reading {
-    /// The position on `instrument`: the base held, or on an amm
-    /// instrument the base its positions hold.
+    /// The position on `instrument`: on an amm instrument the base its
+    /// positions hold; on a spot one the base held, in the wallet and on
+    /// the venues, and in every pool position too (one base-asset
+    /// position, wherever it sits).
     fn position(&self, instrument: &InstrumentRef) -> f64 {
         match instrument.kind {
             Kind::Amm => self
@@ -386,7 +392,7 @@ impl Reading {
                 .iter()
                 .find(|(i, _)| i == instrument)
                 .map_or(0.0, |(_, held)| *held),
-            _ => self.wallet.base,
+            _ => self.wallet.base + self.pooled.iter().map(|(_, held)| held).sum::<f64>(),
         }
     }
 }
@@ -518,6 +524,18 @@ impl Venues {
             pooled,
             positions,
         })
+    }
+
+    /// Each side the bot's liquidity moved base on, per amm market, in
+    /// slots after `after_slot`.
+    async fn liquidity_moves(&self, after_slot: u64) -> Result<Vec<(InstrumentRef, Side)>> {
+        let mut moves = Vec::new();
+        for market in self.markets.iter().filter(|m| m.kind() == Kind::Amm) {
+            for side in market.liquidity_moves(after_slot, &self.owner).await? {
+                moves.push((market.instrument().clone(), side));
+            }
+        }
+        Ok(moves)
     }
 
     /// Add to the ledger every match the venues recorded in slots after
@@ -1029,10 +1047,10 @@ fn send_signed(
     Ok(())
 }
 
-/// Read every tick array (Raydium) or bin array (Meteora) its pool's bitmap
+/// Read every tick array (Raydium, Orca) or bin array (Meteora) its pool's bitmap
 /// marks, and the pool's bitmap extension: a fork loads what is read.
 async fn load_arrays(chain: &dyn ChainClient, venue: &str, pool: &Pubkey) -> Result<()> {
-    use mtx_kit::protocols::{meteora::dlmm, raydium::clmm};
+    use mtx_kit::protocols::{meteora::dlmm, orca::whirlpool as orca, raydium::clmm};
 
     let account = chain
         .get_account(pool)
@@ -1053,6 +1071,19 @@ async fn load_arrays(chain: &dyn ChainClient, venue: &str, pool: &Pubkey) -> Res
                 if state.tick_array_initialized(start) == Some(true) {
                     addresses.push(clmm::tick_array_address(pool, start));
                 }
+            }
+        }
+        "orca" => {
+            let state =
+                orca::PoolState::decode(*pool, &account.data).map_err(venue_error("a pool"))?;
+            let span = orca::TICK_ARRAY_SIZE * i32::from(state.tick_spacing);
+            addresses.push(orca::oracle_address(pool));
+            // The pool keeps no record of which tick arrays exist: ask for
+            // each place one could be.
+            for index in
+                orca::math::MIN_TICK.div_euclid(span)..=orca::math::MAX_TICK.div_euclid(span)
+            {
+                addresses.push(orca::tick_array_address(pool, index * span));
             }
         }
         _ => {
@@ -1399,7 +1430,7 @@ impl Account for SpotAccount {
             book_usd: None,
             best_bid_usd: None,
             best_ask_usd: None,
-            position: now.wallet.base,
+            position: now.position(&self.instruments[0]),
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,
             turn_ms: None,
@@ -1497,6 +1528,7 @@ impl Account for SpotAccount {
             base_slot
         };
         self.venues.scan(&mut self.ledger, after).await?;
+        let liquidity_moves = self.venues.liquidity_moves(base_slot).await?;
         let ledger = &self.ledger;
         let fills = ledger.own(base_slot)?;
         let start = &self.start;
@@ -1552,7 +1584,7 @@ impl Account for SpotAccount {
             start_value_usd,
             end_value_usd,
             pnl_usd,
-            end_position: end.wallet.base,
+            end_position: end.position(&instrument),
             liquidatable: false,
             refused_calls: done.refused_calls,
             bot_exit: done.bot_exit,
@@ -1574,6 +1606,7 @@ impl Account for SpotAccount {
                 end: end.wallet,
                 fills,
                 open_orders: std::mem::take(&mut self.open_orders),
+                liquidity_moves,
                 volume,
                 pools: std::mem::take(&mut self.pools),
                 arbitrage: done.actors.arbitrage,
@@ -1612,6 +1645,8 @@ fn decode_instruction(ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxR
         "raydium"
     } else if program == mtx_kit::protocols::meteora::dlmm::PROGRAM_ID.to_string() {
         "meteora"
+    } else if program == mtx_kit::protocols::orca::whirlpool::PROGRAM_ID.to_string() {
+        "orca"
     } else if program == "ComputeBudget111111111111111111111111111111" {
         "compute_budget"
     } else {
@@ -1676,7 +1711,7 @@ mod tests {
         assert!(one_venue.validate().unwrap_err().contains("exactly"));
 
         let mut unknown = scenario();
-        unknown.spot.as_mut().unwrap().venues[1] = "orca".into();
+        unknown.spot.as_mut().unwrap().venues[1] = "kamino".into();
         assert!(unknown.validate().unwrap_err().contains("unknown venue"));
         let mut pool = scenario();
         pool.spot.as_mut().unwrap().venues[1] = "raydium".into();
@@ -1779,6 +1814,43 @@ mod tests {
     }
 
     #[test]
+    fn base_parked_in_a_pool_position_counts_toward_the_spot_cap() {
+        let spot: InstrumentRef = "orca:spot:SPCX-USDC".parse().unwrap();
+        let pool: InstrumentRef = "orca:amm:SPCX-USDC".parse().unwrap();
+        let other: InstrumentRef = "raydium:amm:SPCX-USDC".parse().unwrap();
+        let reading = |wallet: f64, pooled: &[(&InstrumentRef, f64)]| Reading {
+            wallet: Wallet {
+                base: wallet,
+                ..Wallet::default()
+            },
+            open_orders: Vec::new(),
+            pooled: pooled.iter().map(|(i, b)| ((*i).clone(), *b)).collect(),
+            positions: Vec::new(),
+        };
+        // The spot position is the wallet's base and every pool position's;
+        // an amm instrument's is its own pool's.
+        let held = reading(6.0, &[(&pool, 3.0), (&other, 2.0)]);
+        assert_eq!(held.position(&spot), 11.0);
+        assert_eq!(held.position(&pool), 3.0);
+        assert_eq!(reading(6.0, &[]).position(&spot), 6.0);
+
+        // Under a cap of 10, 6 in the wallet and 5 in positions is a breach
+        // that neither shows alone.
+        let mandate = Mandate::spot(&["orca"], "SPCX-USDC", 10.0);
+        let mut observed = Observed::default();
+        observed.begin(&spot, 6.0);
+        observed.record(&spot, held.position(&spot));
+        assert!(matches!(
+            mandate.audit(&observed),
+            Some(mtx_core::mandate::Breach::Position { .. })
+        ));
+        let mut within = Observed::default();
+        within.begin(&spot, 6.0);
+        within.record(&spot, reading(6.0, &[(&pool, 3.0)]).position(&spot));
+        assert_eq!(mandate.audit(&within), None);
+    }
+
+    #[test]
     fn the_report_audits_its_fills() {
         let sell = |price| SpotFill {
             at: 4,
@@ -1811,10 +1883,10 @@ mod tests {
         assert!(mandate.audit(&observed).is_some());
     }
 
-    /// The pool snapshot offline: both pools' markets read, each priced near
-    /// the other and the oracle, a wallet with nothing read as nothing.
+    /// The pool snapshot offline: every pool's markets read, each priced near
+    /// the others and the oracle, a wallet with nothing read as nothing.
     #[tokio::test(flavor = "multi_thread")]
-    async fn the_pool_snapshot_prices_both_pools_near_the_oracle() {
+    async fn the_pool_snapshot_prices_every_pool_near_the_oracle() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../snapshots/spcx-pools-2026-11-13")
             .canonicalize()
@@ -1823,8 +1895,8 @@ mod tests {
         let internal = Guard::internal(surfnet.rpc_url()).await.unwrap();
         let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(internal.url()));
         let spot = Spot {
-            venues: vec!["raydium".into(), "meteora".into()],
-            liquidity: vec!["raydium".into(), "meteora".into()],
+            venues: POOLS.map(Into::into).to_vec(),
+            liquidity: POOLS.map(Into::into).to_vec(),
             arbitrage: None,
             base: 0.0,
             quote: 0.0,
@@ -1839,7 +1911,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(venues.markets.len(), 4);
+        assert_eq!(venues.markets.len(), 2 * POOLS.len());
         let reading = venues.read().await.unwrap();
         assert_eq!((reading.wallet.base, reading.wallet.quote), (0.0, 0.0));
         assert!(reading.positions.is_empty());
@@ -1854,7 +1926,9 @@ mod tests {
             assert!(bid < ask, "{venue}: {bid} / {ask}");
             mids.push((bid + ask) / 2.0);
         }
-        assert!((mids[0] / mids[1] - 1.0).abs() < 0.01, "{mids:?}");
+        for mid in &mids {
+            assert!((mid / mids[0] - 1.0).abs() < 0.01, "{mids:?}");
+        }
         assert!(
             (mids[0] / oracle - 1.0).abs() < 0.1,
             "{mids:?} against {oracle}"

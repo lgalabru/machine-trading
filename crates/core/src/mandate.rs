@@ -275,6 +275,13 @@ impl Mandate {
         self.universe.iter().find(|a| &a.instrument == instrument)
     }
 
+    /// Whether `instrument`'s allowance lets the account trade `side`: an
+    /// instrument outside the universe has no sides to check.
+    pub fn allows_side(&self, instrument: &InstrumentRef, side: Side) -> bool {
+        self.allowance(instrument)
+            .is_none_or(|a| a.sides.as_ref().is_none_or(|sides| sides.contains(&side)))
+    }
+
     /// The first rule the observed session broke, if any.
     pub fn audit(&self, observed: &Observed) -> Option<Breach> {
         if observed.positions_outside_universe > 0 {
@@ -303,11 +310,9 @@ impl Mandate {
             .iter()
             .map(|fill| (&fill.instrument, fill.side))
             .chain(observed.open_orders.iter().map(|(i, side)| (i, *side)))
+            .chain(observed.liquidity.iter().map(|(i, side)| (i, *side)))
         {
-            let allowed = self
-                .allowance(instrument)
-                .is_none_or(|a| a.sides.as_ref().is_none_or(|sides| sides.contains(&side)));
-            if !allowed {
+            if !self.allows_side(instrument, side) {
                 return Some(Breach::Side {
                     instrument: instrument.clone(),
                     side,
@@ -364,6 +369,10 @@ pub struct Observed {
     /// Each side the account was seen with an order resting on, per
     /// instrument.
     pub open_orders: Vec<(InstrumentRef, Side)>,
+    /// Each side the account's liquidity deposits and withdrawals moved base
+    /// on, per `amm` instrument: a deposit that takes base in is a buy, a
+    /// withdrawal that returns base a sell. Only the sides rule reads them.
+    pub liquidity: Vec<(InstrumentRef, Side)>,
 }
 
 /// A fill as the audit reads it: where, which way for the account, and at
@@ -406,6 +415,18 @@ impl Observed {
             lowest: position,
             highest: position,
         });
+    }
+
+    /// Counts a deposit or withdrawal that moved base on `side` of the `amm`
+    /// instrument.
+    pub fn record_liquidity(&mut self, instrument: &InstrumentRef, side: Side) {
+        if !self
+            .liquidity
+            .iter()
+            .any(|(i, s)| i == instrument && *s == side)
+        {
+            self.liquidity.push((instrument.clone(), side));
+        }
     }
 
     /// Counts an order seen resting on `side` of `instrument`.
@@ -922,6 +943,39 @@ mod tests {
             ..Observed::default()
         };
         assert_eq!(mandate.audit(&deep), None);
+    }
+
+    #[test]
+    fn liquidity_moves_count_as_trades_for_the_sides_rule() {
+        let pool: InstrumentRef = "orca:amm:SPCX-USDC".parse().unwrap();
+        let mut mandate = Mandate::spot(&["orca"], "SPCX-USDC", 10.0);
+        mandate.universe.push(Allowance {
+            instrument: pool.clone(),
+            max_position: 10.0,
+            min_position: None,
+            sides: Some(vec![Side::Sell]),
+            min_sell_price: None,
+            max_buy_price: None,
+        });
+        let mut observed = Observed::default();
+        observed.record_liquidity(&pool, Side::Sell);
+        observed.record_liquidity(&pool, Side::Sell);
+        assert_eq!(observed.liquidity.len(), 1);
+        // A withdrawal returning base is a sell: a sell-only mandate allows it.
+        assert_eq!(mandate.audit(&observed), None);
+        assert!(mandate.allows_side(&pool, Side::Sell) && !mandate.allows_side(&pool, Side::Buy));
+        // A deposit taking base in is a buy.
+        observed.record_liquidity(&pool, Side::Buy);
+        assert_eq!(
+            mandate.audit(&observed),
+            Some(Breach::Side {
+                instrument: pool.clone(),
+                side: Side::Buy
+            })
+        );
+        // Outside the universe, nothing to check.
+        let other: InstrumentRef = "raydium:amm:SPCX-USDC".parse().unwrap();
+        assert!(mandate.allows_side(&other, Side::Buy));
     }
 
     #[test]

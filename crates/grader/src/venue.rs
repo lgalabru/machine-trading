@@ -35,14 +35,15 @@
 //! - [`phoenix`]: Phoenix, its Eternal perpetuals ([`perps`]) and its v1
 //!   spot books ([`books`]).
 //! - [`openbook`]: OpenBook v2 and its spot books ([`books`]).
-//! - [`raydium`]: Raydium's CLMM pools, and [`meteora`]: Meteora's DLMM
-//!   pools, each a spot and an amm instrument ([`pools`]): a pool's top is
+//! - [`raydium`]: Raydium's CLMM pools, [`meteora`]: Meteora's DLMM pools
+//!   and [`orca`]: Orca's Whirlpools, each a spot and an amm instrument ([`pools`]): a pool's top is
 //!   the price of a small trade each way, its fills come from its vaults,
 //!   and its seats execute swaps and liquidity.
 
 pub mod books;
 pub mod meteora;
 pub mod openbook;
+pub mod orca;
 pub mod perps;
 pub mod phoenix;
 pub mod pools;
@@ -91,6 +92,7 @@ pub fn spot_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
         "openbook" => Ok(Box::new(openbook::OpenBook::new(rpc_url))),
         "raydium" => Ok(Box::new(raydium::Raydium::new(rpc_url))),
         "meteora" => Ok(Box::new(meteora::Meteora::new(rpc_url))),
+        "orca" => Ok(Box::new(orca::Orca::new(rpc_url))),
         other => Err(Error::Transaction {
             label: "a spot venue".into(),
             reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
@@ -162,6 +164,20 @@ pub trait Market: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// The sides of the base that `owner`'s liquidity deposits and
+    /// withdrawals moved on this (amm) market in slots after `after_slot`,
+    /// read from the chain: a deposit that takes base in is a buy, a
+    /// withdrawal that returns base a sell. The mandate's sides rule counts
+    /// them as trades.
+    async fn liquidity_moves(
+        &self,
+        after_slot: u64,
+        owner: &Pubkey,
+    ) -> Result<Vec<mtx_core::Side>> {
+        let _ = (after_slot, owner);
+        Ok(Vec::new())
+    }
+
     /// What `holdings`, this market's, are worth in USD, where the market
     /// values its own (a money market's supply and debt, a pool position);
     /// `None` leaves them to the reference prices ([`value_usd`]).
@@ -221,6 +237,15 @@ pub trait Seat: Send + Sync {
     /// The account's position here, in base units: a perp's, the base asset
     /// a spot account holds, or a money market's supply less its debt.
     async fn position(&self) -> SeatResult<f64>;
+
+    /// The side of the base `action` would move on this market for the
+    /// mandate's sides rule, if it moves any: a deposit that takes base in
+    /// is a buy, a withdrawal that returns base a sell. `None` for any other
+    /// action.
+    async fn base_moved(&self, action: &Action) -> SeatResult<Option<mtx_core::Side>> {
+        let _ = action;
+        Ok(None)
+    }
 
     /// The market's tick, in quote units; 0 without a book.
     fn tick(&self) -> f64 {
@@ -337,7 +362,7 @@ mod tests {
             openbook.market(&spot("SOL-USDC")).await.is_err(),
             "Phoenix's"
         );
-        assert!(spot_venue("orca", "http://127.0.0.1:1").is_err());
+        assert!(spot_venue("kamino", "http://127.0.0.1:1").is_err());
         // A pool offers a spot and an amm instrument.
         let raydium = spot_venue("raydium", "http://127.0.0.1:1").unwrap();
         let mut offered = raydium.instruments();
@@ -349,6 +374,15 @@ mod tests {
         );
         let meteora = spot_venue("meteora", "http://127.0.0.1:1").unwrap();
         assert_eq!(meteora.instruments().len(), 2);
+        let orca = spot_venue("orca", "http://127.0.0.1:1").unwrap();
+        let mut offered = orca.instruments();
+        offered.sort();
+        assert_eq!(
+            offered,
+            ["orca:spot:SPCX-USDC", "orca:amm:SPCX-USDC"]
+                .map(|i| i.parse::<InstrumentRef>().unwrap())
+        );
+        assert!(orca.market(&spot("SOL-USDC")).await.is_err(), "Phoenix's");
         assert!(
             meteora.market(&spot("SPCX-USDC")).await.is_err(),
             "Phoenix's"

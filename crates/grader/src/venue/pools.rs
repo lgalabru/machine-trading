@@ -1,4 +1,4 @@
-//! Pools: what Raydium's and Meteora's markets share.
+//! Pools: what Raydium's, Meteora's and Orca's markets share.
 //!
 //! A pool offers two instruments, each its own [`PoolMarket`]:
 //!
@@ -11,8 +11,8 @@
 //!   pool, each a [`Holding::Amm`]; its seat adds and removes liquidity.
 //!
 //! A pool's program is behind [`Pool`]: Raydium CLMM's in
-//! [`super::raydium`], Meteora DLMM's in [`super::meteora`]. What is the
-//! same for both is here: a market's top (the price of a small trade each
+//! [`super::raydium`], Meteora DLMM's in [`super::meteora`], Orca
+//! Whirlpool's in [`super::orca`]. What is the same for all is here: a market's top (the price of a small trade each
 //! way: the pool's price less or plus its fee), its fills (read from the
 //! pool's vaults, which every swap moves: the vault deltas give the side,
 //! the size and the price paid, fee included, and the fee payer the taker),
@@ -110,7 +110,8 @@ pub struct Deposit {
 /// One of an account's positions in a pool.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lp {
-    /// The position's id: its NFT's mint (Raydium), its account (Meteora).
+    /// The position's id: its NFT's mint (Raydium, Orca), its account
+    /// (Meteora).
     pub id: Pubkey,
     pub range: Option<PriceRange>,
     /// In whole units.
@@ -247,13 +248,8 @@ fn holding(assets: &PoolAssets, lp: &Lp) -> Holding {
     })
 }
 
-/// A transaction's swap through a pool, from its vaults' deltas: the
-/// taker's side, base and quote, in atoms. `None` for a transaction that
-/// moved both vaults the same way (liquidity in or out) or neither.
-fn vault_swap(
-    summary: &mtx_kit::chain::TransactionSummary,
-    assets: &PoolAssets,
-) -> Option<(CoreSide, u64, u64)> {
+/// How a transaction moved a pool's base and quote vaults, in atoms.
+fn vault_deltas(summary: &mtx_kit::chain::TransactionSummary, assets: &PoolAssets) -> (i128, i128) {
     let delta = |vault: &Pubkey| -> i128 {
         summary
             .token_balance_changes
@@ -262,7 +258,33 @@ fn vault_swap(
             .map(|c| i128::from(c.post_amount) - i128::from(c.pre_amount))
             .sum()
     };
-    let (base, quote) = (delta(&assets.base_vault), delta(&assets.quote_vault));
+    (delta(&assets.base_vault), delta(&assets.quote_vault))
+}
+
+/// The side of the base a transaction's liquidity moved, from its vaults'
+/// deltas: base into the pool (a deposit) is a buy, base out (a withdrawal
+/// or collected fees) a sell. `None` for a swap (the vaults moved opposite
+/// ways) or a transaction that moved no base.
+fn vault_liquidity(
+    summary: &mtx_kit::chain::TransactionSummary,
+    assets: &PoolAssets,
+) -> Option<CoreSide> {
+    let (base, quote) = vault_deltas(summary, assets);
+    match (base.signum(), quote.signum()) {
+        (1, 0 | 1) => Some(CoreSide::Buy),
+        (-1, 0 | -1) => Some(CoreSide::Sell),
+        _ => None,
+    }
+}
+
+/// A transaction's swap through a pool, from its vaults' deltas: the
+/// taker's side, base and quote, in atoms. `None` for a transaction that
+/// moved both vaults the same way (liquidity in or out) or neither.
+fn vault_swap(
+    summary: &mtx_kit::chain::TransactionSummary,
+    assets: &PoolAssets,
+) -> Option<(CoreSide, u64, u64)> {
+    let (base, quote) = vault_deltas(summary, assets);
     let atoms = |x: i128| u64::try_from(x.unsigned_abs()).ok();
     match (base.signum(), quote.signum()) {
         (1, -1) => Some((CoreSide::Sell, atoms(base)?, atoms(quote)?)),
@@ -407,6 +429,41 @@ impl Market for PoolMarket {
             ));
         }
         Ok(fills)
+    }
+
+    /// The sides of the base `owner`'s transactions through the pool's
+    /// liquidity moved since `after_slot`, for the amm instrument: read from
+    /// the vaults, so a bot's own transactions count as much as its seat's.
+    async fn liquidity_moves(&self, after_slot: u64, owner: &Pubkey) -> Result<Vec<CoreSide>> {
+        if self.instrument.kind != Kind::Amm {
+            return Ok(Vec::new());
+        }
+        let chain = self.chain.as_ref();
+        let assets = self.assets();
+        let mut moves = Vec::new();
+        for (signature, _) in chain
+            .signatures_for_address(&assets.address, after_slot)
+            .await
+            .map_err(chain_error("the pool's transactions"))?
+        {
+            let summary = chain
+                .get_transaction(&signature)
+                .await
+                .map_err(chain_error("a pool transaction"))?
+                .ok_or_else(|| Error::Transaction {
+                    label: "a pool transaction".into(),
+                    reason: format!("{signature} is listed but not found"),
+                })?;
+            if summary.error.is_some() || summary.account_keys.first() != Some(owner) {
+                continue;
+            }
+            if let Some(side) = vault_liquidity(&summary, assets)
+                && !moves.contains(&side)
+            {
+                moves.push(side);
+            }
+        }
+        Ok(moves)
     }
 
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {
@@ -699,6 +756,47 @@ impl Seat for PoolSeat {
         }
     }
 
+    /// A deposit that takes base into the pool moves it on the buy side, a
+    /// withdrawal that returns base on the sell side. A deposit of base into
+    /// a range that lies wholly below the price takes none.
+    async fn base_moved(&self, action: &Action) -> SeatResult<Option<CoreSide>> {
+        if self.kind != Kind::Amm {
+            return Ok(None);
+        }
+        match action {
+            Action::AddLiquidity {
+                base,
+                range,
+                position,
+                ..
+            } => {
+                if base.is_nan() || *base <= 0.0 {
+                    return Ok(None);
+                }
+                let range = match position {
+                    Some(id) => self.position(Some(id)).await?.range,
+                    None => *range,
+                };
+                let PoolPrice { price, .. } = self
+                    .pool
+                    .price(self.chain.as_ref())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(range
+                    .is_none_or(|r| r.upper > price)
+                    .then_some(CoreSide::Buy))
+            }
+            Action::RemoveLiquidity {
+                position, share, ..
+            } => {
+                let held = self.position(position.as_deref()).await?;
+                Ok(((*share > 0.0 && held.base > 0.0) || held.fees_base > 0.0)
+                    .then_some(CoreSide::Sell))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// A taker's swap: up to `size`, stopping at `limit`.
     async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
         self.swap(&SwapOrder {
@@ -776,7 +874,7 @@ impl Seat for PoolSeat {
     }
 }
 
-/// The pool `named` names on `venue` (`raydium` or `meteora`), read through
+/// The pool `named` names on `venue` (`raydium`, `meteora` or `orca`), read through
 /// `chain`.
 pub async fn connect(
     venue: &str,
@@ -786,6 +884,7 @@ pub async fn connect(
     Ok(match venue {
         "raydium" => Arc::new(super::raydium::ClmmPool::connect(chain, named).await?),
         "meteora" => Arc::new(super::meteora::DlmmPool::connect(chain, named).await?),
+        "orca" => Arc::new(super::orca::WhirlpoolPool::connect(chain, named).await?),
         other => return Err(Error::UnknownMarket(format!("{other} has no pools"))),
     })
 }
@@ -1004,5 +1103,178 @@ mod tests {
         ]);
         assert_eq!(vault_swap(&added, &assets), None);
         assert_eq!(vault_swap(&summary(Vec::new()), &assets), None);
+
+        // The side the liquidity moved: base in is a buy, out a sell, however
+        // the quote went; a swap is neither.
+        let liquidity = |base: (u64, u64), quote: (u64, u64)| {
+            vault_liquidity(
+                &summary(vec![
+                    change(assets.base_vault, base.0, base.1),
+                    change(assets.quote_vault, quote.0, quote.1),
+                ]),
+                &assets,
+            )
+        };
+        assert_eq!(liquidity((100, 110), (1000, 2000)), Some(CoreSide::Buy));
+        assert_eq!(liquidity((100, 110), (1000, 1000)), Some(CoreSide::Buy));
+        assert_eq!(liquidity((110, 100), (2000, 1000)), Some(CoreSide::Sell));
+        assert_eq!(liquidity((100, 100), (1000, 900)), None);
+        assert_eq!(liquidity((100, 102), (1000, 720)), None);
+        assert_eq!(vault_liquidity(&summary(Vec::new()), &assets), None);
+    }
+
+    /// A pool at a fixed price holding a fixed set of positions.
+    struct Stub {
+        assets: PoolAssets,
+        held: Vec<Lp>,
+    }
+
+    #[async_trait]
+    impl Pool for Stub {
+        fn assets(&self) -> &PoolAssets {
+            &self.assets
+        }
+        async fn price(&self, _: &dyn ChainClient) -> Result<PoolPrice> {
+            Ok(PoolPrice {
+                price: 140.0,
+                fee: 0.003,
+            })
+        }
+        async fn stats(&self, _: &dyn ChainClient) -> Result<Vec<(String, f64)>> {
+            Ok(Vec::new())
+        }
+        async fn swap(
+            &self,
+            _: &dyn ChainClient,
+            _: &Pubkey,
+            _: &SwapOrder,
+        ) -> SeatResult<Vec<Instruction>> {
+            unreachable!()
+        }
+        async fn positions(&self, _: &dyn ChainClient, _: &Pubkey) -> Result<Vec<Lp>> {
+            Ok(self.held.clone())
+        }
+        async fn position(
+            &self,
+            _: &dyn ChainClient,
+            _: &Pubkey,
+            id: &Pubkey,
+        ) -> Result<Option<Lp>> {
+            Ok(self.held.iter().find(|lp| lp.id == *id).cloned())
+        }
+        async fn deposit(
+            &self,
+            _: &dyn ChainClient,
+            _: &Pubkey,
+            _: Option<&Pubkey>,
+            _: &Pubkey,
+            _: &Deposit,
+        ) -> SeatResult<(Vec<Instruction>, bool)> {
+            unreachable!()
+        }
+        async fn withdraw(
+            &self,
+            _: &dyn ChainClient,
+            _: &Pubkey,
+            _: &Lp,
+            _: f64,
+            _: Option<f64>,
+            _: Option<f64>,
+        ) -> SeatResult<Vec<Instruction>> {
+            unreachable!()
+        }
+    }
+
+    fn lp(base: f64, fees_base: f64) -> Lp {
+        Lp {
+            id: Pubkey::new_unique(),
+            range: Some(PriceRange {
+                lower: 130.0,
+                upper: 150.0,
+            }),
+            base,
+            quote: 100.0,
+            fees_base,
+            fees_quote: 0.0,
+            live: true,
+        }
+    }
+
+    fn amm_seat(held: Vec<Lp>) -> PoolSeat {
+        PoolSeat {
+            market: "orca:amm:SPCX-USDC".into(),
+            kind: Kind::Amm,
+            pool: Arc::new(Stub {
+                assets: assets(),
+                held,
+            }),
+            chain: Arc::new(RpcChainClient::new("http://127.0.0.1:1")),
+            signer: Keypair::new(),
+            opened: AtomicU64::new(0),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_deposit_that_takes_base_is_a_buy_and_a_withdrawal_that_returns_it_a_sell() {
+        let held = lp(2.0, 0.0);
+        let id = held.id.to_string();
+        let seat = amm_seat(vec![held, lp(0.0, 0.0), lp(0.0, 0.01)]);
+        let add =
+            |base, range: Option<(f64, f64)>, position: Option<String>| Action::AddLiquidity {
+                base,
+                quote: 100.0,
+                range: range.map(|(lower, upper)| PriceRange { lower, upper }),
+                position,
+                shape: None,
+            };
+        let remove = |position: Option<String>, share| Action::RemoveLiquidity {
+            position,
+            share,
+            min_base: None,
+            min_quote: None,
+        };
+        // A range over the price, or the whole curve, takes base in.
+        let buy = Some(CoreSide::Buy);
+        assert_eq!(
+            seat.base_moved(&add(1.0, Some((130.0, 150.0)), None)).await,
+            Ok(buy)
+        );
+        assert_eq!(seat.base_moved(&add(1.0, None, None)).await, Ok(buy));
+        // A range below it takes quote only, and no base asked takes none.
+        assert_eq!(
+            seat.base_moved(&add(1.0, Some((100.0, 130.0)), None)).await,
+            Ok(None)
+        );
+        assert_eq!(
+            seat.base_moved(&add(0.0, Some((130.0, 150.0)), None)).await,
+            Ok(None)
+        );
+        // Into a position, the position's range decides.
+        assert_eq!(
+            seat.base_moved(&add(1.0, None, Some(id.clone()))).await,
+            Ok(buy)
+        );
+        // Taking out a position that holds base, or fees in base, sells.
+        let sell = Some(CoreSide::Sell);
+        assert_eq!(
+            seat.base_moved(&remove(Some(id.clone()), 0.5)).await,
+            Ok(sell)
+        );
+        assert_eq!(seat.base_moved(&remove(Some(id), 0.0)).await, Ok(None));
+        // Not the only position: it can't say which, and the order fails on
+        // its own.
+        assert!(seat.base_moved(&remove(None, 1.0)).await.is_err());
+        let fees_only = amm_seat(vec![lp(0.0, 0.01)]);
+        assert_eq!(fees_only.base_moved(&remove(None, 0.0)).await, Ok(sell));
+        let empty = amm_seat(vec![lp(0.0, 0.0)]);
+        assert_eq!(empty.base_moved(&remove(None, 1.0)).await, Ok(None));
+        // A swap moves no liquidity.
+        let swap = Action::Swap {
+            side: Side::Bid,
+            amount: 1.0,
+            unit: AmountUnit::Base,
+            limit: 150.0,
+        };
+        assert_eq!(seat.base_moved(&swap).await, Ok(None));
     }
 }
