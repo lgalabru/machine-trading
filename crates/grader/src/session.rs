@@ -109,6 +109,9 @@ pub struct SessionOptions<'a> {
     /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
+    /// Upkeep for the venues the session trades on, called every step
+    /// (see [`crate::crank`]).
+    pub cranks: Option<&'a crate::crank::CrankFactory>,
     /// A trusted process bot (an anchor, a ladder rung): the world waits for
     /// each of its turns, up to [`TRUSTED_WALL`], rather than the turn wall
     /// and the session's budget, so a loaded machine can't make it miss a
@@ -182,6 +185,9 @@ pub struct SessionReport {
     /// A spot session scored net of the starting holding's drift.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
+    /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -335,7 +341,10 @@ impl SessionReport {
 /// the grader may run it again from scratch.
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut bot_started = false;
-    match run_session(opts, &mut bot_started).await {
+    let session = run_session(opts, &mut bot_started).await;
+    match session {
+        // Already wrapped: a crank's grader failure, after the bot started.
+        Err(error @ Error::Setup(_)) => Err(error),
         Err(error) if !bot_started => Err(Error::Setup(Box::new(error))),
         done => done,
     }
@@ -445,6 +454,7 @@ pub(crate) struct Done {
     pub transactions: Vec<TxRecord>,
     pub calls: CallLog,
     pub actors: ActorsReport,
+    pub crank_refusals: Vec<crate::crank::CrankRefusal>,
 }
 
 /// The one session loop, for every kind of session: perp, spot, and
@@ -596,6 +606,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
 
     let mut bot_exit = None;
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
+    let mut cranks = crate::crank::Cranks::new(opts.cranks);
     let mut slot = start_slot;
     for k in 0..steps {
         // A step: the takers trade against the quotes the bot left; then the
@@ -614,6 +625,17 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
+        cranks
+            .step(
+                &rpc,
+                &crate::crank::CrankStep {
+                    k,
+                    slot,
+                    at,
+                    last: k + 1 == steps,
+                },
+            )
+            .await?;
         cast.after_blocks(account.moment(at)).await;
         steps_seen.push(account.step(k, slot, at).await?);
         if bot_exit.is_none()
@@ -730,6 +752,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             transactions,
             calls,
             actors,
+            crank_refusals: cranks.into_refusals(),
         })
         .await?;
     info!(

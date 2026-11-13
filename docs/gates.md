@@ -38,6 +38,11 @@ every run grades the same sessions and a verdict doesn't flip with the draw.
 It is never a hidden set: hidden sets come from fresh 256-bit secrets, and
 `MTX_EVAL_SEED` is never used here.
 
+A task whose reference edge is thin (market-making's is about $3 a session
+against $15 of noise) can lose money on twelve sessions by chance. Then the
+reference and order checks are `inconclusive`, not failed: the edge is too
+thin to judge in fast mode, and the full ladder decides.
+
 Twelve sessions can't carry the full ladder's thresholds, so fast mode
 loosens two of them. The bootstrap floor drops to 0.5: the order must still
 hold on the set itself. An exploit bot over a limit fails only when the
@@ -51,7 +56,7 @@ and limits as measured.
 ## The signal gate
 
 A task is about reading something: the flow tape, the regime, the funding
-episode. Its ladder file (`bench/checks/ladder/<family>.json`) says which
+episode. Its ladder file (`bench/tasks/<task>/checks/ladder.json`) says which
 rungs read it and which trade without:
 
 ```json

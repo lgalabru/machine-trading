@@ -18,6 +18,16 @@ category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
 snapshot = "phoenix-spcx-2026-10-29"
 
+[metadata.mtx]
+# What the repository's lists are written from (`mtx task sync`).
+generator = "market-making"
+emoji = "⚖️"
+market = "Phoenix SPCX perp"
+summary = "earns the SPCX spread from noise, and steps back before informed flow"
+skill = "earns the spread from noise and steps back before informed flow"
+# Lines only the answers hold, for `just leak-audit`.
+leak_needles = ["one tick inside the competitor", "backs off after one-sided fills"]
+
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
 # reference on the same sessions first (four at a time). The world moves
