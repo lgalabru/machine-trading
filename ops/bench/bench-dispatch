@@ -11,8 +11,8 @@
 #   publish <batch> <version> [force]
 #
 # Everything it runs is `main`'s code: <commit> must be on origin/main. The
-# API keys stay on this machine, in ~/.machine-trading.env; nothing here
-# prints them.
+# API keys stay on this machine, in the env file `just bench` reads; nothing
+# here prints them.
 set -euo pipefail
 umask 077
 
@@ -28,7 +28,7 @@ read_only=false
 # Split on spaces only; no quoting, globbing or expansion.
 IFS=' ' read -r -a argv <<< "${SSH_ORIGINAL_COMMAND:-}"
 [ "${#argv[@]}" -ge 1 ] || fail "no command"
-[ "${#argv[@]}" -le 16 ] || fail "too many arguments"
+[ "${#argv[@]}" -le 20 ] || fail "too many arguments"
 verb="${argv[0]}"
 args=("${argv[@]:1}")
 if $read_only && [ "$verb" != status ]; then
@@ -39,7 +39,7 @@ is() { [[ "$2" =~ $1 ]]; }
 commit_re='^[0-9a-f]{40}$'
 version_re='^[0-9]+\.[0-9]+\.[0-9]+$'
 batch_re='^[0-9]{8}-[0-9]{6}-x[0-9]+$'
-model_re='^((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$'
+model_re='^(hermes:)?((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$'
 int_in() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
 
 running() { pgrep -u "$(id -u)" -f 'harbor run' > /dev/null; }
@@ -64,7 +64,7 @@ case "$verb" in
     int_in "$k" 1 20 || fail "attempts: 1 to 20"
     int_in "$n" 1 32 || fail "concurrent: 1 to 32"
     int_in "$limit" 1 4 || fail "limit: 1 to 4"
-    [ "${#models[@]}" -le 8 ] || fail "8 models at most"
+    [ "${#models[@]}" -le 12 ] || fail "12 models at most"
     for model in "${models[@]}"; do is "$model_re" "$model" || fail "bad model: $model"; done
     running && fail "a bench is running already"
     checkout "$commit"
@@ -72,7 +72,8 @@ case "$verb" in
     marker="$(mktemp)"
     log="$logs/bench-$(date -u +%Y%m%d-%H%M%S).log"
     # Detached from this SSH session: the run takes hours.
-    setsid nohup just bench "${models[*]}" "$k" "$n" "$version" "$limit" > "$log" 2>&1 < /dev/null &
+    # The models at once (together=1): grades don't depend on load.
+    setsid nohup just bench "${models[*]}" "$k" "$n" "$version" "$limit" 1 > "$log" 2>&1 < /dev/null &
     # `just bench` names the batch; wait for it to appear.
     for _ in $(seq 60); do
       batch="$(find jobs/bench -mindepth 1 -maxdepth 1 -type d -newer "$marker" -printf '%f\n' | sort | tail -1)"

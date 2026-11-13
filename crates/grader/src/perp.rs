@@ -82,13 +82,30 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         crate::txlayer::setup(surfnet, layer, &bot.pubkey())?;
     }
     let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_mark_ticks = patiently("the book", async || {
+    let start_bbo = patiently("the book", async || {
         hawkeye.view_bbo(&scenario.symbol).await
     })
     .await?
-    .value
-    .mark_price_ticks;
+    .value;
+    let start_mark_ticks = start_bbo.mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(&market, start_mark_ticks);
+    crate::oracles::check_index_gap(
+        &scenario.symbol,
+        start_mark_ticks as f64,
+        start_bbo.index_price_ticks as f64,
+    )?;
+    let start_quote = crate::oracles::MarketQuote {
+        mark: Some(start_mark_usd),
+        index: Some(phoenix.ticks_to_usd(&market, start_bbo.index_price_ticks)),
+        mid: crate::oracles::MarketQuote::mid_of(
+            start_bbo
+                .best_bid_ticks()
+                .map(|t| phoenix.ticks_to_usd(&market, t)),
+            start_bbo
+                .best_ask_ticks()
+                .map(|t| phoenix.ticks_to_usd(&market, t)),
+        ),
+    };
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
     // A scenario that sets funding values it with the funding it has accrued
     // and not settled yet; others as Phoenix's collateral and unrealized PnL
@@ -284,16 +301,18 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
-    if let Some(oracles) = &scenario.oracles {
-        crate::oracles::register(
+    let oracle_starts = match &scenario.oracles {
+        Some(oracles) => crate::oracles::register(
             &rpc,
             oracles,
             scenario.duration_slots,
             &crate::oracles::World {
                 phoenix: Some((perp_asset_map, start_mark_ticks)),
+                prices: [(scenario.instrument(), start_quote)].into(),
             },
-        )?;
-    }
+        )?,
+        None => Default::default(),
+    };
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -368,6 +387,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         start_value_usd,
         base_slot,
         observed: Observed::default(),
+        oracle_starts,
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
@@ -466,6 +486,7 @@ struct PerpAccount {
     universe: Vec<InstrumentId>,
     market_id: InstrumentId,
     start_mark_usd: f64,
+    oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
     base_slot: u64,
     /// Sampled every step: a fill persists until the bot trades out of it,
@@ -874,6 +895,7 @@ impl Account for PerpAccount {
             net: None,
             tx_layer: None,
             crank_refusals: done.crank_refusals,
+            oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {

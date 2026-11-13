@@ -21,15 +21,15 @@ flowchart LR
     harbor --> pins["Branch release/X.Y.Z<br/>(pins, to merge)"]
   end
   subgraph bench["2. Bench (bench.yml start)"]
-    approve2{{"Approve<br/>sunburst"}} --> run["sunburst: just bench<br/>models × tasks × attempts"]
+    approve2{{"Approve<br/>bench"}} --> run["Bench machine: just bench<br/>models × tasks × attempts"]
   end
   subgraph publish["3. Publish (bench.yml publish)"]
-    approve3{{"Approve<br/>sunburst"}} --> hf["Hugging Face<br/>machine-trading-results"]
+    approve3{{"Approve<br/>bench"}} --> hf["Hugging Face<br/>machine-trading-results"]
     hf --> results["Branch results/X.Y.Z-batch<br/>(release.json, to merge)"]
     results --> site["Pages site<br/>rebuilt on merge"]
   end
   harbor -. "pulled by every trial" .-> run
-  run -. "batch on sunburst" .-> approve3
+  run -. "batch on the bench machine" .-> approve3
 ```
 
 `status` (`bench.yml status`) can be asked at any time, without approval.
@@ -85,7 +85,7 @@ From a laptop, `just release` does the same in one go; the images then
 build for both arches on the laptop, amd64 under emulation (about 40
 minutes on Apple silicon). A buildx node on the bench machine builds amd64
 natively instead, in minutes: `docker buildx create --name mtx-amd64
---platform linux/amd64 ssh://sunburst`, then one `buildx build --platform
+--platform linux/amd64 ssh://<bench machine>`, then one `buildx build --platform
 linux/amd64` there and one `linux/arm64` locally, merged with `docker buildx
 imagetools create`. The registry login stays on the laptop: buildx lends it
 to the remote builder for the build only.
@@ -97,14 +97,14 @@ sequenceDiagram
   autonumber
   actor Dev as Maintainer
   participant GH as GitHub Actions<br/>(bench.yml)
-  participant D as sunburst:<br/>~/bin/bench-dispatch
+  participant D as Bench machine:<br/>dispatcher
   participant J as just bench
   participant HB as harbor run<br/>(one per model)
   participant T as Trials<br/>(n at a time)
 
   Dev->>GH: action=start, version, models, attempts, concurrent
   GH->>GH: check every input
-  GH-->>Dev: environment "sunburst" waits for review
+  GH-->>Dev: environment "bench" waits for review
   Dev->>GH: approve
   GH->>D: ssh (key pinned to the dispatcher):<br/>start <main sha> X.Y.Z k n limit models…
   D->>D: check again, sha on origin/main, no bench running,<br/>clean checkout → detach at sha
@@ -112,10 +112,14 @@ sequenceDiagram
   D-->>GH: batch=YYYYMMDD-HHMMSS-x1
   GH-->>Dev: summary: batch, status and publish commands
   J->>J: batch dir, .seed (one secret per batch), batch.json (the plan)
-  loop each model, one after the other
+  par each model at once (together=1), a minute apart
     J->>HB: -d machine-trading@X.Y.Z -k attempts -n concurrent
-    HB->>T: models × tasks × attempts trials, n at a time
+    HB->>T: tasks × attempts trials, n at a time
+  and the watcher, every 20 s
+    J->>T: an agent refused for quota or credit?
+    J-->>HB: if so: INT, then TERM, every run of the batch
   end
+  J->>J: stopped? exit 1, no report
   J->>J: secret in no job file? report (skill by model and task)
   Dev->>GH: action=status (any time, no review)
   GH->>D: ssh (read-only key): status [batch]
@@ -157,7 +161,7 @@ sequenceDiagram
 
 | Level | In parallel | Limit | Set by |
 | --- | --- | --- | --- |
-| Models | one after the other in `just bench` | — | the recipe's loop |
+| Models | at once with `together=1` (what `bench.yml` starts), else one after the other | — | `just bench … together` |
 | Trials of a model | `concurrent` at a time | the machine: 4 CPUs and 6 GB per container | `-n`, `bench.yml concurrent` |
 | A trial's two phases | no: agent, then verifier | — | Harbor |
 | Reference sessions | 4 at a time | trusted, small | `--anchor-jobs 4` |
@@ -170,15 +174,20 @@ alongside 39 others gets the report it would get alone (`mtx grade
 
 How long a batch takes, roughly: the agent's hour, then grading (about 15
 minutes for flash-crash, longer for market-making), times the number of
-waves (`ceil(models × tasks × attempts / concurrent)` per model, models in
-turn). Two models × four tasks × five attempts at `concurrent` 20 is one
-wave per model.
+waves (`ceil(tasks × attempts / concurrent)` per model, the models at once).
+Two models × four tasks × five attempts at `concurrent` 20 is one wave.
+
+A batch stops at the first agent a provider refuses for quota or credit
+("Quota exceeded", "credit balance is too low"): the other agents would be
+cut off too, and a trial whose agent was cut off can't be ranked. The batch
+is marked `.stopped`, with the refusal, and gets no report. Rate limits
+don't stop it; the harnesses retry them.
 
 Each trial uses two Docker networks while it runs. Docker's default address
-pools hold about 31, so the bench machine's `/etc/docker/daemon.json` sets
-`{"default-address-pools":[{"base":"10.200.0.0/14","size":24}]}`: room for
-1,024. Without it, a batch of 40 trials fails at the 16th with "all
-predefined address pools have been fully subnetted".
+pools hold about 31, so the bench machine's Docker daemon is given a larger
+private range (`default-address-pools`, with room for hundreds of /24s).
+Without it, a batch of 40 trials fails at the 16th with "all predefined
+address pools have been fully subnetted".
 
 ## 3. Publish
 
@@ -187,17 +196,17 @@ sequenceDiagram
   autonumber
   actor Dev as Maintainer
   participant GH as GitHub Actions<br/>(bench.yml)
-  participant D as sunburst:<br/>bench-dispatch
+  participant D as Bench machine:<br/>dispatcher
   participant M as mtx bench publish
   participant HF as Hugging Face<br/>machine-trading-results
   participant Repo as GitHub repo
   participant P as Pages
 
   Dev->>GH: action=publish, batch, version
-  GH-->>Dev: environment "sunburst" waits for review
+  GH-->>Dev: environment "bench" waits for review
   Dev->>GH: approve
   GH->>D: ssh: publish <batch> X.Y.Z [force]
-  D->>D: no bench running, load HF_TOKEN from ~/.machine-trading.env
+  D->>D: no bench running, load HF_TOKEN
   D->>M: into a copy of bench/results (the checkout stays clean)
   M->>M: compact the batch, refuse if any file holds the seed or an API key
   M->>HF: X.Y.Z/release.tar, trials.jsonl, sessions.jsonl
@@ -210,32 +219,3 @@ sequenceDiagram
   Dev->>Repo: merge
   Repo->>P: specs.yml: mtx bench export fetches every archive from HF
 ```
-
-## Where the secrets are
-
-```mermaid
-flowchart TB
-  subgraph gh["GitHub environments (deploy from main or v* tags only)"]
-    rel["release<br/>GHCR_TOKEN, HARBOR_API_KEY<br/>(reviewer)"]
-    sb["sunburst<br/>SUNBURST_KEY → dispatcher<br/>(reviewer)"]
-    sbs["sunburst-status<br/>SUNBURST_KEY → dispatcher --read-only"]
-  end
-  subgraph box["sunburst"]
-    disp["~/bin/bench-dispatch<br/>(a copy, outside the checkout)"]
-    env["~/.machine-trading.env<br/>ANTHROPIC_API_KEY, OPENAI_API_KEY, HF_TOKEN"]
-  end
-  sb -- "start, status, publish" --> disp
-  sbs -- "status" --> disp
-  disp --> env
-  rel --> ghcr["ghcr.io/solana-foundation"]
-  rel --> harbor["Harbor"]
-  env --> hf["Hugging Face"]
-  env --> apis["Model APIs"]
-```
-
-- The API keys and `HF_TOKEN` never leave the bench machine. GitHub gets
-  back only a batch's name, its status, and `release.json`.
-- A workflow edited on a branch never sees a key: each environment deploys
-  from `main` (or tags `v*.*.*` for `release`) only.
-- A leaked `SUNBURST_KEY` can start a bench on main's code or publish a
-  finished batch. It can't open a shell, read a file or forward a port.
