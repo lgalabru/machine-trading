@@ -453,6 +453,7 @@ impl MakingFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            stake: None,
             faults: None,
             turn_data: None,
             oracles: None,

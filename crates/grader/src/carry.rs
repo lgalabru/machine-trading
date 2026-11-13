@@ -505,6 +505,7 @@ impl CarryFamily {
             funding: Some(funding),
             tape,
             spot: None,
+            stake: None,
             faults: None,
             turn_data: None,
             oracles: None,
