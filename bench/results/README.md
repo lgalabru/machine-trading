@@ -33,5 +33,15 @@ and compacted (`crates/cli/src/compact.rs`; `release.json` says `"format": 2`):
 
 The review page reads all of it as the grader wrote it. A release published
 before compacting existed is compacted with `mtx bench compact <version>`,
-before it is uploaded. Don't edit them by hand: publish again with
+before it is uploaded.
+
+A **slim** release (`mtx bench publish --artifacts <dir>`, or `mtx bench
+slim <version> --artifacts <dir>` for one published before) keeps only
+`release.json`, `batch.json`, `tasks/`, and per trial its `result.json`,
+`config.json`, `verifier/report.json`, `verifier/reward.json` and the bot's
+source. Its full copy, everything above, is `<dir>/<version>`, outside the
+repository, with `artifacts.sha256` listing every file the slim release
+leaves out; the slim `release.json`'s `artifacts` section records that
+list's SHA-256. Readers use the full copy when `MTX_ARTIFACTS=<dir>`.
+It uploads nothing. Don't edit releases by hand: publish again with
 `--force`.

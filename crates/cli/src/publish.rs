@@ -75,7 +75,8 @@ pub fn results_dir() -> PathBuf {
 
 /// Published releases, newest first. A release in the results dataset is
 /// fetched, once, and read from its cache; one that fails to fetch is left
-/// out, with a warning.
+/// out, with a warning. A slim release whose full copy is in
+/// [`crate::slim::ARTIFACTS_ENV`] is read from there.
 pub fn releases(results: &Path) -> Vec<Root> {
     let mut found: Vec<Root> = std::fs::read_dir(results)
         .into_iter()
@@ -98,7 +99,8 @@ pub fn releases(results: &Path) -> Vec<Root> {
                         return None;
                     }
                 },
-                None => e.path().canonicalize().unwrap_or_else(|_| e.path()),
+                None => crate::slim::full_copy(&e.path())
+                    .unwrap_or_else(|| e.path().canonicalize().unwrap_or_else(|_| e.path())),
             };
             Some(Root {
                 label,
@@ -192,12 +194,16 @@ pub fn roots(first: Root, results: &Path) -> Vec<Root> {
 
 /// Compact `batch` into a release, upload it to the results dataset and
 /// write its `release.json` to `<results>/<version>`. With `local`, the
-/// whole release is written there instead, and nothing is uploaded.
+/// whole release is written there instead, and nothing is uploaded. With
+/// `artifacts`, nothing is uploaded either: the release goes there whole (as
+/// `<artifacts>/<version>`) and `<results>/<version>` is its slim release
+/// (see [`crate::slim`]).
 pub fn publish(
     batch: &Path,
     version: &str,
     results: &Path,
     force: bool,
+    artifacts: Option<&Path>,
     local: bool,
 ) -> Result<Value> {
     if version.is_empty()
@@ -244,7 +250,7 @@ pub fn publish(
         check_secrets(&batch, &trials, &staging)?;
         Ok(summary)
     });
-    let summary = match written {
+    let mut summary = match written {
         Ok(summary) => summary,
         Err(error) => {
             let _ = std::fs::remove_dir_all(&staging);
@@ -252,6 +258,33 @@ pub fn publish(
         }
     };
     let bytes = dir_bytes(&staging);
+    if let Some(artifacts) = artifacts {
+        let full = artifacts.join(version);
+        if full.exists() {
+            if !force {
+                let _ = std::fs::remove_dir_all(&staging);
+                bail!("{} exists; pass --force to replace it", full.display());
+            }
+            std::fs::remove_dir_all(&full)?;
+        }
+        crate::slim::move_dir(&staging, &full)?;
+        let slim = results.join(format!(".{version}.slim"));
+        if slim.exists() {
+            std::fs::remove_dir_all(&slim)?;
+        }
+        summary["slim"] = crate::slim::slim(&full, &slim)?;
+        summary["full"] = json!(full);
+        if out.exists() {
+            std::fs::remove_dir_all(&out)?;
+        }
+        std::fs::rename(&slim, &out)?;
+        return Ok(json!({
+            "release": version,
+            "path": out,
+            "bytes": dir_bytes(&out),
+            "summary": summary,
+        }));
+    }
     if local {
         if out.exists() {
             std::fs::remove_dir_all(&out)?;
@@ -880,7 +913,7 @@ mod tests {
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
-        publish(&batch, "1.0.0", &results, false, true).unwrap();
+        publish(&batch, "1.0.0", &results, false, None, true).unwrap();
         let out = results.join("1.0.0/job/task__a");
         assert!(out.join("artifacts/app/bot/src/main.rs").is_file());
         assert!(out.join("verifier/sessions/bot/hidden-1.json.gz").is_file());
@@ -895,7 +928,7 @@ mod tests {
         assert!(!results.join("1.0.0/.seed").exists());
         assert_eq!(releases(&results).len(), 1);
         assert!(
-            publish(&batch, "1.0.0", &results, false, true).is_err(),
+            publish(&batch, "1.0.0", &results, false, None, true).is_err(),
             "exists"
         );
 
@@ -905,10 +938,34 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
         )
         .unwrap();
-        let error = publish(&batch, "1.0.1", &results, false, true).unwrap_err();
+        let error = publish(&batch, "1.0.1", &results, false, None, true).unwrap_err();
         assert!(error.to_string().contains("seed"), "{error}");
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());
+
+        // With --artifacts: the full release outside, the slim one here.
+        std::fs::remove_file(trial.join("artifacts/app/bot/src/seed.rs")).unwrap();
+        let artifacts = tmp.join("artifacts");
+        publish(&batch, "1.0.2", &results, false, Some(&artifacts), false).unwrap();
+        let full = artifacts.join("1.0.2/job/task__a");
+        let slim = results.join("1.0.2/job/task__a");
+        assert!(
+            full.join("verifier/sessions/bot/hidden-1.json.gz")
+                .is_file()
+        );
+        assert!(full.join("verifier/bot/hidden-1.log.gz").is_file());
+        assert!(!slim.join("verifier/sessions").exists());
+        assert!(!slim.join("verifier/bot").exists());
+        assert!(!slim.join("agent").exists());
+        assert!(slim.join("verifier/report.json").is_file());
+        assert!(slim.join("artifacts/app/bot/src/main.rs").is_file());
+        let release = review::read_json(&results.join("1.0.2/release.json")).unwrap();
+        assert_eq!(release["artifacts"]["files"], 3);
+        assert!(!results.join(".1.0.2.slim").exists());
+        assert!(
+            publish(&batch, "1.0.2", &results, false, Some(&artifacts), false).is_err(),
+            "exists"
+        );
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

@@ -29,16 +29,19 @@ if [ -z "${MTX_EVAL_SEED:-}" ]; then
   exit 3
 fi
 
-# The bot's sessions run one at a time. Concurrent sessions share the
-# container, so a bot could reach another session's surfnet while it was
-# being set up, before its cheatcodes locked. The reference is trusted:
-# its sessions run four at a time, before the bot's.
+# Only a strategy component is graded, and it runs inside the grader with
+# no files and no network: it can't reach another session, so the bot's
+# sessions run several at a time, each on its own surfnet, and the report
+# is the one they'd give one at a time. Up to four, as many as the
+# container's memory holds with every strategy at its 1 GiB cap: two in the
+# verifier's 6 GB. The reference is trusted: its sessions run four at a
+# time, before the bot's.
 mtx grade \
   --draw funding-carry \
   --count 72 \
   --reference /opt/mtx/anchors/funding-carry \
   --anchor-jobs 4 \
-  --jobs 1 \
+  --jobs 4 \
   --stop-on-disqualify \
   --components-only \
   --snapshot "$MTX_SNAPSHOT" \
