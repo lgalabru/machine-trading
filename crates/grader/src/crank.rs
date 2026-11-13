@@ -25,7 +25,7 @@
 //!   (see `grade.rs`) and otherwise fails.
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use solana_rpc_client::rpc_client::RpcClient;
 
 use crate::Result;
@@ -51,7 +51,7 @@ pub enum CrankOutcome {
 }
 
 /// A turn that came to [`CrankOutcome::Refused`].
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CrankRefusal {
     pub crank: String,
     pub step: u64,

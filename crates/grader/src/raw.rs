@@ -2431,7 +2431,7 @@ mod tests {
                 scenario: &scenario,
                 bot_dir: &dir,
                 bot_log: &log,
-                slot: 0,
+                slot: None,
                 regime: None,
                 cranks: None,
                 trusted: false,
