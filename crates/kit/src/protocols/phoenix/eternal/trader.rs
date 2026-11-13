@@ -10,7 +10,10 @@ use std::sync::Arc;
 
 use phoenix_rise::{
     core::{LimitOrderTicket, MarketOrderTicket},
-    ix::hawkeye::{ViewAssetReturn, ViewBboReturn},
+    ix::{
+        hawkeye::{ViewAssetReturn, ViewBboReturn},
+        types::OrderFlags,
+    },
     math::Side as PhoenixSide,
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -49,6 +52,17 @@ pub enum PhoenixOrder {
         worst_price: Option<Decimal>,
         /// Fill all of `quantity` or nothing.
         all_or_none: bool,
+    },
+    /// Rests on the book at `price` without taking: Phoenix's multiple-order
+    /// packet, which places post-only orders and, not sliding, skips one
+    /// that would cross: the transaction succeeds and nothing rests.
+    PostOnly {
+        /// Buy or sell.
+        side: Side,
+        /// Limit price, USDC per base unit, on the tick grid.
+        price: Decimal,
+        /// Base units, on the lot grid.
+        quantity: Decimal,
     },
 }
 
@@ -95,6 +109,7 @@ impl PhoenixOrder {
         match self {
             Self::Limit { .. } => "limit order",
             Self::Market { .. } => "market order",
+            Self::PostOnly { .. } => "post-only order",
         }
     }
 }
@@ -104,6 +119,15 @@ fn phoenix_side(side: Side) -> PhoenixSide {
         Side::Buy => PhoenixSide::Bid,
         Side::Sell => PhoenixSide::Ask,
     }
+}
+
+/// How an order is placed beyond its kind, price and size.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PhoenixOrderOptions {
+    /// Phoenix's reduce-only flag: the order may only shrink the position.
+    pub reduce_only: bool,
+    /// For a limit order, the last slot it rests in.
+    pub last_valid_slot: Option<u64>,
 }
 
 /// One trader account in one Phoenix market.
@@ -270,6 +294,17 @@ impl PhoenixTrader {
     /// The plan for one order: validated against the grid, built by
     /// Phoenix's SDK, packed into one transaction.
     pub async fn plan(&self, order: &PhoenixOrder) -> Result<ExecutionPlan, PhoenixError> {
+        self.plan_with(order, PhoenixOrderOptions::default()).await
+    }
+
+    /// [`plan`](Self::plan), with options: Phoenix's reduce-only flag, and
+    /// an expiry (a post-only order's goes in the second multiple-order
+    /// packet, built from its parameters).
+    pub async fn plan_with(
+        &self,
+        order: &PhoenixOrder,
+        options: PhoenixOrderOptions,
+    ) -> Result<ExecutionPlan, PhoenixError> {
         let symbol = self.market.symbol();
         let instructions = match *order {
             PhoenixOrder::Limit {
@@ -277,16 +312,24 @@ impl PhoenixTrader {
                 price,
                 quantity,
             } => {
-                let ticket = LimitOrderTicket::builder()
+                let mut ticket = LimitOrderTicket::builder()
                     .authority(self.authority)
                     .trader_account(self.account)
                     .symbol(symbol)
                     .side(phoenix_side(side))
                     .price(self.ticket_price(price)?)
                     .num_base_lots(self.lots(quantity)?)
-                    .client_order_id(self.order_id())
-                    .build()?;
-                self.exchange.tx().place_limit_order(ticket).await?
+                    .client_order_id(self.order_id());
+                if options.reduce_only {
+                    ticket = ticket.order_flags(OrderFlags::ReduceOnly);
+                }
+                if let Some(slot) = options.last_valid_slot {
+                    ticket = ticket.last_valid_slot(slot);
+                }
+                self.exchange
+                    .tx()
+                    .place_limit_order(ticket.build()?)
+                    .await?
             }
             PhoenixOrder::Market {
                 side,
@@ -308,13 +351,102 @@ impl PhoenixTrader {
                 if all_or_none {
                     ticket = ticket.min_base_lots_to_fill(lots);
                 }
+                if options.reduce_only {
+                    ticket = ticket.order_flags(OrderFlags::ReduceOnly);
+                }
                 self.exchange
                     .tx()
                     .place_market_order(ticket.build()?)
                     .await?
             }
+            PhoenixOrder::PostOnly {
+                side,
+                price,
+                quantity,
+            } => {
+                let order = vec![(self.ticket_price(price)?, self.lots(quantity)?)];
+                let none = Vec::new();
+                let (bids, asks) = match side {
+                    Side::Buy => (&order, &none),
+                    Side::Sell => (&none, &order),
+                };
+                // The second version of the packet carries the reduce-only
+                // flag and an expiry; the first is what plain post-only
+                // orders send.
+                if options.reduce_only || options.last_valid_slot.is_some() {
+                    self.post_only_v2(side, order[0], options)?
+                } else {
+                    self.exchange.tx().build_multi_limit_order(
+                        self.authority,
+                        self.account,
+                        symbol,
+                        bids,
+                        asks,
+                        false,
+                    )?
+                }
+            }
         };
         self.pack(order.label(), instructions)
+    }
+
+    /// A post-only order in the second version of Phoenix's multiple-order
+    /// packet, `(price, lots)`, with the options' reduce-only flag and
+    /// expiry. Built from its parameters, as the SDK's
+    /// `build_multi_limit_order_v2` builds them, since that one sets no
+    /// expiry.
+    fn post_only_v2(
+        &self,
+        side: Side,
+        (price, lots): (f64, u64),
+        options: PhoenixOrderOptions,
+    ) -> Result<Vec<solana_transaction::Instruction>, PhoenixError> {
+        use phoenix_rise::ix::{
+            multi_limit_order::MultiLimitOrderParamsV2, order_packet::CondensedOrderV2,
+        };
+        let symbol = self.market.symbol();
+        let metadata = self.exchange.metadata();
+        let unknown = || PhoenixError::UnknownMarket(symbol.to_string());
+        let market = metadata.get_market(symbol).ok_or_else(unknown)?;
+        let calc = metadata.get_market_calculator(symbol).ok_or_else(unknown)?;
+        let keys = metadata.keys();
+        let key = |key: &str| {
+            key.parse::<Pubkey>()
+                .map_err(|_| PhoenixError::InvalidExchangeKey(key.to_string()))
+        };
+        let keys_of = |list: &[String]| list.iter().map(|k| key(k)).collect::<Result<Vec<_>, _>>();
+        let ticks = calc
+            .order_price_to_ticks(price, phoenix_side(side))
+            .map_err(|e| PhoenixError::InvalidOrder(format!("price {price}: {e:?}")))?
+            .as_inner();
+        let order = CondensedOrderV2::new(
+            ticks,
+            lots,
+            options.last_valid_slot,
+            false,
+            options.reduce_only,
+        );
+        let (bids, asks) = match side {
+            Side::Buy => (vec![order], vec![]),
+            Side::Sell => (vec![], vec![order]),
+        };
+        let params = MultiLimitOrderParamsV2::builder()
+            .trader(self.authority)
+            .trader_account(self.account)
+            .perp_asset_map(key(&keys.perp_asset_map)?)
+            .orderbook(key(&market.market_pubkey)?)
+            .spline_collection(key(&market.spline_pubkey)?)
+            .global_trader_index(keys_of(&keys.global_trader_index)?)
+            .active_trader_buffer(keys_of(&keys.active_trader_buffer)?)
+            .bids(bids)
+            .asks(asks)
+            .scale_set_id(0)
+            .symbol(symbol)
+            .build()?;
+        Ok(self
+            .exchange
+            .tx()
+            .build_multi_limit_order_v2_with_params(params)?)
     }
 
     /// The plan to cancel every open order of the account in the market.
@@ -353,6 +485,17 @@ impl PhoenixTrader {
             .expect("execute returns one receipt per step of a non-empty plan"))
     }
 
+    /// Plans and executes one order, with options.
+    pub async fn submit_with(
+        &self,
+        order: &PhoenixOrder,
+        options: PhoenixOrderOptions,
+        signer: &dyn TransactionSigner,
+    ) -> Result<Signature, PhoenixError> {
+        let plan = self.plan_with(order, options).await?;
+        self.execute(&plan, signer).await
+    }
+
     /// Plans and executes one order.
     pub async fn submit(
         &self,
@@ -378,6 +521,27 @@ impl PhoenixTrader {
                 price,
                 quantity,
             },
+            signer,
+        )
+        .await
+    }
+
+    /// Rests a post-only order at `price`: skipped if it would cross.
+    pub async fn place_post_only(
+        &self,
+        signer: &dyn TransactionSigner,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+        options: PhoenixOrderOptions,
+    ) -> Result<Signature, PhoenixError> {
+        self.submit_with(
+            &PhoenixOrder::PostOnly {
+                side,
+                price,
+                quantity,
+            },
+            options,
             signer,
         )
         .await
@@ -477,5 +641,108 @@ mod tests {
             PhoenixOrder::from_order(&order(OrderType::Limit, TimeInForce::Gtc, None)),
             Err(PhoenixError::InvalidOrder(_))
         ));
+    }
+
+    /// Fresh traders on the snapshot's exchange, whose client order ids
+    /// start alike.
+    fn trader() -> PhoenixTrader {
+        let exchange = PhoenixExchange::load(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../snapshots/phoenix-spcx-2026-10-29/exchange.json"
+        )))
+        .unwrap();
+        PhoenixTrader::new(
+            Arc::new(exchange),
+            "SPCX",
+            Pubkey::new_from_array([7; 32]),
+            "http://127.0.0.1:1",
+        )
+        .unwrap()
+    }
+
+    async fn data(order: &PhoenixOrder, options: PhoenixOrderOptions) -> Vec<Vec<u8>> {
+        trader()
+            .plan_with(order, options)
+            .await
+            .unwrap()
+            .steps
+            .iter()
+            .flat_map(|step| step.all_instructions())
+            .map(|ix| ix.data)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn reduce_only_and_expiry_go_on_the_order() {
+        let flagged = PhoenixOrderOptions {
+            reduce_only: true,
+            last_valid_slot: None,
+        };
+        let expiring = PhoenixOrderOptions {
+            reduce_only: false,
+            last_valid_slot: Some(500),
+        };
+        let limit = PhoenixOrder::Limit {
+            side: Side::Sell,
+            price: dec!(150),
+            quantity: dec!(1),
+        };
+        let plain = data(&limit, PhoenixOrderOptions::default()).await;
+        // Without options, the order is the one `plan` builds.
+        let planned: Vec<Vec<u8>> = trader()
+            .plan(&limit)
+            .await
+            .unwrap()
+            .steps
+            .iter()
+            .flat_map(|step| step.all_instructions())
+            .map(|ix| ix.data)
+            .collect();
+        assert_eq!(plain, planned);
+        assert_ne!(data(&limit, flagged).await, plain);
+        assert_ne!(data(&limit, expiring).await, plain);
+        let market = PhoenixOrder::Market {
+            side: Side::Sell,
+            quantity: dec!(1),
+            worst_price: Some(dec!(140)),
+            all_or_none: false,
+        };
+        assert_ne!(
+            data(&market, flagged).await,
+            data(&market, PhoenixOrderOptions::default()).await
+        );
+        // A reduce-only post-only order is the second packet's.
+        let post_only = PhoenixOrder::PostOnly {
+            side: Side::Sell,
+            price: dec!(150),
+            quantity: dec!(1),
+        };
+        assert_ne!(
+            data(&post_only, flagged).await,
+            data(&post_only, PhoenixOrderOptions::default()).await
+        );
+        // With an expiry, the order is built from its parameters; without
+        // one, that is the SDK's own reduce-only packet.
+        let expiring_post_only = data(&post_only, expiring).await;
+        assert_ne!(expiring_post_only, data(&post_only, flagged).await);
+        let trader = trader();
+        let sdk = trader
+            .exchange
+            .tx()
+            .build_multi_limit_order_v2(
+                trader.authority,
+                trader.account,
+                "SPCX",
+                &[],
+                &[(150.0, trader.lots(dec!(1)).unwrap())],
+                false,
+                true,
+                0,
+            )
+            .unwrap();
+        let ours = trader
+            .post_only_v2(Side::Sell, (150.0, trader.lots(dec!(1)).unwrap()), flagged)
+            .unwrap();
+        assert_eq!(ours, sdk);
     }
 }

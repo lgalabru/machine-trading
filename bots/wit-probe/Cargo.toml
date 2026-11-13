@@ -1,0 +1,16 @@
+# A check, not a strategy: a component that puts every line the interface
+# allows on its sheet and logs what it is handed (crates/grader/src/wasm.rs's
+# tests; `just wit-probe` grades it in a session).
+[package]
+name = "mtx-bot-wit-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
