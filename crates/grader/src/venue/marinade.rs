@@ -19,7 +19,7 @@ use mtx_core::{
 };
 use mtx_kit::{
     Action, Planned, Sent,
-    chain::{RpcChainClient, token},
+    chain::{ChainClient, RpcChainClient, token},
     protocols::spot::MarketFill,
 };
 use solana_keypair::Keypair;
@@ -29,7 +29,7 @@ use solana_signer::Signer;
 use solana_transaction::{AccountMeta, Instruction};
 
 use super::{
-    Chain, Market, Seat, SeatResult, Venue, not_offered,
+    Market, Seat, SeatResult, Venue, not_offered,
     stake_pool::{
         CLOCK, RENT, SYSTEM_PROGRAM, account_data, atoms, chain_error, epoch_stats, lamports,
         not_sent, pool_fills, send_now, sol_holding, stake_amount, token_held, value_token,
@@ -312,7 +312,7 @@ pub struct Ticket {
 }
 
 /// The tickets `owner` is the beneficiary of.
-pub async fn tickets(chain: &Chain, owner: &Pubkey) -> Result<Vec<Ticket>> {
+pub async fn tickets(chain: &dyn ChainClient, owner: &Pubkey) -> Result<Vec<Ticket>> {
     let accounts = chain
         .get_program_accounts(
             &PROGRAM,
@@ -341,12 +341,12 @@ pub async fn tickets(chain: &Chain, owner: &Pubkey) -> Result<Vec<Ticket>> {
     Ok(tickets)
 }
 
-pub async fn read_state(chain: &Chain) -> Result<MarinadeState> {
+pub async fn read_state(chain: &dyn ChainClient) -> Result<MarinadeState> {
     MarinadeState::decode(&account_data(chain, &STATE, "the Marinade state").await?)
 }
 
 /// The SOL leg's lamports a liquid unstake can take.
-async fn sol_leg_capacity(chain: &Chain, state: &MarinadeState) -> Result<u64> {
+async fn sol_leg_capacity(chain: &dyn ChainClient, state: &MarinadeState) -> Result<u64> {
     let leg = chain
         .get_balance(&sol_leg())
         .await
@@ -359,7 +359,7 @@ const QUOTE_SOL: u64 = super::stake_pool::QUOTE_SOL;
 
 /// Prices for a small trade each way, in SOL per mSOL: staking at the
 /// state's virtual price, unstaking at once less the pool's fee.
-async fn quote(chain: &Chain) -> Result<(Option<f64>, Option<f64>, MarinadeState, u64)> {
+async fn quote(chain: &dyn ChainClient) -> Result<(Option<f64>, Option<f64>, MarinadeState, u64)> {
     let state = read_state(chain).await?;
     let capacity = sol_leg_capacity(chain, &state).await?;
     let rate = crate::session::grader_f64(state.rate());
@@ -406,7 +406,7 @@ impl Venue for Marinade {
         if *instrument != self.instrument() {
             return Err(not_offered(&self.id, instrument));
         }
-        let chain: Arc<Chain> = Arc::new(RpcChainClient::with_timeout(
+        let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::with_timeout(
             &self.rpc_url,
             INTERNAL_RPC_TIMEOUT,
         ));
@@ -422,7 +422,7 @@ impl Venue for Marinade {
 /// mSOL, as a session trades it.
 pub struct MarinadeMarket {
     instrument: InstrumentRef,
-    chain: Arc<Chain>,
+    chain: Arc<dyn ChainClient>,
     mint: Pubkey,
 }
 
@@ -467,7 +467,11 @@ impl Market for MarinadeMarket {
         ])
     }
 
-    async fn value_usd(&self, chain: &Chain, holdings: &[Holding]) -> Result<Option<Decimal>> {
+    async fn value_usd(
+        &self,
+        chain: &dyn ChainClient,
+        holdings: &[Holding],
+    ) -> Result<Option<Decimal>> {
         let Some(token) = token_held(holdings, &self.mint) else {
             return Ok(None);
         };
@@ -511,7 +515,7 @@ impl Market for MarinadeMarket {
 /// An account staking into, and unstaking from, Marinade.
 pub struct MarinadeSeat {
     market: String,
-    chain: Arc<Chain>,
+    chain: Arc<dyn ChainClient>,
     signer: Keypair,
 }
 

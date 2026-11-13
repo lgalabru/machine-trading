@@ -363,7 +363,7 @@ impl Venues {
             }
             all.extend(held);
         }
-        let value = value_usd(chain, &self.markets, &all).await?;
+        let value = value_usd(chain, &all).await?;
         let asset = |i: usize| -> Option<&Holdings> {
             match all.get(i)? {
                 Holding::Spot(asset) => Some(asset),

@@ -73,6 +73,11 @@ pool is updated (`StakeListAndPoolOutOfDate`, 17).
   grader account. The program sums the pool, mints its epoch fee (4%) to
   the manager in tokens, and marks the pool current, so the rate moves by
   the reward less the fee, as on mainnet.
+- **Lenders read the same account.** Kamino prices JitoSOL through Scope's
+  `SplStake` entry, computed from this pool account's `total_lamports` and
+  `pool_token_supply`. A boundary changes them only through the program's
+  own `UpdateStakePoolBalance`, so a Scope refresh after it prices JitoSOL
+  at the new rate, as on mainnet.
 - **Starting holdings.** A session's wallet that starts with JitoSOL staked
   it before the session; its SOL is moved from the reserve to that same
   validator, as Jito's staker would, so the reserve starts where mainnet's

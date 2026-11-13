@@ -28,8 +28,8 @@ use mtx_core::{
 use mtx_kit::{
     Action, Planned, SendState, Sent,
     chain::{
-        ExecutionPlan, FireAndForgetOptions, InstructionGroup, RpcChainClient, SendMode, pack,
-        token,
+        ChainClient, ExecutionPlan, FireAndForgetOptions, InstructionGroup, RpcChainClient,
+        SendMode, pack, token,
     },
     protocols::spot::MarketFill,
 };
@@ -40,7 +40,7 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use solana_signer::Signer;
 use solana_transaction::{AccountMeta, Instruction};
 
-use super::{Chain, Market, Seat, SeatResult, Venue, not_offered, price_usd};
+use super::{Market, Seat, SeatResult, Venue, not_offered, price_usd};
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
 
 /// The SPL stake pool program, and Sanctum's forks of it.
@@ -605,7 +605,11 @@ pub(super) fn chain_error<E: std::fmt::Display>(what: &str) -> impl Fn(E) -> Err
 }
 
 /// An account's bytes, which must exist.
-pub(super) async fn account_data(chain: &Chain, address: &Pubkey, what: &str) -> Result<Vec<u8>> {
+pub(super) async fn account_data(
+    chain: &dyn ChainClient,
+    address: &Pubkey,
+    what: &str,
+) -> Result<Vec<u8>> {
     chain
         .get_account(address)
         .await
@@ -616,7 +620,11 @@ pub(super) async fn account_data(chain: &Chain, address: &Pubkey, what: &str) ->
 
 /// What `owner` holds in SOL: the wallet's lamports, and as locked
 /// `waiting`, what a market's delayed exits owe it.
-pub(super) async fn sol_holding(chain: &Chain, owner: &Pubkey, waiting: u64) -> Result<Holding> {
+pub(super) async fn sol_holding(
+    chain: &dyn ChainClient,
+    owner: &Pubkey,
+    waiting: u64,
+) -> Result<Holding> {
     let wallet = chain
         .get_balance(owner)
         .await
@@ -631,7 +639,7 @@ pub(super) async fn sol_holding(chain: &Chain, owner: &Pubkey, waiting: u64) -> 
 /// The lamports of every stake account `owner` may withdraw: an SPL
 /// pool's delayed exits, which may come from any pool's validators, so
 /// the account that holds them counts them once, not each pool.
-pub async fn stake_accounts(chain: &Chain, owner: &Pubkey) -> Result<u64> {
+pub async fn stake_accounts(chain: &dyn ChainClient, owner: &Pubkey) -> Result<u64> {
     // Meta: the state (4), rent_exempt_reserve (8), the staker (32), then
     // the withdrawer.
     let stakes = chain
@@ -679,7 +687,7 @@ pub(super) fn stake_amount(amount: Option<f64>, balance: u64) -> std::result::Re
 /// transactions that moved `vault` (the pool's SOL) after `after_slot`:
 /// the token `owner` gained or gave, against the SOL `vault` took or paid.
 pub(super) async fn pool_fills(
-    chain: &Chain,
+    chain: &dyn ChainClient,
     instrument: &InstrumentRef,
     vault: &Pubkey,
     mint: &Pubkey,
@@ -746,7 +754,11 @@ pub(super) fn token_held<'a>(holdings: &'a [Holding], mint: &Pubkey) -> Option<&
 }
 
 /// `token` at `rate` SOL each, at the SOL reference price.
-pub(super) async fn value_token(chain: &Chain, token: &Holdings, rate: Decimal) -> Result<Decimal> {
+pub(super) async fn value_token(
+    chain: &dyn ChainClient,
+    token: &Holdings,
+    rate: Decimal,
+) -> Result<Decimal> {
     Ok(token.total() * rate * price_usd(chain, &token::native_mint()).await?)
 }
 
@@ -793,7 +805,7 @@ impl Venue for SplStakePools {
         else {
             return Err(not_offered(&self.id, instrument));
         };
-        let chain: Arc<Chain> = Arc::new(RpcChainClient::with_timeout(
+        let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::with_timeout(
             &self.rpc_url,
             INTERNAL_RPC_TIMEOUT,
         ));
@@ -807,7 +819,7 @@ impl Venue for SplStakePools {
 pub struct StakePoolMarket {
     instrument: InstrumentRef,
     named: NamedPool,
-    chain: Arc<Chain>,
+    chain: Arc<dyn ChainClient>,
     /// The pool's accounts, which don't change: its mint, reserve, list.
     state: PoolState,
 }
@@ -816,7 +828,7 @@ impl StakePoolMarket {
     pub async fn connect(
         instrument: InstrumentRef,
         named: NamedPool,
-        chain: Arc<Chain>,
+        chain: Arc<dyn ChainClient>,
     ) -> Result<Self> {
         let state =
             PoolState::decode(&account_data(chain.as_ref(), &named.address, "stake pool").await?)?;
@@ -842,13 +854,13 @@ impl StakePoolMarket {
     }
 }
 
-async fn read_state(chain: &Chain, pool: &Pubkey) -> Result<PoolState> {
+async fn read_state(chain: &dyn ChainClient, pool: &Pubkey) -> Result<PoolState> {
     PoolState::decode(&account_data(chain, pool, "stake pool").await?)
 }
 
 /// SOL the reserve can pay out at once: its lamports above its rent and
 /// the stake program's minimum.
-async fn instant_capacity(chain: &Chain, state: &PoolState) -> Result<u64> {
+async fn instant_capacity(chain: &dyn ChainClient, state: &PoolState) -> Result<u64> {
     let reserve = chain
         .get_account(&state.reserve_stake)
         .await
@@ -868,7 +880,10 @@ pub const QUOTE_SOL: u64 = 1_000_000_000;
 /// The pool's prices for a small trade each way, in SOL per token: staking
 /// pays the rate grossed up by the deposit fee; redeeming at once gets it
 /// less the withdrawal fee, if the reserve can pay [`QUOTE_SOL`].
-async fn quote(chain: &Chain, pool: &Pubkey) -> Result<(Option<f64>, Option<f64>, PoolState)> {
+async fn quote(
+    chain: &dyn ChainClient,
+    pool: &Pubkey,
+) -> Result<(Option<f64>, Option<f64>, PoolState)> {
     let state = read_state(chain, pool).await?;
     let rate = crate::session::grader_f64(state.rate());
     let ask = rate / (1.0 - state.sol_deposit_fee.rate());
@@ -907,7 +922,11 @@ impl Market for StakePoolMarket {
         ])
     }
 
-    async fn value_usd(&self, chain: &Chain, holdings: &[Holding]) -> Result<Option<Decimal>> {
+    async fn value_usd(
+        &self,
+        chain: &dyn ChainClient,
+        holdings: &[Holding],
+    ) -> Result<Option<Decimal>> {
         let Some(token) = token_held(holdings, &self.state.pool_mint) else {
             return Ok(None);
         };
@@ -945,7 +964,7 @@ impl Market for StakePoolMarket {
 pub struct StakePoolSeat {
     market: String,
     named: NamedPool,
-    chain: Arc<Chain>,
+    chain: Arc<dyn ChainClient>,
     signer: Keypair,
 }
 
@@ -953,7 +972,7 @@ pub struct StakePoolSeat {
 /// waiting: it lands in the world's next block. What became of it, as far
 /// as the chain says now.
 pub(super) async fn send_now(
-    chain: &Chain,
+    chain: &dyn ChainClient,
     signer: &Keypair,
     label: &str,
     instructions: Vec<Instruction>,
@@ -1000,7 +1019,7 @@ pub(super) fn not_sent(reason: impl Into<String>) -> Sent {
 }
 
 /// A seat's stake-pool statistics, as `venue-view.stats` names them.
-pub(super) async fn epoch_stats(chain: &Chain) -> Result<Vec<(String, f64)>> {
+pub(super) async fn epoch_stats(chain: &dyn ChainClient) -> Result<Vec<(String, f64)>> {
     let word = |data: &[u8], at: usize| {
         data.get(at..at + 8)
             .map_or(0, |b| u64::from_le_bytes(b.try_into().expect("8 bytes")))

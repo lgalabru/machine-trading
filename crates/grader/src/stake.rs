@@ -52,7 +52,7 @@ use crate::{
     },
     snapshot,
     spot::{SpotFill, Wallet},
-    venue::{Market, price_usd, stake_venue, value_usd},
+    venue::{Market, price_usd, stake_venue, value_of_markets},
     wasm::{Desk, Reader},
 };
 
@@ -251,9 +251,10 @@ impl Pools {
         let mut tokens = Vec::new();
         for market in &self.markets {
             let held = market.holdings(&self.owner).await?;
-            let Some(Holding::Spot(token)) = held.first() else {
+            // A pool's market holds its token, then the wallet's SOL.
+            let (2, Some(Holding::Spot(token))) = (held.len(), held.first()) else {
                 return Err(Error::UnknownMarket(format!(
-                    "{} holds no token",
+                    "{} holds no token and SOL",
                     market.instrument()
                 )));
             };
@@ -278,7 +279,14 @@ impl Pools {
         ) {
             sol.locked += Decimal::from(staked) / Decimal::from(1_000_000_000u64);
         }
-        let value = value_usd(chain, &self.markets, &all).await?;
+        // Each market values its token (`Market::value_usd`); the SOL goes
+        // to the reference price, the wallet counted once.
+        let mut held: Vec<(&dyn Market, Vec<Holding>)> = Vec::new();
+        for (market, holdings) in self.markets.iter().zip(all.chunks(2)) {
+            held.push((market.as_ref(), holdings[..1].to_vec()));
+            held.push((market.as_ref(), holdings[1..].to_vec()));
+        }
+        let value = value_of_markets(chain, &held).await?;
         let (sol, waiting) = all
             .iter()
             .filter_map(|h| match h {

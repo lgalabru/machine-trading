@@ -71,6 +71,9 @@ the beneficiary at byte 40).
   reward times active stake over virtual staked SOL. The price is computed
   from the state at the session's start; a bot's own Marinade trades before
   the boundary shift it by under a billionth.
+- **Lenders read the same account.** Kamino prices mSOL through Scope's
+  `MsolStake` entry, computed from the state's `msol_price`, which a
+  boundary writes: a Scope refresh after it prices mSOL at the new rate.
 - **Tickets.** A ticket counts at its SOL until claimed. The session's
   boundary lands 7,500 slots (31 minutes at 250 ms) into the new epoch, past
   Marinade's 30-minute wait, so a ticket ordered before it can be claimed
