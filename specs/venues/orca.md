@@ -147,6 +147,32 @@ Where it differs from the other pools (and the profiles):
 - **Shape** (`liquidity-shape`) is Meteora's; a Whirlpool position is
   uniform over its range, and the grader ignores it here.
 
+## What a bot may run
+
+The audit reads what an account does through a pool's swaps and positions:
+fills, liquidity moves, and the positions the cap and the value count. What
+the program can do with the account's tokens in any other way (base resting
+in a bundled position, whose NFT is the bundle's and not the position's)
+would sit outside the position cap, the account's value and the sides rule.
+So the grader lets a bot run only these of the program's instructions,
+whether its transaction runs them or a program it calls does, and
+disqualifies a session that runs any other ("ran orca OpenBundledPosition,
+which this benchmark doesn't support"):
+
+| Use | Instructions | Where |
+| --- | --- | --- |
+| Swap | `swap`, `swap_v2` | Through the session's pool |
+| Liquidity | `initialize_tick_array`, `initialize_dynamic_tick_array`, `open_position`, `open_position_with_metadata`, `open_position_with_token_extensions`, `increase_liquidity`, `increase_liquidity_v2`, `increase_liquidity_by_token_amounts_v2`, `decrease_liquidity`, `decrease_liquidity_v2`, `update_fees_and_rewards`, `collect_fees`, `collect_fees_v2`, `collect_reward`, `collect_reward_v2` | Through the session's pool, where the session takes liquidity on Orca (`amm` in its universe) |
+| Position | `close_position`, `close_position_with_token_extensions` | Where the session takes liquidity on Orca |
+
+A swap or a deposit through another of the program's pools is a breach,
+and so is a liquidity or position instruction where the session lists Orca
+for swaps only. Everything else is refused, notably position bundles
+(`initialize_position_bundle`, `open_bundled_position` and the rest),
+`lock_position`, `transfer_locked_position`, `reset_position_range`,
+`reposition_liquidity_v2`, the two-pool `two_hop_swap` and
+`two_hop_swap_v2`, and the pool's and the program's own administration.
+
 ## Snapshot
 
 `snapshots/spcx-pools-2026-11-13` copies the named pool from mainnet with

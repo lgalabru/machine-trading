@@ -170,6 +170,12 @@ fill, from the venue's own records. It reads liquidity deposits and
 withdrawals the same way, for the sides rule: each instruction on its own,
 and the account's whoever pays the transaction's fee.
 
+An enforcer can only audit what it can measure. A venue profile MAY list
+the instructions of its program an agent may run (a pool's: swaps and
+positions, as in [Raydium's](venues/raydium.md#what-a-bot-may-run)); a
+benchmark grader treats any other the account runs as a breach, since what
+it does to the account would escape the rules above.
+
 The enforcer MUST hold its own copy of the mandate, and MUST NOT read it
 back from anywhere the agent can write. The copy handed to the agent is for
 the agent to plan by.

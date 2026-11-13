@@ -101,6 +101,11 @@ its range.
 
 ## Open questions
 
+- Whether positions or tokens the agent moves to a second keypair it
+  controls should count as its own. Today neither a position (its NFT, or
+  its `owner`) nor a wallet token sent to another key is counted, on any
+  venue; that is a design question across the profiles, not this one's.
+
 - Whether the curve's trades against a position should be audited as its
   fills, at the price they happened at, so the price limits bound liquidity
   provision too.

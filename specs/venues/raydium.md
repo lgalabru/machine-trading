@@ -110,6 +110,30 @@ Where it differs from the profiles:
 - **Shape** (`liquidity-shape`) is Meteora's; a CLMM position is uniform
   over its range, and the grader ignores it here.
 
+## What a bot may run
+
+The audit reads what an account does through a pool's swaps and positions:
+fills, liquidity moves, and the positions the cap and the value count. What
+the program can do with the account's tokens in any other way (base resting
+in a limit order, outside any position) would sit outside the position cap,
+the account's value and the sides rule. So the grader lets a bot run only
+these of the program's instructions, whether its transaction runs them or a
+program it calls does, and disqualifies a session that runs any other ("ran
+raydium OpenLimitOrder, which this benchmark doesn't support"):
+
+| Use | Instructions | Where |
+| --- | --- | --- |
+| Swap | `swap`, `swap_v2` | Through the session's pool |
+| Liquidity | `open_position`, `open_position_v2`, `open_position_with_token22_nft`, `increase_liquidity`, `increase_liquidity_v2`, `decrease_liquidity`, `decrease_liquidity_v2` | Through the session's pool, where the session takes liquidity on Raydium (`amm` in its universe) |
+| Position | `close_position` | Where the session takes liquidity on Raydium |
+
+A swap or a deposit through another of the program's pools is a breach,
+and so is a liquidity or position instruction where the session lists
+Raydium for swaps only. Everything else is refused, notably the limit
+orders (`open_limit_order`, `increase_limit_order`, `decrease_limit_order`,
+`settle_limit_order`, `close_limit_order`), the multi-pool
+`swap_router_base_in`, and the pool's and the program's own administration.
+
 ## Snapshot
 
 `snapshots/spcx-pools-2026-11-13` copies the named pool from mainnet with
