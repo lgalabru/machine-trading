@@ -27,6 +27,7 @@
 //! the slot time, whatever the bot does.
 
 use std::{
+    collections::BTreeMap,
     os::{fd::AsRawFd, unix::net::UnixStream as StdUnixStream},
     path::{Path, PathBuf},
     process::Stdio,
@@ -265,6 +266,9 @@ pub struct SessionReport {
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
+    /// Each anchored oracle feed's start, against its account's own price.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// Where the session was stopped out, if it was (see
