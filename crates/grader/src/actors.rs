@@ -23,11 +23,14 @@
 //!
 //! Two actors come with the engine: [`takers`], the taker orders a scenario
 //! lists, and [`competitor`], a maker that competes with the bot's quotes.
-//! Both work on any market whose seats take and rest orders. A scenario's
-//! [`library`] adds more: noise and informed traders, spoofers, stop
-//! hunters, front-runners, an arbitrageur, RFQ clients and a competing
-//! liquidator, each trading from wallets of its own.
+//! Both work on any market whose seats take and rest orders. [`arbitrageur`]
+//! trades markets back to the reference price, on any whose seats take (a
+//! pool's swap, a book's market order). A scenario's [`library`] adds more:
+//! noise and informed traders, spoofers, stop hunters, front-runners, an
+//! arbitrageur, RFQ clients and a competing liquidator, each trading from
+//! wallets of its own.
 
+pub mod arbitrageur;
 pub mod competitor;
 pub mod flow;
 pub mod library;
@@ -35,6 +38,7 @@ pub mod takers;
 
 use std::sync::Arc;
 
+pub use arbitrageur::{ArbitrageReport, ArbitrageSpec, Arbitrageur};
 use async_trait::async_trait;
 pub use competitor::{CompeteReport, Competitor};
 pub use flow::{FlowWatch, SendReader, SentOrder, StepFlow, VenueFlow};
@@ -103,6 +107,8 @@ pub struct ActorsReport {
     pub taker_orders: Vec<TakerRecord>,
     /// The grader's own maker's.
     pub competitor: Option<CompeteReport>,
+    /// The arbitrageur's.
+    pub arbitrage: Option<ArbitrageReport>,
     /// The scenario's library actors'.
     pub library: Option<LibraryReport>,
 }

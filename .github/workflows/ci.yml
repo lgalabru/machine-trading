@@ -117,7 +117,7 @@ jobs:
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
       - name: Strategy components
-        # The starter, the references and the spot smoke build for
+        # The starter, the references and the spot and pool smokes build for
         # wasm32-wasip2 too, as do the kit's spot venue decoders, the
         # flash-crash reference's and the spot smoke's components load in
         # the grader's host, the probe's sheet and market round-trip
@@ -125,10 +125,10 @@ jobs:
         # session as its scenario allows.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-amm-smoke mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
-          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
+          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
           just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
           just --justfile bots/spot-smoke/Justfile build

@@ -1,0 +1,90 @@
+{
+  "name": "pools-smoke",
+  "description": "SPCX-USDC on Raydium's CLMM and Meteora's DLMM pools: the bot swaps both ways and opens, halves and closes a position on each; the grader's takers trade the Raydium pool and its arbitrageur trades both pools toward the snapshot's Pyth price (stale, so the takers' limits are wide)",
+  "symbol": "SPCX-USDC",
+  "duration_slots": 24,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "raydium:spot:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "meteora:spot:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "raydium:amm:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "meteora:amm:SPCX-USDC",
+        "max_position": 1000.0
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "tape": [
+    {
+      "slot": 2,
+      "side": "buy",
+      "size": 2.0,
+      "limit_bps": 1000.0,
+      "account": 0
+    },
+    {
+      "slot": 6,
+      "side": "sell",
+      "size": 3.0,
+      "limit_bps": 1000.0,
+      "account": 3
+    },
+    {
+      "slot": 10,
+      "side": "buy",
+      "size": 1.5,
+      "limit_bps": 1000.0,
+      "account": 5
+    },
+    {
+      "slot": 14,
+      "side": "sell",
+      "size": 2.0,
+      "limit_bps": 1000.0,
+      "account": 1
+    },
+    {
+      "slot": 18,
+      "side": "buy",
+      "size": 1.0,
+      "limit_bps": 1000.0,
+      "account": 7
+    }
+  ],
+  "spot": {
+    "venues": [
+      "raydium",
+      "meteora"
+    ],
+    "liquidity": [
+      "raydium",
+      "meteora"
+    ],
+    "arbitrage": {
+      "band_bps": 30.0,
+      "clip": 2.0,
+      "base": 100.0,
+      "quote": 20000.0
+    },
+    "base": 10.0,
+    "quote": 3000.0
+  },
+  "turn_data": {
+    "tape": true,
+    "depth_levels": 0,
+    "timestamps": true,
+    "parties": true
+  }
+}
