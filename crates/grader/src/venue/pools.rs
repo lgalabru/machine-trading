@@ -50,7 +50,7 @@ use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_transaction::versioned::VersionedTransaction;
 
-use super::{Market, MarketKind, Seat, SeatResult, price_usd};
+use super::{Listing, Market, MarketKind, Seat, SeatResult, price_usd};
 use crate::{Error, Result, session::grader_f64};
 
 /// Compute units a pool transaction asks for: a swap across several tick
@@ -154,8 +154,13 @@ pub enum Use {
 }
 
 /// The instructions of a pool's program a bot may run, by their Anchor
-/// names, and what for.
-pub(crate) type Allowed = &'static [(&'static str, Use)];
+/// names, what for, and where a swap's or a position's names its pool: the
+/// slot of the pool's account among the instruction's accounts.
+pub(crate) type Allowed = &'static [(&'static str, Use, Option<usize>)];
+
+/// What a bot may run one of a pool program's instructions for, and the
+/// slot of the pool's account among its accounts, where it names one.
+pub type Allowance = (Use, Option<usize>);
 
 /// What an Anchor program's event starts with: the program logs it by
 /// calling itself, which only it can (`emit_cpi!`), so it is no instruction
@@ -169,7 +174,7 @@ pub(crate) fn anchor_instruction(
     data: &[u8],
     allowed: Allowed,
     others: &[&'static str],
-) -> (String, Option<Use>) {
+) -> (String, Option<Allowance>) {
     let discriminator = data.get(..8);
     let runs = |name: &str| {
         discriminator == Some(&Sha256::digest(format!("global:{name}").as_bytes())[..8])
@@ -185,8 +190,8 @@ pub(crate) fn anchor_instruction(
             })
             .collect::<String>()
     };
-    if let Some((name, used)) = allowed.iter().find(|(name, _)| runs(name)) {
-        return (logged(name), Some(*used));
+    if let Some((name, used, pool)) = allowed.iter().find(|(name, ..)| runs(name)) {
+        return (logged(name), Some((*used, *pool)));
     }
     match others.iter().find(|name| runs(name)) {
         Some(name) => (logged(name), None),
@@ -208,10 +213,10 @@ pub(crate) fn anchor_instruction(
 pub trait Pool: Send + Sync {
     fn assets(&self) -> &PoolAssets;
 
-    /// The program's instruction `data` runs, by name, and what a bot may
-    /// run it for: `None` where a bot may not (see [`Use`], and the venue's
-    /// profile).
-    fn instruction(&self, data: &[u8]) -> (String, Option<Use>);
+    /// The program's instruction `data` runs, by name, what a bot may run
+    /// it for and where it names its pool: `None` where a bot may not (see
+    /// [`Use`], and the venue's profile).
+    fn instruction(&self, data: &[u8]) -> (String, Option<Allowance>);
 
     /// The pool's price and fee now.
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice>;
@@ -305,42 +310,40 @@ impl PoolMarket {
     /// Every transaction through the pool since `after_slot` that
     /// succeeded, oldest first.
     async fn transactions(&self, after_slot: u64) -> Result<Vec<TransactionSummary>> {
-        self.transactions_of(&self.assets().address, after_slot, &[])
-            .await
+        transactions_of(self.chain.as_ref(), &self.assets().address, after_slot, &[]).await
     }
+}
 
-    /// Every transaction naming `address` since `after_slot` that succeeded,
-    /// oldest first, but those in `skip`.
-    async fn transactions_of(
-        &self,
-        address: &Pubkey,
-        after_slot: u64,
-        skip: &[TransactionSummary],
-    ) -> Result<Vec<TransactionSummary>> {
-        let chain = self.chain.as_ref();
-        let mut found = Vec::new();
-        for (signature, _) in chain
-            .signatures_for_address(address, after_slot)
-            .await
-            .map_err(chain_error("an account's transactions"))?
-        {
-            if skip.iter().any(|s| s.signature == signature) {
-                continue;
-            }
-            let summary = chain
-                .get_transaction(&signature)
-                .await
-                .map_err(chain_error("a pool transaction"))?
-                .ok_or_else(|| Error::Transaction {
-                    label: "a pool transaction".into(),
-                    reason: format!("{signature} is listed but not found"),
-                })?;
-            if summary.error.is_none() {
-                found.push(summary);
-            }
+/// Every transaction naming `address` since `after_slot` that succeeded,
+/// oldest first, but those in `skip`.
+async fn transactions_of(
+    chain: &dyn ChainClient,
+    address: &Pubkey,
+    after_slot: u64,
+    skip: &[TransactionSummary],
+) -> Result<Vec<TransactionSummary>> {
+    let mut found = Vec::new();
+    for (signature, _) in chain
+        .signatures_for_address(address, after_slot)
+        .await
+        .map_err(chain_error("an account's transactions"))?
+    {
+        if skip.iter().any(|s| s.signature == signature) {
+            continue;
         }
-        Ok(found)
+        let summary = chain
+            .get_transaction(&signature)
+            .await
+            .map_err(chain_error("a pool transaction"))?
+            .ok_or_else(|| Error::Transaction {
+                label: "a pool transaction".into(),
+                reason: format!("{signature} is listed but not found"),
+            })?;
+        if summary.error.is_none() {
+            found.push(summary);
+        }
     }
+    Ok(found)
 }
 
 /// `owner`'s balance of `mint` across its token accounts, in atoms.
@@ -540,6 +543,102 @@ fn vault_flows(summary: &TransactionSummary, assets: &PoolAssets) -> Vec<VaultFl
     flows
 }
 
+/// The program of the pools of `venue` (`raydium`, `meteora` or `orca`).
+pub fn program(venue: &str) -> Option<Pubkey> {
+    match venue {
+        "raydium" => Some(mtx_kit::protocols::raydium::clmm::PROGRAM_ID),
+        "meteora" => Some(mtx_kit::protocols::meteora::dlmm::PROGRAM_ID),
+        "orca" => Some(mtx_kit::protocols::orca::whirlpool::PROGRAM_ID),
+        _ => None,
+    }
+}
+
+/// The breach `ix`, an instruction of a pool program of `venue`'s, is where
+/// the session takes `listing` of the venue, if it is one; `pool` is the
+/// session's pool of the program, where the session's chain holds it.
+fn breach(
+    venue: &str,
+    ix: &ExecutedInstruction,
+    pool: Option<&dyn Pool>,
+    listing: Listing,
+) -> Option<String> {
+    let Some(pool) = pool.filter(|_| listing != Listing::Unlisted) else {
+        return Some(format!("used {venue}, which this session doesn't trade"));
+    };
+    let (name, allowed) = pool.instruction(&ix.data);
+    // A swap or a position names its pool in one slot of its accounts: the
+    // session's pool anywhere else (a swap's route, a referral) is not it.
+    let through_pool = |slot: Option<usize>| {
+        slot.and_then(|at| ix.accounts.get(at)) == Some(&pool.assets().address)
+    };
+    match allowed {
+        None => Some(format!(
+            "ran {venue} {name}, which this benchmark doesn't support"
+        )),
+        Some((Use::Swap | Use::Liquidity, slot)) if !through_pool(slot) => {
+            Some(format!("ran {venue} {name} on a pool outside the session"))
+        }
+        Some((Use::Liquidity | Use::Position, _)) if listing != Listing::Liquidity => Some(
+            format!("ran {venue} {name}, and the session takes no liquidity on {venue}"),
+        ),
+        _ => None,
+    }
+}
+
+/// Each instruction of `program`, the pools of `venue`, that `owner` ran
+/// since `after_slot` and a bot may not run, as the breach it is. Read from
+/// the owner's own transactions and, where the session's chain holds the
+/// session's pool of the program (`pool`), the pool's, every instruction
+/// whether the transaction ran it or a program it called, and attributed as
+/// fills are (a signature, a token account, a position of the owner's).
+///
+/// Where the session doesn't list the venue, any instruction is a breach.
+/// Where it does, a breach is an instruction [`Use`] leaves out, a swap or a
+/// position that doesn't name the session's pool in the pool's own slot, or
+/// a position where the session takes no liquidity.
+pub(crate) async fn breaches(
+    chain: &dyn ChainClient,
+    venue: &str,
+    program: &Pubkey,
+    pool: Option<&dyn Pool>,
+    listing: Listing,
+    owner: &Pubkey,
+    after_slot: u64,
+) -> Result<Vec<String>> {
+    let mut summaries = match pool {
+        Some(pool) => transactions_of(chain, &pool.assets().address, after_slot, &[]).await?,
+        None => Vec::new(),
+    };
+    let own = transactions_of(chain, owner, after_slot, &summaries).await?;
+    summaries.extend(own);
+    summaries.sort_by_key(|s| s.slot);
+    let mut breaches: Vec<String> = Vec::new();
+    for summary in &summaries {
+        for ix in summary
+            .instructions
+            .iter()
+            .filter(|ix| ix.program == *program && !ix.data.starts_with(&ANCHOR_EVENT))
+        {
+            let Some(breach) = breach(venue, ix, pool, listing) else {
+                continue;
+            };
+            if breaches.contains(&breach) {
+                continue;
+            }
+            let owners = async {
+                match pool {
+                    Some(pool) => pool.position_owners(chain, &ix.accounts).await,
+                    None => Ok(Vec::new()),
+                }
+            };
+            if parties(summary, ix).contains(owner) || owners.await?.contains(owner) {
+                breaches.push(breach);
+            }
+        }
+    }
+    Ok(breaches)
+}
+
 #[async_trait]
 impl Market for PoolMarket {
     fn instrument(&self) -> &InstrumentRef {
@@ -706,61 +805,27 @@ impl Market for PoolMarket {
     }
 
     /// Each instruction of the pool's program `owner` ran since `after_slot`
-    /// that a bot may not run here, as the breach it is: one [`Use`] leaves
-    /// out, a swap or a deposit through another of the program's pools, or a
-    /// position where the session takes no liquidity (`liquidity` false).
-    /// Read from the pool's transactions and the owner's own, every
-    /// instruction whether the transaction ran it or a program it called, for
+    /// that a bot may not run here, as the breach it is ([`breaches`]), for
     /// the spot instrument only (the amm one is the same pool's).
     async fn unsupported(
         &self,
         after_slot: u64,
         owner: &Pubkey,
-        liquidity: bool,
+        listing: Listing,
     ) -> Result<Vec<String>> {
         if self.instrument.kind != Kind::Spot {
             return Ok(Vec::new());
         }
-        let assets = self.assets();
-        let venue = &self.instrument.venue;
-        let mut summaries = self.transactions(after_slot).await?;
-        let own = self.transactions_of(owner, after_slot, &summaries).await?;
-        summaries.extend(own);
-        summaries.sort_by_key(|s| s.slot);
-        let mut breaches: Vec<String> = Vec::new();
-        for summary in &summaries {
-            for ix in summary
-                .instructions
-                .iter()
-                .filter(|ix| ix.program == assets.program && !ix.data.starts_with(&ANCHOR_EVENT))
-            {
-                let (name, used) = self.pool.instruction(&ix.data);
-                let through_pool = ix.accounts.contains(&assets.address);
-                let breach = match used {
-                    None => format!("ran {venue} {name}, which this benchmark doesn't support"),
-                    Some(Use::Swap | Use::Liquidity) if !through_pool => {
-                        format!("ran {venue} {name} on a pool outside the session")
-                    }
-                    Some(Use::Liquidity | Use::Position) if !liquidity => {
-                        format!("ran {venue} {name}, and the session takes no liquidity on {venue}")
-                    }
-                    _ => continue,
-                };
-                if breaches.contains(&breach) {
-                    continue;
-                }
-                if parties(summary, ix).contains(owner)
-                    || self
-                        .pool
-                        .position_owners(self.chain.as_ref(), &ix.accounts)
-                        .await?
-                        .contains(owner)
-                {
-                    breaches.push(breach);
-                }
-            }
-        }
-        Ok(breaches)
+        breaches(
+            self.chain.as_ref(),
+            &self.instrument.venue,
+            &self.assets().program,
+            Some(self.pool.as_ref()),
+            listing,
+            owner,
+            after_slot,
+        )
+        .await
     }
 
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {
@@ -1447,18 +1512,21 @@ mod tests {
 
     #[test]
     fn a_pool_instruction_is_named_and_allowed_or_not() {
-        const ALLOWED: Allowed = &[("swap_v2", Use::Swap), ("close_position", Use::Position)];
+        const ALLOWED: Allowed = &[
+            ("swap_v2", Use::Swap, Some(2)),
+            ("close_position", Use::Position, None),
+        ];
         let data = |name: &str| Sha256::digest(format!("global:{name}").as_bytes())[..8].to_vec();
         let others = ["open_limit_order"];
         let mut swap = data("swap_v2");
         swap.extend([1, 2, 3]);
         assert_eq!(
             anchor_instruction(&swap, ALLOWED, &others),
-            ("SwapV2".into(), Some(Use::Swap))
+            ("SwapV2".into(), Some((Use::Swap, Some(2))))
         );
         assert_eq!(
             anchor_instruction(&data("close_position"), ALLOWED, &others),
-            ("ClosePosition".into(), Some(Use::Position))
+            ("ClosePosition".into(), Some((Use::Position, None)))
         );
         assert_eq!(
             anchor_instruction(&data("open_limit_order"), ALLOWED, &others),
@@ -1469,6 +1537,53 @@ mod tests {
             ("instruction 0102030405060708".into(), None)
         );
         assert_eq!(anchor_instruction(&[], ALLOWED, &others).1, None);
+    }
+
+    /// A swap goes through the session's pool only where the pool is in the
+    /// slot the instruction names its pool in; anything run on a venue the
+    /// session doesn't list is a breach, its pool on the chain or not.
+    #[test]
+    fn a_pool_instruction_is_checked_at_the_pools_own_slot() {
+        let stub = Stub {
+            assets: assets(),
+            held: Vec::new(),
+        };
+        let pool = stub.assets.address;
+        let other = Pubkey::new_unique();
+        let ix = |accounts: Vec<Pubkey>| ExecutedInstruction {
+            outer: 0,
+            depth: Some(1),
+            program: stub.assets.program,
+            accounts,
+            data: vec![0; 8],
+        };
+        let outside = Some("ran orca Swap on a pool outside the session".to_string());
+        assert_eq!(
+            breach("orca", &ix(vec![pool, other]), Some(&stub), Listing::Swaps),
+            None
+        );
+        assert_eq!(
+            breach("orca", &ix(vec![other, pool]), Some(&stub), Listing::Swaps),
+            outside
+        );
+        assert_eq!(
+            breach("orca", &ix(Vec::new()), Some(&stub), Listing::Liquidity),
+            outside
+        );
+        let unlisted = Some("used orca, which this session doesn't trade".to_string());
+        assert_eq!(
+            breach(
+                "orca",
+                &ix(vec![pool, other]),
+                Some(&stub),
+                Listing::Unlisted
+            ),
+            unlisted
+        );
+        assert_eq!(
+            breach("orca", &ix(vec![pool]), None, Listing::Swaps),
+            unlisted
+        );
     }
 
     #[test]
@@ -1635,8 +1750,8 @@ mod tests {
         fn assets(&self) -> &PoolAssets {
             &self.assets
         }
-        fn instruction(&self, _: &[u8]) -> (String, Option<Use>) {
-            ("Swap".into(), Some(Use::Swap))
+        fn instruction(&self, _: &[u8]) -> (String, Option<Allowance>) {
+            ("Swap".into(), Some((Use::Swap, Some(0))))
         }
         async fn price(&self, _: &dyn ChainClient) -> Result<PoolPrice> {
             Ok(PoolPrice {

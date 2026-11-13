@@ -64,7 +64,7 @@ use crate::{
         SessionOptions, SessionReport, StepRecord, Timeline, World, grader_f64,
     },
     snapshot,
-    venue::{Market, books, price_usd, spot_venue, value_of_markets},
+    venue::{Listing, Market, books, pools, price_usd, spot_venue, value_of_markets},
     wasm::{Desk, Reader},
 };
 
@@ -252,6 +252,15 @@ struct Venues {
     chain: Arc<dyn ChainClient>,
     owner: Pubkey,
     markets: Vec<Box<dyn Market>>,
+    /// What the session's chain holds of the pool venues the session doesn't
+    /// list, for swaps or for liquidity: the venue's market where its pool is
+    /// there (spot where the session doesn't trade the venue, amm where it
+    /// takes no liquidity there), or its program alone. Never offered to the
+    /// bot, but read, so that nothing the account runs or holds there goes
+    /// unseen: anything run on a venue the session doesn't trade is a
+    /// breach, and a position counts wherever it is.
+    unlisted: Vec<Box<dyn Market>>,
+    unlisted_programs: Vec<(&'static str, Pubkey)>,
 }
 
 /// One reading of the account.
@@ -284,7 +293,8 @@ impl Reading {
 impl Venues {
     /// The `symbol` spot market of each of `venues`, in the profiles' order
     /// (books first), then the amm instrument of each of `liquidity`, as
-    /// their venues offer them.
+    /// their venues offer them; and what the chain holds of the pool venues
+    /// the session doesn't list.
     async fn connect(
         chain: Arc<dyn ChainClient>,
         rpc_url: &str,
@@ -303,10 +313,60 @@ impl Venues {
                 markets.push(spot_venue(venue, rpc_url)?.market(&instrument).await?);
             }
         }
+        let mut unlisted = Vec::new();
+        let mut unlisted_programs = Vec::new();
+        let held = |address: Pubkey| {
+            let chain = chain.clone();
+            async move {
+                chain
+                    .get_account(&address)
+                    .await
+                    .map(|account| account.is_some())
+                    .map_err(|e| Error::Transaction {
+                        label: "a pool venue's accounts".into(),
+                        reason: e.to_string(),
+                    })
+            }
+        };
+        for venue in POOLS {
+            let traded = spot.venues.iter().any(|v| v == venue);
+            let pooled = spot.liquidity.iter().any(|v| v == venue);
+            if traded && pooled {
+                continue;
+            }
+            let Some(program) = pools::program(venue) else {
+                continue;
+            };
+            if !held(program).await? {
+                continue;
+            }
+            let pool = books::named_markets(venue)?
+                .iter()
+                .find(|m| m.symbol == symbol);
+            match pool {
+                Some(pool) if held(pool.address).await? => {
+                    for (kind, listed) in [(Kind::Spot, traded), (Kind::Amm, pooled)] {
+                        if listed {
+                            continue;
+                        }
+                        let instrument = InstrumentRef {
+                            venue: venue.into(),
+                            kind,
+                            symbol: symbol.into(),
+                        };
+                        unlisted.push(spot_venue(venue, rpc_url)?.market(&instrument).await?);
+                    }
+                }
+                _ if !traded => unlisted_programs.push((venue, program)),
+                _ => {}
+            }
+        }
         Ok(Self {
             chain,
             owner,
             markets,
+            unlisted,
+            unlisted_programs,
         })
     }
 
@@ -338,7 +398,8 @@ impl Venues {
         let mut pooled = Vec::new();
         let mut positions = Vec::new();
         let mut per_market: Vec<(&dyn Market, Vec<Holding>)> = Vec::new();
-        for market in &self.markets {
+        let unlisted_pools = self.unlisted.iter().filter(|m| m.kind() == Kind::Amm);
+        for market in self.markets.iter().chain(unlisted_pools) {
             let held = market.holdings(&self.owner).await?;
             if market.kind() == Kind::Amm {
                 let instrument = market.instrument();
@@ -410,11 +471,17 @@ impl Venues {
         })
     }
 
-    /// Each side the bot's liquidity moved base on, per amm market, in
-    /// slots after `after_slot`.
+    /// Each side the bot's liquidity moved base on, per amm market (the
+    /// session's, and any other pool's the chain holds), in slots after
+    /// `after_slot`.
     async fn liquidity_moves(&self, after_slot: u64) -> Result<Vec<(InstrumentRef, Side)>> {
         let mut moves = Vec::new();
-        for market in self.markets.iter().filter(|m| m.kind() == Kind::Amm) {
+        for market in self
+            .markets
+            .iter()
+            .chain(&self.unlisted)
+            .filter(|m| m.kind() == Kind::Amm)
+        {
             for side in market.liquidity_moves(after_slot, &self.owner).await? {
                 moves.push((market.instrument().clone(), side));
             }
@@ -423,19 +490,43 @@ impl Venues {
     }
 
     /// Each instruction the bot ran on a pool's program in slots after
-    /// `after_slot` that a bot may not, as the mandate breach it is.
+    /// `after_slot` that a bot may not, as the mandate breach it is: on the
+    /// session's venues, and on every pool venue the chain holds that the
+    /// session doesn't trade.
     async fn unsupported(&self, after_slot: u64) -> Result<Vec<String>> {
         let mut breaches = Vec::new();
         for market in self.markets.iter().filter(|m| m.kind() == Kind::Spot) {
             let venue = &market.instrument().venue;
-            let liquidity = self
+            let listing = if self
                 .markets
                 .iter()
-                .any(|m| m.kind() == Kind::Amm && &m.instrument().venue == venue);
+                .any(|m| m.kind() == Kind::Amm && &m.instrument().venue == venue)
+            {
+                Listing::Liquidity
+            } else {
+                Listing::Swaps
+            };
+            breaches.extend(market.unsupported(after_slot, &self.owner, listing).await?);
+        }
+        for market in self.unlisted.iter().filter(|m| m.kind() == Kind::Spot) {
             breaches.extend(
                 market
-                    .unsupported(after_slot, &self.owner, liquidity)
+                    .unsupported(after_slot, &self.owner, Listing::Unlisted)
                     .await?,
+            );
+        }
+        for (venue, program) in &self.unlisted_programs {
+            breaches.extend(
+                pools::breaches(
+                    self.chain.as_ref(),
+                    venue,
+                    program,
+                    None,
+                    Listing::Unlisted,
+                    &self.owner,
+                    after_slot,
+                )
+                .await?,
             );
         }
         Ok(breaches)
@@ -2240,11 +2331,13 @@ mod tests {
             // may not run, where the session takes its liquidity. Where it
             // doesn't, the positions are breaches.
             assert_eq!(
-                spot.unsupported(start, &me, true).await.unwrap(),
+                spot.unsupported(start, &me, Listing::Liquidity)
+                    .await
+                    .unwrap(),
                 Vec::<String>::new(),
                 "{venue}"
             );
-            let spot_only = spot.unsupported(start, &me, false).await.unwrap();
+            let spot_only = spot.unsupported(start, &me, Listing::Swaps).await.unwrap();
             assert!(
                 !spot_only.is_empty()
                     && spot_only.iter().all(|b| b
@@ -2266,6 +2359,184 @@ mod tests {
                 .await;
             }
         }
+    }
+
+    /// The pool snapshot, live: a pool venue the session doesn't list is
+    /// read all the same. With only Raydium's pool in the session, 2 SPCX
+    /// the owner puts in a position on Orca's stay in the spot position, the
+    /// account's value and the sides rule, and the position is a breach that
+    /// names Orca; so is a swap on Meteora's. Where the session trades a pool
+    /// but takes no liquidity there, a position on it counts too.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pool_venue_the_session_doesnt_list_is_read_all_the_same() {
+        use mtx_kit::{AmountUnit, PriceRange, Side as KitSide};
+
+        use crate::venue::pools::{self, Deposit, SwapOrder};
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../snapshots/spcx-pools-2026-11-13")
+            .canonicalize()
+            .unwrap();
+        let (surfnet, _) = snapshot::start_snapshot(&dir, snapshot::Access::Open)
+            .await
+            .unwrap();
+        let url = surfnet.rpc_url().to_string();
+        let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(&url));
+        let rpc = mtx_kit::rpc_client(&url);
+        let owner = Keypair::new();
+        let me = owner.pubkey();
+        let named = |venue| &books::named_markets(venue).unwrap()[0];
+        let symbol = named("raydium").symbol;
+        fund_pair(
+            &surfnet,
+            &rpc,
+            &owner,
+            &named("raydium").base_mint,
+            10.0,
+            2_000.0,
+            true,
+        )
+        .unwrap();
+        surfnet.cheatcodes().fund_sol(&me, 10_000_000_000).unwrap();
+        let instrument = |venue: &str, kind| InstrumentRef {
+            venue: venue.into(),
+            kind,
+            symbol: symbol.into(),
+        };
+        let session = |venues: &[&str], liquidity: &[&str]| Spot {
+            venues: venues.iter().map(|v| (*v).into()).collect(),
+            liquidity: liquidity.iter().map(|v| (*v).into()).collect(),
+            arbitrage: None,
+            base: 0.0,
+            quote: 0.0,
+            bound_usd: None,
+        };
+        let raydium_only = Venues::connect(
+            chain.clone(),
+            &url,
+            &session(&["raydium"], &["raydium"]),
+            symbol,
+            me,
+        )
+        .await
+        .unwrap();
+        let start = rpc.get_slot().unwrap();
+        let before = raydium_only.read().await.unwrap();
+
+        // 2 SPCX into a range above Orca's price: base alone.
+        let orca = pools::connect("orca", chain.as_ref(), named("orca"))
+            .await
+            .unwrap();
+        let mid = orca.price(chain.as_ref()).await.unwrap().price;
+        let opened = Keypair::new();
+        let (ixs, _) = orca
+            .deposit(
+                chain.as_ref(),
+                &me,
+                None,
+                &opened.pubkey(),
+                &Deposit {
+                    base: 2.0,
+                    quote: 0.0,
+                    range: Some(PriceRange {
+                        lower: mid * 1.05,
+                        upper: mid * 1.2,
+                    }),
+                    shape: None,
+                },
+            )
+            .await
+            .unwrap();
+        land(&rpc, &owner, &[&opened], ixs);
+        let after = raydium_only.read().await.unwrap();
+        let spot = instrument("raydium", Kind::Spot);
+        assert!(after.wallet.base < before.wallet.base - 1.99);
+        assert!(
+            (after.position(&spot) - before.position(&spot)).abs() < 1e-6,
+            "{} -> {}",
+            before.position(&spot),
+            after.position(&spot)
+        );
+        assert!((after.position(&instrument("orca", Kind::Amm)) - 2.0).abs() < 1e-3);
+        assert!(
+            (after.wallet.value_usd - before.wallet.value_usd).abs()
+                < 1e-3 * before.wallet.value_usd,
+            "{} -> {}",
+            before.wallet.value_usd,
+            after.wallet.value_usd
+        );
+        assert_eq!(
+            raydium_only.liquidity_moves(start).await.unwrap(),
+            vec![
+                (instrument("orca", Kind::Amm), Side::Buy),
+                (instrument("orca", Kind::Amm), Side::Sell)
+            ]
+        );
+        let orca_breach = "used orca, which this session doesn't trade".to_string();
+        assert_eq!(
+            raydium_only.unsupported(start).await.unwrap(),
+            vec![orca_breach.clone()]
+        );
+
+        // A swap on Meteora's pool, which the session doesn't trade either.
+        let meteora = pools::connect("meteora", chain.as_ref(), named("meteora"))
+            .await
+            .unwrap();
+        let mid = meteora.price(chain.as_ref()).await.unwrap().price;
+        let ixs = meteora
+            .swap(
+                chain.as_ref(),
+                &me,
+                &SwapOrder {
+                    side: KitSide::Ask,
+                    amount: 0.05,
+                    unit: AmountUnit::Base,
+                    limit: mid * 0.9,
+                    partial: false,
+                },
+            )
+            .await
+            .unwrap();
+        land(&rpc, &owner, &[], ixs);
+        let meteora_breach = "used meteora, which this session doesn't trade".to_string();
+        let breaches = raydium_only.unsupported(start).await.unwrap();
+        assert_eq!(breaches, vec![meteora_breach.clone(), orca_breach]);
+        let mandate = Mandate::spot(&["raydium"], symbol, 100.0);
+        assert_eq!(
+            mandate.audit(&Observed {
+                unsupported: breaches,
+                ..Observed::default()
+            }),
+            Some(mtx_core::mandate::Breach::Unsupported {
+                what: meteora_breach.clone()
+            })
+        );
+
+        // Orca traded but taking no liquidity: the position still counts,
+        // and opening it is the breach that says so.
+        let orca_swaps = Venues::connect(
+            chain.clone(),
+            &url,
+            &session(&["raydium", "orca"], &["raydium"]),
+            symbol,
+            me,
+        )
+        .await
+        .unwrap();
+        let reading = orca_swaps.read().await.unwrap();
+        assert!((reading.position(&spot) - after.position(&spot)).abs() < 0.06);
+        assert!((reading.position(&instrument("orca", Kind::Amm)) - 2.0).abs() < 1e-3);
+        let mut breaches = orca_swaps.unsupported(start).await.unwrap();
+        assert_eq!(breaches.pop(), Some(meteora_breach), "{breaches:?}");
+        assert!(
+            breaches
+                .iter()
+                .any(|b| b.starts_with("ran orca OpenPosition"))
+                && breaches
+                    .iter()
+                    .all(|b| b.ends_with("and the session takes no liquidity on orca")),
+            "{breaches:?}"
+        );
     }
 
     /// The part of [`pool_moves_are_read_per_instruction_and_per_owner`]
@@ -2425,7 +2696,9 @@ mod tests {
             .unwrap();
         assert!(!emptied.live && emptied.base == 0.0, "{emptied:?}");
         assert_eq!(
-            spot.unsupported(start, &me, true).await.unwrap(),
+            spot.unsupported(start, &me, Listing::Liquidity)
+                .await
+                .unwrap(),
             Vec::<String>::new()
         );
 
@@ -2470,7 +2743,10 @@ mod tests {
         ));
         let after = slot();
         land(rpc, owner, &[&order], vec![instruction(accounts, data)]);
-        let breaches = spot.unsupported(after, &me, true).await.unwrap();
+        let breaches = spot
+            .unsupported(after, &me, Listing::Liquidity)
+            .await
+            .unwrap();
         assert_eq!(
             breaches,
             ["ran meteora PlaceLimitOrder, which this benchmark doesn't support"]
@@ -2527,7 +2803,10 @@ mod tests {
         );
         let after = slot();
         land(rpc, owner, &[], vec![instruction(accounts, data)]);
-        let breaches = spot.unsupported(after, &me, true).await.unwrap();
+        let breaches = spot
+            .unsupported(after, &me, Listing::Liquidity)
+            .await
+            .unwrap();
         assert_eq!(
             breaches,
             ["ran meteora RebalanceLiquidity, which this benchmark doesn't support"]

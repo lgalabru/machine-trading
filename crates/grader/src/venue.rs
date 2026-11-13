@@ -105,6 +105,16 @@ fn not_offered(venue: &VenueId, instrument: &InstrumentRef) -> Error {
     Error::UnknownMarket(format!("{venue} offers no {instrument}"))
 }
 
+/// What a session takes of a venue: nothing (the venue's program is on the
+/// session's chain, but the session doesn't list it), its swaps, or its
+/// swaps and the account's liquidity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listing {
+    Unlisted,
+    Swaps,
+    Liquidity,
+}
+
 /// One instrument of a venue's, as a session trades it.
 #[async_trait]
 pub trait Market: Send + Sync {
@@ -180,15 +190,15 @@ pub trait Market: Send + Sync {
 
     /// Each instruction `owner` ran on this market's program in slots after
     /// `after_slot` that a bot may not run, as the mandate breach it is (a
-    /// pool's, `venue/pools.rs`); `liquidity` says whether the session takes
-    /// the account's liquidity on this venue.
+    /// pool's, `venue/pools.rs`); `listing` is what the session takes of the
+    /// venue.
     async fn unsupported(
         &self,
         after_slot: u64,
         owner: &Pubkey,
-        liquidity: bool,
+        listing: Listing,
     ) -> Result<Vec<String>> {
-        let _ = (after_slot, owner, liquidity);
+        let _ = (after_slot, owner, listing);
         Ok(Vec::new())
     }
 

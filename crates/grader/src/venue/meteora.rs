@@ -26,52 +26,57 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        Allowance, Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
         anchor_instruction, named, pool_assets, range, swap_atoms, units,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
 
 /// What a bot may run of Meteora DLMM's instructions (`specs/venues/meteora.md`, "What
-/// a bot may run"): swaps, and positions in the session's pool.
+/// a bot may run"): swaps, and positions in the session's pool, each with
+/// the slot of the pool's account among its accounts (from its IDL).
 const ALLOWED: Allowed = &[
-    ("swap", Use::Swap),
-    ("swap2", Use::Swap),
-    ("swap_exact_out", Use::Swap),
-    ("swap_exact_out2", Use::Swap),
-    ("swap_with_price_impact", Use::Swap),
-    ("swap_with_price_impact2", Use::Swap),
-    ("initialize_position", Use::Liquidity),
-    ("initialize_position2", Use::Liquidity),
-    ("initialize_position_pda", Use::Liquidity),
-    ("initialize_bin_array", Use::Liquidity),
-    ("add_liquidity", Use::Liquidity),
-    ("add_liquidity2", Use::Liquidity),
-    ("add_liquidity_by_strategy", Use::Liquidity),
-    ("add_liquidity_by_strategy2", Use::Liquidity),
-    ("add_liquidity_by_strategy_one_side", Use::Liquidity),
-    ("add_liquidity_by_weight", Use::Liquidity),
-    ("add_liquidity_by_weight2", Use::Liquidity),
-    ("add_liquidity_one_side", Use::Liquidity),
-    ("add_liquidity_one_side_precise", Use::Liquidity),
-    ("add_liquidity_one_side_precise2", Use::Liquidity),
-    ("remove_liquidity", Use::Liquidity),
-    ("remove_liquidity2", Use::Liquidity),
-    ("remove_liquidity_by_range", Use::Liquidity),
-    ("remove_liquidity_by_range2", Use::Liquidity),
-    ("remove_all_liquidity", Use::Liquidity),
-    ("claim_fee", Use::Liquidity),
-    ("claim_fee2", Use::Liquidity),
-    ("claim_reward", Use::Liquidity),
-    ("claim_reward2", Use::Liquidity),
-    ("update_fees_and_rewards", Use::Liquidity),
-    ("update_fees_and_reward2", Use::Liquidity),
-    ("close_position", Use::Position),
-    ("close_position2", Use::Position),
-    ("close_position_if_empty", Use::Position),
-    ("increase_position_length", Use::Position),
-    ("increase_position_length2", Use::Position),
-    ("decrease_position_length", Use::Position),
+    ("swap", Use::Swap, Some(0)),
+    ("swap2", Use::Swap, Some(0)),
+    ("swap_exact_out", Use::Swap, Some(0)),
+    ("swap_exact_out2", Use::Swap, Some(0)),
+    ("swap_with_price_impact", Use::Swap, Some(0)),
+    ("swap_with_price_impact2", Use::Swap, Some(0)),
+    ("initialize_position", Use::Liquidity, Some(2)),
+    ("initialize_position2", Use::Liquidity, Some(2)),
+    ("initialize_position_pda", Use::Liquidity, Some(3)),
+    ("initialize_bin_array", Use::Liquidity, Some(0)),
+    ("add_liquidity", Use::Liquidity, Some(1)),
+    ("add_liquidity2", Use::Liquidity, Some(1)),
+    ("add_liquidity_by_strategy", Use::Liquidity, Some(1)),
+    ("add_liquidity_by_strategy2", Use::Liquidity, Some(1)),
+    (
+        "add_liquidity_by_strategy_one_side",
+        Use::Liquidity,
+        Some(1),
+    ),
+    ("add_liquidity_by_weight", Use::Liquidity, Some(1)),
+    ("add_liquidity_by_weight2", Use::Liquidity, Some(1)),
+    ("add_liquidity_one_side", Use::Liquidity, Some(1)),
+    ("add_liquidity_one_side_precise", Use::Liquidity, Some(1)),
+    ("add_liquidity_one_side_precise2", Use::Liquidity, Some(1)),
+    ("remove_liquidity", Use::Liquidity, Some(1)),
+    ("remove_liquidity2", Use::Liquidity, Some(1)),
+    ("remove_liquidity_by_range", Use::Liquidity, Some(1)),
+    ("remove_liquidity_by_range2", Use::Liquidity, Some(1)),
+    ("remove_all_liquidity", Use::Liquidity, Some(1)),
+    ("claim_fee", Use::Liquidity, Some(0)),
+    ("claim_fee2", Use::Liquidity, Some(0)),
+    ("claim_reward", Use::Liquidity, Some(0)),
+    ("claim_reward2", Use::Liquidity, Some(0)),
+    ("update_fees_and_rewards", Use::Liquidity, Some(1)),
+    ("update_fees_and_reward2", Use::Liquidity, Some(1)),
+    ("close_position", Use::Position, None),
+    ("close_position2", Use::Position, None),
+    ("close_position_if_empty", Use::Position, None),
+    ("increase_position_length", Use::Position, None),
+    ("increase_position_length2", Use::Position, None),
+    ("decrease_position_length", Use::Position, None),
 ];
 /// The program's other instructions, by name, as the pinned program's IDL lists them.
 const OTHERS: &[&str] = &[
@@ -331,7 +336,7 @@ impl Pool for DlmmPool {
         &self.assets
     }
 
-    fn instruction(&self, data: &[u8]) -> (String, Option<Use>) {
+    fn instruction(&self, data: &[u8]) -> (String, Option<Allowance>) {
         anchor_instruction(data, ALLOWED, OTHERS)
     }
 

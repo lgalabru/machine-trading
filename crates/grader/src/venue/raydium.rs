@@ -27,25 +27,26 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        Allowance, Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
         anchor_instruction, named, pool_assets, range, swap_atoms, units, wallet_atoms,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
 
 /// What a bot may run of Raydium CLMM's instructions (`specs/venues/raydium.md`, "What
-/// a bot may run"): swaps, and positions in the session's pool.
+/// a bot may run"): swaps, and positions in the session's pool, each with
+/// the slot of the pool's account among its accounts (from its source's account structs).
 const ALLOWED: Allowed = &[
-    ("swap", Use::Swap),
-    ("swap_v2", Use::Swap),
-    ("open_position", Use::Liquidity),
-    ("open_position_v2", Use::Liquidity),
-    ("open_position_with_token22_nft", Use::Liquidity),
-    ("increase_liquidity", Use::Liquidity),
-    ("increase_liquidity_v2", Use::Liquidity),
-    ("decrease_liquidity", Use::Liquidity),
-    ("decrease_liquidity_v2", Use::Liquidity),
-    ("close_position", Use::Position),
+    ("swap", Use::Swap, Some(2)),
+    ("swap_v2", Use::Swap, Some(2)),
+    ("open_position", Use::Liquidity, Some(5)),
+    ("open_position_v2", Use::Liquidity, Some(5)),
+    ("open_position_with_token22_nft", Use::Liquidity, Some(4)),
+    ("increase_liquidity", Use::Liquidity, Some(2)),
+    ("increase_liquidity_v2", Use::Liquidity, Some(2)),
+    ("decrease_liquidity", Use::Liquidity, Some(3)),
+    ("decrease_liquidity_v2", Use::Liquidity, Some(3)),
+    ("close_position", Use::Position, None),
 ];
 /// The program's other instructions, by name, as the program source lists them.
 const OTHERS: &[&str] = &[
@@ -342,7 +343,7 @@ impl Pool for ClmmPool {
         &self.assets
     }
 
-    fn instruction(&self, data: &[u8]) -> (String, Option<Use>) {
+    fn instruction(&self, data: &[u8]) -> (String, Option<Allowance>) {
         anchor_instruction(data, ALLOWED, OTHERS)
     }
 
