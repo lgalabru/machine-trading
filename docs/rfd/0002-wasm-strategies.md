@@ -431,3 +431,37 @@ defend, no bot users, no keypair files.
   post-only order goes through Phoenix's second multiple-order packet built
   from its parameters, and a line with an amount that isn't a number gets
   a note.
+- 2026-11-12: raw sends land (PR 4). A scenario opts in with `raw_sends`,
+  the programs its raw transactions may run; a component sees them as
+  `MTX_RAW_PROGRAMS`. Fresh signers come from the grade's secret, as the
+  session's other keys do (`fresh/{step}/{id}`), never from the session's
+  seed, which the strategy sees. The grader resolves the keys in order,
+  compiles a v0 message with the lookup tables, and simulates it with
+  Surfpool's `simulateBundle`: the transaction, then Hawkeye's views of the
+  account, so the audit reads the venue's own measurement of the account
+  after it. Every program the logs show it running, through another or
+  not, must be on the list. What is taken is checked again after the
+  sheet, then signed and sent through the bot's guard.
+- 2026-11-12: raw sends, after review. Phoenix lets an authority register
+  isolated subaccounts and move collateral to them, where positions don't
+  show in the main account the session measures; a raw send may write no
+  trader account but the main one. A send the guard holds under the
+  scenario's faults is `delayed`, not failed, and stays ahead of every new
+  send's simulation until it lands or its blockhash expires (two at most).
+  A step may have 16 raw sends simulated.
+- 2026-11-13: raw sends, after a second review. The audit reads only the
+  writable accounts that can matter to it (token accounts, the main trader
+  account, accounts a send creates), each first read as far as its owner
+  and first eight bytes, so marking big accounts writable costs a
+  simulation and no copies; another trader account is refused before
+  anything runs. A copy of a send the step already took is refused. A
+  scenario may allow only the programs the audit measures (Phoenix,
+  system, token, associated token, compute budget) until a venue adds
+  its own.
+- 2026-11-13: raw sends, after a third review. An address can be funded
+  in one step and registered as a subaccount in the next, so the audit
+  judges what an account can become: an empty account the system program
+  holds is read before and after a send, like a new one, and refused if it
+  ends as a trader account other than the main one. A writable token
+  account may hold at most 4 KiB. A duplicate is a send that compiles to
+  the same message.

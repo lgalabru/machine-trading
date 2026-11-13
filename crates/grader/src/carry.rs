@@ -512,6 +512,7 @@ impl CarryFamily {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            raw_sends: None,
         };
         let shape = Shape {
             informed_share,

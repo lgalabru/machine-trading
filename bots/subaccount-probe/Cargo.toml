@@ -1,0 +1,16 @@
+# No workspace inheritance: bots build outside this workspace too.
+[package]
+name = "mtx-bot-subaccount-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-subaccount-probe"
+path = "src/main.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit" }
+solana-compute-budget-interface = "3"
+tracing = "0.1"
