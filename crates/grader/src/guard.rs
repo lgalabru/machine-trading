@@ -386,19 +386,20 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
             *log.methods.entry(method.to_string()).or_default() += 1;
         }
     }
-    if let (Value::Object(_), Some(router)) = (&request, state.router())
-        && let Some(method) = request["method"]
+    let is_router = |call: &Value| {
+        call["method"]
             .as_str()
-            .filter(|m| ROUTER_METHODS.contains(m))
+            .is_some_and(|m| ROUTER_METHODS.contains(&m))
+    };
+    // Router calls are no refusal, so a bot that probes for the router, or
+    // shares one client across tasks with and without it, is never disqualified.
+    if let Value::Object(_) = &request
+        && is_router(&request)
     {
-        let id = request["id"].clone();
-        let params = request["params"].get(0).cloned().unwrap_or(Value::Null);
-        return reply(match router_call(state, &router, method, &params).await {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err((code, message)) => error_response(id, code, &message),
-        });
+        return reply(router_answer(state, &request).await);
     }
-    let refusals: Vec<Value> = calls
+    let rest: Vec<&Value> = calls.iter().copied().filter(|c| !is_router(c)).collect();
+    let refusals: Vec<Value> = rest
         .iter()
         .filter_map(|call| refusal(state, call).or_else(|| late(state, call)))
         .collect();
@@ -418,6 +419,11 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
             )),
             _ => reply(refusals.into_iter().next().expect("one refusal")),
         };
+    }
+    if let Value::Array(_) = &request
+        && rest.len() < calls.len()
+    {
+        return mixed_batch(state, &calls, host).await;
     }
 
     serve(state, request, host).await
@@ -864,13 +870,7 @@ fn refusal_for(state: &GuardState, call: &Value) -> Option<Value> {
     match method {
         Some(_) if !state.allowlist => None,
         Some(method) if ALLOWED_METHODS.contains(&method) => None,
-        Some(method) if ROUTER_METHODS.contains(&method) && state.router().is_some() => {
-            Some(error_response(
-                call["id"].clone(),
-                INVALID_REQUEST,
-                &format!("{method} is answered on its own, not in a batch"),
-            ))
-        }
+        Some(method) if ROUTER_METHODS.contains(&method) => None,
         Some(method) => Some(error_response(
             call["id"].clone(),
             METHOD_NOT_FOUND,
@@ -919,6 +919,54 @@ async fn router_call(
         router.swap_instructions_api(params).await
     };
     answer.map_err(|e| (INVALID_REQUEST, e))
+}
+
+/// A router call's JSON-RPC answer: the router's, or a plain error, never a
+/// refusal, in a session without one.
+async fn router_answer(state: &GuardState, call: &Value) -> Value {
+    let id = call["id"].clone();
+    let Some(router) = state.router() else {
+        return error_response(
+            id,
+            METHOD_NOT_FOUND,
+            "Method not found: this session has no router",
+        );
+    };
+    let method = call["method"].as_str().unwrap_or_default();
+    let params = call["params"].get(0).cloned().unwrap_or(Value::Null);
+    match router_call(state, &router, method, &params).await {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err((code, message)) => error_response(id, code, &message),
+    }
+}
+
+/// A batch of router calls and others: the router's own are answered here,
+/// the rest are served as a batch, and the replies come back together.
+async fn mixed_batch(state: &GuardState, calls: &[&Value], host: bool) -> axum::response::Response {
+    let mut replies = Vec::with_capacity(calls.len());
+    let mut rest = Vec::new();
+    for call in calls {
+        if call["method"]
+            .as_str()
+            .is_some_and(|m| ROUTER_METHODS.contains(&m))
+        {
+            replies.push(router_answer(state, call).await);
+        } else {
+            rest.push((*call).clone());
+        }
+    }
+    let served = serve(state, Value::Array(rest), host).await;
+    let (parts, body) = served.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    };
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Array(served)) => {
+            replies.extend(served);
+            (parts.status, axum::Json(Value::Array(replies))).into_response()
+        }
+        _ => axum::response::Response::from_parts(parts, axum::body::Body::from(bytes)),
+    }
 }
 
 /// A router call over HTTP, as Jupiter's API answers: the JSON, or 400 with
@@ -1162,21 +1210,26 @@ mod tests {
             post(move |body: Bytes| {
                 let log = log.clone();
                 async move {
-                    let call: Value = serde_json::from_slice(&body).unwrap();
-                    let method = call["method"].as_str().unwrap().to_string();
-                    log.lock().unwrap().push(method.clone());
-                    let result = match method.as_str() {
-                        "sendTransaction" => json!(
-                            crate::faults::WireTransaction::parse(&call)
-                                .unwrap()
-                                .signature
-                        ),
-                        "getSignatureStatuses" => json!({ "value": [{
-                            "slot": 1, "confirmations": null, "err": null,
-                            "confirmationStatus": "processed" }] }),
-                        _ => json!(1),
+                    let answer = |call: &Value| {
+                        let method = call["method"].as_str().unwrap().to_string();
+                        log.lock().unwrap().push(method.clone());
+                        let result = match method.as_str() {
+                            "sendTransaction" => json!(
+                                crate::faults::WireTransaction::parse(call)
+                                    .unwrap()
+                                    .signature
+                            ),
+                            "getSignatureStatuses" => json!({ "value": [{
+                                "slot": 1, "confirmations": null, "err": null,
+                                "confirmationStatus": "processed" }] }),
+                            _ => json!(1),
+                        };
+                        json!({ "jsonrpc": "2.0", "id": call["id"], "result": result })
                     };
-                    axum::Json(json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }))
+                    axum::Json(match serde_json::from_slice::<Value>(&body).unwrap() {
+                        Value::Array(calls) => Value::Array(calls.iter().map(answer).collect()),
+                        call => answer(&call),
+                    })
                 }
             }),
         );
@@ -1184,6 +1237,88 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (url, seen)
+    }
+
+    /// A router with no pools: every quote is an error of its own, so a call
+    /// it answers is told apart from one the guard turned away.
+    fn bare_router(url: &str) -> Arc<crate::router::Router> {
+        Arc::new(crate::router::Router::new(
+            Vec::new(),
+            &[],
+            Arc::new(mtx_kit::chain::RpcChainClient::new(url)),
+            solana_pubkey::Pubkey::new_unique(),
+            2,
+            50,
+        ))
+    }
+
+    fn router_call_body(id: u64) -> Value {
+        json!({ "jsonrpc": "2.0", "id": id, "method": ROUTER_METHODS[0], "params": [{}] })
+    }
+
+    #[tokio::test]
+    async fn a_batched_router_call_is_answered_and_no_refusal() {
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url.clone()).await.unwrap();
+        guard.set_router(bare_router(&url));
+        let read = json!({ "jsonrpc": "2.0", "id": 2, "method": "getSlot" });
+        let (status, reply) = call(&guard, json!([router_call_body(1), read])).await;
+        assert_eq!(status, StatusCode::OK);
+        let replies = reply.as_array().expect("a batch reply");
+        assert_eq!(replies.len(), 2);
+        let router = replies.iter().find(|r| r["id"] == 1).unwrap();
+        assert_ne!(router["error"]["code"], METHOD_NOT_FOUND);
+        assert!(
+            !router["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("batch")
+        );
+        assert_eq!(replies.iter().find(|r| r["id"] == 2).unwrap()["result"], 1);
+        assert_eq!(seen.lock().unwrap().as_slice(), ["getSlot"]);
+        assert!(guard.refused().is_empty());
+        assert!(guard.call_log().refused.is_empty());
+    }
+
+    #[tokio::test]
+    async fn router_calls_without_a_router_are_errors_and_no_refusal() {
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        let (_, single) = call(&guard, router_call_body(1)).await;
+        assert_eq!(single["error"]["code"], METHOD_NOT_FOUND);
+        let read = json!({ "jsonrpc": "2.0", "id": 2, "method": "getSlot" });
+        let (_, batch) = call(&guard, json!([router_call_body(3), read])).await;
+        let batch = batch.as_array().expect("a batch reply");
+        assert_eq!(batch.len(), 2);
+        assert_eq!(
+            batch.iter().find(|r| r["id"] == 3).unwrap()["error"]["code"],
+            METHOD_NOT_FOUND
+        );
+        assert_eq!(batch.iter().find(|r| r["id"] == 2).unwrap()["result"], 1);
+        assert_eq!(seen.lock().unwrap().as_slice(), ["getSlot"]);
+        assert!(guard.refused().is_empty());
+        assert!(guard.call_log().refused.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_forbidden_method_still_refuses_beside_a_router_call() {
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url.clone()).await.unwrap();
+        guard.set_router(bare_router(&url));
+        let cheat = json!({ "jsonrpc": "2.0", "id": 2, "method": "surfnet_setAccount" });
+        let (_, reply) = call(&guard, json!([router_call_body(1), cheat.clone()])).await;
+        let replies = reply.as_array().expect("a batch reply");
+        assert_eq!(
+            replies.iter().find(|r| r["id"] == 2).unwrap()["error"]["code"],
+            METHOD_NOT_FOUND
+        );
+        let (_, single) = call(&guard, cheat).await;
+        assert_eq!(single["error"]["code"], METHOD_NOT_FOUND);
+        assert_eq!(
+            guard.refused(),
+            ["surfnet_setAccount", "surfnet_setAccount"]
+        );
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     async fn call(guard: &Guard, body: Value) -> (StatusCode, Value) {

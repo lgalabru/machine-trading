@@ -81,7 +81,10 @@ The same as JSON-RPC methods `mtx_routerQuote` and
 parameter: what a strategy component's `rpc` reaches. A quote's legs are
 re-quoted on the pools as they are when its instructions are asked for;
 an edited `otherAmountThreshold` is what the legs enforce. At most 64 calls
-a step. A process bot signs and sends the transaction itself; a component
+a step. They are answered in a batch too, beside any other call. In a
+session without a router they answer a plain "method not found" error (and
+`GET /quote` a 404): a probe is no refusal and costs the bot nothing. A
+process bot signs and sends the transaction itself; a component
 sends a `swap` on the pseudo-venue `router` (raw sends are perp-only so
 far).
 
