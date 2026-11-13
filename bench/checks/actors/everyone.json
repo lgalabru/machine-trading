@@ -243,6 +243,28 @@
         "size_mult": 10.0
       }
     ],
+    "chasers": [
+      {
+        "wallets": 2,
+        "lookback_slots": 40,
+        "trigger_bps": 10.0,
+        "intensity_mult": 120.0,
+        "size_mult": 10.0
+      }
+    ],
+    "decoys": [
+      {
+        "wallets": 2,
+        "horizon_slots": 40,
+        "edge_bps": 30.0,
+        "informed_for": {
+          "from": 60,
+          "until": 160
+        },
+        "intensity_mult": 60.0,
+        "size_mult": 10.0
+      }
+    ],
     "spoofers": [
       {
         "side": "bid",
@@ -250,7 +272,7 @@
         "cancel_ticks": 2,
         "wall_mult": 200.0,
         "lifetime_slots": 40,
-        "harvest_mult": 5.0
+        "ahead_slots": 40
       }
     ],
     "stop_hunters": [
@@ -268,7 +290,8 @@
         "pattern_steps": 2,
         "share": 0.5,
         "hold_steps": 4,
-        "on_send": true
+        "on_send": true,
+        "max_inventory_mult": 60.0
       }
     ],
     "arbitrageur": {
@@ -285,7 +308,8 @@
       "per_100_slots": 10.0,
       "size_mult": 10.0,
       "deadline_slots": 8,
-      "tolerance_bps": 20.0
+      "desk_base": 20.0,
+      "desk_usdc": 2000.0
     },
     "liquidator": {},
     "record": true

@@ -2,27 +2,37 @@
 
 Takes a graded session of a scenario with `"record": true` (its report and
 details) and reads the actors as anyone watching the chain could: every
-wallet's orders, cancels and takes, the bot's position, and the book's
-prices, step by step. Which wallet is which actor is used only to score the
-reader, never by it.
+wallet's orders, cancels, takes and swaps, the bot's position, and the
+book's prices, step by step. Which wallet is which actor is used only to
+score the reader, and to give the "told" strategy its answer key.
 
 1. **Telling them apart.** Each wallet that acted is classified from its own
-   record alone (orders that live and get pulled, orders that last no slot,
-   takes that come in reversed pairs, takes that follow the bot, takes
-   against the index, takes that a later price rewards), and the classes are
-   checked against the truth. A wallet whose orders never landed shows
-   nothing to read, and isn't counted.
-2. **The edge of reading.** Informed flow: two followers trade one unit on
-   every signal, marked out `--horizon` slots later net of the half spread;
-   the blind one copies every taker, the reader only wallets whose past
-   takes, already marked out, were rewarded.
-   Spoofing is read as depth: a seller sizing to the displayed bids counts
-   every large order near the touch; the reader skips wallets it has seen
-   pull most of their orders. The edge is the depth, in USD, the blind
-   seller leaned on that never traded and the reader didn't.
-   Both readers decide on each signal from what was public before it.
+   record alone (orders that live and get pulled, swaps with the bot, takes
+   that come in reversed pairs, takes that follow the bot, takes against the
+   index, takes with the chart, takes that a later price rewards, a record
+   that stops being rewarded), and the classes are checked against the
+   truth. A wallet whose orders never landed shows nothing to read, and
+   isn't counted.
+2. **What reading pays.** Three strategies trade one unit every `--every`
+   slots, on what the last `--lookback` slots showed, and are marked out
+   `--horizon` slots later, net of the half spread then:
+   - **told** follows the net flow of the wallets that are informed (the
+     answer key);
+   - **careful blind** reads no wallet: the better (by total) of following
+     the market's net taker flow and following the price's move;
+   - **reader** follows the net flow of the wallets whose takes, already
+     marked out, have been rewarded lately: it learns them online.
+   Reading pays when told makes at least twice what the careful blind does
+   (`--require-edge` fails the check otherwise).
+   Spoofing is read as support: a follower of walls buys one unit as a big
+   bid goes up (sells as an ask does), marked out the same way. The blind
+   one follows every wall; the reader fades the walls of wallets it has
+   seen pull most of their orders. The edge is the reader's PnL over the
+   blind one's.
+   Every strategy decides from what was public before its decision.
 
 Usage: read.py <report.json> <details.json.gz> [--horizon 40]
+           [--lookback 40] [--every 4] [--require-edge]
 """
 
 import argparse
@@ -30,6 +40,7 @@ import bisect
 import gzip
 import json
 import statistics
+import sys
 from collections import defaultdict
 
 TICK = 0.01
@@ -42,14 +53,8 @@ def load(report_path, details_path):
         details = json.load(f)
     steps = details["timeline"]["steps"]
     library = session["actors"]
-    truth, bought = {}, {}
-    for actor in library["actors"]:
-        for wallet in actor["wallets"]:
-            truth[wallet] = actor["kind"]
-            # Takes buy too; a wallet that only rests and takes the other
-            # way shows its resting bids' fills here.
-            bought[wallet] = actor["bought"]
-    return library["tape"], steps, truth, bought
+    truth = {w: actor["kind"] for actor in library["actors"] for w in actor["wallets"]}
+    return library["tape"], steps, truth
 
 
 class Book:
@@ -85,6 +90,12 @@ class Book:
         return self.ats[-1]
 
 
+def moved_bps(book, at, back):
+    """The price's move over the `back` slots to `at`."""
+    before = book.mid(max(0, at - back))
+    return (book.mid(at) - before) / before * 1e4
+
+
 def markout_bps(book, at, side, horizon):
     sign = 1 if side == "bid" else -1
     now, later = book.mid(at), book.mid(at + horizon)
@@ -95,6 +106,7 @@ def features(entries, book, horizon):
     rests = [e for e in entries if e["action"] == "rest"]
     cancels = [e for e in entries if e["action"] == "cancel"]
     takes = [e for e in entries if e["action"] == "take"]
+    swaps = [e for e in entries if e["action"] == "swap"]
     lives = []
     for r in rests:
         later = [c["at"] for c in cancels if c["at"] >= r["at"]]
@@ -127,13 +139,17 @@ def features(entries, book, horizon):
         off = book.mid(t["at"]) - s["index_usd"]
         if off != 0 and (off < 0) == (t["side"] == "bid"):
             against_index += 1
+    trended = [t for t in takes if abs(moved_bps(book, t["at"], horizon)) > 2]
+    with_trend = sum(1 for t in trended if (moved_bps(book, t["at"], horizon) > 0) == (t["side"] == "bid"))
     marked = [
         markout_bps(book, t["at"], t["side"], horizon)
         for t in takes
         if t["at"] + horizon <= book.end()
     ]
     hits = sum(1 for m in marked if m > 0)
+    half = len(marked) // 2
     return {
+        "swaps": len(swaps),
         "rests": len(rests),
         "cancels": len(cancels),
         "takes": len(takes),
@@ -142,16 +158,19 @@ def features(entries, book, horizon):
         "with_bot": with_bot / len(follows) if follows else 0.0,
         "follows": len(follows),
         "against_index": against_index / len(takes) if takes else 0.0,
+        "with_trend": with_trend / len(trended) if trended else 0.0,
         "markout": statistics.mean(marked) if marked else 0.0,
+        "markout_early": statistics.mean(marked[:half]) if half else 0.0,
+        "markout_late": statistics.mean(marked[half:]) if half else 0.0,
         "hit_rate": hits / len(marked) if marked else 0.0,
         "marked": len(marked),
     }
 
 
 def classify(f):
+    if f["swaps"]:
+        return "rfq-client"
     if f["rests"]:
-        if f["life"] is not None and f["life"] == 0:
-            return "rfq-client"
         if f["cancels"] >= 0.8 * f["rests"]:
             return "spoofer"
     if not f["takes"]:
@@ -162,8 +181,12 @@ def classify(f):
         return "stop-hunter"
     if f["against_index"] >= 0.9 and f["takes"] >= 5:
         return "arbitrageur"
+    if f["marked"] >= 6 and f["markout_early"] >= 5 and f["markout_late"] < 2:
+        return "decoy"
     if f["markout"] >= 5 and f["hit_rate"] >= 0.75:
         return "informed"
+    if f["with_trend"] >= 0.9 and f["takes"] >= 5:
+        return "chaser"
     return "noise"
 
 
@@ -179,89 +202,102 @@ def tell_apart(tape, book, truth, horizon):
     return rows
 
 
-def follow_edges(tape, book, horizon):
-    """Reader vs blind followers of the informed flow and of the walls."""
+def strategies(tape, book, truth, horizon, lookback, every):
+    """Told, careful blind and reader: each one's PnL per decision, in bps
+    of a unit, marked out `horizon` slots on net of the half spread."""
     takes = sorted(
         (e for e in tape if e["ok"] and e["action"] == "take"), key=lambda e: e["at"]
     )
-    rests = sorted(
-        (e for e in tape if e["ok"] and e["action"] in ("rest", "cancel")),
-        key=lambda e: e["at"],
-    )
     end = book.end()
 
-    def net(at, side):
+    def signed(t):
+        return t["size"] if t["side"] == "bid" else -t["size"]
+
+    def pnl(at, net):
+        side = "bid" if net > 0 else "ask"
         return markout_bps(book, at, side, horizon) - book.half_spread_bps(at)
 
-    # Informed: a wallet is believed informed once its takes marked out
-    # before now average over 5 bps across at least 3 of them.
-    blind, reader = [], []
-    for t in takes:
-        if t["at"] + horizon > end:
-            continue
-        pnl = net(t["at"], t["side"])
-        blind.append(pnl)
-        known = [
-            markout_bps(book, u["at"], u["side"], horizon)
-            for u in takes
-            if u["wallet"] == t["wallet"] and u["at"] + horizon <= t["at"]
-        ]
-        if len(known) >= 3 and statistics.mean(known) > 5:
-            reader.append(pnl)
-    informed = summary(blind, reader)
-
-    # Spoofing: a seller sizing to the displayed bids counts every large
-    # order resting near the touch as depth it can sell into. The blind one
-    # counts all of them; the reader skips a wallet once at least 3 of its
-    # orders came and 80% of them went again. What it counted that never
-    # traded is depth it leaned on and didn't have.
-    sizes = [t["size"] for t in takes]
-    big = 5 * statistics.median(sizes) if sizes else 0.0
-    blind, reader = [], []
-    for r in rests:
-        if r["action"] != "rest" or r["size"] < big:
-            continue
-        usd = r["size"] * r["price_usd"]
-        blind.append((r["wallet"], usd))
-        past = [e for e in rests if e["wallet"] == r["wallet"] and e["at"] < r["at"]]
-        placed = sum(1 for e in past if e["action"] == "rest")
-        pulled = sum(1 for e in past if e["action"] == "cancel")
-        if not (placed >= 3 and pulled >= 0.8 * placed):
-            reader.append((r["wallet"], usd))
-    spoofing = {"blind": blind, "reader": reader}
-    return informed, spoofing
-
-
-def phantom(walls, traded):
-    """Depth leaned on that never traded, in USD, blind and read."""
-
-    def never(entries):
-        return round(sum(usd for wallet, usd in entries if traded.get(wallet, 0.0) == 0.0), 2)
-
-    b, r = never(walls["blind"]), never(walls["reader"])
+    told, flow, momentum, reader = [], [], [], []
+    for at in range(lookback, end - horizon + 1, every):
+        window = [t for t in takes if at - lookback <= t["at"] < at]
+        net = sum(signed(t) for t in window if truth.get(t["wallet"]) == "informed")
+        if net:
+            told.append(pnl(at, net))
+        net = sum(signed(t) for t in window)
+        if net:
+            flow.append(pnl(at, net))
+        moved = moved_bps(book, at, lookback)
+        if abs(moved) > 2:
+            momentum.append(pnl(at, moved))
+        # The reader trusts a wallet whose last takes that have marked out
+        # by now were, on average and mostly, rewarded.
+        trusted = set()
+        record = defaultdict(list)
+        for t in takes:
+            if t["at"] + horizon <= at:
+                record[t["wallet"]].append(markout_bps(book, t["at"], t["side"], horizon))
+        for wallet, marks in record.items():
+            recent = marks[-READER_MEMORY:]
+            hits = sum(1 for m in recent if m > 0)
+            if len(recent) >= 3 and statistics.mean(recent) > 5 and hits >= 0.6 * len(recent):
+                trusted.add(wallet)
+        net = sum(signed(t) for t in window if t["wallet"] in trusted)
+        if net:
+            reader.append(pnl(at, net))
+    blind = max((("flow", flow), ("momentum", momentum)), key=lambda p: sum(p[1]))
     return {
-        "walls": len(walls["blind"]),
-        "blind_phantom_usd": b,
-        "reader_phantom_usd": r,
-        "reader_walls_counted": len(walls["reader"]),
-        "edge_usd": round(b - r, 2),
+        "told": stats(told),
+        "careful_blind": {"uses": blind[0], **stats(blind[1])},
+        "blind_flow": stats(flow),
+        "blind_momentum": stats(momentum),
+        "reader": stats(reader),
     }
 
 
-def summary(blind, reader):
-    def stats(xs):
-        return {
-            "trades": len(xs),
-            "mean_bps": round(statistics.mean(xs), 2) if xs else 0.0,
-            "total_bps": round(sum(xs), 1),
-        }
+# How many of a wallet's latest marked-out takes the reader judges it by.
+READER_MEMORY = 8
 
+
+def walls(tape, book, horizon):
+    """Followers of walls, blind and read: each one's PnL per wall."""
+    takes = [e for e in tape if e["ok"] and e["action"] == "take"]
+    orders = sorted(
+        (e for e in tape if e["ok"] and e["action"] in ("rest", "cancel")),
+        key=lambda e: e["at"],
+    )
+    sizes = [t["size"] for t in takes]
+    big = 5 * statistics.median(sizes) if sizes else 0.0
+    blind, reader = [], []
+    for r in orders:
+        if r["action"] != "rest" or r["size"] < big or r["at"] + horizon > book.end():
+            continue
+        def pnl(side):
+            return markout_bps(book, r["at"], side, horizon) - book.half_spread_bps(r["at"])
+
+        blind.append(pnl(r["side"]))
+        past = [e for e in orders if e["wallet"] == r["wallet"] and e["at"] < r["at"]]
+        placed = sum(1 for e in past if e["action"] == "rest")
+        pulled = sum(1 for e in past if e["action"] == "cancel")
+        spoofs = placed >= 3 and pulled >= 0.8 * placed
+        reader.append(pnl(("ask" if r["side"] == "bid" else "bid") if spoofs else r["side"]))
     b, r = stats(blind), stats(reader)
+    return {"blind": b, "reader": r, "edge_total_bps": round(r["total_bps"] - b["total_bps"], 1)}
+
+
+def stats(xs):
     return {
-        "blind": b,
-        "reader": r,
-        "edge_bps_per_trade": round(r["mean_bps"] - b["mean_bps"], 2),
-        "edge_total_bps": round(r["total_bps"] - b["total_bps"], 1),
+        "trades": len(xs),
+        "mean_bps": round(statistics.mean(xs), 2) if xs else 0.0,
+        "total_bps": round(sum(xs), 1),
+    }
+
+
+def edge(table):
+    """Whether told makes at least twice what the careful blind does."""
+    told, blind = table["told"]["total_bps"], table["careful_blind"]["total_bps"]
+    return {
+        "told_over_blind": round(told / blind, 2) if blind > 0 else None,
+        "pass": told > 0 and told >= 2 * max(blind, 0.0),
     }
 
 
@@ -270,8 +306,11 @@ def main():
     parser.add_argument("report")
     parser.add_argument("details")
     parser.add_argument("--horizon", type=int, default=40)
+    parser.add_argument("--lookback", type=int, default=40)
+    parser.add_argument("--every", type=int, default=4)
+    parser.add_argument("--require-edge", action="store_true")
     args = parser.parse_args()
-    tape, steps, truth, bought = load(args.report, args.details)
+    tape, steps, truth = load(args.report, args.details)
     book = Book(steps)
     rows = tell_apart(tape, book, truth, args.horizon)
     right = sum(1 for kind, guess, _, _ in rows if kind == guess)
@@ -279,11 +318,8 @@ def main():
     for kind, guess, _, _ in rows:
         by_kind[kind][1] += 1
         by_kind[kind][0] += kind == guess
-    informed, walls = follow_edges(tape, book, args.horizon)
-    # Whether a wall's depth was there to sell into: its wallet's buying,
-    # from the report (a bid wall that traded bought).
-    traded = {w: a for w, a in bought.items()}
-    spoofing = phantom(walls, traded)
+    table = strategies(tape, book, truth, args.horizon, args.lookback, args.every)
+    gate = edge(table)
     print(
         json.dumps(
             {
@@ -294,11 +330,15 @@ def main():
                     {"truth": kind, "read": guess, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in f.items()}}
                     for kind, guess, _, f in rows
                 ],
-                "edge": {"informed": informed, "spoofing": spoofing},
+                "pnl": table,
+                "edge": gate,
+                "spoofing": walls(tape, book, args.horizon),
             },
             indent=1,
         )
     )
+    if args.require_edge and not gate["pass"]:
+        sys.exit(f"reading doesn't pay: told {table['told']['total_bps']} bps, careful blind {table['careful_blind']['total_bps']} bps")
 
 
 if __name__ == "__main__":

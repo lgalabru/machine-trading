@@ -128,17 +128,19 @@ actors-smoke:
     takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
     takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
     # The library: every actor beside a bot that sells and answers requests
-    # for quotes. Each acts, none fails, and a reader of the chain can tell
-    # them apart.
+    # for quotes. Each acts, none acting on its own fails, RFQ fills
+    # settle, and reading the chain pays: told makes at least twice what a
+    # careful blind strategy does.
     just --justfile bots/actors-smoke/Justfile build
     report=target/logs/actors-library.json details=target/logs/actors-library-details
     "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/{{snapshot}}" --bot bots/actors-smoke \
       --logs target/logs/actors-library --report "$report" --details "$details" bench/checks/actors/everyone.json > /dev/null
-    jq -e '.scenarios[0].actors | .actions.failed == 0
+    jq -e '.scenarios[0].actors | ([.actors[] | select(.reacts_to_bot | not) | .actions.failed] | add) == 0
       and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)
-      and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)' "$report" > /dev/null \
+      and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)
+      and any(.actors[]; .kind == "rfq-client" and .counts.fills > 0)' "$report" > /dev/null \
       || { echo "actors-library: an actor didn't act, or failed: $(jq -c '.scenarios[0].actors.actions' "$report")"; exit 1; }
-    python3 bench/checks/actors/read.py "$report" "$details/bot/actors-everyone.json.gz"
+    python3 bench/checks/actors/read.py --require-edge "$report" "$details/bot/actors-everyone.json.gz"
 
 # The strategy interface end to end: the probe puts one line of each kind
 # on its first sheet in a flash-crash session, and its log
