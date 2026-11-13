@@ -9,6 +9,7 @@ pub mod faults;
 pub mod grade;
 pub mod guard;
 pub mod keys;
+pub mod lending;
 pub mod making;
 pub mod offhours;
 pub mod oracles;

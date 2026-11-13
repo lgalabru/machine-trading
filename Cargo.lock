@@ -5070,6 +5070,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "solana-clock 3.2.1",
  "solana-keypair",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",

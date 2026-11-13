@@ -92,6 +92,14 @@ pub struct Scenario {
     /// how they fail (see [`crate::oracles`]). Without it, none are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oracles: Option<crate::oracles::Oracles>,
+    /// A lending session's reserves, wallet, borrowers and liquidators
+    /// (see [`crate::lending`]). With it, the session runs on Kamino.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lending: Option<crate::lending::Lending>,
+    /// Jumps of the session's clock, for interest over days (see
+    /// [`crate::lending::Warp`]). Lending sessions only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warps: Vec<crate::lending::Warp>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -286,6 +294,24 @@ impl Scenario {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(lending) = &self.lending {
+            if self.spot.is_some() {
+                return Err("lending: a scenario is a lending or a spot scenario".into());
+            }
+            if let Some(faults) = &self.faults {
+                faults
+                    .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                    .map_err(|reason| format!("faults: {reason}"))?;
+            }
+            if let Some(oracles) = &self.oracles {
+                let (_, warped) = crate::lending::gaps(&self.warps);
+                oracles.validate(self.duration_slots + warped)?;
+            }
+            return lending.validate(self);
+        }
+        if !self.warps.is_empty() {
+            return Err("warps: only lending sessions jump the clock".into());
+        }
         if let Some(oracles) = &self.oracles {
             oracles.validate(self.duration_slots)?;
             self.validate_oracles(oracles)?;
@@ -983,6 +1009,8 @@ impl ShockFamily {
             faults: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
@@ -1696,6 +1724,8 @@ mod tests {
             faults: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
@@ -1761,6 +1791,8 @@ mod tests {
             faults: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,

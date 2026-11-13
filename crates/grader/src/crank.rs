@@ -87,6 +87,11 @@ impl Cranks {
         }
     }
 
+    /// A crank the session's kind brings, after the factory's.
+    pub fn push(&mut self, crank: Box<dyn VenueCrank>) {
+        self.cranks.push(crank);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.cranks.is_empty()
     }

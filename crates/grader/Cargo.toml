@@ -22,6 +22,8 @@ serde_json.workspace = true
 # Derives each session's keypairs from the grade's secret (see src/keys.rs), and
 # hashes a snapshot recipe.
 sha2 = "0.10"
+# The clock a scenario's warp sets (surfpool's own version).
+solana-clock = { version = "3.2", default-features = false }
 solana-keypair.workspace = true
 solana-pubkey.workspace = true
 solana-rpc-client.workspace = true

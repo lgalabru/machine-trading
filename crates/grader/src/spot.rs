@@ -278,6 +278,20 @@ pub struct Wallet {
     /// The Pyth SOL/USD price it was valued at, and its value.
     pub price_usd: f64,
     pub value_usd: f64,
+    /// A lending session's reserves, as a component's step shows them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub venues: Vec<VenueReading>,
+}
+
+/// One reserve of a measured account, as a component's step shows it: the
+/// supply and debt there, and the reserve's numbers.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct VenueReading {
+    pub id: String,
+    pub supplied: f64,
+    pub borrowed: f64,
+    pub health: Option<f64>,
+    pub stats: Vec<(String, f64)>,
 }
 
 /// One of the bot's fills.
@@ -404,6 +418,7 @@ impl Venues {
                 quote: grader_f64(total(quote)),
                 price_usd: grader_f64(price),
                 value_usd: grader_f64(value),
+                venues: Vec::new(),
             },
             open_orders,
         })
@@ -887,6 +902,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reports,
         reopen_slot: None,
         cast,
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -1165,6 +1181,7 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            lending: None,
             crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -1229,6 +1246,8 @@ mod tests {
             fair_path: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,

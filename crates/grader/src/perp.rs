@@ -299,6 +299,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .as_ref()
             .map(|off| base_slot + off.reopen_slot),
         cast,
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -523,6 +524,7 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            lending: None,
             crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,

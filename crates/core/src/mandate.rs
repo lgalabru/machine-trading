@@ -142,9 +142,8 @@ pub struct InstrumentRef {
     pub symbol: String,
 }
 
-/// Instrument kinds this reader enforces. `specs/instruments/` defines
-/// money markets too, and reserves futures and options; this reader refuses
-/// them.
+/// Instrument kinds this reader enforces. `specs/instruments/` reserves
+/// futures and options; this reader refuses them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     /// A perpetual future: no expiry, held near spot by funding payments.
@@ -152,6 +151,9 @@ pub enum Kind {
     /// A spot market, where the base asset changes hands. The position is
     /// the account's holdings of the base asset, wherever they sit.
     Spot,
+    /// A money market's reserve. The position is what the account supplied
+    /// there minus what it borrowed.
+    MoneyMarket,
 }
 
 impl Mandate {
@@ -606,6 +608,7 @@ impl fmt::Display for Kind {
         f.write_str(match self {
             Self::Perp => "perp",
             Self::Spot => "spot",
+            Self::MoneyMarket => "money-market",
         })
     }
 }
@@ -617,8 +620,9 @@ impl FromStr for Kind {
         match s {
             "perp" => Ok(Self::Perp),
             "spot" => Ok(Self::Spot),
-            "future" | "option" | "money-market" => Err(format!(
-                "instrument kind {s:?} is reserved; this reader enforces perp and spot only"
+            "money-market" => Ok(Self::MoneyMarket),
+            "future" | "option" => Err(format!(
+                "instrument kind {s:?} is reserved; this reader enforces perp, spot and money-market only"
             )),
             _ => Err(format!("unknown instrument kind {s:?}")),
         }
@@ -657,8 +661,15 @@ mod tests {
         ] {
             assert!(bad.parse::<InstrumentRef>().is_err(), "{bad}");
         }
-        assert!(
+        assert_eq!(
             "kamino:money-market:USDC"
+                .parse::<InstrumentRef>()
+                .unwrap()
+                .kind,
+            Kind::MoneyMarket
+        );
+        assert!(
+            "drift:future:SOL"
                 .parse::<InstrumentRef>()
                 .unwrap_err()
                 .contains("reserved")
