@@ -195,6 +195,8 @@ enum Command {
         /// `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
         #[arg(long)]
         details: Option<PathBuf>,
+        #[command(flatten)]
+        scoring: rescore::ScoringArgs,
     },
     /// Score a finished grade again from what it wrote, without running a
     /// session: for when a scoring rule changes. Each session's report and
@@ -214,9 +216,11 @@ enum Command {
         #[arg(long)]
         reward: Option<PathBuf>,
         /// Fail unless the new report is the old one: nothing about scoring
-        /// changed.
+        /// changed (v2 aside, when the old one had none).
         #[arg(long)]
         check: bool,
+        #[command(flatten)]
+        scoring: rescore::ScoringArgs,
     },
     /// Run the reference bot through scenarios and save its PnL in each file.
     Calibrate {
@@ -530,6 +534,8 @@ enum BenchCommand {
         check: bool,
         #[arg(long)]
         results: Option<PathBuf>,
+        #[command(flatten)]
+        scoring: rescore::ScoringArgs,
     },
     /// Compare two releases (or batches), task by task: each model's mean
     /// skill on both, and the change. As in `mtx bench compare 0.9.0...0.8.0`.
@@ -853,9 +859,10 @@ async fn run() -> Result<()> {
             path,
             check,
             results,
+            scoring,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
-            let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?)?;
+            let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?, &scoring)?;
             if check && (summary["changed"] != 0 || summary["failed"] != 0) {
                 eprintln!("{}", serde_json::to_string_pretty(&summary)?);
                 anyhow::bail!(
@@ -873,14 +880,16 @@ async fn run() -> Result<()> {
             out,
             reward,
             check,
+            scoring,
         } => {
+            let v2 = scoring.params(None)?;
             let details = details.unwrap_or_else(|| {
                 report
                     .parent()
                     .unwrap_or(std::path::Path::new("."))
                     .join("sessions")
             });
-            let rescored = rescore::rescore(&report, &details, None)?;
+            let rescored = rescore::rescore(&report, &details, None, v2.as_ref())?;
             for difference in &rescored.differences {
                 eprintln!("{}", rescore::describe(difference));
             }
@@ -1282,7 +1291,9 @@ async fn run() -> Result<()> {
             reward,
             report,
             details,
+            scoring,
         } => {
+            let v2 = scoring.params(None)?;
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
             let mut annotations: Option<Vec<serde_json::Value>> = None;
@@ -1367,6 +1378,12 @@ async fn run() -> Result<()> {
                 && path.exists()
             {
                 graded.tamper(format!("a bot wrote {}", path.display()));
+            }
+            // Report-only: a grade v2 can't score keeps its v1 scores.
+            if let Some(params) = &v2
+                && let Err(error) = graded.score_v2(params)
+            {
+                eprintln!("{error}");
             }
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
