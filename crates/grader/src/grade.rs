@@ -1542,8 +1542,8 @@ mod tests {
 
         let v2 = report.v2.as_ref().unwrap();
         assert_eq!(v2.breached_sessions, 1);
-        // The drawdown limit (1,000) lost twice.
-        assert_eq!(v2.sessions[1].bot_usd, -2_000.0);
+        // The drawdown limit (1,000) lost 1.5 times.
+        assert_eq!(v2.sessions[1].bot_usd, -1_500.0);
         assert!(v2.fatal.is_none());
         let rewards = report.rewards();
         assert_eq!(rewards["score_v2"], v2.score);

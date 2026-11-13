@@ -30,7 +30,7 @@ pub enum Scoring {
     V1,
     /// Those, and scoring v2 beside them (`v2` in the report, `score_v2*`
     /// in the rewards): 0 = doing nothing, 0.5 = the reference, 1 = the
-    /// task's informed bot, losses counted twice and a breach scored per
+    /// task's informed bot, losses counted 1.5 times and a breach scored per
     /// session. Report-only: `reward` and `skill` don't change.
     V2,
 }
@@ -223,6 +223,8 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         bail!("no Harbor trials under {}", root.path.display());
     }
     let mut rows = Vec::new();
+    // Each task's v2 grades, by model, for the comparison across runs.
+    let mut graded: BTreeMap<String, Vec<Graded>> = BTreeMap::new();
     let (mut same, mut changed, mut skipped, mut failed) = (0, 0, 0, 0);
     for trial in &trials {
         let name = trial
@@ -274,6 +276,7 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
                 "raw": v2.raw,
                 "edge": v2.edge,
                 "ci": [v2.ci_lo, v2.ci_hi],
+                "ci_scope": v2.ci_scope,
                 "within_noise": v2.within_noise,
                 "beats_informed": v2.beats_informed,
                 "ceiling": v2.ceiling,
@@ -289,10 +292,15 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
                 "breached_sessions": v2.breached_sessions,
                 "fatal": v2.fatal,
             });
+            graded.entry(task_of(trial)).or_default().push((
+                model_of(trial),
+                v2.clone(),
+                rescored.report.eval_seed_sha256.clone(),
+            ));
         }
         rows.push(row);
     }
-    Ok(json!({
+    let mut summary = json!({
         "root": root.label,
         "trials": trials.len(),
         "same": same,
@@ -300,7 +308,58 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         "skipped": skipped,
         "failed": failed,
         "rescored": rows,
-    }))
+    });
+    if !graded.is_empty() {
+        summary["v2_comparison"] = compare_models(&graded, scoring)?;
+    }
+    Ok(summary)
+}
+
+/// One trial's model, v2 score and `eval_seed_sha256`.
+type Graded = (String, scoring_v2::ScoreV2, Option<String>);
+
+/// Per task with more than one run: each model's mean v2 `raw` and the
+/// paired interval of every difference between models, from a bootstrap of
+/// scenarios and runs (see [`scoring_v2::compare`]). A task whose runs
+/// can't be compared says why.
+fn compare_models(graded: &BTreeMap<String, Vec<Graded>>, scoring: &ScoringArgs) -> Result<Value> {
+    let mut tasks = serde_json::Map::new();
+    for (task, runs) in graded {
+        if runs.len() < 2 {
+            continue;
+        }
+        let Some(params) = scoring.params(Some(task))? else {
+            continue;
+        };
+        let compared = scoring_v2::compare(
+            &runs
+                .iter()
+                .map(|(model, v2, _)| scoring_v2::Run {
+                    model: model.clone(),
+                    v2,
+                })
+                .collect::<Vec<_>>(),
+            &params,
+            runs.iter().find_map(|(_, _, seed)| seed.as_deref()),
+        );
+        tasks.insert(
+            task.clone(),
+            match compared {
+                Ok(comparison) => serde_json::to_value(comparison)?,
+                Err(why) => json!({ "failed": why }),
+            },
+        );
+    }
+    Ok(Value::Object(tasks))
+}
+
+/// A trial's model: the last part of its agent's model name.
+fn model_of(trial: &Path) -> String {
+    let config = crate::review::read_json(&trial.join("config.json")).unwrap_or(Value::Null);
+    config["agent"]["model_name"]
+        .as_str()
+        .map(|m| m.rsplit('/').next().unwrap_or(m).to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// A trial's task, as named in bench/tasks: the last part of its config's

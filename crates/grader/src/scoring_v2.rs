@@ -10,12 +10,17 @@
 //! latency: 1 is perfect reading and perfect execution, reachable by
 //! definition. A bot that beats it scores above 1 in `raw`, flagged.
 //!
-//! Losses count `k` times (2 by default) before the sums, with no floor per
-//! session, so a gamble with no edge scores no better than doing nothing. A
-//! session that breaks its mandate or order, or ends liquidatable, counts as
-//! losing the whole drawdown limit `k` times, the worst loss the mandate
-//! allows: a breach never beats complying, and one late breach no longer
-//! erases a whole grade. Calling a method the guard refuses, tampering with
+//! Losses count `k` times (1.5 by default) before the sums, with no floor
+//! per session, so a gamble with no edge scores no better than doing
+//! nothing. The price is that a profitable strategy whose sessions are too
+//! noisy for its edge also scores below doing nothing: with normally
+//! distributed session PnL, below a per-session Sharpe (mean over standard
+//! deviation) of about 0.16 at k = 1.5 (0.28 at k = 2), reported with the
+//! score as `break_even_sharpe`. A session that breaks its mandate or order,
+//! or ends liquidatable, counts at least as losing the whole drawdown limit
+//! `k` times, the worst loss the mandate allows, and its real weighted loss
+//! when that is worse: a breach never beats complying, never caps a loss,
+//! and one late breach no longer erases a whole grade. Calling a method the guard refuses, tampering with
 //! the grade, or not being graded at all still scores 0.
 //!
 //! ```text
@@ -49,14 +54,15 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 /// The loss weight `k` by default.
-pub const LOSS_WEIGHT: f64 = 2.0;
+pub const LOSS_WEIGHT: f64 = 1.5;
 /// The reference anchor's floor `φ`, as a share of the informed bot's, by
 /// default.
 pub const ANCHOR_FLOOR: f64 = 0.10;
 /// Bootstrap resamples for the interval.
 pub const RESAMPLES: usize = 2_000;
-/// The interval's tails: the 5th and 95th percentiles.
-const CI_TAIL: f64 = 0.05;
+/// The intervals' level: 95%, the 2.5th and 97.5th percentiles.
+pub const CI_LEVEL: f64 = 0.95;
+const CI_TAIL: f64 = (1.0 - CI_LEVEL) / 2.0;
 
 /// Where the 1.0 anchor comes from.
 #[derive(Debug, Clone, PartialEq)]
@@ -130,10 +136,14 @@ pub struct ScoreV2 {
     pub raw: f64,
     /// `raw − 0.5`: the edge over the reference.
     pub edge: f64,
-    /// The 5th and 95th percentiles of `raw` over a paired bootstrap of the
-    /// sessions.
+    /// The 95% interval of `raw` over a paired bootstrap of this grade's
+    /// sessions (`ci_scope: "sessions"`): one run's uncertainty from the
+    /// sessions it drew. Comparing models over several runs is
+    /// [`compare`]'s, which resamples runs too.
     pub ci_lo: f64,
     pub ci_hi: f64,
+    pub ci_scope: String,
+    pub ci_level: f64,
     /// The interval of `edge` spans 0: the bot isn't told apart from the
     /// reference on this set.
     pub within_noise: bool,
@@ -157,6 +167,9 @@ pub struct ScoreV2 {
     pub bound_usd: f64,
     pub luck_headroom_usd: f64,
     pub breached_sessions: usize,
+    /// The per-session Sharpe below which a profitable strategy scores under
+    /// doing nothing at this `k` (see [`break_even_sharpe`]).
+    pub break_even_sharpe: f64,
     /// Sessions whose mandate has no drawdown limit, where `L` is the
     /// hindsight bound instead.
     pub limit_from_bound_sessions: usize,
@@ -408,6 +421,8 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         edge: -0.5,
         ci_lo: 0.0,
         ci_hi: 0.0,
+        ci_scope: "sessions".into(),
+        ci_level: CI_LEVEL,
         within_noise: false,
         beats_informed: false,
         fatal: Some(reason),
@@ -421,6 +436,7 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         luck_headroom_usd: 0.0,
         breached_sessions: 0,
         limit_from_bound_sessions: 0,
+        break_even_sharpe: break_even_sharpe(params.loss_weight),
         loss_weight: params.loss_weight,
         anchor_floor: params.anchor_floor,
         ceiling: ceiling.into(),
@@ -431,6 +447,42 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         gap: Gap::default(),
         sessions: Vec::new(),
     }
+}
+
+/// The per-session Sharpe `s = μ/σ` at which a strategy with normally
+/// distributed session PnL has an expected weighted PnL of 0, doing
+/// nothing's: `E[w(X)] = μ − (k − 1)·E[max(−X, 0)] = 0`, that is
+/// `s = (k − 1)·(φ(s) − s·(1 − Φ(s)))`. Below it, losses counted `k` times
+/// outweigh the edge. 0 at `k = 1`; about 0.16 at 1.5 and 0.28 at 2.
+pub fn break_even_sharpe(k: f64) -> f64 {
+    let gap = |s: f64| {
+        let density = (-0.5 * s * s).exp() / (2.0 * std::f64::consts::PI).sqrt();
+        let upper = 0.5 * erfc(s / std::f64::consts::SQRT_2);
+        (k - 1.0) * (density - s * upper) - s
+    };
+    // gap(0) ≥ 0 and gap falls with s: bisect on [0, 5].
+    let (mut lo, mut hi) = (0.0, 5.0);
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if gap(mid) > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
+/// The complementary error function, to about 1e-7 (Abramowitz and Stegun
+/// 7.1.26), for [`break_even_sharpe`].
+fn erfc(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let poly = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let tail = poly * (-x * x).exp();
+    if x >= 0.0 { tail } else { 2.0 - tail }
 }
 
 /// The weighted sums over some sessions.
@@ -474,7 +526,7 @@ impl Sums {
     }
 }
 
-/// The 5th and 95th percentiles of `raw` over resamples of the sessions,
+/// The 95% interval of `raw` over resamples of the sessions,
 /// each drawn with replacement and used for the bot, the reference and the
 /// ceiling alike.
 fn interval(terms: &[SessionV2], params: &Params, seed: u64) -> (f64, f64) {
@@ -494,6 +546,195 @@ fn interval(terms: &[SessionV2], params: &Params, seed: u64) -> (f64, f64) {
     }
     raws.sort_by(f64::total_cmp);
     (percentile(&raws, CI_TAIL), percentile(&raws, 1.0 - CI_TAIL))
+}
+
+/// One graded run of a task, for [`compare`].
+pub struct Run<'a> {
+    pub model: String,
+    pub v2: &'a ScoreV2,
+}
+
+/// Models compared over several runs of one task (see [`compare`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Comparison {
+    /// `scenarios+runs`: scenarios resampled as clusters, then runs within
+    /// each model, the same scenario draws for every model.
+    pub ci_scope: String,
+    pub ci_level: f64,
+    pub resamples: usize,
+    pub seeded_from_eval: bool,
+    pub scenarios: usize,
+    pub models: Vec<ModelV2>,
+    pub pairs: Vec<PairV2>,
+}
+
+/// One model's runs on a task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelV2 {
+    pub model: String,
+    pub runs: usize,
+    /// The mean of its runs' `raw`, with its interval.
+    pub mean_raw: f64,
+    pub ci_lo: f64,
+    pub ci_hi: f64,
+    /// The mean of its runs' clamped score: the headline, no interval.
+    pub mean_score: f64,
+}
+
+/// Two models' difference in mean `raw` (`a − b`), with its paired interval.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PairV2 {
+    pub a: String,
+    pub b: String,
+    pub diff: f64,
+    pub ci_lo: f64,
+    pub ci_hi: f64,
+    /// The interval includes 0: the two rank as tied.
+    pub tie: bool,
+}
+
+/// Compare models over several graded runs of one task, all on the same
+/// scenarios: a hierarchical, paired bootstrap of the mean `raw`. Each
+/// resample draws the scenarios with replacement (each scenario a cluster,
+/// the same draws for every model, so model differences are paired), then
+/// each model's runs with replacement, and scores every drawn run on the
+/// drawn scenarios. A grade that is fatal counts as `raw` 0. The seed is
+/// the first run's `eval_seed_sha256`, as for one grade.
+pub fn compare(
+    runs: &[Run],
+    params: &Params,
+    eval_seed_sha256: Option<&str>,
+) -> Result<Comparison, String> {
+    let first = runs
+        .iter()
+        .find(|r| !r.v2.sessions.is_empty())
+        .ok_or("no run with sessions to compare")?;
+    let names: Vec<&str> = first
+        .v2
+        .sessions
+        .iter()
+        .map(|s| s.scenario.as_str())
+        .collect();
+    // Each run's terms in the first run's scenario order; `None`: unscored.
+    let mut aligned: Vec<Option<Vec<&SessionV2>>> = Vec::with_capacity(runs.len());
+    for run in runs {
+        if run.v2.sessions.is_empty() {
+            aligned.push(None);
+            continue;
+        }
+        let by_name: BTreeMap<&str, &SessionV2> = run
+            .v2
+            .sessions
+            .iter()
+            .map(|s| (s.scenario.as_str(), s))
+            .collect();
+        if by_name.len() != names.len() {
+            return Err("the runs didn't play the same scenarios".into());
+        }
+        let terms = names
+            .iter()
+            .map(|name| {
+                by_name
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| format!("a run didn't play {name}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        aligned.push(Some(terms));
+    }
+    let raw_of = |i: usize, idx: &[usize]| -> f64 {
+        match &aligned[i] {
+            Some(_) if runs[i].v2.fatal.is_some() => 0.0,
+            Some(terms) => {
+                let sums = Sums::of(idx.iter().map(|&j| terms[j]));
+                if sums.ceiling <= 0.0 {
+                    0.0
+                } else {
+                    sums.raw(params.anchor_floor)
+                }
+            }
+            None => 0.0,
+        }
+    };
+    let mut models: Vec<String> = runs.iter().map(|r| r.model.clone()).collect();
+    models.sort();
+    models.dedup();
+    let members: Vec<Vec<usize>> = models
+        .iter()
+        .map(|m| (0..runs.len()).filter(|&i| &runs[i].model == m).collect())
+        .collect();
+    let n = names.len();
+    let all: Vec<usize> = (0..n).collect();
+    let means: Vec<f64> = members
+        .iter()
+        .map(|ix| ix.iter().map(|&i| raw_of(i, &all)).sum::<f64>() / ix.len() as f64)
+        .collect();
+    let seed = seed(eval_seed_sha256);
+    let mut rng = SplitMix64(seed.unwrap_or(FIXED_SEED));
+    let mut draws: Vec<Vec<f64>> = vec![Vec::with_capacity(params.resamples); models.len()];
+    let mut idx = vec![0; n];
+    for _ in 0..params.resamples {
+        for slot in idx.iter_mut() {
+            *slot = rng.below(n);
+        }
+        for (m, ix) in members.iter().enumerate() {
+            let total: f64 = (0..ix.len())
+                .map(|_| raw_of(ix[rng.below(ix.len())], &idx))
+                .sum();
+            draws[m].push(total / ix.len() as f64);
+        }
+    }
+    let interval_of = |mut values: Vec<f64>| {
+        if values.is_empty() {
+            return (f64::NAN, f64::NAN);
+        }
+        values.sort_by(f64::total_cmp);
+        (
+            percentile(&values, CI_TAIL),
+            percentile(&values, 1.0 - CI_TAIL),
+        )
+    };
+    let mut pairs = Vec::new();
+    for a in 0..models.len() {
+        for b in a + 1..models.len() {
+            let diffs = draws[a].iter().zip(&draws[b]).map(|(x, y)| x - y).collect();
+            let (ci_lo, ci_hi) = interval_of(diffs);
+            pairs.push(PairV2 {
+                a: models[a].clone(),
+                b: models[b].clone(),
+                diff: means[a] - means[b],
+                ci_lo,
+                ci_hi,
+                tie: ci_lo <= 0.0 && 0.0 <= ci_hi,
+            });
+        }
+    }
+    let models = models
+        .iter()
+        .zip(&members)
+        .zip(&means)
+        .zip(draws)
+        .map(|(((model, ix), &mean_raw), draws)| {
+            let (ci_lo, ci_hi) = interval_of(draws);
+            ModelV2 {
+                model: model.clone(),
+                runs: ix.len(),
+                mean_raw,
+                ci_lo,
+                ci_hi,
+                mean_score: ix.iter().map(|&i| runs[i].v2.score).sum::<f64>() / ix.len() as f64,
+            }
+        })
+        .collect();
+    Ok(Comparison {
+        ci_scope: "scenarios+runs".into(),
+        ci_level: CI_LEVEL,
+        resamples: params.resamples,
+        seeded_from_eval: seed.is_some(),
+        scenarios: n,
+        models,
+        pairs,
+    })
 }
 
 /// The `q` quantile of sorted values, interpolated between neighbours.
@@ -596,8 +837,8 @@ mod tests {
         let at = score(&set(&[150.0; 6], &REFERENCE), &informed(), None, None).unwrap();
         assert!((at.raw - 1.0).abs() < 1e-12, "{}", at.raw);
         assert!(!at.beats_informed);
-        let above = score(&set(&[228.0; 6], &REFERENCE), &informed(), None, None).unwrap();
-        // (1,368 − 120) / (900 − 120) = 1.6: raw 0.5 + 0.8.
+        let above = score(&set(&[227.5; 6], &REFERENCE), &informed(), None, None).unwrap();
+        // (1,365 − 125) / (900 − 125) = 1.6: raw 0.5 + 0.8.
         assert!((above.raw - 1.3).abs() < 1e-12, "{}", above.raw);
         assert!(above.beats_informed);
         assert_eq!(above.score, 1.0);
@@ -633,29 +874,69 @@ mod tests {
         assert_eq!(both.eta, None);
     }
 
-    /// The analysis's formula, worked by hand: losses count twice, the
-    /// reference's sum is 40 − 20 + 25 + 60 + 0 + 15 = 120, the informed
+    /// The analysis's formula, worked by hand: losses count 1.5 times, the
+    /// reference's sum is 40 − 15 + 25 + 60 + 0 + 15 = 125, the informed
     /// bot's 6 × 150 = 900.
     #[test]
-    fn losses_count_twice_in_the_pooled_sums() {
+    fn losses_count_k_times_in_the_pooled_sums() {
         let bot = [100.0, -30.0, 50.0, -10.0, 20.0, 0.0];
         let v2 = score(&set(&bot, &REFERENCE), &informed(), None, None).unwrap();
-        // E_bot = 100 − 60 + 50 − 20 + 20 + 0 = 90, under the reference's 120.
-        assert_eq!(v2.bot_usd, 90.0);
-        assert_eq!(v2.reference_usd, 120.0);
+        // E_bot = 100 − 45 + 50 − 15 + 20 + 0 = 110, under the reference's 125.
+        assert_eq!(v2.loss_weight, 1.5);
+        assert_eq!(v2.bot_usd, 110.0);
+        assert_eq!(v2.reference_usd, 125.0);
         assert_eq!(v2.ceiling_usd, 900.0);
-        assert_eq!(v2.raw, 0.5 * 90.0 / 120.0);
+        assert_eq!(v2.raw, 0.5 * 110.0 / 125.0);
         let better = [400.0, 0.0, 50.0, 60.0, 20.0, 0.0];
         let v2 = score(&set(&better, &REFERENCE), &informed(), None, None).unwrap();
-        assert_eq!(v2.raw, 0.5 + 0.5 * (530.0 - 120.0) / (900.0 - 120.0));
+        assert_eq!(v2.raw, 0.5 + 0.5 * (530.0 - 125.0) / (900.0 - 125.0));
+        // At k = 2, REPORT.md's G: 100 − 60 + 50 − 20 + 20 = 90 against 120.
+        let mut g = informed();
+        g.loss_weight = 2.0;
+        let v2 = score(&set(&bot, &REFERENCE), &g, None, None).unwrap();
+        assert_eq!((v2.bot_usd, v2.reference_usd), (90.0, 120.0));
     }
 
     #[test]
-    fn an_informed_bots_losses_count_twice_too() {
+    fn an_informed_bots_losses_count_k_times_too() {
         let mut sessions = set(&REFERENCE, &REFERENCE);
         sessions[0].informed_pnl_usd = Some(-50.0);
         let v2 = score(&sessions, &informed(), None, None).unwrap();
-        assert_eq!(v2.ceiling_usd, 750.0 - 100.0);
+        assert_eq!(v2.ceiling_usd, 750.0 - 75.0);
+    }
+
+    #[test]
+    fn the_break_even_sharpe_is_reported_for_k() {
+        assert!(break_even_sharpe(1.0) < 1e-9);
+        assert!(
+            (break_even_sharpe(1.5) - 0.16).abs() < 0.01,
+            "{}",
+            break_even_sharpe(1.5)
+        );
+        assert!(
+            (break_even_sharpe(2.0) - 0.28).abs() < 0.01,
+            "{}",
+            break_even_sharpe(2.0)
+        );
+        let v2 = score(&set(&REFERENCE, &REFERENCE), &informed(), None, None).unwrap();
+        assert_eq!(v2.break_even_sharpe, break_even_sharpe(1.5));
+        // A strategy at that Sharpe scores about what doing nothing does.
+        let s = break_even_sharpe(1.5);
+        let (n, mut rng) = (200_000, SplitMix64(11));
+        let mut normal = || {
+            // Box-Muller, from two uniforms.
+            let u = (rng.next() >> 11) as f64 / (1u64 << 53) as f64;
+            let v = (rng.next() >> 11) as f64 / (1u64 << 53) as f64;
+            (-2.0 * (1.0 - u).ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+        };
+        let mean = (0..n)
+            .map(|_| {
+                let x = s + normal();
+                if x < 0.0 { 1.5 * x } else { x }
+            })
+            .sum::<f64>()
+            / n as f64;
+        assert!(mean.abs() < 0.01, "{mean}");
     }
 
     #[test]
@@ -669,7 +950,7 @@ mod tests {
         sessions[5].pnl_usd = 500.0;
         sessions[5].breach = Some("drew down past its limit".into());
         let breached = score(&sessions, &informed(), None, None).unwrap();
-        assert_eq!(breached.sessions[5].bot_usd, -200.0);
+        assert_eq!(breached.sessions[5].bot_usd, -150.0);
         assert_eq!(breached.breached_sessions, 1);
         assert_eq!(breached.raw, compliant_worst.raw);
         // One breach no longer zeroes the set.
@@ -682,14 +963,16 @@ mod tests {
         for s in &mut sessions {
             s.worst_loss_usd = 1_000.0;
         }
+        let mut k2 = informed();
+        k2.loss_weight = 2.0;
         sessions[2].pnl_usd = -9_000.0;
         sessions[2].breach = Some("drew down past its limit".into());
-        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        let v2 = score(&sessions, &k2, None, None).unwrap();
         assert_eq!(v2.sessions[2].bot_usd, -18_000.0);
         assert!(v2.gap.usd.risk >= 0.0 && v2.gap.risk >= 0.0, "{:?}", v2.gap);
         // A breach that made money still counts the worst allowed loss.
         sessions[2].pnl_usd = 400.0;
-        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        let v2 = score(&sessions, &k2, None, None).unwrap();
         assert_eq!(v2.sessions[2].bot_usd, -2_000.0);
         assert!(v2.gap.usd.risk >= 0.0);
     }
@@ -737,10 +1020,11 @@ mod tests {
 
     #[test]
     fn a_weak_reference_is_floored_and_flagged() {
-        let weak = [1.0, -2.0, 1.0, 0.0, 1.0, 0.0];
+        let weak = [1.0, -3.0, 1.0, 0.0, 1.0, 0.0];
         let v2 = score(&set(&weak, &weak), &informed(), None, None).unwrap();
         assert!(v2.anchor_floored);
-        assert_eq!(v2.reference_measured_usd, -1.0);
+        // 1 − 4.5 + 1 + 0 + 1 + 0.
+        assert_eq!(v2.reference_measured_usd, -1.5);
         assert!((v2.reference_usd - 0.10 * 900.0).abs() < 1e-9);
         // The reference itself now scores below 0.5, and nop still 0.
         assert!(v2.raw < 0.0);
@@ -805,7 +1089,7 @@ mod tests {
 
     #[test]
     fn the_gap_buckets_sum_to_what_is_left_to_one() {
-        // Traded at a cost of 5 a session, sat out one, lost twice in one.
+        // Traded at a cost of 5 a session, sat out one, lost in one, breached one.
         let bot = [100.0, -30.0, 50.0, 0.0, 20.0, 80.0];
         let mut sessions = set(&bot, &REFERENCE);
         sessions[5].breach = Some("went over the cap".into());
@@ -824,8 +1108,8 @@ mod tests {
         assert_eq!(usd.missed, 150.0);
         // Five traded sessions paid 5 each.
         assert_eq!(usd.execution, 25.0);
-        // The loss counted again (30), and the breach: 80 made, −200 scored.
-        assert_eq!(usd.risk, 30.0 + 280.0);
+        // Half the loss again (15), and the breach: 80 made, −150 scored.
+        assert_eq!(usd.risk, 15.0 + 230.0);
         assert_eq!(g.noise, (v2.ci_hi - v2.ci_lo) / 2.0);
         assert!(g.noise > 0.0);
     }
@@ -863,6 +1147,89 @@ mod tests {
             None,
         );
         assert!(low.unwrap_err().contains("too low"));
+    }
+
+    /// Runs of two models on the same six scenarios.
+    fn runs(model_a: &[[f64; 6]], model_b: &[[f64; 6]]) -> Vec<(String, ScoreV2)> {
+        let graded =
+            |pnl: &[f64; 6]| score(&set(pnl, &REFERENCE), &informed(), None, None).unwrap();
+        model_a
+            .iter()
+            .map(|p| ("a".to_string(), graded(p)))
+            .chain(model_b.iter().map(|p| ("b".to_string(), graded(p))))
+            .collect()
+    }
+
+    fn compared(graded: &[(String, ScoreV2)]) -> Comparison {
+        let runs: Vec<Run> = graded
+            .iter()
+            .map(|(model, v2)| Run {
+                model: model.clone(),
+                v2,
+            })
+            .collect();
+        compare(&runs, &informed(), Some(&"ab".repeat(32))).unwrap()
+    }
+
+    #[test]
+    fn models_far_apart_are_ranked_and_close_ones_tie() {
+        let strong = [[140.0, 120.0, 150.0, 130.0, 145.0, 150.0]; 3];
+        let weak = [[10.0, -20.0, 5.0, 0.0, 15.0, 10.0]; 3];
+        let c = compared(&runs(&strong, &weak));
+        assert_eq!(c.ci_scope, "scenarios+runs");
+        assert_eq!(c.ci_level, 0.95);
+        assert_eq!(c.models[0].runs, 3);
+        assert!(
+            c.models[0].ci_lo <= c.models[0].mean_raw && c.models[0].mean_raw <= c.models[0].ci_hi
+        );
+        let pair = &c.pairs[0];
+        assert_eq!((pair.a.as_str(), pair.b.as_str()), ("a", "b"));
+        assert!(pair.diff > 0.0 && !pair.tie, "{pair:?}");
+
+        let close = [
+            [60.0, 10.0, 30.0, 70.0, 0.0, 20.0],
+            [40.0, -5.0, 35.0, 55.0, 10.0, 15.0],
+        ];
+        let similar = [
+            [50.0, 0.0, 40.0, 60.0, 5.0, 20.0],
+            [45.0, 5.0, 20.0, 65.0, 0.0, 25.0],
+        ];
+        let c = compared(&runs(&close, &similar));
+        assert!(c.pairs[0].tie, "{:?}", c.pairs[0]);
+    }
+
+    #[test]
+    fn the_same_draws_give_the_same_intervals_and_fatal_runs_count_zero() {
+        let a = [[100.0, 20.0, 40.0, 60.0, 0.0, 30.0]; 2];
+        let b = [[30.0, 10.0, 20.0, 50.0, 5.0, 10.0]; 2];
+        let graded = runs(&a, &b);
+        assert_eq!(compared(&graded), compared(&graded));
+        let mut fatal = graded.clone();
+        fatal[0].1.fatal = Some("tampered".into());
+        let c = compared(&fatal);
+        // One of model a's two runs now counts 0.
+        assert!((c.models[0].mean_raw - graded[1].1.raw / 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn runs_on_different_scenarios_are_not_compared() {
+        let mut graded = runs(&[[10.0; 6]], &[[20.0; 6]]);
+        graded[1].1.sessions[0].scenario = "elsewhere".into();
+        let runs: Vec<Run> = graded
+            .iter()
+            .map(|(model, v2)| Run {
+                model: model.clone(),
+                v2,
+            })
+            .collect();
+        assert!(compare(&runs, &informed(), None).is_err());
+    }
+
+    #[test]
+    fn one_grades_interval_is_labelled_as_its_sessions() {
+        let v2 = score(&set(&REFERENCE, &REFERENCE), &informed(), None, None).unwrap();
+        assert_eq!(v2.ci_scope, "sessions");
+        assert_eq!(v2.ci_level, 0.95);
     }
 
     #[test]
