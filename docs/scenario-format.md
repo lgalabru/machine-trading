@@ -24,7 +24,7 @@ docs together.
 | Section | Holds |
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
-| `assets` | `symbol`; a spot session's starting `wallet` |
+| `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
 | `venues` | Exactly one of `perp` (with its `funding`), `spot` (`markets`, the pool markets in `liquidity`, `turn_data`), `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) and `stake` (the stake pools, the wallet's SOL and pool `tokens`, the `epochs` crossed; [stake pools](../specs/instruments/stake-pool.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
@@ -32,8 +32,8 @@ docs together.
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
-| `order` | A quantity the bot has to trade by the end |
-| `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net` |
+| `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
+| `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
 
 Optional sections are left out when empty. Unknown fields are errors in
 every section.
@@ -48,7 +48,24 @@ moving prices through their Scope feeds only (no path, actors, order or spot
 scoring; clock jumps inside the session and without faults), stake-pool
 scenarios having only their pools, wallet and epochs (no market model,
 actors, oracles, faults, raw sends, order or spot scoring), the mandate
-covering exactly the scenario's markets, a sell order fitting the wallet.
+covering exactly the scenario's markets, a sell order fitting the wallet,
+and, on a perp (`positions_fit_the_market`):
+
+- `start_positions` and `close_out` are perp-only and name the scenario's
+  market; a start position is not 0 and lies inside the mandate's range for
+  it;
+- an order is in the scenario's market and ends inside the range; a
+  reduce-only order is no bigger than the starting position it reduces (a
+  reduce-only buy closes a short, so it needs one; on spot it is refused);
+- the order's market has no `close_out`: the order's broker already takes
+  what is left of it.
+
+A perp order and close-outs price the close at the scenario's own level at
+the last slot (the index, not Phoenix's mark, which quotes can push), and
+the session values the account there too (`valuation` `oracle`). A start
+position is a real Phoenix fill in setup, against a grader counterparty at
+the start mark, before the start value is measured; a position Phoenix
+won't margin fails the session's setup.
 
 ## Example
 

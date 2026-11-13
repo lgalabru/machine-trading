@@ -247,13 +247,21 @@ pub fn phoenix_market_address(exchange: &str, symbol: &str) -> Option<String> {
 /// The variables a task may set for a session, beyond the bot's contract:
 /// the slot an off-hours market reopens at; the session's regime and the
 /// rung a reference plays, which only the benchmark's ladder hands a
-/// process bot; and, for a component in a session that enables raw sends,
-/// the programs they may run, base58, comma-separated.
+/// process bot; for a component in a session that enables raw sends, the
+/// programs they may run, base58, comma-separated; and a perp session's
+/// starting positions (JSON, `{symbol: base units}`), its execution order
+/// (JSON, without the haircut) and the order's broker haircut in basis
+/// points, and the haircut of each market a broker closes out (JSON,
+/// `{symbol: bps}`).
 pub const SESSION_VARS: &[&str] = &[
     "MTX_REOPEN_SLOT",
     "MTX_REGIME",
     "MTX_RUNG",
     "MTX_RAW_PROGRAMS",
+    "MTX_START_POSITIONS",
+    "MTX_ORDER",
+    "MTX_BROKER_HAIRCUT_BPS",
+    "MTX_CLOSE_OUT",
 ];
 
 impl Session {

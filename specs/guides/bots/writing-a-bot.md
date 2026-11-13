@@ -393,6 +393,18 @@ The grader clears the environment, then sets exactly:
 An off-hours scenario, whose underlying's market is closed, also sets
 `MTX_REOPEN_SLOT`: the slot that market reopens at.
 
+A perp scenario that starts the bot holding a position, or gives it an
+order to work, says so:
+
+| Variable | Meaning |
+| --- | --- |
+| `MTX_START_POSITIONS` | The positions the account starts with, in base units by market: `{"NVDA": -480.0}`. |
+| `MTX_ORDER` | A quantity to trade by the end: `{"instrument": "phoenix:perp:NVDA", "side": "buy", "quantity": 62.0}`, and `"reduce_only": true` when no fill may grow the position. |
+| `MTX_BROKER_HAIRCUT_BPS` | What a broker charges, in basis points off the scenario's closing price, to trade whatever the order leaves undone. |
+| `MTX_CLOSE_OUT` | Markets whose leftover position a broker closes at the end, and its haircut in basis points: `{"SPY": 10.0}`. |
+
+A component reads them with `session.var("MTX_ORDER")`.
+
 What the account holds at the start is the task's: on `flash-crash-spcx`,
 SOL for fees and 10,000 USDC of collateral.
 

@@ -1226,6 +1226,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         env,
         reports,
         reopen_slot: None,
+        vars: Vec::new(),
         cast,
         cranks: Vec::new(),
         account: Box::new(account),
@@ -1311,6 +1312,12 @@ impl SpotAccount {
 impl Account for SpotAccount {
     fn start_value_usd(&self) -> f64 {
         self.start_value_usd
+    }
+
+    /// The session's last scan reads every fill the venues listed, for the
+    /// report, the order and the audit.
+    fn reads_fills(&self) -> bool {
+        true
     }
 
     fn moment(&self, at: u64) -> Moment {
@@ -1545,6 +1552,9 @@ impl Account for SpotAccount {
             participation,
             net,
             lending: None,
+            close_outs: Vec::new(),
+            perp_fills: Vec::new(),
+            perp_open_orders: Vec::new(),
             crank_refusals: done.crank_refusals,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
@@ -1617,6 +1627,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
             turn_data: None,
             oracles: None,
             lending: None,
@@ -1801,6 +1813,7 @@ mod tests {
             parties: true,
         });
         full.order = Some(ExecutionOrder {
+            instrument: None,
             side: Side::Sell,
             quantity: 10.0,
             haircut_bps: 50.0,
@@ -1840,10 +1853,23 @@ mod tests {
         share.participation.as_mut().unwrap().max_share = 0.0;
         assert!(share.validate().is_err());
 
-        // They are for spot scenarios.
+        // Turn data and participation are for spot scenarios; an order is
+        // for either.
         let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        perp.order = full.order.clone();
+        perp.participation = full.participation.clone();
         assert!(perp.validate().unwrap_err().contains("spot scenarios"));
+        // A spot wallet can't go short: no reduce-only buy.
+        let mut buy = full.clone();
+        buy.order = Some(ExecutionOrder {
+            side: Side::Buy,
+            reduce_only: true,
+            ..full.order.clone().unwrap()
+        });
+        assert!(buy.validate().unwrap_err().contains("reduce-only"));
+        // Starting positions and close-outs are a perp's.
+        let mut started = full.clone();
+        started.start_positions.insert("SOL-USDC".into(), 1.0);
+        assert!(started.validate().unwrap_err().contains("perp scenarios"));
     }
 
     #[test]

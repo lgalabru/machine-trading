@@ -39,11 +39,13 @@ chain = [
 # (wit/strategy.wit) and `export!`. Build for wasm32-wasip2.
 component = ["dep:wit-bindgen"]
 # Phoenix Eternal perpetuals: market metadata, exact tick/lot conversions, a
-# trader, and an ExecutionDriver; and the bot plumbing, which trades on them.
+# trader, an ExecutionDriver and a meter (fills from Phoenix's market
+# events); and the bot plumbing, which trades on them.
 phoenix = [
     "chain",
     "venue",
     "phoenix-rise/api",
+    "phoenix-rise/events",
     "phoenix-rise/tx-builder",
     "dep:tracing-subscriber",
 ]
@@ -124,6 +126,8 @@ spl-token-interface = { version = "3", optional = true }
 phoenix-rise = { version = "=0.6.15", default-features = false, features = ["serde"], optional = true }
 
 [dev-dependencies]
+# Encodes Phoenix's market events, for tests that decode them.
+borsh = "1.7"
 rust_decimal_macros = "1.39"
 serde_json = "1"
 # Signature verification, for tests that check what was signed.

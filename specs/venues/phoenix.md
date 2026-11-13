@@ -47,6 +47,21 @@ cross-margin account.
   summed over the traders, plus the authority's wallet USDC. Unsettled funding is not counted. USDC
   withdrawn from Phoenix to the wallet keeps its value, so withdrawing can't
   hide a drawdown.
+- **Fills.** Each instruction that trades a market logs, through Phoenix's
+  `Log` and `LogEventLengths` self-invocations, a `Header` event (the
+  market's sequence number, its `asset_id` and the acting trader account),
+  then an `OrderFilled` event for each resting order it took from and a
+  `SplineFilled` event for each spline, each naming the maker's trader
+  account, the maker's side, the price in ticks and `base_lots_filled`. The
+  taker is the header's trader account, on the side opposite the maker's.
+  Positions live in Phoenix's market-wide state, so a maker's trader account
+  is in none of the transactions that fill it: an enforcer reads every
+  transaction that names the market's order book (its `marketPubkey` in the
+  `/exchange` metadata) and counts each fill where one of the account's
+  traders is the taker or the maker. It MUST NOT infer fills from the
+  position.
+- **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
+  order it left on the book, its side the sign of its `quantity`.
 
 ## Spot markets
 

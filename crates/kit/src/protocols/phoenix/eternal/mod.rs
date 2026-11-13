@@ -8,6 +8,7 @@
 //! | ticks, base lots, quote lots | exact [`Decimal`](rust_decimal::Decimal) conversions on [`PhoenixMarket`] |
 //! | Hawkeye BBO view | [`OrderBook`](crate::core::OrderBook) (top of book, prices only) |
 //! | Hawkeye margin view | [`Position`](crate::core::Position) |
+//! | market events (`Log`) | [`PerpFill`], [`PerpOrderPlaced`] → [`RecordedFill`](crate::core::RecordedFill) |
 //! | limit / market order, cancel all | [`PhoenixTrader`] plans, [`chain::execute`](crate::chain::execute) sends |
 //! | order flow | [`PhoenixDriver`] → [`ExecutionDriver`](crate::core::ExecutionDriver) |
 //!
@@ -18,6 +19,7 @@
 mod driver;
 mod error;
 mod exchange;
+mod fills;
 mod market;
 mod meter;
 mod trader;
@@ -25,6 +27,7 @@ mod trader;
 pub use driver::PhoenixDriver;
 pub use error::PhoenixError;
 pub use exchange::{PhoenixExchange, load_exchange};
+pub use fills::{PerpFill, PerpMarketRecords, PerpOrderPlaced, TraderRecords};
 pub use market::{DEFAULT_QUOTE_LOT_DECIMALS, PhoenixMarket};
 pub use meter::PhoenixEternalMeter;
 /// Phoenix's SDK, re-exported so dependents do not have to pin it.
