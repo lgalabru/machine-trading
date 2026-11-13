@@ -299,6 +299,13 @@ release-publish:
     just pin-image
     for task in {{tasks}}/*/; do harbor lint "$task" --select ALL; done
     harbor sync {{tasks}}
+    # Every task in the dataset has a real digest: 0.12.0 went out with two
+    # of its four tasks still at sha256:000…, and so without them.
+    if grep -q 'digest = "sha256:0\{64\}"' {{tasks}}/dataset.toml; then
+      echo "dataset.toml lists a task with no digest; harbor sync didn't reach it:"
+      grep -B1 'digest = "sha256:0\{64\}"' {{tasks}}/dataset.toml
+      exit 1
+    fi
     # The dataset keeps the layout `mtx task sync` writes.
     cargo run --release -q -- task check
     # Publishing a dataset asks for confirmation, even with -y.
@@ -310,6 +317,13 @@ release-publish:
       harbor version tag "$(name_of "$task/task.toml")@latest" "$(version_of "$task/task.toml")" --force
     done
     harbor version tag "$(name_of {{tasks}}/dataset.toml)@latest" "$(version_of {{tasks}}/dataset.toml)" --force
+    # What a bench will pull: every task of bench/tasks, at this version.
+    check="$(mktemp -d)"
+    harbor dataset download "$(name_of {{tasks}}/dataset.toml)@$(version_of {{tasks}}/dataset.toml)" -o "$check" > /dev/null
+    want="$(ls -d {{tasks}}/*/ | wc -l | tr -d ' ')"
+    got="$(find "$check" -mindepth 2 -maxdepth 3 -name task.toml | wc -l | tr -d ' ')"
+    rm -r "$check"
+    [ "$got" = "$want" ] || { echo "the published dataset holds $got tasks, bench/tasks $want"; exit 1; }
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
 # Benchmark agents on the published dataset, on an idle machine: other load
