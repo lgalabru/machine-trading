@@ -21,6 +21,7 @@ use solana_keypair::Keypair;
 /// the eval seed (the draw, the reported hash) can be one of them.
 const SECRET_DOMAIN: &[u8] = b"mtx-grader/session-keys/v1/secret";
 const KEY_DOMAIN: &[u8] = b"mtx-grader/session-keys/v1/key";
+const SEED_DOMAIN: &[u8] = b"mtx-grader/session-keys/v1/seed";
 
 /// The secret a grade's session keys come from.
 #[derive(Clone)]
@@ -91,18 +92,29 @@ impl SessionKeyring<'_> {
     /// The keypair for `role` (`bot`, `taker`, `competitor`), the `index`th
     /// of its kind.
     pub fn keypair(&self, role: &str, index: u32) -> Keypair {
+        Keypair::new_from_array(self.derive(KEY_DOMAIN, role, index))
+    }
+
+    /// The seed of `role`'s randomness, the `index`th of its kind: the
+    /// grader's actors draw from it, so a session replays the same draws.
+    /// No key derives from it, and it is never written anywhere.
+    pub fn seed(&self, role: &str, index: u32) -> [u8; 32] {
+        self.derive(SEED_DOMAIN, role, index)
+    }
+
+    fn derive(&self, domain: &[u8], role: &str, index: u32) -> [u8; 32] {
         let field = |bytes: &[u8]| {
             let mut framed = (bytes.len() as u64).to_le_bytes().to_vec();
             framed.extend_from_slice(bytes);
             framed
         };
-        Keypair::new_from_array(digest(&[
-            KEY_DOMAIN,
+        digest(&[
+            domain,
             &self.keys.secret,
             &field(self.session.as_bytes()),
             &field(role.as_bytes()),
             &index.to_le_bytes(),
-        ]))
+        ])
     }
 }
 
@@ -141,6 +153,14 @@ mod tests {
         for other in &others {
             assert_ne!(bot.pubkey(), other.pubkey());
         }
+        // A seed is no key, and replays like one.
+        let ring = keys.session("bot/0/crash-1");
+        assert_eq!(
+            ring.seed("noise", 0),
+            again.session("bot/0/crash-1").seed("noise", 0)
+        );
+        assert_ne!(ring.seed("noise", 0), ring.seed("noise", 1));
+        assert_ne!(&ring.seed("bot", 0), bot.secret_bytes());
         // Fields are framed: moving a byte between them changes the key.
         assert_ne!(
             keys.session("ab").keypair("c", 0).pubkey(),
