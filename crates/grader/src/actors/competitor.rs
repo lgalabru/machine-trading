@@ -436,6 +436,7 @@ mod tests {
             at,
             level_usd,
             book_usd: level_usd,
+            fair_usd: None,
         };
         maker.after_blocks(&at(2, 100.0)).await;
         // Not due again until 4 slots on.

@@ -53,12 +53,16 @@ pub struct TakerRecord {
 }
 
 /// What the takers' limits are reached from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Pricing {
     /// The scenario's level: a flow trading around the market's value.
     Level,
     /// The book's level, where its premium puts it: a tape.
     Book,
+    /// The scenario's fair value: a flow of arbitrageurs who know it, whose
+    /// limits don't move with an oracle that fails.
+    Fair,
 }
 
 /// The takers through a session: the orders still to send, and what they
@@ -142,6 +146,9 @@ impl Takers {
         match self.pricing {
             Pricing::Level => moment.level_usd,
             Pricing::Book => moment.book_usd,
+            // A scenario that picks `fair` has a fair path (it is validated
+            // with it), so the level is only there for a missing one.
+            Pricing::Fair => moment.fair_usd.unwrap_or(moment.level_usd),
         }
     }
 }
@@ -232,6 +239,69 @@ pub(crate) mod tests {
         }
     }
 
+    /// Each pricing reads its own price off the moment: a level, a book and
+    /// a fair value that differ, so the limits say which one was used.
+    #[tokio::test]
+    async fn each_pricing_takes_its_limit_from_its_own_price() {
+        let moment = |at| Moment {
+            at,
+            level_usd: 100.0,
+            book_usd: 101.0,
+            fair_usd: Some(98.0),
+        };
+        let mut sent = Vec::new();
+        for pricing in [Pricing::Level, Pricing::Book, Pricing::Fair] {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let seat = Box::new(NotingSeat {
+                market: "a".into(),
+                fail_over: f64::MAX,
+                log: log.clone(),
+            }) as Box<dyn Seat>;
+            let mut takers = Takers::new(
+                vec![seat],
+                vec![
+                    order(1, TakerSide::Buy, 1.0, 0),
+                    order(2, TakerSide::Sell, 1.0, 0),
+                ],
+                pricing,
+                0,
+            );
+            takers.before_blocks(&moment(2)).await;
+            sent.push(log.lock().unwrap().clone());
+        }
+        // The orders reach 100 bp from their price.
+        assert_eq!(sent[0], ["a Bid 1 at 101", "a Ask 1 at 99"]);
+        assert_eq!(sent[1], ["a Bid 1 at 102.01", "a Ask 1 at 99.99"]);
+        assert_eq!(sent[2], ["a Bid 1 at 98.98", "a Ask 1 at 97.02"]);
+    }
+
+    /// A moment with no fair value, priced `Fair`, falls back to the level
+    /// (a scenario that picks `fair` is validated to have one).
+    #[tokio::test]
+    async fn a_fair_flow_without_a_fair_value_prices_off_the_level() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seat = Box::new(NotingSeat {
+            market: "a".into(),
+            fail_over: f64::MAX,
+            log: log.clone(),
+        }) as Box<dyn Seat>;
+        let mut takers = Takers::new(
+            vec![seat],
+            vec![order(1, TakerSide::Buy, 1.0, 0)],
+            Pricing::Fair,
+            0,
+        );
+        takers
+            .before_blocks(&Moment {
+                at: 1,
+                level_usd: 100.0,
+                book_usd: 150.0,
+                fair_usd: None,
+            })
+            .await;
+        assert_eq!(*log.lock().unwrap(), ["a Bid 1 at 101"]);
+    }
+
     #[tokio::test]
     async fn orders_go_out_when_due_from_their_accounts_seats() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -256,6 +326,7 @@ pub(crate) mod tests {
             at,
             level_usd: 1.0,
             book_usd,
+            fair_usd: None,
         };
         takers.before_blocks(&at(0, 100.0)).await;
         assert!(log.lock().unwrap().is_empty());
