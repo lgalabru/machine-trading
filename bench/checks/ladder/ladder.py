@@ -19,6 +19,16 @@ over the reference's. Then it checks:
 
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
+       [--min-rule-odds P] [--public-seed LABEL]
+
+`--public-seed LABEL` draws each set from a secret derived from the label
+instead of a fresh one: a fixed, public set that gives the same sessions on
+every run (`mtx gates --fast` uses it in CI). It is never a hidden set: those
+come from fresh 256-bit secrets.
+
+It also writes `<out>/<task>/summary.json`, which `mtx gates` reads: each
+set's totals per rung (as graded), and every rule, exploit and clean-run
+verdict.
 
 `--parallel N` grades N rungs at once. Each grade's bots run as its own
 range of the grader's bot users (`--first-bot-user`): a session's end kills
@@ -27,6 +37,7 @@ bots. There are four, so `parallel × jobs` can't exceed 4.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import queue
@@ -64,6 +75,9 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
         "--first-bot-user", str(first_bot_user),
         "--snapshot", snapshot, "--bot", os.path.join(ROOT, rung["dir"]),
         "--logs", os.path.join(out, "logs", rung["name"]), "--report", report,
+        # Rungs are ours, like the reference: their turns wait for them, so a
+        # rung's skill doesn't depend on how loaded the machine is.
+        "--trusted",
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
@@ -136,7 +150,9 @@ def main():
     parser.add_argument("--count", type=int)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--parallel", type=int, default=1, help="rungs graded at once")
+    parser.add_argument("--min-rule-odds", type=float, help="override the task's bootstrap floor")
     parser.add_argument("--out", default=os.path.join(ROOT, "target", "ladder"))
+    parser.add_argument("--public-seed", help="draw fixed, public sets from this label")
     args = parser.parse_args()
     if args.parallel < 1 or args.parallel * args.jobs > BOT_USERS:
         parser.error(f"--parallel × --jobs must be between 1 and {BOT_USERS}, one bot user each")
@@ -156,7 +172,10 @@ def main():
         os.makedirs(set_dir, exist_ok=True)
         # The secret lives only in this process and the graders it starts.
         secret_file = os.path.join(set_dir, ".secret")
-        if os.path.exists(secret_file):
+        if args.public_seed:
+            label = f"mtx-ladder-public:{args.public_seed}:{config['family']}:set-{k + 1}"
+            secret = hashlib.sha256(label.encode()).hexdigest()
+        elif os.path.exists(secret_file):
             with open(secret_file) as f:
                 secret = f.read().strip()
         else:
@@ -178,6 +197,17 @@ def main():
         ), flush=True)
 
     failed = []
+    min_rule_odds = args.min_rule_odds if args.min_rule_odds is not None else config["min_rule_odds"]
+    summary = {
+        "task": args.task,
+        "sessions": count,
+        "min_rule_odds": min_rule_odds,
+        "public_seed": args.public_seed,
+        "totals": [totals(reports) for reports in sets],
+        "rules": [],
+        "exploits": [],
+        "disqualified": [],
+    }
     print("\nskill by set (reference = 1, hindsight = the bound; a disqualified rung is 0):")
     names = [r["name"] for r in config["rungs"]] + ["hindsight"]
     table = [skills(reports) for reports in sets]
@@ -199,7 +229,9 @@ def main():
             per_set.append((holds(rule, totals(reports)), hits / BOOTSTRAP_DRAWS))
         every = all(h for h, _ in per_set)
         odds = sum(p for _, p in per_set) / len(per_set)
-        ok = every and odds >= config["min_rule_odds"]
+        ok = every and odds >= min_rule_odds
+        summary["rules"].append({"rule": rule, "ok": ok, "sets_holding": sum(h for h, _ in per_set),
+                                 "sets": len(per_set), "odds": odds})
         print(f"  {'ok  ' if ok else 'FAIL'} {rule}: holds on {sum(h for h, _ in per_set)}"
               f"/{len(per_set)} sets, bootstrap odds per set {odds:.3f} "
               f"({', '.join(f'{p:.3f}' for _, p in per_set)})")
@@ -219,12 +251,32 @@ def main():
             reasons.append(f"profitable in {profitable:.0%} of sessions")
         # Knowing the generator shouldn't pay more than knowing the regime.
         below = limits.get("below")
+        ceiling = below_odds = None
         if below:
             ceiling = sum(sum(pnls(r[below])) for r in sets)
             if sum(all_pnls) >= ceiling:
                 reasons.append(f"${sum(all_pnls):.0f}, at or above {below}'s ${ceiling:.0f}")
+            # How often a set like this one would put it at or above: the
+            # sessions resampled in pairs (both bots played the same ones).
+            pairs = list(zip(all_pnls, [p for r in sets for p in pnls(r[below])]))
+            rng = random.Random(0)
+            hits = 0
+            for _ in range(BOOTSTRAP_DRAWS):
+                draw = [pairs[rng.randrange(len(pairs))] for _ in pairs]
+                hits += sum(e for e, _ in draw) >= sum(b for _, b in draw)
+            below_odds = hits / BOOTSTRAP_DRAWS
         if reward > 0.999:
             reasons.append("reached the bound")
+        # The sample behind each verdict, for a reader (`mtx gates --fast`)
+        # judging a short set.
+        summary["exploits"].append({
+            "bot": name, "ok": not reasons, "ratio": ratio, "profitable": profitable,
+            "reasons": reasons, "sessions": len(all_pnls),
+            "profitable_sessions": sum(p > 0 for p in all_pnls),
+            "max_profitable": limits["max_profitable"], "total": sum(all_pnls),
+            "below": below, "below_total": ceiling, "below_odds": below_odds,
+            "reached_bound": reward > 0.999,
+        })
         print(f"  {'FAIL' if reasons else 'ok  '} {name}: {ratio:.2f}x the reference, "
               f"profitable {profitable:.0%}, worst ${min(all_pnls):.0f}"
               + (f" ({'; '.join(reasons)})" if reasons else ""))
@@ -241,10 +293,14 @@ def main():
                    if s.get("disqualified") or s["refused_calls"]]
             if bad:
                 print(f"  FAIL {name}: disqualified in {', '.join(bad)}")
+                summary["disqualified"].append({"rung": name, "scenarios": bad})
                 failed.append(f"{name} disqualified")
     if not any("disqualified" in f for f in failed):
         print("  ok   no rung was refused or disqualified")
 
+    summary["failed"] = failed
+    with open(os.path.join(out, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
     print("\nladder " + ("FAILED: " + "; ".join(failed) if failed else "holds"))
     sys.exit(1 if failed else 0)
 

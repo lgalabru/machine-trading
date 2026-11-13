@@ -22,12 +22,13 @@ use mtx_grader::{
     scenario::Scenario,
     wasm::{StepObserver, StepTrace},
 };
-use mtx_kit::{Action, Intent, Session, Side};
+use mtx_kit::{Action, AmountUnit, Intent, LineOptions, SendState, Session, Side, TimeInForce};
 
 pub struct Run<'a> {
     pub dir: &'a Path,
     pub task: Option<&'a str>,
-    /// A practice scenario's name (`practice-3`) or a scenario file.
+    /// A scenario: the studio's (`practice-101`, the default, `practice-102`),
+    /// one of the task's practice set (`practice-3`), or a file.
     pub scenario: Option<&'a str>,
     pub build: bool,
     pub debug: bool,
@@ -60,7 +61,7 @@ pub async fn run(options: Run<'_>) -> Result<String> {
     let root = crate::bot::repo(options.repo)?;
     let task = crate::bot::resolve_task(&root, options.task)?;
     let snapshot = crate::bot::task_snapshot(&root, &task)?;
-    let path = scenario_path(&root, &task, options.scenario)?;
+    let path = scenario_path(&dir, &root, &task, options.scenario)?;
     let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
     let logs = dir.join("target/mtx-run-logs");
     std::fs::create_dir_all(&logs)?;
@@ -90,7 +91,9 @@ pub async fn run(options: Run<'_>) -> Result<String> {
         detail_dir: None,
         annotations: None,
         components_only: false,
+        trusted: false,
         observer,
+        keys: &mtx_grader::keys::SessionKeys::random(),
     })
     .await?;
     let log = logs.join(format!("{}.log", scenario.name));
@@ -130,22 +133,31 @@ pub async fn run(options: Run<'_>) -> Result<String> {
 
 /// The scenario `mtx bot run` plays: a file, a practice scenario by name, or
 /// the task's first.
-fn scenario_path(root: &Path, task: &str, asked: Option<&str>) -> Result<PathBuf> {
-    let practice = crate::bot::practice_scenarios(root, task)?;
-    let Some(asked) = asked else {
-        return practice
-            .into_iter()
-            .next()
-            .with_context(|| format!("{task} has no practice scenarios"));
-    };
+fn scenario_path(dir: &Path, root: &Path, task: &str, asked: Option<&str>) -> Result<PathBuf> {
+    let asked = asked.unwrap_or(crate::studio::FIRST_SCENARIO);
     let path = PathBuf::from(asked);
     if path.is_file() {
         return Ok(path);
     }
-    practice
+    // The studio's own scenarios (practice-101, practice-102), written out
+    // where the run's logs go.
+    if let Some(bytes) = crate::studio::builtin_scenario(asked) {
+        let out = dir
+            .join("target/mtx-run-scenarios")
+            .join(format!("{asked}.json"));
+        std::fs::create_dir_all(out.parent().unwrap_or(dir))?;
+        std::fs::write(&out, bytes)?;
+        return Ok(out);
+    }
+    crate::bot::practice_scenarios(root, task)?
         .into_iter()
         .find(|p| p.file_stem().is_some_and(|s| s == asked))
-        .with_context(|| format!("no practice scenario {asked} in {task}, and no file {asked}"))
+        .with_context(|| {
+            format!(
+                "no scenario {asked}: the studio's are {}, and {task}'s practice set is practice-1 to practice-6; or pass a file",
+                crate::studio::builtin_scenarios().join(", ")
+            )
+        })
 }
 
 /// `--debug`'s console: a block a step, and a key to go on.
@@ -257,9 +269,10 @@ impl StepObserver for Debugger {
             out.push_str(&row("sheet", &paint(DIM, "empty: no orders")));
         } else {
             for (i, intent) in trace.intents.iter().enumerate() {
+                let options = trace.options.get(i).map(options_text).unwrap_or_default();
                 out.push_str(&row(
                     if i == 0 { "sheet" } else { "" },
-                    &intent_text(intent),
+                    &format!("{}{options}", intent_text(intent)),
                 ));
             }
         }
@@ -268,12 +281,27 @@ impl StepObserver for Debugger {
         }
         for (i, (action, result)) in trace.sent.iter().enumerate() {
             let line = match result {
-                Ok(()) => format!("{} {}", paint(ACCENT, "✓"), action_text(action)),
-                Err(e) => format!(
+                SendState::Landed(_) => format!("{} {}", paint(ACCENT, "✓"), action_text(action)),
+                SendState::Failed { reason: e, .. } => format!(
                     "{} {} {}",
                     paint(RED, "✗"),
                     action_text(action),
                     paint(DIM, e)
+                ),
+                SendState::NotSent(why) => format!(
+                    "{} {} {}",
+                    paint(DIM, "–"),
+                    action_text(action),
+                    paint(DIM, why)
+                ),
+                SendState::Delayed => {
+                    format!("… {} {}", action_text(action), paint(DIM, "delayed"))
+                }
+                SendState::Expired => format!(
+                    "{} {} {}",
+                    paint(RED, "✗"),
+                    action_text(action),
+                    paint(DIM, "expired")
                 ),
             };
             out.push_str(&row(if i == 0 { "sent" } else { "" }, &line));
@@ -391,7 +419,63 @@ fn intent_text(intent: &Intent) -> String {
             Side::Ask => format!("ask {} @ {}", units(*size), price(*p)),
         },
         Intent::CancelAll => "cancel_all".into(),
+        Intent::Cancel { client_id } => format!("cancel({client_id})"),
+        Intent::Respond { id, bid, ask, .. } => respond_text(id, *bid, *ask),
+        Intent::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        } => swap_text(*side, *amount, *unit, *limit),
+        // Liquidity and lending: as the sheet holds them.
+        other => format!("{other:?}"),
     }
+}
+
+fn respond_text(id: &str, bid: Option<f64>, ask: Option<f64>) -> String {
+    let side = |name: &str, p: Option<f64>| p.map(|p| format!(" {name} {}", price(p)));
+    format!(
+        "respond {id}:{}{}",
+        side("bid", bid).unwrap_or_default(),
+        side("ask", ask).unwrap_or_default()
+    )
+}
+
+fn swap_text(side: Side, amount: f64, unit: AmountUnit, limit: f64) -> String {
+    let unit = match unit {
+        AmountUnit::Base => "base",
+        AmountUnit::Quote => "quote",
+    };
+    match side {
+        Side::Bid => format!("swap buy, {} {unit} ≤ {}", units(amount), price(limit)),
+        Side::Ask => format!("swap sell, {} {unit} ≥ {}", units(amount), price(limit)),
+    }
+}
+
+/// A line's options, as calls on the sheet would write them.
+fn options_text(options: &LineOptions) -> String {
+    let mut text = String::new();
+    match options.time_in_force {
+        TimeInForce::Gtc => {}
+        TimeInForce::PostOnly => text.push_str(" .post_only()"),
+        TimeInForce::Ioc => text.push_str(" .ioc()"),
+    }
+    if options.reduce_only {
+        text.push_str(" .reduce_only()");
+    }
+    if let Some(share) = options.participation {
+        text.push_str(&format!(" .participation({share})"));
+    }
+    if let Some(venue) = &options.venue {
+        text.push_str(&format!(" .at({venue})"));
+    }
+    if let Some(id) = options.client_id {
+        text.push_str(&format!(" .client_id({id})"));
+    }
+    if options.tx.is_some() {
+        text.push_str(" .tx(…)");
+    }
+    text
 }
 
 fn action_text(action: &Action) -> String {
@@ -408,7 +492,24 @@ fn action_text(action: &Action) -> String {
             Side::Bid => format!("bid {} @ {}", units(*size), price(*p)),
             Side::Ask => format!("ask {} @ {}", units(*size), price(*p)),
         },
+        Action::PostOnly {
+            side,
+            price: p,
+            size,
+        } => match side {
+            Side::Bid => format!("post-only bid {} @ {}", units(*size), price(*p)),
+            Side::Ask => format!("post-only ask {} @ {}", units(*size), price(*p)),
+        },
         Action::CancelAll => "cancel all".into(),
+        Action::Cancel { client_id } => format!("cancel {client_id}"),
+        Action::Respond { id, bid, ask, .. } => respond_text(id, *bid, *ask),
+        Action::Swap {
+            side,
+            amount,
+            unit,
+            limit,
+        } => swap_text(*side, *amount, *unit, *limit),
+        other => format!("{other:?}"),
     }
 }
 

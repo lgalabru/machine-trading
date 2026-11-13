@@ -338,3 +338,71 @@ defend, no bot users, no keypair files.
   `MTX_RUNG` and `MTX_REGIME` through `Session::var` (both are session
   variables in a process). `just build` builds both. The old process code,
   which read and sent through `Trader` itself, is gone.
+- 2026-11-12: the interface, 0.2.0 (`crates/kit/wit/strategy.wit`). What
+  the next tasks need, as conveniences on the same step: the session's
+  venues (`<venue>:<kind>:<symbol>`, the mandate's names, its own first)
+  and a view of each (best bid and ask, the book and the tape when the
+  scenario reports them, the position there); lines that name a venue and
+  carry a time in force (post-only, immediate-or-cancel), reduce-only, a
+  participation cap and transaction options; what became of every order of
+  the last sheet (`sends`: landed with a signature, failed with the venue's
+  reason, not sent, and, for the transaction layer, delayed and expired),
+  the planner's notes, own fills from the tape, and requests for quotes
+  with a response line. Intents became records (an action, a venue, the
+  options) rather than a variant of tuples. The kit plans every sheet with
+  one planner (`plan_sheet`), a ledger per venue; `plan()` is the same for
+  lines without options. The grader keeps 0.1.0 (`wit/0.1.0`), tells the
+  worlds apart by type-checking the component against each before any of
+  its code runs, and plans both with the same planner: the flash-crash,
+  maker, carry and weekend references grade the same, built on either.
+  Not yet: a session trades only its own market (a line for another comes
+  back not sent until spot venues have component executors), no session
+  reports a perp tape (so a perp strategy's fills come from its position),
+  no session sends requests for quotes, and transaction options are
+  counted, not applied, until the transaction layer.
+- 2026-11-12: 0.2.0 settled before it freezes, after review. WIT records
+  and variants are closed, so what the next venues need is in the world
+  now, answered `not-sent` until their executors land: market kinds for
+  pools, lending reserves and stake pools; swap, add- and
+  remove-liquidity (with a price range), deposit, withdraw, borrow, repay
+  and liquidate; client order ids and cancel by id; two-way requests for
+  quotes; a route and retries on transaction options; slot, fee and tip on
+  send status, and a fee view; liquidity positions, a lending account,
+  resting orders and the venue's own numbers in each venue's view; and the
+  grader-signed `send` import, reserved, which every session refuses until
+  raw sends land. Four fixes to what was there: reduce-only now counts
+  only the sheet's orders that shrink the position as filled, so an
+  unfilled buy can't let a sell open a short; a post-only order is checked
+  against the paused book and, if it would cross, reported failed and kept
+  out of the resting count (Phoenix's own post-only skips it silently);
+  the session says what its steps report, so an empty tape is a step
+  without trades; and turn data names its market (`turns::Trade::market`),
+  venues carry their address, and an id is unique in the session (with
+  `@<address>` where two pools would share one).
+- 2026-11-12: two planner bugs, and the last closed-type gaps. A line the
+  session won't execute (a swap on a perp) counted as filled and made
+  room under the cap for the lines after it: a session now plans with
+  what it executes (`plan_sheet_with`), and such a line counts for
+  nothing. A reduce-only line was only cut on the sheet: its orders now
+  carry Phoenix's reduce-only flag (a post-only one through the second
+  multiple-order packet), so a resting one can't open a position later.
+  A target whose `max_per_step` isn't positive panicked in `clamp`; it is
+  a note now. And, so 0.2.0 doesn't need a 0.3.0: adding to an existing
+  liquidity position and a bin shape; expiries on limit orders, quotes and
+  responses to requests for quotes (Phoenix's last valid slot; not yet on
+  a post-only order); a liquidation's minimum received; a failure's
+  signature; and fresh signers on raw transactions, named by index in the
+  instructions and returned by `send`, for accounts that sign their own
+  creation (a position's mint).
+- 2026-11-12: what raw sends need for a new position. Opening a Raydium
+  CLMM or Orca position names accounts derived from the fresh NFT mint: the
+  position PDA and the owner's token account for the mint. A raw
+  transaction now lists derived addresses (a PDA from a program and seeds,
+  or an associated token account), which instructions and later entries
+  name by index; WIT types can't be recursive, so an entry names only the
+  ones before it, which also rules out cycles and bounds the depth by the
+  list's length (32). The grader makes the fresh signers, then resolves
+  the list in order. `remove-liquidity` gained minimums out, an expiring
+  post-only order goes through Phoenix's second multiple-order packet built
+  from its parameters, and a line with an amount that isn't a number gets
+  a note.

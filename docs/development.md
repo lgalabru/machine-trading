@@ -13,7 +13,8 @@
   (`snapshots/<name>/surfnet.json.gz`, under 3 MB), and `mtx` decompresses
   them into a temp-directory cache the first time a surfnet starts. To fork
   a fresh one, put a mainnet RPC URL in `.env` as `MTX_FORK_RPC_URL` and run
-  `just snapshot-prepare snapshots/<name>`, which writes the `.gz`.
+  `just snapshot-build <name>`, which rebuilds the `.gz` from
+  `snapshots/<name>/recipe.toml` ([snapshot recipes](snapshot-recipes.md)).
 
 ## Everyday loop
 
@@ -26,6 +27,29 @@ just test lint                                     # unit tests and clippy
 `mtx grade` runs exactly what the verifier runs, and bot logs land in
 `target/logs/`. Don't run heavy builds while grading: a starved machine
 slows the grade.
+
+A grade replays exactly: the same bot on the same hidden set (the same
+`MTX_EVAL_SEED`) gets the same report, byte for byte but for wall times.
+The sessions' keypairs are derived from that secret, so their transactions
+and signatures repeat too. A grade of scenario files has no secret and
+draws fresh keys, so its own replays agree but two separate grades of a
+component that reads signatures can differ in fuel. Load slows a grade, not
+its result: sessions run on no clock, trusted bots (the reference,
+`--trusted`) get up to two minutes a turn, and the grader's own requests
+wait up to ten minutes each, a read that got no answer being made again.
+The limit: a request that fails outright rather than slowly (a surfnet that
+died, a refused connection) still fails the grade, and a taker order lost
+that way counts as failed.
+
+`--replay N` checks it: it runs the grade N times (with `--replay-load
+<threads>` busy threads alongside) and fails at the first session report,
+the reference's included, that came out differently.
+
+```sh
+MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
+  --reference /opt/mtx/anchors/flash-crash --bot bots/reference \
+  --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
+```
 
 ## Write a bot
 
@@ -73,8 +97,9 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
    secret inside the verifier. At the end it checks the secret is in no job
    file, then prints the report (`bench/report.py`): skill by model and task,
    with 90% intervals.
-   - **Machine:** an idle one. Load slows the surfnets' clocks, and the
-     grader fails sessions it can't run on time. A trial takes about 8 CPUs
+   - **Machine:** any; an idle one is faster. Sessions run on no clock, so
+     load makes a grade slower, not different (see `--replay` above for the
+     limit). A trial takes about 8 CPUs
      while it grades; market-making's verifier alone runs about an hour.
    - **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for the providers
      it runs, from `.env` or `~/.machine-trading.env`.
@@ -87,7 +112,7 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      cache.
    - **A void trial:** rerun it on the same set with the batch's secret.
 2. **Review.** Look at what stands out before you publish: read a winning
-   run's bot, and check its report for refused calls and late slots. A score
+   run's bot, and check its report for refused calls. A score
    far above the others is a leak until it isn't.
 3. **Publish.** `just publish <batch> <version>` writes
    `bench/results/<version>/` and refuses if any file holds the batch's
@@ -142,6 +167,10 @@ mtx scenario play scenario.json                               # replays a saved 
 
 ## Change a task
 
+One command runs them all and writes one report: `mtx gates <task> --fast`
+for the cheap checks, `mtx gates <task>` for the full set (see
+[gates](gates.md)). The pieces, one by one:
+
 ```sh
 just ladder <family>                   # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
@@ -180,5 +209,15 @@ just release     # push both images (amd64 + arm64, ~40 min on Apple silicon),
 ```
 
 Commit the pins and digests it writes. CI checks every push (fmt, clippy,
-tests, lint, calibrated scenarios), and once a week it builds the images and
-runs the oracle through Harbor.
+tests, lint, calibrated scenarios) and runs `mtx gates --fast` on the tasks a
+pull request or push changes. Once a week it builds the images and runs the
+oracle through Harbor.
+
+The Rust jobs run in a prebuilt image, `ghcr.io/<owner>/machine-trading-ci`
+(`bench/ci/Dockerfile`). `ci-image.yml` builds it at the start of a CI run
+whenever `bench/ci` or `rust-toolchain` changes, tagged with their hash.
+Until anyone can pull it, the jobs run `bench/ci/setup.sh` on the plain Rust
+image instead, which is slower but just as correct. One-time step after the
+first push to main: in the repository owner's GitHub packages, open
+`machine-trading-ci`, then Package settings, and change its visibility to
+public. Pull requests from forks use it from then on.

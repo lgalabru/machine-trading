@@ -7,9 +7,9 @@ use solana_signer::Signer;
 use solana_transaction::Signature;
 
 use crate::{
-    BotEnv, Decimal, Error, Phoenix, Position, Result, Side,
+    Action, BotEnv, Decimal, Error, Phoenix, Planned, Position, Result, SendState, Side,
     core::{Rounding, Side as CoreSide},
-    protocols::phoenix::eternal::PhoenixTrader,
+    protocols::phoenix::eternal::{PhoenixOrder, PhoenixOrderOptions, PhoenixTrader},
     rpc_client,
 };
 
@@ -75,6 +75,19 @@ impl Trader {
             phoenix,
             inner,
         })
+    }
+
+    /// [`Trader::connect`], with every transaction it sends, and every
+    /// request on the way, allowed up to `timeout` (the default is 30 s).
+    /// Reads through Hawkeye ([`Trader::top`], [`Trader::position`]) keep
+    /// Hawkeye's own client.
+    pub fn connect_with_timeout(env: &BotEnv, timeout: std::time::Duration) -> Result<Self> {
+        let mut trader = Self::connect(env)?;
+        trader.inner = trader.inner.with_chain(std::sync::Arc::new(
+            crate::chain::RpcChainClient::with_timeout(&env.rpc_url, timeout),
+        ));
+        trader.rpc = crate::tx::rpc_client_with_timeout(&env.rpc_url, timeout);
+        Ok(trader)
     }
 
     pub fn authority(&self) -> Pubkey {
@@ -209,6 +222,26 @@ impl Trader {
             .await?)
     }
 
+    /// Rest an order on the book at `price_usd` that takes nothing: not
+    /// placed if the price crosses.
+    pub async fn place_post_only(
+        &self,
+        side: Side,
+        price_usd: f64,
+        base_units: f64,
+    ) -> Result<Signature> {
+        Ok(self
+            .inner
+            .place_post_only(
+                &self.keypair,
+                core_side(side),
+                self.price(side, price_usd)?,
+                self.quantity(base_units)?,
+                PhoenixOrderOptions::default(),
+            )
+            .await?)
+    }
+
     /// Fill against the book, at no worse than `limit_usd`.
     pub async fn place_market(
         &self,
@@ -225,6 +258,100 @@ impl Trader {
                 Some(self.price(side, limit_usd)?),
             )
             .await?)
+    }
+
+    /// Whether [`Trader::send_planned`] executes `action`: market, limit
+    /// and post-only orders, and cancelling everything. A session plans its
+    /// sheets with this (`mtx_kit::plan_sheet_with`), so a line it won't
+    /// execute counts for nothing.
+    pub fn executes(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::Market { .. }
+                | Action::Limit { .. }
+                | Action::PostOnly { .. }
+                | Action::CancelAll
+        )
+    }
+
+    /// Send one order a sheet planned for this market (`mtx_kit::plan_sheet`),
+    /// and say what became of it. Its line's reduce-only flag and expiry go
+    /// on the order. A post-only order that would cross the book as it is
+    /// now (the world is paused) isn't placed, and fails without reaching
+    /// the chain. Actions this trader doesn't execute aren't sent.
+    pub async fn send_planned(&self, planned: &Planned) -> Sent {
+        let options = PhoenixOrderOptions {
+            reduce_only: planned.reduce_only,
+            last_valid_slot: planned.expires_slot,
+        };
+        let order = match planned.action {
+            Action::Market { side, size, limit } => self.order(size, |quantity| {
+                Ok(PhoenixOrder::Market {
+                    side: core_side(side),
+                    quantity,
+                    worst_price: Some(self.price(side, limit)?),
+                    all_or_none: false,
+                })
+            }),
+            Action::Limit { side, price, size } => self.order(size, |quantity| {
+                Ok(PhoenixOrder::Limit {
+                    side: core_side(side),
+                    price: self.price(side, price)?,
+                    quantity,
+                })
+            }),
+            Action::PostOnly { side, price, size } => {
+                let crosses = |top: Top| {
+                    let price = self.price(side, price)?.to_string();
+                    let price: f64 = price.parse().unwrap_or(f64::NAN);
+                    Ok::<_, Error>(match side {
+                        Side::Bid => top.best_ask.is_some_and(|ask| price >= ask),
+                        Side::Ask => top.best_bid.is_some_and(|bid| price <= bid),
+                    })
+                };
+                match self.top().await.and_then(crosses) {
+                    Ok(false) => self.order(size, |quantity| {
+                        Ok(PhoenixOrder::PostOnly {
+                            side: core_side(side),
+                            price: self.price(side, price)?,
+                            quantity,
+                        })
+                    }),
+                    Ok(true) => return Sent::checked("post-only would cross: not placed"),
+                    Err(error) => {
+                        return Sent::checked(&format!(
+                            "post-only: couldn't read the book to check it: {error}"
+                        ));
+                    }
+                }
+            }
+            Action::CancelAll => {
+                return Sent::reached(self.cancel_all());
+            }
+            Action::Respond { .. } => {
+                return Sent::not_sent("no requests for quotes in this session");
+            }
+            _ => return Sent::not_sent("unsupported in this session"),
+        };
+        let result = match order {
+            Ok(order) => self
+                .inner
+                .submit_with(&order, options, &self.keypair)
+                .await
+                .map_err(Error::from),
+            Err(error) => Err(error),
+        };
+        Sent::reached(result)
+    }
+
+    /// A Phoenix order of `size` base units, built by `order` from its
+    /// quantity on the lot grid.
+    fn order(
+        &self,
+        size: f64,
+        order: impl FnOnce(Decimal) -> Result<PhoenixOrder>,
+    ) -> Result<PhoenixOrder> {
+        order(self.quantity(size)?)
     }
 
     pub fn cancel_all(&self) -> Result<Signature> {
@@ -267,6 +394,43 @@ impl From<crate::phoenix_rise::math::Side> for Side {
         match side {
             crate::phoenix_rise::math::Side::Bid => Self::Bid,
             crate::phoenix_rise::math::Side::Ask => Self::Ask,
+        }
+    }
+}
+
+/// What became of an order [`Trader::send_planned`] was given.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sent {
+    pub state: SendState,
+    /// Whether it reached the chain: a resting order that did counts toward
+    /// what rests, even if it failed (the ledger only over-counts), and a
+    /// failure stops a component's step.
+    pub sent: bool,
+}
+
+impl Sent {
+    /// What became of an order that was sent.
+    fn reached(result: Result<Signature>) -> Self {
+        Sent {
+            state: match result {
+                Ok(signature) => SendState::Landed(signature.to_string()),
+                Err(error) => SendState::failed(error.to_string()),
+            },
+            sent: true,
+        }
+    }
+
+    fn checked(why: &str) -> Self {
+        Sent {
+            state: SendState::failed(why),
+            sent: false,
+        }
+    }
+
+    fn not_sent(why: &str) -> Self {
+        Sent {
+            state: SendState::NotSent(why.to_string()),
+            sent: false,
         }
     }
 }
