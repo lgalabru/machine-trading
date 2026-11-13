@@ -33,6 +33,7 @@ surfpool-core.workspace = true
 surfpool-types.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+toml = "1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
