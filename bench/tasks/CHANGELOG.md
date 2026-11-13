@@ -4,34 +4,44 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
-- **Unreleased.** Grades replay exactly: sessions run on no clock, setup
-  included, and each session's keypairs (the bot's, the takers' and the
-  maker's) are derived from the batch's secret instead of drawn at random,
-  so the same bot on the same hidden set gets the same report, byte for
-  byte but for wall times, however loaded the machine (`mtx grade --replay`
-  checks it).
-  - **`market-making-spcx`: sessions start on a fixed slot.** Its setup
-    (ten onboardings) used to overrun its 60 setup slots on the wall
-    clock, so each session started up to about 70 slots late, by however
-    long the machine took. Sessions now start exactly 60 slots after the
-    snapshot. Reports' `mandate.term.until_slot` moves, and a session's
-    marks can move by a tick; on the reference the total PnL is unchanged.
-  - The other three tasks' sessions are unchanged for process bots, byte
-    for byte. For a component, `turns.fuel_used` and `turns.fuel_max_call`
-    differ from earlier releases, since its transactions' signatures do;
-    they now repeat from grade to grade. A `funding-carry-spcx` session no
-    longer wobbles by cents to dollars between grades.
-  - Process bots get the session's seed in the hello, as components do.
-  - The verifier grades the bot's sessions several at a time: as many as
-    its memory holds with every strategy at its 1 GiB cap, two in 6 GB (up
-    to four). A component runs inside the grader with no files and no
-    network, so its sessions can't reach each other, and the report is the
-    one they'd give one at a time (`mtx grade --replay-jobs` checks it).
-
 - **0.12.0.** Bots are strategy components, and two new tasks on new
   scenario hooks in the engine (book premiums, a taker tape, per-session
   funding, off-hours markets; each opt-in, so flash-crash's and
   market-making's sessions are unchanged).
+  Re-released on 2026-11-13 from main (`25550482`): the first 0.12.0
+  publish (2026-11-12) held only flash-crash-spcx and market-making-spcx,
+  on the grader as of the release commit. Everything below is in it.
+  - **Grades replay exactly:** sessions run on no clock, setup
+    included, and each session's keypairs (the bot's, the takers' and the
+    maker's) are derived from the batch's secret instead of drawn at random,
+    so the same bot on the same hidden set gets the same report, byte for
+    byte but for wall times, however loaded the machine (`mtx grade --replay`
+    checks it).
+    - **`market-making-spcx`: sessions start on a fixed slot.** Its setup
+      (ten onboardings) used to overrun its 60 setup slots on the wall
+      clock, so each session started up to about 70 slots late, by however
+      long the machine took. Sessions now start exactly 60 slots after the
+      snapshot. Reports' `mandate.term.until_slot` moves, and a session's
+      marks can move by a tick; on the reference the total PnL is unchanged.
+    - The other three tasks' sessions are unchanged for process bots, byte
+      for byte. For a component, `turns.fuel_used` and `turns.fuel_max_call`
+      differ from earlier releases, since its transactions' signatures do;
+      they now repeat from grade to grade. A `funding-carry-spcx` session no
+      longer wobbles by cents to dollars between grades.
+    - Process bots get the session's seed in the hello, as components do.
+    - The verifier grades the bot's sessions several at a time: as many as
+      its memory holds with every strategy at its 1 GiB cap, two in 6 GB (up
+      to four). A component runs inside the grader with no files and no
+      network, so its sessions can't reach each other, and the report is the
+      one they'd give one at a time (`mtx grade --replay-jobs` checks it).
+  - **Bot interface 0.2.0** (#41): desk actions across perps, AMMs,
+    lending and RFQ. Raw sends (#46): a bot may sign its own transactions,
+    inside its mandate. Every Phoenix account a bot opens counts (#45).
+  - **The engine** (#49 to #54): scenario v2, oracle writers and venue
+    cranks with controlled oracle failures, spot bots as components with
+    Token-2022 and v0 transactions, mainnet-calibrated markets, one session
+    loop for every venue and actor, and caps on a component's memories,
+    instances and tables.
   - **`funding-carry-spcx`.** The SPCX book trades at a premium or a
     discount to its index, and Phoenix's funding pays the side against
     it. A good bot fades the premiums the crowd's positioning opened,
