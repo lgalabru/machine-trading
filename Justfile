@@ -17,6 +17,10 @@ tasks := "bench/tasks"
 # OpenAI's.
 claude_code := "2.1.312"
 codex := "0.166.0"
+# Hermes (NousResearch/hermes-agent), one harness for every provider's
+# models: `hermes:<model>` in `just bench` runs <model> in it, so a harness's
+# bias shows next to the providers' own.
+hermes := "v0.23.1"
 
 default:
     @just --list
@@ -377,8 +381,14 @@ release-publish:
 # ANTHROPIC_API_KEY and OPENAI_API_KEY (for the providers it runs) from .env
 # or ~/.machine-trading.env. Results go to jobs/bench/; read them with
 # `mtx bench review`. Arguments are positional:
-# just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1":
+# just bench "claude-opus-5-5 openai/<model> hermes:openai/<model>" 5 3 0.11.0
+# `together=1` runs the models at once (each with n trials at a time)
+# instead of one after the other: grades don't depend on load.
+#
+# A provider that refuses an agent for quota or credit stops the whole
+# batch at once: its other agents would be cut off too, and a cut-off trial
+# can't be ranked. The batch is marked (.stopped) and gets no report.
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1" together="0":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
@@ -386,6 +396,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
     for model in {{models}}; do
+      model="${model#hermes:}"
       case "$model" in
         openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
         */*) [ "${model%%/*}" = anthropic ] || { echo "$model: only anthropic/ and openai/ models have a pinned harness"; exit 1; }
@@ -410,18 +421,34 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     # The plan, written before the first trial starts: what runs (models,
     # harnesses and their versions, attempts, time), what's measured and on
     # which commit. `mtx bench review` shows trials not started yet as queued.
-    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, commit = sys.argv[1:]
+    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, hm, commit = sys.argv[1:]
     models = m.split()
-    harness = lambda m: {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
+    harness = lambda m: {"agent": "hermes", "version": hm} if m.startswith("hermes:") else {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
     json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x),
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
-      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    for model in {{models}}; do
+      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "{{hermes}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    # What the providers say when the account, not the model, is out: a
+    # quota, a credit balance or a usage cap. Rate limits are retried by the
+    # harnesses and don't stop a batch.
+    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached'
+    run_model() {
+      local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
       # Each harness is pinned, so numbers compare across releases, with no
       # web and no memory across trials.
       case "$model" in
+        hermes:*)
+          # Every provider's model in one harness; a bare name is Anthropic's.
+          local target="${model#hermes:}"
+          case "$target" in */*) ;; *) target="anthropic/$target" ;; esac
+          # bench/harness/mtx_hermes.py: Harbor's adapter, with the version
+          # check today's hermes-agent answers.
+          PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
+          harbor run -y -d "$dataset" -a mtx_hermes:Hermes -m "$target" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} \
+            --ak version={{hermes}} --ak disable_web_search=true
+          ;;
         openai/*)
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} \
@@ -435,7 +462,48 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
           ;;
       esac
-    done
+    }
+    # Watch the agents' logs while the batch runs; at the first refusal,
+    # interrupt every harbor run writing to this batch.
+    (
+      while sleep 20; do
+        hit="$(grep -rlE "$refused" "$batch"/*/*/agent 2>/dev/null | head -1 || true)"
+        if [ -n "$hit" ]; then
+          { echo "refused: $(grep -hoE "$refused" "$hit" | head -1)"; echo "in: $hit"; date -u +%FT%TZ; } > "$batch/.stopped"
+          # INT first, for a clean stop; TERM for what's left: a run started
+          # in the background (together=1) ignores INT.
+          pkill -INT -f -- "harbor run .* -o $batch" || true
+          sleep 30
+          pkill -TERM -f -- "harbor run .* -o $batch" || true
+          exit 0
+        fi
+      done
+    ) &
+    watcher=$!
+    trap 'kill "$watcher" 2> /dev/null || true' EXIT
+    status=0
+    if [ "{{together}}" = 1 ]; then
+      pids=()
+      for model in {{models}}; do
+        run_model "$model" & pids+=("$!")
+        # Two runs starting at once can race on Harbor's task cache.
+        sleep 60
+      done
+      for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+    else
+      for model in {{models}}; do
+        [ -e "$batch/.stopped" ] && break
+        run_model "$model" || status=1
+      done
+    fi
+    kill "$watcher" 2> /dev/null || true
+    if [ -e "$batch/.stopped" ]; then
+      echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"
+      cat "$batch/.stopped"
+      echo "raise the account's limit, then run the batch again"
+      exit 1
+    fi
+    [ "$status" = 0 ] || { echo "a harbor run failed; see above"; exit 1; }
     if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
     fi
