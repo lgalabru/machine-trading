@@ -10,6 +10,7 @@ copy of Solana mainnet, restored with
 | --- | --- | --- |
 | [`flash-crash-spcx`](flash-crash-spcx) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
 | [`funding-carry-spcx`](funding-carry-spcx) | Phoenix SPCX perp | earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise |
+| [`levered-carry-sizing-spcx`](levered-carry-sizing-spcx) | Phoenix SPCX perp | reads the index's volatility state live, turns the carry's yield over its variance and the stop-out distance into leverage, and cuts before the crowd flushes |
 | [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
 | [`weekend-gap-spcx`](weekend-gap-spcx) | Phoenix SPCX perp | reads which weekend flow knows where SPCX will open, and holds that gap into the reopen |
 <!-- mtx:tasks end -->

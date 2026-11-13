@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::{
     carry::CarryFamily,
     error::Result,
+    levcarry::LeveredCarryFamily,
     making::MakingFamily,
     scenario::{Scenario, ShockFamily},
     weekend::WeekendFamily,
@@ -84,6 +85,18 @@ pub const GENERATORS: &[Generator] = &[
         practice: |prefix, count, seed| CarryFamily::practice().sample_set(prefix, count, seed),
         hidden: |count, seed, tell| {
             shaped(CarryFamily::spcx().draw_set("hidden", count, seed), tell)
+        },
+    },
+    Generator {
+        name: "levered-carry",
+        practice: |prefix, count, seed| {
+            LeveredCarryFamily::spcx().sample_set(prefix, count, seed)
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                LeveredCarryFamily::spcx().draw_set("hidden", count, seed),
+                tell,
+            )
         },
     },
     Generator {

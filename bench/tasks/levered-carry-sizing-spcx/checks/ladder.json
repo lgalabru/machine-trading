@@ -1,0 +1,68 @@
+{
+  "family": "levered-carry",
+  "count": 100,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "max-lever",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/max-lever"
+    },
+    {
+      "name": "fixed",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/fixed"
+    },
+    {
+      "name": "prem-scaled",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/prem-scaled"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/reference"
+    },
+    {
+      "name": "told",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/told",
+      "tell_regime": true
+    },
+    {
+      "name": "oracle",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/oracle",
+      "tell_regime": true
+    },
+    {
+      "name": "stop-in",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/stop-in"
+    },
+    {
+      "name": "stop-out",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/stop-out"
+    },
+    {
+      "name": "mark-pusher",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/mark-pusher"
+    }
+  ],
+  "gates": {
+    "informed": ["told"],
+    "non_reading": ["nop", "max-lever", "fixed", "prem-scaled"]
+  },
+  "rules": [
+    "max(max-lever, fixed) < reference",
+    "prem-scaled < reference",
+    "reference < told",
+    "told < oracle",
+    "oracle < hindsight",
+    "stop-out < stop-in"
+  ],
+  "exploits": {
+    "bots": [
+      "mark-pusher"
+    ],
+    "max_profitable": 0.99,
+    "below": "told"
+  }
+}

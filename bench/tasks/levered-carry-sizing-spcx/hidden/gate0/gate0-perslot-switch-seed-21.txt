@@ -1,0 +1,15 @@
+nop              mean      0.0 se    0.0 stopout 0.00
+max-lever        mean   -114.4 se   40.6 stopout 0.51
+fixed-3x         mean   -105.9 se   16.3 stopout 0.03
+best-const0.05   mean    -16.5 se    2.7 stopout 0.00
+prem-scaled      mean    127.5 se   21.7 stopout 0.03
+reference        mean    223.6 se   22.9 stopout 0.03
+ref2             mean    233.3 se   21.5 stopout 0.02
+bayes            mean    196.7 se   23.9 stopout 0.03
+told             mean    427.8 se   23.9 stopout 0.02
+path-oracle      mean    503.3 se   23.6 stopout 0.01
+ref2 (8, 1, 4, 1000000000.0) params best const (np.float64(0.05),) prem (np.float64(0.25526315789473686),) told (1000, 0) ref (8, 1) bound 9907.359379993633 carry-bound 776.7189183048299 stressed share 0.3109584623414652 squeeze share 0.5016666666666667
+GATE0 told/best-nonreading = 3.36 (told 256670, best non-reading 76484)
+bootstrap(100-session sets): order rule holds 0.993, gate0 holds 0.975, ratio p5 2.13 median 3.36
+skill vs reference: {'nop': np.float64(0.0), 'max-lever': np.float64(-0.51), 'fixed-3x': np.float64(-0.47), 'best-const': np.float64(-0.07), 'prem-scaled': np.float64(0.57), 'reference': np.float64(1.0), 'ref2': np.float64(1.04), 'bayes': np.float64(0.88), 'told': np.float64(1.91), 'path-oracle': np.float64(2.25)}
+reward ref (house bound) 0.023, (carry bound) 0.288
