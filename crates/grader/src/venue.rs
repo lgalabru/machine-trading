@@ -184,6 +184,15 @@ pub trait Seat: Send + Sync {
     /// The best bid and ask, as the seat reads them.
     async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)>;
 
+    /// The best bid and ask among resting orders of at least `min_size` base
+    /// units at their price: a quote smaller than that is an odd lot and
+    /// sets no touch. A seat that can't read sizes says what [`Seat::top`]
+    /// does.
+    async fn top_sized(&self, min_size: f64) -> SeatResult<(Option<f64>, Option<f64>)> {
+        let _ = min_size;
+        self.top().await
+    }
+
     /// The account's position here, in base units: a perp's, or the base
     /// asset a spot account holds.
     async fn position(&self) -> SeatResult<f64>;
