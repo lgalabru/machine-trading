@@ -108,6 +108,11 @@ spot-smoke:
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
 
+# The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
+# SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
+actors-markets:
+    cargo test -p mtx-grader --test actors_non_spcx -- --ignored --nocapture
+
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
 # SOL-USDC book, every order from its account's own seat. Then every actor

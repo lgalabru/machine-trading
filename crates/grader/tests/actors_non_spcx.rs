@@ -7,6 +7,8 @@
 //! scenario's path moves, funding, mark and oracle overrides, and Phoenix's
 //! own meter. What a test measures is printed as a `TABLE|item|market|PASS or
 //! FAIL|numbers` line (run with `--nocapture`), and asserted after printing.
+//! They take about 8 minutes, so they're ignored by default: run them with
+//! `just actors-markets`.
 
 use std::{
     path::{Path, PathBuf},
@@ -374,22 +376,27 @@ macro_rules! per_market {
         mod $name {
             use super::*;
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "slow (about 8 minutes): run with `just actors-markets`"]
             async fn spcx() {
                 $run("SPCX").await
             }
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "slow (about 8 minutes): run with `just actors-markets`"]
             async fn nvda() {
                 $run("NVDA").await
             }
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "slow (about 8 minutes): run with `just actors-markets`"]
             async fn tsla() {
                 $run("TSLA").await
             }
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "slow (about 8 minutes): run with `just actors-markets`"]
             async fn spy() {
                 $run("SPY").await
             }
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "slow (about 8 minutes): run with `just actors-markets`"]
             async fn qqq() {
                 $run("QQQ").await
             }
