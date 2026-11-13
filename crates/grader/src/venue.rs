@@ -262,20 +262,31 @@ pub async fn price_usd(chain: &dyn ChainClient, mint: &Pubkey) -> Result<Decimal
         })
 }
 
-/// What `holdings`, read across a session's markets, are worth in USD. A
-/// spot asset counts its wallet once, however many markets report it, and
-/// what it has on each venue; the first of `markets` that values it
-/// ([`Market::value_usd`]) does, and the reference price ([`price_usd`])
-/// otherwise. Holdings that need their own valuation (a perp's, which the
-/// session meters; a money market's) are refused.
+/// What `holdings`, read across a session's `markets`, are worth in USD.
+/// Each goes to the markets first ([`Market::value_usd`]), the first that
+/// values it counting: a pool's token at the pool's rate. A spot asset
+/// counts its wallet once, however many markets report it, and what it has
+/// on each venue, and none valuing it, counts at its reference price
+/// ([`price_usd`]). Any other holding none values (a perp's, which the
+/// session meters) is refused.
 pub async fn value_usd(
     chain: &Chain,
-    markets: &[&dyn Market],
+    markets: &[Box<dyn Market>],
     holdings: &[Holding],
 ) -> Result<Decimal> {
     let mut held: BTreeMap<String, Holdings> = BTreeMap::new();
-    for holding in holdings {
+    let mut value = Decimal::ZERO;
+    'holding: for holding in holdings {
         let Holding::Spot(asset) = holding else {
+            for market in markets {
+                if let Some(worth) = market
+                    .value_usd(chain, std::slice::from_ref(holding))
+                    .await?
+                {
+                    value += worth;
+                    continue 'holding;
+                }
+            }
             return Err(MeterError::Unsupported(format!(
                 "valuing {holding:?} in a wallet's account"
             ))
@@ -288,14 +299,13 @@ pub async fn value_usd(
         total.free += asset.free;
         total.locked += asset.locked;
     }
-    let mut value = Decimal::ZERO;
-    'assets: for (id, asset) in held {
+    'asset: for (id, asset) in held {
         let amount = asset.wallet + asset.free + asset.locked;
         let one = [Holding::Spot(asset)];
         for market in markets {
             if let Some(worth) = market.value_usd(chain, &one).await? {
                 value += worth;
-                continue 'assets;
+                continue 'asset;
             }
         }
         let mint: Pubkey = id.parse().map_err(|_| {

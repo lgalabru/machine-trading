@@ -278,8 +278,7 @@ impl Pools {
         ) {
             sol.locked += Decimal::from(staked) / Decimal::from(1_000_000_000u64);
         }
-        let markets: Vec<&dyn Market> = self.markets.iter().map(AsRef::as_ref).collect();
-        let value = value_usd(chain, &markets, &all).await?;
+        let value = value_usd(chain, &self.markets, &all).await?;
         let (sol, waiting) = all
             .iter()
             .filter_map(|h| match h {

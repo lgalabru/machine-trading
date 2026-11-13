@@ -363,8 +363,7 @@ impl Venues {
             }
             all.extend(held);
         }
-        let markets: Vec<&dyn Market> = self.markets.iter().map(AsRef::as_ref).collect();
-        let value = value_usd(chain, &markets, &all).await?;
+        let value = value_usd(chain, &self.markets, &all).await?;
         let asset = |i: usize| -> Option<&Holdings> {
             match all.get(i)? {
                 Holding::Spot(asset) => Some(asset),
