@@ -243,7 +243,9 @@ def main():
     for name in limits["bots"]:
         all_pnls = [p for reports in sets for p in pnls(reports[name])]
         reference = sum(sum(pnls(r["reference"])) for r in sets)
-        ratio = sum(all_pnls) / reference if reference > 0 else float("nan")
+        # Undefined when the reference lost money on these sets: null in the
+        # summary, never NaN (not JSON).
+        ratio = sum(all_pnls) / reference if reference > 0 else None
         profitable = sum(p > 0 for p in all_pnls) / len(all_pnls)
         reward = max(r[name]["reward"] for r in sets)
         reasons = []
@@ -277,7 +279,8 @@ def main():
             "below": below, "below_total": ceiling, "below_odds": below_odds,
             "reached_bound": reward > 0.999,
         })
-        print(f"  {'FAIL' if reasons else 'ok  '} {name}: {ratio:.2f}x the reference, "
+        multiple = f"{ratio:.2f}x the reference" if ratio is not None else "no ratio (the reference lost money)"
+        print(f"  {'FAIL' if reasons else 'ok  '} {name}: {multiple}, "
               f"profitable {profitable:.0%}, worst ${min(all_pnls):.0f}"
               + (f" ({'; '.join(reasons)})" if reasons else ""))
         if reasons:

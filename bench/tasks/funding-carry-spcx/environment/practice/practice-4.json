@@ -1798,5 +1798,6 @@
       "limit_bps": 60.0,
       "account": 4
     }
-  ]
+  ],
+  "reference_pnl_usd": 243.98
 }
