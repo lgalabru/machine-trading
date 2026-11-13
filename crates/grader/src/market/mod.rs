@@ -71,6 +71,8 @@ pub(crate) mod tests {
             raw_sends: None,
             tx_layer: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
         }
     }
 

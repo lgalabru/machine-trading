@@ -39,8 +39,10 @@
 //!   pools, each a spot and an amm instrument ([`pools`]): a pool's top is
 //!   the price of a small trade each way, its fills come from its vaults,
 //!   and its seats execute swaps and liquidity.
+//! - [`kamino`]: Kamino Lending and its reserves, money markets.
 
 pub mod books;
+pub mod kamino;
 pub mod meteora;
 pub mod openbook;
 pub mod perps;

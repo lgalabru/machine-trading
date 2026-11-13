@@ -767,6 +767,13 @@ pub enum Reader {
         /// The account when the session starts.
         start: Wallet,
     },
+    /// A lending account the session measures: its value, and each
+    /// reserve's supply, debt and numbers ([`Wallet::venues`]). Reserves
+    /// have no book.
+    Lending {
+        /// The account when the session starts.
+        start: Wallet,
+    },
 }
 
 /// A wallet as the session measures it, at the session's oracle price.
@@ -828,7 +835,9 @@ impl WasmBot {
         } = clock;
         let (start_mark, start_oracle) = match &desk.reader {
             Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
-            Reader::Wallet { start } => (start.price_usd, start.price_usd),
+            Reader::Wallet { start } | Reader::Lending { start } => {
+                (start.price_usd, start.price_usd)
+            }
         };
         let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
@@ -960,6 +969,19 @@ impl WasmBot {
                     position,
                 )
             }
+            Reader::Lending { start } => {
+                let Some(wallet) = wallet else {
+                    tracing::warn!(step = k, "no reading of the account; skipping the step");
+                    return None;
+                };
+                self.pnl = wallet.value_usd - start.value_usd;
+                let position = mtx_kit::Position {
+                    size: wallet.base,
+                    entry_usd: start.price_usd,
+                };
+                let price = wallet.price_usd;
+                (price, price, price, None, None, position)
+            }
             Reader::Wallet { start } => {
                 let Some(wallet) = wallet else {
                     tracing::warn!(step = k, "no reading of the wallet; skipping the step");
@@ -994,6 +1016,20 @@ impl WasmBot {
         // Its RFQ fills, which settle off the book.
         if let Some(board) = &self.desk.rfqs {
             fills.extend(board.take_fills());
+        }
+        if let (Reader::Lending { .. }, Some(wallet)) = (&self.desk.reader, wallet) {
+            for view in &mut venues {
+                let Some(reading) = wallet.venues.iter().find(|r| r.id == view.id) else {
+                    continue;
+                };
+                view.position = None;
+                view.lending = Some(mtx_kit::LendingPosition {
+                    supplied: reading.supplied,
+                    borrowed: reading.borrowed,
+                    health: reading.health,
+                });
+                view.stats = reading.stats.clone();
+            }
         }
         // A measured wallet's other markets: the same base held, and each
         // seat's own top, where the step's depth didn't give one. Then what

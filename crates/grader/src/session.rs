@@ -201,6 +201,10 @@ pub struct SessionReport {
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_layer: Option<crate::txlayer::report::TxLayerReport>,
+    /// A lending session: the bot's supply and debt, its health, and what
+    /// the borrowers and liquidators did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lending: Option<crate::lending::LendingReport>,
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
@@ -410,6 +414,9 @@ pub(crate) struct Prepared {
     /// Off hours: the slot the external market reopens at.
     pub reopen_slot: Option<u64>,
     pub cast: Cast,
+    /// Upkeep the session's venues need, beyond the options' (see
+    /// [`crate::crank`]).
+    pub cranks: Vec<Box<dyn crate::crank::VenueCrank>>,
     pub account: Box<dyn Account>,
 }
 
@@ -520,8 +527,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         reports,
         reopen_slot,
         mut cast,
+        cranks: kind_cranks,
         mut account,
-    } = if scenario.spot.is_some() {
+    } = if scenario.lending.is_some() {
+        crate::lending::prepare(&opts).await?
+    } else if scenario.spot.is_some() {
         crate::spot::prepare(&opts).await?
     } else {
         crate::perp::prepare(&opts).await?
@@ -692,6 +702,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let mut bot_exit = None;
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     let mut cranks = crate::crank::Cranks::new(opts.cranks);
+    for crank in kind_cranks {
+        cranks.push(crank);
+    }
     let mut slot = start_slot;
     for k in 0..steps {
         // A step: the takers trade against the quotes the bot left; then the
@@ -702,6 +715,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
         cast.before_blocks().await;
+        // A scenario's clock jump lands before the step's blocks.
+        if let Some(warp) = scenario.warps.iter().find(|w| w.step == k) {
+            slot = crate::lending::warp(surfnet, &rpc, warp.slots).await?;
+        }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
             // Under the transaction layer, the slot's block: what its
