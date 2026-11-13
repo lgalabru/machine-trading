@@ -284,3 +284,49 @@ image instead, which is slower but just as correct. One-time step after the
 first push to main: in the repository owner's GitHub packages, open
 `machine-trading-ci`, then Package settings, and change its visibility to
 public. Pull requests from forks use it from then on.
+
+## Automation
+
+Releases and benches can run from GitHub instead of a laptop. Every step
+that spends money or publishes waits for a reviewer. [automation.md](automation.md)
+walks through each one with diagrams: its sequence and what runs in
+parallel.
+
+| What | How | Asks a reviewer |
+| --- | --- | --- |
+| Release X.Y.Z | Bump `tag` and `bench/tasks/dataset.toml`, merge, then `git tag vX.Y.Z origin/main && git push origin vX.Y.Z` | Before publishing (`release`) |
+| Start a bench | `gh workflow run bench.yml -f action=start -f version=X.Y.Z -f models="…"` | Yes (`bench`) |
+| Follow it | `gh workflow run bench.yml -f action=status [-f batch=…]` | No (`bench-status`) |
+| Publish it | `gh workflow run bench.yml -f action=publish -f batch=… -f version=X.Y.Z` | Yes (`bench`) |
+
+- **`release.yml`**, on a tag `vX.Y.Z` on main. It builds both images
+  natively for amd64 and arm64 and stages them under this repository's
+  package, with the workflow's own token. Once approved, it copies them to
+  `ghcr.io/solana-foundation/machine-trading`, refusing a tag that exists
+  already, and runs `just release-publish`: pin, lint, sync, `mtx task
+  check`, publish to Harbor, tag the versions. It pushes the pins to
+  `release/X.Y.Z` for a pull request. Run `just harbor-checks` on the
+  images before tagging, as for a release from a laptop.
+- **`bench.yml`**, dispatched by hand. It reaches the bench machine over
+  SSH, where a copy of `ops/bench/bench-dispatch` is the only command a
+  key may run. The machine checks every argument again, runs only commits
+  on `origin/main`, and keeps the API keys. `publish` runs
+  `mtx bench publish` there and pushes the `release.json` it wrote to
+  `results/<version>-<batch>`; merging it republishes the site.
+
+The keys and the machine's address live in GitHub environments (Settings ›
+Environments): `release` deploys from tags `v*.*.*`, `bench` and
+`bench-status` from `main`, and `release` and `bench` ask a reviewer.
+
+Setting up the bench machine, or another one:
+
+```sh
+install -m 755 ops/bench/bench-dispatch ~/bin/bench-dispatch   # on the machine
+# One key per environment, its private half only in GitHub:
+ssh-keygen -t ed25519 -N '' -C github-actions-bench -f bench
+echo "restrict,command=\"$HOME/bin/bench-dispatch\" $(cat bench.pub)" >> ~/.ssh/authorized_keys
+```
+
+The dispatcher is a copy, not the checkout's file, so a commit on main
+can't widen what a key may run: reinstall it after a change. Why SSH and not
+a self-hosted runner: [ADR 0002](adr/0002-bench-machine-over-ssh.md).

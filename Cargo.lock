@@ -4898,6 +4898,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-actors-smoke"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-carry"
 version = "0.1.0"
 dependencies = [
@@ -4968,6 +4975,20 @@ dependencies = [
 
 [[package]]
 name = "mtx-bot-reference"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-rfq-desk"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-rfq-dust"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",
@@ -5089,6 +5110,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "solana-account 4.7.0",
  "solana-keypair",
  "solana-message 4.6.0",
  "solana-pubkey 4.3.0",

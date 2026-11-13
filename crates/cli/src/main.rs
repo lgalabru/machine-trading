@@ -1138,7 +1138,25 @@ async fn run() -> Result<()> {
         Command::Scenario(ScenarioCommand::Check { files }) => {
             let mut failed = 0;
             for file in &files {
-                match mtx_grader::scenario::Scenario::load(file) {
+                let loaded = mtx_grader::scenario::Scenario::load(file)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|scenario| {
+                        // A market no snapshot warmed up loads, then never
+                        // moves: say so here. Only when the repo is at hand.
+                        if let Ok(root) = bot::repo(None)
+                            && let Ok(task) = bot::resolve_task(&root, None)
+                            && let Ok(snapshot) = bot::task_snapshot(&root, &task)
+                            && scenario.spot.is_none()
+                        {
+                            bot::snapshot_for(&snapshot, &scenario.symbol).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "{e:#}. Set `symbol`, and the mandate's instrument, to one of those"
+                                )
+                            })?;
+                        }
+                        Ok(scenario)
+                    });
+                match loaded {
                     Ok(scenario) => notice::print(
                         notice::NoticeLevel::Success,
                         &format!("{} is a scenario", file.display()),
