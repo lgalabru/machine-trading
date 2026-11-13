@@ -48,7 +48,8 @@ the reference's included, that came out differently.
 Sessions run in parallel with `--jobs`, each isolated: its own surfnet and
 ports, RPC guard, directory and keys, and for a component its own store and
 fuel. A strategy component runs inside the grader, with no files and no
-network, so up to 32 of its sessions run at once; a process bot runs as one
+network, so up to 32 of its sessions run at once, as many as memory holds
+with each strategy at its 1 GiB cap (two in a 6 GB container); a process bot runs as one
 of four bot users, so at most four. Grades running at once on one machine
 never run bots as the same user at the same time (a session's end kills
 everything its user runs): a session waits for its user, and

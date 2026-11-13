@@ -31,9 +31,11 @@ fi
 
 # Only a strategy component is graded, and it runs inside the grader with
 # no files and no network: it can't reach another session, so the bot's
-# sessions run four at a time, each on its own surfnet, and the report is
-# the one they'd give one at a time. The reference is trusted: its
-# sessions run four at a time too, before the bot's.
+# sessions run several at a time, each on its own surfnet, and the report
+# is the one they'd give one at a time. Up to four, as many as the
+# container's memory holds with every strategy at its 1 GiB cap: two in the
+# verifier's 6 GB. The reference is trusted: its sessions run four at a
+# time, before the bot's.
 mtx grade \
   --draw funding-carry \
   --count 72 \

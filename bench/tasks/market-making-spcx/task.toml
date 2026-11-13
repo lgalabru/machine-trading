@@ -20,7 +20,8 @@ snapshot = "phoenix-spcx-2026-10-29"
 
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
-# reference on the same sessions first, four sessions at a time each. The
+# reference on the same sessions first: four of its sessions at a time,
+# and of the bot's as many as the memory holds (two in 6 GB). The
 # world moves only between the bot's turns, so a session takes as long as
 # the bot thinks: a minute or two for most bots, about four at worst. A
 # disqualified bot stops at its first breach.
