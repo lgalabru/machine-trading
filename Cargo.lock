@@ -4985,6 +4985,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-subaccount-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+ "solana-compute-budget-interface",
+ "tracing",
+]
+
+[[package]]
 name = "mtx-bot-weekend"
 version = "0.1.0"
 dependencies = [

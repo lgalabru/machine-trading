@@ -41,6 +41,10 @@
       "dir": "bench/checks/exploits/market-making-fable-0.10"
     }
   ],
+  "gates": {
+    "informed": ["flow-oracle"],
+    "non_reading": ["nop", "naive-quoter", "skew-quoter"]
+  },
   "rules": [
     "naive-quoter < reference",
     "skew-quoter < reference < flow-oracle < hindsight"
