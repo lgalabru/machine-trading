@@ -42,15 +42,16 @@ pub use engine::TxEngine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// A scenario's transaction layer. Everything but the seed and the
-/// calibration has a default.
+/// A scenario's transaction layer. Everything but the seed has a default.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TxLayer {
     /// What the layer's draws come from: the background demand, the
     /// leaders, latencies, losses and ties.
     pub seed: u64,
-    /// The fee calibration's id ([`calibration::Calibration::builtin`]).
+    /// The fee calibration's id ([`calibration::Calibration::builtin`]);
+    /// by default the one fitted to mainnet, [`calibration::DEFAULT`].
+    #[serde(default = "default_calibration")]
     pub calibration: String,
     /// The accounts background demand contends for, each with the class
     /// whose calibration prices it: the market, the pool, the oracle.
@@ -83,6 +84,10 @@ pub struct TxLayer {
     /// What a SOL is worth in the account's currency, for `fees_in_pnl`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sol_usd: Option<f64>,
+}
+
+fn default_calibration() -> String {
+    calibration::DEFAULT.to_string()
 }
 
 fn default_validators() -> u32 {

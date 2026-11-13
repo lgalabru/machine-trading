@@ -16,6 +16,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// The calibration a scenario's layer uses unless it names another.
+pub const DEFAULT: &str = "mainnet-fees.20261113.43786520";
+
 /// The calibrations the grader ships, by id.
 const BUILTIN: &[(&str, &str)] = &[(
     "mainnet-fees.20261113.43786520",
@@ -268,6 +271,7 @@ mod tests {
             assert_eq!(calibration.meta.calibration_id, *id);
         }
         assert!(Calibration::builtin("nope").is_err());
+        assert!(Calibration::builtin(DEFAULT).is_ok());
     }
 
     #[test]

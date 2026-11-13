@@ -96,13 +96,15 @@ to sampled public mainnet blocks (keyless, rate-limited), and its
 `<id>.inputs.json` cites every download by URL and SHA-256. The grader
 carries the shipped files in its binary, and a scenario names one by id.
 
-The file shipped, `mainnet-fees.20261113.43786520`, covers:
+The file shipped, `mainnet-fees.20261113.43786520`, is the default. It
+covers:
 
 - **The samples:** 300 full blocks in calm, busy and spike windows.
 - **Regimes:** from the leaders' fee rewards over 39 hours.
-- **Network numbers:** the skip rate and Jito stake share, from
-  `getBlockProduction`, `getVoteAccounts` and Jito's validator list.
-- **Tips:** from Jito's public tip floor.
+- **Network numbers:** a skip rate of 0.00057 and Jito on 98.4% of stake,
+  from `getBlockProduction`, `getVoteAccounts` and Jito's validator list.
+- **Tips:** from Jito's public tip floor (median 1,333, p95 105,025, p99
+  1,402,542 lamports).
 - **Classes:** `block`; `amm_pool`, from three SOL/USDC pools; `oracle`,
   from Pyth SOL/USD.
 
@@ -112,7 +114,12 @@ Its limits are in its `[meta] limits`:
   copies `amm_pool`.
 - The spike window's fees were block-wide, not on the pools. A task that
   wants a local spike pins a regime window, or a congestion floor.
+- `oracle` (Pyth SOL/USD) is never contended: its updates are small.
 - `inversion_p` is a default, not fitted.
+- Slots sampled at about 215 ms; one sample of 300 blocks over two days.
+- Sampling today's blocks needs `getBlock` with
+  `maxSupportedTransactionVersion: 1`: blocks carry version-1
+  transactions.
 
 A test (`the_shipped_calibration_draws_what_it_observed`) draws 20,000
 slots per class and regime. It checks the drawn clearing prices against the
@@ -137,7 +144,8 @@ a Kolmogorov-Smirnov distance within what a sample of that size allows.
 }
 ```
 
-Every field but `seed` and `calibration` has a default.
+Every field but `seed` has a default; `calibration` defaults to
+`mainnet-fees.20261113.43786520`.
 
 - **`routes`.** `rpc` and `jito` are always there. `staked` exists only if
   the scenario lists it. A route's `fee_lamports` is its price per send. It
