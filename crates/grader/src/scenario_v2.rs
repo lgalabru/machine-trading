@@ -8,8 +8,8 @@
 //! | section        | holds                                                        |
 //! |----------------|--------------------------------------------------------------|
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
-//! | `venues`       | the perp venue's funding, the spot markets and their data    |
-//! | `market_model` | the price path, the fair value, a closed period, the calibration record |
+//! | `venues`       | the perp venue's funding, the spot markets and their data, the lending markets |
+//! | `market_model` | the price path, the fair value, a closed period, the calibration record, the clock's jumps |
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker, the grader's taker flow, the actor library |
 //! | `faults`       | execution faults on the bot's sends and reads                |
@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     faults::Faults,
+    lending::{Lending, Warp},
     making::{Competition, Making, TAKER_ACCOUNTS, TakerOrder},
     offhours::OffHours,
     orders::{ExecutionOrder, NetScoring, Participation},
@@ -47,6 +48,10 @@ use crate::{
 
 /// The schema version this module reads and writes.
 pub const SCHEMA: u32 = 2;
+
+/// What a lending scenario refuses beside its markets, in both versions.
+const LENDING_ALONE: &str = "lending: a lending scenario moves prices through its oracles only, \
+     and has no path, market making, tape, order or spot scoring";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -99,7 +104,7 @@ pub struct StartingWallet {
     pub quote: f64,
 }
 
-/// Where the bot trades. Exactly one of `perp` and `spot`.
+/// Where the bot trades. Exactly one of `perp`, `spot` and `lending`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Venues {
@@ -107,6 +112,11 @@ pub struct Venues {
     pub perp: Option<PerpVenue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot: Option<SpotVenues>,
+    /// Kamino's lending markets: the reserves, the bot's wallet and opening
+    /// position, and the borrowers and liquidators beside it (see
+    /// [`crate::lending`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lending: Option<Lending>,
 }
 
 /// The perp venue (Phoenix) and what is set on it when the session starts.
@@ -148,6 +158,10 @@ pub struct MarketModel {
     /// are what sessions replay; this records where they came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<crate::market::MarketModelRecord>,
+    /// Jumps of the session's clock, for interest over days. Lending
+    /// sessions only (see [`crate::lending::Warp`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warps: Vec<Warp>,
 }
 
 /// The closed period before the underlying's market reopens, and Phoenix's
@@ -237,9 +251,12 @@ impl Assets {
 
 impl Venues {
     /// A spot venue list that is known, unique and not empty, its step
-    /// data asking for something sensible, and a perp venue's funding that
-    /// settles.
+    /// data asking for something sensible, a perp venue's funding that
+    /// settles, and lending markets that check themselves.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(lending) = &self.lending {
+            lending.validate()?;
+        }
         if let Some(funding) = self.perp.as_ref().and_then(|p| p.funding.as_ref())
             && (funding.interval_seconds == 0
                 || funding.period_seconds < funding.interval_seconds
@@ -485,13 +502,15 @@ impl ScenarioV2 {
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
         if let Some(oracles) = &self.oracles {
-            oracles.validate(self.duration_slots)?;
+            // A clock jump adds its slots to the session the feeds run over.
+            let (_, warped) = crate::lending::gaps(&self.market_model.warps);
+            oracles.validate(self.duration_slots + warped)?;
             self.validate_oracles(oracles)?;
         }
         if let Some(raw) = self.tx.as_ref().and_then(|tx| tx.raw_sends.as_ref()) {
             raw.programs()
                 .map_err(|reason| format!("raw_sends: {reason}"))?;
-            if self.venues.spot.is_some() {
+            if self.venues.perp.is_none() {
                 return Err("raw_sends: only perp sessions take raw sends yet".into());
             }
         }
@@ -500,8 +519,13 @@ impl ScenarioV2 {
         self.library_is_for_perps()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
+        } else if self.venues.lending.is_some() {
+            self.lending_is_alone()?;
         } else {
             self.spot_fields_are_for_spot()?;
+        }
+        if self.venues.lending.is_none() && !self.market_model.warps.is_empty() {
+            return Err("warps: only lending sessions jump the clock".into());
         }
         self.assets.validate()?;
         self.venues.validate()?;
@@ -524,12 +548,52 @@ impl ScenarioV2 {
         self.order_fits_the_wallet()
     }
 
-    /// Exactly one venue kind: a session is a perp's or a spot's.
+    /// Exactly one venue kind: a session is a perp's, a spot's or a
+    /// lending one's.
     fn venues_are_one_kind(&self) -> Result<(), String> {
-        match (&self.venues.perp, &self.venues.spot) {
-            (Some(_), None) | (None, Some(_)) => Ok(()),
-            _ => Err("venues: exactly one of perp and spot".into()),
+        let Venues {
+            perp,
+            spot,
+            lending,
+        } = &self.venues;
+        match [perp.is_some(), spot.is_some(), lending.is_some()]
+            .iter()
+            .filter(|kind| **kind)
+            .count()
+        {
+            1 => Ok(()),
+            _ => Err("venues: exactly one of perp, spot and lending".into()),
         }
+    }
+
+    /// A lending scenario trades Kamino's reserves from the wallet its
+    /// section gives it, and moves prices through its oracles only: no path,
+    /// other flow, order or spot scoring. Clock jumps fit inside the session
+    /// and leave execution faults out, which count steps on the unjumped
+    /// clock.
+    fn lending_is_alone(&self) -> Result<(), String> {
+        let market = &self.market_model;
+        if !market.path.is_empty()
+            || market.fair_path.is_some()
+            || market.closed_period.is_some()
+            || market.record.is_some()
+            || !self.actors.is_empty()
+            || self.assets.wallet.is_some()
+            || self.order.is_some()
+            || self.scoring.bound_usd.is_some()
+            || self.scoring.participation.is_some()
+            || self.scoring.net.is_some()
+        {
+            return Err(LENDING_ALONE.into());
+        }
+        if self.duration_slots == 0 {
+            return Err("lending: the session has no slots".into());
+        }
+        crate::lending::validate_warps(&market.warps, self.duration_slots)?;
+        if !market.warps.is_empty() && self.faults.is_some() {
+            return Err("warps: a session with clock jumps has no execution faults".into());
+        }
+        Ok(())
     }
 
     /// A spot scenario trades the profiles' pair from a wallet, and has no
@@ -578,7 +642,20 @@ impl ScenarioV2 {
     /// only those, so a wider universe would go unenforced. It has no term
     /// (the session sets it); a perp mandate has a drawdown limit.
     fn mandate_covers_the_market(&self) -> Result<(), String> {
-        if self.venues.spot.is_some() {
+        if let Some(lending) = &self.venues.lending {
+            let mut wanted = lending.instruments();
+            let mut universe: Vec<InstrumentRef> = self
+                .mandate
+                .universe
+                .iter()
+                .map(|a| a.instrument.clone())
+                .collect();
+            wanted.sort();
+            universe.sort();
+            if wanted != universe {
+                return Err("mandate: the universe must be exactly the lending reserves".into());
+            }
+        } else if self.venues.spot.is_some() {
             let mut wanted = self.venues.spot_instruments();
             let mut universe: Vec<InstrumentRef> = self
                 .mandate
@@ -609,7 +686,7 @@ impl ScenarioV2 {
         if self.mandate.term.is_some() {
             return Err("mandate: a scenario's mandate has no term; the session sets it".into());
         }
-        if self.venues.spot.is_none() && self.mandate.limits.max_drawdown_usd.is_none() {
+        if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
         }
         Ok(())
@@ -619,6 +696,12 @@ impl ScenarioV2 {
     fn validate_oracles(&self, oracles: &crate::oracles::Oracles) -> Result<(), String> {
         use crate::oracles::Source;
         for feed in &oracles.feeds {
+            if self.venues.lending.is_some() && !matches!(feed.source, Source::Scope(_)) {
+                return Err(format!(
+                    "oracles: {} isn't Scope's; Kamino's reserves read Scope only",
+                    feed.name
+                ));
+            }
             match &feed.source {
                 Source::Phoenix(phoenix) => {
                     if self.venues.spot.is_some() {
@@ -715,6 +798,11 @@ impl ScenarioV2 {
     /// first, so what comes out is valid.
     pub fn into_scenario(self) -> Result<Scenario, String> {
         self.validate()?;
+        Ok(self.into_v1())
+    }
+
+    /// The same facts in v1's layout, unchecked.
+    fn into_v1(self) -> Scenario {
         let Self {
             name,
             description,
@@ -736,6 +824,7 @@ impl ScenarioV2 {
             fair_path,
             closed_period,
             record,
+            warps,
         } = market_model;
         let Actors {
             competitor,
@@ -767,7 +856,7 @@ impl ScenarioV2 {
             ),
             _ => (None, None),
         };
-        Ok(Scenario {
+        Scenario {
             name,
             description,
             symbol: assets.symbol,
@@ -789,8 +878,10 @@ impl ScenarioV2 {
             raw_sends: tx.and_then(|tx| tx.raw_sends),
             market_model: record,
             oracles,
+            lending: venues.lending,
+            warps,
             actors: library,
-        })
+        }
     }
 }
 
@@ -810,6 +901,20 @@ impl TryFrom<&Scenario> for ScenarioV2 {
             return Err("an off-hours scenario's takers are its offhours', not a tape".into());
         }
         let (venues, wallet) = match &v1.spot {
+            // Lending's v1 fields are its own section's; v2 has no place for
+            // the others, so they are refused here as v2 refuses them.
+            None if v1.lending.is_some() => {
+                if v1.funding.is_some() || v1.turn_data.is_some() {
+                    return Err(LENDING_ALONE.into());
+                }
+                (
+                    Venues {
+                        lending: v1.lending.clone(),
+                        ..Venues::default()
+                    },
+                    None,
+                )
+            }
             Some(spot) => {
                 if v1.making.is_some() || v1.offhours.is_some() || v1.funding.is_some() {
                     return Err("spot: a spot scenario has no path, fair path, market making, off-hours or funding".into());
@@ -821,6 +926,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                             markets: spot.venues.clone(),
                             turn_data: v1.turn_data.clone(),
                         }),
+                        lending: v1.lending.clone(),
                     },
                     Some(StartingWallet {
                         base: spot.base,
@@ -844,6 +950,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                             funding: v1.funding,
                         }),
                         spot: None,
+                        lending: None,
                     },
                     None,
                 )
@@ -885,6 +992,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 fair_path: v1.fair_path.clone(),
                 closed_period,
                 record: v1.market_model.clone(),
+                warps: v1.warps.clone(),
             },
             oracles: v1.oracles.clone(),
             actors: Actors {
@@ -999,6 +1107,7 @@ mod tests {
                 markets: vec!["phoenix".into(), "openbook".into()],
                 turn_data: None,
             }),
+            lending: None,
         };
         s.assets = Assets {
             symbol: SYMBOL.into(),
@@ -1180,7 +1289,7 @@ mod tests {
         assert!(
             s.validate()
                 .unwrap_err()
-                .contains("exactly one of perp and spot")
+                .contains("exactly one of perp, spot and lending")
         );
         s.venues = Venues::default();
         assert!(s.validate().unwrap_err().contains("exactly one"));
@@ -1241,6 +1350,66 @@ mod tests {
             .programs
             .clear();
         assert!(s.validate().unwrap_err().starts_with("raw_sends:"));
+    }
+
+    fn lending(check: &str) -> Scenario {
+        let path = format!(
+            "{}/../../bench/checks/kamino/{check}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        parse(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn lending_scenarios_round_trip_through_v2_and_json() {
+        for check in ["liquidation", "stale-oracle", "interest", "drain"] {
+            let v1 = lending(check);
+            let as_v2 = v2(&v1);
+            assert_eq!(as_v2.validate(), Ok(()), "{check}");
+            assert!(as_v2.venues.lending.is_some());
+            let text = serde_json::to_string_pretty(&as_v2).unwrap();
+            assert_eq!(parse(&text).unwrap(), v1, "{check}");
+            assert_eq!(as_v2.into_scenario().unwrap(), v1, "{check}");
+        }
+        assert!(!v2(&lending("interest")).market_model.warps.is_empty());
+    }
+
+    #[test]
+    fn a_lending_scenario_stands_alone_in_both_versions() {
+        let refused = |s: &ScenarioV2, needle: &str| {
+            let err = s.validate().unwrap_err();
+            assert!(err.contains(needle), "{err}");
+            assert_eq!(s.clone().into_v1().validate().unwrap_err(), err);
+        };
+
+        let mut s = v2(&lending("liquidation"));
+        s.venues.spot = spot().venues.spot;
+        s.assets.wallet = spot().assets.wallet;
+        refused(&s, "exactly one of perp, spot and lending");
+
+        let mut s = v2(&lending("liquidation"));
+        s.market_model.path.push(Waypoint::at(4, -1.0));
+        refused(&s, "moves prices through its oracles only");
+
+        let mut s = v2(&lending("liquidation"));
+        s.mandate.universe.pop();
+        refused(&s, "exactly the lending reserves");
+
+        let mut s = v2(&lending("interest"));
+        s.market_model.warps[0].step = 10_000;
+        refused(&s, "warps: step");
+
+        let mut s = v2(&lending("liquidation"));
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec!["11111111111111111111111111111111".into()],
+            }),
+        });
+        refused(&s, "only perp sessions take raw sends");
+
+        let mut s = shock();
+        s.market_model.warps = v2(&lending("interest")).market_model.warps;
+        refused(&s, "only lending sessions jump the clock");
     }
 
     #[test]

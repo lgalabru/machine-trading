@@ -108,6 +108,39 @@ spot-smoke:
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
 
+# Kamino lending sessions (bench/checks/kamino), graded with the probe: the
+# bot and a competing liquidator both liquidate borrowers a crash pushes
+# under; a stale oracle blocks borrows but not repays; a day's clock jump
+# accrues a day's interest; a process bot that sends all its SOL away is
+# still measured.
+kamino-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/kamino-probe/Justfile build
+    just --justfile bots/kamino-drain/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/kamino-2026-11-13 \
+        --bot bots/kamino-probe --logs "target/logs/kamino-$1" --report "target/logs/kamino-$1.json" \
+        "bench/checks/kamino/$1.json" > /dev/null
+    }
+    grade liquidation
+    jq -e '.scenarios[0] | .lending.liquidations >= 1
+      and ([.lending.actions[] | select(.action == "liquidate" and .error == null)] | length) >= 1
+      and (has("crank_refusals") | not)' target/logs/kamino-liquidation.json > /dev/null
+    grade stale-oracle
+    log=$(cat target/logs/kamino-stale-oracle/*)
+    grep -q 'Borrow { amount: Some(1.0) }.*Landed' <<< "$log"
+    grep -q 'Borrow { amount: Some(1.0) }.*Failed.*price status' <<< "$log"
+    grade interest
+    jq -e '.scenarios[0].lending.end[1].borrowed > 600.03' target/logs/kamino-interest.json > /dev/null
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --snapshot snapshots/kamino-2026-11-13 \
+      --bot bots/kamino-drain --logs target/logs/kamino-drain --report target/logs/kamino-drain.json \
+      bench/checks/kamino/drain.json > /dev/null
+    grep -rq 'drain: sent all SOL away' target/logs/kamino-drain
+    jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
+    echo "kamino-smoke: ok"
+
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
 # SOL-USDC book, every order from its account's own seat. Then every actor

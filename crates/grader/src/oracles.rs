@@ -40,7 +40,7 @@ use crate::{
 
 /// Slots between a feed's publications unless it says otherwise: a second
 /// at 250 ms slots, a Pyth feed's usual pace.
-const DEFAULT_CADENCE_SLOTS: u64 = 4;
+pub(crate) const DEFAULT_CADENCE_SLOTS: u64 = 4;
 /// Confidence interval, in basis points of the price, unless it says
 /// otherwise.
 const DEFAULT_CONF_BPS: f64 = 2.0;
@@ -186,6 +186,9 @@ pub struct Context {
     pub duration_slots: u64,
     /// Phoenix's perp asset map, for a Phoenix feed.
     pub perp_asset_map: Option<Pubkey>,
+    /// The TWAP the source holds beside its price when the session starts,
+    /// for a source that writes one.
+    pub start_twap: Option<f64>,
 }
 
 impl Context {
@@ -206,6 +209,11 @@ pub struct World {
 pub trait OracleSource {
     /// The price the account holds now.
     fn start_price(&self, rpc: &RpcClient, world: &World) -> Result<f64>;
+    /// The TWAP it holds now, if it writes one.
+    fn start_twap(&self, rpc: &RpcClient) -> Result<Option<f64>> {
+        let _ = rpc;
+        Ok(None)
+    }
     /// Overrides that publish `publications` in order.
     fn lower(&self, context: &Context, publications: &[Publication]) -> Result<Vec<Override>>;
 }
@@ -302,6 +310,12 @@ impl Feed {
         }
     }
 
+    /// The path's price at `slot`, from `start_price`: the true price,
+    /// whatever the feed's failures publish.
+    pub fn true_price(&self, start_price: f64, slot: u64) -> f64 {
+        self.price_at(start_price, slot)
+    }
+
     /// The path's price at `slot`.
     fn price_at(&self, start_price: f64, slot: u64) -> f64 {
         let level = match self.path.iter().position(|l| l.slot > slot) {
@@ -329,6 +343,22 @@ impl Feed {
         duration_slots: u64,
         start_price: f64,
     ) -> Vec<Publication> {
+        self.plan_around(seed, index, duration_slots, start_price, &[])
+    }
+
+    /// [`Feed::plan`] for a session whose clock jumps over `gaps`, each
+    /// `(from, to)` in slots of the session: no slot after `from` passes
+    /// until the clock lands on `to`, so nothing is published there, and the
+    /// feed publishes at `to + 1`, the first slot produced after the jump
+    /// (the landing slot itself plays no override).
+    pub fn plan_around(
+        &self,
+        seed: u64,
+        index: usize,
+        duration_slots: u64,
+        start_price: f64,
+        gaps: &[(u64, u64)],
+    ) -> Vec<Publication> {
         let windows: Vec<(u64, u64, Mode)> = self
             .failures
             .iter()
@@ -341,6 +371,9 @@ impl Feed {
         let mut publications: Vec<Publication> = Vec::new();
         let mut slot = 0;
         while slot <= duration_slots {
+            if let Some(&(_, to)) = gaps.iter().find(|(from, to)| slot > *from && slot <= *to) {
+                slot = to + 1;
+            }
             let active = || {
                 windows
                     .iter()
@@ -579,7 +612,41 @@ pub struct ScopeOracle {
     /// The price's power of ten, as the entry holds it.
     #[serde(default = "default_scope_exp")]
     pub exp: u64,
+    /// The entry the consumer's TWAP reads (a klend reserve's
+    /// `twap_chain`), written beside the price with a 1-hour EMA of the
+    /// path. A TWAP equal to the price would hide the divergence a crash
+    /// opens, which klend checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub twap_index: Option<u16>,
+    /// The rest of a multiplied price chain (a reserve's `price_chain`
+    /// after `index`): held at their prices and restamped with every
+    /// publication, so `index` alone carries the move.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<u16>,
+    /// What the TWAP averages: the true path (`hold`, by default: a
+    /// failure moves the price only), or the prints as published
+    /// (`follow`: a manipulation drags the TWAP too).
+    #[serde(default, skip_serializing_if = "TwapMode::is_hold")]
+    pub twap: TwapMode,
 }
+
+/// What a Scope feed's TWAP averages.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TwapMode {
+    #[default]
+    Hold,
+    Follow,
+}
+
+impl TwapMode {
+    fn is_hold(&self) -> bool {
+        *self == TwapMode::Hold
+    }
+}
+
+/// The window Scope's `ScopeTwap1h` entries average over, in seconds.
+const TWAP_WINDOW_SECONDS: f64 = 3_600.0;
 
 fn default_scope_exp() -> u64 {
     8
@@ -593,7 +660,17 @@ const SCOPE_ENTRY_LEN: usize = 8 + 8 + 8 + 8 + 24;
 pub const SCOPE_ENTRIES: u16 = 512;
 
 impl ScopeOracle {
+    /// The account's entries: the price chain's, then the TWAP's.
+    fn entries(&self) -> impl Iterator<Item = u16> + '_ {
+        std::iter::once(self.index)
+            .chain(self.chain.iter().copied())
+            .chain(self.twap_index)
+    }
+
     pub(crate) fn address(&self) -> std::result::Result<Pubkey, String> {
+        if let Some(entry) = self.entries().find(|i| *i >= SCOPE_ENTRIES) {
+            return Err(format!("entry {entry} is past Scope's {SCOPE_ENTRIES}"));
+        }
         if self.index >= SCOPE_ENTRIES {
             return Err(format!(
                 "index {} is past Scope's {SCOPE_ENTRIES}",
@@ -614,36 +691,77 @@ impl OracleSource for ScopeOracle {
             .ok_or_else(|| oracle_error(&self.account, "not a Scope price account"))
     }
 
+    fn start_twap(&self, rpc: &RpcClient) -> Result<Option<f64>> {
+        let Some(twap) = self.twap_index else {
+            return Ok(None);
+        };
+        let address = self.address().map_err(|e| oracle_error(&self.account, e))?;
+        let account = rpc.get_account(&address)?;
+        scope_price(&account.data, twap)
+            .map(Some)
+            .ok_or_else(|| oracle_error(&self.account, "not a Scope price account"))
+    }
+
     fn lower(&self, context: &Context, publications: &[Publication]) -> Result<Vec<Override>> {
         let address = self.address().map_err(|e| oracle_error(&self.account, e))?;
         let scale = 10f64.powi(self.exp as i32);
+        let stamp = |i: u16, p: &Publication| {
+            [
+                (
+                    format!("prices.{i}.last_updated_slot"),
+                    json!(context.base_slot + p.slot),
+                ),
+                (
+                    format!("prices.{i}.unix_timestamp"),
+                    json!(context.unix_at(p.as_of_slot)),
+                ),
+            ]
+        };
         let i = self.index;
+        let mut twap = context.start_twap.unwrap_or(context.start_price);
+        let mut last_slot = 0;
         Ok(publications
             .iter()
-            .map(|p| Override {
-                template_id: "kamino-scope-price",
-                account: address,
-                values: serde_json::Value::Object(
-                    [
-                        (
-                            format!("prices.{i}.price.value"),
-                            json!((p.price * scale).round() as u64),
-                        ),
-                        (format!("prices.{i}.price.exp"), json!(self.exp)),
-                        (
-                            format!("prices.{i}.last_updated_slot"),
-                            json!(context.base_slot + p.slot),
-                        ),
-                        (
-                            format!("prices.{i}.unix_timestamp"),
-                            json!(context.unix_at(p.as_of_slot)),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
-                slot: p.slot,
-                label: format!("scope {i} @{}", p.slot),
+            .map(|p| {
+                let mut values: serde_json::Map<String, serde_json::Value> = [
+                    (
+                        format!("prices.{i}.price.value"),
+                        json!((p.price * scale).round() as u64),
+                    ),
+                    (format!("prices.{i}.price.exp"), json!(self.exp)),
+                ]
+                .into_iter()
+                .chain(stamp(i, p))
+                .collect();
+                for &held in &self.chain {
+                    values.extend(stamp(held, p));
+                }
+                if let Some(t) = self.twap_index {
+                    // An EMA over the hour, stepped by the time since the
+                    // last publication.
+                    let seconds =
+                        (p.slot - last_slot) as f64 * context.slot_time_ms as f64 / 1000.0;
+                    let weight = 1.0 - (-seconds / TWAP_WINDOW_SECONDS).exp();
+                    let target = match self.twap {
+                        TwapMode::Hold => p.ema_price,
+                        TwapMode::Follow => p.price,
+                    };
+                    twap += (target - twap) * weight;
+                    values.insert(
+                        format!("prices.{t}.price.value"),
+                        json!((twap * scale).round() as u64),
+                    );
+                    values.insert(format!("prices.{t}.price.exp"), json!(self.exp));
+                    values.extend(stamp(t, p));
+                }
+                last_slot = p.slot;
+                Override {
+                    template_id: "kamino-scope-price",
+                    account: address,
+                    values: serde_json::Value::Object(values),
+                    slot: p.slot,
+                    label: format!("scope {i} @{}", p.slot),
+                }
             })
             .collect())
     }
@@ -683,7 +801,8 @@ fn oracle_error(name: &str, reason: impl Into<String>) -> Error {
     }
 }
 
-/// Every feed's overrides, in feed order.
+/// Every feed's overrides, in feed order, for a session whose clock jumps
+/// over `gaps` (see [`Feed::plan_around`]).
 pub fn overrides(
     oracles: &Oracles,
     duration_slots: u64,
@@ -691,6 +810,7 @@ pub fn overrides(
     start_unix: i64,
     rpc: &RpcClient,
     world: &World,
+    gaps: &[(u64, u64)],
 ) -> Result<Vec<Override>> {
     let mut all = Vec::new();
     for (index, feed) in oracles.feeds.iter().enumerate() {
@@ -703,8 +823,9 @@ pub fn overrides(
             start_price,
             duration_slots,
             perp_asset_map: world.phoenix.map(|(map, _)| map),
+            start_twap: writer.start_twap(rpc)?,
         };
-        let publications = feed.plan(oracles.seed, index, duration_slots, start_price);
+        let publications = feed.plan_around(oracles.seed, index, duration_slots, start_price, gaps);
         all.extend(writer.lower(&context, &publications)?);
     }
     Ok(all)
@@ -719,6 +840,17 @@ pub fn register(
     duration_slots: u64,
     world: &World,
 ) -> Result<()> {
+    register_around(rpc, oracles, duration_slots, world, &[])
+}
+
+/// [`register`] for a session whose clock jumps over `gaps`.
+pub fn register_around(
+    rpc: &RpcClient,
+    oracles: &Oracles,
+    duration_slots: u64,
+    world: &World,
+    gaps: &[(u64, u64)],
+) -> Result<()> {
     let base_slot = rpc.get_slot()?;
     let clock = solana_pubkey::pubkey!("SysvarC1ock11111111111111111111111111111111");
     let start_unix = rpc
@@ -728,7 +860,15 @@ pub fn register(
         .and_then(|b| b.try_into().ok())
         .map(i64::from_le_bytes)
         .ok_or_else(|| oracle_error("clock", "the clock sysvar is short"))?;
-    let overrides = overrides(oracles, duration_slots, base_slot, start_unix, rpc, world)?;
+    let overrides = overrides(
+        oracles,
+        duration_slots,
+        base_slot,
+        start_unix,
+        rpc,
+        world,
+        gaps,
+    )?;
     info!(
         feeds = oracles.feeds.len(),
         writes = overrides.len(),
@@ -785,6 +925,7 @@ mod tests {
             start_price: 100.0,
             duration_slots: 40,
             perp_asset_map: Some(Pubkey::new_unique()),
+            start_twap: None,
         }
     }
 
@@ -944,6 +1085,9 @@ mod tests {
             account: Pubkey::new_unique().to_string(),
             index: 3,
             exp: 8,
+            twap_index: None,
+            chain: Vec::new(),
+            twap: TwapMode::Hold,
         });
         let f = feed(source, vec![]);
         let plan = f.plan(1, 0, 8, 100.0);
@@ -959,6 +1103,65 @@ mod tests {
             overrides[1].values["prices.3.unix_timestamp"],
             1_800_000_001i64
         );
+    }
+
+    #[test]
+    fn scope_writes_a_lagging_twap_and_restamps_its_chain() {
+        let scope = |twap| {
+            Source::Scope(ScopeOracle {
+                account: Pubkey::new_unique().to_string(),
+                index: 210,
+                exp: 8,
+                twap_index: Some(455),
+                chain: vec![3],
+                twap,
+            })
+        };
+        let crash = Failure {
+            mode: Mode::OffPrice { bias_pct: -50.0 },
+            window: Window {
+                from_slot: 20,
+                from_slot_max: None,
+                slots: None,
+            },
+        };
+        let held = feed(scope(TwapMode::Hold), vec![crash.clone()]);
+        let plan = held.plan(1, 0, 40, 100.0);
+        let lowered = held.source.writer().lower(&context(), &plan).unwrap();
+        let entry = |o: &Override, i: u16| {
+            o.values[format!("prices.{i}.price.value")]
+                .as_u64()
+                .map(|v| v as f64 / 1e8)
+        };
+        let last = lowered.last().unwrap();
+        // The price takes the path and the failure; the held entry only its
+        // stamps.
+        assert!((entry(last, 210).unwrap() - 45.0).abs() < 1e-6);
+        assert_eq!(entry(last, 3), None);
+        assert_eq!(last.values["prices.3.last_updated_slot"], 1_040u64);
+        assert_eq!(last.values["prices.455.last_updated_slot"], 1_040u64);
+        // Over ten seconds an hour's average barely moves toward the true 90.
+        let twap = entry(last, 455).unwrap();
+        assert!(twap < 100.0 && twap > 99.5, "{twap}");
+        let followed = feed(scope(TwapMode::Follow), vec![crash]);
+        let lowered = followed
+            .source
+            .writer()
+            .lower(&context(), &followed.plan(1, 0, 40, 100.0))
+            .unwrap();
+        assert!(entry(lowered.last().unwrap(), 455).unwrap() < twap);
+    }
+
+    #[test]
+    fn a_plan_lands_where_the_clock_jumps() {
+        let f = feed(pyth(), vec![]);
+        let slots: Vec<u64> = f
+            .plan_around(1, 0, 400, 100.0, &[(10, 300)])
+            .iter()
+            .map(|p| p.slot)
+            .collect();
+        assert_eq!(&slots[..5], &[0, 4, 8, 301, 305]);
+        assert_eq!(*slots.last().unwrap(), 397);
     }
 
     #[test]

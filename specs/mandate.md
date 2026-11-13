@@ -187,12 +187,13 @@ specification can state.
 ## Implementation status
 
 The reference implementation, `mtx_core::mandate`, reads and enforces the
-part of this specification the benchmark's tasks use today: `perp` and
-`spot` instruments, on one venue or several, `max_position`,
-`min_position`, `sides`, `min_sell_price`, `max_buy_price`, and
-`max_drawdown_usd`. It rejects documents that use anything else, so the
-example of a money-market mandate below lives here rather than in
-[`examples/`](examples/), which `cargo test` checks against it.
+part of this specification the benchmark's tasks use today: `perp`,
+`spot` and `money-market` instruments, on one venue or several,
+`max_position`, `min_position`, `sides`, `min_sell_price`,
+`max_buy_price`, and `max_drawdown_usd`. It rejects documents that use
+anything else, so the example of a money-market mandate below, which
+limits `min_health`, lives here rather than in [`examples/`](examples/),
+which `cargo test` checks against it.
 
 ## Changes in later versions
 

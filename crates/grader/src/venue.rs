@@ -35,8 +35,10 @@
 //! - [`phoenix`]: Phoenix, its Eternal perpetuals ([`perps`]) and its v1
 //!   spot books ([`books`]).
 //! - [`openbook`]: OpenBook v2 and its spot books ([`books`]).
+//! - [`kamino`]: Kamino Lending and its reserves, money markets.
 
 pub mod books;
+pub mod kamino;
 pub mod openbook;
 pub mod perps;
 pub mod phoenix;
@@ -153,10 +155,25 @@ pub trait Market: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// What `holdings`, this market's, are worth in USD, where the market
+    /// values its own (a money market's supply and debt, a pool position);
+    /// `None` leaves them to the reference prices ([`value_usd`]).
+    async fn value_usd(
+        &self,
+        chain: &dyn ChainClient,
+        holdings: &[Holding],
+    ) -> Result<Option<Decimal>> {
+        let _ = (chain, holdings);
+        Ok(None)
+    }
+
     /// An account on this market, signed with `signer`, trading through
     /// `rpc_url`. It must already hold what it trades (setup funds it).
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>>;
 }
+
+/// What a seat answers for a book's method on a market with no book.
+pub const NOT_A_BOOK: &str = "unsupported: not an order book";
 
 /// One account trading on one market.
 #[async_trait]
@@ -173,23 +190,35 @@ pub trait Seat: Send + Sync {
     async fn send(&self, planned: &Planned) -> Sent;
 
     /// Take up to `size` base units on `side`, at no worse than `limit`.
-    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult;
+    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
+        let _ = (side, size, limit);
+        Err(NOT_A_BOOK.into())
+    }
 
     /// Rest `size` base units on `side` at `price`.
-    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult;
+    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {
+        let _ = (side, price, size);
+        Err(NOT_A_BOOK.into())
+    }
 
     /// Cancel every order the seat has resting.
-    async fn cancel_all(&self) -> SeatResult;
+    async fn cancel_all(&self) -> SeatResult {
+        Err(NOT_A_BOOK.into())
+    }
 
     /// The best bid and ask, as the seat reads them.
-    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)>;
+    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
+        Err(NOT_A_BOOK.into())
+    }
 
-    /// The account's position here, in base units: a perp's, or the base
-    /// asset a spot account holds.
+    /// The account's position here, in base units: a perp's, the base asset
+    /// a spot account holds, or a money market's supply less its debt.
     async fn position(&self) -> SeatResult<f64>;
 
-    /// The market's tick, in quote units.
-    fn tick(&self) -> f64;
+    /// The market's tick, in quote units; 0 without a book.
+    fn tick(&self) -> f64 {
+        0.0
+    }
 
     /// The price the market itself refers to, where it has one: a perp's
     /// index.
@@ -217,6 +246,24 @@ pub async fn price_usd(chain: &dyn ChainClient, mint: &Pubkey) -> Result<Decimal
             label: format!("the price of {mint}"),
             reason: e.to_string(),
         })
+}
+
+/// What each market's holdings are worth in USD: the market's own value
+/// where it has one ([`Market::value_usd`]), the reference prices
+/// ([`value_usd`]) for the rest.
+pub async fn value_of_markets(
+    chain: &dyn ChainClient,
+    held: &[(&dyn Market, Vec<Holding>)],
+) -> Result<Decimal> {
+    let mut value = Decimal::ZERO;
+    let mut rest = Vec::new();
+    for (market, holdings) in held {
+        match market.value_usd(chain, holdings).await? {
+            Some(own) => value += own,
+            None => rest.extend(holdings.iter().cloned()),
+        }
+    }
+    Ok(value + value_usd(chain, &rest).await?)
 }
 
 /// What `holdings`, read across a session's markets, are worth in USD at

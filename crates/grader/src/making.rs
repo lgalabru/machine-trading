@@ -457,6 +457,8 @@ impl MakingFamily {
             actors: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
