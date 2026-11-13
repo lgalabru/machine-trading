@@ -394,3 +394,10 @@ defend, no bot users, no keypair files.
   scenario may allow only the programs the audit measures (Phoenix,
   system, token, associated token, compute budget) until a venue adds
   its own.
+- 2026-11-13: raw sends, after a third review. An address can be funded
+  in one step and registered as a subaccount in the next, so the audit
+  judges what an account can become: an empty account the system program
+  holds is read before and after a send, like a new one, and refused if it
+  ends as a trader account other than the main one. A writable token
+  account may hold at most 4 KiB. A duplicate is a send that compiles to
+  the same message.
