@@ -1,0 +1,82 @@
+{
+  "name": "router-smoke",
+  "description": "SPCX-USDC on Raydium's CLMM and Meteora's DLMM pools, with the router on and routes allowed through both venues' SPCX-SOL and SOL-USDC pools: the bot sells and buys through the router (the pseudo-venue and Jupiter's API), sends a route whose least out no route pays, and asks for one through a pool outside the session; the grader's takers trade the Raydium pool between its turns",
+  "symbol": "SPCX-USDC",
+  "duration_slots": 24,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "raydium:spot:SPCX-USDC",
+        "max_position": 2000.0
+      },
+      {
+        "instrument": "meteora:spot:SPCX-USDC",
+        "max_position": 2000.0
+      },
+      {
+        "instrument": "raydium:spot:SPCX-SOL",
+        "max_position": 2000.0
+      },
+      {
+        "instrument": "meteora:spot:SPCX-SOL",
+        "max_position": 2000.0
+      },
+      {
+        "instrument": "raydium:spot:SOL-USDC",
+        "max_position": 2000.0
+      },
+      {
+        "instrument": "meteora:spot:SOL-USDC",
+        "max_position": 2000.0
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "tape": [
+    {
+      "slot": 3,
+      "side": "buy",
+      "size": 2.0,
+      "limit_bps": 1000.0,
+      "account": 0
+    },
+    {
+      "slot": 7,
+      "side": "sell",
+      "size": 3.0,
+      "limit_bps": 1000.0,
+      "account": 3
+    },
+    {
+      "slot": 11,
+      "side": "buy",
+      "size": 1.5,
+      "limit_bps": 1000.0,
+      "account": 5
+    }
+  ],
+  "spot": {
+    "venues": [
+      "raydium",
+      "meteora"
+    ],
+    "router": {
+      "through": [
+        "raydium:spot:SPCX-SOL",
+        "meteora:spot:SPCX-SOL",
+        "raydium:spot:SOL-USDC",
+        "meteora:spot:SOL-USDC"
+      ]
+    },
+    "base": 1000.0,
+    "quote": 100000.0
+  },
+  "turn_data": {
+    "tape": true,
+    "depth_levels": 0,
+    "timestamps": true,
+    "parties": true
+  }
+}

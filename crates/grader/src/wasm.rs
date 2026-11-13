@@ -263,6 +263,9 @@ struct Host {
     raw_sends: Vec<mtx_kit::RawTransaction>,
     /// What takes the raw sends, in a session that enables them.
     raw: Option<crate::raw::RawSender>,
+    /// Whether the session has a router, whose JSON-RPC methods `rpc` may
+    /// then call ([`crate::router`]).
+    router: bool,
     limits: Limits,
 }
 
@@ -281,7 +284,8 @@ impl Host {
     }
 
     async fn rpc(&mut self, method: String, params: String) -> std::result::Result<String, String> {
-        if !RPC_METHODS.contains(&method.as_str()) {
+        let routed = self.router && crate::guard::ROUTER_METHODS.contains(&method.as_str());
+        if !RPC_METHODS.contains(&method.as_str()) && !routed {
             return Err(format!("{method} is not a read a strategy may make"));
         }
         self.rpc_calls += 1;
@@ -483,6 +487,7 @@ impl WasmStrategy {
             raw_calls: 0,
             raw_sends: Vec::new(),
             raw: None,
+            router: false,
             limits: Limits::new(),
         };
         let mut store = Store::new(&engine, host);
@@ -553,6 +558,11 @@ impl WasmStrategy {
     /// Let the strategy's steps send raw transactions, through `raw`.
     pub fn enable_raw_sends(&mut self, raw: crate::raw::RawSender) {
         self.store.data_mut().raw = Some(raw);
+    }
+
+    /// Let the strategy's `rpc` call the session's router.
+    pub fn enable_router(&mut self) {
+        self.store.data_mut().router = true;
     }
 
     /// What takes the strategy's raw sends, if the session enables them.
@@ -855,6 +865,11 @@ impl WasmBot {
             reports,
             applies_tx_options: false,
         };
+        if let Some(strategy) = strategy.as_mut()
+            && desk.markets.iter().any(|m| m.id == crate::router::VENUE)
+        {
+            strategy.enable_router();
+        }
         // Raw sends are a perp session's: a scenario enables them nowhere
         // else. They go out as the sheet's do, through the desk's trader.
         if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
@@ -1186,6 +1201,11 @@ impl WasmBot {
             });
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
+        // What the seats' sends did beyond their state (a route's paths),
+        // for the next step's notes.
+        for seat in &self.desk.seats {
+            self.notes.extend(seat.notes());
+        }
         // Raw sends go after the sheet, whatever became of it.
         if let (Some(raw), Reader::Perp(trader)) = (
             self.strategy.as_mut().and_then(WasmStrategy::raw_sender),

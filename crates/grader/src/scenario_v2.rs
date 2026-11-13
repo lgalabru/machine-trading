@@ -42,7 +42,7 @@ use crate::{
     scenario::{
         Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
     },
-    spot::{MAX_DEPTH_LEVELS, POOLS, Spot, TurnData, VENUES},
+    spot::{MAX_DEPTH_LEVELS, POOLS, RouterSpec, Spot, TurnData, VENUES},
 };
 
 /// The schema version this module reads and writes.
@@ -131,6 +131,10 @@ pub struct SpotVenues {
     /// each adds its amm instrument to the universe.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub liquidity: Vec<String>,
+    /// Opt-in: Jupiter-style routing across the session's pools, as a
+    /// service at the bot's RPC URL and as the pseudo-venue `router`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<RouterSpec>,
     /// What each step message carries beyond the clock. Without it, none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_data: Option<TurnData>,
@@ -316,6 +320,7 @@ impl Venues {
                     .iter()
                     .map(move |v| at(v, Kind::Spot))
                     .chain(s.liquidity.iter().map(move |v| at(v, Kind::Amm)))
+                    .chain(s.router.iter().flat_map(|r| r.through.iter().cloned()))
             })
             .collect()
     }
@@ -531,6 +536,7 @@ impl ScenarioV2 {
         self.assets.validate()?;
         self.venues.validate()?;
         self.spot_markets_trade_the_symbol()?;
+        self.router_routes_the_pools()?;
         self.market_model
             .validate(self.duration_slots, &self.actors.takers)?;
         self.actors.validate(
@@ -590,6 +596,19 @@ impl ScenarioV2 {
             );
         }
         Ok(())
+    }
+
+    /// A router routes through the session's pools, and across pairs its
+    /// venues' profiles name.
+    fn router_routes_the_pools(&self) -> Result<(), String> {
+        match self.venues.spot.as_ref() {
+            Some(SpotVenues {
+                router: Some(router),
+                markets,
+                ..
+            }) => router.validate(markets, &self.assets.symbol),
+            _ => Ok(()),
+        }
     }
 
     /// Each spot market's venue profile names the scenario's symbol: the
@@ -812,6 +831,7 @@ impl ScenarioV2 {
                 Some(Spot {
                     venues: spot.markets,
                     liquidity: spot.liquidity,
+                    router: spot.router,
                     arbitrage,
                     base: wallet.base,
                     quote: wallet.quote,
@@ -874,6 +894,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                         spot: Some(SpotVenues {
                             markets: spot.venues.clone(),
                             liquidity: spot.liquidity.clone(),
+                            router: spot.router.clone(),
                             turn_data: v1.turn_data.clone(),
                         }),
                     },
@@ -1056,6 +1077,7 @@ mod tests {
             spot: Some(SpotVenues {
                 markets: vec!["phoenix".into(), "openbook".into()],
                 liquidity: Vec::new(),
+                router: None,
                 turn_data: None,
             }),
         };
@@ -1278,6 +1300,7 @@ mod tests {
         s.venues.spot = Some(SpotVenues {
             markets: vec!["phoenix".into()],
             liquidity: Vec::new(),
+            router: None,
             turn_data: None,
         });
         assert!(

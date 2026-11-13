@@ -58,13 +58,14 @@ use crate::{
     guard::Guard,
     making::TAKER_ACCOUNTS,
     orders::Traded,
+    router::{self, Router, RouterSeat},
     scenario::Scenario,
     session::{
         self, Account, BOT_USERS, Done, IxRecord, Prepared, SLOTS_PER_STEP, SessionDir,
         SessionOptions, SessionReport, StepRecord, Timeline, World, grader_f64,
     },
     snapshot,
-    venue::{Market, books, price_usd, spot_venue, value_of_markets},
+    venue::{Market, books, pools, price_usd, spot_venue, value_of_markets},
     wasm::{Desk, Reader},
 };
 
@@ -103,6 +104,72 @@ pub struct Spot {
     /// that scores spot sessions sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_usd: Option<f64>,
+    /// Opt-in: Jupiter-style routing across the session's pools
+    /// ([`crate::router`]), as a service at the bot's RPC URL and as the
+    /// pseudo-venue `router`. Absent, neither exists, and a bot routes
+    /// across the pools itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<RouterSpec>,
+}
+
+/// A spot session's router.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RouterSpec {
+    /// Spot instruments of other pairs a route may cross, as the mandate
+    /// names them (`meteora:spot:SOL-USDC`): pools of the session's pool
+    /// venues. Each joins the universe; the bot may trade it directly too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub through: Vec<InstrumentRef>,
+    /// The most pools one path of a route crosses, 1 to
+    /// [`router::MAX_HOPS`].
+    #[serde(default = "RouterSpec::default_max_hops")]
+    pub max_hops: usize,
+    /// The slippage the pseudo-venue's routes allow a leg that another
+    /// follows, in basis points.
+    #[serde(default = "RouterSpec::default_slippage_bps")]
+    pub slippage_bps: u16,
+}
+
+impl RouterSpec {
+    fn default_max_hops() -> usize {
+        router::MAX_HOPS
+    }
+
+    fn default_slippage_bps() -> u16 {
+        router::DEFAULT_SLIPPAGE_BPS
+    }
+
+    pub(crate) fn validate(&self, venues: &[String], symbol: &str) -> std::result::Result<(), String> {
+        if !(1..=router::MAX_HOPS).contains(&self.max_hops) {
+            return Err(format!(
+                "spot: router max_hops is 1 to {}",
+                router::MAX_HOPS
+            ));
+        }
+        if u128::from(self.slippage_bps) >= 10_000 {
+            return Err("spot: router slippage_bps is under 10000".into());
+        }
+        if !venues.iter().any(|v| POOLS.contains(&v.as_str())) {
+            return Err("spot: a router routes through pools, and the session has none".into());
+        }
+        for (i, through) in self.through.iter().enumerate() {
+            let named = crate::venue::books::named_markets(&through.venue).ok();
+            if through.kind != Kind::Spot
+                || !POOLS.contains(&through.venue.as_str())
+                || through.symbol == symbol
+                || !named.is_some_and(|n| n.iter().any(|m| m.symbol == through.symbol))
+            {
+                return Err(format!(
+                    "spot: router through {through}: a pool's spot instrument of another pair, as its venue's profile names it"
+                ));
+            }
+            if self.through[..i].contains(through) {
+                return Err(format!("spot: router through {through} is listed twice"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// What a spot scenario's step messages carry besides the clock: what a bot
@@ -131,8 +198,8 @@ pub struct TurnData {
 pub const MAX_DEPTH_LEVELS: usize = 20;
 
 impl Spot {
-    /// The `symbol` spot markets, then the amm instruments, as the mandate
-    /// names them.
+    /// The `symbol` spot markets, then the amm instruments, then the other
+    /// pairs a router crosses, as the mandate names them.
     pub fn instruments(&self, symbol: &str) -> Vec<InstrumentRef> {
         let at = |venue: &String, kind| InstrumentRef {
             venue: venue.clone(),
@@ -143,6 +210,7 @@ impl Spot {
             .iter()
             .map(|venue| at(venue, Kind::Spot))
             .chain(self.liquidity.iter().map(|venue| at(venue, Kind::Amm)))
+            .chain(self.router.iter().flat_map(|r| r.through.iter().cloned()))
             .collect()
     }
 }
@@ -254,6 +322,10 @@ struct Reading {
     pooled: Vec<(InstrumentRef, f64)>,
     /// The pool positions, as the amm profile holds them.
     positions: Vec<(InstrumentRef, mtx_core::PoolPosition)>,
+    /// The session's own pair, and the base each market of another pair (a
+    /// router's) holds in the wallet.
+    symbol: String,
+    others: Vec<(InstrumentRef, f64)>,
 }
 
 impl Reading {
@@ -266,6 +338,11 @@ impl Reading {
                 .iter()
                 .find(|(i, _)| i == instrument)
                 .map_or(0.0, |(_, held)| *held),
+            _ if instrument.symbol != self.symbol => self
+                .others
+                .iter()
+                .find(|(i, _)| i == instrument)
+                .map_or(0.0, |(_, held)| *held),
             _ => self.wallet.base,
         }
     }
@@ -274,7 +351,7 @@ impl Reading {
 impl Venues {
     /// The `symbol` spot market of each of `venues`, in the profiles' order
     /// (books first), then the amm instrument of each of `liquidity`, as
-    /// their venues offer them.
+    /// their venues offer them, then the spot instruments a router crosses.
     async fn connect(
         chain: Arc<dyn ChainClient>,
         rpc_url: &str,
@@ -292,6 +369,14 @@ impl Venues {
                 };
                 markets.push(spot_venue(venue, rpc_url)?.market(&instrument).await?);
             }
+        }
+        // The other pairs a router crosses, after the session's own.
+        for instrument in spot.router.iter().flat_map(|r| &r.through) {
+            markets.push(
+                spot_venue(&instrument.venue, rpc_url)?
+                    .market(instrument)
+                    .await?,
+            );
         }
         Ok(Self {
             chain,
@@ -328,8 +413,23 @@ impl Venues {
         let mut pooled = Vec::new();
         let mut positions = Vec::new();
         let mut per_market: Vec<(&dyn Market, Vec<Holding>)> = Vec::new();
+        let mut others = Vec::new();
+        let symbol = self
+            .markets
+            .first()
+            .map(|m| m.instrument().symbol.clone())
+            .unwrap_or_default();
         for market in &self.markets {
             let held = market.holdings(&self.owner).await?;
+            if market.kind() == Kind::Spot
+                && market.instrument().symbol != symbol
+                && let Some(Holding::Spot(base)) = held.first()
+            {
+                others.push((
+                    market.instrument().clone(),
+                    grader_f64(base.wallet + base.free + base.locked),
+                ));
+            }
             if market.kind() == Kind::Amm {
                 let instrument = market.instrument();
                 pooled.push((
@@ -397,6 +497,8 @@ impl Venues {
             open_orders,
             pooled,
             positions,
+            symbol,
+            others,
         })
     }
 
@@ -834,9 +936,11 @@ pub async fn exercise_pools(rpc_url: &str, trader: &Keypair) -> Result<f64> {
             let deposit = Deposit {
                 base: 0.05,
                 quote: 5.0,
+                // 1% each way: inside one position's 70 bins on the
+                // finest pool of bins named (4 bps a bin).
                 range: Some(PriceRange {
-                    lower: mid * 0.97,
-                    upper: mid * 1.03,
+                    lower: mid * 0.99,
+                    upper: mid * 1.01,
                 }),
                 shape: None,
             };
@@ -878,7 +982,7 @@ pub async fn exercise_pools(rpc_url: &str, trader: &Keypair) -> Result<f64> {
 
 /// Simulate `instructions` as one transaction (its logs say why it would
 /// fail), then sign it, by `payer` and `extra`, send it and wait for it.
-fn send_signed(
+pub(crate) fn send_signed(
     rpc: &RpcClient,
     payer: &Keypair,
     extra: Option<&Keypair>,
@@ -1060,7 +1164,46 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         cast.add(Box::new(Arbitrageur::new(seats, *spec)));
     }
 
+    // The router, and the lookup table its routes name, made now: a table
+    // serves what it holds from the slot after it is extended.
+    let router = match &spot.router {
+        Some(spec) => {
+            let mut routed = Vec::new();
+            for instrument in instruments
+                .iter()
+                .filter(|i| i.kind == Kind::Spot && POOLS.contains(&i.venue.as_str()))
+            {
+                let named = books::named_markets(&instrument.venue)?
+                    .iter()
+                    .find(|m| m.symbol == instrument.symbol)
+                    .ok_or_else(|| Error::UnknownMarket(instrument.to_string()))?;
+                routed.push((
+                    instrument.clone(),
+                    pools::connect(&instrument.venue, chain.as_ref(), named).await?,
+                ));
+            }
+            let mut order = spot.venues.clone();
+            order.extend(spec.through.iter().map(|i| i.venue.clone()));
+            let router = Router::new(
+                routed,
+                &order,
+                chain.clone(),
+                bot.pubkey(),
+                spec.max_hops,
+                spec.slippage_bps,
+            );
+            let accounts = router.accounts().await?;
+            let table =
+                router::lookup_table(&surfnet, &rpc, &opts.keys.keypair("router", 0), accounts)?;
+            Some(Arc::new(router.with_table(table)))
+        }
+        None => None,
+    };
+
     let guard = Guard::start(surfnet.rpc_url()).await?;
+    if let Some(router) = &router {
+        guard.set_router(router.clone());
+    }
     let user = opts.slot.map(|slot| BOT_USERS[slot]);
     let workdir = SessionDir::create(&bot, user)?;
     let mut slot = rpc.get_slot()?;
@@ -1144,6 +1287,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         first_new: 0,
         start,
         last: None,
+        router,
     };
     Ok(Prepared {
         world: World::Snapshot(Box::new(surfnet)),
@@ -1189,6 +1333,8 @@ struct SpotAccount {
     first_new: usize,
     /// The last step's reading.
     last: Option<Reading>,
+    /// The session's router, if the scenario has one.
+    router: Option<Arc<Router>>,
 }
 
 impl SpotAccount {
@@ -1355,6 +1501,42 @@ impl Account for SpotAccount {
                 info.kind = market.kind;
                 info.address = market.address.clone();
             }
+        }
+        // The router's pseudo-venue, last: a swap there is routed across
+        // the session's pools.
+        if let Some(router) = &self.router {
+            let asset = |h: &Holdings| -> Result<(Pubkey, u8)> {
+                let mint =
+                    h.base.id.0.parse().map_err(|_| {
+                        Error::UnknownMarket(format!("{} is not a mint", h.base.id))
+                    })?;
+                Ok((mint, h.base.decimals))
+            };
+            let (base, quote) = match self
+                .venues
+                .of(&self.instruments[0])
+                .holdings(&bot.pubkey())
+                .await?
+                .as_slice()
+            {
+                [Holding::Spot(base), Holding::Spot(quote), ..] => (asset(base)?, asset(quote)?),
+                _ => {
+                    return Err(Error::UnknownMarket(
+                        "the session's market holds no base and quote".into(),
+                    ));
+                }
+            };
+            seats.push(Box::new(RouterSeat::new(
+                router.clone(),
+                bot.insecure_clone(),
+                Arc::new(RpcChainClient::with_timeout(
+                    host_url,
+                    session::INTERNAL_RPC_TIMEOUT,
+                )),
+                base,
+                quote,
+            )));
+            venues.push(RouterSeat::info());
         }
         Ok(Desk {
             rfqs: None,
@@ -1554,6 +1736,7 @@ mod tests {
                 base: 10.0,
                 quote: 0.0,
                 bound_usd: None,
+                router: None,
             }),
             reference_pnl_usd: None,
         }
@@ -1621,8 +1804,9 @@ mod tests {
         unknown.spot.as_mut().unwrap().venues[1] = "orca".into();
         assert!(unknown.validate().unwrap_err().contains("unknown venue"));
         let mut pool = scenario();
-        pool.spot.as_mut().unwrap().venues[1] = "raydium".into();
-        assert!(pool.validate().unwrap_err().contains("no SOL-USDC market"));
+        pool.spot.as_mut().unwrap().venues = vec!["raydium".into(), "meteora".into()];
+        pool.symbol = "BTC-USDC".into();
+        assert!(pool.validate().unwrap_err().contains("no BTC-USDC market"));
 
         let mut moving = scenario();
         moving.path.push(crate::scenario::Waypoint::at(4, -1.0));
@@ -1806,6 +1990,7 @@ mod tests {
             base: 0.0,
             quote: 0.0,
             bound_usd: None,
+            router: None,
         };
         let venues = Venues::connect(
             chain,

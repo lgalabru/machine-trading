@@ -27,14 +27,17 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units,
+        Deposit, Loaded, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, Quote, SwapOrder, named,
+        pool_assets, range, read_accounts, swap_atoms, units, within_compute,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
 
 /// Tick arrays a swap may cross: the current one and two beyond.
 const SWAP_TICK_ARRAYS: usize = 3;
+/// Initialized tick arrays a quote reads each way from the current one:
+/// more than one swap can name, so the quote knows where it would stop.
+const LOADED_TICK_ARRAYS: usize = 4;
 
 /// Raydium, read and traded through one endpoint.
 pub struct Raydium {
@@ -559,5 +562,164 @@ impl Pool for ClmmPool {
             &rewards,
         ));
         Ok(instructions)
+    }
+
+    async fn load(&self, chain: &dyn ChainClient) -> Result<Arc<dyn Loaded>> {
+        let (state, config) = self.state(chain).await?;
+        let mut starts = state.swap_tick_arrays(true, LOADED_TICK_ARRAYS);
+        for start in state.swap_tick_arrays(false, LOADED_TICK_ARRAYS) {
+            if !starts.contains(&start) {
+                starts.push(start);
+            }
+        }
+        let addresses: Vec<Pubkey> = starts
+            .iter()
+            .map(|start| clmm::tick_array_address(&self.assets.address, *start))
+            .collect();
+        let tick_arrays = read_accounts(chain, &addresses)
+            .await?
+            .iter()
+            .map(|(_, data)| TickArray::decode(data).map_err(read_error("raydium tick array")))
+            .collect::<Result<Vec<_>>>()?;
+        let timestamp = super::books::unix_timestamp(chain).await?;
+        Ok(Arc::new(LoadedClmm {
+            assets: self.assets.clone(),
+            base_is_0: self.base_is_0,
+            tokens: self.tokens,
+            extension: self.bitmap_extension(chain).await,
+            state,
+            config,
+            tick_arrays,
+            timestamp: u64::try_from(timestamp).unwrap_or_default(),
+        }))
+    }
+}
+
+/// A Raydium pool as one read left it.
+struct LoadedClmm {
+    assets: PoolAssets,
+    base_is_0: bool,
+    tokens: PoolTokens,
+    extension: Option<Pubkey>,
+    state: PoolState,
+    config: AmmConfig,
+    /// The initialized tick arrays nearest the price, each way.
+    tick_arrays: Vec<TickArray>,
+    /// The clock, for a dynamic fee.
+    timestamp: u64,
+}
+
+impl LoadedClmm {
+    fn zero_for_one(&self, base_in: bool) -> bool {
+        base_in == self.base_is_0
+    }
+
+    fn swap_state(
+        &self,
+        base_in: bool,
+        amount: u64,
+        exact_in: bool,
+    ) -> SeatResult<clmm::swap::SwapQuote> {
+        if self.state.status & (1 << 4) != 0 {
+            return Err("the pool's swaps are off".into());
+        }
+        clmm::swap::swap(
+            &self.state,
+            &self.config,
+            &self.tick_arrays,
+            self.zero_for_one(base_in),
+            amount,
+            exact_in,
+            0,
+            self.timestamp,
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+impl Loaded for LoadedClmm {
+    fn assets(&self) -> &PoolAssets {
+        &self.assets
+    }
+
+    fn label(&self) -> &'static str {
+        "Raydium CLMM"
+    }
+
+    fn quote(&self, base_in: bool, amount: u64, exact_in: bool) -> SeatResult<Quote> {
+        let swap = self.swap_state(base_in, amount, exact_in)?;
+        let fee_mint = if swap.fee_in_token_0 {
+            self.state.mint_0
+        } else {
+            self.state.mint_1
+        };
+        let quote = Quote {
+            base_in,
+            exact_in,
+            amount_in: swap.amount_in,
+            amount_out: swap.amount_out,
+            fee: swap.fee,
+            fee_mint,
+            crossed: swap.ticks_crossed,
+        };
+        within_compute(self, quote)
+    }
+
+    fn swap(&self, owner: &Pubkey, quote: &Quote, threshold: u64) -> SeatResult<Instruction> {
+        let amount = if quote.exact_in {
+            quote.amount_in
+        } else {
+            quote.amount_out
+        };
+        let walked = self
+            .swap_state(quote.base_in, amount, quote.exact_in)?
+            .tick_arrays
+            .len();
+        // The arrays it walked and the next one its way, in case the price
+        // moves before it lands.
+        let zero_for_one = self.zero_for_one(quote.base_in);
+        let tick_arrays = self.state.swap_tick_arrays(zero_for_one, walked.max(1) + 1);
+        Ok(ix::swap_v2(
+            &self.state,
+            &self.tokens,
+            owner,
+            &Swap {
+                zero_for_one,
+                amount,
+                other_amount_threshold: threshold,
+                sqrt_price_limit_x64: 0,
+                is_base_input: quote.exact_in,
+            },
+            &tick_arrays,
+            self.extension,
+        ))
+    }
+
+    fn accounts(&self) -> Vec<Pubkey> {
+        let state = &self.state;
+        let mut accounts = vec![
+            clmm::PROGRAM_ID,
+            state.address,
+            state.amm_config,
+            state.vault_0,
+            state.vault_1,
+            state.observation,
+            state.mint_0,
+            state.mint_1,
+            mtx_kit::token::TOKEN_PROGRAM_ID,
+            TOKEN_2022_PROGRAM_ID,
+            ix::MEMO_PROGRAM_ID,
+        ];
+        accounts.extend(self.extension);
+        accounts.extend(
+            self.tick_arrays
+                .iter()
+                .map(|a| clmm::tick_array_address(&state.address, a.start_tick_index)),
+        );
+        accounts
+    }
+
+    fn compute_units(&self, crossed: u32) -> u32 {
+        120_000 + 25_000 * crossed
     }
 }
