@@ -750,6 +750,30 @@ impl Account for PerpAccount {
         Ok(())
     }
 
+    async fn sample(&mut self, slot: u64) -> Result<()> {
+        let now = self.measure().await?;
+        record(&mut self.observed, &now)?;
+        let position = position_in(&now, &self.market_id);
+        self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
+        let value_usd = self
+            .value_with_desk(grader_f64(now.value_usd), position, slot)
+            .await?;
+        self.peak_value_usd = self.peak_value_usd.max(value_usd);
+        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        Ok(())
+    }
+
+    fn breach(&self, mandate: &Mandate) -> Option<String> {
+        mandate
+            .audit(&Observed {
+                positions: self.observed.positions.clone(),
+                positions_outside_universe: self.positions_outside_universe,
+                max_drawdown_usd: self.max_drawdown_usd,
+                ..Observed::default()
+            })
+            .map(|breach| breach.to_string())
+    }
+
     fn wallet(&self) -> Option<&crate::spot::Wallet> {
         None
     }
@@ -853,6 +877,7 @@ impl Account for PerpAccount {
             net: None,
             crank_refusals: done.crank_refusals,
             turns: done.turns,
+            stop_out: None,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
                 start_slot: done.start_slot,

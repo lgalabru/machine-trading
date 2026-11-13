@@ -161,6 +161,13 @@ enum Command {
         /// whatever the rest do); the report covers the sessions up to it.
         #[arg(long)]
         stop_on_disqualify: bool,
+        /// Run the sessions under scoring v2's rules: a breach the grader
+        /// sees at a step stops that session out (the bot plays no more of
+        /// it, and its position counts as closed at the touch), every other
+        /// session still runs, and drawdowns are sampled every slot. For a
+        /// task scored by v2; off, sessions run as they always have.
+        #[arg(long, conflicts_with = "stop_on_disqualify")]
+        v2_sessions: bool,
         /// Grade the bot only if it is a strategy component (a bot.wasm): the
         /// verifier's rule. The reference can still be a process.
         #[arg(long)]
@@ -230,6 +237,10 @@ enum Command {
         /// scenario's `informed_pnl_usd`, scoring v2's 1, instead.
         #[arg(long)]
         informed: bool,
+        /// Sample drawdowns every slot, as `mtx grade --v2-sessions` does,
+        /// so the drawdowns saved anchor a v2 grade at its granularity.
+        #[arg(long)]
+        v2_sessions: bool,
     },
     /// Market calibration: per-asset files fitted to real data, the market
     /// model they drive, and realism checks against them.
@@ -1287,6 +1298,7 @@ async fn run() -> Result<()> {
             anchor_jobs,
             tell_regime,
             stop_on_disqualify,
+            v2_sessions,
             components_only,
             trusted,
             replay,
@@ -1344,6 +1356,7 @@ async fn run() -> Result<()> {
                 trusted,
                 observer: None,
                 keys: &keys,
+                v2_sessions,
             };
             let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
             let mut graded = grade::grade(options(sessions.jobs, anchor_jobs)).await?;
@@ -1496,7 +1509,11 @@ async fn run() -> Result<()> {
                 out,
             } => bot::pack(&dir, task.as_deref(), repo.as_deref(), &out)?,
         },
-        Command::Calibrate { sessions, informed } => {
+        Command::Calibrate {
+            sessions,
+            informed,
+            v2_sessions,
+        } => {
             let mut scenarios = sessions.load()?;
             let reports = grade::calibrate(
                 &sessions.snapshot,
@@ -1506,6 +1523,7 @@ async fn run() -> Result<()> {
                 sessions.first_bot_user,
                 sessions.jobs,
                 informed,
+                v2_sessions,
             )
             .await?;
             serde_json::to_string_pretty(&reports)?

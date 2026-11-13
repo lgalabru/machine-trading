@@ -224,7 +224,11 @@ impl GradeReport {
                 }
                 Ok(scoring_v2::Session {
                     scenario: session.scenario.clone(),
-                    pnl_usd: session.pnl_usd,
+                    // A stopped-out session's PnL is what it realised there.
+                    pnl_usd: session
+                        .stop_out
+                        .as_ref()
+                        .map_or(session.pnl_usd, |stopped| stopped.pnl_usd),
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
                     nop_pnl_usd: 0.0,
@@ -245,7 +249,7 @@ impl GradeReport {
                     reference_max_drawdown_usd: result.reference_max_drawdown_usd,
                     informed_max_drawdown_usd: result.informed_max_drawdown_usd,
                     start_value_usd: session.start_value_usd,
-                    stopped_out: false,
+                    stopped_out: session.stop_out.is_some(),
                     traded: session.peak_position > 0.0,
                     trade_markout_usd: result.trade_markout_usd,
                 })
@@ -355,17 +359,29 @@ impl GradeReport {
             let m = &v2.metrics;
             rewards.extend([
                 ("metric_return_on_capital".to_string(), m.return_on_capital),
-                ("metric_drawdown_to_limit_mean".to_string(), m.drawdown_to_limit_mean),
-                ("metric_drawdown_to_limit_max".to_string(), m.drawdown_to_limit_max),
+                (
+                    "metric_drawdown_to_limit_mean".to_string(),
+                    m.drawdown_to_limit_mean,
+                ),
+                (
+                    "metric_drawdown_to_limit_max".to_string(),
+                    m.drawdown_to_limit_max,
+                ),
                 ("metric_profitable_share".to_string(), m.profitable_share),
                 ("metric_worst_session_usd".to_string(), m.worst_session_usd),
-                ("metric_losing_sessions".to_string(), m.losing_sessions as f64),
+                (
+                    "metric_losing_sessions".to_string(),
+                    m.losing_sessions as f64,
+                ),
                 ("metric_usd_lost".to_string(), m.usd_lost),
                 (
                     "metric_breaches_per_100_sessions".to_string(),
                     m.breaches_per_100_sessions,
                 ),
-                ("metric_stopped_out_sessions".to_string(), m.stopped_out_sessions as f64),
+                (
+                    "metric_stopped_out_sessions".to_string(),
+                    m.stopped_out_sessions as f64,
+                ),
                 (
                     "metric_raw_negative".to_string(),
                     f64::from(u8::from(m.raw_negative)),
@@ -430,6 +446,11 @@ pub struct GradeOptions<'a> {
     /// Where the sessions' keypairs come from (see [`crate::keys`]): the same
     /// keys every run of the grade.
     pub keys: &'a SessionKeys,
+    /// Run the sessions under scoring v2's rules (see [`session::Rules`]):
+    /// the bot's are stopped out at a breach, and the bot's and the
+    /// reference's drawdowns are sampled every slot. Off, the grade runs
+    /// as it always has.
+    pub v2_sessions: bool,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -494,6 +515,12 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             true,
             None,
             opts.keys.role("reference"),
+            // The anchor's drawdown at the bot's granularity; a reference
+            // that breaches fails the grade anyway (`check_anchors`).
+            session::Rules {
+                stop_out: false,
+                every_slot: opts.v2_sessions,
+            },
         )
         .await?;
         check_timing(&anchors)?;
@@ -518,6 +545,10 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.trusted,
         opts.observer.clone(),
         opts.keys.role("bot"),
+        session::Rules {
+            stop_out: opts.v2_sessions,
+            every_slot: opts.v2_sessions,
+        },
     )
     .await?;
     check_timing(&sessions)?;
@@ -917,6 +948,7 @@ pub async fn calibrate(
     first_bot_user: usize,
     jobs: usize,
     informed: bool,
+    v2_sessions: bool,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(
@@ -930,6 +962,10 @@ pub async fn calibrate(
         true,
         None,
         SessionKeys::random().role("reference"),
+        session::Rules {
+            stop_out: false,
+            every_slot: v2_sessions,
+        },
     )
     .await?;
     check_timing(&sessions)?;
@@ -987,6 +1023,7 @@ async fn run_sessions(
     trusted: bool,
     observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
     keys: RoleKeys<'_>,
+    rules: session::Rules,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
     let components = crate::wasm::component_in(bot_dir).is_some();
@@ -1050,6 +1087,7 @@ async fn run_sessions(
                     trusted,
                     observer: observer.clone(),
                     keys: keys.session(index, &scenario.name),
+                    rules,
                 })
             };
             // Another grade on this machine may use the same bot user, and
@@ -1237,6 +1275,7 @@ mod tests {
             trusted: false,
             observer: None,
             keys: &SessionKeys::random(),
+            v2_sessions: false,
         })
         .await
         .unwrap();
@@ -1277,6 +1316,7 @@ mod tests {
             net: None,
             crank_refusals: Vec::new(),
             turns: Default::default(),
+            stop_out: None,
             wall_ms: 0,
             timeline: Default::default(),
         }
@@ -1619,7 +1659,11 @@ mod tests {
         deep.max_drawdown_usd = 950.0;
         let mut report = score(vec![(deep.clone(), &s), (deep, &s)]);
         // Kept out of the report: it is the scenario's, or the grade's own.
-        assert!(!serde_json::to_string(&report).unwrap().contains("reference_max_drawdown"));
+        assert!(
+            !serde_json::to_string(&report)
+                .unwrap()
+                .contains("reference_max_drawdown")
+        );
         assert_eq!(report.scenarios[0].reference_max_drawdown_usd, Some(50.0));
         report.score_v2(&v2()).unwrap();
         let v2 = report.v2.as_ref().unwrap();
@@ -1635,6 +1679,35 @@ mod tests {
         assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
         assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
         assert!(!rewards.contains_key("score_v2_breach_cap"));
+    }
+
+    #[test]
+    fn v2_scores_a_stopped_out_session_at_what_it_realised() {
+        let s = scenario(Some(100.0));
+        let mut stopped = session(-1_050.0);
+        stopped.max_drawdown_usd = 1_050.0;
+        stopped.stop_out = Some(session::StopOut {
+            step: 3,
+            at: 6,
+            reason: "drew down past its limit".into(),
+            position: 50.0,
+            price_usd: 90.0,
+            exit_usd: Some(89.0),
+            close_cost_usd: 50.0,
+            pnl_usd: -1_100.0,
+        });
+        let mut report = score(vec![(session(300.0), &s), (stopped, &s)]);
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        // k times the realised loss, past the limit: 1.5 × 1,100.
+        assert_eq!(v2.sessions[1].bot_usd, -1_650.0);
+        assert_eq!(v2.breach_cap, Some(0.5));
+        assert_eq!(v2.metrics.stopped_out_sessions, 1);
+        assert_eq!(v2.metrics.worst_session_usd, -1_100.0);
+        // The stop-out is in the session's report.
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["scenarios"][1]["stop_out"]["pnl_usd"], -1_100.0);
+        assert!(json["scenarios"][0].get("stop_out").is_none());
     }
 
     #[test]
@@ -1814,6 +1887,7 @@ mod tests {
                 false,
                 None,
                 keys.role("bot"),
+                session::Rules::default(),
             )
         };
         assert!(matches!(
@@ -1849,6 +1923,7 @@ mod tests {
                 false,
                 None,
                 keys.role("bot"),
+                session::Rules::default(),
             )
         };
         assert!(run(0, 16).await.unwrap().is_empty());

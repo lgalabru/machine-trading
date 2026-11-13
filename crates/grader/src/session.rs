@@ -124,6 +124,73 @@ pub struct SessionOptions<'a> {
     pub keys: crate::keys::SessionKeyring<'a>,
     /// Watches a component's session step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    /// Scoring v2's session rules, if the grade runs under them.
+    pub rules: Rules,
+}
+
+/// Scoring v2's session rules (`mtx grade --v2-sessions`). Both are off
+/// by default, and a session then runs as it always has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Rules {
+    /// A breach of the mandate the grader sees at a step (a position over
+    /// its cap or outside the universe, the drawdown past its limit, a side
+    /// it may not trade) stops the session out, as a desk's risk manager
+    /// would: the bot gets no more turns, the session ends at that step,
+    /// and its position counts as closed at the touch (see [`StopOut`]).
+    pub stop_out: bool,
+    /// The account is valued at every slot for its drawdown, not only at
+    /// every step.
+    pub every_slot: bool,
+}
+
+/// Where a session was stopped out (see [`Rules::stop_out`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StopOut {
+    /// The step, and slots into the session, the breach was seen at.
+    pub step: u64,
+    pub at: u64,
+    pub reason: String,
+    /// The position closed, the price it was valued at, and the touch it
+    /// closes at (the best bid for a long, the best ask for a short) when
+    /// the book has one.
+    pub position: f64,
+    pub price_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_usd: Option<f64>,
+    /// What closing at the touch costs against the valuation, and the PnL
+    /// the session realises with it: what the stop-out leaves.
+    pub close_cost_usd: f64,
+    pub pnl_usd: f64,
+}
+
+impl StopOut {
+    /// A stop-out at `step`, valued as `valuation` does, its PnL to be set
+    /// once the session's last reading is in.
+    fn at(step: &StepRecord, reason: String, valuation: &str) -> Self {
+        let price_usd = match valuation {
+            "oracle" => step.level_usd,
+            "book" => step.book_usd.unwrap_or(step.mark_usd),
+            _ => step.mark_usd,
+        };
+        let exit_usd = if step.position > 0.0 {
+            step.best_bid_usd
+        } else if step.position < 0.0 {
+            step.best_ask_usd
+        } else {
+            None
+        };
+        Self {
+            step: step.k,
+            at: step.at,
+            reason,
+            position: step.position,
+            price_usd,
+            exit_usd,
+            close_cost_usd: exit_usd
+                .map_or(0.0, |exit| (step.position * (price_usd - exit)).max(0.0)),
+            pnl_usd: step.pnl_usd,
+        }
+    }
 }
 
 /// A session's outcome, as the grade reports it. It reads back from the
@@ -200,6 +267,10 @@ pub struct SessionReport {
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     /// How the bot's turns went.
     pub turns: TurnReport,
+    /// Where the session was stopped out, if it was (see
+    /// [`Rules::stop_out`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_out: Option<StopOut>,
     /// The session's wall time, setup included, in milliseconds.
     pub wall_ms: u64,
     /// The session step by step, for review. Kept out of the report: the
@@ -445,6 +516,18 @@ pub(crate) trait Account: Send + Sync {
     /// One instruction of a bot's transaction, as the report shows it.
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
 
+    /// Between a step's slots, at `slot`: value the account for its
+    /// drawdown (see [`Rules::every_slot`]). Nothing by default.
+    async fn sample(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
+    /// The mandate's breach in what the account has measured so far, if
+    /// any (see [`Rules::stop_out`]). None by default.
+    fn breach(&self, _mandate: &Mandate) -> Option<String> {
+        None
+    }
+
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
 }
@@ -650,6 +733,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     account.begin().await?;
 
     let mut bot_exit = None;
+    let mut stop_out: Option<StopOut> = None;
+    // The slot the session ends at: its last, or its stop-out's.
+    let mut ended = end_slot;
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     let mut cranks = crate::crank::Cranks::new(opts.cranks);
     let mut slot = start_slot;
@@ -666,6 +752,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         while slot < target {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
+            if opts.rules.every_slot && slot < target {
+                account.sample(slot).await?;
+            }
         }
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks.
@@ -683,6 +772,15 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             .await?;
         cast.after_blocks(account.moment(at)).await;
         steps_seen.push(account.step(k, slot, at).await?);
+        if opts.rules.stop_out
+            && let Some(reason) = account.breach(&mandate)
+            && let Some(now) = steps_seen.last()
+        {
+            warn!(scenario = scenario.name, step = k, %reason, "stopped out");
+            stop_out = Some(StopOut::at(now, reason, scenario.valuation()));
+            ended = slot;
+            break;
+        }
         if bot_exit.is_none()
             && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
@@ -782,11 +880,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         account.decode(ix, keys)
     });
     let actors = cast.report().await;
-    let report = account
+    let mut report = account
         .finish(Done {
             began,
             start_slot,
-            end_slot,
+            end_slot: ended,
             mandate,
             refused_calls: guard.refused(),
             bot_exit,
@@ -800,6 +898,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             crank_refusals: cranks.into_refusals(),
         })
         .await?;
+    if let Some(mut stopped) = stop_out {
+        // Closed at the touch, from the session's last reading.
+        stopped.pnl_usd = report.pnl_usd - stopped.close_cost_usd;
+        report.stop_out = Some(stopped);
+    }
     info!(
         scenario = report.scenario,
         pnl_usd = report.pnl_usd,
@@ -1356,6 +1459,50 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    fn step(position: f64) -> StepRecord {
+        StepRecord {
+            k: 7,
+            at: 14,
+            mark_usd: 101.0,
+            index_usd: 100.0,
+            level_usd: 100.0,
+            book_usd: None,
+            fair_usd: None,
+            best_bid_usd: Some(99.5),
+            best_ask_usd: Some(100.75),
+            position,
+            value_usd: 9_400.0,
+            pnl_usd: -600.0,
+            turn_ms: None,
+            answered: None,
+        }
+    }
+
+    #[test]
+    fn a_stop_out_closes_at_the_touch() {
+        // Long 40, valued at the oracle level 100, sold at the bid 99.5.
+        let long = StopOut::at(&step(40.0), "drew down".into(), "oracle");
+        assert_eq!((long.step, long.at), (7, 14));
+        assert_eq!(long.price_usd, 100.0);
+        assert_eq!(long.exit_usd, Some(99.5));
+        assert_eq!(long.close_cost_usd, 20.0);
+        // Short 40 at the mark 101, bought back at the ask 100.75: closing
+        // there costs nothing beyond the valuation.
+        let short = StopOut::at(&step(-40.0), "drew down".into(), "mark");
+        assert_eq!(short.exit_usd, Some(100.75));
+        assert_eq!(short.close_cost_usd, 0.0);
+        let short = StopOut::at(&step(-40.0), "drew down".into(), "oracle");
+        assert_eq!(short.close_cost_usd, 30.0);
+        // Flat, or no book: closed at the valuation.
+        assert_eq!(
+            StopOut::at(&step(0.0), "x".into(), "oracle").close_cost_usd,
+            0.0
+        );
+        let mut bare = step(40.0);
+        bare.best_bid_usd = None;
+        assert_eq!(StopOut::at(&bare, "x".into(), "oracle").exit_usd, None);
+    }
 
     fn mode(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777

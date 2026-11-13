@@ -441,13 +441,7 @@ pub fn score(
     let seed = seed(eval_seed_sha256);
     let (ci_lo, ci_hi) = interval(&terms, params, risk_anchor, seed.unwrap_or(FIXED_SEED));
     let bound_usd: f64 = sessions.iter().map(|s| s.bound_usd).sum();
-    let gap = gap(
-        sessions,
-        &ceilings,
-        &terms,
-        &scored,
-        (ci_hi - ci_lo) / 2.0,
-    );
+    let gap = gap(sessions, &ceilings, &terms, &scored, (ci_hi - ci_lo) / 2.0);
     Ok(ScoreV2 {
         score: if fatal.is_some() {
             0.0
@@ -503,7 +497,10 @@ enum RiskAnchor {
 
 impl RiskAnchor {
     fn of_sessions(sessions: &[Session], ceiling: &str) -> Self {
-        if ceiling == "informed" && sessions.iter().all(|s| s.informed_max_drawdown_usd.is_some())
+        if ceiling == "informed"
+            && sessions
+                .iter()
+                .all(|s| s.informed_max_drawdown_usd.is_some())
         {
             Self::Informed
         } else if sessions
@@ -1573,7 +1570,12 @@ mod tests {
 
     /// [`set`] with each session's drawdowns: the bot's, and the
     /// reference's, as the near-breach charge reads them.
-    fn risked(pnls: &[f64], drawdowns: &[f64], references: &[f64], ref_drawdowns: &[f64]) -> Vec<Session> {
+    fn risked(
+        pnls: &[f64],
+        drawdowns: &[f64],
+        references: &[f64],
+        ref_drawdowns: &[f64],
+    ) -> Vec<Session> {
         let mut sessions = set(pnls, references);
         for ((s, &dd), &ref_dd) in sessions.iter_mut().zip(drawdowns).zip(ref_drawdowns) {
             s.max_drawdown_usd = dd;
@@ -1627,7 +1629,12 @@ mod tests {
         assert_eq!(v2.bot_usd, 86.0);
         assert_eq!(v2.risk.allowance, 1.0);
         assert_eq!(v2.risk.dd_rms, 1.0);
-        let anchor = (REFERENCE_DD.iter().map(|d| (d / 100.0) * (d / 100.0)).sum::<f64>() / 6.0).sqrt();
+        let anchor = (REFERENCE_DD
+            .iter()
+            .map(|d| (d / 100.0) * (d / 100.0))
+            .sum::<f64>()
+            / 6.0)
+            .sqrt();
         assert!((v2.risk.dd_rms_anchor.unwrap() - anchor).abs() < 1e-12);
         // λ·k·ΣL·(1 − ρ_A)², over its 86 of winnings: all of them.
         assert!(1.0 * 1.5 * 600.0 * (1.0 - anchor).powi(2) > 86.0);
@@ -1657,12 +1664,28 @@ mod tests {
         for m in [2.0, 3.0] {
             let pnl: Vec<f64> = REFERENCE.iter().map(|p| p * m).collect();
             let dd: Vec<f64> = REFERENCE_DD.iter().map(|d| d * m).collect();
-            let v2 = score(&risked(&pnl, &dd, &REFERENCE, &REFERENCE_DD), &informed(), None, None).unwrap();
-            assert!((v2.risk.allowance - m).abs() < 1e-12, "{}", v2.risk.allowance);
+            let v2 = score(
+                &risked(&pnl, &dd, &REFERENCE, &REFERENCE_DD),
+                &informed(),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                (v2.risk.allowance - m).abs() < 1e-12,
+                "{}",
+                v2.risk.allowance
+            );
             assert_eq!(v2.risk.charge_usd, 0.0, "×{m}");
             let mut off = informed();
             off.risk_weight = 0.0;
-            let uncharged = score(&risked(&pnl, &dd, &REFERENCE, &REFERENCE_DD), &off, None, None).unwrap();
+            let uncharged = score(
+                &risked(&pnl, &dd, &REFERENCE, &REFERENCE_DD),
+                &off,
+                None,
+                None,
+            )
+            .unwrap();
             assert_eq!(v2.raw, uncharged.raw);
         }
     }
@@ -1670,7 +1693,13 @@ mod tests {
     #[test]
     fn the_charge_never_deepens_a_loss() {
         let losing = [-20.0, -40.0, 10.0, -5.0, 0.0, 15.0];
-        let v2 = score(&risked(&losing, &[100.0; 6], &REFERENCE, &REFERENCE_DD), &informed(), None, None).unwrap();
+        let v2 = score(
+            &risked(&losing, &[100.0; 6], &REFERENCE, &REFERENCE_DD),
+            &informed(),
+            None,
+            None,
+        )
+        .unwrap();
         assert!(v2.bot_usd < 0.0);
         assert_eq!(v2.risk.charge_usd, 0.0);
     }
@@ -1686,7 +1715,13 @@ mod tests {
         assert!((v2.risk.dd_rms_anchor.unwrap() - 0.3).abs() < 1e-12);
         // Under a proxy ceiling, the informed bot's drawdowns aren't the
         // ceiling's: the reference's are used.
-        let proxied = score(&without_informed(sessions.clone()), &proxy(0.15), None, None).unwrap();
+        let proxied = score(
+            &without_informed(sessions.clone()),
+            &proxy(0.15),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(proxied.risk.anchor, "reference");
         // Without the reference's on every session, nothing is charged.
         let mut bare = without_informed(sessions);
@@ -1721,7 +1756,12 @@ mod tests {
         once[1].stopped_out = true;
         let once = score(&once, &informed(), None, None).unwrap();
         assert_eq!(once.breach_cap, Some(0.5));
-        assert!(once.raw < compliant.raw, "{} vs {}", once.raw, compliant.raw);
+        assert!(
+            once.raw < compliant.raw,
+            "{} vs {}",
+            once.raw,
+            compliant.raw
+        );
         assert_eq!(once.metrics.stopped_out_sessions, 1);
         let mut twice = set(&twin.map(|p| p * 2.0), &REFERENCE);
         for i in [1, 4] {
@@ -1740,7 +1780,12 @@ mod tests {
     #[test]
     fn the_metrics_are_what_the_sessions_made_and_risked() {
         let bot = [100.0, -30.0, 50.0, -10.0, 20.0, 0.0];
-        let mut sessions = risked(&bot, &[40.0, 60.0, 10.0, 30.0, 0.0, 0.0], &REFERENCE, &REFERENCE_DD);
+        let mut sessions = risked(
+            &bot,
+            &[40.0, 60.0, 10.0, 30.0, 0.0, 0.0],
+            &REFERENCE,
+            &REFERENCE_DD,
+        );
         sessions[1].breach = Some("drew down past its limit".into());
         let m = score(&sessions, &informed(), None, None).unwrap().metrics;
         assert_eq!(m.sessions, 6);
@@ -1754,7 +1799,10 @@ mod tests {
         assert!((m.drawdown_to_limit_mean - 140.0 / 600.0).abs() < 1e-15);
         assert_eq!(m.drawdown_to_limit_max, 0.6);
         assert_eq!(m.profitable_share, 0.5);
-        assert_eq!((m.worst_session.as_str(), m.worst_session_usd), ("hidden-1", -30.0));
+        assert_eq!(
+            (m.worst_session.as_str(), m.worst_session_usd),
+            ("hidden-1", -30.0)
+        );
         assert_eq!(m.pnl_usd, 130.0);
         assert_eq!(m.losing_sessions, 2);
         assert_eq!(m.usd_lost, 40.0);
@@ -1768,9 +1816,22 @@ mod tests {
     #[test]
     fn the_interval_and_comparison_charge_each_resample() {
         let lucky = [95.0, -100.0, 98.0, 97.0, -100.0, 96.0];
-        let v2 = score(&risked(&lucky, &[100.0; 6], &REFERENCE, &REFERENCE_DD), &informed(), None, None).unwrap();
-        assert!(v2.ci_hi < 0.25, "{} {}", v2.ci_lo, v2.ci_hi);
-        let runs = [Run { model: "a".into(), v2: &v2 }];
+        let sessions = risked(&lucky, &[100.0; 6], &REFERENCE, &REFERENCE_DD);
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        let mut off = informed();
+        off.risk_weight = 0.0;
+        let uncharged = score(&sessions, &off, None, None).unwrap();
+        assert!(v2.ci_lo <= v2.raw && v2.raw <= v2.ci_hi);
+        assert!(
+            v2.ci_hi < uncharged.ci_hi,
+            "{} vs {}",
+            v2.ci_hi,
+            uncharged.ci_hi
+        );
+        let runs = [Run {
+            model: "a".into(),
+            v2: &v2,
+        }];
         let c = compare(&runs, &informed(), None).unwrap();
         assert_eq!(c.models[0].mean_raw, v2.raw);
     }

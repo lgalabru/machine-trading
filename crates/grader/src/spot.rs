@@ -923,6 +923,19 @@ impl Account for SpotAccount {
         self.last.as_ref().map(|reading| &reading.wallet)
     }
 
+    /// Positions, resting orders' sides and the drawdown so far; fills,
+    /// which the venues' ledgers give only at the end, are audited then.
+    fn breach(&self, mandate: &Mandate) -> Option<String> {
+        mandate
+            .audit(&Observed {
+                positions: self.observed.positions.clone(),
+                max_drawdown_usd: self.max_drawdown_usd,
+                open_orders: self.open_orders.clone(),
+                ..Observed::default()
+            })
+            .map(|breach| breach.to_string())
+    }
+
     async fn desk(
         &self,
         host_url: &str,
@@ -1068,6 +1081,7 @@ impl Account for SpotAccount {
             net,
             crank_refusals: done.crank_refusals,
             turns: done.turns,
+            stop_out: None,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
                 start_slot: done.start_slot,
