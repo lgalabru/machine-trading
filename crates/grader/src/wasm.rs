@@ -711,6 +711,7 @@ pub struct WasmBot {
 impl WasmBot {
     /// Loads the component and calls its `start`. Its own `rpc` reads go to
     /// `rpc_url`, the bot's guarded endpoint.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         path: &Path,
         rpc_url: &str,
