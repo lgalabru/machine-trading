@@ -1,7 +1,9 @@
 //! The spot session smoke bot as a strategy component: on its first step
 //! it sells 1 SOL at any price on the venue its orders go to. Built with
 //! feature `buy`, it also buys 0.1 SOL there, which a sell-only mandate
-//! forbids; with `accumulate`, it buys 1 SOL instead of selling. Every step
+//! forbids; with `accumulate`, it buys 1 SOL instead of selling. With
+//! `rest`, it rests a 0.1 SOL post-only bid at the best bid on each of its
+//! first six steps, logging what became of each, then cancels them. Every step
 //! it reads each market the session names through `rpc`, decodes its book
 //! with the kit's venue decoders, and logs the market and the books.
 
@@ -58,6 +60,18 @@ impl Strategy for SpotSmoke {
             market.pnl,
             books.join(", ")
         ));
+        if cfg!(feature = "rest") {
+            for sent in &market.sends {
+                log(&format!("sent {:?}: {:?}", sent.order, sent.state));
+            }
+            if market.k < 6 {
+                let price = market.best_bid.unwrap_or(market.mark * 0.95);
+                orders.bid(price, 0.1).post_only();
+            } else if market.k == 6 {
+                orders.cancel_all();
+            }
+            return Ok(());
+        }
         if self.sent {
             return Ok(());
         }
