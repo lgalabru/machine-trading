@@ -132,18 +132,27 @@ pub struct ScoreV2 {
     /// `raw` clamped to [0, 1]; 0 when [`Self::fatal`].
     pub score: f64,
     /// 0 = doing nothing, 0.5 = the reference, 1 = the informed bot; at
-    /// least −1, and above 1 when the bot beats the informed bot.
+    /// least −1, and above 1 when the bot beats the informed bot. A fatal
+    /// grade is −1, the floor: failing on purpose never beats losing.
     pub raw: f64,
+    /// `raw` without the −1 floor, for training: a loss past the floor still
+    /// counts. A fatal grade is at most −1 and never above what its sessions
+    /// made.
+    pub raw_unfloored: f64,
+    /// What the sessions alone score, floored at −1, fatal or not: reported,
+    /// not scored.
+    pub measured_raw: f64,
     /// `raw − 0.5`: the edge over the reference.
     pub edge: f64,
     /// The 95% interval of `raw` over a paired bootstrap of this grade's
     /// sessions (`ci_scope: "sessions"`): one run's uncertainty from the
-    /// sessions it drew. Comparing models over several runs is
-    /// [`compare`]'s, which resamples runs too.
+    /// sessions it drew, **not for ranking** (`ci_use`). Ranking models
+    /// takes several runs and [`compare`], which resamples runs too.
     pub ci_lo: f64,
     pub ci_hi: f64,
     pub ci_scope: String,
     pub ci_level: f64,
+    pub ci_use: String,
     /// The interval of `edge` spans 0: the bot isn't told apart from the
     /// reference on this set.
     pub within_noise: bool,
@@ -303,17 +312,24 @@ pub fn score(
             sums.ceiling
         ));
     }
-    let raw = sums.raw(params.anchor_floor);
+    let measured_raw = sums.raw(params.anchor_floor);
+    let measured_unfloored = sums.raw_unfloored(params.anchor_floor);
     let seed = seed(eval_seed_sha256);
-    let (ci_lo, ci_hi) = interval(&terms, params, seed.unwrap_or(FIXED_SEED));
+    // A fatal grade is the floor, with no interval: its sessions don't count.
+    let (raw, raw_unfloored, (ci_lo, ci_hi)) = match fatal {
+        Some(_) => (-1.0, measured_unfloored.min(-1.0), (-1.0, -1.0)),
+        None => (
+            measured_raw,
+            measured_unfloored,
+            interval(&terms, params, seed.unwrap_or(FIXED_SEED)),
+        ),
+    };
     let bound_usd: f64 = sessions.iter().map(|s| s.bound_usd).sum();
     Ok(ScoreV2 {
-        score: if fatal.is_some() {
-            0.0
-        } else {
-            raw.clamp(0.0, 1.0)
-        },
+        score: raw.clamp(0.0, 1.0),
         raw,
+        raw_unfloored,
+        measured_raw,
         edge: raw - 0.5,
         ci_lo,
         ci_hi,
@@ -334,7 +350,13 @@ pub fn score(
         eta,
         resamples: params.resamples,
         seeded_from_eval: seed.is_some(),
-        gap: gap(sessions, &ceilings, &terms, raw, (ci_hi - ci_lo) / 2.0),
+        gap: gap(
+            sessions,
+            &ceilings,
+            &terms,
+            measured_raw,
+            (ci_hi - ci_lo) / 2.0,
+        ),
         sessions: terms,
         ..unscored(params, String::new())
     })
@@ -408,6 +430,22 @@ fn gap(sessions: &[Session], ceilings: &[f64], terms: &[SessionV2], raw: f64, no
     }
 }
 
+impl ScoreV2 {
+    /// Make the grade fatal after it was scored (tampering found once the
+    /// sessions ended): the floor, as [`score`] gives a fatal grade.
+    pub fn make_fatal(&mut self, reason: String) {
+        self.score = 0.0;
+        self.raw = -1.0;
+        self.raw_unfloored = self.raw_unfloored.min(-1.0);
+        self.edge = -1.5;
+        self.ci_lo = -1.0;
+        self.ci_hi = -1.0;
+        self.within_noise = false;
+        self.beats_informed = false;
+        self.fatal = Some(reason);
+    }
+}
+
 /// v2 for a grade with no sessions to score because it was never graded
 /// (or was tampered with before any ran): 0, with why.
 pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
@@ -417,11 +455,14 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
     };
     ScoreV2 {
         score: 0.0,
-        raw: 0.0,
-        edge: -0.5,
-        ci_lo: 0.0,
-        ci_hi: 0.0,
+        raw: -1.0,
+        raw_unfloored: -1.0,
+        measured_raw: 0.0,
+        edge: -1.5,
+        ci_lo: -1.0,
+        ci_hi: -1.0,
         ci_scope: "sessions".into(),
+        ci_use: "not for ranking".into(),
         ci_level: CI_LEVEL,
         within_noise: false,
         beats_informed: false,
@@ -514,15 +555,19 @@ impl Sums {
 
     /// The bot on the scale, floored at −1.
     fn raw(&self, floor: f64) -> f64 {
+        self.raw_unfloored(floor).max(-1.0)
+    }
+
+    /// The bot on the scale, not floored.
+    fn raw_unfloored(&self, floor: f64) -> f64 {
         let anchor = self.anchor(floor);
-        let raw = if self.bot <= anchor {
+        if self.bot <= anchor {
             0.5 * self.bot / anchor
         } else if self.ceiling > anchor {
             0.5 + 0.5 * (self.bot - anchor) / (self.ceiling - anchor)
         } else {
             1.0
-        };
-        raw.max(-1.0)
+        }
     }
 }
 
@@ -577,7 +622,8 @@ pub struct ModelV2 {
     pub mean_raw: f64,
     pub ci_lo: f64,
     pub ci_hi: f64,
-    /// The mean of its runs' clamped score: the headline, no interval.
+    /// The headline: the mean `raw` clamped to [0, 1] once. Never the mean
+    /// of clamped run scores, which would turn every losing run into 0.
     pub mean_score: f64,
 }
 
@@ -589,8 +635,15 @@ pub struct PairV2 {
     pub diff: f64,
     pub ci_lo: f64,
     pub ci_hi: f64,
-    /// The interval includes 0: the two rank as tied.
+    /// The interval includes 0.
     pub tie: bool,
+    /// The bootstrap's two-sided p-value for no difference, and the same
+    /// adjusted for every pair of the task (Benjamini–Hochberg).
+    pub p_value: f64,
+    pub p_adjusted: f64,
+    /// The adjusted p-value is at least 0.05: the two rank as tied. Ranks
+    /// are published as groups of ties by this flag.
+    pub tie_adjusted: bool,
 }
 
 /// Compare models over several graded runs of one task, all on the same
@@ -598,7 +651,9 @@ pub struct PairV2 {
 /// resample draws the scenarios with replacement (each scenario a cluster,
 /// the same draws for every model, so model differences are paired), then
 /// each model's runs with replacement, and scores every drawn run on the
-/// drawn scenarios. A grade that is fatal counts as `raw` 0. The seed is
+/// drawn scenarios. A fatal or unscored grade counts as `raw` −1, the floor,
+/// as it does alone. (A grade the machine failed is retried by the grader
+/// and never reaches here: it is reported apart, not scored.) The seed is
 /// the first run's `eval_seed_sha256`, as for one grade.
 pub fn compare(
     runs: &[Run],
@@ -644,7 +699,7 @@ pub fn compare(
     }
     let raw_of = |i: usize, idx: &[usize]| -> f64 {
         match &aligned[i] {
-            Some(_) if runs[i].v2.fatal.is_some() => 0.0,
+            Some(_) if runs[i].v2.fatal.is_some() => -1.0,
             Some(terms) => {
                 let sums = Sums::of(idx.iter().map(|&j| terms[j]));
                 if sums.ceiling <= 0.0 {
@@ -653,7 +708,7 @@ pub fn compare(
                     sums.raw(params.anchor_floor)
                 }
             }
-            None => 0.0,
+            None => -1.0,
         }
     };
     let mut models: Vec<String> = runs.iter().map(|r| r.model.clone()).collect();
@@ -697,7 +752,8 @@ pub fn compare(
     let mut pairs = Vec::new();
     for a in 0..models.len() {
         for b in a + 1..models.len() {
-            let diffs = draws[a].iter().zip(&draws[b]).map(|(x, y)| x - y).collect();
+            let diffs: Vec<f64> = draws[a].iter().zip(&draws[b]).map(|(x, y)| x - y).collect();
+            let p_value = two_sided_p(&diffs);
             let (ci_lo, ci_hi) = interval_of(diffs);
             pairs.push(PairV2 {
                 a: models[a].clone(),
@@ -706,8 +762,16 @@ pub fn compare(
                 ci_lo,
                 ci_hi,
                 tie: ci_lo <= 0.0 && 0.0 <= ci_hi,
+                p_value,
+                p_adjusted: p_value,
+                tie_adjusted: true,
             });
         }
+    }
+    let adjusted = benjamini_hochberg(&pairs.iter().map(|p| p.p_value).collect::<Vec<_>>());
+    for (pair, p) in pairs.iter_mut().zip(adjusted) {
+        pair.p_adjusted = p;
+        pair.tie_adjusted = p >= 1.0 - CI_LEVEL;
     }
     let models = models
         .iter()
@@ -722,7 +786,7 @@ pub fn compare(
                 mean_raw,
                 ci_lo,
                 ci_hi,
-                mean_score: ix.iter().map(|&i| runs[i].v2.score).sum::<f64>() / ix.len() as f64,
+                mean_score: mean_raw.clamp(0.0, 1.0),
             }
         })
         .collect();
@@ -735,6 +799,44 @@ pub fn compare(
         models,
         pairs,
     })
+}
+
+/// A bootstrap's two-sided p-value for a difference of 0: twice the
+/// smaller share of resamples on either side of 0 (ties counted half),
+/// at most 1.
+fn two_sided_p(diffs: &[f64]) -> f64 {
+    if diffs.is_empty() {
+        return 1.0;
+    }
+    let n = diffs.len() as f64;
+    let below = diffs
+        .iter()
+        .map(|&d| {
+            if d < 0.0 {
+                1.0
+            } else if d == 0.0 {
+                0.5
+            } else {
+                0.0
+            }
+        })
+        .sum::<f64>();
+    (2.0 * (below / n).min(1.0 - below / n)).min(1.0)
+}
+
+/// Benjamini–Hochberg adjusted p-values, in the order given: each is the
+/// smallest `p_(j)·m/j` over the ranks `j` at or above its own, at most 1.
+fn benjamini_hochberg(p: &[f64]) -> Vec<f64> {
+    let m = p.len();
+    let mut order: Vec<usize> = (0..m).collect();
+    order.sort_by(|&a, &b| p[a].total_cmp(&p[b]));
+    let mut adjusted = vec![1.0; m];
+    let mut running = 1.0_f64;
+    for (rank, &i) in order.iter().enumerate().rev() {
+        running = running.min(p[i] * m as f64 / (rank + 1) as f64);
+        adjusted[i] = running.min(1.0);
+    }
+    adjusted
 }
 
 /// The `q` quantile of sorted values, interpolated between neighbours.
@@ -1015,7 +1117,86 @@ mod tests {
         )
         .unwrap();
         assert_eq!(v2.score, 0.0);
-        assert!(v2.raw > 0.0);
+        assert_eq!(v2.raw, -1.0);
+        assert_eq!(v2.edge, -1.5);
+        assert!(v2.measured_raw > 0.0, "what it made is still reported");
+        assert_eq!(v2.ci_use, "not for ranking");
+    }
+
+    /// A bot that fails on purpose when it is losing scores below the
+    /// losing bot it wraps, in `raw`, in `raw_unfloored`, and in a ranking.
+    #[test]
+    fn crashing_when_losing_scores_below_losing() {
+        let losing = [-20.0, -10.0, 5.0, -30.0, 0.0, -5.0];
+        let honest = score(&set(&losing, &REFERENCE), &informed(), None, None).unwrap();
+        assert!(honest.raw < 0.0 && honest.raw > -1.0, "{}", honest.raw);
+        let crashed = score(
+            &set(&losing, &REFERENCE),
+            &informed(),
+            Some("ended the session liquidatable".into()),
+            None,
+        )
+        .unwrap();
+        assert!(crashed.raw < honest.raw);
+        assert!(crashed.raw_unfloored < honest.raw_unfloored);
+        // Far below the floor, the fatal grade's unfloored raw is no better
+        // than what its sessions made.
+        let ruinous = [-900.0; 6];
+        let lost = score(&set(&ruinous, &REFERENCE), &informed(), None, None).unwrap();
+        assert_eq!(lost.raw, -1.0);
+        assert!(lost.raw_unfloored < -1.0);
+        let crashed = score(
+            &set(&ruinous, &REFERENCE),
+            &informed(),
+            Some("x".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(crashed.raw_unfloored, lost.raw_unfloored);
+
+        let mut graded = runs(&[losing, losing], &[losing, losing]);
+        for (_, v2) in &mut graded[..2] {
+            v2.make_fatal("refused call".into());
+        }
+        let c = compared(&graded);
+        assert_eq!(c.models[0].mean_raw, -1.0);
+        assert!(c.models[0].mean_raw < c.models[1].mean_raw);
+    }
+
+    #[test]
+    fn an_unscored_grade_is_the_floor() {
+        let v2 = unscored(&informed(), "no bot.wasm".into());
+        assert_eq!((v2.raw, v2.raw_unfloored, v2.score), (-1.0, -1.0, 0.0));
+    }
+
+    #[test]
+    fn a_models_headline_clamps_its_mean_raw_once() {
+        let good = [140.0, 120.0, 150.0, 130.0, 145.0, 150.0];
+        let bad = [-60.0, -40.0, -50.0, -70.0, -45.0, -60.0];
+        let graded = runs(&[good, bad], &[good, good]);
+        let (up, down) = (graded[0].1.raw, graded[1].1.raw);
+        assert!(up > 0.0 && down < 0.0);
+        let c = compared(&graded);
+        assert!((c.models[0].mean_raw - (up + down) / 2.0).abs() < 1e-12);
+        assert_eq!(c.models[0].mean_score, ((up + down) / 2.0).clamp(0.0, 1.0));
+        // Not the mean of clamped runs, which hides the losing run.
+        assert!(c.models[0].mean_score < (up.clamp(0.0, 1.0) + 0.0) / 2.0);
+    }
+
+    #[test]
+    fn pairwise_ties_are_adjusted_for_every_pair() {
+        let adjusted = benjamini_hochberg(&[0.01, 0.04, 0.03, 0.2]);
+        let want = [0.04, 0.04 * 4.0 / 3.0, 0.04 * 4.0 / 3.0, 0.2];
+        for (a, w) in adjusted.iter().zip(want) {
+            assert!((a - w).abs() < 1e-12, "{adjusted:?}");
+        }
+        assert_eq!(two_sided_p(&[1.0, 2.0, 3.0, -1.0]), 0.5);
+        assert_eq!(two_sided_p(&[1.0; 10]), 0.0);
+        let strong = [[140.0, 120.0, 150.0, 130.0, 145.0, 150.0]; 3];
+        let weak = [[10.0, -20.0, 5.0, 0.0, 15.0, 10.0]; 3];
+        let c = compared(&runs(&strong, &weak));
+        let pair = &c.pairs[0];
+        assert!(!pair.tie_adjusted && pair.p_adjusted < 0.05, "{pair:?}");
     }
 
     #[test]
@@ -1207,8 +1388,8 @@ mod tests {
         let mut fatal = graded.clone();
         fatal[0].1.fatal = Some("tampered".into());
         let c = compared(&fatal);
-        // One of model a's two runs now counts 0.
-        assert!((c.models[0].mean_raw - graded[1].1.raw / 2.0).abs() < 1e-12);
+        // One of model a's two runs now counts −1, the floor.
+        assert!((c.models[0].mean_raw - (graded[1].1.raw - 1.0) / 2.0).abs() < 1e-12);
     }
 
     #[test]

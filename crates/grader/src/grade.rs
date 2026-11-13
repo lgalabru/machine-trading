@@ -174,8 +174,7 @@ impl GradeReport {
     pub fn tamper(&mut self, reason: String) {
         self.reward = 0.0;
         if let Some(v2) = &mut self.v2 {
-            v2.score = 0.0;
-            v2.fatal = Some(reason.clone());
+            v2.make_fatal(reason.clone());
         }
         self.tampered = Some(reason);
     }
@@ -297,6 +296,7 @@ impl GradeReport {
             rewards.extend([
                 ("score_v2".to_string(), v2.score),
                 ("score_v2_raw".to_string(), v2.raw),
+                ("score_v2_raw_unfloored".to_string(), v2.raw_unfloored),
                 ("score_v2_edge".to_string(), v2.edge),
                 ("score_v2_ci_lo".to_string(), v2.ci_lo),
                 ("score_v2_ci_hi".to_string(), v2.ci_hi),
@@ -1577,6 +1577,7 @@ mod tests {
         assert!(honest.v2.as_ref().unwrap().score > 0.0);
         honest.tamper("a bot wrote reward.json".into());
         assert_eq!(honest.v2.as_ref().unwrap().score, 0.0);
+        assert_eq!(honest.v2.as_ref().unwrap().raw, -1.0);
 
         let mut skipped = rescore(
             Vec::new(),
@@ -1587,6 +1588,7 @@ mod tests {
         );
         skipped.score_v2(&v2()).unwrap();
         assert_eq!(skipped.v2.as_ref().unwrap().score, 0.0);
+        assert_eq!(skipped.rewards()["score_v2_raw"], -1.0);
     }
 
     #[test]
