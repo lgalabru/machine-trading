@@ -134,6 +134,9 @@ pub enum Action {
     /// A simulated OpenBook v2 market, seeded around `price`.
     #[serde(rename = "openbook-v2-market")]
     OpenbookV2Market(OpenbookMarketSpec),
+    /// Kamino lending markets: every account a lending session uses,
+    /// exercised (see [`crate::lending::exercise`]).
+    KaminoMarkets(crate::lending::MarketsSpec),
     /// A real Pyth price account, written from a file fetched once.
     PythFeedAccount(PythFeedSpec),
 }
@@ -329,6 +332,9 @@ impl World<'_> {
             }
             Action::PoolsExercise => {
                 self.price = Some(pools_exercise(self.surfnet, &self.rpc).await?);
+            }
+            Action::KaminoMarkets(spec) => {
+                self.price = Some(crate::lending::exercise(self.surfnet, &self.rpc, spec).await?);
             }
             Action::CreateMint(spec) => {
                 let address = simulated::create_mint(self.surfnet, &self.namespace, spec)?;

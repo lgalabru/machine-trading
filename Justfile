@@ -142,6 +142,38 @@ amm-smoke:
     jq -e "$spot | .arbitrage.failed == 0" "$report" > /dev/null \
       || { echo "amm-smoke: the arbitrageur's orders failed"; exit 1; }
     echo "amm-smoke: clean, $(jq -c "$spot | {fills: (.fills | length), positions: (.pools | length), arbitrage}" "$report")"
+# Kamino lending sessions (bench/checks/kamino), graded with the probe: the
+# bot and a competing liquidator both liquidate borrowers a crash pushes
+# under; a stale oracle blocks borrows but not repays; a day's clock jump
+# accrues a day's interest; a process bot that sends all its SOL away is
+# still measured.
+kamino-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/kamino-probe/Justfile build
+    just --justfile bots/kamino-drain/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/kamino-2026-11-13 \
+        --bot bots/kamino-probe --logs "target/logs/kamino-$1" --report "target/logs/kamino-$1.json" \
+        "bench/checks/kamino/$1.json" > /dev/null
+    }
+    grade liquidation
+    jq -e '.scenarios[0] | .lending.liquidations >= 1
+      and ([.lending.actions[] | select(.action == "liquidate" and .error == null)] | length) >= 1
+      and (has("crank_refusals") | not)' target/logs/kamino-liquidation.json > /dev/null
+    grade stale-oracle
+    log=$(cat target/logs/kamino-stale-oracle/*)
+    grep -q 'Borrow { amount: Some(1.0) }.*Landed' <<< "$log"
+    grep -q 'Borrow { amount: Some(1.0) }.*Failed.*price status' <<< "$log"
+    grade interest
+    jq -e '.scenarios[0].lending.end[1].borrowed > 600.03' target/logs/kamino-interest.json > /dev/null
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --snapshot snapshots/kamino-2026-11-13 \
+      --bot bots/kamino-drain --logs target/logs/kamino-drain --report target/logs/kamino-drain.json \
+      bench/checks/kamino/drain.json > /dev/null
+    grep -rq 'drain: sent all SOL away' target/logs/kamino-drain
+    jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
+    echo "kamino-smoke: ok"
 
 # The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
 # SPY, QQQ, with SPCX as the control): one TABLE line per check and market.

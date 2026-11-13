@@ -42,6 +42,10 @@
 
 pub mod books;
 pub mod meteora;
+//! - [`kamino`]: Kamino Lending and its reserves, money markets.
+
+pub mod books;
+pub mod kamino;
 pub mod openbook;
 pub mod perps;
 pub mod phoenix;
