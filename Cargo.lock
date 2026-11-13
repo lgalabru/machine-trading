@@ -4946,6 +4946,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-levcarry"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
 name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
