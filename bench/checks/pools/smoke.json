@@ -1,6 +1,6 @@
 {
   "name": "pools-smoke",
-  "description": "SPCX-USDC on Raydium's CLMM and Meteora's DLMM pools: the bot swaps both ways and opens, halves and closes a position on each; the grader's takers trade the Raydium pool and its arbitrageur trades both pools toward the snapshot's Pyth price (stale, so the takers' limits are wide)",
+  "description": "SPCX-USDC on Raydium's CLMM, Meteora's DLMM and Orca's Whirlpool: the bot swaps both ways and opens, halves and closes a position on each; the grader's takers trade the Raydium pool and its arbitrageur trades all three toward the snapshot's Pyth price (stale, so the takers' limits are wide)",
   "symbol": "SPCX-USDC",
   "duration_slots": 24,
   "mandate": {
@@ -15,11 +15,19 @@
         "max_position": 1000.0
       },
       {
+        "instrument": "orca:spot:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
         "instrument": "raydium:amm:SPCX-USDC",
         "max_position": 1000.0
       },
       {
         "instrument": "meteora:amm:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "orca:amm:SPCX-USDC",
         "max_position": 1000.0
       }
     ],
@@ -66,11 +74,13 @@
   "spot": {
     "venues": [
       "raydium",
-      "meteora"
+      "meteora",
+      "orca"
     ],
     "liquidity": [
       "raydium",
-      "meteora"
+      "meteora",
+      "orca"
     ],
     "arbitrage": {
       "band_bps": 30.0,

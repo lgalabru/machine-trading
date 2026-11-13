@@ -109,12 +109,12 @@ spot-smoke:
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
 
-# Pools end to end, on SPCX-USDC in Raydium's CLMM pool and Meteora's DLMM
-# pool: the smoke component swaps both ways on each and opens, halves and
-# closes a position on each, among the grader's takers and arbitrageur. The
-# grade must come out clean, with the bot's swaps read back as fills on both
-# pools, both positions seen and gone by the end, and the actors' orders
-# sent.
+# Pools end to end, on SPCX-USDC in Raydium's CLMM pool, Meteora's DLMM pool
+# and Orca's Whirlpool: the smoke component swaps both ways on each and
+# opens, halves and closes a position on each, among the grader's takers and
+# arbitrageur. The grade must come out clean, with the bot's swaps read back
+# as fills on every pool, every position seen and gone by the end, and the
+# actors' orders sent.
 amm-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -126,15 +126,28 @@ amm-smoke:
     spot='[.. | objects | select(has("pools"))][0]'
     jq -e '[.. | objects | select(has("disqualified")) | .disqualified | select(. != null)] | length == 0' "$report" > /dev/null \
       || { echo "amm-smoke: disqualified"; exit 1; }
-    jq -e "$spot | [.fills[].instrument] | (index(\"raydium:spot:SPCX-USDC\") != null) and (index(\"meteora:spot:SPCX-USDC\") != null)" "$report" > /dev/null \
-      || { echo "amm-smoke: the bot's swaps didn't read back as fills on both pools"; exit 1; }
-    jq -e "$spot | .pools | length == 2 and all(.[]; .at_end == false and .first_step != null and .value_usd >= 0)" "$report" > /dev/null \
+    jq -e "$spot | [.fills[].instrument] | (index(\"raydium:spot:SPCX-USDC\") != null) and (index(\"meteora:spot:SPCX-USDC\") != null) and (index(\"orca:spot:SPCX-USDC\") != null)" "$report" > /dev/null \
+      || { echo "amm-smoke: the bot's swaps didn't read back as fills on every pool"; exit 1; }
+    jq -e "$spot | .pools | length == 3 and all(.[]; .at_end == false and .first_step != null and .value_usd >= 0)" "$report" > /dev/null \
       || { echo "amm-smoke: a position wasn't opened and taken out: $(jq -c "$spot | .pools" "$report")"; exit 1; }
     jq -e '[.. | objects | select(has("makers_widened_ticks"))][0] | .sent == .orders and .failed == 0' "$report" > /dev/null \
       || { echo "amm-smoke: the takers' orders didn't all go"; exit 1; }
     jq -e "$spot | .arbitrage.failed == 0" "$report" > /dev/null \
       || { echo "amm-smoke: the arbitrageur's orders failed"; exit 1; }
     echo "amm-smoke: clean, $(jq -c "$spot | {fills: (.fills | length), positions: (.pools | length), arbitrage}" "$report")"
+    # The same bot under a sell-only mandate on the liquidity: a deposit that
+    # takes base in counts as a buy, so every one is refused and no position
+    # opens, with the reason in the bot's log; the grade stays clean.
+    report=target/logs/amm-smoke-sell-only.json
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/{{pool_snapshot}} \
+      --bot bots/amm-smoke --logs target/logs/amm-smoke-sell-only --report "$report" bench/checks/pools/sell-only.json > /dev/null
+    jq -e '[.. | objects | select(has("disqualified")) | .disqualified | select(. != null)] | length == 0' "$report" > /dev/null \
+      || { echo "amm-smoke: the sell-only mandate disqualified the bot"; exit 1; }
+    jq -e "$spot | (.pools | length) == 0" "$report" > /dev/null \
+      || { echo "amm-smoke: a deposit that adds base was not refused: $(jq -c "$spot | .pools" "$report")"; exit 1; }
+    refused=$(grep -c "counts as a buy, and the mandate's sides" target/logs/amm-smoke-sell-only/pools-sell-only.log || true)
+    [ "$refused" -ge 3 ] || { echo "amm-smoke: expected a refusal on each of the three pools, saw $refused"; exit 1; }
+    echo "amm-smoke: sell-only refused $refused deposits"
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's

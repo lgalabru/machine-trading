@@ -19,7 +19,7 @@ use mtx_kit::{
             math,
         },
     },
-    token::{TOKEN_2022_PROGRAM_ID, associated_token_address},
+    token::associated_token_address,
 };
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
@@ -27,11 +27,57 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units,
+        Allowance, Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        anchor_instruction, named, pool_assets, range, swap_atoms, units, wallet_atoms,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+
+/// What a bot may run of Raydium CLMM's instructions (`specs/venues/raydium.md`, "What
+/// a bot may run"): swaps, and positions in the session's pool, each with
+/// the slot of the pool's account among its accounts (from its source's account structs).
+const ALLOWED: Allowed = &[
+    ("swap", Use::Swap, Some(2)),
+    ("swap_v2", Use::Swap, Some(2)),
+    ("open_position", Use::Liquidity, Some(5)),
+    ("open_position_v2", Use::Liquidity, Some(5)),
+    ("open_position_with_token22_nft", Use::Liquidity, Some(4)),
+    ("increase_liquidity", Use::Liquidity, Some(2)),
+    ("increase_liquidity_v2", Use::Liquidity, Some(2)),
+    ("decrease_liquidity", Use::Liquidity, Some(3)),
+    ("decrease_liquidity_v2", Use::Liquidity, Some(3)),
+    ("close_position", Use::Position, None),
+];
+/// The program's other instructions, by name, as the program source lists them.
+const OTHERS: &[&str] = &[
+    "create_amm_config",
+    "create_support_mint_associated",
+    "update_amm_config",
+    "create_dynamic_fee_config",
+    "update_dynamic_fee_config",
+    "close_support_mint_associated",
+    "create_pool",
+    "create_customizable_pool",
+    "create_customizable_pool_v2",
+    "update_pool_status",
+    "create_operation_account",
+    "update_operation_account",
+    "transfer_reward_owner",
+    "initialize_reward",
+    "collect_remaining_rewards",
+    "update_reward_infos",
+    "set_reward_params",
+    "collect_protocol_fee",
+    "collect_fund_fee",
+    "swap_router_base_in",
+    "close_protocol_position",
+    "open_limit_order",
+    "increase_limit_order",
+    "decrease_limit_order",
+    "settle_limit_order",
+    "close_limit_order",
+    "collect_excess_lamports",
+];
 
 /// Tick arrays a swap may cross: the current one and two beyond.
 const SWAP_TICK_ARRAYS: usize = 3;
@@ -163,6 +209,7 @@ impl ClmmPool {
         Ok(Self {
             assets: PoolAssets {
                 address: named.address,
+                program: clmm::PROGRAM_ID,
                 base,
                 quote,
                 base_mint: named.base_mint,
@@ -263,20 +310,18 @@ impl ClmmPool {
     }
 
     /// Whether `owner` holds `position`'s NFT, which makes the position its
-    /// own.
+    /// own: in any of its token accounts for the NFT's mint, as the wallet
+    /// is read, not only the associated one. A mint the chain can't read
+    /// is held by no one.
     async fn holds_nft(
         &self,
         chain: &dyn ChainClient,
         owner: &Pubkey,
         position: &PersonalPosition,
     ) -> bool {
-        let nft = associated_token_address(owner, &position.nft_mint, &TOKEN_2022_PROGRAM_ID);
-        match chain.get_account(&nft).await {
-            Ok(Some(account)) => {
-                mtx_kit::chain::token::token_balance(&account).is_ok_and(|n| n > 0)
-            }
-            _ => false,
-        }
+        wallet_atoms(chain, owner, &position.nft_mint)
+            .await
+            .is_ok_and(|atoms| atoms > 0)
     }
 
     async fn personal_position(
@@ -296,6 +341,10 @@ impl ClmmPool {
 impl Pool for ClmmPool {
     fn assets(&self) -> &PoolAssets {
         &self.assets
+    }
+
+    fn instruction(&self, data: &[u8]) -> (String, Option<Allowance>) {
+        anchor_instruction(data, ALLOWED, OTHERS)
     }
 
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice> {

@@ -14,7 +14,7 @@ bs58 = "0.5"
 flate2 = "1"
 libc.workspace = true
 mtx-core.workspace = true
-mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2", "raydium-clmm", "meteora-dlmm"] }
+mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2", "raydium-clmm", "meteora-dlmm", "orca-whirlpool"] }
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -50,6 +50,8 @@ rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
 # A chain held in memory, for reading wallets without a surfnet.
 mtx-kit = { workspace = true, features = ["test-util"] }
 solana-account = "4"
+# Hand-built pool instructions a bot may or may not run (src/spot.rs).
+solana-instruction = "3.5"
 # A Token-2022 mint with a transfer fee, and v0 transactions, on a surfnet
 # behind the guard (tests/tokens_and_v0.rs).
 solana-system-interface = { version = "3", features = ["wincode"] }

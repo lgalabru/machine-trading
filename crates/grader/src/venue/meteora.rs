@@ -26,17 +26,107 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units,
+        Allowance, Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        anchor_instruction, named, pool_assets, range, swap_atoms, units,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+
+/// What a bot may run of Meteora DLMM's instructions (`specs/venues/meteora.md`, "What
+/// a bot may run"): swaps, and positions in the session's pool, each with
+/// the slot of the pool's account among its accounts (from its IDL).
+const ALLOWED: Allowed = &[
+    ("swap", Use::Swap, Some(0)),
+    ("swap2", Use::Swap, Some(0)),
+    ("swap_exact_out", Use::Swap, Some(0)),
+    ("swap_exact_out2", Use::Swap, Some(0)),
+    ("swap_with_price_impact", Use::Swap, Some(0)),
+    ("swap_with_price_impact2", Use::Swap, Some(0)),
+    ("initialize_position", Use::Liquidity, Some(2)),
+    ("initialize_position2", Use::Liquidity, Some(2)),
+    ("initialize_position_pda", Use::Liquidity, Some(3)),
+    ("initialize_bin_array", Use::Liquidity, Some(0)),
+    ("add_liquidity", Use::Liquidity, Some(1)),
+    ("add_liquidity2", Use::Liquidity, Some(1)),
+    ("add_liquidity_by_strategy", Use::Liquidity, Some(1)),
+    ("add_liquidity_by_strategy2", Use::Liquidity, Some(1)),
+    (
+        "add_liquidity_by_strategy_one_side",
+        Use::Liquidity,
+        Some(1),
+    ),
+    ("add_liquidity_by_weight", Use::Liquidity, Some(1)),
+    ("add_liquidity_by_weight2", Use::Liquidity, Some(1)),
+    ("add_liquidity_one_side", Use::Liquidity, Some(1)),
+    ("add_liquidity_one_side_precise", Use::Liquidity, Some(1)),
+    ("add_liquidity_one_side_precise2", Use::Liquidity, Some(1)),
+    ("remove_liquidity", Use::Liquidity, Some(1)),
+    ("remove_liquidity2", Use::Liquidity, Some(1)),
+    ("remove_liquidity_by_range", Use::Liquidity, Some(1)),
+    ("remove_liquidity_by_range2", Use::Liquidity, Some(1)),
+    ("remove_all_liquidity", Use::Liquidity, Some(1)),
+    ("claim_fee", Use::Liquidity, Some(0)),
+    ("claim_fee2", Use::Liquidity, Some(0)),
+    ("claim_reward", Use::Liquidity, Some(0)),
+    ("claim_reward2", Use::Liquidity, Some(0)),
+    ("update_fees_and_rewards", Use::Liquidity, Some(1)),
+    ("update_fees_and_reward2", Use::Liquidity, Some(1)),
+    ("close_position", Use::Position, None),
+    ("close_position2", Use::Position, None),
+    ("close_position_if_empty", Use::Position, None),
+    ("increase_position_length", Use::Position, None),
+    ("increase_position_length2", Use::Position, None),
+    ("decrease_position_length", Use::Position, None),
+];
+/// The program's other instructions, by name, as the pinned program's IDL lists them.
+const OTHERS: &[&str] = &[
+    "cancel_limit_order",
+    "close_bin_array",
+    "close_claim_fee_operator_account",
+    "close_limit_order_if_empty",
+    "close_operator_account",
+    "close_preset_parameter",
+    "close_preset_parameter2",
+    "close_token_badge",
+    "create_operator_account",
+    "fund_reward",
+    "go_to_a_bin",
+    "increase_oracle_length",
+    "initialize_bin_array_bitmap_extension",
+    "initialize_customizable_permissionless_lb_pair",
+    "initialize_customizable_permissionless_lb_pair2",
+    "initialize_lb_pair",
+    "initialize_lb_pair2",
+    "initialize_permission_lb_pair",
+    "initialize_position_by_operator",
+    "initialize_preset_parameter",
+    "initialize_reward",
+    "initialize_token_badge",
+    "place_limit_order",
+    "rebalance_liquidity",
+    "set_activation_point",
+    "set_pair_status",
+    "set_pair_status_permissionless",
+    "set_permissionless_operation_bits",
+    "set_pre_activation_duration",
+    "set_pre_activation_swap_address",
+    "update_base_fee_parameters",
+    "update_dynamic_fee_parameters",
+    "update_position_operator",
+    "update_reward_duration",
+    "update_reward_funder",
+    "withdraw_ineligible_reward",
+    "withdraw_protocol_fee",
+    "zap_protocol_fee",
+];
 
 /// Bin arrays a swap may cross: the active one and two beyond.
 const SWAP_BIN_ARRAYS: usize = 3;
 /// How far the active bin may move between a deposit's planning and its
 /// landing.
 const MAX_ACTIVE_BIN_SLIPPAGE: i32 = BINS_PER_ARRAY;
+/// The most accounts one `getMultipleAccounts` reads.
+const MAX_ACCOUNTS_PER_READ: usize = 100;
 
 /// Meteora, read and traded through one endpoint.
 pub struct Meteora {
@@ -130,6 +220,7 @@ impl DlmmPool {
         Ok(Self {
             assets: PoolAssets {
                 address: named.address,
+                program: dlmm::PROGRAM_ID,
                 base,
                 quote,
                 base_mint: pair.mint_x,
@@ -206,6 +297,25 @@ impl DlmmPool {
         }
     }
 
+    /// `initialize_bin_array`, paid by `owner`, for each of `indexes` not
+    /// made yet.
+    async fn missing_bin_arrays(
+        &self,
+        chain: &dyn ChainClient,
+        pair: &LbPair,
+        owner: &Pubkey,
+        indexes: &[i64],
+    ) -> Vec<Instruction> {
+        let mut instructions = Vec::new();
+        for index in indexes {
+            let address = dlmm::bin_array_address(&self.assets.address, *index);
+            if !matches!(chain.get_account(&address).await, Ok(Some(_))) {
+                instructions.push(ix::initialize_bin_array(pair, owner, *index));
+            }
+        }
+        instructions
+    }
+
     async fn read_position(
         &self,
         chain: &dyn ChainClient,
@@ -224,6 +334,10 @@ impl DlmmPool {
 impl Pool for DlmmPool {
     fn assets(&self) -> &PoolAssets {
         &self.assets
+    }
+
+    fn instruction(&self, data: &[u8]) -> (String, Option<Allowance>) {
+        anchor_instruction(data, ALLOWED, OTHERS)
     }
 
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice> {
@@ -306,11 +420,13 @@ impl Pool for DlmmPool {
 
     async fn positions(&self, chain: &dyn ChainClient, owner: &Pubkey) -> Result<Vec<Lp>> {
         let pair = self.pair(chain).await?;
+        // Any size: `increase_position_length` grows a position's account
+        // past `Position::LEN`.
         let mut accounts = chain
             .get_program_accounts(
                 &dlmm::PROGRAM_ID,
                 vec![
-                    RpcFilterType::DataSize(Position::LEN as u64),
+                    RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &Position::DISCRIMINATOR)),
                     RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
                         Position::PAIR_OFFSET,
                         self.assets.address.as_ref(),
@@ -353,6 +469,29 @@ impl Pool for DlmmPool {
         let pair = self.pair(chain).await?;
         let arrays = self.bin_arrays(chain, &position.bin_arrays()).await;
         Ok(Some(self.lp(&pair, &position, &arrays)))
+    }
+
+    /// A position's owner is in its account, whatever its size.
+    async fn position_owners(
+        &self,
+        chain: &dyn ChainClient,
+        accounts: &[Pubkey],
+    ) -> Result<Vec<Pubkey>> {
+        let mut owners = Vec::new();
+        for chunk in accounts.chunks(MAX_ACCOUNTS_PER_READ) {
+            let read = chain
+                .get_multiple_accounts(chunk)
+                .await
+                .map_err(read_error("meteora positions"))?;
+            owners.extend(chunk.iter().zip(read).filter_map(|(address, account)| {
+                let account = account.filter(|a| a.owner == dlmm::PROGRAM_ID)?;
+                Position::decode(*address, &account.data)
+                    .ok()
+                    .filter(|p| p.pair == self.assets.address)
+                    .map(|p| p.owner)
+            }));
+        }
+        Ok(owners)
     }
 
     async fn deposit(
@@ -404,15 +543,13 @@ impl Pool for DlmmPool {
         if lower > pair.active_id && amount_x == 0 || upper < pair.active_id && amount_y == 0 {
             return Err("this range at this price takes the other asset: none given".into());
         }
-        let mut instructions = Vec::new();
-        // The range's bin arrays must exist.
-        let indexes = dlmm::position_bin_arrays(lower);
-        for index in &indexes {
-            let address = dlmm::bin_array_address(&self.assets.address, *index);
-            if !matches!(chain.get_account(&address).await, Ok(Some(_))) {
-                instructions.push(ix::initialize_bin_array(&pair, owner, *index));
-            }
-        }
+        // The range's bin arrays must exist: a grown position's may reach
+        // arrays nobody has made yet.
+        let indexes = match &existing {
+            Some(p) => p.bin_arrays(),
+            None => dlmm::position_bin_arrays(lower),
+        };
+        let mut instructions = self.missing_bin_arrays(chain, &pair, owner, &indexes).await;
         let target = match &existing {
             Some(p) => p.address,
             None => {
@@ -469,7 +606,9 @@ impl Pool for DlmmPool {
             return Err("the position would pay out less than the minimum".into());
         }
         let bps = (share * 10_000.0).round() as u16;
-        let mut instructions = Vec::new();
+        let mut instructions = self
+            .missing_bin_arrays(chain, &pair, owner, &held.bin_arrays())
+            .await;
         if bps > 0 && position.live {
             instructions.push(ix::remove_liquidity(&pair, owner, &held, bps));
         }

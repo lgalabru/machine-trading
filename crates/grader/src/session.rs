@@ -342,6 +342,16 @@ impl SessionReport {
                 .as_ref()
                 .map(|spot| spot.open_orders.clone())
                 .unwrap_or_default(),
+            liquidity: self
+                .spot
+                .as_ref()
+                .map(|spot| spot.liquidity_moves.clone())
+                .unwrap_or_default(),
+            unsupported: self
+                .spot
+                .as_ref()
+                .map(|spot| spot.unsupported.clone())
+                .unwrap_or_default(),
         }
     }
 }
