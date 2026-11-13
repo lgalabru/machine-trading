@@ -544,18 +544,18 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     mandate: &mandate,
                     cap: env.max_position,
                     max_drawdown: env.max_drawdown_usd,
+                    raw: raw_programs.map(|programs| crate::raw::RawConfig {
+                        programs,
+                        fresh: opts.keys.fresh(),
+                        internal_url: internal.url().to_string(),
+                        mandate: mandate.clone(),
+                        instrument: scenario.instrument(),
+                        unsettled_funding: scenario.funding.is_some(),
+                    }),
                 },
                 desk,
                 Box::new(log),
                 opts.observer.clone(),
-                raw_programs.map(|programs| crate::raw::RawConfig {
-                    programs,
-                    fresh: opts.keys.fresh(),
-                    internal_url: internal.url().to_string(),
-                    mandate: mandate.clone(),
-                    instrument: scenario.instrument(),
-                    unsettled_funding: scenario.funding.is_some(),
-                }),
             )
             .await?,
         );

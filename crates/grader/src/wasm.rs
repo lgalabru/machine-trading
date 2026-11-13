@@ -641,6 +641,8 @@ pub struct Terms<'a> {
     /// The position cap on its market, and its drawdown limit.
     pub cap: f64,
     pub max_drawdown: f64,
+    /// What raw sends need, where the scenario enables them.
+    pub raw: Option<crate::raw::RawConfig>,
 }
 
 /// What the grader trades and reads for a component: a seat on each market
@@ -719,7 +721,6 @@ impl WasmBot {
         desk: Desk,
         log: Box<dyn Write + Send>,
         observer: Option<std::sync::Arc<dyn StepObserver>>,
-        raw: Option<crate::raw::RawConfig>,
     ) -> crate::Result<Self> {
         let Clock {
             steps,
@@ -768,7 +769,7 @@ impl WasmBot {
         };
         // Raw sends are a perp session's, as its scenario validates.
         if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
-            (strategy.as_mut(), raw, &desk.reader)
+            (strategy.as_mut(), terms.raw, &desk.reader)
         {
             strategy.enable_raw_sends(crate::raw::RawSender::new(
                 raw,
