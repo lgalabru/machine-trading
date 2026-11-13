@@ -204,6 +204,17 @@
   .msg code { font: 12px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--raise-2); }
   .msg pre { margin: 0 0 8px; padding: 9px 11px; border-radius: 8px; background: #060607; border: 1px solid var(--line); overflow: auto; font: 12px/1.55 var(--mono); }
   .msg pre code { padding: 0; background: none; }
+  .msg.agent :is(ul, ol, blockquote, .table, h3, h4, h5, h6, hr) { margin: 0 0 8px; } .msg.agent > :last-child { margin-bottom: 0; }
+  .msg.agent :is(ul, ol) { padding-left: 20px; } .msg.agent li { margin: 2px 0; } .msg.agent li > :is(ul, ol) { margin: 2px 0 0; }
+  .msg.agent :is(h3, h4, h5, h6) { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 12px; } .msg.agent h3 { font-size: 14px; }
+  .msg.agent blockquote { padding: 2px 0 2px 10px; border-left: 2px solid var(--line); color: var(--text-2); }
+  .msg.agent hr { border: 0; border-top: 1px solid var(--line); }
+  .msg.agent a { color: #7aa2f7; text-decoration: none; } .msg.agent a:hover { text-decoration: underline; }
+  .msg .table { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .msg table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .msg :is(th, td) { padding: 5px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .msg th { font-weight: 600; color: var(--text-2); background: var(--raise); }
+  .msg tr:last-child td { border-bottom: 0; }
   /* The agent's tool calls: one line per run, in words. It opens to its
      calls, and a call to its details. */
   .run { align-self: stretch; font-size: 12.5px; color: var(--text-2); min-width: 0; }
@@ -1231,17 +1242,75 @@ $("build").addEventListener("click", buildNow);
 
 // ---------------------------------------------------------------- composer
 const thread = $("thread"), threadScroll = $("thread-scroll");
+// Markdown as agents write it: headings, paragraphs, lists (nested by
+// indent), tables, quotes, rules, fenced code; inline code, bold, italics,
+// strikethrough and links. Everything is escaped first: an agent's text
+// never becomes markup of its own.
 const md = (text) => {
-  const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
-  return String(text).split(/```/).map((part, i) => {
-    if (i % 2) return `<pre><code>${esc(part.replace(/^[\w-]*\n/, ""))}</code></pre>`;
-    return part.split(/\n{2,}/).filter((p) => p.trim()).map((p) => {
-      const lines = p.split("\n");
-      if (lines.every((l) => /^\s*([-*]|\d+\.)\s+/.test(l))) return `<p>${lines.map((l) => "• " + inline(l.replace(/^\s*([-*]|\d+\.)\s+/, ""))).join("<br>")}</p>`;
-      if (/^#{1,4}\s/.test(p)) return `<p><b>${inline(p.replace(/^#{1,4}\s+/, ""))}</b></p>`;
-      return `<p>${inline(p).replace(/\n/g, "<br>")}</p>`;
-    }).join("");
-  }).join("");
+  const inline = (s) => {
+    const codes = [];
+    let out = esc(s).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
+    out = out
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<b>${a ?? b}</b>`)
+      .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=$|[\s).,;:!?])/g, "$1<i>$2</i>")
+      .replace(/(^|[\s(])_([^_\s][^_]*?)_(?=$|[\s).,;:!?])/g, "$1<i>$2</i>")
+      .replace(/~~([^~]+)~~/g, "<s>$1</s>");
+    return out.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
+  };
+  const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+  const isRule = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l) && l.includes("-");
+  const item = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const lines = String(text).replace(/\r/g, "").split("\n");
+  const out = [];
+  let i = 0;
+  const list = (from) => {
+    // Items at this indent; deeper ones nest; other lines continue an item.
+    const first = lines[from].match(item), indent = first[1].length, ordered = /\d/.test(first[2]);
+    const start = ordered ? parseInt(first[2], 10) : 1;
+    let html = ordered ? `<ol${start !== 1 ? ` start="${start}"` : ""}>` : "<ul>", j = from;
+    while (j < lines.length) {
+      const m = lines[j].match(item);
+      if (!m || m[1].length < indent || (m[1].length === indent && /\d/.test(m[2]) !== ordered)) break;
+      if (m[1].length > indent) { const [inner, next] = list(j); html = html.replace(/<\/li>$/, inner + "</li>"); j = next; continue; }
+      let body = m[3]; j++;
+      while (j < lines.length && lines[j].trim() && !item.test(lines[j]) && /^\s+/.test(lines[j])) body += " " + lines[j++].trim();
+      html += `<li>${inline(body)}</li>`;
+    }
+    return [html + (ordered ? "</ol>" : "</ul>"), j];
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    const fence = line.match(/^\s*(```|~~~)\s*([\w+-]*)/);
+    if (fence) {
+      const body = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
+      i++;
+      out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`); continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h) { const n = Math.min(h[1].length + 2, 6); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
+    if (line.includes("|") && i + 1 < lines.length && isRule(lines[i + 1])) {
+      const head = cells(line), align = cells(lines[i + 1]).map((c) => (c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : ""));
+      const td = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ""}>${inline(c)}</${tag}>`;
+      let html = `<div class="table"><table><thead><tr>${head.map((c, k) => td("th", c, k)).join("")}</tr></thead><tbody>`;
+      i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) html += `<tr>${cells(lines[i++]).map((c, k) => td("td", c, k)).join("")}</tr>`;
+      out.push(html + "</tbody></table></div>"); continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const body = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push(`<blockquote>${md(body.join("\n"))}</blockquote>`); continue;
+    }
+    if (item.test(line)) { const [html, next] = list(i); out.push(html); i = next; continue; }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>)/.test(lines[i]) && !item.test(lines[i]) && !(lines[i].includes("|") && isRule(lines[i + 1] ?? ""))) para.push(lines[i++]);
+    out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+  }
+  return out.join("");
 };
 const texts = new Map();
 let replayingThread = false;
