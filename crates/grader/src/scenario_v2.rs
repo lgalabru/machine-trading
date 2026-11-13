@@ -556,12 +556,10 @@ impl ScenarioV2 {
             layer
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
                 .map_err(|reason| format!("tx_layer: {reason}"))?;
-            if self.venues.spot.is_some() {
-                return Err("tx_layer: only perp sessions take the transaction layer yet".into());
-            }
+            self.layer_fits_the_session(layer)?;
             // An actor hooked on the bot's sends acts as each arrives, as if
             // it ran next: under the layer a send only enters the pool, and
-            // lands when a block takes it.
+            // lands when a block takes it. A pool-aware one reads the pool.
             let hooked = self
                 .actors
                 .library
@@ -570,10 +568,19 @@ impl ScenarioV2 {
                 .unwrap_or_default();
             if !hooked.is_empty() {
                 return Err(format!(
-                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; the two can't run together until pool-aware actors (PR 17b)",
+                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; under the layer, a front-runner reads the pool instead (on_pool)",
                     hooked.join(", ")
                 ));
             }
+        } else if let Some(reader) = self
+            .actors
+            .library
+            .as_ref()
+            .and_then(|library| library.pool_readers().into_iter().next())
+        {
+            return Err(format!(
+                "actors: {reader} reads the transaction layer's pool (on_pool), and the scenario has no tx_layer"
+            ));
         }
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
@@ -655,6 +662,47 @@ impl ScenarioV2 {
         crate::lending::validate_warps(&market.warps, self.duration_slots)?;
         if !market.warps.is_empty() && self.faults.is_some() {
             return Err("warps: a session with clock jumps has no execution faults".into());
+        }
+        Ok(())
+    }
+
+    /// A transaction layer runs in perp sessions, in spot sessions on pools
+    /// (whose seats send through it), and in lending sessions. Searchers on
+    /// pools need a spot session trading those pools; racing liquidators,
+    /// a lending session's liquidators.
+    fn layer_fits_the_session(&self, layer: &crate::txlayer::TxLayer) -> Result<(), String> {
+        let searchers = &layer.searchers;
+        if let Some(spot) = &self.venues.spot {
+            if let Some(book) = spot.markets.iter().find(|m| !POOLS.contains(&m.as_str())) {
+                return Err(format!(
+                    "tx_layer: a spot session takes the layer on pools only, and {book} is a book"
+                ));
+            }
+            if let Some(venue) = searchers
+                .venues()
+                .into_iter()
+                .find(|v| !spot.markets.iter().any(|m| m == v))
+            {
+                return Err(format!(
+                    "tx_layer.searchers: {venue} isn't one of the session's pools"
+                ));
+            }
+        } else if searchers.on_pools() {
+            return Err(
+                "tx_layer.searchers: searchers on pools need a spot session on them".into(),
+            );
+        }
+        if searchers.liquidators.is_some()
+            && self
+                .venues
+                .lending
+                .as_ref()
+                .is_none_or(|l| l.liquidators.is_none())
+        {
+            return Err(
+                "tx_layer.searchers.liquidators: a race needs a lending session with liquidators"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1653,12 +1701,97 @@ mod tests {
         let refused = s.validate().unwrap_err();
         assert!(
             refused.starts_with("tx_layer: actors.front_runners[0] acts on the bot's sends")
-                && refused.contains("PR 17b"),
+                && refused.contains("on_pool"),
             "{refused}"
         );
         // A v1 scenario, the same.
         v1.actors.as_mut().unwrap().front_runners[0].on_send = true;
         assert_eq!(v1.validate().unwrap_err(), refused);
+    }
+
+    #[test]
+    fn a_front_runner_reads_the_pool_only_under_the_transaction_layer() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        library.front_runners = vec![crate::actors::library::FrontRunner {
+            on_pool: true,
+            ..Default::default()
+        }];
+        let mut s = shock();
+        s.actors.library = Some(library.clone());
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused
+                .starts_with("actors: actors.front_runners[0] reads the transaction layer's pool"),
+            "{refused}"
+        );
+        s.tx = Some(Tx {
+            layer: Some(crate::txlayer::tests::layer()),
+            raw_sends: None,
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert!(v1.actors.as_ref().unwrap().front_runners[0].on_pool);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+        // Both ways of reading the bot's sends at once: refused.
+        library.front_runners[0].on_send = true;
+        assert!(
+            library
+                .validate()
+                .unwrap_err()
+                .contains("on_send and on_pool")
+        );
+        s.actors.library = Some(library);
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn the_transaction_layer_runs_on_pools_and_lending_and_its_searchers_fit_the_session() {
+        let pools = include_str!("../../../bench/checks/pools/smoke.json");
+        let mut s = v2(&parse(pools).unwrap());
+        let mut layer = crate::txlayer::tests::layer();
+        layer.regimes.clear();
+        layer.searchers = serde_json::from_str(
+            r#"{ "sandwichers": [{ "venue": "raydium" }], "backrunners": [{ "venue": "raydium", "other": "meteora" }] }"#,
+        )
+        .unwrap();
+        s.tx = Some(Tx {
+            layer: Some(layer.clone()),
+            raw_sends: None,
+        });
+        s.validate().unwrap();
+        let mut one_pool = s.clone();
+        one_pool.venues.spot.as_mut().unwrap().markets = vec!["raydium".into()];
+        one_pool.venues.spot.as_mut().unwrap().liquidity = vec!["raydium".into()];
+        one_pool
+            .mandate
+            .universe
+            .retain(|a| a.instrument.venue == "raydium");
+        assert!(
+            one_pool
+                .validate()
+                .unwrap_err()
+                .contains("meteora isn't one of the session's pools")
+        );
+        // Searchers on pools in a perp session; a race without liquidators.
+        let mut perp = shock();
+        perp.tx = s.tx.clone();
+        assert!(perp.validate().unwrap_err().contains("need a spot session"));
+        let mut race = layer;
+        race.searchers =
+            serde_json::from_str(r#"{ "liquidators": { "shade": [0.1, 0.5] } }"#).unwrap();
+        let mut lend = v2(&lending("liquidation"));
+        lend.tx = Some(Tx {
+            layer: Some(race.clone()),
+            raw_sends: None,
+        });
+        lend.validate().unwrap();
+        lend.venues.lending.as_mut().unwrap().liquidators = None;
+        assert!(
+            lend.validate()
+                .unwrap_err()
+                .contains("a race needs a lending session")
+        );
     }
 
     #[test]

@@ -634,6 +634,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
 
     let bot = opts.keys.keypair("bot", 0);
     cheats.fund_sol(&bot.pubkey(), (FEE_SOL * 1e9) as u64)?;
+    if let Some(layer) = &scenario.tx_layer {
+        crate::txlayer::setup(&surfnet, layer, &bot.pubkey())?;
+    }
     for (symbol, units) in &lending.wallet {
         fund(&bot.pubkey(), book(symbol)?, *units)?;
     }
@@ -767,6 +770,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             });
         }
     }
+    // Under a transaction layer whose searchers race the liquidators, each
+    // bids a share of the bonus to land first.
+    let race = scenario
+        .tx_layer
+        .as_ref()
+        .and_then(|l| l.searchers.liquidators.as_ref().map(|r| (r, l.seed)));
     let mut liquidators = Vec::new();
     if let (Some(spec), Some(b)) = (&lending.liquidators, &lending.borrowers) {
         let debt = book(&b.debt)?;
@@ -786,6 +795,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 seen: BTreeMap::new(),
                 // A key for the race's order, drawn per liquidator.
                 order: rng.next_u64(),
+                share: race.map_or(0.0, |(r, seed)| r.share(seed, i)),
+                sent: BTreeMap::new(),
             });
         }
         liquidators.sort_by_key(|l| l.order);
@@ -968,6 +979,15 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             liquidators,
             step: 0,
             log,
+            race: race.map(|(r, _)| Race {
+                bundles: r.bundles,
+                sol_usd: scenario
+                    .tx_layer
+                    .as_ref()
+                    .and_then(|l| l.sol_usd)
+                    .unwrap_or(RACE_SOL_USD),
+                engine: None,
+            }),
         }));
     }
     info!(
@@ -1031,6 +1051,30 @@ struct Liquidator {
     /// The step it first saw each obligation liquidatable.
     seen: BTreeMap<Pubkey, u64>,
     order: u64,
+    /// In a race: the share of the bonus it bids, and the step it last sent
+    /// for each obligation.
+    share: f64,
+    sent: BTreeMap<Pubkey, u64>,
+}
+
+/// Liquidators racing through a transaction layer's pool (see
+/// [`crate::actors::searchers::LiquidatorRace`]).
+struct Race {
+    bundles: bool,
+    sol_usd: f64,
+    engine: Option<Arc<crate::txlayer::TxEngine>>,
+}
+
+/// What a SOL is worth for a race's bids when the scenario doesn't say.
+const RACE_SOL_USD: f64 = 150.0;
+/// Steps a racing liquidator waits before sending for an obligation again.
+const RESEND_STEPS: u64 = 4;
+
+impl Liquidator {
+    /// Its sender in the transaction layer.
+    fn sender(&self) -> String {
+        format!("actor:{}", self.name)
+    }
 }
 
 /// The session's borrowers and competing liquidators, acting after the
@@ -1044,6 +1088,8 @@ struct KaminoActors {
     liquidators: Vec<Liquidator>,
     step: u64,
     log: ActionLog,
+    /// Their race through the transaction layer's pool, if they run one.
+    race: Option<Race>,
 }
 
 impl KaminoActors {
@@ -1256,6 +1302,49 @@ impl KaminoActors {
                     atoms(amount, repay.decimals),
                     0,
                 ));
+                if let Some(race) = &self.race {
+                    // Once every few steps per obligation: what it sent may
+                    // still be in the pool.
+                    if liquidator
+                        .sent
+                        .get(address)
+                        .is_some_and(|at| self.step < at + RESEND_STEPS)
+                    {
+                        continue;
+                    }
+                    let bonus_bps = self
+                        .chain
+                        .get_account(&withdraw.keys.address)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|a| klend::Reserve::decode(&a.data))
+                        .map_or(0, |r| r.min_liquidation_bonus_bps);
+                    let repay_value = obligation
+                        .borrows
+                        .iter()
+                        .find(|b| b.reserve == repay.keys.address)
+                        .map_or(0.0, |b| b.market_value);
+                    let bonus_usd = repay_value * close_factor * f64::from(bonus_bps) / 10_000.0;
+                    let bid = crate::actors::searchers::lamports_of(
+                        bonus_usd * liquidator.share,
+                        race.sol_usd,
+                    );
+                    let result = race
+                        .send(
+                            &self.chain,
+                            &self.books,
+                            market,
+                            liquidator,
+                            instructions,
+                            bid,
+                        )
+                        .await;
+                    let name = liquidator.name.clone();
+                    self.liquidators[l].sent.insert(*address, self.step);
+                    self.record(&name, "liquidate-sent", address, amount, result);
+                    continue;
+                }
                 let result = land(
                     self.chain.as_ref(),
                     &self.books,
@@ -1275,8 +1364,105 @@ impl KaminoActors {
     }
 }
 
+impl Race {
+    /// Send `liquidator`'s liquidation to the pool, bidding `bid` lamports:
+    /// as its priority fee over the transaction's compute units, or as the
+    /// tip of a bundle of it.
+    async fn send(
+        &self,
+        chain: &Arc<dyn ChainClient>,
+        books: &Books,
+        market: &Pubkey,
+        liquidator: &Liquidator,
+        instructions: Vec<Instruction>,
+        bid: u64,
+    ) -> std::result::Result<(), String> {
+        let engine = self.engine.as_ref().ok_or("no transaction layer")?;
+        let cu_price =
+            (!self.bundles).then(|| bid.saturating_mul(1_000_000) / u64::from(kamino::UNITS));
+        let tx = kamino::signed(
+            chain.as_ref(),
+            books,
+            market,
+            &liquidator.keypair,
+            "liquidate",
+            instructions,
+            cu_price,
+        )
+        .await?;
+        let mut wires = vec![wincode::serialize(&tx).map_err(|e| e.to_string())?];
+        if self.bundles {
+            wires.push(tip_wire(chain.as_ref(), &liquidator.keypair, bid).await?);
+        }
+        engine
+            .submit_actor(
+                &liquidator.sender(),
+                false,
+                crate::txlayer::engine::Submission {
+                    wires,
+                    route: if self.bundles {
+                        crate::txlayer::RouteKind::Jito
+                    } else {
+                        crate::txlayer::RouteKind::Rpc
+                    },
+                    bundle: self.bundles,
+                    retry_until_slot: None,
+                    resign: false,
+                    delay_slots: 0,
+                    dropped: false,
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(|refusal| refusal.message)
+    }
+}
+
+/// A transaction of `payer`'s tipping `lamports`, at least the least tip, to
+/// a Jito tip account.
+async fn tip_wire(
+    chain: &dyn ChainClient,
+    payer: &Keypair,
+    lamports: u64,
+) -> std::result::Result<Vec<u8>, String> {
+    let blockhash = chain
+        .get_latest_blockhash()
+        .await
+        .map_err(|e| e.to_string())?;
+    let to: Pubkey = crate::txlayer::jito::TIP_ACCOUNTS[0]
+        .parse()
+        .expect("a tip account");
+    let mut data = 2u32.to_le_bytes().to_vec();
+    data.extend(lamports.max(crate::txlayer::jito::MIN_TIP).to_le_bytes());
+    let ix = Instruction::new_with_bytes(
+        crate::txlayer::pool::SYSTEM,
+        &data,
+        vec![
+            solana_transaction::AccountMeta::new(payer.pubkey(), true),
+            solana_transaction::AccountMeta::new(to, false),
+        ],
+    );
+    let message =
+        solana_message::Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &blockhash);
+    let tx = solana_transaction::versioned::VersionedTransaction::try_new(
+        solana_message::VersionedMessage::Legacy(message),
+        &[payer],
+    )
+    .map_err(|e| e.to_string())?;
+    wincode::serialize(&tx).map_err(|e| e.to_string())
+}
+
 #[async_trait]
 impl Actor for KaminoActors {
+    fn bind_tx(&mut self, engine: &Arc<crate::txlayer::TxEngine>) {
+        if let Some(race) = &mut self.race {
+            for liquidator in &self.liquidators {
+                engine.register_actor(&liquidator.sender(), liquidator.keypair.pubkey());
+            }
+            race.engine = Some(engine.clone());
+        }
+    }
+
     async fn after_blocks(&mut self, _now: &Moment) {
         self.borrowers_act().await;
         self.liquidators_act().await;
@@ -1626,12 +1812,29 @@ impl Account for LendingAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
-        _tx: Option<Arc<crate::txlayer::TxEngine>>,
+        tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
+        // Under the transaction layer the bot's sends go to its pool, with
+        // each line's options.
+        let pool = tx.is_some().then(|| {
+            Arc::new(crate::txlayer::client::PoolClient::new(
+                host_url,
+                bot.insecure_clone(),
+            ))
+        });
         let mut seats = Vec::new();
         for instrument in &self.instruments {
             let market = self.venue.market(instrument).await?;
-            seats.push(market.seat(bot.insecure_clone(), host_url).await?);
+            let seat = match &pool {
+                Some(pool) => market
+                    .pooled_seat(bot.insecure_clone(), pool.clone())
+                    .await?
+                    .ok_or_else(|| {
+                        Error::TxLayer(format!("{instrument} can't send through the pool"))
+                    })?,
+                None => market.seat(bot.insecure_clone(), host_url).await?,
+            };
+            seats.push(seat);
         }
         let mut venues = mtx_kit::VenueInfo::of_mandate(mandate, &self.instruments[0], |i| {
             self.instruments.contains(i)
@@ -1652,8 +1855,8 @@ impl Account for LendingAccount {
             authority: bot.pubkey().to_string(),
             reader: Reader::Lending { start },
             rfqs: None,
-            pool: None,
-            tx: None,
+            pool,
+            tx,
         })
     }
 

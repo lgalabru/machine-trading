@@ -489,12 +489,28 @@ pub async fn send(
     label: &str,
     instructions: Vec<Instruction>,
 ) -> std::result::Result<mtx_kit::Signature, String> {
+    let tx = signed(chain, books, market, signer, label, instructions, None).await?;
+    chain.send(&tx).await.map_err(|e| e.to_string())
+}
+
+/// `instructions` as one transaction `signer` signed, once a simulation
+/// says it runs, paying `cu_price` micro-lamports a compute unit if given:
+/// what [`send`] sends.
+pub async fn signed(
+    chain: &dyn ChainClient,
+    books: &Books,
+    market: &Pubkey,
+    signer: &Keypair,
+    label: &str,
+    instructions: Vec<Instruction>,
+    cu_price: Option<u64>,
+) -> std::result::Result<VersionedTransaction, String> {
     let plan = plan(books, market, label, instructions);
     let blockhash = chain
         .get_latest_blockhash()
         .await
         .map_err(|e| e.to_string())?;
-    let unsigned = plan
+    let mut unsigned = plan
         .versioned(&signer.pubkey(), blockhash)
         .map_err(|e| e.to_string())?;
     let simulation = chain
@@ -504,10 +520,14 @@ pub async fn send(
     if let Some(error) = simulation.error {
         return Err(format!("{error}: {}", tail(&simulation.logs)));
     }
-    let tx =
-        VersionedTransaction::try_new(unsigned.message, &[signer]).map_err(|e| e.to_string())?;
-    chain.send(&tx).await.map_err(|e| e.to_string())
+    if cu_price.is_some() {
+        crate::txlayer::client::set_budget(&mut unsigned.message, None, cu_price)?;
+    }
+    VersionedTransaction::try_new(unsigned.message, &[signer]).map_err(|e| e.to_string())
 }
+
+/// The compute units a lending transaction asks for.
+pub const UNITS: u32 = COMPUTE_UNIT_LIMIT;
 
 #[async_trait]
 impl Venue for Kamino {
@@ -615,7 +635,23 @@ impl Market for ReserveMarket {
             books: self.books.clone(),
             chain: Arc::new(RpcChainClient::with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT)),
             signer,
+            pooled: false,
         }))
+    }
+
+    async fn pooled_seat(
+        &self,
+        signer: Keypair,
+        chain: Arc<dyn ChainClient>,
+    ) -> Result<Option<Box<dyn Seat>>> {
+        Ok(Some(Box::new(LendingSeat {
+            market: self.book.instrument.to_string(),
+            book: self.book.clone(),
+            books: self.books.clone(),
+            chain,
+            signer,
+            pooled: true,
+        })))
     }
 }
 
@@ -631,6 +667,9 @@ pub struct LendingSeat {
     books: Arc<Books>,
     chain: Arc<dyn ChainClient>,
     signer: Keypair,
+    /// Its sends go to a transaction layer's pool, which says later what
+    /// became of them.
+    pooled: bool,
 }
 
 impl LendingSeat {
@@ -850,6 +889,10 @@ impl Seat for LendingSeat {
         )
         .await
         {
+            Ok(signature) if self.pooled => Sent {
+                state: SendState::Landed(signature.to_string()),
+                sent: true,
+            },
             Ok(signature) => Sent {
                 state: self.outcome(signature).await,
                 sent: true,

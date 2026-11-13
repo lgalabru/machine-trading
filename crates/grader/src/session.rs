@@ -566,6 +566,23 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         None => None,
     };
+    // Actors that send through the layer register with it; each one's wallet
+    // is read now, for its ledger. Searchers act inside every slot.
+    let mut actor_wallets = Vec::new();
+    let searching = match &tx {
+        Some((engine, ..)) => {
+            cast.bind_tx(engine);
+            for (sender, payer) in engine.actors() {
+                actor_wallets.push((
+                    sender,
+                    payer,
+                    crate::txlayer::fees::Wallet::read(&rpc, &payer)?,
+                ));
+            }
+            cast.wants_pool()
+        }
+        None => false,
+    };
     let hooks = cast.send_hooks();
     if !hooks.is_empty() {
         guard.set_send_hook(std::sync::Arc::new(crate::actors::Hooks(hooks)));
@@ -724,6 +741,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             // Under the transaction layer, the slot's block: what its
             // builder picks, committed in order before the slot closes.
             if let Some((engine, ..)) = &tx {
+                if searching {
+                    cast.on_pool(&engine.pool_turn(slot + 1)).await;
+                }
                 let picks = engine.plan(slot + 1);
                 for signature in engine.commit(slot + 1, picks).await {
                     guard.landed(&signature, k);
@@ -882,6 +902,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .await?;
     if let Some((engine, layer, start)) = &tx {
         let end = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+        for (sender, payer, start) in &actor_wallets {
+            let (change, closable) =
+                crate::txlayer::fees::Wallet::read(&rpc, payer)?.change_since(start);
+            engine.reconcile_actor(sender, change, closable);
+        }
         report.tx_layer = Some(engine.report(Some(end.change_since(start))));
         if let Some(sol_usd) = layer.sol_usd.filter(|_| layer.fees_in_pnl) {
             fees_in_pnl(

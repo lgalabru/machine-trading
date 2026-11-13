@@ -375,6 +375,152 @@ impl ChainClient for PoolClient {
     }
 }
 
+/// An actor's chain under the transaction layer, for its seat: reads go to
+/// the grader's endpoint, and a send goes to the pool as the actor's
+/// (`sender`), at the priority fee last set, to land in the slot being
+/// built. Before the session binds it to the layer, a send goes straight to
+/// the chain.
+pub struct ActorChain {
+    inner: RpcChainClient,
+    sender: String,
+    signer: Keypair,
+    engine: std::sync::OnceLock<std::sync::Arc<super::TxEngine>>,
+    /// Micro-lamports per compute unit its next send pays.
+    price: Mutex<u64>,
+}
+
+impl ActorChain {
+    pub fn new(rpc_url: &str, sender: String, signer: Keypair) -> Self {
+        Self {
+            inner: RpcChainClient::with_timeout(rpc_url, crate::session::INTERNAL_RPC_TIMEOUT),
+            sender,
+            signer,
+            engine: std::sync::OnceLock::new(),
+            price: Mutex::new(0),
+        }
+    }
+
+    /// Send through `engine`'s pool from now on, registered as the actor.
+    pub fn bind(&self, engine: &std::sync::Arc<super::TxEngine>) {
+        engine.register_actor(&self.sender, self.signer.pubkey());
+        let _ = self.engine.set(engine.clone());
+    }
+
+    /// The priority fee its next sends pay.
+    pub fn set_price(&self, micro_lamports: u64) {
+        *self.price.lock().expect("actor chain lock") = micro_lamports;
+    }
+
+    async fn pooled(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
+        let Some(engine) = self.engine.get() else {
+            return self.inner.send(transaction).await;
+        };
+        let fail = |e: String| ChainError::Rpc(e);
+        let price = *self.price.lock().expect("actor chain lock");
+        let mut message = transaction.message.clone();
+        set_budget(&mut message, None, Some(price)).map_err(fail)?;
+        let signed = VersionedTransaction::try_new(message, &[&self.signer])
+            .map_err(|e| fail(e.to_string()))?;
+        let wire = wincode::serialize(&signed).map_err(|e| fail(e.to_string()))?;
+        engine
+            .submit_actor(
+                &self.sender,
+                true,
+                super::engine::Submission {
+                    wires: vec![wire],
+                    route: super::RouteKind::Rpc,
+                    bundle: false,
+                    retry_until_slot: None,
+                    resign: false,
+                    delay_slots: 0,
+                    dropped: false,
+                },
+            )
+            .await
+            .map_err(|refusal| fail(refusal.message))?;
+        Ok(signed.signatures[0])
+    }
+}
+
+#[async_trait]
+impl ChainClient for ActorChain {
+    async fn get_account(&self, pubkey: &Pubkey) -> Result<Option<Account>, ChainError> {
+        self.inner.get_account(pubkey).await
+    }
+
+    async fn get_multiple_accounts(
+        &self,
+        pubkeys: &[Pubkey],
+    ) -> Result<Vec<Option<Account>>, ChainError> {
+        self.inner.get_multiple_accounts(pubkeys).await
+    }
+
+    async fn get_program_accounts(
+        &self,
+        program: &Pubkey,
+        filters: Vec<RpcFilterType>,
+    ) -> Result<Vec<(Pubkey, Account)>, ChainError> {
+        self.inner.get_program_accounts(program, filters).await
+    }
+
+    async fn get_token_accounts_by_owner(
+        &self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+    ) -> Result<Vec<(Pubkey, Account)>, ChainError> {
+        self.inner.get_token_accounts_by_owner(owner, mint).await
+    }
+
+    async fn get_balance(&self, pubkey: &Pubkey) -> Result<u64, ChainError> {
+        self.inner.get_balance(pubkey).await
+    }
+
+    async fn get_slot(&self) -> Result<u64, ChainError> {
+        self.inner.get_slot().await
+    }
+
+    async fn get_latest_blockhash(&self) -> Result<Hash, ChainError> {
+        self.inner.get_latest_blockhash().await
+    }
+
+    async fn simulate(
+        &self,
+        transaction: &VersionedTransaction,
+        watch: &[Pubkey],
+    ) -> Result<SimulationOutcome, ChainError> {
+        self.inner.simulate(transaction, watch).await
+    }
+
+    async fn send_and_confirm(
+        &self,
+        transaction: &VersionedTransaction,
+    ) -> Result<Signature, ChainError> {
+        if self.engine.get().is_none() {
+            return self.inner.send_and_confirm(transaction).await;
+        }
+        self.pooled(transaction).await
+    }
+
+    async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
+        self.pooled(transaction).await
+    }
+
+    async fn get_transaction(
+        &self,
+        signature: &Signature,
+    ) -> Result<Option<TransactionSummary>, ChainError> {
+        self.inner.get_transaction(signature).await
+    }
+
+    async fn signatures_for_address(
+        &self,
+        address: &Pubkey,
+        after_slot: u64,
+    ) -> Result<Vec<(Signature, u64)>, ChainError> {
+        self.inner.signatures_for_address(address, after_slot).await
+    }
+}
+
 fn encode(wire: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(wire)
 }

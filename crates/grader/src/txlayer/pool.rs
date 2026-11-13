@@ -34,6 +34,8 @@ pub struct PooledTx {
     pub signature: String,
     /// Its wire bytes, as sent.
     pub wire: Vec<u8>,
+    /// Who pays its fee: its first account.
+    pub payer: Pubkey,
     pub signatures: u64,
     /// Requested compute units, and the price per unit in micro-lamports.
     pub cu_limit: u64,
@@ -144,6 +146,7 @@ impl PooledTx {
         let dont_front = keys.iter().any(jito::is_dont_front);
         Ok(Self {
             signature,
+            payer: statics.first().copied().unwrap_or_default(),
             signatures: header.num_required_signatures as u64,
             cu_limit,
             cu_price,
@@ -188,6 +191,9 @@ pub enum EntryState {
     /// Signed again, it became the same transactions as entry `into`, which
     /// stands for it from then on: the same signature runs once.
     Merged { into: u64 },
+    /// Its transactions landed at `slot` inside entry `into`, another
+    /// sender's bundle (a searcher's around it), not as this send.
+    Carried { into: u64, slot: u64 },
 }
 
 /// When it was sent: the bot's turn and its sequence in it.

@@ -1051,6 +1051,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         spot.quote,
         scenario.order.is_some(),
     )?;
+    if let Some(layer) = &scenario.tx_layer {
+        crate::txlayer::setup(&surfnet, layer, &bot.pubkey())?;
+    }
     let venues = Venues::connect(
         chain.clone(),
         internal.url(),
@@ -1103,6 +1106,17 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             seats.push(venues.market(venue).seat(keypair, internal.url()).await?);
         }
         cast.add(Box::new(Arbitrageur::new(seats, *spec)));
+    }
+    // The transaction layer's searchers, each a funded wallet of its own.
+    if let Some(layer) = scenario
+        .tx_layer
+        .as_ref()
+        .filter(|l| l.searchers.on_pools())
+    {
+        add_searchers(
+            &mut cast, layer, &venues, &surfnet, &rpc, &chain, &base_mint, opts,
+        )
+        .await?;
     }
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
@@ -1230,6 +1244,125 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         cranks: Vec::new(),
         account: Box::new(account),
     })
+}
+
+/// The transaction layer's searchers on the session's pools, each trading
+/// from a wallet funded here (see [`crate::actors::searchers`]). A JIT
+/// provider's position is opened here, nearly empty, around the price.
+#[allow(clippy::too_many_arguments)]
+async fn add_searchers(
+    cast: &mut Cast,
+    layer: &crate::txlayer::TxLayer,
+    venues: &Venues,
+    surfnet: &Surfnet,
+    rpc: &RpcClient,
+    chain: &Arc<dyn ChainClient>,
+    base_mint: &Pubkey,
+    opts: &SessionOptions<'_>,
+) -> Result<()> {
+    use crate::actors::searchers::{Account, Backrun, FeeBid, Jit, PoolSide, Sandwich};
+    let pool = |venue: &str| -> Result<PoolSide> {
+        let pool = venues
+            .markets
+            .iter()
+            .find(|m| m.instrument().venue == venue && m.kind() == Kind::Spot)
+            .and_then(|m| m.pool())
+            .ok_or_else(|| Error::UnknownMarket(format!("no {venue} pool in this session")))?;
+        Ok(PoolSide {
+            pool,
+            chain: chain.clone(),
+        })
+    };
+    let wallet = |role: &str, i: usize, base: f64, quote: f64| -> Result<Keypair> {
+        let keypair = opts.keys.keypair(role, i as u32);
+        fund_pair(surfnet, rpc, &keypair, base_mint, base, quote, true)?;
+        Ok(keypair)
+    };
+    let searchers = &layer.searchers;
+    for (i, spec) in searchers.fee_bidders.iter().enumerate() {
+        let keypair = wallet("fee-bidder", i, spec.base, spec.quote)?;
+        cast.add(Box::new(FeeBid::new(
+            spec.clone(),
+            Account::new("fee-bidder", i as u32, keypair),
+            pool(&spec.venue)?,
+            layer.seed,
+            i as u32,
+        )));
+    }
+    for (i, spec) in searchers.sandwichers.iter().enumerate() {
+        let keypair = wallet("sandwicher", i, spec.base, spec.quote)?;
+        cast.add(Box::new(Sandwich::new(
+            spec.clone(),
+            Account::new("sandwicher", i as u32, keypair),
+            pool(&spec.venue)?,
+        )));
+    }
+    for (i, spec) in searchers.jit.iter().enumerate() {
+        let keypair = wallet("jit", i, spec.base, spec.quote)?;
+        let side = pool(&spec.venue)?;
+        let position = open_jit_position(&side, &keypair, spec, rpc).await?;
+        cast.add(Box::new(Jit::new(
+            spec.clone(),
+            Account::new("jit", i as u32, keypair),
+            side,
+            position,
+        )));
+    }
+    for (i, spec) in searchers.backrunners.iter().enumerate() {
+        let keypair = wallet("backrunner", i, spec.base, spec.quote)?;
+        cast.add(Box::new(Backrun::new(
+            spec.clone(),
+            Account::new("backrunner", i as u32, keypair),
+            [pool(&spec.venue)?, pool(&spec.other)?],
+        )));
+    }
+    Ok(())
+}
+
+/// A JIT provider's position on its pool: `range_bps` either side of the
+/// price, holding a hundredth of a deposit until it fills it. Its key is
+/// derived from the provider's, so a session replays it.
+async fn open_jit_position(
+    side: &crate::actors::searchers::PoolSide,
+    owner: &Keypair,
+    spec: &crate::actors::searchers::JitLp,
+    rpc: &RpcClient,
+) -> Result<Pubkey> {
+    use sha2::{Digest, Sha256};
+
+    let price = side
+        .price()
+        .await
+        .ok_or_else(|| Error::UnknownMarket("a JIT pool without a price".into()))?;
+    let mut hash = Sha256::new();
+    hash.update(b"mtx jit position");
+    hash.update(owner.secret_bytes());
+    let position = Keypair::new_from_array(hash.finalize().into());
+    let reach = spec.range_bps / 10_000.0;
+    let (instructions, _) = side
+        .pool
+        .deposit(
+            side.chain.as_ref(),
+            &owner.pubkey(),
+            None,
+            &position.pubkey(),
+            &crate::venue::pools::Deposit {
+                base: spec.deposit_base / 100.0,
+                quote: spec.deposit_quote / 100.0,
+                range: Some(mtx_kit::PriceRange {
+                    lower: price * (1.0 - reach),
+                    upper: price * (1.0 + reach),
+                }),
+                shape: None,
+            },
+        )
+        .await
+        .map_err(|reason| Error::Transaction {
+            label: "a JIT position".into(),
+            reason,
+        })?;
+    send_signed(rpc, owner, Some(&position), instructions, "a JIT position")?;
+    Ok(position.pubkey())
 }
 
 /// A spot session's account: the bot's wallet, and what each venue holds
@@ -1407,16 +1540,32 @@ impl Account for SpotAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
-        _tx: Option<Arc<crate::txlayer::TxEngine>>,
+        tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's seats, the scenario's first venue's first, trading
         // through the guard's host side: their sends are the bot's, their
-        // reads aren't.
+        // reads aren't. Under the transaction layer they go to its pool,
+        // with each line's options.
+        let pool = tx.is_some().then(|| {
+            Arc::new(crate::txlayer::client::PoolClient::new(
+                host_url,
+                bot.insecure_clone(),
+            ))
+        });
         let mut seats = Vec::new();
         let mut infos = Vec::new();
         for instrument in &self.instruments {
             let market = self.venues.of(instrument);
-            seats.push(market.seat(bot.insecure_clone(), host_url).await?);
+            let seat = match &pool {
+                Some(pool) => market
+                    .pooled_seat(bot.insecure_clone(), pool.clone())
+                    .await?
+                    .ok_or_else(|| {
+                        Error::TxLayer(format!("{instrument} can't send through the pool"))
+                    })?,
+                None => market.seat(bot.insecure_clone(), host_url).await?,
+            };
+            seats.push(seat);
             infos.push(market.info(true));
         }
         let mut venues = mtx_kit::VenueInfo::of_mandate(mandate, &self.instruments[0], |i| {
@@ -1441,8 +1590,8 @@ impl Account for SpotAccount {
             reader: Reader::Wallet {
                 start: self.start.wallet.clone(),
             },
-            pool: None,
-            tx: None,
+            pool,
+            tx,
         })
     }
 

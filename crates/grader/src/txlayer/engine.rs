@@ -24,11 +24,14 @@ use super::{
     leader::Leaders,
     normal,
     pool::{Arrival, BASE_FEE, Entry, EntryState, Pool, PooledTx},
-    report::{BlockRecord, Landed, Refused, SendRecord, TxLayerReport},
+    report::{ActorFees, BlockRecord, Landed, Refused, SendRecord, TxLayerReport},
 };
 
 /// The sender the bot's entries carry.
 pub const BOT: &str = "bot";
+/// Where an actor's sends count in a step's arrivals: after any the bot
+/// can make.
+const ACTOR_ARRIVALS: u64 = 1 << 32;
 /// How many blocks a blockhash stays valid for.
 pub const BLOCKHASH_BLOCKS: u64 = 150;
 
@@ -86,6 +89,63 @@ pub enum Fate {
     Expired,
 }
 
+/// An actor's account with the layer: the wallet it pays from, its ledger,
+/// and what it counts of its own doing.
+#[derive(Debug, Clone)]
+struct ActorBook {
+    payer: Pubkey,
+    ledger: FeeLedger,
+    counts: BTreeMap<String, u64>,
+    values: BTreeMap<String, f64>,
+}
+
+/// A send of the bot's a searcher sees, pending, while a slot is built.
+#[derive(Debug, Clone)]
+pub struct Pending {
+    pub id: u64,
+    pub tx: PooledTx,
+    pub route: RouteKind,
+}
+
+/// A transaction that landed in the last block.
+#[derive(Debug, Clone)]
+pub struct Recent {
+    pub tx: PooledTx,
+    pub by_bot: bool,
+    pub ok: bool,
+}
+
+/// What the searchers see of a slot before its block is built
+/// ([`TxEngine::pool_turn`]).
+#[derive(Debug, Clone)]
+pub struct PoolTurn {
+    pub slot: u64,
+    /// Slots into the session.
+    pub at: u64,
+    pub skipped: bool,
+    /// The leader runs Jito (it lands bundles), and sandwiches.
+    pub jito: bool,
+    pub sandwicher: bool,
+    /// What landing in the block costs per compute unit, in micro-lamports.
+    pub price_floor: u64,
+    /// The bot's pending sends a searcher can see: through a leaky route,
+    /// or all of them in a sandwicher's slot. Never a bundle.
+    pub visible: Vec<Pending>,
+    /// What landed in the slot before.
+    pub recent: Vec<Recent>,
+    pub sol_usd: Option<f64>,
+    /// The chain's latest blockhash.
+    pub latest: Hash,
+}
+
+/// One transaction of a simulated bundle: whether it ran without error,
+/// and the accounts asked for after it, as their data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Simulated {
+    pub ok: bool,
+    pub accounts: Vec<Option<Vec<u8>>>,
+}
+
 pub struct TxEngine {
     rpc_url: String,
     http: reqwest::Client,
@@ -115,6 +175,17 @@ struct State {
     /// The bot's key, for sends the grader made and may sign again.
     signer: Keypair,
     ledger: FeeLedger,
+    /// The actors that send through the pool: each fee payer's sender, and
+    /// each sender's ledger and what it counts of its own doing.
+    payers: BTreeMap<Pubkey, String>,
+    actors: BTreeMap<String, ActorBook>,
+    /// Actor sends so far, for their arrivals.
+    actor_sends: u64,
+    /// The slot whose entries [`TxEngine::pool_turn`] brought up to date,
+    /// and which an actor's send made then may land in.
+    prepared: Option<u64>,
+    /// What preparing that slot let go, for its block's record.
+    let_go: Vec<Refused>,
     blocks: Vec<BlockRecord>,
     /// Errors of landed transactions, by signature.
     errors: BTreeMap<String, String>,
@@ -143,7 +214,12 @@ impl TxEngine {
             slots_per_step,
             congestion,
         );
-        let leaders = Leaders::new(layer.seed, layer.validators, &calibration);
+        let leaders = Leaders::new(
+            layer.seed,
+            layer.validators,
+            &calibration,
+            layer.sandwichers,
+        );
         let engine = Arc::new(Self {
             rpc_url: rpc_url.to_string(),
             http: reqwest::Client::new(),
@@ -164,6 +240,11 @@ impl TxEngine {
                 tables: BTreeMap::new(),
                 signer,
                 ledger: FeeLedger::default(),
+                payers: BTreeMap::new(),
+                actors: BTreeMap::new(),
+                actor_sends: 0,
+                prepared: None,
+                let_go: Vec::new(),
                 blocks: Vec::new(),
                 errors: BTreeMap::new(),
             }),
@@ -236,6 +317,34 @@ impl TxEngine {
     /// same signature is a rebroadcast: a lost delivery tries again, and it
     /// never runs twice.
     pub async fn submit(&self, submission: Submission) -> Result<Accepted, Refusal> {
+        self.submit_from(BOT, false, submission).await
+    }
+
+    /// Put an actor's send in the pool, as `sender` (one it registered).
+    /// `now`: a searcher's, made while [`TxEngine::pool_turn`]'s slot is
+    /// being built, which reaches its leader in that slot; otherwise it
+    /// takes its route's latency and loss, as the bot's sends do.
+    pub async fn submit_actor(
+        &self,
+        sender: &str,
+        now: bool,
+        submission: Submission,
+    ) -> Result<Accepted, Refusal> {
+        if !self.state().actors.contains_key(sender) {
+            return Err(Refusal {
+                code: INVALID_PARAMS,
+                message: format!("{sender} isn't an actor of this session"),
+            });
+        }
+        self.submit_from(sender, now, submission).await
+    }
+
+    async fn submit_from(
+        &self,
+        sender: &str,
+        now: bool,
+        submission: Submission,
+    ) -> Result<Accepted, Refusal> {
         let refuse = |code, message: String| Refusal { code, message };
         if submission.wires.is_empty() || submission.wires.len() > jito::MAX_BUNDLE {
             return Err(refuse(
@@ -326,28 +435,168 @@ impl TxEngine {
             state.blockhashes.insert(hash, height + BLOCKHASH_BLOCKS);
         }
         let mut state = self.state();
-        state.submit(submission, txs)
+        state.submit(sender, now, submission, txs)
+    }
+
+    /// An actor that sends through the pool: `sender` names it in blocks
+    /// and the report, and its transactions are those `payer` pays for.
+    pub fn register_actor(&self, sender: &str, payer: Pubkey) {
+        let mut state = self.state();
+        state.payers.insert(payer, sender.to_string());
+        state.actors.entry(sender.to_string()).or_insert(ActorBook {
+            payer,
+            ledger: FeeLedger::default(),
+            counts: BTreeMap::new(),
+            values: BTreeMap::new(),
+        });
+    }
+
+    /// The actors registered, and the wallet each pays from.
+    pub fn actors(&self) -> Vec<(String, Pubkey)> {
+        self.state()
+            .actors
+            .iter()
+            .map(|(sender, book)| (sender.clone(), book.payer))
+            .collect()
+    }
+
+    /// Note `value` as `sender`'s `what`, into the report.
+    pub fn note(&self, sender: &str, what: &str, value: f64) {
+        if let Some(book) = self.state().actors.get_mut(sender) {
+            book.values.insert(what.to_string(), value);
+        }
+    }
+
+    /// Count `n` of `what` for `sender`, into the report.
+    pub fn count(&self, sender: &str, what: &str, n: u64) {
+        if let Some(book) = self.state().actors.get_mut(sender) {
+            *book.counts.entry(what.to_string()).or_default() += n;
+        }
+    }
+
+    /// The searchers' view of slot `slot`, before its block is built: every
+    /// pending send brought up to `slot` (deliveries drawn, expiries and
+    /// retries done, what already landed let go), what of the bot's they
+    /// can see, and what landed in the last block. A searcher's send made
+    /// now ([`TxEngine::submit_actor`]) may land in `slot`.
+    pub fn pool_turn(&self, slot: u64) -> PoolTurn {
+        let mut state = self.state();
+        state.prepare(slot);
+        let leader = state.leaders.leader(slot).clone();
+        let s = &*state;
+        let leaky = |route: RouteKind| s.route(route).leaky;
+        let visible = s
+            .pool
+            .entries
+            .iter()
+            .filter(|e| {
+                e.sender == BOT
+                    && !e.is_bundle()
+                    && e.state == EntryState::Pending
+                    && e.delivered
+                    && !e.dropped
+                    && e.ready_slot <= slot
+                    && (leader.sandwicher || leaky(e.route))
+            })
+            .map(|e| Pending {
+                id: e.id,
+                tx: e.txs[0].clone(),
+                route: e.route,
+            })
+            .collect();
+        let recent = s
+            .pool
+            .entries
+            .iter()
+            .filter(|e| matches!(e.state, EntryState::Landed { slot: at, .. } if at + 1 == slot))
+            .flat_map(|e| {
+                let bot = s.signer.pubkey();
+                e.txs.iter().map(move |t| Recent {
+                    by_bot: t.payer == bot,
+                    tx: t.clone(),
+                    ok: !s.errors.contains_key(&t.signature),
+                })
+            })
+            .collect();
+        PoolTurn {
+            slot,
+            at: slot.saturating_sub(s.base_slot),
+            skipped: s.leaders.skipped(slot),
+            jito: leader.jito,
+            sandwicher: leader.sandwicher,
+            price_floor: s.ghost.block(slot).price,
+            visible,
+            recent,
+            sol_usd: s.layer.sol_usd,
+            latest: s.latest,
+        }
+    }
+
+    /// What landing in `slot` costs per compute unit for a transaction
+    /// that writes `writes`, in micro-lamports.
+    pub fn price_to_land(&self, slot: u64, writes: &[Pubkey]) -> u64 {
+        self.state().ghost.price_to_land(slot, writes)
+    }
+
+    /// `simulateBundle` at the chain's state now: each transaction's error,
+    /// if it failed, and each listed account's data after it ran.
+    pub async fn simulate_bundle(
+        &self,
+        wires: &[Vec<u8>],
+        after: &[Vec<Pubkey>],
+    ) -> Result<Vec<Simulated>, String> {
+        let encoded: Vec<String> = wires
+            .iter()
+            .map(|w| base64::engine::general_purpose::STANDARD.encode(w))
+            .collect();
+        let configs: Vec<Value> = after
+            .iter()
+            .map(|keys| {
+                if keys.is_empty() {
+                    Value::Null
+                } else {
+                    json!({ "addresses": keys.iter().map(ToString::to_string).collect::<Vec<_>>(), "encoding": "base64" })
+                }
+            })
+            .collect();
+        let value = self
+            .rpc(
+                "simulateBundle",
+                json!([{ "encodedTransactions": encoded }, {
+                    "preExecutionAccountsConfigs": vec![Value::Null; wires.len()],
+                    "postExecutionAccountsConfigs": configs,
+                    "skipSigVerify": true,
+                }]),
+            )
+            .await?;
+        let results = value["value"]["transactionResults"]
+            .as_array()
+            .ok_or("simulateBundle gave no results")?;
+        // A transaction after the one that failed didn't run: no logs.
+        Ok(results
+            .iter()
+            .map(|r| Simulated {
+                ok: r["err"].is_null() && r["logs"].is_array(),
+                accounts: r["postExecutionAccounts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|a| {
+                        a["data"][0]
+                            .as_str()
+                            .and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok())
+                    })
+                    .collect(),
+            })
+            .collect())
     }
 
     /// Decide slot `slot`'s block, update every entry's fate up to it, and
     /// return what to commit, in order.
     pub fn plan(&self, slot: u64) -> Vec<(u64, bool, Vec<Vec<u8>>)> {
         let mut state = self.state();
-        state.advance(slot);
-        // A send holding a transaction that landed in another lets it go: a
-        // signature runs, and is charged, once.
-        let landed = state.pool.landed();
-        let mut superseded = Vec::new();
-        for entry in &mut state.pool.entries {
-            if entry.is_pending() && entry.holds_any(&landed) {
-                let reason = "a transaction in it already landed".to_string();
-                superseded.push(Refused {
-                    sender: entry.sender.clone(),
-                    reason: reason.clone(),
-                });
-                entry.state = EntryState::Failed { slot, reason };
-            }
-        }
+        let superseded = state.prepare(slot);
+        state.let_go.clear();
         let tips = state.ghost_tips(slot);
         let tip_of = |account: &Pubkey| tips.get(account).copied().unwrap_or(jito::MIN_TIP);
         let block = {
@@ -528,9 +777,10 @@ impl TxEngine {
             let entry = state
                 .pool
                 .entries
-                .iter_mut()
+                .iter()
                 .find(|e| e.id == id)
                 .expect("picked");
+            let entry = entry.clone();
             let mut all_ok = true;
             for (tx, meta) in entry.txs.iter().zip(&metas) {
                 let ok = meta["meta"]["err"].is_null() && meta.is_object();
@@ -542,13 +792,16 @@ impl TxEngine {
                         .errors
                         .insert(tx.signature.clone(), meta["meta"]["err"].to_string());
                 }
-                if entry.sender == BOT {
-                    state.ledger.landed(ok, fee, BASE_FEE * tx.signatures, tip);
+                let owner = state.owner(&entry, tx);
+                state
+                    .ledger_of(&owner)
+                    .landed(ok, fee, BASE_FEE * tx.signatures, tip);
+                if owner == BOT {
                     landed_bot.push(tx.signature.clone());
                 }
                 if let Some(record) = state.blocks.last_mut() {
                     record.landed.push(Landed {
-                        sender: entry.sender.clone(),
+                        sender: owner,
                         fee,
                         tip,
                         cu: tx.cu_limit,
@@ -557,17 +810,33 @@ impl TxEngine {
                     });
                 }
             }
-            entry.state = EntryState::Landed {
-                slot,
-                index,
-                ok: all_ok,
-            };
+            if let Some(landed) = state.pool.entries.iter_mut().find(|e| e.id == id) {
+                landed.state = EntryState::Landed {
+                    slot,
+                    index,
+                    ok: all_ok,
+                };
+            }
+            // A send of the bot's whose transactions all landed inside this
+            // one (a searcher's bundle around it) landed: as part of it.
+            let signatures: std::collections::BTreeSet<String> =
+                entry.txs.iter().map(|t| t.signature.clone()).collect();
+            for other in &mut state.pool.entries {
+                if other.id != id
+                    && other.sender != entry.sender
+                    && other.is_pending()
+                    && other.txs.iter().all(|t| signatures.contains(&t.signature))
+                {
+                    other.state = EntryState::Carried { into: id, slot };
+                }
+            }
         }
         landed_bot
     }
 
     /// The slot was produced: read the chain's height and blockhash there.
     pub async fn produced(&self, slot: u64) -> crate::Result<()> {
+        self.state().prepared = None;
         self.observe(slot).await
     }
 
@@ -579,7 +848,10 @@ impl TxEngine {
             .find(signature)
             .or_else(|| state.pool.bundle(signature).map(|e| state.pool.resolve(e)))?;
         Some(match &entry.state {
-            EntryState::Pending | EntryState::Lost | EntryState::Merged { .. } => Fate::Pending,
+            EntryState::Pending
+            | EntryState::Lost
+            | EntryState::Merged { .. }
+            | EntryState::Carried { .. } => Fate::Pending,
             EntryState::Landed { slot, .. } => {
                 let tx = entry
                     .txs
@@ -723,9 +995,10 @@ impl TxEngine {
                     Some(entry) => {
                         let (status, slot) = match &entry.state {
                             EntryState::Landed { slot, .. } => ("Landed", Some(*slot)),
-                            EntryState::Pending | EntryState::Lost | EntryState::Merged { .. } => {
-                                ("Pending", None)
-                            }
+                            EntryState::Pending
+                            | EntryState::Lost
+                            | EntryState::Merged { .. }
+                            | EntryState::Carried { .. } => ("Pending", None),
                             EntryState::Failed { .. } | EntryState::Expired { .. } => {
                                 ("Failed", None)
                             }
@@ -785,8 +1058,24 @@ impl TxEngine {
                             "signed again, it became the transactions of pool entry {into}"
                         )),
                     ),
+                    EntryState::Carried { into, slot } => (
+                        "landed",
+                        Some(slot - base),
+                        Some(format!(
+                            "inside {}'s bundle",
+                            state
+                                .pool
+                                .entries
+                                .iter()
+                                .find(|c| c.id == *into)
+                                .map_or("another sender", |c| c.sender.as_str())
+                        )),
+                    ),
                 };
-                let landed = matches!(e.state, EntryState::Landed { .. });
+                let landed = matches!(
+                    e.state,
+                    EntryState::Landed { .. } | EntryState::Carried { .. }
+                );
                 SendRecord {
                     step: e.arrival.step,
                     seq: e.arrival.seq,
@@ -817,7 +1106,31 @@ impl TxEngine {
                 .collect(),
             sends,
             fees,
-            pending_at_end: state.pool.entries.iter().filter(|e| e.is_pending()).count(),
+            pending_at_end: state
+                .pool
+                .entries
+                .iter()
+                .filter(|e| e.sender == BOT && e.is_pending())
+                .count(),
+            actors: state
+                .actors
+                .iter()
+                .map(|(sender, book)| ActorFees {
+                    sender: sender.clone(),
+                    wallet: book.payer.to_string(),
+                    fees: book.ledger.clone(),
+                    counts: book.counts.clone(),
+                    values: book.values.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Check `sender`'s ledger against its wallet's SOL `change` and the
+    /// lamports it moved into accounts it can close, for the report.
+    pub fn reconcile_actor(&self, sender: &str, change: i64, closable: i64) {
+        if let Some(book) = self.state().actors.get_mut(sender) {
+            book.ledger.reconcile(change, closable);
         }
     }
 
@@ -850,7 +1163,13 @@ impl State {
         }
     }
 
-    fn submit(&mut self, submission: Submission, txs: Vec<PooledTx>) -> Result<Accepted, Refusal> {
+    fn submit(
+        &mut self,
+        sender: &str,
+        immediate: bool,
+        submission: Submission,
+        txs: Vec<PooledTx>,
+    ) -> Result<Accepted, Refusal> {
         let signatures: Vec<String> = txs.iter().map(|t| t.signature.clone()).collect();
         let key = if submission.bundle {
             jito::bundle_id(&signatures)
@@ -901,7 +1220,7 @@ impl State {
                         .into(),
             });
         }
-        if self.pool.pending(BOT) >= self.layer.max_pending {
+        if self.pool.pending(sender) >= self.layer.max_pending {
             return Err(Refusal {
                 code: TOO_MANY_REQUESTS,
                 message: format!(
@@ -915,21 +1234,35 @@ impl State {
             .map(|t| self.blockhashes.get(&t.blockhash).copied().unwrap_or(0))
             .min()
             .unwrap_or(0);
-        let sender = BOT.to_string();
+        let sender = sender.to_string();
         let sender_seq = {
             let seq = self.sender_seqs.entry(sender.clone()).or_default();
             *seq += 1;
             *seq - 1
         };
-        let arrival = Arrival {
-            step: self.step,
-            seq: self.step_seq,
+        let arrival = if sender == BOT {
+            self.step_seq += 1;
+            Arrival {
+                step: self.step,
+                seq: self.step_seq - 1,
+            }
+        } else {
+            self.actor_sends += 1;
+            Arrival {
+                step: self.step,
+                seq: ACTOR_ARRIVALS + self.actor_sends - 1,
+            }
         };
-        self.step_seq += 1;
         let latency = latency(seed, &route, &sender, sender_seq, 1);
         if route.fee_lamports > 0 {
-            self.ledger.route_fees += route.fee_lamports;
+            self.ledger_of(&sender).route_fees += route.fee_lamports;
         }
+        // A searcher's send made while its slot is built reaches the leader
+        // in that slot.
+        let ready_slot = match self.prepared.filter(|_| immediate) {
+            Some(slot) => slot,
+            None => now + 1 + latency + submission.delay_slots,
+        };
         let id = self.pool.entries.len() as u64;
         self.pool.entries.push(Entry {
             id,
@@ -939,17 +1272,65 @@ impl State {
             route: submission.route,
             bundle: submission.bundle.then(|| key.clone()),
             txs,
-            ready_slot: now + 1 + latency + submission.delay_slots,
+            ready_slot,
             expiry_height,
             retry_until_slot: submission.retry_until_slot,
             resign: submission.resign,
             attempts: 1,
-            delivered: false,
+            delivered: self.prepared.is_some() && immediate,
             dropped: submission.dropped,
             state: EntryState::Pending,
             resigned_from: Vec::new(),
         });
         Ok(answer(&key))
+    }
+
+    /// The ledger of `sender`: the bot's, or an actor's.
+    fn ledger_of(&mut self, sender: &str) -> &mut FeeLedger {
+        match self.actors.get_mut(sender) {
+            Some(book) => &mut book.ledger,
+            None => &mut self.ledger,
+        }
+    }
+
+    /// Who a landed transaction of `entry`'s is charged to: whoever pays
+    /// its fee, the bot's own sends aside, which are the bot's whoever
+    /// signed first. A bot's transaction a searcher carried in its bundle
+    /// is still the bot's.
+    fn owner(&self, entry: &Entry, tx: &PooledTx) -> String {
+        if entry.sender == BOT || tx.payer == self.signer.pubkey() {
+            return BOT.to_string();
+        }
+        self.payers
+            .get(&tx.payer)
+            .cloned()
+            .unwrap_or_else(|| entry.sender.clone())
+    }
+
+    /// Bring every entry up to slot `slot`, once ([`State::advance`]), and
+    /// let go of the sends holding a transaction that landed in another: a
+    /// signature runs, and is charged, once. Returns what was let go, for
+    /// the block's record.
+    fn prepare(&mut self, slot: u64) -> Vec<Refused> {
+        if self.prepared == Some(slot) {
+            return std::mem::take(&mut self.let_go);
+        }
+        self.advance(slot);
+        let landed = self.pool.landed();
+        let mut superseded = Vec::new();
+        for entry in &mut self.pool.entries {
+            if entry.is_pending() && entry.holds_any(&landed) {
+                let reason = "a transaction in it already landed".to_string();
+                superseded.push(Refused {
+                    sender: entry.sender.clone(),
+                    reason: reason.clone(),
+                });
+                entry.state = EntryState::Failed { slot, reason };
+            }
+        }
+        self.prepared = Some(slot);
+        self.let_go = superseded.clone();
+        superseded
     }
 
     /// Bring every entry's fate up to slot `slot`: deliveries drawn, lost

@@ -5,7 +5,8 @@
 //! consecutive slots, picked by stake. The identities are synthetic, drawn
 //! from the seed: no real validator is named. A leader that skips its slot
 //! produces an empty block; a Jito leader is the only one that lands
-//! bundles.
+//! bundles. A share of the Jito validators sandwich: in their slots the
+//! grader's searchers see every transaction sent to them.
 
 use serde::Serialize;
 use solana_pubkey::Pubkey;
@@ -18,6 +19,9 @@ pub struct Validator {
     pub stake: u64,
     pub jito: bool,
     pub skip_rate: f64,
+    /// It runs Jito and shows the searchers what it is sent.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub sandwicher: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +33,8 @@ pub struct Leaders {
 }
 
 impl Leaders {
-    pub fn new(seed: u64, count: u32, calibration: &Calibration) -> Self {
+    /// `sandwichers`: the share of the Jito validators that sandwich.
+    pub fn new(seed: u64, count: u32, calibration: &Calibration, sandwichers: f64) -> Self {
         let block = &calibration.block;
         let validators: Vec<Validator> = (0..count as u64)
             .map(|i| {
@@ -46,11 +51,13 @@ impl Leaders {
                 let skip_rate = (block.skip_rate
                     * (0.5 * super::normal(seed, "skip-rate", &[i])).exp())
                 .min(0.5);
+                let jito = draw(seed, "jito", &[i]) < block.jito_stake_share;
                 Validator {
                     identity: Pubkey::new_from_array(bytes),
                     stake,
-                    jito: draw(seed, "jito", &[i]) < block.jito_stake_share,
+                    jito,
                     skip_rate,
+                    sandwicher: jito && draw(seed, "sandwicher", &[i]) < sandwichers,
                 }
             })
             .collect();
@@ -109,7 +116,7 @@ mod tests {
 
     fn leaders(seed: u64) -> Leaders {
         let calibration = Calibration::builtin("fixture-fees.20261113.00000000").unwrap();
-        Leaders::new(seed, 24, &calibration)
+        Leaders::new(seed, 24, &calibration, 0.0)
     }
 
     #[test]
@@ -127,6 +134,20 @@ mod tests {
         assert!(jito > 12, "{jito} of 24 run Jito");
         let skips = (0..20_000).filter(|s| a.skipped(*s)).count();
         assert!((50..=1_500).contains(&skips), "{skips} skips in 20k slots");
+    }
+
+    #[test]
+    fn sandwichers_are_jito_validators_and_change_nothing_else() {
+        let calibration = Calibration::builtin("fixture-fees.20261113.00000000").unwrap();
+        let plain = Leaders::new(5, 24, &calibration, 0.0);
+        let some = Leaders::new(5, 24, &calibration, 0.5);
+        assert!(plain.validators().iter().all(|v| !v.sandwicher));
+        let sandwiching: Vec<_> = some.validators().iter().filter(|v| v.sandwicher).collect();
+        assert!(!sandwiching.is_empty() && sandwiching.iter().all(|v| v.jito));
+        for (a, b) in plain.validators().iter().zip(some.validators()) {
+            assert_eq!((a.identity, a.stake, a.jito), (b.identity, b.stake, b.jito));
+        }
+        assert!((0..400).all(|s| plain.leader(s).identity == some.leader(s).identity));
     }
 
     #[test]

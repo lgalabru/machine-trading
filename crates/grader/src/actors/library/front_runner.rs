@@ -12,6 +12,11 @@
 //! once, or a limit through the touch) that the chain would run, takes
 //! `share` of that order just before it lands.
 //!
+//! With `on_pool`, under a transaction layer, it reads the bot's sends in
+//! the layer's pool as a searcher would, where it can see them (a leaky
+//! route, a sandwiching leader), and sends its own take to the same pool
+//! paying more per compute unit than the bot's, so the block runs it first.
+//!
 //! Either way it front-runs at most once a turn, and never holds more than
 //! `max_inventory_mult` market trade sizes: what it does follows the bot,
 //! so how often and how much is bounded by the market, not by how much the
@@ -29,7 +34,12 @@ use super::{Scale, Wallet, finite_positive};
 use crate::{
     actors::{Actor, ActorsReport, Moment, SendReader, SentOrder, StepFlow},
     guard::SendHook,
+    txlayer::{TxEngine, client::ActorChain, engine::PoolTurn},
 };
+
+/// What it pays over the bot's send per compute unit, in micro-lamports, to
+/// go first in the block.
+const OUTBID: u64 = 1_000;
 
 fn two() -> u64 {
     2
@@ -74,6 +84,10 @@ pub struct FrontRunner {
     pub max_inventory_mult: f64,
     #[serde(default)]
     pub on_send: bool,
+    /// Read the bot's pending sends in the transaction layer's pool, and
+    /// land ahead of one in its block.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_pool: bool,
 }
 
 impl Default for FrontRunner {
@@ -86,6 +100,7 @@ impl Default for FrontRunner {
             limit_bps: fifty(),
             max_inventory_mult: twenty(),
             on_send: false,
+            on_pool: false,
         }
     }
 }
@@ -98,6 +113,9 @@ impl FrontRunner {
         finite_positive("min_mult", self.min_mult)?;
         finite_positive("share", self.share)?;
         finite_positive("limit_bps", self.limit_bps)?;
+        if self.on_send && self.on_pool {
+            return Err("on_send and on_pool are two ways to read the bot's sends: one".into());
+        }
         finite_positive("max_inventory_mult", self.max_inventory_mult)
     }
 }
@@ -119,6 +137,10 @@ struct Inner {
     fronted: bool,
     /// Where the last step left the price.
     last: Option<Moment>,
+    /// With `on_pool`: its seat's chain, sending to the pool, and the
+    /// bot's sends it has read there.
+    chain: Option<Arc<ActorChain>>,
+    read: std::collections::BTreeSet<u64>,
 }
 
 impl Inner {
@@ -230,6 +252,7 @@ impl Runner {
         scale: Scale,
         wallet: Wallet,
         reader: Option<SendReader>,
+        chain: Option<Arc<ActorChain>>,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
@@ -242,6 +265,8 @@ impl Runner {
                 steps: 0,
                 fronted: false,
                 last: None,
+                chain,
+                read: std::collections::BTreeSet::new(),
             })),
         }
     }
@@ -276,7 +301,7 @@ impl Actor for Runner {
         inner.last = Some(*now);
         inner.fronted = false;
         inner.unwind(now.at, now.book_usd, false).await;
-        if inner.spec.on_send {
+        if inner.spec.on_send || inner.spec.on_pool {
             return;
         }
         if let Some((side, size)) = inner.armed() {
@@ -292,6 +317,66 @@ impl Actor for Runner {
             .await
             .unwind(last.at, last.book_usd, true)
             .await;
+    }
+
+    fn bind_tx(&mut self, engine: &Arc<TxEngine>) {
+        if let Ok(inner) = self.inner.try_lock()
+            && let Some(chain) = &inner.chain
+        {
+            chain.bind(engine);
+        }
+    }
+
+    fn wants_pool(&self) -> bool {
+        self.inner
+            .try_lock()
+            .is_ok_and(|inner| inner.spec.on_pool && inner.chain.is_some())
+    }
+
+    /// Front-run the first of the bot's sends it can see in the pool that
+    /// is worth it, if the pattern holds: paying more than it, to land first.
+    async fn on_pool(&mut self, turn: &PoolTurn) {
+        let mut inner = self.inner.lock().await;
+        let (Some((side, _)), Some(last), Some(reader), Some(chain)) = (
+            inner.armed(),
+            inner.last,
+            inner.reader.clone(),
+            inner.chain.clone(),
+        ) else {
+            return;
+        };
+        if turn.skipped {
+            return;
+        }
+        for pending in &turn.visible {
+            if !inner.read.insert(pending.id) {
+                continue;
+            }
+            inner.wallet.count("pool_reads", 1);
+            use base64::Engine as _;
+            let call = serde_json::json!({
+                "method": "sendTransaction",
+                "params": [
+                    base64::engine::general_purpose::STANDARD.encode(&pending.tx.wire),
+                    { "encoding": "base64" }
+                ]
+            });
+            for order in reader(call).await {
+                if inner.worth_running(side, &order).await {
+                    chain.set_price(
+                        pending
+                            .tx
+                            .effective_price()
+                            .max(turn.price_floor)
+                            .saturating_add(OUTBID),
+                    );
+                    inner
+                        .front_run(last.at, last.book_usd, side, order.size, "pool_front_runs")
+                        .await;
+                    return;
+                }
+            }
+        }
     }
 
     fn send_hook(&self) -> Option<Arc<dyn SendHook>> {
@@ -382,6 +467,7 @@ mod tests {
             scale(),
             wallet,
             None,
+            None,
         );
         assert!(runner.send_hook().is_none());
         // Too small to count, then two steps of selling 4, then none.
@@ -419,6 +505,7 @@ mod tests {
             scale(),
             wallet,
             Some(reader()),
+            None,
         );
         let hook = runner.send_hook().expect("on_send hooks the bot's sends");
         let sell = |size: f64| json!([{ "side": "ask", "size": size, "immediate": true }]);

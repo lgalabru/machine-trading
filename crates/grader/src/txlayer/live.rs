@@ -51,6 +51,8 @@ fn layer(spike: bool) -> TxLayer {
         fees_in_pnl: false,
         native_sol: Some(10.0),
         sol_usd: None,
+        sandwichers: 0.0,
+        searchers: Default::default(),
     }
 }
 

@@ -274,6 +274,8 @@ pub fn realism(calibration: &Calibration, seed: u64, slots: u64) -> Vec<Realism>
                 fees_in_pnl: false,
                 native_sol: None,
                 sol_usd: None,
+                sandwichers: 0.0,
+                searchers: Default::default(),
             };
             let base = RECENT_SLOTS;
             let path = GhostPath::new(&layer, calibration, base, base + slots, 1, None);

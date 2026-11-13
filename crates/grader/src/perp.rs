@@ -203,23 +203,50 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 .map(|(role, n)| opts.keys.keypair(role, n))
                 .collect();
             let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
-            let seats =
+            // A front-runner reading the transaction layer's pool sends
+            // through it, from a seat on a chain of its own.
+            let mut chains = Vec::new();
+            let mut pooled = Vec::new();
+            if scenario.tx_layer.is_some() {
+                let mut nth = 0;
+                for (i, (role, _)) in library.wallets().into_iter().enumerate() {
+                    if role != "front-runner" {
+                        continue;
+                    }
+                    let chain = library.front_runners[nth].on_pool.then(|| {
+                        Arc::new(crate::txlayer::client::ActorChain::new(
+                            internal.url(),
+                            format!("actor:front-runner/{nth}"),
+                            keypairs[i].insecure_clone(),
+                        ))
+                    });
+                    if let Some(chain) = &chain {
+                        pooled.push((i, keypairs[i].insecure_clone(), chain.clone()));
+                    }
+                    chains.push(chain);
+                    nth += 1;
+                }
+            }
+            let mut seats =
                 onboard_unique(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
+            for (i, keypair, chain) in pooled {
+                seats[i] = perp.unique_seat_on(keypair, internal.url(), chain)?;
+            }
             tracing::info!(wallets = seats.len(), "library actors ready");
             let seats: Vec<WalletSeat> = pubkeys
                 .into_iter()
                 .zip(seats)
                 .map(|(pubkey, seat)| WalletSeat { pubkey, seat })
                 .collect();
-            Some((library, seats))
+            Some((library, seats, chains))
         }
         _ => None,
     };
     // RFQ fills settle as swaps of the asset's spot token for USDC, between
     // the clients' wallets and the bot's: they hold both, funded here.
-    let swaps = match library.as_ref().and_then(|(l, _)| l.rfq_clients.as_ref()) {
+    let swaps = match library.as_ref().and_then(|(l, ..)| l.rfq_clients.as_ref()) {
         Some(rfq) => {
-            let scale = library.as_ref().map(|(l, _)| l.scale).unwrap_or_default();
+            let scale = library.as_ref().map(|(l, ..)| l.scale).unwrap_or_default();
             let setup = RfqSetup {
                 symbol: &scenario.symbol,
                 rfq,
@@ -325,7 +352,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
-    if let Some((library, seats)) = library {
+    if let Some((library, seats, pool_chains)) = library {
         let (path, start) = (scenario.path.clone(), start_mark_usd);
         let fair_path = scenario.fair_path.clone();
         let path = Arc::new(move |at| Moment {
@@ -355,6 +382,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                     .as_ref()
                     .map(|(swaps, _)| swaps.clone() as Arc<dyn crate::actors::library::Settlement>),
                 send_reader,
+                pool_chains,
                 liquidations: None,
                 rpc_url: Some(internal.url().to_string()),
             },

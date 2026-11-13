@@ -150,6 +150,33 @@ impl Market for PerpMarket {
 }
 
 impl PerpMarket {
+    /// A [`PerpMarket::unique_seat`] whose sends go to `chain` (an actor's
+    /// under a transaction layer), which says nothing of them landing: the
+    /// seat waits for no receipt.
+    pub fn unique_seat_on(
+        &self,
+        signer: Keypair,
+        rpc_url: &str,
+        chain: Arc<dyn mtx_kit::chain::ChainClient>,
+    ) -> Result<Box<dyn Seat>> {
+        let trader = self
+            .trader(signer.insecure_clone(), rpc_url)?
+            .with_timeout(INTERNAL_RPC_TIMEOUT);
+        let trader = Trader {
+            inner: trader
+                .inner
+                .with_chain(chain)
+                .with_execute_options(mtx_kit::chain::ExecuteOptions::without_receipts()),
+            ..trader
+        };
+        Ok(Box::new(UniquePerpSeat {
+            seat: PerpSeat::new(self.instrument.to_string(), Arc::new(trader)),
+            signer,
+            sends: AtomicU32::new(0),
+            last: std::sync::Mutex::default(),
+        }))
+    }
+
     /// A seat for `signer` whose every transaction is unique among its own
     /// ([`UniquePerpSeat`]).
     pub fn unique_seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {

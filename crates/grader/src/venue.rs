@@ -50,7 +50,7 @@ pub mod phoenix;
 pub mod pools;
 pub mod raydium;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use mtx_core::{
@@ -179,6 +179,25 @@ pub trait Market: Send + Sync {
     /// An account on this market, signed with `signer`, trading through
     /// `rpc_url`. It must already hold what it trades (setup funds it).
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>>;
+
+    /// An account on this market whose sends go to `chain`: a transaction
+    /// layer's pool, which lands them in a later block. A seat sent through
+    /// it says each order landed when it was sent, with its signature, and
+    /// the layer says later what became of it. `None` for a market whose
+    /// seats can't send that way.
+    async fn pooled_seat(
+        &self,
+        signer: Keypair,
+        chain: Arc<dyn ChainClient>,
+    ) -> Result<Option<Box<dyn Seat>>> {
+        let _ = (signer, chain);
+        Ok(None)
+    }
+
+    /// The pool behind this market, if it is one's.
+    fn pool(&self) -> Option<Arc<dyn pools::Pool>> {
+        None
+    }
 }
 
 /// What a seat answers for a book's method on a market with no book.

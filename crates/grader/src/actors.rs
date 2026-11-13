@@ -21,6 +21,14 @@
 //! on the bot's orders as they arrive hands the bot's guard a
 //! [`SendHook`] ([`Actor::send_hook`]).
 //!
+//! Under a transaction layer ([`crate::txlayer`]) nothing runs on receipt:
+//! an actor that sends through the layer's pool is bound to it
+//! ([`Actor::bind_tx`]), and a **searcher** ([`Actor::wants_pool`]) also
+//! acts inside every slot, before its block is built ([`Actor::on_pool`]):
+//! it sees what of the bot's is pending where it can look and what landed
+//! in the last block, and sends what the block may take, each send paying
+//! its own fees and tips ([`searchers`]).
+//!
 //! Two actors come with the engine: [`takers`], the taker orders a scenario
 //! lists, and [`competitor`], a maker that competes with the bot's quotes.
 //! Both work on any market whose seats take and rest orders. [`arbitrageur`]
@@ -34,6 +42,7 @@ pub mod arbitrageur;
 pub mod competitor;
 pub mod flow;
 pub mod library;
+pub mod searchers;
 pub mod takers;
 
 use std::sync::Arc;
@@ -45,7 +54,10 @@ pub use flow::{FlowWatch, SendReader, SentOrder, StepFlow, VenueFlow};
 pub use library::{Library, LibraryReport};
 pub use takers::{FlowReport, Pricing, TakerRecord, Takers};
 
-use crate::guard::SendHook;
+use crate::{
+    guard::SendHook,
+    txlayer::{TxEngine, engine::PoolTurn},
+};
 
 /// Where a step stands for the actors.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -96,6 +108,22 @@ pub trait Actor: Send + Sync {
     /// What it runs around each of the bot's transactions, if anything.
     fn send_hook(&self) -> Option<Arc<dyn SendHook>> {
         None
+    }
+
+    /// The session's transaction layer, before the first step: an actor
+    /// that sends through its pool registers there.
+    fn bind_tx(&mut self, engine: &Arc<TxEngine>) {
+        let _ = engine;
+    }
+
+    /// Whether it acts inside each slot ([`Actor::on_pool`]).
+    fn wants_pool(&self) -> bool {
+        false
+    }
+
+    /// A slot's block is about to be built: what the pool shows of it.
+    async fn on_pool(&mut self, turn: &PoolTurn) {
+        let _ = turn;
     }
 
     /// What it did, into the session's report.
@@ -161,6 +189,25 @@ impl Cast {
     /// The hooks the actors run around each of the bot's transactions.
     pub fn send_hooks(&self) -> Vec<Arc<dyn SendHook>> {
         self.actors.iter().filter_map(|a| a.send_hook()).collect()
+    }
+
+    /// Bind every actor to the session's transaction layer.
+    pub fn bind_tx(&mut self, engine: &Arc<TxEngine>) {
+        for actor in &mut self.actors {
+            actor.bind_tx(engine);
+        }
+    }
+
+    /// Whether any actor acts inside each slot.
+    pub fn wants_pool(&self) -> bool {
+        self.actors.iter().any(|a| a.wants_pool())
+    }
+
+    /// A slot's block is about to be built: the searchers act, in order.
+    pub async fn on_pool(&mut self, turn: &PoolTurn) {
+        for actor in self.actors.iter_mut().filter(|a| a.wants_pool()) {
+            actor.on_pool(turn).await;
+        }
     }
 
     /// The start of a step: nothing before the first.

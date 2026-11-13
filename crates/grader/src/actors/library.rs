@@ -202,6 +202,17 @@ impl Library {
             .collect()
     }
 
+    /// The actors that read a transaction layer's pool, by where the
+    /// scenario names them: `actors.front_runners[i]` with `on_pool`.
+    pub fn pool_readers(&self) -> Vec<String> {
+        self.front_runners
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.on_pool)
+            .map(|(i, _)| format!("actors.front_runners[{i}]"))
+            .collect()
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.scale.validate()?;
         let each = |kind: &str, checks: Vec<Result<(), String>>| {
@@ -371,13 +382,14 @@ impl Library {
                 wallet,
             )));
         }
-        for spec in &self.front_runners {
+        for (i, spec) in self.front_runners.iter().enumerate() {
             let wallet = ledger.reacting("front-runner", take(1)).remove(0);
             built.actors.push(Box::new(front_runner::Runner::new(
                 spec.clone(),
                 scale,
                 wallet,
                 setting.send_reader.clone(),
+                setting.pool_chains.get(i).cloned().flatten(),
             )));
         }
         if let Some(spec) = &self.arbitrageur {
@@ -435,6 +447,9 @@ pub struct Setting {
     pub settlement: Option<Arc<dyn Settlement>>,
     /// What the bot's sends carry, for the front-runners that read them.
     pub send_reader: Option<SendReader>,
+    /// Each front-runner's seat's chain, for those that read the
+    /// transaction layer's pool (`on_pool`): their sends go to the pool.
+    pub pool_chains: Vec<Option<Arc<crate::txlayer::client::ActorChain>>>,
     /// The session's lending venue, for the liquidator: none yet.
     pub liquidations: Option<Box<dyn Liquidations>>,
     /// The grader's own endpoint: with [`Library::record`], the report

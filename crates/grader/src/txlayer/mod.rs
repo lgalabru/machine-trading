@@ -84,6 +84,21 @@ pub struct TxLayer {
     /// What a SOL is worth in the account's currency, for `fees_in_pnl`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sol_usd: Option<f64>,
+    /// The share of the Jito validators that sandwich: in their slots, the
+    /// grader's searchers see every transaction sent, whatever its route.
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub sandwichers: f64,
+    /// The grader's searchers, which see the pool and act inside each
+    /// slot's block (see [`crate::actors::searchers`]).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::actors::searchers::Searchers::is_empty"
+    )]
+    pub searchers: crate::actors::searchers::Searchers,
+}
+
+fn is_zero_f64(value: &f64) -> bool {
+    *value == 0.0
 }
 
 fn default_calibration() -> String {
@@ -154,6 +169,10 @@ pub struct Route {
     /// connection's price. Counted in the fee ledger, not on chain.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub fee_lamports: u64,
+    /// Whether it shares what it carries: the grader's searchers see a
+    /// transaction sent this way while it is pending, whoever leads.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub leaky: bool,
 }
 
 fn is_zero(value: &u64) -> bool {
@@ -167,6 +186,7 @@ impl Route {
             loss: 0.01,
             loss_congested: 0.3,
             fee_lamports: 0,
+            leaky: false,
         }
     }
 
@@ -176,6 +196,7 @@ impl Route {
             loss: 0.002,
             loss_congested: 0.05,
             fee_lamports: 0,
+            leaky: false,
         }
     }
 
@@ -185,6 +206,7 @@ impl Route {
             loss: 0.0,
             loss_congested: 0.0,
             fee_lamports: 0,
+            leaky: false,
         }
     }
 }
@@ -251,7 +273,10 @@ impl TxLayer {
         {
             return Err(format!("native_sol {sol}"));
         }
-        Ok(())
+        if !(0.0..=1.0).contains(&self.sandwichers) {
+            return Err(format!("sandwichers {} is not a share", self.sandwichers));
+        }
+        self.searchers.validate()
     }
 }
 
@@ -345,6 +370,8 @@ pub(crate) mod tests {
             fees_in_pnl: true,
             native_sol: Some(1.0),
             sol_usd: Some(150.0),
+            sandwichers: 0.0,
+            searchers: Default::default(),
         }
     }
 

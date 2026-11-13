@@ -17,6 +17,24 @@ pub struct TxLayerReport {
     pub fees: FeeLedger,
     /// Entries still pending when the session ended: they never landed.
     pub pending_at_end: usize,
+    /// The actors that sent through the pool: each one's ledger, checked
+    /// against its own wallet, and what it counts of its own doing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actors: Vec<ActorFees>,
+}
+
+/// What one actor paid to land, and did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ActorFees {
+    /// `actor:<kind>/<i>`.
+    pub sender: String,
+    pub wallet: String,
+    pub fees: FeeLedger,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub counts: std::collections::BTreeMap<String, u64>,
+    /// What it notes of its own: its inventory's change, what it made.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub values: std::collections::BTreeMap<String, f64>,
 }
 
 /// One slot's block.
@@ -128,6 +146,7 @@ mod tests {
             }],
             fees: FeeLedger::default(),
             pending_at_end: 0,
+            actors: Vec::new(),
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(!json.contains("refused") && !json.contains("resigned"));

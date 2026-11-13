@@ -417,7 +417,28 @@ impl Market for PoolMarket {
             chain: Arc::new(RpcChainClient::new(rpc_url)),
             signer,
             opened: AtomicU64::new(0),
+            pooled: false,
         }))
+    }
+
+    async fn pooled_seat(
+        &self,
+        signer: Keypair,
+        chain: Arc<dyn ChainClient>,
+    ) -> Result<Option<Box<dyn Seat>>> {
+        Ok(Some(Box::new(PoolSeat {
+            market: self.instrument.to_string(),
+            kind: self.instrument.kind,
+            pool: self.pool.clone(),
+            chain,
+            signer,
+            opened: AtomicU64::new(0),
+            pooled: true,
+        })))
+    }
+
+    fn pool(&self) -> Option<Arc<dyn Pool>> {
+        Some(self.pool.clone())
     }
 }
 
@@ -430,6 +451,9 @@ pub struct PoolSeat {
     signer: Keypair,
     /// Positions this seat opened: the next new position's number.
     opened: AtomicU64,
+    /// Its sends go to a transaction layer's pool, which says later what
+    /// became of them.
+    pooled: bool,
 }
 
 impl PoolSeat {
@@ -692,6 +716,7 @@ impl Seat for PoolSeat {
         };
         Sent {
             state: match sent {
+                Ok(signature) if self.pooled => SendState::Landed(signature.to_string()),
                 Ok(signature) => self.outcome(signature).await,
                 Err(reason) => SendState::failed(reason),
             },
