@@ -109,9 +109,11 @@ impl<'a> Fields<'a> {
     pub(crate) fn i32(&self, at: usize) -> Result<i32, DecodeError> {
         self.bytes(at).map(i32::from_le_bytes)
     }
+    #[cfg(any(feature = "raydium-clmm", feature = "meteora-dlmm"))]
     pub(crate) fn u32(&self, at: usize) -> Result<u32, DecodeError> {
         self.bytes(at).map(u32::from_le_bytes)
     }
+    #[cfg(feature = "meteora-dlmm")]
     pub(crate) fn i64(&self, at: usize) -> Result<i64, DecodeError> {
         self.bytes(at).map(i64::from_le_bytes)
     }
@@ -121,6 +123,7 @@ impl<'a> Fields<'a> {
     pub(crate) fn u128(&self, at: usize) -> Result<u128, DecodeError> {
         self.bytes(at).map(u128::from_le_bytes)
     }
+    #[cfg(any(feature = "raydium-clmm", feature = "orca-whirlpool"))]
     pub(crate) fn i128(&self, at: usize) -> Result<i128, DecodeError> {
         self.bytes(at).map(i128::from_le_bytes)
     }
