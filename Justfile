@@ -52,6 +52,10 @@ install bin="mtx":
 
 # Build a snapshot from its recipe: fork mainnet, warm up, export.
 # Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+# The ladder script's own tests.
+ladder-test:
+    python3 -I bench/checks/ladder/test_ladder.py
+
 snapshot-build name *flags:
     cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
@@ -512,6 +516,12 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     done
     for bot in {{tasks}}/{{task}}/checks/exploits/*/; do
       [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
+    done
+    # The shared exploit bots the ladder lists (bench/checks/exploits).
+    for bot in $(jq -r '.rungs[].dir' "{{tasks}}/{{task}}/checks/ladder.json" | sort -u); do
+      case "$bot" in bench/checks/exploits/*)
+        [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null ;;
+      esac
     done
     python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
