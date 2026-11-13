@@ -232,6 +232,16 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World {
+                phoenix: Some((perp_asset_map, start_mark_ticks)),
+            },
+        )?;
+    }
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -538,6 +548,7 @@ impl Account for PerpAccount {
             participation: None,
             net: None,
             tx_layer: None,
+            crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {

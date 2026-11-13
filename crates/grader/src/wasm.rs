@@ -778,8 +778,8 @@ impl WasmBot {
             },
             applies_tx_options: desk.tx.is_some(),
         };
-        // Raw sends audit a Phoenix perp account: a session of another
-        // kind takes none.
+        // Raw sends are a perp session's: a scenario enables them nowhere
+        // else. They go out as the sheet's do, through the desk's trader.
         if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
             (strategy.as_mut(), raw, &desk.reader)
         {

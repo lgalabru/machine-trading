@@ -147,6 +147,10 @@ a Kolmogorov-Smirnov distance within what a sample of that size allows.
 Every field but `seed` has a default; `calibration` defaults to
 `mainnet-fees.20261113.43786520`.
 
+That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
+`docs/scenario-format.md`) puts the same object in its `tx` section, as
+`"tx": { "layer": { ... } }`, beside `raw_sends`.
+
 - **`routes`.** `rpc` and `jito` are always there. `staked` exists only if
   the scenario lists it. A route's `fee_lamports` is its price per send. It
   counts in the fee ledger and in PnL, but is not paid on chain.

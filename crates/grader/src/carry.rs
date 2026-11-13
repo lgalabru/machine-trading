@@ -507,6 +507,7 @@ impl CarryFamily {
             spot: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
