@@ -434,27 +434,27 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .map(|r| r.rule.as_str())
         .collect();
     let order_detail = if broken.is_empty() {
-            format!(
-                "{} rule{} hold on {sets} set{} of {} sessions",
-                summary.rules.len(),
-                if summary.rules.len() == 1 { "" } else { "s" },
-                if sets == 1 { "" } else { "s" },
-                summary.sessions
-            )
-        } else {
-            summary
-                .rules
-                .iter()
-                .filter(|r| !r.ok)
-                .map(|r| {
-                    format!(
-                        "{} (holds on {}/{} sets, odds {:.2})",
-                        r.rule, r.sets_holding, r.sets, r.odds
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ")
-        };
+        format!(
+            "{} rule{} hold on {sets} set{} of {} sessions",
+            summary.rules.len(),
+            if summary.rules.len() == 1 { "" } else { "s" },
+            if sets == 1 { "" } else { "s" },
+            summary.sessions
+        )
+    } else {
+        summary
+            .rules
+            .iter()
+            .filter(|r| !r.ok)
+            .map(|r| {
+                format!(
+                    "{} (holds on {}/{} sets, odds {:.2})",
+                    r.rule, r.sets_holding, r.sets, r.odds
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
     checks.push(if thin && !broken.is_empty() {
         Check::new(
             SOLVABLE,
@@ -1357,7 +1357,12 @@ mod tests {
 
     #[test]
     fn a_reference_that_lost_money_on_a_fast_sample_is_inconclusive_not_failed() {
-        let mut s = summary(&[&[("nop", 0.0), ("reference", -38.0), ("fade", 18.0), ("told", 850.0)]]);
+        let mut s = summary(&[&[
+            ("nop", 0.0),
+            ("reference", -38.0),
+            ("fade", 18.0),
+            ("told", 850.0),
+        ]]);
         s.rules.push(RuleResult {
             rule: "fade < reference".into(),
             ok: false,
@@ -1366,7 +1371,8 @@ mod tests {
             odds: 0.16,
         });
         let g = gate(&["told"], &["fade"]);
-        let status = |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        let status =
+            |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         let fast = ladder_checks(&s, &g, true);
         assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
         assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
