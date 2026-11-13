@@ -180,6 +180,8 @@ struct Host {
     /// for, as the kit has them: what a test or the debug view shows.
     raw_calls: u32,
     raw_sends: Vec<mtx_kit::RawTransaction>,
+    /// What takes the raw sends, in a session that enables them.
+    raw: Option<crate::raw::RawSender>,
     limits: StoreLimits,
 }
 
@@ -242,9 +244,9 @@ impl v2::StrategyImports for Host {
         Host::rpc(self, method, params).await
     }
 
-    /// Reserved for raw sends (the grader-signed `send`): no session enables
-    /// them yet. A malformed transaction is refused for what is wrong with
-    /// it; any other, because raw sends are off.
+    /// A raw send (`crate::raw`): a malformed transaction is refused for
+    /// what is wrong with it; any other, in a session without raw sends,
+    /// because they are off.
     async fn send(
         &mut self,
         tx: v2::mtx::strategy::types::RawTransaction,
@@ -256,10 +258,17 @@ impl v2::StrategyImports for Host {
         let tx = wit2::raw_transaction(tx);
         let checked = tx.check();
         if self.raw_sends.len() < RAW_SENDS_KEPT {
-            self.raw_sends.push(tx);
+            self.raw_sends.push(tx.clone());
         }
         checked?;
-        Err("raw sends aren't enabled in this session".into())
+        let Some(raw) = self.raw.as_mut() else {
+            return Err("raw sends aren't enabled in this session".into());
+        };
+        let receipt = raw.take(tx).await?;
+        Ok(v2::mtx::strategy::types::RawReceipt {
+            id: receipt.id,
+            fresh_signers: receipt.fresh_signers,
+        })
     }
 }
 
@@ -391,6 +400,7 @@ impl WasmStrategy {
             rpc_calls: 0,
             raw_calls: 0,
             raw_sends: Vec::new(),
+            raw: None,
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY_BYTES)
                 .trap_on_grow_failure(true)
@@ -459,6 +469,16 @@ impl WasmStrategy {
     /// refused or not.
     pub fn raw_sends(&self) -> &[mtx_kit::RawTransaction] {
         &self.store.data().raw_sends
+    }
+
+    /// Let the strategy's steps send raw transactions, through `raw`.
+    pub fn enable_raw_sends(&mut self, raw: crate::raw::RawSender) {
+        self.store.data_mut().raw = Some(raw);
+    }
+
+    /// What takes the strategy's raw sends, if the session enables them.
+    pub fn raw_sender(&mut self) -> Option<&mut crate::raw::RawSender> {
+        self.store.data_mut().raw.as_mut()
     }
 
     /// What the last call printed, its fuel, and its `rpc` calls.
@@ -563,6 +583,10 @@ pub struct Account {
     pub position_change: f64,
     /// The scenario's planned level at the step.
     pub level_usd: f64,
+    /// The price the session values the position at, where it isn't
+    /// Phoenix's mark: market making's oracle level, or the book's level
+    /// where the book trades at a premium.
+    pub valued_at_usd: Option<f64>,
 }
 
 /// One step of a component's session, as `mtx bot run --debug` shows it:
@@ -648,6 +672,7 @@ impl WasmBot {
         clock: Clock<'_>,
         log: Box<dyn Write + Send>,
         observer: Option<std::sync::Arc<dyn StepObserver>>,
+        raw: Option<crate::raw::RawConfig>,
     ) -> crate::Result<Self> {
         let Clock {
             steps,
@@ -701,6 +726,15 @@ impl WasmBot {
             reports,
             applies_tx_options: false,
         };
+        if let (Some(strategy), Some(raw)) = (strategy.as_mut(), raw) {
+            strategy.enable_raw_sends(crate::raw::RawSender::new(
+                raw,
+                trader.authority(),
+                env.exchange()?,
+                &env.symbol,
+                &env.rpc_url,
+            ));
+        }
         if let Some(strategy) = strategy.as_mut() {
             let failed = match strategy.start(&session).await {
                 Outcome::Done(()) => None,
@@ -809,7 +843,20 @@ impl WasmBot {
             self.last = Some(market);
             return false;
         };
+        if let Some(raw) = strategy.raw_sender() {
+            raw.begin(k, self.account).await;
+        }
         let outcome = strategy.step(&market).await;
+        let raw = strategy.raw_sender();
+        let dropped = match &outcome {
+            Outcome::Done(_) => raw.map(|raw| {
+                raw.close();
+                Vec::new()
+            }),
+            Outcome::Failed(_) => raw.map(|raw| raw.discard("the step failed")),
+            Outcome::Trapped(_) => raw.map(|raw| raw.discard("the strategy trapped")),
+        };
+        self.sends.extend(dropped.into_iter().flatten());
         let mut trace = self.observer.as_ref().map(|_| {
             let (printed, fuel, rpc_calls) = strategy.last_call();
             StepTrace {
@@ -914,6 +961,10 @@ impl WasmBot {
             });
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
+        // Raw sends go after the sheet, whatever became of it.
+        if let Some(raw) = self.strategy.as_mut().and_then(WasmStrategy::raw_sender) {
+            self.sends.extend(raw.flush(&self.trader.keypair).await);
+        }
         self.observe(trace);
         true
     }

@@ -104,6 +104,67 @@ pub struct Scenario {
     /// told. It is not shown to the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_path: Option<Vec<Waypoint>>,
+    /// Opt-in: a strategy component may build transactions itself, for
+    /// what its sheet can't say, and the grader signs them (`send`, see
+    /// [`crate::raw`]). Absent, the session refuses every one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_sends: Option<RawSends>,
+}
+
+/// What a scenario's raw sends may do.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RawSends {
+    /// The programs, base58, a raw transaction may run, at the top level or
+    /// through another program. The compute budget program is always
+    /// allowed: it only sets the transaction's own limits and fee.
+    pub programs: Vec<String>,
+}
+
+/// The programs a raw send may be allowed to run: those whose effects the
+/// grader's audit of a raw send measures (Phoenix's main trader account, the
+/// wallet's tokens), and the system, associated token and compute budget
+/// programs. A venue's program joins when its venue adds its own audit;
+/// until then a position it holds would go unmeasured.
+pub const RAW_SEND_PROGRAMS: [(&str, &str); 5] = [
+    ("Phoenix", "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih"),
+    ("system", "11111111111111111111111111111111"),
+    ("token", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    (
+        "associated token",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    ),
+    (
+        "compute budget",
+        "ComputeBudget111111111111111111111111111111",
+    ),
+];
+
+impl RawSends {
+    /// The programs, parsed and in order.
+    pub fn programs(&self) -> std::result::Result<Vec<Pubkey>, String> {
+        let mut programs = Vec::with_capacity(self.programs.len());
+        for program in &self.programs {
+            let key = program
+                .parse::<Pubkey>()
+                .map_err(|_| format!("{program} is not a base58 address"))?;
+            if !RAW_SEND_PROGRAMS.iter().any(|(_, p)| p == program) {
+                let audited: Vec<&str> = RAW_SEND_PROGRAMS.iter().map(|(name, _)| *name).collect();
+                return Err(format!(
+                    "{program}: raw sends can't run it yet, since the audit can't measure what it holds; only the {} programs",
+                    audited.join(", ")
+                ));
+            }
+            if programs.contains(&key) {
+                return Err(format!("{program} is listed twice"));
+            }
+            programs.push(key);
+        }
+        if programs.is_empty() {
+            return Err("no programs: leave raw_sends out to turn raw sends off".into());
+        }
+        Ok(programs)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -794,6 +855,7 @@ impl ShockFamily {
                     premium_pct: 0.0,
                 }]
             }),
+            raw_sends: None,
         };
         let shape = Shape {
             direction,
@@ -1425,6 +1487,7 @@ mod tests {
             assert_eq!(
                 Scenario {
                     fair_path: None,
+                    raw_sends: None,
                     ..marked.clone()
                 },
                 plain
@@ -1500,6 +1563,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            raw_sends: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1564,6 +1628,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            raw_sends: None,
         }
     }
 

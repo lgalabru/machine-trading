@@ -38,7 +38,9 @@ use crate::{
     offhours::OffHours,
     orders::{ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
-    scenario::{Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, Scenario, VENUE, Waypoint, move_slots},
+    scenario::{
+        Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
+    },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
 };
 
@@ -173,10 +175,16 @@ pub struct Competitor {
     pub competition: Competition,
 }
 
-/// The transaction layer. Nothing is configurable yet.
+/// The transaction layer.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct Tx {}
+pub struct Tx {
+    /// Opt-in: a strategy component may build transactions itself, for what
+    /// its sheet can't say, and the grader signs them (see
+    /// [`crate::raw`]). Absent, the session refuses every one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_sends: Option<RawSends>,
+}
 
 /// How the session is scored beyond the PnL itself.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -454,6 +462,13 @@ impl ScenarioV2 {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(raw) = self.tx.as_ref().and_then(|tx| tx.raw_sends.as_ref()) {
+            raw.programs()
+                .map_err(|reason| format!("raw_sends: {reason}"))?;
+            if self.venues.spot.is_some() {
+                return Err("raw_sends: only perp sessions take raw sends yet".into());
+            }
+        }
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
         if self.venues.spot.is_some() {
@@ -621,6 +636,7 @@ impl ScenarioV2 {
             market_model,
             actors,
             faults,
+            tx,
             mandate,
             order,
             scoring,
@@ -676,6 +692,7 @@ impl ScenarioV2 {
             net: scoring.net,
             reference_pnl_usd: scoring.reference_pnl_usd,
             fair_path,
+            raw_sends: tx.and_then(|tx| tx.raw_sends),
         })
     }
 }
@@ -777,7 +794,9 @@ impl TryFrom<&Scenario> for ScenarioV2 {
             },
             actors: Actors { competitor, takers },
             faults: v1.faults.clone(),
-            tx: None,
+            tx: v1.raw_sends.clone().map(|raw_sends| Tx {
+                raw_sends: Some(raw_sends),
+            }),
             mandate: v1.mandate.clone(),
             order: v1.order.clone(),
             scoring: Scoring {
@@ -1091,9 +1110,9 @@ mod tests {
     }
 
     #[test]
-    fn tx_is_a_placeholder_section() {
+    fn an_empty_tx_section_takes_nothing_else() {
         let mut s = shock();
-        s.tx = Some(Tx {});
+        s.tx = Some(Tx::default());
         let text = serde_json::to_string(&s).unwrap();
         assert!(text.contains("\"tx\":{}"));
         assert_eq!(serde_json::from_str::<ScenarioV2>(&text).unwrap(), s);
@@ -1101,6 +1120,28 @@ mod tests {
             serde_json::from_str::<ScenarioV2>(&text.replace("\"tx\":{}", "\"tx\":{\"x\":1}"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn raw_sends_live_in_the_tx_section_and_round_trip_through_v1() {
+        let mut s = shock();
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec!["11111111111111111111111111111111".into()],
+            }),
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.raw_sends, s.tx.as_ref().unwrap().raw_sends);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+        s.tx.as_mut()
+            .unwrap()
+            .raw_sends
+            .as_mut()
+            .unwrap()
+            .programs
+            .clear();
+        assert!(s.validate().unwrap_err().starts_with("raw_sends:"));
     }
 
     /// What main said for the same input, word for word.
