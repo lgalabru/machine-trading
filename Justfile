@@ -378,7 +378,13 @@ release-publish:
 # or ~/.machine-trading.env. Results go to jobs/bench/; read them with
 # `mtx bench review`. Arguments are positional:
 # just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1":
+# `together=1` runs the models at once (each with n trials at a time)
+# instead of one after the other: grades don't depend on load.
+#
+# A provider that refuses an agent for quota or credit stops the whole
+# batch at once: its other agents would be cut off too, and a cut-off trial
+# can't be ranked. The batch is marked (.stopped) and gets no report.
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1" together="0":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
@@ -417,7 +423,12 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
       "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    for model in {{models}}; do
+    # What the providers say when the account, not the model, is out: a
+    # quota, a credit balance or a usage cap. Rate limits are retried by the
+    # harnesses and don't stop a batch.
+    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached'
+    run_model() {
+      local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
       # Each harness is pinned, so numbers compare across releases, with no
       # web and no memory across trials.
@@ -435,7 +446,48 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
           ;;
       esac
-    done
+    }
+    # Watch the agents' logs while the batch runs; at the first refusal,
+    # interrupt every harbor run writing to this batch.
+    (
+      while sleep 20; do
+        hit="$(grep -rlE "$refused" "$batch"/*/*/agent 2>/dev/null | head -1 || true)"
+        if [ -n "$hit" ]; then
+          { echo "refused: $(grep -hoE "$refused" "$hit" | head -1)"; echo "in: $hit"; date -u +%FT%TZ; } > "$batch/.stopped"
+          # INT first, for a clean stop; TERM for what's left: a run started
+          # in the background (together=1) ignores INT.
+          pkill -INT -f -- "harbor run .* -o $batch" || true
+          sleep 30
+          pkill -TERM -f -- "harbor run .* -o $batch" || true
+          exit 0
+        fi
+      done
+    ) &
+    watcher=$!
+    trap 'kill "$watcher" 2> /dev/null || true' EXIT
+    status=0
+    if [ "{{together}}" = 1 ]; then
+      pids=()
+      for model in {{models}}; do
+        run_model "$model" & pids+=("$!")
+        # Two runs starting at once can race on Harbor's task cache.
+        sleep 60
+      done
+      for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+    else
+      for model in {{models}}; do
+        [ -e "$batch/.stopped" ] && break
+        run_model "$model" || status=1
+      done
+    fi
+    kill "$watcher" 2> /dev/null || true
+    if [ -e "$batch/.stopped" ]; then
+      echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"
+      cat "$batch/.stopped"
+      echo "raise the account's limit, then run the batch again"
+      exit 1
+    fi
+    [ "$status" = 0 ] || { echo "a harbor run failed; see above"; exit 1; }
     if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
     fi

@@ -72,7 +72,8 @@ case "$verb" in
     marker="$(mktemp)"
     log="$logs/bench-$(date -u +%Y%m%d-%H%M%S).log"
     # Detached from this SSH session: the run takes hours.
-    setsid nohup just bench "${models[*]}" "$k" "$n" "$version" "$limit" > "$log" 2>&1 < /dev/null &
+    # The models at once (together=1): grades don't depend on load.
+    setsid nohup just bench "${models[*]}" "$k" "$n" "$version" "$limit" 1 > "$log" 2>&1 < /dev/null &
     # `just bench` names the batch; wait for it to appear.
     for _ in $(seq 60); do
       batch="$(find jobs/bench -mindepth 1 -maxdepth 1 -type d -newer "$marker" -printf '%f\n' | sort | tail -1)"

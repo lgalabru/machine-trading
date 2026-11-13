@@ -112,10 +112,14 @@ sequenceDiagram
   D-->>GH: batch=YYYYMMDD-HHMMSS-x1
   GH-->>Dev: summary: batch, status and publish commands
   J->>J: batch dir, .seed (one secret per batch), batch.json (the plan)
-  loop each model, one after the other
+  par each model at once (together=1), a minute apart
     J->>HB: -d machine-trading@X.Y.Z -k attempts -n concurrent
-    HB->>T: models × tasks × attempts trials, n at a time
+    HB->>T: tasks × attempts trials, n at a time
+  and the watcher, every 20 s
+    J->>T: an agent refused for quota or credit?
+    J-->>HB: if so: INT, then TERM, every run of the batch
   end
+  J->>J: stopped? exit 1, no report
   J->>J: secret in no job file? report (skill by model and task)
   Dev->>GH: action=status (any time, no review)
   GH->>D: ssh (read-only key): status [batch]
@@ -157,7 +161,7 @@ sequenceDiagram
 
 | Level | In parallel | Limit | Set by |
 | --- | --- | --- | --- |
-| Models | one after the other in `just bench` | — | the recipe's loop |
+| Models | at once with `together=1` (what `bench.yml` starts), else one after the other | — | `just bench … together` |
 | Trials of a model | `concurrent` at a time | the machine: 4 CPUs and 6 GB per container | `-n`, `bench.yml concurrent` |
 | A trial's two phases | no: agent, then verifier | — | Harbor |
 | Reference sessions | 4 at a time | trusted, small | `--anchor-jobs 4` |
@@ -170,9 +174,14 @@ alongside 39 others gets the report it would get alone (`mtx grade
 
 How long a batch takes, roughly: the agent's hour, then grading (about 15
 minutes for flash-crash, longer for market-making), times the number of
-waves (`ceil(models × tasks × attempts / concurrent)` per model, models in
-turn). Two models × four tasks × five attempts at `concurrent` 20 is one
-wave per model.
+waves (`ceil(tasks × attempts / concurrent)` per model, the models at once).
+Two models × four tasks × five attempts at `concurrent` 20 is one wave.
+
+A batch stops at the first agent a provider refuses for quota or credit
+("Quota exceeded", "credit balance is too low"): the other agents would be
+cut off too, and a trial whose agent was cut off can't be ranked. The batch
+is marked `.stopped`, with the refusal, and gets no report. Rate limits
+don't stop it; the harnesses retry them.
 
 Each trial uses two Docker networks while it runs. Docker's default address
 pools hold about 31, so the bench machine's Docker daemon is given a larger
