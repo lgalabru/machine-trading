@@ -74,6 +74,12 @@ pub struct Scenario {
     /// the scenario lists elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actors: Option<crate::actors::Library>,
+    /// What the takers' limits are priced off (see
+    /// [`Pricing`](crate::actors::Pricing)). Without it, the scenario's
+    /// kind picks: the level for making and off hours, the book for a tape.
+    /// `fair` needs [`Scenario::fair_path`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takers_pricing: Option<crate::actors::Pricing>,
     /// For a spot session: what each step message carries beyond the clock
     /// (see [`crate::spot::TurnData`]). Without it, none of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -871,6 +877,7 @@ impl ShockFamily {
             spot: None,
             faults: None,
             actors: None,
+            takers_pricing: None,
             turn_data: None,
             oracles: None,
             order: None,
@@ -1589,6 +1596,7 @@ mod tests {
             spot: None,
             faults: None,
             actors: None,
+            takers_pricing: None,
             turn_data: None,
             oracles: None,
             order: None,
@@ -1658,6 +1666,7 @@ mod tests {
             spot: None,
             faults: None,
             actors: None,
+            takers_pricing: None,
             turn_data: None,
             oracles: None,
             order: None,
@@ -1678,6 +1687,7 @@ mod tests {
             feeds: vec![Feed {
                 name: "f".into(),
                 source,
+                anchor: None,
                 cadence_slots: 4,
                 path: Vec::new(),
                 conf_bps: 2.0,
