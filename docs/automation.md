@@ -137,7 +137,7 @@ sequenceDiagram
   autonumber
   participant HB as harbor run
   participant E as Environment container<br/>(4 CPUs, 6 GB, public network)
-  participant Ag as Coding agent<br/>(Codex or Claude Code, pinned)
+  participant Ag as Coding agent<br/>(Hermes, pinned)
   participant V as Verifier container<br/>(4 CPUs, 6 GB, no network)
   participant G as mtx grade
 
