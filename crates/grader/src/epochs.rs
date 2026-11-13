@@ -117,7 +117,7 @@ enum Paid {
     Spl {
         instrument: InstrumentRef,
         named: NamedPool,
-        state: PoolState,
+        state: Box<PoolState>,
         /// The entry the rewards go to, and its active stake after each
         /// boundary.
         target: usize,
@@ -299,7 +299,7 @@ impl Epochs {
             paid.push(Paid::Spl {
                 instrument: instrument.clone(),
                 named: *named,
-                state,
+                state: Box::new(state),
                 target,
                 active_after,
             });
