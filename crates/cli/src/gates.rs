@@ -263,7 +263,9 @@ pub struct RuleResult {
 pub struct ExploitResult {
     pub bot: String,
     pub ok: bool,
-    pub ratio: f64,
+    /// Null when the reference lost money on the sets: no ratio to take.
+    #[serde(default)]
+    pub ratio: Option<f64>,
     pub profitable: f64,
     pub reasons: Vec<String>,
     /// The sample behind the verdict (absent in older summaries).
@@ -551,12 +553,11 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
             .exploits
             .iter()
             .map(|e| {
-                format!(
-                    "{} {:.2}x, profitable {:.0}%",
-                    e.bot,
-                    e.ratio,
-                    e.profitable * 100.0
-                )
+                let ratio = e.ratio.map_or_else(
+                    || "no ratio (the reference lost money on this sample)".to_string(),
+                    |r| format!("{r:.2}x"),
+                );
+                format!("{} {ratio}, profitable {:.0}%", e.bot, e.profitable * 100.0)
             })
             .collect::<Vec<_>>()
             .join(", "),
@@ -1231,7 +1232,7 @@ mod tests {
         let bot = |k: usize, total: f64, odds: f64| ExploitResult {
             bot: "fable".into(),
             ok: false,
-            ratio: 0.9,
+            ratio: Some(0.9),
             profitable: k as f64 / 12.0,
             reasons: vec!["the ladder's own verdict".into()],
             sessions: Some(12),
@@ -1301,7 +1302,7 @@ mod tests {
         s.exploits.push(ExploitResult {
             bot: "x".into(),
             ok: false,
-            ratio: 3.1,
+            ratio: Some(3.1),
             profitable: 0.9,
             reasons: vec!["profitable in 90% of sessions".into()],
             ..Default::default()
