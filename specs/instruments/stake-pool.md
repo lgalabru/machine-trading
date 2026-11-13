@@ -75,7 +75,11 @@ the account's token accounts every step; the value is the pool's rate as
 above, through `Market::value_usd`; fills come from the pools' own
 transactions. A scenario's epoch boundaries move the clock into the next
 epoch between two steps and run the pools' cranks before the bot's next
-turn (see the venue profiles).
+turn (see the venue profiles). Each pool's view tells the bot what is
+coming: `slots_to_epoch_end` is the distance to the session's next planned
+boundary (where the jump happens, not the cluster's natural epoch end),
+and `next_epoch` the epoch it starts. Each view's position is that pool's
+own token.
 
 ## Open questions (for Ludo)
 

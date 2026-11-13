@@ -42,7 +42,7 @@ use surfpool_sdk::{CheatcodeFilter, SimnetCommand, Surfnet};
 use crate::{
     Error, Result,
     actors::{Cast, Moment},
-    epochs::{EpochEvent, EpochRecord, Epochs},
+    epochs::{EpochEvent, EpochPlan, EpochRecord, Epochs},
     error::io_error,
     guard::Guard,
     scenario::Scenario,
@@ -104,7 +104,7 @@ impl Stake {
             if pool.kind != Kind::StakePool {
                 return Err(format!("stake: {pool} is not a stake-pool instrument"));
             }
-            let offered = stake_venue(&pool.venue, "http://127.0.0.1:1")
+            let offered = stake_venue(&pool.venue, "http://127.0.0.1:1", &EpochPlan::default())
                 .map_err(|e| format!("stake: {e}"))?
                 .instruments();
             if !offered.contains(pool) {
@@ -230,10 +230,11 @@ impl Pools {
         rpc_url: &str,
         pools: &[InstrumentRef],
         owner: Pubkey,
+        plan: &EpochPlan,
     ) -> Result<Self> {
         let mut markets = Vec::new();
         for pool in pools {
-            markets.push(stake_venue(&pool.venue, rpc_url)?.market(pool).await?);
+            markets.push(stake_venue(&pool.venue, rpc_url, plan)?.market(pool).await?);
         }
         Ok(Self {
             chain,
@@ -385,7 +386,15 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     ));
 
     let bot = opts.keys.keypair("bot", 0);
-    let pools = Pools::connect(chain.clone(), internal.url(), &stake.pools, bot.pubkey()).await?;
+    let plan = EpochPlan::default();
+    let pools = Pools::connect(
+        chain.clone(),
+        internal.url(),
+        &stake.pools,
+        bot.pubkey(),
+        &plan,
+    )
+    .await?;
     fund(&surfnet, &rpc, &bot, stake, &pools.mints().await?)?;
     let crank = opts.keys.keypair("crank", 0);
     surfnet.cheatcodes().fund_sol(&crank.pubkey(), CRANK_SOL)?;
@@ -406,7 +415,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
-    let (epochs, added) = Epochs::schedule(&rpc, &stake.epochs, &stake.pools, slot, crank)?;
+    let (epochs, added) = Epochs::schedule(&rpc, &stake.epochs, &stake.pools, slot, crank, &plan)?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots + added;

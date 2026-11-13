@@ -56,7 +56,15 @@ pool is updated (`StakeListAndPoolOutOfDate`, 17).
   the reserve can't pay 1 SOL.
 - **Stats** (`venue-view.stats`): `rate`, `deposit_fee_bps`,
   `withdraw_fee_bps`, `instant_capacity_sol` (the reserve above its rent),
-  `last_update_epoch`, `epoch_fee_bps`, `epoch`, `slots_to_epoch_end`.
+  `last_update_epoch`, `epoch_fee_bps`, `epoch`, `slots_to_epoch_end`,
+  `next_epoch`.
+
+  `slots_to_epoch_end` is the distance to the session's next planned
+  boundary, not the cluster's natural epoch end: it reaches 0 at the end
+  of the step whose blocks the clock jumps after, and `next_epoch` is the
+  epoch that boundary starts. Both are absent once no boundary is left.
+  The view's position is this pool's token (the entry price is the
+  session's).
 
 ## Where it differs from the profile
 

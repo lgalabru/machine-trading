@@ -54,7 +54,14 @@ the beneficiary at byte 40).
 - **Stats** (`venue-view.stats`): `rate`, `deposit_fee_bps` (0),
   `withdraw_fee_bps` (the liquid unstake fee for 1 SOL),
   `instant_capacity_sol` (the SOL leg above its rent), `epoch`,
-  `slots_to_epoch_end`.
+  `slots_to_epoch_end`, `next_epoch`.
+
+  `slots_to_epoch_end` is the distance to the session's next planned
+  boundary, not the cluster's natural epoch end: it reaches 0 at the end
+  of the step whose blocks the clock jumps after, and `next_epoch` is the
+  epoch that boundary starts. Both are absent once no boundary is left.
+  The view's position is this pool's token (the entry price is the
+  session's).
 
 ## Where it differs from the profile
 

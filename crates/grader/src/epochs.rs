@@ -27,7 +27,10 @@
 //! boundary is planned to the slot, and a session that reaches it anywhere
 //! else fails rather than run on a different clock.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
 
 use mtx_core::{Decimal, mandate::InstrumentRef};
 use serde::{Deserialize, Serialize};
@@ -152,6 +155,32 @@ pub struct PoolRate {
     pub after: f64,
 }
 
+/// A session's planned boundaries, as the pools' seats tell a bot about
+/// them: where each lands and the epoch it starts. Cheap to clone, and
+/// filled when [`Epochs::schedule`] plans the session; empty before that,
+/// and for a session without epochs.
+#[derive(Clone, Default)]
+pub struct EpochPlan(Arc<OnceLock<Vec<(u64, u64)>>>);
+
+impl EpochPlan {
+    /// The session's next boundary after `slot`: the slots until its step's
+    /// blocks end there, which is when the clock jumps, and the epoch it
+    /// starts. None once every planned boundary has passed.
+    pub fn next(&self, slot: u64) -> Option<(u64, u64)> {
+        self.0
+            .get()?
+            .iter()
+            .find(|(at_slot, _)| *at_slot > slot)
+            .map(|(at_slot, epoch)| (at_slot - slot, *epoch))
+    }
+
+    /// Plan boundaries at `(slot, epoch)`, in order. Only the first call
+    /// counts.
+    pub fn set(&self, boundaries: Vec<(u64, u64)>) {
+        let _ = self.0.set(boundaries);
+    }
+}
+
 /// A session's epoch boundaries.
 pub struct Epochs {
     events: Vec<EpochEvent>,
@@ -180,6 +209,7 @@ impl Epochs {
         instruments: &[InstrumentRef],
         base_slot: u64,
         crank: Keypair,
+        plan: &EpochPlan,
     ) -> Result<(Self, u64)> {
         let schedule = rpc.get_epoch_schedule()?;
         let mut boundaries = Vec::new();
@@ -198,6 +228,7 @@ impl Epochs {
                 first_slot,
             });
         }
+        plan.set(boundaries.iter().map(|b| (b.at_slot, b.epoch)).collect());
         let mut paid = Vec::new();
         let mut layouts: BTreeMap<Pubkey, Vec<Layout>> = BTreeMap::new();
         let mut overrides = Vec::new();

@@ -55,14 +55,14 @@ use mtx_core::{
 };
 pub use mtx_kit::MarketKind;
 use mtx_kit::{
-    Action, Planned, Sent, Side, VenueInfo,
+    Action, Planned, Sent, Side, VenueInfo, VenueView,
     chain::ChainClient,
     protocols::{USDC_MINT, pyth, spot::MarketFill},
 };
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 
-use crate::{Error, Result};
+use crate::{Error, Result, epochs::EpochPlan};
 
 /// What a seat's own orders come to: the venue's error, as text.
 pub type SeatResult<T = ()> = std::result::Result<T, String>;
@@ -95,12 +95,12 @@ pub fn spot_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
 
 /// The venue `name` names, for stake-pool sessions: its pools read
 /// through `rpc_url`.
-pub fn stake_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
+pub fn stake_venue(name: &str, rpc_url: &str, plan: &EpochPlan) -> Result<Box<dyn Venue>> {
     if name == marinade::VENUE {
-        return Ok(Box::new(marinade::Marinade::new(rpc_url)));
+        return Ok(Box::new(marinade::Marinade::new(rpc_url, plan)));
     }
     if stake_pool::POOLS.iter().any(|p| p.venue == name) {
-        return Ok(Box::new(stake_pool::SplStakePools::new(name, rpc_url)));
+        return Ok(Box::new(stake_pool::SplStakePools::new(name, rpc_url, plan)));
     }
     Err(Error::UnknownMarket(format!(
         "{name} is not a stake-pool venue"
@@ -236,10 +236,11 @@ pub trait Seat: Send + Sync {
         0.0
     }
 
-    /// The venue's own numbers, by name, as the interface's `venue-view`
-    /// carries them: a stake pool's rate and fees, say. None by default.
-    async fn stats(&self) -> SeatResult<Vec<(String, f64)>> {
-        Ok(Vec::new())
+    /// Fill in what this market adds to a step's view of it, as the seat
+    /// reads it: a pool's numbers and the account's positions there.
+    async fn view(&self, view: &mut VenueView) -> SeatResult {
+        let _ = view;
+        Ok(())
     }
 }
 

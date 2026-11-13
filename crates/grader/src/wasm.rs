@@ -847,8 +847,9 @@ impl WasmBot {
             &step.tape,
             &step.depth,
         );
-        // A measured wallet's other markets: the same SOL held, and each
-        // seat's own top, where the step's depth didn't give one.
+        // A measured wallet's other markets: the same base held, and each
+        // seat's own top, where the step's depth didn't give one. Then what
+        // each market adds to its view (a pool's numbers and positions).
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
             for view in venues.iter_mut().skip(1) {
                 view.position = Some(position);
@@ -861,14 +862,11 @@ impl WasmBot {
                     (view.best_bid, view.best_ask) = (bid, ask);
                 }
             }
-            // The venues' own numbers, where a seat reads any: a stake pool's
-            // rate and fees.
             for view in &mut venues {
                 if let Some(seat) = self.desk.seats.iter().find(|s| s.market() == view.id)
-                    && let Ok(stats) = seat.stats().await
-                    && !stats.is_empty()
+                    && let Err(error) = seat.view(view).await
                 {
-                    view.stats = stats;
+                    tracing::warn!(step = k, market = %view.id, %error, "couldn't read the market's view");
                 }
             }
         }

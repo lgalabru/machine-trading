@@ -18,7 +18,7 @@ use mtx_core::{
     mandate::{InstrumentRef, Kind},
 };
 use mtx_kit::{
-    Action, Planned, Sent,
+    Action, Planned, Sent, VenueView,
     chain::{ChainClient, RpcChainClient, token},
     protocols::spot::MarketFill,
 };
@@ -32,10 +32,11 @@ use super::{
     Market, Seat, SeatResult, Venue, not_offered,
     stake_pool::{
         CLOCK, RENT, SYSTEM_PROGRAM, account_data, atoms, chain_error, epoch_stats, lamports,
-        not_sent, pool_fills, send_now, sol_holding, stake_amount, token_held, value_token,
+        not_sent, pool_fills, send_now, set_size, sol_holding, stake_amount, token_held,
+        value_token,
     },
 };
-use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+use crate::{Error, Result, epochs::EpochPlan, session::INTERNAL_RPC_TIMEOUT};
 
 pub const PROGRAM: Pubkey = pubkey!("MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD");
 pub const STATE: Pubkey = pubkey!("8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC");
@@ -373,13 +374,17 @@ async fn quote(chain: &dyn ChainClient) -> Result<(Option<f64>, Option<f64>, Mar
 pub struct Marinade {
     id: VenueId,
     rpc_url: String,
+    plan: EpochPlan,
 }
 
 impl Marinade {
-    pub fn new(rpc_url: &str) -> Self {
+    /// Marinade, read through `rpc_url`, in a session that plans `plan`'s
+    /// epoch boundaries.
+    pub fn new(rpc_url: &str, plan: &EpochPlan) -> Self {
         Self {
             id: VenueId::new(VENUE),
             rpc_url: rpc_url.into(),
+            plan: plan.clone(),
         }
     }
 
@@ -415,6 +420,7 @@ impl Venue for Marinade {
             instrument: self.instrument(),
             chain,
             mint: state.msol_mint,
+            plan: self.plan.clone(),
         }))
     }
 }
@@ -424,6 +430,7 @@ pub struct MarinadeMarket {
     instrument: InstrumentRef,
     chain: Arc<dyn ChainClient>,
     mint: Pubkey,
+    plan: EpochPlan,
 }
 
 impl MarinadeMarket {
@@ -508,6 +515,7 @@ impl Market for MarinadeMarket {
             market: self.instrument.to_string(),
             chain: Arc::new(RpcChainClient::new(rpc_url)),
             signer,
+            plan: self.plan.clone(),
         }))
     }
 }
@@ -517,6 +525,7 @@ pub struct MarinadeSeat {
     market: String,
     chain: Arc<dyn ChainClient>,
     signer: Keypair,
+    plan: EpochPlan,
 }
 
 impl MarinadeSeat {
@@ -602,10 +611,11 @@ impl Seat for MarinadeSeat {
         Ok(held as f64 / 1e9)
     }
 
-    async fn stats(&self) -> SeatResult<Vec<(String, f64)>> {
+    async fn view(&self, view: &mut VenueView) -> SeatResult {
         let chain = self.chain.as_ref();
         let (_, _, state, capacity) = quote(chain).await.map_err(|e| e.to_string())?;
-        let mut stats = vec![
+        set_size(view, self.position().await?);
+        view.stats = vec![
             ("rate".into(), crate::session::grader_f64(state.rate())),
             ("deposit_fee_bps".into(), 0.0),
             (
@@ -614,8 +624,9 @@ impl Seat for MarinadeSeat {
             ),
             ("instant_capacity_sol".into(), capacity as f64 / 1e9),
         ];
-        stats.extend(epoch_stats(chain).await.map_err(|e| e.to_string())?);
-        Ok(stats)
+        view.stats
+            .extend(epoch_stats(chain, &self.plan).await.map_err(|e| e.to_string())?);
+        Ok(())
     }
 }
 

@@ -26,7 +26,7 @@ use mtx_core::{
     mandate::{InstrumentRef, Kind},
 };
 use mtx_kit::{
-    Action, Planned, SendState, Sent,
+    Action, Planned, SendState, Sent, VenueView,
     chain::{
         ChainClient, ExecutionPlan, FireAndForgetOptions, InstructionGroup, RpcChainClient,
         SendMode, pack, token,
@@ -41,7 +41,7 @@ use solana_signer::Signer;
 use solana_transaction::{AccountMeta, Instruction};
 
 use super::{Market, Seat, SeatResult, Venue, not_offered, price_usd};
-use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+use crate::{Error, Result, epochs::EpochPlan, session::INTERNAL_RPC_TIMEOUT};
 
 /// The SPL stake pool program, and Sanctum's forks of it.
 pub const SPL_STAKE_POOL: Pubkey = pubkey!("SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy");
@@ -52,7 +52,6 @@ pub const STAKE_PROGRAM: Pubkey = pubkey!("Stake11111111111111111111111111111111
 pub const CLOCK: Pubkey = pubkey!("SysvarC1ock11111111111111111111111111111111");
 pub const STAKE_HISTORY: Pubkey = pubkey!("SysvarStakeHistory1111111111111111111111111");
 pub const RENT: Pubkey = pubkey!("SysvarRent111111111111111111111111111111111");
-pub const EPOCH_SCHEDULE: Pubkey = pubkey!("SysvarEpochSchedu1e111111111111111111111111");
 pub const SYSTEM_PROGRAM: Pubkey = pubkey!("11111111111111111111111111111111");
 /// A stake account's size.
 pub const STAKE_ACCOUNT_LEN: u64 = 200;
@@ -766,14 +765,17 @@ pub(super) async fn value_token(
 pub struct SplStakePools {
     id: VenueId,
     rpc_url: String,
+    plan: EpochPlan,
 }
 
 impl SplStakePools {
-    /// The pools `venue` names, read through `rpc_url`.
-    pub fn new(venue: &str, rpc_url: &str) -> Self {
+    /// The pools `venue` names, read through `rpc_url`, in a session that
+    /// plans `plan`'s epoch boundaries.
+    pub fn new(venue: &str, rpc_url: &str, plan: &EpochPlan) -> Self {
         Self {
             id: VenueId::new(venue),
             rpc_url: rpc_url.into(),
+            plan: plan.clone(),
         }
     }
 
@@ -810,7 +812,7 @@ impl Venue for SplStakePools {
             INTERNAL_RPC_TIMEOUT,
         ));
         Ok(Box::new(
-            StakePoolMarket::connect(instrument.clone(), *named, chain).await?,
+            StakePoolMarket::connect(instrument.clone(), *named, chain, self.plan.clone()).await?,
         ))
     }
 }
@@ -822,6 +824,7 @@ pub struct StakePoolMarket {
     chain: Arc<dyn ChainClient>,
     /// The pool's accounts, which don't change: its mint, reserve, list.
     state: PoolState,
+    plan: EpochPlan,
 }
 
 impl StakePoolMarket {
@@ -829,6 +832,7 @@ impl StakePoolMarket {
         instrument: InstrumentRef,
         named: NamedPool,
         chain: Arc<dyn ChainClient>,
+        plan: EpochPlan,
     ) -> Result<Self> {
         let state =
             PoolState::decode(&account_data(chain.as_ref(), &named.address, "stake pool").await?)?;
@@ -837,6 +841,7 @@ impl StakePoolMarket {
             named,
             chain,
             state,
+            plan,
         })
     }
 
@@ -956,6 +961,7 @@ impl Market for StakePoolMarket {
             named: self.named,
             chain: Arc::new(RpcChainClient::new(rpc_url)),
             signer,
+            plan: self.plan.clone(),
         }))
     }
 }
@@ -966,6 +972,7 @@ pub struct StakePoolSeat {
     named: NamedPool,
     chain: Arc<dyn ChainClient>,
     signer: Keypair,
+    plan: EpochPlan,
 }
 
 /// Send `instructions` as one transaction signed by `signer`, without
@@ -1018,23 +1025,34 @@ pub(super) fn not_sent(reason: impl Into<String>) -> Sent {
     }
 }
 
-/// A seat's stake-pool statistics, as `venue-view.stats` names them.
-pub(super) async fn epoch_stats(chain: &dyn ChainClient) -> Result<Vec<(String, f64)>> {
+/// What a pool's seat holds, as its view's position: the size is its own
+/// token's, and the entry keeps what the session's reader put there.
+pub(super) fn set_size(view: &mut VenueView, size: f64) {
+    let entry_usd = view.position.map_or(0.0, |p| p.entry_usd);
+    view.position = Some(mtx_kit::Position { size, entry_usd });
+}
+
+/// A seat's epoch statistics, as `venue-view.stats` names them: the chain's
+/// epoch, and, where the session plans another boundary, the slots to it and
+/// the epoch it starts. The boundary is the session's own: the clock jumps
+/// there when the slots run out, not at the schedule's natural epoch end.
+pub(super) async fn epoch_stats(
+    chain: &dyn ChainClient,
+    plan: &EpochPlan,
+) -> Result<Vec<(String, f64)>> {
     let word = |data: &[u8], at: usize| {
         data.get(at..at + 8)
             .map_or(0, |b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
     };
+    // Clock: slot, epoch start, epoch.
     let clock = account_data(chain, &CLOCK, "the clock").await?;
-    let schedule = account_data(chain, &EPOCH_SCHEDULE, "the epoch schedule").await?;
-    // Clock: slot, epoch start, epoch. EpochSchedule: slots per epoch, the
-    // leader schedule's offset, warmup, the first normal epoch and slot.
     let (slot, epoch) = (word(&clock, 0), word(&clock, 16));
-    let (per_epoch, first_normal_slot) = (word(&schedule, 0), word(&schedule, 25));
-    let into = slot.saturating_sub(first_normal_slot) % per_epoch.max(1);
-    Ok(vec![
-        ("epoch".into(), epoch as f64),
-        ("slots_to_epoch_end".into(), (per_epoch - into) as f64),
-    ])
+    let mut stats = vec![("epoch".into(), epoch as f64)];
+    if let Some((slots, next)) = plan.next(slot) {
+        stats.push(("slots_to_epoch_end".into(), slots as f64));
+        stats.push(("next_epoch".into(), next as f64));
+    }
+    Ok(stats)
 }
 
 impl StakePoolSeat {
@@ -1143,7 +1161,7 @@ impl Seat for StakePoolSeat {
         Ok(held as f64 / 1e9)
     }
 
-    async fn stats(&self) -> SeatResult<Vec<(String, f64)>> {
+    async fn view(&self, view: &mut VenueView) -> SeatResult {
         let chain = self.chain.as_ref();
         let (_, _, state) = quote(chain, &self.named.address)
             .await
@@ -1152,7 +1170,8 @@ impl Seat for StakePoolSeat {
             .await
             .map_err(|e| e.to_string())?;
         let bps = |fee: Fee| fee.rate() * 1e4;
-        let mut stats = vec![
+        set_size(view, self.position().await?);
+        view.stats = vec![
             ("rate".into(), crate::session::grader_f64(state.rate())),
             ("deposit_fee_bps".into(), bps(state.sol_deposit_fee)),
             ("withdraw_fee_bps".into(), bps(state.sol_withdrawal_fee)),
@@ -1160,8 +1179,9 @@ impl Seat for StakePoolSeat {
             ("last_update_epoch".into(), state.last_update_epoch as f64),
             ("epoch_fee_bps".into(), bps(state.epoch_fee)),
         ];
-        stats.extend(epoch_stats(chain).await.map_err(|e| e.to_string())?);
-        Ok(stats)
+        view.stats
+            .extend(epoch_stats(chain, &self.plan).await.map_err(|e| e.to_string())?);
+        Ok(())
     }
 }
 
