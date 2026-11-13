@@ -180,7 +180,6 @@ these holds:
    the exposure's value when the term starts.
 9. **Hedge.** A hedged position is on the same side as its `against`, or its
    absolute notional exceeds `max_ratio` times `against`'s.
-
 10. **Taking.** The account has a fill as the taker, in an instrument whose
     allowance sets `taking` to `"reduce_only"`, that leaves its position
     further from zero than before the fill, or on the other side of zero.
