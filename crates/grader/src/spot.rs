@@ -891,6 +891,12 @@ impl Account for SpotAccount {
         self.start_value_usd
     }
 
+    /// The session's last scan reads every fill the venues listed, for the
+    /// report, the order and the audit.
+    fn reads_fills(&self) -> bool {
+        true
+    }
+
     fn moment(&self, at: u64) -> Moment {
         // Nothing moves a spot market but its traders: the session's price
         // is where it started.
