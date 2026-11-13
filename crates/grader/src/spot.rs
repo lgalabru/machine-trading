@@ -1130,6 +1130,7 @@ impl Account for SpotAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             crank_refusals: done.crank_refusals,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,

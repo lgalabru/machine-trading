@@ -46,7 +46,7 @@ use crate::{
     },
     chain,
     guard::Guard,
-    making::{TAKER_ACCOUNTS, book_at, level_at},
+    making::{MakingFill, Parties, TAKER_ACCOUNTS, book_at, level_at},
     orders::{CloseOutReport, OrderReport},
     phoenix::{self, Phoenix},
     scenario::Scenario,
@@ -190,6 +190,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             (start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
         phoenix::widen_makers(surfnet, &phoenix, &scenario.symbol, half_spread_ticks)
     };
+    let mut parties = Parties::default();
     let takers = match (&scenario.making, &scenario.offhours) {
         (Some(making), _) => Some((
             widen(making.competitor_bps)?,
@@ -204,6 +205,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
             .map(|i| opts.keys.keypair("taker", i as u32))
             .collect();
+        parties.takers = keypairs
+            .iter()
+            .map(|k| phoenix.trader_account(&k.pubkey()))
+            .collect();
         let seats = onboard(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
         tracing::info!(takers = seats.len(), widened_ticks, "takers ready");
         cast.add(Box::new(Takers::new(
@@ -215,6 +220,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     if let Some(making) = &scenario.making {
         let keypair = opts.keys.keypair("competitor", 0);
+        parties.competitor = Some(phoenix.trader_account(&keypair.pubkey()));
         let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
             .await?
             .remove(0);
@@ -420,6 +426,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         observed.begin(&market_ref, start_position);
     }
     let vars = session_vars(scenario)?;
+    let bot_trader = meter.trader();
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
@@ -437,6 +444,13 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         fills: reads_fills.then(|| PerpFills {
             last_scan: base_slot,
             ..PerpFills::default()
+        }),
+        making_fills: scenario.making.is_some().then(|| MakingFills {
+            bot: bot_trader,
+            parties,
+            last_scan: base_slot,
+            seen: HashSet::new(),
+            fills: Vec::new(),
         }),
         oracle_starts,
         peak_value_usd: start_value_usd,
@@ -691,6 +705,16 @@ struct PerpFills {
     open_orders: Vec<(InstrumentRef, CoreSide)>,
 }
 
+/// A market-making session's record of the bot's fills.
+struct MakingFills {
+    bot: Pubkey,
+    parties: Parties,
+    /// The slot fills were last read at, read the way [`PerpFills`] reads.
+    last_scan: u64,
+    seen: HashSet<((u64, u32), bool)>,
+    fills: Vec<MakingFill>,
+}
+
 /// A perp session's account: the bot's Phoenix trader account, metered.
 struct PerpAccount {
     scenario: Scenario,
@@ -713,6 +737,8 @@ struct PerpAccount {
     start_position: f64,
     /// The bot's fills, where the session reads them.
     fills: Option<PerpFills>,
+    /// Its fills in a market-making session, with who traded against it.
+    making_fills: Option<MakingFills>,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
@@ -876,6 +902,7 @@ impl PerpAccount {
     /// resting, since the last read, at `slot`. Nothing where the session
     /// doesn't read them.
     async fn scan(&mut self, slot: u64) -> Result<()> {
+        self.scan_making(slot).await?;
         let Some(read) = self.fills.as_mut() else {
             return Ok(());
         };
@@ -897,6 +924,26 @@ impl PerpAccount {
             let seen = (instrument.clone(), placed.side);
             if !read.open_orders.contains(&seen) {
                 read.open_orders.push(seen);
+            }
+        }
+        read.last_scan = slot;
+        Ok(())
+    }
+
+    /// Read the market's fills since the last read, and keep the bot's:
+    /// each as the side it traded, with its counterparty and fee.
+    async fn scan_making(&mut self, slot: u64) -> Result<()> {
+        let Some(read) = self.making_fills.as_mut() else {
+            return Ok(());
+        };
+        let after = read.last_scan.saturating_sub(1);
+        let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
+        for fill in &records.fills {
+            for record in MakingFill::of(fill, &read.bot, &read.parties, self.base_slot) {
+                // A trade between the bot's own accounts is two records.
+                if read.seen.insert((fill.sequence, record.role == "taker")) {
+                    read.fills.push(record);
+                }
             }
         }
         read.last_scan = slot;
@@ -978,7 +1025,7 @@ impl Account for PerpAccount {
     }
 
     fn reads_fills(&self) -> bool {
-        self.fills.is_some()
+        self.fills.is_some() || self.making_fills.is_some()
     }
 
     fn moment(&self, at: u64) -> Moment {
@@ -1092,6 +1139,11 @@ impl Account for PerpAccount {
             .ticks_to_usd(&self.market, self.mark_ticks().await?);
         let observed = std::mem::take(&mut self.observed);
         let fills = self.fills.take().unwrap_or_default();
+        let making_fills = self
+            .making_fills
+            .take()
+            .map(|read| read.fills)
+            .unwrap_or_default();
         let close_usd = self
             .moment(done.end_slot.saturating_sub(self.base_slot))
             .level_usd;
@@ -1148,6 +1200,7 @@ impl Account for PerpAccount {
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
+            making_fills,
             crank_refusals: done.crank_refusals,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,

@@ -22,13 +22,111 @@
 //! Takers care about price: each order carries its own limit, so a maker
 //! quoting wider than a taker will pay doesn't fill it at all.
 
+use mtx_core::Side;
+use mtx_kit::protocols::phoenix::eternal::PerpFill;
 use serde::{Deserialize, Serialize};
+use solana_pubkey::Pubkey;
 
-use crate::scenario::{Scenario, SplitMix64, VENUE, Waypoint};
+use crate::{
+    scenario::{Scenario, SplitMix64, VENUE, Waypoint},
+    session::{StaticName, static_name},
+};
 
 /// Taker accounts the grader trades from. Every order picks one at random,
 /// so an account says nothing about whether its flow is informed.
 pub const TAKER_ACCOUNTS: u8 = 8;
+
+/// Phoenix's taker fee, as a share of the notional. A fill's event carries
+/// no fee, so the record prices it from the bot's role: a maker pays none.
+pub const TAKER_FEE: f64 = 0.00035;
+
+/// Who the bot traded against in a [`MakingFill`].
+pub const TAKER: StaticName = "taker";
+pub const COMPETITOR: StaticName = "competitor";
+/// Phoenix's own resting orders and splines: the snapshot's makers, which
+/// the fill event doesn't tell apart.
+pub const BOOK: StaticName = "book";
+
+/// One of a market-making bot's fills, as the grade's decomposition reads
+/// it: when, which side, at what price and size, whether the bot rested or
+/// took, who was on the other side, and what it paid.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MakingFill {
+    /// Slots into the session it landed at.
+    pub at: u64,
+    /// The bot's side.
+    pub side: Side,
+    /// `maker` if its order rested, `taker` if it crossed.
+    #[serde(deserialize_with = "static_name")]
+    pub role: StaticName,
+    /// The other side: a grader `taker`, the grader's `competitor`, or the
+    /// `book`.
+    #[serde(deserialize_with = "static_name")]
+    pub counterparty: StaticName,
+    /// Price in USDC per base unit, before fees, and size in base units.
+    pub price: f64,
+    pub base: f64,
+    /// The fee it paid in USDC: [`TAKER_FEE`] of the notional as a taker,
+    /// none as a maker.
+    pub fee_usd: f64,
+}
+
+/// The trader accounts the grader's actors trade from, to name a fill's
+/// counterparty.
+#[derive(Debug, Clone, Default)]
+pub struct Parties {
+    pub takers: Vec<Pubkey>,
+    pub competitor: Option<Pubkey>,
+}
+
+impl Parties {
+    fn name(&self, account: &Pubkey) -> StaticName {
+        if self.competitor.as_ref() == Some(account) {
+            COMPETITOR
+        } else if self.takers.contains(account) {
+            TAKER
+        } else {
+            BOOK
+        }
+    }
+}
+
+impl MakingFill {
+    /// `fill` as the bot's trader account `bot` traded it, if it did.
+    pub fn of(fill: &PerpFill, bot: &Pubkey, parties: &Parties, base_slot: u64) -> Vec<Self> {
+        let price = crate::session::grader_f64(fill.price);
+        let base = crate::session::grader_f64(fill.quantity);
+        let at = fill.slot.saturating_sub(base_slot);
+        let mut out = Vec::new();
+        let mut push = |side, role, other: &Pubkey, fee| {
+            out.push(Self {
+                at,
+                side,
+                role,
+                counterparty: parties.name(other),
+                price,
+                base,
+                fee_usd: fee,
+            });
+        };
+        if fill.taker == *bot {
+            push(
+                fill.taker_side,
+                "taker",
+                &fill.maker,
+                price * base * TAKER_FEE,
+            );
+        }
+        if fill.maker == *bot {
+            let side = match fill.taker_side {
+                Side::Buy => Side::Sell,
+                Side::Sell => Side::Buy,
+            };
+            push(side, "maker", &fill.taker, 0.0);
+        }
+        out
+    }
+}
 
 /// What a market-making scenario adds to the price path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -793,5 +891,98 @@ mod tests {
         );
         assert!(making.competition.floor_bps < making.competitor_bps);
         assert_eq!(s.validate(), Ok(()));
+    }
+
+    fn account(n: u8) -> Pubkey {
+        Pubkey::new_from_array([n; 32])
+    }
+
+    fn fill(taker: Pubkey, maker: Pubkey, side: Side) -> PerpFill {
+        PerpFill {
+            slot: 1_050,
+            instrument: mtx_kit::InstrumentId("phoenix:perp:SPCX".into()),
+            sequence: (7, 3),
+            taker,
+            maker,
+            taker_side: side,
+            price: "123.45".parse().unwrap(),
+            quantity: "2.5".parse().unwrap(),
+            unix_timestamp: 0,
+        }
+    }
+
+    fn parties() -> Parties {
+        Parties {
+            takers: vec![account(10), account(11)],
+            competitor: Some(account(20)),
+        }
+    }
+
+    #[test]
+    fn a_resting_bot_hit_by_a_taker_records_a_maker_fill_without_a_fee() {
+        let bot = account(1);
+        // A taker buys: the bot, resting, sold.
+        let fills = MakingFill::of(&fill(account(11), bot, Side::Buy), &bot, &parties(), 1_000);
+        assert_eq!(
+            fills,
+            [MakingFill {
+                at: 50,
+                side: Side::Sell,
+                role: "maker",
+                counterparty: TAKER,
+                price: 123.45,
+                base: 2.5,
+                fee_usd: 0.0,
+            }]
+        );
+        // A taker sells: the bot bought.
+        let fills = MakingFill::of(&fill(account(10), bot, Side::Sell), &bot, &parties(), 1_000);
+        assert_eq!(fills[0].side, Side::Buy);
+        assert_eq!(fills[0].role, "maker");
+    }
+
+    #[test]
+    fn a_crossing_bot_records_a_taker_fill_with_phoenixs_fee() {
+        let bot = account(1);
+        // Against the competitor's quote, then Phoenix's own makers.
+        let fills = MakingFill::of(&fill(bot, account(20), Side::Buy), &bot, &parties(), 1_000);
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].side, Side::Buy);
+        assert_eq!(fills[0].role, "taker");
+        assert_eq!(fills[0].counterparty, COMPETITOR);
+        assert!((fills[0].fee_usd - 123.45 * 2.5 * 0.00035).abs() < 1e-12);
+        let fills = MakingFill::of(&fill(bot, account(99), Side::Sell), &bot, &parties(), 1_000);
+        assert_eq!(fills[0].side, Side::Sell);
+        assert_eq!(fills[0].counterparty, BOOK);
+    }
+
+    #[test]
+    fn other_accounts_fills_are_not_the_bots() {
+        let bot = account(1);
+        let others = fill(account(10), account(20), Side::Buy);
+        assert!(MakingFill::of(&others, &bot, &parties(), 0).is_empty());
+    }
+
+    #[test]
+    fn a_fill_between_the_bots_own_accounts_counts_once_each_way() {
+        let bot = account(1);
+        let fills = MakingFill::of(&fill(bot, bot, Side::Buy), &bot, &parties(), 0);
+        let roles: Vec<_> = fills.iter().map(|f| (f.role, f.side)).collect();
+        assert_eq!(roles, [("taker", Side::Buy), ("maker", Side::Sell)]);
+    }
+
+    #[test]
+    fn a_fill_round_trips_through_the_report() {
+        let record = MakingFill {
+            at: 3,
+            side: Side::Buy,
+            role: "maker",
+            counterparty: COMPETITOR,
+            price: 99.5,
+            base: 1.0,
+            fee_usd: 0.0,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert_eq!(serde_json::from_str::<MakingFill>(&json).unwrap(), record);
     }
 }

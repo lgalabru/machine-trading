@@ -1058,6 +1058,7 @@ mod tests {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             crank_refusals: Vec::new(),
             oracle_starts: Default::default(),
             turns: Default::default(),
