@@ -19,3 +19,6 @@ __pycache__/
 
 # Agent worktrees.
 .claude/worktrees/
+
+# Fitter download cache.
+/calibration/fitter/.cache/
