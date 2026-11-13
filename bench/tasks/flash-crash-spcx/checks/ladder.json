@@ -53,6 +53,10 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/exploits/flash-crash-fable-0.10"
     }
   ],
+  "gates": {
+    "informed": ["regime-oracle"],
+    "non_reading": ["nop", "blind-long", "blind-short", "dip-buyer", "momentum"]
+  },
   "rules": [
     "max(blind-long, blind-short) < reference",
     "dip-buyer < reference",
