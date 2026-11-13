@@ -132,6 +132,7 @@ pub async fn studio(options: StudioOptions<'_>) -> Result<()> {
     let task = crate::bot::resolve_task(&root, options.task)?;
     let snapshot = crate::bot::task_snapshot(&root, &task)?;
     seed_scenarios(&dir)?;
+    seed_agents(&dir)?;
     let (events, _) = broadcast::channel(4096);
     let studio = Arc::new(Studio {
         dir: dir.clone(),
@@ -233,6 +234,16 @@ pub(crate) fn builtin_scenario(name: &str) -> Option<&'static [u8]> {
     ASSETS
         .get_file(format!("scenarios/{name}.json"))
         .map(|f| f.contents())
+}
+
+/// A workspace without an `AGENTS.md` gets the starter's: the rules the
+/// agent reads on every turn (every line documented). One it has is its own.
+fn seed_agents(dir: &Path) -> Result<()> {
+    let to = dir.join("AGENTS.md");
+    if !to.exists() {
+        std::fs::write(&to, crate::bot::STARTER_AGENTS)?;
+    }
+    Ok(())
 }
 
 /// Every workspace gets the studio's own scenarios (`studio/scenarios/`)

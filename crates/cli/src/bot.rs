@@ -28,6 +28,9 @@ const REPO_URL: &str = "https://github.com/lgalabru/machine-trading";
 const BUILT_COMMIT: Option<&str> = option_env!("MTX_GIT_COMMIT");
 const STARTER_LIB: &str = include_str!("../../../bots/starter/src/lib.rs");
 const STARTER_JUSTFILE: &str = include_str!("../../../bots/starter/Justfile");
+/// What a coding agent working on a bot is told on every turn (Claude Code
+/// and Codex both read `AGENTS.md`): every line documented, sizes from the cap.
+pub(crate) const STARTER_AGENTS: &str = include_str!("../../../bots/starter/AGENTS.md");
 /// The kit's features a strategy component builds with.
 const KIT_FEATURES: &str = r#"default-features = false, features = ["component", "venue"]"#;
 /// The workspace's lockfile, so a new bot builds against the versions the
@@ -210,6 +213,7 @@ path = "src/lib.rs"
     std::fs::write(dir.join("Cargo.lock"), LOCKFILE)?;
     std::fs::write(dir.join("src/lib.rs"), STARTER_LIB)?;
     std::fs::write(dir.join("Justfile"), STARTER_JUSTFILE)?;
+    std::fs::write(dir.join("AGENTS.md"), STARTER_AGENTS)?;
     std::fs::write(dir.join(".gitignore"), "/target\n/bot.wasm\n")?;
     Ok(format!(
         "made a bot in {}\n\n  rustup target add wasm32-wasip2   # once: the bot builds into a wasm component\n  cd {}\n  mtx bot run --debug               # build it, and watch it play one session, step by step\n  mtx bot practice                  # grade it on the practice scenarios\n\nThe strategy goes in src/lib.rs. A first strategy, step by step: https://lgalabru.github.io/machine-trading/guides/bots/first-strategy.html\nThe rules it runs under: https://lgalabru.github.io/machine-trading/guides/bots/writing-a-bot.html",
