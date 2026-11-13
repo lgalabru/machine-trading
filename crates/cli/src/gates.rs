@@ -1036,11 +1036,15 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         }
     };
     match std::fs::read_to_string(&summary_path) {
-        Ok(text) => {
-            let summary: LadderSummary =
-                serde_json::from_str(&text).with_context(|| summary_path.display().to_string())?;
-            checks.extend(ladder_checks(&summary, &signal, opts.fast));
-        }
+        Ok(text) => match serde_json::from_str::<LadderSummary>(&text) {
+            Ok(summary) => checks.extend(ladder_checks(&summary, &signal, opts.fast)),
+            Err(e) => checks.push(Check::fail(
+                SOLVABLE,
+                "ladder",
+                "Skill ladder ran",
+                format!("couldn't read {}: {e}", summary_path.display()),
+            )),
+        },
         Err(e) => checks.push(Check::fail(
             SOLVABLE,
             "ladder",
