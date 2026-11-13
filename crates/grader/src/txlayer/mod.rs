@@ -1,5 +1,5 @@
 //! The transaction layer: how a session's transactions land, when a
-//! scenario turns it on (`tx_layer`, see `specs/tx-layer.md`).
+//! scenario turns it on (`tx_layer`, see `docs/tx-layer.md`).
 //!
 //! Without it, the bot's guard forwards a send at once and the surfnet runs
 //! it on receipt. With it, nothing the bot sends runs on receipt. **Collect,

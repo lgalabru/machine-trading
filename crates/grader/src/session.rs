@@ -308,8 +308,8 @@ pub struct TurnReport {
     /// didn't load, or it trapped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped: Option<String>,
-    /// A component's lines that carried transaction options, which the
-    /// session accepted and didn't apply (no session does yet).
+    /// A component's lines that carried transaction options: applied under
+    /// a transaction layer, accepted and not applied elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_options: Option<u64>,
 }
