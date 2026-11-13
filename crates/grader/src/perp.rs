@@ -18,7 +18,7 @@ use mtx_core::{
     turns::Step,
 };
 use mtx_kit::{
-    BotEnv,
+    BotEnv, Side,
     chain::RpcChainClient,
     phoenix_rise::types::exchange::ExchangeMarketConfig,
     protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
@@ -35,7 +35,8 @@ use crate::{
     guard::Guard,
     making::{TAKER_ACCOUNTS, book_at, level_at},
     phoenix::{self, Phoenix},
-    scenario::Scenario,
+    risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
+    scenario::{STOP_OUT_LIMIT_BPS, Scenario},
     session::{
         Account, BOT_USERS, DEPOSIT_USDC, Done, INTERNAL_RPC_TIMEOUT, IxRecord, OrderRecord,
         Prepared, SessionDir, SessionOptions, SessionReport, StepRecord, Timeline, World,
@@ -481,6 +482,57 @@ impl Account for PerpAccount {
         decode_instruction(ix, keys, &self.phoenix, &self.market)
     }
 
+    /// Cancel the bot's orders, then sell a long (buy back a short) with
+    /// market orders through the book, each at most `slice`, limited
+    /// [`STOP_OUT_LIMIT_BPS`] through the best price, reading the position
+    /// back from Phoenix after each.
+    async fn force_close(
+        &mut self,
+        bot: &Keypair,
+        rpc_url: &str,
+        slice: Option<f64>,
+        at: u64,
+    ) -> Result<Closing> {
+        let seat = self.perp.seat(bot.insecure_clone(), rpc_url).await?;
+        if let Err(error) = seat.cancel_all().await {
+            tracing::warn!(%error, "stop-out: cancelling the bot's orders failed");
+        }
+        let mut position = position_in(&self.measure().await?, &self.market_id);
+        let mut orders = Vec::new();
+        while !is_flat(position) && orders.len() < MAX_CLOSE_ORDERS_PER_STEP {
+            let (side, name) = if position > 0.0 {
+                (Side::Ask, "sell")
+            } else {
+                (Side::Bid, "buy")
+            };
+            let size = slice.map_or(position.abs(), |s| s.min(position.abs()));
+            let (bid, ask) = seat.top().await.map_err(Error::StopOut)?;
+            let through = STOP_OUT_LIMIT_BPS / 10_000.0;
+            let limit_usd = match side {
+                Side::Ask => bid.unwrap_or(self.start_mark_usd) * (1.0 - through),
+                Side::Bid => ask.unwrap_or(self.start_mark_usd) * (1.0 + through),
+            };
+            let sent = seat.take(side, size, limit_usd).await;
+            let after = position_in(&self.measure().await?, &self.market_id);
+            let moved = (after - position).abs() > 0.0;
+            orders.push(CloseOrder {
+                at,
+                side: name.into(),
+                size,
+                limit_usd,
+                position_after: after,
+                ok: sent.is_ok(),
+                error: sent.err(),
+            });
+            position = after;
+            // A book that took nothing won't take more this step.
+            if !moved {
+                break;
+            }
+        }
+        Ok(Closing { orders, position })
+    }
+
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         let scenario = &self.scenario;
         let end = self.measure().await?;
@@ -525,6 +577,7 @@ impl Account for PerpAccount {
             participation: None,
             net: None,
             crank_refusals: done.crank_refusals,
+            forced_closes: done.forced_closes,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {

@@ -433,6 +433,7 @@ impl WeekendFamily {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
         };
         (scenario, shape)
     }

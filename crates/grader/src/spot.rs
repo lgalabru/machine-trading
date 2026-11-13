@@ -1065,6 +1065,7 @@ impl Account for SpotAccount {
             participation,
             net,
             crank_refusals: done.crank_refusals,
+            forced_closes: done.forced_closes,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1129,6 +1130,7 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
             turn_data: None,
             oracles: None,
             order: None,
