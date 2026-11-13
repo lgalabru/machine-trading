@@ -152,6 +152,9 @@ pub enum Kind {
     /// A spot market, where the base asset changes hands. The position is
     /// the account's holdings of the base asset, wherever they sit.
     Spot,
+    /// Liquidity in a pool. The position is the base asset its positions
+    /// hold, fees included.
+    Amm,
 }
 
 impl Mandate {
@@ -549,6 +552,7 @@ impl InstrumentRef {
             Holding::Perp(_) => "perp",
             Holding::Spot(_) => "spot",
             Holding::MoneyMarket(_) => "money-market",
+            Holding::Amm(_) => "amm",
         };
         match id.0.split(':').nth(1) {
             Some(kind) if kind == held => id.0.parse(),
@@ -606,6 +610,7 @@ impl fmt::Display for Kind {
         f.write_str(match self {
             Self::Perp => "perp",
             Self::Spot => "spot",
+            Self::Amm => "amm",
         })
     }
 }
@@ -617,6 +622,7 @@ impl FromStr for Kind {
         match s {
             "perp" => Ok(Self::Perp),
             "spot" => Ok(Self::Spot),
+            "amm" => Ok(Self::Amm),
             "future" | "option" | "money-market" => Err(format!(
                 "instrument kind {s:?} is reserved; this reader enforces perp and spot only"
             )),
@@ -663,6 +669,13 @@ mod tests {
                 .unwrap_err()
                 .contains("reserved")
         );
+    }
+
+    #[test]
+    fn a_pools_liquidity_is_an_amm_instrument() {
+        let pool: InstrumentRef = "raydium:amm:SPCX-USDC".parse().unwrap();
+        assert_eq!(pool.kind, Kind::Amm);
+        assert_eq!(pool.to_string(), "raydium:amm:SPCX-USDC");
     }
 
     #[test]

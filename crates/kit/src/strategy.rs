@@ -152,6 +152,7 @@ impl From<mtx_core::mandate::Kind> for MarketKind {
         match kind {
             mtx_core::mandate::Kind::Perp => MarketKind::Perp,
             mtx_core::mandate::Kind::Spot => MarketKind::Spot,
+            mtx_core::mandate::Kind::Amm => MarketKind::Amm,
         }
     }
 }

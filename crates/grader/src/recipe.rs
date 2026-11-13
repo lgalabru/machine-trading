@@ -123,6 +123,9 @@ pub enum Action {
     PhoenixEternal(EternalSpec),
     /// Trade SOL/USDC on Phoenix v1 and OpenBook v2 as a spot session does.
     SpotExercise,
+    /// Trade the Raydium and Meteora pools the profiles name as a pool
+    /// session does: swaps, and a position opened and taken out.
+    PoolsExercise,
     /// A simulated mint.
     CreateMint(MintSpec),
     /// A simulated Phoenix v1 market, seeded around `price`.
@@ -323,6 +326,9 @@ impl World<'_> {
             }
             Action::SpotExercise => {
                 self.price = Some(spot_exercise(self.surfnet, &self.rpc).await?);
+            }
+            Action::PoolsExercise => {
+                self.price = Some(pools_exercise(self.surfnet, &self.rpc).await?);
             }
             Action::CreateMint(spec) => {
                 let address = simulated::create_mint(self.surfnet, &self.namespace, spec)?;
@@ -542,6 +548,32 @@ async fn spot_exercise(surfnet: &Surfnet, rpc: &RpcClient) -> Result<f64> {
     let warmup = Keypair::new();
     crate::spot::fund(surfnet, rpc, &warmup, 10.0, 2_000.0, false)?;
     let price = crate::spot::exercise(surfnet.rpc_url(), &warmup).await?;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    Ok(price)
+}
+
+/// Trade every pool the Raydium and Meteora profiles name with a throwaway
+/// trader, holding each pool's assets. Returns the base's Pyth price.
+async fn pools_exercise(surfnet: &Surfnet, rpc: &RpcClient) -> Result<f64> {
+    let warmup = Keypair::new();
+    let mut funded = Vec::new();
+    for venue in crate::spot::POOLS {
+        for pool in crate::venue::books::named_markets(venue)? {
+            if !funded.contains(&pool.base_mint) {
+                crate::spot::fund_pair(
+                    surfnet,
+                    rpc,
+                    &warmup,
+                    &pool.base_mint,
+                    10.0,
+                    2_000.0,
+                    true,
+                )?;
+                funded.push(pool.base_mint);
+            }
+        }
+    }
+    let price = crate::spot::exercise_pools(surfnet.rpc_url(), &warmup).await?;
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(price)
 }

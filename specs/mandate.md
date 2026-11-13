@@ -71,8 +71,9 @@ An instrument is referenced as `<venue>:<kind>:<symbol>`, for example
 
 - `venue` names a [venue profile](venues/), such as `phoenix` or `openbook`.
 - `kind` names an [instrument profile](instruments/). This specification
-  defines `perp`, `spot` and `money-market`. `future` and `option` are
-  reserved for later, and a reader MUST reject them.
+  defines `perp`, `spot` and `money-market`, and proposes `amm` (a pool's
+  liquidity, a draft for review). `future` and `option` are reserved for
+  later, and a reader MUST reject them.
 - `symbol` is the market's identifier on the venue, as the venue profile
   defines it.
 

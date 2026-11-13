@@ -44,7 +44,7 @@ use solana_signer::Signer;
 
 use super::{Market, Seat, SeatResult};
 /// The book venues a spot session can trade on.
-pub use crate::spot::VENUES;
+pub const VENUES: [&str; 2] = ["phoenix", "openbook"];
 use crate::{Error, Result, session::grader_f64};
 
 /// One spot book's market, decoded once.
@@ -61,11 +61,14 @@ pub struct BookMarket {
     market: Decoded,
 }
 
-/// The markets `venue`'s profile names (`phoenix` or `openbook`).
+/// The markets `venue`'s profile names: `phoenix`'s or `openbook`'s books,
+/// or `raydium`'s or `meteora`'s pools.
 pub fn named_markets(venue: &str) -> Result<&'static [NamedMarket]> {
     match venue {
         "phoenix" => Ok(phoenix_v1::MARKETS),
         "openbook" => Ok(openbook_v2::MARKETS),
+        "raydium" => Ok(mtx_kit::protocols::raydium::clmm::POOLS),
+        "meteora" => Ok(mtx_kit::protocols::meteora::dlmm::POOLS),
         other => Err(not_a_book(other)),
     }
 }
@@ -673,6 +676,8 @@ impl SessionVenues {
                     let program = match venue.as_str() {
                         "phoenix" => phoenix_v1::PROGRAM_ID,
                         "openbook" => openbook_v2::PROGRAM_ID,
+                        "raydium" => mtx_kit::protocols::raydium::clmm::PROGRAM_ID,
+                        "meteora" => mtx_kit::protocols::meteora::dlmm::PROGRAM_ID,
                         other => return Err(not_a_book(other)),
                     };
                     let named = named_markets(venue)?
@@ -783,6 +788,12 @@ mod tests {
     fn a_component_is_told_every_market_and_where_its_orders_go() {
         let venues = SessionVenues::of(&["openbook".into(), "phoenix".into()], "SOL-USDC").unwrap();
         assert!(SessionVenues::of(&["raydium".into()], "SOL-USDC").is_err());
+        let pools = SessionVenues::of(&["raydium".into(), "meteora".into()], "SPCX-USDC").unwrap();
+        let pools = serde_json::to_value(&pools).unwrap();
+        assert_eq!(
+            pools["markets"][1]["program"],
+            mtx_kit::protocols::meteora::dlmm::PROGRAM_ID.to_string()
+        );
         let json = serde_json::to_value(&venues).unwrap();
         assert_eq!(json["orders"], "openbook");
         assert_eq!(
