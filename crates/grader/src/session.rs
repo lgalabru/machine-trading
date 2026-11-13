@@ -193,7 +193,7 @@ pub struct SessionReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     /// How the bot's turns went.
     pub turns: TurnReport,
