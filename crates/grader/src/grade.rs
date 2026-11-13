@@ -18,13 +18,16 @@
 //! mandate (trades outside its market, goes over the position cap, or draws
 //! down past its limit), or ends liquidatable disqualifies the bot: the
 //! reward is 0. Risk is otherwise reported, not scored: see [`Risk`].
+//!
+//! A finished grade can be scored again from what it wrote, without
+//! running a session: see [`rescore`].
 
 use std::{collections::BTreeMap, path::Path};
 
 use futures::StreamExt;
 use mtx_core::MeterError;
 use mtx_kit::core::{Decomposition, MarkoutMeter, MarkoutSample};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::{
@@ -32,7 +35,7 @@ use crate::{
     error::io_error,
     keys::{RoleKeys, SessionKeys},
     scenario::Scenario,
-    session::{self, SessionOptions, SessionReport},
+    session::{self, SessionOptions, SessionReport, StepRecord, Timeline},
 };
 
 #[derive(Debug, Serialize)]
@@ -226,8 +229,9 @@ pub struct GradeOptions<'a> {
     pub jobs: usize,
     /// The first of [`session::BOT_USERS`] this grade's bots run as; it
     /// uses `jobs` of them from there. Graders running at once on one
-    /// machine need ranges that don't overlap: a session's end kills every
-    /// process of its bot user.
+    /// machine never share a user at the same time (see
+    /// [`session::BotUserLock`]); ranges that don't overlap keep them from
+    /// waiting for each other.
     pub first_bot_user: usize,
     /// A reference bot to run on the same scenarios first, as the baseline,
     /// with `anchor_jobs` sessions at once (it's trusted: it can share the
@@ -308,10 +312,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     if opts.components_only && crate::wasm::component_in(opts.bot_dir).is_none() {
         let reason = Error::NotAComponent(opts.bot_dir.to_path_buf()).to_string();
         tracing::warn!("{reason}: the reward is 0");
-        let mut report = score(Vec::new());
-        report.not_graded = Some(reason);
-        report.skill = Some(0.0);
-        return Ok(report);
+        return Ok(not_graded(reason));
     }
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
@@ -376,6 +377,89 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         "graded"
     );
     Ok(report)
+}
+
+/// The report of a bot that wasn't graded at all: 0.
+fn not_graded(reason: String) -> GradeReport {
+    let mut report = score(Vec::new());
+    report.not_graded = Some(reason);
+    report.skill = Some(0.0);
+    report
+}
+
+/// A session as its detail file holds it (see [`GradeOptions::detail_dir`]):
+/// what [`rescore`] reads back.
+#[derive(Debug, Deserialize)]
+pub struct StoredSession {
+    /// The scenario as the session played it, the reference's PnL in it.
+    pub scenario: Scenario,
+    pub report: SessionReport,
+    pub timeline: StoredTimeline,
+}
+
+/// The part of a session's timeline scoring reads: the market and the
+/// account at every step. The transactions and calls are left out.
+#[derive(Debug, Deserialize)]
+pub struct StoredTimeline {
+    pub start_slot: u64,
+    pub end_slot: u64,
+    pub slots_per_step: u64,
+    pub start_mark_usd: f64,
+    pub steps: Vec<StepRecord>,
+}
+
+impl StoredSession {
+    /// The session's report, its timeline's steps back in it, and its
+    /// scenario.
+    pub fn into_parts(self) -> (SessionReport, Scenario) {
+        let StoredTimeline {
+            start_slot,
+            end_slot,
+            slots_per_step,
+            start_mark_usd,
+            steps,
+        } = self.timeline;
+        let mut report = self.report;
+        report.timeline = Timeline {
+            start_slot,
+            end_slot,
+            slots_per_step,
+            start_mark_usd,
+            steps,
+            ..Timeline::default()
+        };
+        (report, self.scenario)
+    }
+}
+
+/// What a grade's report says beyond its sessions, read back from it for
+/// [`rescore`].
+#[derive(Debug, Default, Deserialize)]
+pub struct Verdict {
+    pub tampered: Option<String>,
+    pub not_graded: Option<String>,
+    pub eval_seed_sha256: Option<String>,
+}
+
+/// Score a finished grade again from what it wrote, without running a
+/// session: its bot's sessions, in the report's order, each with the
+/// scenario it played (see [`StoredSession`]), and what the report said
+/// beyond them. With the scoring rules unchanged, the result is the grade's
+/// report, but for a replay check's section and the reference's sessions;
+/// with them changed, the grade the same sessions get under the new ones.
+pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> GradeReport {
+    let mut report = match verdict.not_graded {
+        Some(reason) => not_graded(reason),
+        None => {
+            let (reports, scenarios): (Vec<_>, Vec<_>) = sessions.into_iter().unzip();
+            score(reports.into_iter().zip(&scenarios).collect())
+        }
+    };
+    report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    if let Some(reason) = verdict.tampered {
+        report.tamper(reason);
+    }
+    report
 }
 
 /// Lift this process's soft limit on open files to its hard limit. Every
@@ -643,15 +727,23 @@ pub async fn calibrate(
     Ok(sessions)
 }
 
-/// Run every scenario, one per bot user in `bot_users` at a time, reports in
-/// scenario order.
+/// The most sessions of a strategy component a grade runs at once.
+pub const MAX_COMPONENT_JOBS: usize = 32;
+
+/// Run every scenario, `bot_users.len()` at a time, reports in scenario
+/// order.
 ///
-/// Concurrent sessions each get their own surfnet, and run their bots as
-/// different users (see [`session::BOT_USERS`]). Sessions are kept in an
-/// ordered window of `jobs` (the range's length), so the ones running at
-/// once always have distinct `bot_users.start + index % jobs` slots. A
-/// machine too loaded for `jobs` grades slower, not differently. `trusted`
-/// bots get [`SessionOptions::trusted`].
+/// Concurrent sessions share nothing: each has its own surfnet, ports, RPC
+/// guard, directory, keys (derived from the session, not the order it ran
+/// in) and, for a component, its own store and fuel. So a grade comes out
+/// the same whatever `jobs` is, and a machine too loaded for it grades
+/// slower, not differently. A process bot also runs as its own user (see
+/// [`session::BOT_USERS`]), one of `bot_users` that no other session
+/// running holds (and no other grade on the machine: see
+/// [`session::BotUserLock`]), so `jobs` is at most the number of users. A
+/// component needs no user: up to [`MAX_COMPONENT_JOBS`] of its sessions run
+/// at once. A new session starts as soon as any one ends. `trusted` bots
+/// get [`SessionOptions::trusted`].
 #[allow(clippy::too_many_arguments)]
 async fn run_sessions(
     snapshot_dir: &Path,
@@ -666,74 +758,208 @@ async fn run_sessions(
     keys: RoleKeys<'_>,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
-    if !(1..=session::BOT_USERS.len()).contains(&jobs) {
-        return Err(Error::Jobs(jobs, session::BOT_USERS.len()));
+    let components = crate::wasm::component_in(bot_dir).is_some();
+    let most = if components {
+        MAX_COMPONENT_JOBS
+    } else {
+        session::BOT_USERS.len()
+    };
+    if !(1..=most).contains(&jobs) {
+        return Err(Error::Jobs(jobs, most));
     }
-    if bot_users.end > session::BOT_USERS.len() {
+    if !components && bot_users.end > session::BOT_USERS.len() {
         return Err(Error::BotUsers {
             first: first_bot_user,
             jobs,
             users: session::BOT_USERS.len(),
         });
     }
+    // A component may grow to its memory cap in every session: run no more
+    // at once than the machine's memory holds, or the grader is killed.
+    let jobs = if components {
+        let limit = memory_limit();
+        let fit = jobs_for_memory(jobs, limit);
+        if fit < jobs {
+            info!(
+                jobs,
+                fit,
+                limit = ?limit,
+                "fewer sessions at once: the memory holds no more"
+            );
+        }
+        fit
+    } else {
+        jobs
+    };
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
     raise_open_file_limit();
+    // The bot users free for a process bot's sessions: each takes one while
+    // it runs, so the ones running at once never share.
+    let free = std::sync::Mutex::new(if components {
+        Vec::new()
+    } else {
+        (first_bot_user..first_bot_user + jobs).rev().collect()
+    });
     let sessions = futures::stream::iter(scenarios.iter().enumerate())
         .map(|(index, scenario)| {
             let observer = observer.clone();
+            let free = &free;
             async move {
-            // Stagger the first sessions so their surfnets don't race for
-            // the same free ports.
-            if index < jobs {
-                tokio::time::sleep(STAGGER * index as u32).await;
-            }
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
+            let user = UserSlot::take(free);
             let run = || {
                 session::run(SessionOptions {
                     snapshot_dir,
                     scenario,
                     bot_dir,
                     bot_log: &bot_log,
-                    slot: first_bot_user + index % jobs,
+                    slot: user.slot,
                     regime: regimes.and_then(|r| r.get(index)).map(String::as_str),
+                    cranks: None,
                     trusted,
                     observer: observer.clone(),
                     keys: keys.session(index, &scenario.name),
                 })
             };
+            // Another grade on this machine may use the same bot user, and
+            // a session's end kills everything its user runs: hold the user
+            // while the session runs.
+            let _held = match user.slot {
+                Some(slot) => match session::BotUserLock::acquire(session::BOT_USERS[slot]).await {
+                    Ok(held) => Some(held),
+                    Err(error) => return (index, Err(error)),
+                },
+                None => None,
+            };
             // A session whose setup fails on the machine (a request to its
             // own surfnet that can't get through on a loaded host) runs once
             // more, from a fresh surfnet. Its bot hadn't started, so it sees
             // the session once either way. A second failure fails the grade.
-            match run().await {
+            let report = match run().await {
                 Err(Error::Setup(error)) if is_transient(&error) => {
                     warn!(scenario = scenario.name, %error, "session setup failed on the machine; running it again");
                     run().await
                 }
                 done => done,
-            }
+            };
+            (index, report)
         }
         })
-        .buffered(jobs);
+        // A new session starts whenever any one ends: a long session doesn't
+        // hold up the ones behind it.
+        .buffer_unordered(jobs);
+    in_order(sessions, scenarios.len(), stop_on_disqualify).await
+}
+
+/// What a component's session may take in memory beyond the strategy's own
+/// cap ([`crate::wasm::MEMORY_BYTES`]): its surfnet, guard, takers and the
+/// grader's records. A market-making session, the largest, measures about
+/// 0.8 GB; this leaves headroom.
+pub const SESSION_WORLD_BYTES: u64 = 1 << 30;
+/// What the grader holds apart from its sessions: the snapshot cache, the
+/// scenarios, the reports so far.
+pub const GRADER_BASE_BYTES: u64 = 3 << 29;
+
+/// How many of a component's sessions fit in `limit` bytes of memory at
+/// once, each at its strategy's cap (at least one, at most `jobs`).
+fn jobs_for_memory(jobs: usize, limit: Option<u64>) -> usize {
+    let Some(limit) = limit else {
+        return jobs;
+    };
+    let per_session = crate::wasm::MEMORY_BYTES as u64 + SESSION_WORLD_BYTES;
+    let fit = limit.saturating_sub(GRADER_BASE_BYTES) / per_session;
+    (fit as usize).clamp(1, jobs)
+}
+
+/// The memory this process may use: its cgroup's limit (a container's, as
+/// the verifier's), else the machine's.
+fn memory_limit() -> Option<u64> {
+    let cgroup = [
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ]
+    .iter()
+    .filter_map(|path| std::fs::read_to_string(path).ok())
+    .find_map(|text| text.trim().parse::<u64>().ok());
+    let total = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            let kb = text
+                .lines()
+                .find(|line| line.starts_with("MemTotal:"))?
+                .split_whitespace()
+                .nth(1)?
+                .parse::<u64>()
+                .ok()?;
+            Some(kb * 1024)
+        });
+    // cgroup v1 reports "no limit" as a huge number.
+    match (cgroup, total) {
+        (Some(cgroup), Some(total)) => Some(cgroup.min(total)),
+        (cgroup, total) => cgroup.or(total),
+    }
+}
+
+/// One of the free bot users, taken for a session and given back when it
+/// ends (or is dropped). `None` for a component, which needs none.
+struct UserSlot<'a> {
+    free: &'a std::sync::Mutex<Vec<usize>>,
+    slot: Option<usize>,
+}
+
+impl<'a> UserSlot<'a> {
+    fn take(free: &'a std::sync::Mutex<Vec<usize>>) -> Self {
+        let slot = free
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop();
+        Self { free, slot }
+    }
+}
+
+impl Drop for UserSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot {
+            self.free
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(slot);
+        }
+    }
+}
+
+/// Sessions' reports as they end, `(index, report)`, put back in scenario
+/// order. With `stop_on_disqualify`, the reports stop at the first
+/// disqualifying session in that order, once every session before it has
+/// ended: the same reports whatever order they ended in.
+async fn in_order(
+    sessions: impl futures::Stream<Item = (usize, Result<SessionReport>)>,
+    count: usize,
+    stop_on_disqualify: bool,
+) -> Result<Vec<SessionReport>> {
     let mut sessions = std::pin::pin!(sessions);
-    let mut reports = Vec::with_capacity(scenarios.len());
-    while let Some(report) = sessions.next().await {
+    let mut done: Vec<Option<SessionReport>> = (0..count).map(|_| None).collect();
+    let mut first_breach: Option<usize> = None;
+    while let Some((index, report)) = sessions.next().await {
         let report = report?;
-        let stop = stop_on_disqualify && disqualification(&report).is_some();
-        reports.push(report);
-        if stop {
+        if stop_on_disqualify && disqualification(&report).is_some() {
+            first_breach = Some(first_breach.map_or(index, |first| first.min(index)));
+        }
+        done[index] = Some(report);
+        if let Some(last) = first_breach
+            && done[..=last].iter().all(Option::is_some)
+        {
             warn!(
-                after = reports.len(),
-                of = scenarios.len(),
+                after = last + 1,
+                of = count,
                 "disqualified: the grade is 0; stopping"
             );
+            done.truncate(last + 1);
             break;
         }
     }
-    Ok(reports)
+    Ok(done.into_iter().flatten().collect())
 }
-
-const STAGGER: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Errors from the grader's own machinery talking to its surfnet, as
 /// opposed to a missing bot, an invalid scenario or a loaded machine
@@ -818,6 +1044,7 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            crank_refusals: Vec::new(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -871,11 +1098,13 @@ mod tests {
             stake: None,
             faults: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
         }
     }
@@ -968,6 +1197,91 @@ mod tests {
         let rewards = marked.rewards();
         assert!((rewards["edge_usd"] - 3.0).abs() < 1e-9);
         assert!((rewards["luck_usd"] - 10.0).abs() < 1e-9);
+    }
+
+    /// A grade's sessions as its detail files hold them, read back.
+    fn stored(dir: &Path, names: &[&str]) -> Vec<(SessionReport, Scenario)> {
+        use std::io::Read;
+        names
+            .iter()
+            .map(|name| {
+                let mut json = String::new();
+                flate2::read::GzDecoder::new(
+                    std::fs::File::open(dir.join(format!("bot/{name}.json.gz"))).unwrap(),
+                )
+                .read_to_string(&mut json)
+                .unwrap();
+                serde_json::from_str::<StoredSession>(&json)
+                    .unwrap()
+                    .into_parts()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_grade_scored_again_from_its_details_is_the_same_report() {
+        let dir = std::env::temp_dir().join(format!("mtx-rescore-{}", uuid::Uuid::new_v4()));
+        let mut marked = scenario(Some(200.37));
+        marked.name = "marked".into();
+        marked.fair_path = Some(vec![Waypoint {
+            slot: 15,
+            level_pct: 1.0,
+            premium_pct: 0.0,
+        }]);
+        let mut traded = traded_session();
+        traded.scenario = "marked".into();
+        // PnL as the meter computes it: not short decimals.
+        let mut odd = session(67.143_261_999_999_6);
+        odd.end_value_usd = 10_167.143_262;
+        odd.max_drawdown_usd = 39.389_592_999_999_88;
+        odd.turns.fuel_used = Some(43_524_702_445);
+        let mut breached = session(0.1 + 0.2);
+        breached.scenario = "breached".into();
+        breached.refused_calls = vec!["surfnet_setAccount".into()];
+        let mut plain = scenario(Some(-13.07));
+        plain.name = "breached".into();
+        let sessions = [
+            (odd, scenario(Some(2.0))),
+            (traded, marked),
+            (breached, plain),
+        ];
+        let scenarios: Vec<Scenario> = sessions.iter().map(|(_, s)| s.clone()).collect();
+        let reports: Vec<SessionReport> = sessions.iter().map(|(r, _)| r.clone()).collect();
+        write_details(&dir, "bot", &reports, &scenarios, None).unwrap();
+        let mut graded = score(reports.into_iter().zip(&scenarios).collect());
+        graded.eval_seed_sha256 = Some("ab".repeat(32));
+
+        let verdict = Verdict {
+            eval_seed_sha256: graded.eval_seed_sha256.clone(),
+            ..Verdict::default()
+        };
+        let again = rescore(stored(&dir, &["s", "marked", "breached"]), verdict);
+        assert_eq!(
+            serde_json::to_string_pretty(&again).unwrap(),
+            serde_json::to_string_pretty(&graded).unwrap()
+        );
+        assert!(again.markout.is_none() && again.scenarios[1].markout.is_some());
+        assert_eq!(again.reward, 0.0, "the breach still disqualifies");
+
+        // What the report said beyond its sessions carries over.
+        let tampered = rescore(
+            stored(&dir, &["s"]),
+            Verdict {
+                tampered: Some("a bot wrote reward.json".into()),
+                ..Verdict::default()
+            },
+        );
+        assert_eq!(tampered.reward, 0.0);
+        assert!(tampered.tampered.is_some());
+        let skipped = rescore(
+            Vec::new(),
+            Verdict {
+                not_graded: Some("no bot.wasm".into()),
+                ..Verdict::default()
+            },
+        );
+        assert_eq!(skipped.skill, Some(0.0));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1104,6 +1418,98 @@ mod tests {
         assert!(run(2, 2).await.unwrap().is_empty());
         assert!(run(0, 4).await.unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&logs);
+    }
+
+    #[tokio::test]
+    async fn a_components_sessions_run_many_at_once_with_no_bot_users() {
+        let logs = std::env::temp_dir().join(format!("mtx-logs-{}", uuid::Uuid::new_v4()));
+        let bot = std::env::temp_dir().join(format!("mtx-component-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&bot).unwrap();
+        std::fs::write(bot.join(crate::wasm::BOT_WASM), b"").unwrap();
+        let keys = SessionKeys::random();
+        let run = |first: usize, jobs: usize| {
+            run_sessions(
+                Path::new("."),
+                &bot,
+                &[],
+                &logs,
+                first..first + jobs,
+                None,
+                false,
+                false,
+                None,
+                keys.role("bot"),
+            )
+        };
+        assert!(run(0, 16).await.unwrap().is_empty());
+        assert!(run(3, MAX_COMPONENT_JOBS).await.unwrap().is_empty());
+        assert!(matches!(
+            run(0, MAX_COMPONENT_JOBS + 1).await,
+            Err(Error::Jobs(_, MAX_COMPONENT_JOBS))
+        ));
+        assert!(matches!(run(0, 0).await, Err(Error::Jobs(0, _))));
+        // A process bot's sessions still take one bot user each.
+        std::fs::remove_file(bot.join(crate::wasm::BOT_WASM)).unwrap();
+        assert!(matches!(run(0, 5).await, Err(Error::Jobs(5, 4))));
+        let _ = std::fs::remove_dir_all(&bot);
+        let _ = std::fs::remove_dir_all(&logs);
+    }
+
+    #[tokio::test]
+    async fn reports_come_back_in_order_and_stop_at_the_first_breach_in_it() {
+        let named = |index: usize, breach: bool| {
+            let mut report = session(index as f64);
+            report.scenario = format!("s{index}");
+            if breach {
+                report.refused_calls = vec!["surfnet_setAccount".into()];
+            }
+            (index, Ok(report))
+        };
+        let names = |reports: Vec<SessionReport>| -> Vec<String> {
+            reports.into_iter().map(|r| r.scenario).collect()
+        };
+        let ended = vec![
+            named(2, false),
+            named(0, false),
+            named(3, false),
+            named(1, false),
+        ];
+        let all = in_order(futures::stream::iter(ended), 4, true)
+            .await
+            .unwrap();
+        assert_eq!(names(all), ["s0", "s1", "s2", "s3"]);
+        // Session 3 breached first, then 1 did: the reports end at 1, as
+        // they would one at a time.
+        let ended = vec![
+            named(3, true),
+            named(0, false),
+            named(1, true),
+            named(2, false),
+        ];
+        let stopped = in_order(futures::stream::iter(ended), 4, true)
+            .await
+            .unwrap();
+        assert_eq!(names(stopped), ["s0", "s1"]);
+        // Without stopping, every report comes back.
+        let ended = vec![named(1, true), named(0, false)];
+        let kept = in_order(futures::stream::iter(ended), 2, false)
+            .await
+            .unwrap();
+        assert_eq!(names(kept), ["s0", "s1"]);
+    }
+
+    #[test]
+    fn a_components_sessions_at_once_fit_the_memory() {
+        let gib = 1u64 << 30;
+        // The verifier's 6 GiB: two sessions at their cap.
+        assert_eq!(jobs_for_memory(4, Some(6 * gib)), 2);
+        assert_eq!(jobs_for_memory(4, Some(64 * gib)), 4);
+        assert_eq!(jobs_for_memory(32, Some(64 * gib)), 31);
+        // Never none, and never more than asked.
+        assert_eq!(jobs_for_memory(4, Some(gib)), 1);
+        assert_eq!(jobs_for_memory(1, Some(64 * gib)), 1);
+        assert_eq!(jobs_for_memory(8, None), 8);
+        assert!(memory_limit().is_none_or(|limit| limit > 0));
     }
 
     #[test]

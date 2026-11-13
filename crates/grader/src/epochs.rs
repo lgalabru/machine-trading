@@ -134,7 +134,7 @@ enum Paid {
 }
 
 /// What a boundary did, for the session's report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EpochRecord {
     pub step: u64,
     pub epoch: u64,
@@ -144,11 +144,11 @@ pub struct EpochRecord {
     /// Each pool's SOL per token, before and after.
     pub rates: Vec<PoolRate>,
     /// A crank the pool refused: why. The bot shares the pool.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refused: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PoolRate {
     pub instrument: InstrumentRef,
     pub before: f64,
@@ -640,6 +640,36 @@ fn idl(program: &Pubkey, layouts: &[Layout]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A grade rescored from its report reads a stake session's section
+    /// back, the epochs it crossed included.
+    #[test]
+    fn a_stake_report_reads_back() {
+        use crate::stake::StakeReport;
+        let report = StakeReport {
+            epochs: vec![EpochRecord {
+                step: 10,
+                epoch: 1086,
+                slot: 469_159_500,
+                reward_bps: 1.4,
+                rates: vec![PoolRate {
+                    instrument: "marinade:stake-pool:MSOL".parse().unwrap(),
+                    before: 1.4177,
+                    after: 1.4179,
+                }],
+                refused: Vec::new(),
+            }],
+            ..StakeReport::default()
+        };
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(!text.contains("refused"));
+        assert_eq!(serde_json::from_str::<StakeReport>(&text).unwrap(), report);
+        let empty = serde_json::to_string(&StakeReport::default()).unwrap();
+        assert_eq!(
+            serde_json::from_str::<StakeReport>(&empty).unwrap(),
+            StakeReport::default()
+        );
+    }
 
     fn event(step: u64, reward_bps: f64) -> EpochEvent {
         EpochEvent { step, reward_bps }

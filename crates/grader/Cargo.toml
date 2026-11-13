@@ -19,8 +19,8 @@ phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Derives each session's keypairs from the grade's secret (see src/keys.rs), and
-# hashes a snapshot recipe.
+# Derives each session's keypairs from the grade's secret (see src/keys.rs),
+# hashes a snapshot recipe, and pins market-calibration files (src/market).
 sha2 = "0.10"
 # The clock an epoch boundary moves to (src/epochs.rs), as Surfpool takes it.
 solana-clock = "3.2"

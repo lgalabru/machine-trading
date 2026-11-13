@@ -94,9 +94,11 @@ pub struct StartingTokens {
 }
 
 impl Stake {
-    /// A stake-pool scenario trades known pools under a mandate whose
-    /// universe is exactly them, and has none of the other kinds' sections.
-    pub fn validate(&self, scenario: &Scenario) -> std::result::Result<(), String> {
+    /// The section on its own: known pools, listed once, and a wallet of
+    /// them. What ties it to the rest of the scenario (the mandate, the
+    /// symbol, the epochs against the session's steps) is checked there (see
+    /// [`crate::scenario_v2::ScenarioV2::validate`]).
+    pub fn validate(&self) -> std::result::Result<(), String> {
         if self.pools.is_empty() {
             return Err("stake: no pools".into());
         }
@@ -137,55 +139,12 @@ impl Stake {
         if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
             return Err("stake: bound_usd must be a number".into());
         }
-        let mut wanted = self.pools.clone();
-        let mut universe: Vec<InstrumentRef> = scenario
-            .mandate
-            .universe
-            .iter()
-            .map(|a| a.instrument.clone())
-            .collect();
-        wanted.sort();
-        universe.sort();
-        if wanted != universe {
-            return Err("mandate: the universe must be exactly the stake pools".into());
-        }
-        if scenario.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if scenario.symbol != self.pools[0].symbol {
-            return Err(format!(
-                "stake: the symbol is the first pool's, {}",
-                self.pools[0].symbol
-            ));
-        }
-        if !scenario.path.is_empty()
-            || scenario.making.is_some()
-            || scenario.offhours.is_some()
-            || scenario.funding.is_some()
-            || scenario.fair_path.is_some()
-            || !scenario.tape.is_empty()
-            || scenario.faults.is_some()
-            || scenario.turn_data.is_some()
-            || scenario.order.is_some()
-            || scenario.participation.is_some()
-            || scenario.net.is_some()
-        {
-            return Err(
-                "stake: a stake-pool scenario has only its pools, wallet and epochs".into(),
-            );
-        }
-        if scenario.duration_slots == 0 {
-            return Err("stake: the session has no slots".into());
-        }
-        crate::epochs::validate(
-            &self.epochs,
-            scenario.duration_slots.div_ceil(SLOTS_PER_STEP),
-        )
+        Ok(())
     }
 }
 
 /// What a stake-pool session's account holds, and what it's worth.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StakeWallet {
     /// SOL in the wallet, and SOL waiting in delayed exits.
     pub sol: f64,
@@ -197,7 +156,7 @@ pub struct StakeWallet {
     pub value_usd: f64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Held {
     pub instrument: InstrumentRef,
     pub amount: f64,
@@ -205,7 +164,7 @@ pub struct Held {
 }
 
 /// A stake-pool session's account of the bot's wallet and trading.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StakeReport {
     pub start: StakeWallet,
     pub end: StakeWallet,
@@ -213,7 +172,7 @@ pub struct StakeReport {
     /// a stake buys the token, an unstake sells it, at SOL per token.
     pub fills: Vec<SpotFill>,
     /// The epoch boundaries the session crossed.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub epochs: Vec<EpochRecord>,
 }
 
@@ -405,7 +364,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let start = pools.read().await?;
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    let workdir = SessionDir::create(&bot, opts.slot.map(|slot| BOT_USERS[slot]))?;
     let mut slot = rpc.get_slot()?;
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
@@ -749,6 +708,7 @@ impl Account for StakeAccount {
             order: None,
             participation: None,
             net: None,
+            crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
