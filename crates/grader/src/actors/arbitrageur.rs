@@ -50,7 +50,7 @@ impl ArbitrageSpec {
 }
 
 /// What the arbitrageur did in a session.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ArbitrageReport {
     /// Orders it sent, and how many failed.
     pub sent: usize,

@@ -430,7 +430,7 @@ impl Observed {
 /// The lowest and highest position an account held in one instrument, in
 /// base units, signed as its instrument profile signs it: short or borrowed
 /// below zero. Both include flat, where every session starts.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PositionRange {
     pub instrument: InstrumentRef,
     pub lowest: f64,

@@ -160,7 +160,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    let user = opts.slot.map(|slot| BOT_USERS[slot]);
+    let workdir = SessionDir::create(&bot, user)?;
     let mut slot = rpc.get_slot()?;
     // Slots from the surfnet's start to the session's. Setup produces a few
     // of its own (each onboarding, one), the same ones every run; the world
@@ -229,6 +230,16 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World {
+                phoenix: Some((perp_asset_map, start_mark_ticks)),
+            },
+        )?;
+    }
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -513,6 +524,7 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {

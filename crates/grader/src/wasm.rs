@@ -26,7 +26,7 @@ use std::{
 use mtx_kit::{Intent, LineOptions, Planned, SendSource, SendState, SendStatus};
 use rand::SeedableRng;
 use wasmtime::{
-    Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
+    Config, Engine, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder,
     component::{Component, HasSelf, Linker, ResourceTable},
 };
 use wasmtime_wasi::{
@@ -68,8 +68,89 @@ pub const FUEL_PER_CALL: u64 = 10_000_000_000;
 /// the funding-carry reference spends, the most of the references.
 pub const FUEL_PER_STEP: u64 = 2_000_000_000;
 
-/// The most linear memory a strategy may grow to, in bytes.
+/// The most linear memory a strategy may grow to, in bytes, all of its
+/// memories together.
 pub const MEMORY_BYTES: usize = 1 << 30;
+
+/// The most linear memories, and core instances, one component may hold. A
+/// component built from Rust has one memory and about four instances (the
+/// module, the WASI adapter and the glue between them); this leaves room
+/// for a few more modules, not for a swarm.
+const MEMORIES: usize = 8;
+const INSTANCES: usize = 32;
+
+/// The most tables, and table elements in all, a component may hold.
+const TABLES: usize = 16;
+const TABLE_ELEMENTS: usize = 1 << 20;
+
+/// Limits on what a strategy's store may hold: `MEMORY_BYTES` across all of
+/// its memories (Wasmtime's own limit is per memory), and a count of each
+/// kind of thing that takes space.
+struct Limits {
+    inner: StoreLimits,
+    memory: usize,
+}
+
+impl Limits {
+    fn new() -> Self {
+        Self {
+            inner: StoreLimitsBuilder::new()
+                .memory_size(MEMORY_BYTES)
+                .memories(MEMORIES)
+                .instances(INSTANCES)
+                .tables(TABLES)
+                .table_elements(TABLE_ELEMENTS)
+                .trap_on_grow_failure(true)
+                .build(),
+            memory: 0,
+        }
+    }
+}
+
+impl ResourceLimiter for Limits {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let total = self.memory.saturating_add(desired.saturating_sub(current));
+        if total > MEMORY_BYTES || !self.inner.memory_growing(current, desired, maximum)? {
+            return Ok(false);
+        }
+        self.memory = total;
+        Ok(true)
+    }
+
+    fn memory_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.inner.memory_grow_failed(error)
+    }
+
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.inner.table_growing(current, desired, maximum)
+    }
+
+    fn table_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.inner.table_grow_failed(error)
+    }
+
+    fn instances(&self) -> usize {
+        self.inner.instances()
+    }
+
+    fn tables(&self) -> usize {
+        self.inner.tables()
+    }
+
+    fn memories(&self) -> usize {
+        self.inner.memories()
+    }
+}
 
 /// The most `rpc` calls one step may make, and the most `send` calls.
 const RPC_CALLS_PER_STEP: u32 = 256;
@@ -180,7 +261,9 @@ struct Host {
     /// for, as the kit has them: what a test or the debug view shows.
     raw_calls: u32,
     raw_sends: Vec<mtx_kit::RawTransaction>,
-    limits: StoreLimits,
+    /// What takes the raw sends, in a session that enables them.
+    raw: Option<crate::raw::RawSender>,
+    limits: Limits,
 }
 
 impl WasiView for Host {
@@ -242,9 +325,9 @@ impl v2::StrategyImports for Host {
         Host::rpc(self, method, params).await
     }
 
-    /// Reserved for raw sends (the grader-signed `send`): no session enables
-    /// them yet. A malformed transaction is refused for what is wrong with
-    /// it; any other, because raw sends are off.
+    /// A raw send (`crate::raw`): a malformed transaction is refused for
+    /// what is wrong with it; any other, in a session without raw sends,
+    /// because they are off.
     async fn send(
         &mut self,
         tx: v2::mtx::strategy::types::RawTransaction,
@@ -256,10 +339,17 @@ impl v2::StrategyImports for Host {
         let tx = wit2::raw_transaction(tx);
         let checked = tx.check();
         if self.raw_sends.len() < RAW_SENDS_KEPT {
-            self.raw_sends.push(tx);
+            self.raw_sends.push(tx.clone());
         }
         checked?;
-        Err("raw sends aren't enabled in this session".into())
+        let Some(raw) = self.raw.as_mut() else {
+            return Err("raw sends aren't enabled in this session".into());
+        };
+        let receipt = raw.take(tx).await?;
+        Ok(v2::mtx::strategy::types::RawReceipt {
+            id: receipt.id,
+            fresh_signers: receipt.fresh_signers,
+        })
     }
 }
 
@@ -344,6 +434,7 @@ impl WasmStrategy {
         let wasm_error = |e: wasmtime::Error| Error::Wasm(format!("{}: {e:#}", path.display()));
         let mut config = Config::new();
         config.consume_fuel(true);
+        config.wasm_multi_memory(false);
         let engine = Engine::new(&config).map_err(wasm_error)?;
         let component = Component::from_file(&engine, path).map_err(wasm_error)?;
         let linker = |add: fn(&mut Linker<Host>) -> wasmtime::Result<()>| {
@@ -391,10 +482,8 @@ impl WasmStrategy {
             rpc_calls: 0,
             raw_calls: 0,
             raw_sends: Vec::new(),
-            limits: StoreLimitsBuilder::new()
-                .memory_size(MEMORY_BYTES)
-                .trap_on_grow_failure(true)
-                .build(),
+            raw: None,
+            limits: Limits::new(),
         };
         let mut store = Store::new(&engine, host);
         store.limiter(|host| &mut host.limits);
@@ -459,6 +548,16 @@ impl WasmStrategy {
     /// refused or not.
     pub fn raw_sends(&self) -> &[mtx_kit::RawTransaction] {
         &self.store.data().raw_sends
+    }
+
+    /// Let the strategy's steps send raw transactions, through `raw`.
+    pub fn enable_raw_sends(&mut self, raw: crate::raw::RawSender) {
+        self.store.data_mut().raw = Some(raw);
+    }
+
+    /// What takes the strategy's raw sends, if the session enables them.
+    pub fn raw_sender(&mut self) -> Option<&mut crate::raw::RawSender> {
+        self.store.data_mut().raw.as_mut()
     }
 
     /// What the last call printed, its fuel, and its `rpc` calls.
@@ -563,6 +662,10 @@ pub struct Account {
     pub position_change: f64,
     /// The scenario's planned level at the step.
     pub level_usd: f64,
+    /// The price the session values the position at, where it isn't
+    /// Phoenix's mark: market making's oracle level, or the book's level
+    /// where the book trades at a premium.
+    pub valued_at_usd: Option<f64>,
 }
 
 /// One step of a component's session, as `mtx bot run --debug` shows it:
@@ -687,6 +790,7 @@ pub struct WasmBot {
 impl WasmBot {
     /// Loads the component and calls its `start`. Its own `rpc` reads go to
     /// `rpc_url`, the bot's guarded endpoint.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         path: &Path,
         rpc_url: &str,
@@ -695,6 +799,7 @@ impl WasmBot {
         desk: Desk,
         log: Box<dyn Write + Send>,
         observer: Option<std::sync::Arc<dyn StepObserver>>,
+        raw: Option<crate::raw::RawConfig>,
     ) -> crate::Result<Self> {
         let Clock {
             steps,
@@ -741,6 +846,19 @@ impl WasmBot {
             reports,
             applies_tx_options: false,
         };
+        // Raw sends are a perp session's: a scenario enables them nowhere
+        // else. They go out as the sheet's do, through the desk's trader.
+        if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
+            (strategy.as_mut(), raw, &desk.reader)
+        {
+            strategy.enable_raw_sends(crate::raw::RawSender::new(
+                raw,
+                trader.authority(),
+                trader.env.exchange()?,
+                &trader.env.symbol,
+                &trader.env.rpc_url,
+            ));
+        }
         if let Some(strategy) = strategy.as_mut() {
             let failed = match strategy.start(&session).await {
                 Outcome::Done(()) => None,
@@ -929,7 +1047,20 @@ impl WasmBot {
             self.last = Some(market);
             return false;
         };
+        if let Some(raw) = strategy.raw_sender() {
+            raw.begin(k, self.account).await;
+        }
         let outcome = strategy.step(&market).await;
+        let raw = strategy.raw_sender();
+        let dropped = match &outcome {
+            Outcome::Done(_) => raw.map(|raw| {
+                raw.close();
+                Vec::new()
+            }),
+            Outcome::Failed(_) => raw.map(|raw| raw.discard("the step failed")),
+            Outcome::Trapped(_) => raw.map(|raw| raw.discard("the strategy trapped")),
+        };
+        self.sends.extend(dropped.into_iter().flatten());
         let mut trace = self.observer.as_ref().map(|_| {
             let (printed, fuel, rpc_calls) = strategy.last_call();
             StepTrace {
@@ -1037,6 +1168,13 @@ impl WasmBot {
             });
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
+        // Raw sends go after the sheet, whatever became of it.
+        if let (Some(raw), Reader::Perp(trader)) = (
+            self.strategy.as_mut().and_then(WasmStrategy::raw_sender),
+            &self.desk.reader,
+        ) {
+            self.sends.extend(raw.flush(&trader.keypair).await);
+        }
         self.observe(trace);
         true
     }
@@ -1781,7 +1919,51 @@ mod tests {
         .unwrap()
     }
 
-    /// The reference as a component: set `MTX_TEST_WASM` to `bots/reference`'s
+    fn limited_store() -> (Engine, Store<Limits>) {
+        let mut config = Config::new();
+        config.wasm_multi_memory(false);
+        let engine = Engine::new(&config).unwrap();
+        let mut store = Store::new(&engine, Limits::new());
+        store.limiter(|limits| limits);
+        (engine, store)
+    }
+
+    fn memory_module(engine: &Engine, pages: u32) -> wasmtime::Module {
+        wasmtime::Module::new(engine, format!("(module (memory {pages}))")).unwrap()
+    }
+
+    /// Wasmtime's own limit is per memory: several memories, each under the
+    /// cap, must still stop at the cap in all.
+    #[test]
+    fn memories_together_stay_under_the_cap() {
+        let (engine, mut store) = limited_store();
+        let half = memory_module(&engine, 6 * 1024); // 384 MiB of 64 KiB pages
+        for _ in 0..2 {
+            wasmtime::Instance::new(&mut store, &half, &[]).unwrap();
+        }
+        let refused = wasmtime::Instance::new(&mut store, &half, &[]);
+        assert!(refused.is_err(), "a third 384 MiB memory fits under 1 GiB");
+
+        let (engine, mut store) = limited_store();
+        let over = memory_module(&engine, 16 * 1024 + 1);
+        assert!(wasmtime::Instance::new(&mut store, &over, &[]).is_err());
+    }
+
+    /// A swarm of small instances is refused at the memory count, and a
+    /// module with two memories at validation.
+    #[test]
+    fn instances_and_multi_memory_are_refused() {
+        let (engine, mut store) = limited_store();
+        let small = memory_module(&engine, 1);
+        let made = (0..INSTANCES + 1)
+            .map(|_| wasmtime::Instance::new(&mut store, &small, &[]))
+            .filter(Result::is_ok)
+            .count();
+        assert_eq!(made, MEMORIES);
+        assert!(wasmtime::Module::new(&engine, "(module (memory 1) (memory 1))").is_err());
+    }
+
+    /// The reference as a component: set `MTX_TEST_WASM` to the flash-crash reference's
     /// component build (`just build`), and `MTX_TEST_WASM_V1` to one built
     /// on `mtx:strategy@0.1.0` to check that it plays the same.
     #[tokio::test(flavor = "multi_thread")]

@@ -87,7 +87,7 @@ every frozen bot on both sets (odds 1.000), and no rung outside the ones
 allowed to breach was refused or disqualified. The reference's deepest
 drawdown was $729.
 
-`just ladder weekend-gap` grades the ladder (`bench/checks/ladder`) on fresh
+`just ladder weekend-gap-spcx` grades the ladder (`checks/`) on fresh
 hidden sets: following and fading the perp's move, trading the basis
 against the index, and a regression fitted to generated sessions must score
 below the reference; the reference told who is informed, and the one told

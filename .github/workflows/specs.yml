@@ -4,8 +4,9 @@ name: Specs
 # served by this repository's GitHub Pages at lgalabru.github.io/machine-trading.
 # It carries the benchmark too, at /bench/: every release in bench/results,
 # shown by the same page `mtx bench review` serves, with its data written out
-# as files (`mtx bench export`). Publishing a release (committing
-# bench/results/<version>) republishes the site.
+# as files (`mtx bench export`, which fetches each release's archive from
+# the results dataset on Hugging Face). Publishing a release (committing
+# bench/results/<version>/release.json) republishes the site.
 # Pushes to main publish it; pull requests only build it.
 on:
   push:
