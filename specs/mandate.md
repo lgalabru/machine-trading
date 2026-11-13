@@ -60,6 +60,7 @@ An **allowance** is an object:
 | `min_sell_price` | number | no | The lowest price at which the account may sell, in the instrument's quote currency per base unit. MUST be positive. Not for `money-market` instruments. |
 | `max_buy_price` | number | no | The highest price at which the account may buy, in the same units. MUST be positive. Not for `money-market` instruments. |
 | `hedge` | object | no | v0.1. The position may be held only against another instrument's. See [Hedges](#hedges). |
+| `taking` | string | no | v0.1. `"reduce_only"`: a fill in which the account is the taker may only bring the position toward zero, never open it, add to it or take it past zero. Positions are then opened only by orders that rest and fill as a maker. Absent, taking is unrestricted. Not for `money-market` instruments. |
 
 A reader MUST reject a mandate with a member it does not know, at any level.
 A limit a reader doesn't know is one it can't enforce, and a mandate read as
@@ -180,6 +181,11 @@ these holds:
 9. **Hedge.** A hedged position is on the same side as its `against`, or its
    absolute notional exceeds `max_ratio` times `against`'s.
 
+10. **Taking.** The account has a fill as the taker, in an instrument whose
+    allowance sets `taking` to `"reduce_only"`, that leaves its position
+    further from zero than before the fill, or on the other side of zero.
+    A fill as the maker is never a take.
+
 Rules 7 to 9 hold at any one measurement: each is checked against what the
 account holds at that moment, at that moment's prices, not against ranges
 over the term. As for rule 2, open orders do not count until they fill.
@@ -223,9 +229,10 @@ also gate. It MUST state how often it measures. An audit that samples can
 miss a breach between two samples, and the venue profile says what is
 measured. Rules 2, 3 and 7 to 9 are sampled.
 
-The rules on fills (sides and limit prices) are checked against every fill
-the venue records during the term, not a sample. An enforcer MUST read every
-fill, from the venue's own records.
+The rules on fills (sides, limit prices and taking) are checked against
+every fill the venue records during the term, not a sample. An enforcer
+MUST read every fill, from the venue's own records, and for the taking rule
+MUST tell the account's taker fills from its maker fills.
 
 The enforcer MUST hold its own copy of the mandate, and MUST NOT read it
 back from anywhere the agent can write. The copy handed to the agent is for
@@ -243,6 +250,12 @@ historically ended up too weak to express real strategies, or have grown
 into programming languages. A mandate only bounds the outcome, so any
 strategy can run under it.
 
+A mandate bounds what the agent may do; it does not oblige it to do
+anything. A duty, such as a market maker's quoting obligations (quotes on
+both sides for a share of the term, within a maximum spread, at a minimum
+size), is a term between the agent and a venue or whoever scores it, and is
+measured and scored there.
+
 A mandate holds limits, not prices for exceeding them. A rule that charges
 for going over it, such as a participation cap that costs a fee per unit
 above it, is a cost the principal accepts. It belongs in how a session is
@@ -256,14 +269,16 @@ enforces the part of this specification the benchmark's tasks use today:
 `perp` and `spot` instruments, on one venue or several, `max_position`,
 `min_position`, `sides`, `min_sell_price`, `max_buy_price`,
 `max_drawdown_usd`, and v0.1's `from_slot`, `max_gross_notional_usd`,
-`exposures` and `hedge`. It rejects documents that use anything else, so
-the example of a money-market mandate below lives here rather than in
-[`examples/`](examples/), which `cargo test` checks against it.
+`exposures`, `hedge` and `taking`. It rejects documents that use anything
+else, so the example of a money-market mandate below lives here rather than
+in [`examples/`](examples/), which `cargo test` checks against it.
 
 The benchmark's grader measures every step and checks rules 7 to 9 in perp
 sessions, at the scenario's level for each market (its book level where the
 session values the account at the book), not at Phoenix's mark. A spot
-session does not check them yet, so a spot scenario may not use them.
+session does not check them yet, so a spot scenario may not use them. No
+session tells taker fills from maker fills yet, so no scenario may use
+`taking`.
 
 ## Changes in later versions
 
@@ -273,7 +288,7 @@ version once v0 is final:
 - More limits: `max_leverage`, a participation cap (a share of a venue's
   traded volume), and order rate limits.
 - More instrument kinds: dated `future` and `option`.
-- More allowed actions per instrument, such as reduce-only, or no borrowing.
+- More allowed actions per instrument, such as no borrowing.
 - Limit prices relative to a reference, such as the price at the start of
   the term, rather than fixed in the document.
 - A gate profile for on-chain enforcement through delegated authority.

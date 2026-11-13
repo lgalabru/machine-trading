@@ -619,6 +619,12 @@ impl ScenarioV2 {
         if self.venues.spot.is_none() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
         }
+        // No session tells the bot's taker fills from its maker fills yet.
+        if self.mandate.universe.iter().any(|a| a.taking.is_some()) {
+            return Err(
+                "mandate: no session records taker fills yet, so none can enforce taking".into(),
+            );
+        }
         // Only a perp session prices the account at each measurement.
         if self.venues.spot.is_some() && self.mandate.checks_samples() {
             return Err(
@@ -1249,6 +1255,10 @@ mod tests {
         s.mandate.version = "v0.1".into();
         s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
         assert!(s.validate().unwrap_err().contains("notional"));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        assert!(s.validate().unwrap_err().contains("taking"));
 
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);

@@ -74,6 +74,18 @@ pub struct Allowance {
     /// on the opposite side, up to a ratio of its notional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hedge: Option<Hedge>,
+    /// v0.1: what a taker fill may do to the position. Absent, anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taking: Option<Taking>,
+}
+
+/// What an order that trades on arrival may do to the position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Taking {
+    /// Only bring the position toward zero: never open it, add to it or
+    /// take it past zero. Positions are opened by orders that rest.
+    ReduceOnly,
 }
 
 /// A hedge bound: the allowance's position is held only against
@@ -116,6 +128,26 @@ impl Allowance {
         match self.min_position {
             None => (buy, sell),
             Some(min) => (buy, (position - resting_asks - min).max(0.0)),
+        }
+    }
+
+    /// Whether the account may take `quantity` (base units) on `side` from
+    /// `position`: always, unless `taking` is reduce-only and the fill
+    /// would leave the position further from zero, or past it. The rule
+    /// [`Mandate::audit`] checks on every taker fill, asked before an order
+    /// is sent, as a gate would.
+    pub fn may_take(&self, position: f64, side: Side, quantity: f64) -> bool {
+        match self.taking {
+            None => true,
+            Some(Taking::ReduceOnly) => {
+                let after = match side {
+                    Side::Buy => position + quantity,
+                    Side::Sell => position - quantity,
+                };
+                let slack = position.abs() * POSITION_TOLERANCE;
+                let past_zero = after.signum() != position.signum() && after.abs() > slack;
+                after.abs() <= position.abs() + slack && !past_zero
+            }
         }
     }
 
@@ -282,6 +314,7 @@ impl Mandate {
                 min_sell_price: None,
                 max_buy_price: None,
                 hedge: None,
+                taking: None,
             }],
             limits: Limits {
                 max_drawdown_usd: Some(max_drawdown_usd),
@@ -311,6 +344,7 @@ impl Mandate {
                     min_sell_price: None,
                     max_buy_price: None,
                     hedge: None,
+                    taking: None,
                 })
                 .collect(),
             limits: Limits::default(),
@@ -353,6 +387,8 @@ impl Mandate {
             Some("limits.exposures")
         } else if self.universe.iter().any(|a| a.hedge.is_some()) {
             Some("hedge")
+        } else if self.universe.iter().any(|a| a.taking.is_some()) {
+            Some("taking")
         } else {
             None
         }
@@ -576,6 +612,19 @@ impl Mandate {
                 });
             }
         }
+        for take in &observed.takes {
+            let allowed = self
+                .allowance(&take.instrument)
+                .is_none_or(|a| a.may_take(take.position_before, take.side, take.quantity));
+            if !allowed {
+                return Some(Breach::Taking {
+                    instrument: take.instrument.clone(),
+                    side: take.side,
+                    quantity: take.quantity,
+                    position_before: take.position_before,
+                });
+            }
+        }
         None
     }
 
@@ -728,6 +777,19 @@ pub struct Observed {
     /// [`Observed::record_sample`]). Ranges can't say what was held at one
     /// moment, so these rules are checked as each measurement is taken.
     pub notional_breach: Option<Breach>,
+    /// Every fill the account took liquidity in, for the taking rule, from
+    /// an enforcer that tells takers from makers.
+    pub takes: Vec<ObservedTake>,
+}
+
+/// A fill in which the account was the taker: which way, how much in base
+/// units, and its position in the instrument just before.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObservedTake {
+    pub instrument: InstrumentRef,
+    pub side: Side,
+    pub quantity: f64,
+    pub position_before: f64,
 }
 
 /// A fill as the audit reads it: where, which way for the account, and at
@@ -868,6 +930,14 @@ pub enum Breach {
         notional: f64,
         against_notional: f64,
     },
+    /// A taker fill that opened, added to or flipped a reduce-only
+    /// position.
+    Taking {
+        instrument: InstrumentRef,
+        side: Side,
+        quantity: f64,
+        position_before: f64,
+    },
 }
 
 impl fmt::Display for Breach {
@@ -947,6 +1017,20 @@ impl fmt::Display for Breach {
                 f,
                 "held ${notional:.2} of {instrument} against ${against_notional:.2} of {against}, \
                  outside its hedge bound"
+            ),
+            Self::Taking {
+                instrument,
+                side,
+                quantity,
+                position_before,
+            } => write!(
+                f,
+                "{} {quantity:.2} {instrument} as a taker from a position of {position_before:.2}, \
+                 where its mandate allows taking only to reduce",
+                match side {
+                    Side::Buy => "bought",
+                    Side::Sell => "sold",
+                }
             ),
         }
     }
@@ -1407,7 +1491,7 @@ mod tests {
         let perp = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
         assert_eq!(perp.minimal_version(), "v0");
         type Edit<'a> = (&'a str, &'a dyn Fn(&mut Mandate));
-        let edits: [Edit; 4] = [
+        let edits: [Edit; 5] = [
             ("term.from_slot", &|m: &mut Mandate| {
                 m.term = Some(Term {
                     from_slot: Some(1),
@@ -1434,6 +1518,9 @@ mod tests {
                     }),
                     ..Mandate::perp("phoenix", "SPY", 10.0, 1.0).universe[0].clone()
                 })
+            }),
+            ("taking", &|m: &mut Mandate| {
+                m.universe[0].taking = Some(Taking::ReduceOnly)
             }),
         ];
         for (member, edit) in edits {
@@ -1758,5 +1845,51 @@ mod tests {
             assert!(json["rule"].is_string(), "{json}");
             assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
         }
+    }
+
+    #[test]
+    fn reduce_only_taking_never_opens_adds_or_flips() {
+        let mut mandate = Mandate::perp("phoenix", "SPCX", 20.0, 250.0);
+        mandate.version = "v0.1".into();
+        let json =
+            r#"{"instrument":"phoenix:perp:SPCX","max_position":20.0,"taking":"reduce_only"}"#;
+        let allowance: Allowance = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_string(&allowance).unwrap(), json);
+        assert!(
+            serde_json::from_str::<Allowance>(&json.replace("reduce_only", "post_only")).is_err()
+        );
+        mandate.universe[0] = allowance;
+        assert_eq!(mandate.validate(), Ok(()));
+        let allowance = &mandate.universe[0];
+        // Toward zero, all the way: allowed.
+        assert!(allowance.may_take(10.0, Side::Sell, 4.0));
+        assert!(allowance.may_take(10.0, Side::Sell, 10.0));
+        assert!(allowance.may_take(-3.0, Side::Buy, 3.0));
+        // Opening, adding or flipping: not.
+        assert!(!allowance.may_take(0.0, Side::Buy, 1.0));
+        assert!(!allowance.may_take(10.0, Side::Buy, 0.5));
+        assert!(!allowance.may_take(10.0, Side::Sell, 10.5));
+        assert!(!allowance.may_take(-3.0, Side::Sell, 1.0));
+        // Without the member, taking is free.
+        assert!(
+            Mandate::perp("phoenix", "SPCX", 20.0, 250.0).universe[0].may_take(0.0, Side::Buy, 5.0)
+        );
+
+        let take = |side, quantity, position_before| ObservedTake {
+            instrument: spcx(),
+            side,
+            quantity,
+            position_before,
+        };
+        let mut observed = Observed::default();
+        observed.takes.push(take(Side::Sell, 4.0, 10.0));
+        assert_eq!(mandate.audit(&observed), None);
+        observed.takes.push(take(Side::Sell, 12.0, 6.0));
+        let breach = mandate.audit(&observed).unwrap();
+        assert!(matches!(breach, Breach::Taking { quantity: 12.0, .. }));
+        assert!(breach.to_string().contains("only to reduce"), "{breach}");
+        let json = serde_json::to_value(&breach).unwrap();
+        assert_eq!(json["rule"], "taking");
+        assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
     }
 }

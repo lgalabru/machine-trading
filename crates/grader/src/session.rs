@@ -351,6 +351,7 @@ impl SessionReport {
                 .map(|spot| spot.open_orders.clone())
                 .unwrap_or_default(),
             notional_breach: self.notional_breach.clone(),
+            takes: Vec::new(),
         }
     }
 }
