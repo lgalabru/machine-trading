@@ -379,7 +379,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
 review path:
     cargo run --release -q -- bench review {{path}}
 
-# Publish a finished batch to bench/results/<version>, to commit.
+# Publish a finished batch: upload it to the results dataset (needs hf and
+# HF_TOKEN) and write bench/results/<version>/release.json, to commit.
 publish batch version:
     cargo run --release -q -- bench publish {{batch}} {{version}}
 

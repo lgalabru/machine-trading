@@ -35,7 +35,9 @@ mod rescore;
 mod review;
 mod run;
 mod slim;
+mod store;
 mod studio;
+mod tables;
 mod tasks;
 mod tools;
 mod ui;
@@ -444,10 +446,12 @@ enum BenchCommand {
         #[arg(long)]
         results: Option<PathBuf>,
     },
-    /// Publish a finished batch as a release, small enough to commit:
-    /// bench/results/<version>. It keeps the reports, the session detail
-    /// files, the bot's source and the agent's trajectory (gzipped); never
-    /// the batch's seed, and nothing that holds it or an API key.
+    /// Publish a finished batch as a release. It keeps the reports, the
+    /// session detail files, the bot's source and the agent's trajectory
+    /// (gzipped); never the batch's seed, and nothing that holds it or an API
+    /// key. The release goes to the results dataset on Hugging Face (needs
+    /// `hf` and HF_TOKEN), and bench/results/<version>/release.json, to
+    /// commit, says where it is and holds its scores.
     Publish {
         /// The batch (jobs/bench/<batch>).
         batch: PathBuf,
@@ -462,6 +466,10 @@ enum BenchCommand {
         /// trajectories. Readers find the full copy through MTX_ARTIFACTS.
         #[arg(long)]
         artifacts: Option<PathBuf>,
+        /// Write the whole release to bench/results/<version>, and upload
+        /// nothing.
+        #[arg(long)]
+        local: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -473,6 +481,17 @@ enum BenchCommand {
         version: String,
         #[arg(long)]
         artifacts: PathBuf,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Move a release whose files are in bench/results to the results
+    /// dataset: upload them, and leave its release.json, with where they
+    /// went and its scores. For a release in the dataset already, upload
+    /// its tables (trials.jsonl, sessions.jsonl) and the dataset's card
+    /// again.
+    Upload {
+        /// The release's version, or `all`.
+        version: String,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -925,17 +944,63 @@ async fn run() -> Result<()> {
             let summary = slim::slim_in_place(&release, &artifacts)?;
             serde_json::to_string_pretty(&summary)?
         }
+        Command::Bench(BenchCommand::Upload { version, results }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let versions: Vec<String> = if version == "all" {
+                std::fs::read_dir(&results)?
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|v| {
+                        !v.starts_with('.') && results.join(v).join("release.json").is_file()
+                    })
+                    .collect()
+            } else {
+                vec![version]
+            };
+            let mut out = serde_json::Map::new();
+            for version in versions {
+                let dir = results.join(&version);
+                anyhow::ensure!(
+                    dir.join("release.json").is_file(),
+                    "{} isn't a published release",
+                    dir.display()
+                );
+                if publish::stored(&dir).is_some() {
+                    ui::start(format!("Uploading {version}'s tables"));
+                    publish::retable(&dir, &version)?;
+                    ui::done(format!("Uploaded {version}'s tables"));
+                    out.insert(version, serde_json::json!("tables"));
+                    continue;
+                }
+                ui::start(format!("Uploading {version}"));
+                let store = publish::offload(&dir, &dir, &version)?;
+                ui::done(format!(
+                    "Uploaded {version}: {} files, {}",
+                    store.files,
+                    store.url()
+                ));
+                out.insert(version, serde_json::json!(store.url()));
+            }
+            serde_json::to_string_pretty(&out)?
+        }
         Command::Bench(BenchCommand::Publish {
             batch,
             version,
             force,
             artifacts,
+            local,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             ui::start(format!("Publishing {} as {version}", batch.display()));
-            let summary =
-                publish::publish(&batch, &version, &results, force, artifacts.as_deref())?;
+            let summary = publish::publish(
+                &batch,
+                &version,
+                &results,
+                force,
+                artifacts.as_deref(),
+                local,
+            )?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
                 summary["summary"]["trials"],
@@ -971,6 +1036,10 @@ async fn run() -> Result<()> {
             };
             let mut out = serde_json::Map::new();
             for release in releases {
+                // A release in the dataset was compacted before it went.
+                if release.join(store::COMPLETE).is_file() || publish::stored(&release).is_some() {
+                    continue;
+                }
                 anyhow::ensure!(
                     release.join("release.json").is_file(),
                     "{} isn't a published release",

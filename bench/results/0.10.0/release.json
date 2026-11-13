@@ -1,6 +1,105 @@
 {
   "format": 2,
   "ran_at": "2026-11-04T20:02:15.338751",
+  "scores": {
+    "label": "0.10.0",
+    "published": true,
+    "tasks": {
+      "flash-crash": {
+        "models": {
+          "claude-fable-5-1": {
+            "graded": 3,
+            "pnl_usd": 21976.67951066667,
+            "reward": 0.2226652570292238,
+            "sessions": 72,
+            "skill": 2.4442894207523143,
+            "skills": [
+              2.3223476923111166,
+              2.590456766132468,
+              2.4200638038133575
+            ],
+            "trials": 3
+          },
+          "claude-opus-5-5": {
+            "graded": 3,
+            "pnl_usd": 26071.065601333336,
+            "reward": 0.26414911862954776,
+            "sessions": 72,
+            "skill": 2.899675076307536,
+            "skills": [
+              2.8209333039707363,
+              2.7981080242196956,
+              3.079983900732175
+            ],
+            "trials": 3
+          },
+          "claude-sonnet-5-5": {
+            "graded": 3,
+            "pnl_usd": 3283.148110666669,
+            "reward": 0.03288179358543631,
+            "sessions": 72,
+            "skill": 0.36095716623494045,
+            "skills": [
+              0.6927393042843818,
+              0.0,
+              0.39013219442043967
+            ],
+            "trials": 3
+          }
+        },
+        "name": "solana-foundation/phoenix-flash-crash",
+        "short": "phoenix-flash-crash",
+        "version": "0.10.0"
+      },
+      "market-making": {
+        "models": {
+          "claude-fable-5-1": {
+            "graded": 3,
+            "pnl_usd": 1634.3706712508028,
+            "reward": 0.08664794344185223,
+            "sessions": 72,
+            "skill": 7.882563283740727,
+            "skills": [
+              1.255620091836602,
+              10.118795789735218,
+              12.273273969650363
+            ],
+            "trials": 3
+          },
+          "claude-opus-5-5": {
+            "graded": 3,
+            "pnl_usd": 3623.761919332534,
+            "reward": 0.19211768991960795,
+            "sessions": 72,
+            "skill": 17.477389405481496,
+            "skills": [
+              19.80476030959485,
+              18.185868850653996,
+              14.441539056195642
+            ],
+            "trials": 3
+          },
+          "claude-sonnet-5-5": {
+            "graded": 3,
+            "pnl_usd": -32.92547543264117,
+            "reward": 0.003267517741214618,
+            "sessions": 72,
+            "skill": -0.15879943779608938,
+            "skills": [
+              0.8917608780808892,
+              -0.16325858781620603,
+              -1.2049006036529513
+            ],
+            "trials": 3
+          }
+        },
+        "name": "solana-foundation/phoenix-market-making",
+        "short": "phoenix-market-making",
+        "version": "0.10.0"
+      }
+    },
+    "trials": 18
+  },
   "skipped": [
     "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__20-02-10/phoenix-market-making__8GvRxtC/verifier/test-stdout.txt (7162685 bytes gzipped)",
     "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-04__20-02-10/phoenix-market-making__oyWiJ4m/verifier/test-stdout.txt (7146743 bytes gzipped)",
@@ -13,6 +112,14 @@
     "/Users/ludo/Coding/ofm/jobs/bench/20261104-200209-x1/2026-11-05__02-59-23/phoenix-market-making__ZmBuRL9/verifier/test-stdout.txt (7033412 bytes gzipped)"
   ],
   "source": "20261104-200209-x1",
+  "store": {
+    "bytes": 35735552,
+    "files": 4197,
+    "path": "0.10.0/release.tar",
+    "repo": "solana-foundation/machine-trading-results",
+    "revision": "8ff9bd2b9a665047e0d2b3c488ba1466e1937feb",
+    "sha256": "44eea3fac9809d6af65a0c5752f813e549582a5b5e684f1d286bc0006b2f0056"
+  },
   "tasks": {
     "phoenix-flash-crash": {
       "name": "solana-foundation/phoenix-flash-crash",

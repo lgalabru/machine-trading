@@ -1,6 +1,147 @@
 {
   "format": 2,
   "ran_at": "2026-11-10T05:21:38.931019",
+  "scores": {
+    "label": "0.11.0",
+    "published": true,
+    "tasks": {
+      "flash-crash": {
+        "models": {
+          "claude-fable-5-1": {
+            "graded": 5,
+            "pnl_usd": 13369.570075599995,
+            "reward": 0.13317860380543314,
+            "sessions": 72,
+            "skill": 1.261032747875888,
+            "skills": [
+              1.6068766607118607,
+              1.5995382440992707,
+              0.7493050960754863,
+              0.7077447433899761,
+              1.6416989951028471
+            ],
+            "trials": 5
+          },
+          "claude-fable-5-2": {
+            "graded": 5,
+            "pnl_usd": 25314.863378999995,
+            "reward": 0.25216952686410216,
+            "sessions": 72,
+            "skill": 2.387726123458793,
+            "skills": [
+              2.4664480175588195,
+              2.3560204129755675,
+              2.348872489360578,
+              2.4473437511318528,
+              2.319945946267149
+            ],
+            "trials": 5
+          },
+          "claude-opus-5-5": {
+            "graded": 5,
+            "pnl_usd": 17761.063366200004,
+            "reward": 0.17692368623934152,
+            "sessions": 72,
+            "skill": 1.6752432886942945,
+            "skills": [
+              1.0275734947293371,
+              1.9582163893311508,
+              2.2804051354073915,
+              1.254874087726182,
+              1.8551473362774105
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5-5": {
+            "graded": 5,
+            "pnl_usd": 3829.531582800001,
+            "reward": 0.03814720043667721,
+            "sessions": 72,
+            "skill": 0.36120568631815664,
+            "skills": [
+              0.01758019945142874,
+              0.25466179693041374,
+              0.32590355345366184,
+              0.8412381168600882,
+              0.3666447648951906
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/flash-crash-spcx",
+        "short": "flash-crash-spcx",
+        "version": "0.11.0"
+      },
+      "market-making": {
+        "models": {
+          "claude-fable-5-1": {
+            "graded": 5,
+            "pnl_usd": -110.8952824271164,
+            "reward": 0.003621492877994948,
+            "sessions": 72,
+            "skill": -0.9364573756723222,
+            "skills": [
+              -0.7694621813991948,
+              -2.2442949068282165,
+              2.7867710220909,
+              -0.7033170029166337,
+              -3.7519838093084665
+            ],
+            "trials": 5
+          },
+          "claude-fable-5-2": {
+            "graded": 5,
+            "pnl_usd": 1426.3109438618417,
+            "reward": 0.08147501120139494,
+            "sessions": 72,
+            "skill": 12.044510588260781,
+            "skills": [
+              -2.4731937824304047,
+              18.643692198540013,
+              15.534253229974723,
+              10.316947367482715,
+              18.20085392773686
+            ],
+            "trials": 5
+          },
+          "claude-opus-5-5": {
+            "graded": 5,
+            "pnl_usd": 145.05812870000554,
+            "reward": 0.012200262247017299,
+            "sessions": 72,
+            "skill": 1.224946197432913,
+            "skills": [
+              -0.13782201772246522,
+              0.9929109047855994,
+              -0.19555122032677155,
+              -2.9301062275763936,
+              8.395299548004596
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5-5": {
+            "graded": 5,
+            "pnl_usd": -193.30677406855756,
+            "reward": 0.0,
+            "sessions": 72,
+            "skill": -1.632382824426259,
+            "skills": [
+              -3.014920698868391,
+              -2.359777505702589,
+              -1.3504924284909354,
+              -0.6764623926777535,
+              -0.7602610963916259
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/market-making-spcx",
+        "short": "market-making-spcx",
+        "version": "0.11.0"
+      }
+    },
+    "trials": 40
+  },
   "shared_reference_sessions": 2134,
   "skipped": [
     "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__05-21-34/market-making-spcx__DiKfpfp/verifier/test-stdout.txt (7964988 bytes gzipped)",
@@ -25,6 +166,14 @@
     "/Users/ludo/Coding/ofm-instruments/jobs/bench/20261110-052134-x1/2026-11-10__17-30-55/market-making-spcx__uasg8cS/verifier/test-stdout.txt (7988564 bytes gzipped)"
   ],
   "source": "20261110-052134-x1",
+  "store": {
+    "bytes": 68461568,
+    "files": 7022,
+    "path": "0.11.0/release.tar",
+    "repo": "solana-foundation/machine-trading-results",
+    "revision": "2426ae07efbfceac240aafcc6bf6e366cec7ffb9",
+    "sha256": "457abc143dee0e2012bc5184b0a8791050083d94e22a2a5a799fec4ea8c04bf9"
+  },
   "tasks": {
     "flash-crash-spcx": {
       "name": "solana-foundation/flash-crash-spcx",
