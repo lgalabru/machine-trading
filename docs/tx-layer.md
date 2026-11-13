@@ -192,6 +192,13 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
   token accounts the bot can close counts as the bot's, not as a cost.
 - **Session kinds.** Only perp sessions take the layer for now. A spot
   venue's seats join when they can send through the pool.
+- **Actors hooked on the bot's sends.** A front-runner with `on_send` (see
+  `docs/actors.md`) acts on each of the bot's sends as it arrives, just
+  before it would land. Under the layer a send only enters the pool, and
+  lands when a block takes it, so a scenario can't have both: it is
+  refused when it loads, naming the actor. Actors that see the pool and
+  act inside the builder's blocks come with PR 17b. The library's other
+  actors run as usual.
 
 ## What the bot sees
 

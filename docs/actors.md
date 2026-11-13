@@ -96,6 +96,12 @@ sent, or failed for that: the request counts as `unsettled`, the bot's own
 doing. A client that has traded its funds away with the bot declines
 (`client_unfunded`).
 
+With `on_send`, a front-runner acts on the bot's sends as they arrive, so it
+can't run in a scenario with the transaction layer (`tx_layer`, see
+`docs/tx-layer.md`), which pools the bot's sends until a block takes them:
+such a scenario is refused when it loads. Pool-aware actors come with PR
+17b.
+
 ## When actors fail
 
 Each order, cancel, take and swap counts as an action. A session where more

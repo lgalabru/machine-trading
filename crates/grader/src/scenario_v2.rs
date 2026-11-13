@@ -509,6 +509,21 @@ impl ScenarioV2 {
             if self.venues.spot.is_some() {
                 return Err("tx_layer: only perp sessions take the transaction layer yet".into());
             }
+            // An actor hooked on the bot's sends acts as each arrives, as if
+            // it ran next: under the layer a send only enters the pool, and
+            // lands when a block takes it.
+            let hooked = self
+                .actors
+                .library
+                .as_ref()
+                .map(|library| library.send_hooked())
+                .unwrap_or_default();
+            if !hooked.is_empty() {
+                return Err(format!(
+                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; the two can't run together until pool-aware actors (PR 17b)",
+                    hooked.join(", ")
+                ));
+            }
         }
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
@@ -1277,6 +1292,31 @@ mod tests {
         assert!(on_spot.validate().unwrap_err().starts_with("tx_layer:"));
         s.tx.as_mut().unwrap().layer.as_mut().unwrap().validators = 0;
         assert!(s.validate().unwrap_err().starts_with("tx_layer:"));
+    }
+
+    #[test]
+    fn the_transaction_layer_refuses_actors_hooked_on_the_bots_sends() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        let mut s = shock();
+        s.tx = Some(Tx {
+            layer: Some(crate::txlayer::tests::layer()),
+            raw_sends: None,
+        });
+        library.front_runners = vec![crate::actors::library::FrontRunner::default()];
+        s.actors.library = Some(library.clone());
+        let mut v1 = s.clone().into_scenario().unwrap();
+        library.front_runners[0].on_send = true;
+        s.actors.library = Some(library);
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.starts_with("tx_layer: actors.front_runners[0] acts on the bot's sends")
+                && refused.contains("PR 17b"),
+            "{refused}"
+        );
+        // A v1 scenario, the same.
+        v1.actors.as_mut().unwrap().front_runners[0].on_send = true;
+        assert_eq!(v1.validate().unwrap_err(), refused);
     }
 
     #[test]

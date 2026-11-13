@@ -190,6 +190,18 @@ pub(crate) fn finite_at_least_zero(what: &str, v: f64) -> Result<(), String> {
 }
 
 impl Library {
+    /// The actors that act on the bot's sends as they arrive (a
+    /// [`SendHook`](crate::guard::SendHook)), by where the scenario names
+    /// them: `actors.front_runners[i]` with `on_send`.
+    pub fn send_hooked(&self) -> Vec<String> {
+        self.front_runners
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.on_send)
+            .map(|(i, _)| format!("actors.front_runners[{i}]"))
+            .collect()
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.scale.validate()?;
         let each = |kind: &str, checks: Vec<Result<(), String>>| {
