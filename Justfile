@@ -107,7 +107,8 @@ spot-smoke:
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
-# SOL-USDC book, every order from its account's own seat.
+# SOL-USDC book, every order from its account's own seat. Then every actor
+# of the library on the SPCX perp (docs/actors.md).
 actors-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -126,6 +127,17 @@ actors-smoke:
     }
     takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
     takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
+    # The library: every actor beside a bot that sells and answers requests
+    # for quotes. Each acts, none fails, and a reader of the chain can tell
+    # them apart.
+    just --justfile bots/actors-smoke/Justfile build
+    report=target/logs/actors-library.json details=target/logs/actors-library-details
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/{{snapshot}}" --bot bots/actors-smoke \
+      --logs target/logs/actors-library --report "$report" --details "$details" bench/checks/actors/everyone.json > /dev/null
+    jq -e '.scenarios[0].actors | .actions.failed == 0
+      and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)' "$report" > /dev/null \
+      || { echo "actors-library: an actor didn't act, or failed: $(jq -c '.scenarios[0].actors.actions' "$report")"; exit 1; }
+    python3 bench/checks/actors/read.py "$report" "$details/bot/actors-everyone.json.gz"
 
 # The strategy interface end to end: the probe puts one line of each kind
 # on its first sheet in a flash-crash session, and its log

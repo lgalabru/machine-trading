@@ -1,0 +1,285 @@
+{
+  "name": "actors-everyone",
+  "description": "SPCX spikes 3.6% around slot 190; every library actor trades beside the bot",
+  "symbol": "SPCX",
+  "duration_slots": 400,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 50.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 6,
+      "level_pct": -0.04
+    },
+    {
+      "slot": 11,
+      "level_pct": -0.085
+    },
+    {
+      "slot": 22,
+      "level_pct": 0.061
+    },
+    {
+      "slot": 31,
+      "level_pct": 0.464
+    },
+    {
+      "slot": 41,
+      "level_pct": 0.387
+    },
+    {
+      "slot": 49,
+      "level_pct": 0.427
+    },
+    {
+      "slot": 53,
+      "level_pct": 0.107
+    },
+    {
+      "slot": 67,
+      "level_pct": 0.123
+    },
+    {
+      "slot": 71,
+      "level_pct": 0.098
+    },
+    {
+      "slot": 76,
+      "level_pct": 0.178
+    },
+    {
+      "slot": 85,
+      "level_pct": 0.164
+    },
+    {
+      "slot": 96,
+      "level_pct": 0.237
+    },
+    {
+      "slot": 100,
+      "level_pct": 0.226
+    },
+    {
+      "slot": 109,
+      "level_pct": 0.198
+    },
+    {
+      "slot": 118,
+      "level_pct": 0.161
+    },
+    {
+      "slot": 127,
+      "level_pct": 0.068
+    },
+    {
+      "slot": 139,
+      "level_pct": 0.205
+    },
+    {
+      "slot": 150,
+      "level_pct": 0.079
+    },
+    {
+      "slot": 161,
+      "level_pct": 0.165
+    },
+    {
+      "slot": 168,
+      "level_pct": 0.18
+    },
+    {
+      "slot": 178,
+      "level_pct": 0.033
+    },
+    {
+      "slot": 187,
+      "level_pct": 0.03
+    },
+    {
+      "slot": 190,
+      "level_pct": 1.352
+    },
+    {
+      "slot": 193,
+      "level_pct": 2.065
+    },
+    {
+      "slot": 196,
+      "level_pct": 2.868
+    },
+    {
+      "slot": 202,
+      "level_pct": 3.572
+    },
+    {
+      "slot": 212,
+      "level_pct": 5.194
+    },
+    {
+      "slot": 223,
+      "level_pct": 5.268
+    },
+    {
+      "slot": 227,
+      "level_pct": 5.156
+    },
+    {
+      "slot": 231,
+      "level_pct": 5.288
+    },
+    {
+      "slot": 235,
+      "level_pct": 3.639
+    },
+    {
+      "slot": 246,
+      "level_pct": 3.581
+    },
+    {
+      "slot": 254,
+      "level_pct": 1.221
+    },
+    {
+      "slot": 267,
+      "level_pct": 1.331
+    },
+    {
+      "slot": 277,
+      "level_pct": 1.304
+    },
+    {
+      "slot": 284,
+      "level_pct": 1.357
+    },
+    {
+      "slot": 295,
+      "level_pct": 1.183
+    },
+    {
+      "slot": 306,
+      "level_pct": 1.298
+    },
+    {
+      "slot": 310,
+      "level_pct": 1.335
+    },
+    {
+      "slot": 320,
+      "level_pct": 1.188
+    },
+    {
+      "slot": 332,
+      "level_pct": 1.141
+    },
+    {
+      "slot": 337,
+      "level_pct": 1.173
+    },
+    {
+      "slot": 341,
+      "level_pct": 1.241
+    },
+    {
+      "slot": 351,
+      "level_pct": 1.297
+    },
+    {
+      "slot": 361,
+      "level_pct": 1.177
+    },
+    {
+      "slot": 370,
+      "level_pct": 1.233
+    },
+    {
+      "slot": 374,
+      "level_pct": 1.298
+    },
+    {
+      "slot": 386,
+      "level_pct": 1.293
+    },
+    {
+      "slot": 393,
+      "level_pct": 1.277
+    }
+  ],
+  "actors": {
+    "scale": {
+      "trades_per_minute": 1.5,
+      "trade_size": 0.02,
+      "trade_size_sigma": 1.0
+    },
+    "noise": [
+      {
+        "wallets": 3,
+        "flow_mult": 20.0,
+        "size_mult": 5.0
+      }
+    ],
+    "informed": [
+      {
+        "wallets": 2,
+        "horizon_slots": 40,
+        "edge_bps": 30.0,
+        "intensity_mult": 40.0,
+        "size_mult": 10.0
+      }
+    ],
+    "spoofers": [
+      {
+        "side": "bid",
+        "distance_ticks": 5,
+        "cancel_ticks": 2,
+        "wall_mult": 200.0,
+        "lifetime_slots": 40,
+        "harvest_mult": 5.0
+      }
+    ],
+    "stop_hunters": [
+      {
+        "level_step_usd": 0.5,
+        "trigger_bps": 20.0,
+        "push_mult": 25.0,
+        "hold_slots": 20,
+        "cooldown_slots": 60
+      }
+    ],
+    "front_runners": [
+      {
+        "min_mult": 5.0,
+        "pattern_steps": 2,
+        "share": 0.5,
+        "hold_steps": 4,
+        "on_send": true
+      }
+    ],
+    "arbitrageur": {
+      "latency_slots": 2,
+      "edge_bps": 3.0,
+      "size_mult": 25.0,
+      "max_inventory_mult": 500.0
+    },
+    "rfq_clients": {
+      "clients": 6,
+      "informed_share": 0.34,
+      "lead_slots": 40,
+      "correlation": 0.8,
+      "per_100_slots": 10.0,
+      "size_mult": 10.0,
+      "deadline_slots": 8,
+      "tolerance_bps": 20.0
+    },
+    "liquidator": {},
+    "record": true
+  }
+}
