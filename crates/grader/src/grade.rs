@@ -874,6 +874,7 @@ mod tests {
             net: None,
             reference_pnl_usd,
             fair_path: None,
+            raw_sends: None,
         }
     }
 

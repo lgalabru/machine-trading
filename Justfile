@@ -134,6 +134,13 @@ wit-probe:
     just --justfile bots/wit-probe/Justfile build
     cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-spcx/environment/practice/practice-1.json
 
+# Raw sends end to end: the probe tries one of each kind, allowed and not,
+# in a session that enables them, and its log (target/logs/raw-probe) shows
+# what the grader answered and what became of the ones it took.
+raw-probe:
+    just --justfile bots/raw-probe/Justfile build
+    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/raw-probe --logs target/logs/raw-probe bots/raw-probe/scenario.json
+
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
