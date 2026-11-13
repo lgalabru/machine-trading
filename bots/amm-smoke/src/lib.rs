@@ -1,5 +1,5 @@
 //! The pool smoke: a session's whole pool round trip on every pool it
-//! names. On the first step it sells 0.5 of the base on each spot market
+//! names (Raydium's, Meteora's and Orca's). On the first step it sells 0.5 of the base on each spot market
 //! (a swap of base units) and buys with 50 of the quote on each (a swap of
 //! quote units); on the third it opens a position on each amm market, 3%
 //! around the price, curved on a pool of bins; on the sixth it takes half

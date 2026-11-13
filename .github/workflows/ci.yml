@@ -109,7 +109,7 @@ jobs:
           for bot in starter printer first-strategy reference maker carry weekend spot-smoke amm-smoke wit-probe; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
-          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm --lib --target wasm32-wasip2 -- -D warnings
+          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm,orca-whirlpool --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
           just --justfile bots/reference/Justfile build
           just --justfile bots/wit-probe/Justfile build
