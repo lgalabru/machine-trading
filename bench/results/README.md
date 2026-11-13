@@ -12,7 +12,16 @@ task) and where its files are (`"store"`). The files are one archive,
 [solana-foundation/machine-trading-results](https://huggingface.co/datasets/solana-foundation/machine-trading-results),
 pinned by revision and sha256. `mtx bench review`, `compare` and `export`
 fetch it once, check its sha256 and unpack it into
-`~/.cache/mtx/results/` (`MTX_CACHE` moves it). A release used to be
+`~/.cache/mtx/results/` (`MTX_CACHE` moves it).
+
+Beside each archive, the dataset has the release as two tables for the
+Hub's viewer and `datasets.load_dataset`: `<version>/trials.jsonl`, a row
+per run (skill, reward, PnL, tokens, cost, time, a link to the run's review
+page), and `<version>/sessions.jsonl`, a row per hidden session a bot
+played (`crates/cli/src/tables.rs`). Its card, `README.md`, holds the
+latest release's leaderboard and the list of releases. `mtx bench publish`
+writes all three; `mtx bench upload <version>` writes a release's tables
+and the card again. A release used to be
 committed whole; `mtx bench upload <version>` moves one to the dataset.
 
 An archive holds the batch's plan (`batch.json`), each task's `task.toml` as

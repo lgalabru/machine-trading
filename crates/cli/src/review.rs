@@ -498,6 +498,11 @@ pub(crate) fn read_json(path: &FsPath) -> Option<Value> {
 }
 
 /// A trial at a glance: what the leaderboard and the trial's header show.
+/// A trial as the review page lists it.
+pub(crate) fn summary_of(root: &Root, n: usize, dir: &FsPath) -> Value {
+    summary(root, n, dir)
+}
+
 fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
     let result = read_json(&dir.join("result.json")).unwrap_or(Value::Null);
     let config = read_json(&dir.join("config.json")).unwrap_or(Value::Null);

@@ -131,7 +131,7 @@ fn fetched(store: &store::Store) -> Result<PathBuf> {
 }
 
 /// `0.10.0` after `0.9.0`.
-fn version_key(label: &str) -> Vec<(u64, String)> {
+pub(crate) fn version_key(label: &str) -> Vec<(u64, String)> {
     label
         .split(['.', '-'])
         .map(|part| match part.parse() {
@@ -330,7 +330,21 @@ pub fn offload(dir: &Path, out: &Path, version: &str) -> Result<store::Store> {
         path: dir.to_path_buf(),
         published: true,
     });
-    let store = store::upload(dir, version)?;
+    let (trials, sessions) = crate::tables::tables(dir, version);
+    let store = store::upload(
+        dir,
+        version,
+        &[
+            (
+                "trials.jsonl",
+                crate::tables::jsonl(&trials, crate::tables::TRIALS),
+            ),
+            (
+                "sessions.jsonl",
+                crate::tables::jsonl(&sessions, crate::tables::SESSIONS),
+            ),
+        ],
+    )?;
     release["store"] = store.to_json();
     release["scores"] = scores;
     // The full directory moves to the cache before `out` is rewritten: `dir`
@@ -345,7 +359,32 @@ pub fn offload(dir: &Path, out: &Path, version: &str) -> Result<store::Store> {
         serde_json::to_string_pretty(&release)? + "\n",
     )?;
     tracing::debug!("{version} is cached at {}", cache.display());
+    let results = out.parent().context("the release has no parent")?;
+    store::upload_beside(None, &[], Some(&crate::tables::card(results)?))?;
     Ok(store)
+}
+
+/// A release already in the dataset: its tables made again from its
+/// archive, and uploaded, with the dataset's card.
+pub fn retable(release: &Path, version: &str) -> Result<()> {
+    let store = stored(release).with_context(|| format!("{version} isn't in the dataset"))?;
+    let dir = fetched(&store)?;
+    let (trials, sessions) = crate::tables::tables(&dir, version);
+    let results = release.parent().context("the release has no parent")?;
+    store::upload_beside(
+        Some(version),
+        &[
+            (
+                "trials.jsonl",
+                crate::tables::jsonl(&trials, crate::tables::TRIALS),
+            ),
+            (
+                "sessions.jsonl",
+                crate::tables::jsonl(&sessions, crate::tables::SESSIONS),
+            ),
+        ],
+        Some(&crate::tables::card(results)?),
+    )
 }
 
 fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> Result<Value> {
