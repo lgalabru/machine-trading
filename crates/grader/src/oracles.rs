@@ -267,6 +267,9 @@ impl Context {
 pub struct World {
     /// Phoenix's perp asset map, and the scenario's market mark in ticks.
     pub phoenix: Option<(Pubkey, u64)>,
+    /// In a session on several perp markets, each market's mark in ticks,
+    /// by symbol: where a Phoenix feed on that market starts.
+    pub phoenix_marks: BTreeMap<String, u64>,
     /// The session's markets' prices, for a feed anchored to one.
     pub prices: BTreeMap<InstrumentRef, MarketQuote>,
 }
@@ -562,6 +565,9 @@ pub struct PhoenixOracle {
 
 impl OracleSource for PhoenixOracle {
     fn start_price(&self, _rpc: &RpcClient, world: &World) -> Result<f64> {
+        if let Some(ticks) = world.phoenix_marks.get(&self.symbol) {
+            return Ok(*ticks as f64);
+        }
         world
             .phoenix
             .map(|(_, ticks)| ticks as f64)

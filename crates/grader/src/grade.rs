@@ -294,7 +294,7 @@ fn write_details(
             scenario,
             annotation: annotations.and_then(|a| a.get(index)),
             disqualified: disqualification(report),
-            bound_pnl_usd: scenario.bound_usd(report.start_mark_usd),
+            bound_pnl_usd: bound_of(scenario, report),
             report,
             timeline: &report.timeline,
         };
@@ -500,7 +500,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         .into_iter()
         .map(|(session, scenario)| ScenarioResult {
             disqualified: disqualification(&session),
-            bound_pnl_usd: scenario.bound_usd(session.start_mark_usd),
+            bound_pnl_usd: bound_of(scenario, &session),
             reference_pnl_usd: scenario.reference_pnl_usd,
             markout: markout(&session, scenario),
             session,
@@ -537,11 +537,25 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     }
 }
 
+/// What a session's PnL is divided by: its scenario's bound at the session's
+/// start mark, or, on several markets, each market's at its own.
+fn bound_of(scenario: &Scenario, session: &SessionReport) -> f64 {
+    if scenario.markets.is_empty() {
+        scenario.bound_usd(session.start_mark_usd)
+    } else {
+        scenario.markets_bound_usd(&session.start_marks_usd())
+    }
+}
+
 /// A session's PnL split against its scenario's fair value, if the scenario
 /// reports one at every step. The position is valued as the session valued
 /// it: at the mark, the scenario's oracle level (market making) or its book
-/// level.
+/// level. A session on several markets has none: its account's value is
+/// one, and the split is a one-market split.
 fn markout(session: &SessionReport, scenario: &Scenario) -> Option<Decomposition> {
+    if !scenario.markets.is_empty() {
+        return None;
+    }
     let timeline = &session.timeline;
     let start = scenario.fair_value_usd(session.start_mark_usd, 0)?;
     let mut meter = MarkoutMeter::open(MarkoutSample {
@@ -1060,6 +1074,7 @@ mod tests {
             perp_open_orders: Vec::new(),
             crank_refusals: Vec::new(),
             oracle_starts: Default::default(),
+            markets: Vec::new(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -1203,6 +1218,7 @@ mod tests {
             pnl_usd: value - 10_100.0,
             turn_ms: None,
             answered: None,
+            markets: Vec::new(),
         };
         let mut report = session(0.0);
         // Bought 10 at 99.60 (fair 100), held while fair rose to 101, sold

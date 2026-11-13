@@ -950,6 +950,7 @@ impl Account for SpotAccount {
             turn_ms: None,
             answered: None,
             fair_usd: None,
+            markets: Vec::new(),
         };
         self.last = Some(now);
         Ok(record)
@@ -1134,6 +1135,7 @@ impl Account for SpotAccount {
             perp_open_orders: Vec::new(),
             crank_refusals: done.crank_refusals,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
+            markets: Vec::new(),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1145,6 +1147,7 @@ impl Account for SpotAccount {
                 transactions: done.transactions,
                 calls: done.calls,
                 taker_orders: done.actors.taker_orders,
+                market_taker_orders: Default::default(),
             },
         })
     }

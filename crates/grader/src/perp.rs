@@ -39,7 +39,7 @@ use surfpool_sdk::{CheatcodeFilter, SimnetCommand};
 use crate::{
     Error, Result,
     actors::{
-        Cast, Competitor, FlowWatch, Moment, Pricing, SendReader, SentOrder, Takers,
+        Cast, Competitor, FlowWatch, Moment, OnMarket, Pricing, SendReader, SentOrder, Takers,
         library::{
             DeskReport, RfqBoard, RfqClients, RfqSeat, Scale, Setting, Swaps, Token, WalletSeat,
         },
@@ -49,11 +49,11 @@ use crate::{
     making::{TAKER_ACCOUNTS, book_at, level_at},
     orders::{CloseOutReport, OrderReport},
     phoenix::{self, Phoenix},
-    scenario::Scenario,
+    scenario::{MarketScenario, Scenario},
     session::{
-        Account, BOT_USERS, DEPOSIT_USDC, Done, INTERNAL_RPC_TIMEOUT, IxRecord, OrderRecord,
-        Prepared, SessionDir, SessionOptions, SessionReport, StepRecord, Timeline, World,
-        grader_f64, patiently, wait_for_slot,
+        Account, BOT_USERS, DEPOSIT_USDC, Done, INTERNAL_RPC_TIMEOUT, IxRecord, MarketReport,
+        MarketStep, OrderRecord, Prepared, SessionDir, SessionOptions, SessionReport, StepRecord,
+        Timeline, World, grader_f64, patiently, wait_for_slot,
     },
     snapshot,
     venue::{Market, Seat, perps::PerpMarket, phoenix::Phoenix as PhoenixVenue},
@@ -69,16 +69,54 @@ const ACTOR_DEPOSIT_USDC: f64 = 100_000.0;
 /// better.
 const SEED_LIMIT: f64 = 0.02;
 
+/// One market of a perp session, as setup found it: the scenario's part
+/// for it, Phoenix's market, and where it started.
+#[derive(Clone)]
+struct MarketState {
+    scenario: MarketScenario,
+    instrument: InstrumentRef,
+    id: InstrumentId,
+    market: ExchangeMarketConfig,
+    perp: Arc<PerpMarket>,
+    start_mark_ticks: u64,
+    start_mark_usd: f64,
+    start_position: f64,
+    /// How its position is valued (see [`Scenario::valuation`]).
+    valuation: &'static str,
+}
+
+impl MarketState {
+    /// The market's moment at `at` slots into the session.
+    fn moment(&self, at: u64) -> Moment {
+        let (path, start) = (&self.scenario.path, self.start_mark_usd);
+        Moment {
+            at,
+            level_usd: start * (1.0 + level_at(path, at) / 100.0),
+            book_usd: start * (1.0 + book_at(path, at) / 100.0),
+            fair_usd: self.scenario.fair_value_usd(start, at),
+        }
+    }
+
+    /// [`MarketState::moment`], as a function the actors keep.
+    fn moments(&self) -> Arc<dyn Fn(u64) -> Moment + Send + Sync> {
+        let market = self.clone();
+        Arc::new(move |at| market.moment(at))
+    }
+}
+
 /// Set a perp session up, up to the bot's start.
 pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let scenario = opts.scenario;
     let world = snapshot::start_offline_stepped(opts.snapshot_dir).await?;
-    if !world.manifest.holds(&scenario.symbol) {
-        return Err(Error::NotWarmed {
-            snapshot: opts.snapshot_dir.display().to_string(),
-            symbol: scenario.symbol.clone(),
-            held: world.manifest.symbols().join(", "),
-        });
+    let wanted = scenario.market_scenarios();
+    for market in wanted.iter() {
+        if !world.manifest.holds(&market.symbol) {
+            return Err(Error::NotWarmed {
+                snapshot: opts.snapshot_dir.display().to_string(),
+                symbol: market.symbol.clone(),
+                held: world.manifest.symbols().join(", "),
+            });
+        }
     }
     let surfnet = &world.surfnet;
     // The grader's own clients, served the way a stepped world needs: a
@@ -87,41 +125,73 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let rpc = mtx_kit::rpc_client_with_timeout(internal.url(), INTERNAL_RPC_TIMEOUT);
     let setup_from = rpc.get_slot()?;
     let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
-    let market = phoenix.market(&scenario.symbol)?.clone();
 
     let bot = opts.keys.keypair("bot", 0);
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
     let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_bbo = patiently("the book", async || {
-        hawkeye.view_bbo(&scenario.symbol).await
-    })
-    .await?
-    .value;
-    let start_mark_ticks = start_bbo.mark_price_ticks;
-    let start_mark_usd = phoenix.ticks_to_usd(&market, start_mark_ticks);
-    crate::oracles::check_index_gap(
-        &scenario.symbol,
-        start_mark_ticks as f64,
-        start_bbo.index_price_ticks as f64,
-    )?;
-    let start_quote = crate::oracles::MarketQuote {
-        mark: Some(start_mark_usd),
-        index: Some(phoenix.ticks_to_usd(&market, start_bbo.index_price_ticks)),
-        mid: crate::oracles::MarketQuote::mid_of(
-            start_bbo
-                .best_bid_ticks()
-                .map(|t| phoenix.ticks_to_usd(&market, t)),
-            start_bbo
-                .best_ask_ticks()
-                .map(|t| phoenix.ticks_to_usd(&market, t)),
-        ),
-    };
-    // The account, as an enforcer reads it: from Phoenix, never from the bot.
-    // A scenario that sets funding values it with the funding it has accrued
-    // and not settled yet; others as Phoenix's collateral and unrealized PnL
-    // alone.
-    let meter = PhoenixEternalMeter::new(
+    // Each market, in symbol order (one, for a session on one market), as
+    // Phoenix offers it, and its prices at the start.
+    let venue = PhoenixVenue::with_exchange(
+        internal.url(),
+        world.exchange.clone(),
+        world.exchange_path.clone(),
+        bot.pubkey(),
+    );
+    let mut markets = Vec::with_capacity(wanted.len());
+    let mut start_quotes = std::collections::BTreeMap::new();
+    for wanted in wanted.iter() {
+        let symbol = &wanted.symbol;
+        let market = phoenix.market(symbol)?.clone();
+        let start_bbo = patiently("the book", async || hawkeye.view_bbo(symbol).await)
+            .await?
+            .value;
+        let start_mark_ticks = start_bbo.mark_price_ticks;
+        let start_mark_usd = phoenix.ticks_to_usd(&market, start_mark_ticks);
+        crate::oracles::check_index_gap(
+            symbol,
+            start_mark_ticks as f64,
+            start_bbo.index_price_ticks as f64,
+        )?;
+        let instrument = wanted.instrument();
+        start_quotes.insert(
+            instrument.clone(),
+            crate::oracles::MarketQuote {
+                mark: Some(start_mark_usd),
+                index: Some(phoenix.ticks_to_usd(&market, start_bbo.index_price_ticks)),
+                mid: crate::oracles::MarketQuote::mid_of(
+                    start_bbo
+                        .best_bid_ticks()
+                        .map(|t| phoenix.ticks_to_usd(&market, t)),
+                    start_bbo
+                        .best_ask_ticks()
+                        .map(|t| phoenix.ticks_to_usd(&market, t)),
+                ),
+            },
+        );
+        markets.push(MarketState {
+            id: instrument.id(),
+            instrument,
+            perp: Arc::new(venue.perp(symbol)?),
+            start_mark_ticks,
+            start_mark_usd,
+            start_position: scenario.start_positions.get(symbol).copied().unwrap_or(0.0),
+            valuation: wanted.valuation(scenario.prices_the_close()),
+            market,
+            scenario: wanted.clone(),
+        });
+    }
+    let primary = markets
+        .iter()
+        .position(|m| m.scenario.symbol == scenario.symbol)
+        .expect("the primary market is one of the session's");
+    // The account, as an enforcer reads it: from Phoenix, never from the bot,
+    // on every market of the session. A scenario that sets funding values
+    // it with the funding it has accrued and not settled yet; others as
+    // Phoenix's collateral and unrealized PnL alone.
+    let symbols: Vec<&str> = markets.iter().map(|m| m.scenario.symbol.as_str()).collect();
+    let funded = markets.iter().any(|m| m.scenario.funding.is_some());
+    let meter = PhoenixEternalMeter::for_markets(
         Arc::new(PhoenixExchange::new(world.exchange.clone())),
         internal.url(),
         Arc::new(RpcChainClient::with_timeout(
@@ -129,10 +199,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             INTERNAL_RPC_TIMEOUT,
         )),
         bot.pubkey(),
-        &scenario.symbol,
+        &symbols,
     )
     .map_err(mtx_kit::Error::from)?
-    .with_unsettled_funding(scenario.funding.is_some());
+    .with_unsettled_funding(funded);
     if meter.trader() != trader {
         return Err(Error::InvalidExchangeKey(format!(
             "the meter would read trader account {}, but the bot was onboarded at {trader}",
@@ -145,91 +215,147 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         .iter()
         .map(|allowance| allowance.instrument.id())
         .collect();
-    if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
-        phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
+    for market in &markets {
+        if let Some(mark) = market
+            .scenario
+            .funding
+            .as_ref()
+            .and_then(|f| f.mark.as_ref())
+        {
+            phoenix::set_mark(surfnet, &phoenix, &market.scenario.symbol, mark)?;
+        }
     }
-    // The scenario's perp, as Phoenix offers it.
-    let perp = PhoenixVenue::with_exchange(
-        internal.url(),
-        world.exchange.clone(),
-        world.exchange_path.clone(),
-        bot.pubkey(),
-    )
-    .perp(&scenario.symbol)?;
-    let market_ref = scenario.instrument();
-    let start_position = scenario
-        .start_positions
-        .get(&scenario.symbol)
-        .copied()
-        .unwrap_or(0.0);
-    if start_position != 0.0 {
-        let seed = Seed {
-            world: &world,
-            phoenix: &phoenix,
-            perp: &perp,
-            rpc: &rpc,
-            rpc_url: internal.url(),
-        };
-        seed.position(
-            opts,
-            &bot,
-            &meter,
-            &universe,
-            start_mark_usd,
-            start_position,
-        )
-        .await?;
+    for (i, market) in markets.iter().enumerate() {
+        if market.start_position != 0.0 {
+            let seed = Seed {
+                world: &world,
+                phoenix: &phoenix,
+                perp: &market.perp,
+                n: i as u32,
+                market_id: &market.id,
+                rpc: &rpc,
+                rpc_url: internal.url(),
+            };
+            seed.position(
+                opts,
+                &bot,
+                &meter,
+                &universe,
+                market.start_mark_usd,
+                market.start_position,
+            )
+            .await?;
+        }
     }
     // The actors, set up while cheatcodes still work: market making's
     // takers, with the makers widened, and a competing maker; off hours'
     // takers, with the makers widened and no competitor; a tape's takers,
-    // with the makers as they are.
+    // with the makers as they are. On several markets, each market's, with
+    // one pool of taker accounts for them all, as one firm trading every
+    // market would; a market's actors other than the primary's act at that
+    // market's moments ([`OnMarket`]).
     let mut cast = Cast::default();
-    let widen = |half_spread_bps: f64| -> Result<u64> {
-        let half_spread_ticks =
-            (start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
-        phoenix::widen_makers(surfnet, &phoenix, &scenario.symbol, half_spread_ticks)
-    };
-    let takers = match (&scenario.making, &scenario.offhours) {
-        (Some(making), _) => Some((
-            widen(making.competitor_bps)?,
-            &making.takers,
-            scenario.takers_pricing.unwrap_or(Pricing::Level),
-        )),
-        (None, Some(off)) => Some((
-            widen(off.half_spread_bps)?,
-            &off.takers,
-            scenario.takers_pricing.unwrap_or(Pricing::Level),
-        )),
-        (None, None) if !scenario.tape.is_empty() => Some((
-            0,
-            &scenario.tape,
-            scenario.takers_pricing.unwrap_or(Pricing::Book),
-        )),
-        (None, None) => None,
-    };
-    if let Some((widened_ticks, orders, pricing)) = takers {
+    let mut flows = Vec::new();
+    for market in &markets {
+        let symbol = &market.scenario.symbol;
+        let widen = |half_spread_bps: f64| -> Result<u64> {
+            let half_spread_ticks =
+                (market.start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
+            phoenix::widen_makers(surfnet, &phoenix, symbol, half_spread_ticks)
+        };
+        let pricing = market.scenario.takers_pricing;
+        let offhours = scenario
+            .offhours
+            .as_ref()
+            .filter(|_| scenario.markets.is_empty());
+        let flow = match (&market.scenario.making, offhours) {
+            (Some(making), _) => Some((
+                widen(making.competitor_bps)?,
+                making.takers.clone(),
+                pricing.unwrap_or(Pricing::Level),
+            )),
+            (None, Some(off)) => Some((
+                widen(off.half_spread_bps)?,
+                off.takers.clone(),
+                pricing.unwrap_or(Pricing::Level),
+            )),
+            (None, None) if !market.scenario.tape.is_empty() => Some((
+                0,
+                market.scenario.tape.clone(),
+                pricing.unwrap_or(Pricing::Book),
+            )),
+            (None, None) => None,
+        };
+        flows.push(flow);
+    }
+    let on_market =
+        |i: usize, actor: Box<dyn crate::actors::Actor>| -> Box<dyn crate::actors::Actor> {
+            if i == primary {
+                actor
+            } else {
+                Box::new(OnMarket::new(
+                    markets[i].scenario.symbol.clone(),
+                    actor,
+                    markets[i].moments(),
+                ))
+            }
+        };
+    if let Some(first) = flows.iter().position(Option::is_some) {
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
             .map(|i| opts.keys.keypair("taker", i as u32))
             .collect();
-        let seats = onboard(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
-        tracing::info!(takers = seats.len(), widened_ticks, "takers ready");
-        cast.add(Box::new(Takers::new(
-            seats,
-            orders.clone(),
-            pricing,
-            widened_ticks,
-        )));
+        let pool: Vec<Keypair> = keypairs.iter().map(Keypair::insecure_clone).collect();
+        let mut seats = Some(
+            onboard(
+                &world,
+                &phoenix,
+                &markets[first].perp,
+                &rpc,
+                internal.url(),
+                keypairs,
+            )
+            .await?,
+        );
+        for (i, flow) in flows.iter().enumerate() {
+            let Some((widened_ticks, orders, pricing)) = flow else {
+                continue;
+            };
+            let seats = match seats.take().filter(|_| i == first) {
+                Some(seats) => seats,
+                None => market_seats(&markets[i].perp, &pool, internal.url()).await?,
+            };
+            tracing::info!(
+                market = markets[i].scenario.symbol,
+                takers = seats.len(),
+                widened_ticks,
+                "takers ready"
+            );
+            cast.add(on_market(
+                i,
+                Box::new(Takers::new(seats, orders.clone(), *pricing, *widened_ticks)),
+            ));
+        }
     }
-    if let Some(making) = &scenario.making {
-        let keypair = opts.keys.keypair("competitor", 0);
-        let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
+    for (i, market) in markets.iter().enumerate() {
+        if let Some(making) = &market.scenario.making {
+            let keypair = opts.keys.keypair("competitor", i as u32);
+            let seat = onboard(
+                &world,
+                &phoenix,
+                &market.perp,
+                &rpc,
+                internal.url(),
+                vec![keypair],
+            )
             .await?
             .remove(0);
-        cast.add(Box::new(Competitor::new(seat, making)));
+            cast.add(on_market(i, Box::new(Competitor::new(seat, making))));
+        }
     }
+    let own = &markets[primary];
     // The library's actors: a wallet each, onboarded like the takers. They
-    // are built once the session's first slot is known.
+    // are built once the session's first slot is known. They trade the
+    // primary market.
     let library = match &scenario.actors {
         Some(library) if !library.wallets().is_empty() => {
             let keypairs: Vec<Keypair> = library
@@ -239,7 +365,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 .collect();
             let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
             let seats =
-                onboard_unique(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
+                onboard_unique(&world, &phoenix, &own.perp, &rpc, internal.url(), keypairs).await?;
             tracing::info!(wallets = seats.len(), "library actors ready");
             let seats: Vec<WalletSeat> = pubkeys
                 .into_iter()
@@ -259,7 +385,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 symbol: &scenario.symbol,
                 rfq,
                 scale,
-                price_usd: start_mark_usd,
+                price_usd: own.start_mark_usd,
             };
             Some(fund_rfq(opts, surfnet, &rpc, internal.url(), &bot, setup)?)
         }
@@ -290,20 +416,29 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             budget: scenario.setup_slots(),
         });
     }
-    // The market's funding parameters land on the session's first slot, so
-    // they're in force, and their intervals start at the same point, before
-    // the bot starts.
+    // Each market's funding parameters land on the session's first slot,
+    // so they're in force, and their intervals start at the same point,
+    // before the bot starts.
     let perp_asset_map = phoenix.perp_asset_map()?;
-    if let Some(funding) = &scenario.funding {
+    let funding: Vec<_> = markets
+        .iter()
+        .filter_map(|m| Some((m.scenario.symbol.as_str(), m.scenario.funding.as_ref()?)))
+        .collect();
+    if !funding.is_empty() {
         chain::register_scenario(
             &rpc,
             "funding",
-            vec![crate::scenario::funding_override(
-                perp_asset_map,
-                &scenario.symbol,
-                funding,
-                first_slot.saturating_sub(slot).max(1),
-            )],
+            funding
+                .iter()
+                .map(|(symbol, funding)| {
+                    crate::scenario::funding_override(
+                        perp_asset_map,
+                        symbol,
+                        funding,
+                        first_slot.saturating_sub(slot).max(1),
+                    )
+                })
+                .collect(),
         )?;
     }
     // Surfpool restamps Phoenix's oracle readings, and the slot its mark's
@@ -313,7 +448,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     // the session's first slot restamps them all to it, so the session's
     // mark doesn't depend on how many onboardings setup ran either. A
     // funding scenario's own override, played there, does the same.
-    if scenario.funding.is_none() {
+    if funding.is_empty() {
         chain::register_scenario(
             &rpc,
             "readings",
@@ -332,26 +467,39 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     // the guard's upstream has no cheatcodes, airdrops, or way to stop it.
     // Overrides count from the slot they were registered at; so does the
     // takers' flow.
-    if let Some(funding) = &scenario.funding {
+    if !funding.is_empty() {
         while slot < first_slot + 1 {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
         }
-        phoenix::check_funding(&rpc, &phoenix, &scenario.symbol, funding)?;
+        for (symbol, funding) in &funding {
+            phoenix::check_funding(&rpc, &phoenix, symbol, funding)?;
+        }
     }
-    chain::register_scenario(
-        &rpc,
-        &scenario.name,
-        scenario.overrides(perp_asset_map, start_mark_ticks),
-    )?;
+    // Each market's moves, in symbol order. A move's overrides carry their
+    // slots, so the order they are registered in doesn't change when they
+    // land.
+    let overrides = if scenario.markets.is_empty() {
+        scenario.overrides(perp_asset_map, own.start_mark_ticks)
+    } else {
+        markets
+            .iter()
+            .flat_map(|m| m.scenario.overrides(perp_asset_map, m.start_mark_ticks))
+            .collect()
+    };
+    chain::register_scenario(&rpc, &scenario.name, overrides)?;
     let oracle_starts = match &scenario.oracles {
         Some(oracles) => crate::oracles::register(
             &rpc,
             oracles,
             scenario.duration_slots,
             &crate::oracles::World {
-                phoenix: Some((perp_asset_map, start_mark_ticks)),
-                prices: [(scenario.instrument(), start_quote)].into(),
+                phoenix: Some((perp_asset_map, own.start_mark_ticks)),
+                phoenix_marks: markets
+                    .iter()
+                    .map(|m| (m.scenario.symbol.clone(), m.start_mark_ticks))
+                    .collect(),
+                prices: start_quotes,
             },
         )?,
         None => Default::default(),
@@ -361,23 +509,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
     if let Some((library, seats)) = library {
-        let (path, start) = (scenario.path.clone(), start_mark_usd);
-        let fair_path = scenario.fair_path.clone();
-        let path = Arc::new(move |at| Moment {
-            at,
-            level_usd: start * (1.0 + level_at(&path, at) / 100.0),
-            book_usd: start * (1.0 + book_at(&path, at) / 100.0),
-            fair_usd: fair_path
-                .as_ref()
-                .map(|fair| start * (1.0 + level_at(fair, at) / 100.0)),
-        });
+        let path = own.moments();
         // Front-runners read the bot's trading through a seat on its
         // account, and its sends as they arrive.
         let send_reader = (!library.front_runners.is_empty())
-            .then(|| send_reader(market.clone(), internal.url().to_string()));
+            .then(|| send_reader(own.market.clone(), internal.url().to_string()));
         if !library.front_runners.is_empty() {
             cast.watch(FlowWatch::new(vec![
-                perp.seat(bot.insecure_clone(), internal.url()).await?,
+                own.perp.seat(bot.insecure_clone(), internal.url()).await?,
             ]));
         }
         let built = library.build(
@@ -420,7 +559,19 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .max_drawdown_usd
             .expect("a perp scenario's mandate has a drawdown limit"),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
-        markets: Vec::new(),
+        // The primary first, then the rest in symbol order.
+        markets: if scenario.markets.is_empty() {
+            Vec::new()
+        } else {
+            std::iter::once(scenario.symbol.clone())
+                .chain(
+                    markets
+                        .iter()
+                        .map(|m| m.scenario.symbol.clone())
+                        .filter(|s| *s != scenario.symbol),
+                )
+                .collect()
+        },
     };
     let reads_fills = scenario.order.is_some()
         || scenario.mandate.universe.iter().any(|allowance| {
@@ -429,24 +580,23 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 || allowance.max_buy_price.is_some()
         });
     let mut observed = Observed::default();
-    if start_position != 0.0 {
-        observed.begin(&market_ref, start_position);
+    for market in &markets {
+        if market.start_position != 0.0 {
+            observed.begin(&market.instrument, market.start_position);
+        }
     }
     let vars = session_vars(scenario)?;
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
-        perp,
-        market,
         bot: bot.pubkey(),
         meter,
         universe,
-        market_id: scenario.instrument().id(),
-        start_mark_usd,
+        markets,
+        primary,
         start_value_usd,
         base_slot,
         observed,
-        start_position,
         fills: reads_fills.then(|| PerpFills {
             last_scan: base_slot,
             ..PerpFills::default()
@@ -461,9 +611,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     };
     // A starting position is worth what the session values it at, from
     // the start: Phoenix's mark at the seeding is not the scenario's level.
-    if start_position != 0.0 {
+    let starts: Vec<f64> = account.markets.iter().map(|m| m.start_position).collect();
+    if starts.iter().any(|&start| start != 0.0) {
         let raw = grader_f64(account.measure().await?.value_usd);
-        account.start_value_usd = account.value(raw, start_position, base_slot).await?;
+        account.start_value_usd = account.value(raw, &starts, base_slot).await?;
         account.peak_value_usd = account.start_value_usd;
     }
     // The desk's asset counts toward the account from the start.
@@ -494,6 +645,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         cast,
         account: Box::new(account),
     })
+}
+
+/// A seat on `perp` for each of `keypairs`, already onboarded, trading
+/// through `rpc_url`: a pool's accounts on another of the session's
+/// markets.
+async fn market_seats(
+    perp: &PerpMarket,
+    keypairs: &[Keypair],
+    rpc_url: &str,
+) -> Result<Vec<Box<dyn Seat>>> {
+    let mut seats = Vec::with_capacity(keypairs.len());
+    for keypair in keypairs {
+        seats.push(perp.seat(keypair.insecure_clone(), rpc_url).await?);
+    }
+    Ok(seats)
 }
 
 /// Onboard an account on the perp for each of `keypairs`, with
@@ -547,20 +713,24 @@ async fn onboard_unique(
         .collect()
 }
 
-/// What setup gives a starting position with.
+/// What setup gives a starting position with: on `perp`, the session's
+/// `n`th market, whose id is `market_id`.
 struct Seed<'a> {
     world: &'a snapshot::OfflineWorld,
     phoenix: &'a Phoenix,
     perp: &'a PerpMarket,
+    n: u32,
+    market_id: &'a InstrumentId,
     rpc: &'a solana_rpc_client::rpc_client::RpcClient,
     rpc_url: &'a str,
 }
 
 impl Seed<'_> {
-    /// Give the bot `position` base units of the scenario's market, before
+    /// Give the bot `position` base units of the seeder's market, before
     /// it starts: a real fill on Phoenix, so Phoenix's margin, funding and
     /// liquidation see the position. A counterparty of the grader's (role
-    /// `seed`) rests the other side post-only at the start mark,
+    /// `seed`, numbered by the market's place in the session) rests the
+    /// other side post-only at the start mark,
     /// `mark_usd`; the grader sends the bot's immediate-or-cancel order for
     /// the position with the bot's own key, which it holds; the counterparty
     /// cancels what is left and never trades again. The fill's fee is paid
@@ -579,7 +749,7 @@ impl Seed<'_> {
         position: f64,
     ) -> Result<()> {
         let failed = Error::StartPosition;
-        let counterparty = opts.keys.keypair("seed", 0);
+        let counterparty = opts.keys.keypair("seed", self.n);
         phoenix::onboard_traders_stepped(
             &self.world.surfnet,
             self.phoenix,
@@ -618,7 +788,7 @@ impl Seed<'_> {
             .map_err(|e| failed(format!("the counterparty's cancel: {e}")))?;
         let held = position_in(
             &patiently("the meter", || meter.measure(universe)).await?,
-            meter.instrument(),
+            self.market_id,
         );
         let market = self.phoenix.market(&self.perp.instrument().symbol)?;
         let lot = mtx_kit::venue::lots_to_base_units(market, 1);
@@ -704,17 +874,19 @@ struct PerpFills {
     open_orders: Vec<(InstrumentRef, CoreSide)>,
 }
 
-/// A perp session's account: the bot's Phoenix trader account, metered.
+/// A perp session's account: the bot's Phoenix trader account, metered on
+/// every market of the session.
 struct PerpAccount {
     scenario: Scenario,
     phoenix: Phoenix,
-    perp: PerpMarket,
-    market: ExchangeMarketConfig,
     bot: Pubkey,
     meter: PhoenixEternalMeter,
     universe: Vec<InstrumentId>,
-    market_id: InstrumentId,
-    start_mark_usd: f64,
+    /// The session's markets, in symbol order, and which is the primary:
+    /// the scenario's `symbol`, the one the report's one-market fields and
+    /// the actors' moments are.
+    markets: Vec<MarketState>,
+    primary: usize,
     oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
     base_slot: u64,
@@ -722,15 +894,13 @@ struct PerpAccount {
     /// so a position over the cap is caught. With a starting position, the
     /// range starts there.
     observed: Observed,
-    /// The starting position in the scenario's market, in base units.
-    start_position: f64,
     /// The bot's fills, where the session reads them.
     fills: Option<PerpFills>,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
     max_drawdown_usd: f64,
-    /// Phoenix positions (or orders) in markets other than the scenario's.
+    /// Phoenix positions (or orders) in markets other than the session's.
     positions_outside_universe: u32,
     /// The requests for quotes open to the bot, if RFQ clients send any.
     rfqs: Option<RfqBoard>,
@@ -881,8 +1051,20 @@ async fn wallet_holds(
 }
 
 impl PerpAccount {
+    fn own(&self) -> &MarketState {
+        &self.markets[self.primary]
+    }
+
     async fn measure(&self) -> Result<Measurement> {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
+    }
+
+    /// Each market's position in `measurement`, in the markets' order.
+    fn positions(&self, measurement: &Measurement) -> Vec<f64> {
+        self.markets
+            .iter()
+            .map(|m| position_in(measurement, &m.id))
+            .collect()
     }
 
     /// Read the fills Phoenix recorded for the bot, and the orders it left
@@ -894,12 +1076,17 @@ impl PerpAccount {
         };
         let after = read.last_scan.saturating_sub(1);
         let records = patiently("the fills", || self.meter.records(after)).await?;
-        let instrument = self.scenario.instrument();
+        let named = |id: &InstrumentId| {
+            self.markets
+                .iter()
+                .find(|m| m.id == *id)
+                .map_or_else(|| self.scenario.instrument(), |m| m.instrument.clone())
+        };
         for recorded in records.fills {
             if read.seen.insert(recorded.fill.id.clone()) {
                 read.fills.push(PerpFillRecord {
                     at: recorded.slot.saturating_sub(self.base_slot),
-                    instrument: instrument.clone(),
+                    instrument: named(&recorded.fill.instrument),
                     side: recorded.fill.side,
                     price: grader_f64(recorded.fill.price),
                     base: grader_f64(recorded.fill.quantity),
@@ -907,7 +1094,7 @@ impl PerpAccount {
             }
         }
         for placed in records.placed {
-            let seen = (instrument.clone(), placed.side);
+            let seen = (named(&placed.instrument), placed.side);
             if !read.open_orders.contains(&seen) {
                 read.open_orders.push(seen);
             }
@@ -936,7 +1123,7 @@ impl PerpAccount {
         Ok(Some(DeskHoldings {
             base,
             usdc,
-            index_usd: self.phoenix.ticks_to_usd(&self.market, index),
+            index_usd: self.phoenix.ticks_to_usd(&self.own().market, index),
         }))
     }
 
@@ -950,37 +1137,72 @@ impl PerpAccount {
             .map_or(0.0, |held| held.base_usd()))
     }
 
-    async fn mark_ticks(&self) -> Result<u64> {
+    async fn mark_ticks(&self, market: &MarketState) -> Result<u64> {
         let hawkeye = self.phoenix.hawkeye(self.bot);
-        let symbol = &self.scenario.symbol;
+        let symbol = &market.scenario.symbol;
         Ok(patiently("the book", || hawkeye.view_bbo(symbol))
             .await?
             .value
             .mark_price_ticks)
     }
 
-    /// What a market-making account's position is worth: the scenario's
-    /// own oracle level at `slot`, which quoting can't push the way it can
-    /// push Phoenix's mark. Otherwise the mark, as Phoenix reports it.
-    /// Where the book trades at a premium, the scenario's book level: what
-    /// closing the position would fetch, which Phoenix's mark, a blend of
-    /// the book and the index, is not.
-    async fn value(&self, value_usd: f64, units: f64, slot: u64) -> Result<f64> {
-        let scenario = &self.scenario;
+    /// What the account is worth at `slot`, given Phoenix's value
+    /// `value_usd` and each market's position (`units`, in the markets'
+    /// order): each position at its market's price. A market-making
+    /// market's is the scenario's own oracle level there, which quoting
+    /// can't push the way it can push Phoenix's mark; where the book trades
+    /// at a premium, the scenario's book level: what closing the position
+    /// would fetch, which Phoenix's mark, a blend of the book and the index,
+    /// is not. Otherwise the mark, as Phoenix reports it.
+    async fn value(&self, value_usd: f64, units: &[f64], slot: u64) -> Result<f64> {
         let at = slot.saturating_sub(self.base_slot);
-        let level = match scenario.valuation() {
-            "oracle" => level_at(&scenario.path, at),
-            "book" => book_at(&scenario.path, at),
-            _ => return Ok(value_usd),
-        };
-        let mark = self.mark_ticks().await?;
-        let price = self.start_mark_usd * (1.0 + level / 100.0);
-        Ok(value_usd + units * (price - self.phoenix.ticks_to_usd(&self.market, mark)))
+        let mut value = value_usd;
+        for (market, &units) in self.markets.iter().zip(units) {
+            let level = match market.valuation {
+                "oracle" => level_at(&market.scenario.path, at),
+                "book" => book_at(&market.scenario.path, at),
+                _ => continue,
+            };
+            let mark = self.mark_ticks(market).await?;
+            let price = market.start_mark_usd * (1.0 + level / 100.0);
+            value += units * (price - self.phoenix.ticks_to_usd(&market.market, mark));
+        }
+        Ok(value)
     }
 
     /// [`PerpAccount::value`], and the RFQ desk's wallet.
-    async fn value_with_desk(&self, value_usd: f64, units: f64, slot: u64) -> Result<f64> {
+    async fn value_with_desk(&self, value_usd: f64, units: &[f64], slot: u64) -> Result<f64> {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
+    }
+
+    /// Each market other than the primary at a step, in symbol order:
+    /// nothing for a session on one market.
+    async fn market_steps(&self, at: u64, positions: &[f64]) -> Result<Vec<MarketStep>> {
+        if self.markets.len() < 2 {
+            return Ok(Vec::new());
+        }
+        let hawkeye = self.phoenix.hawkeye(self.bot);
+        let mut steps = Vec::with_capacity(self.markets.len());
+        for (market, &position) in self.markets.iter().zip(positions) {
+            let symbol = &market.scenario.symbol;
+            let bbo = patiently("the book", || hawkeye.view_bbo(symbol))
+                .await?
+                .value;
+            let usd = |ticks: u64| self.phoenix.ticks_to_usd(&market.market, ticks);
+            let moment = market.moment(at);
+            steps.push(MarketStep {
+                symbol: symbol.clone(),
+                mark_usd: usd(bbo.mark_price_ticks),
+                index_usd: usd(bbo.index_price_ticks),
+                level_usd: moment.level_usd,
+                book_usd: (market.valuation == "book").then_some(moment.book_usd),
+                fair_usd: moment.fair_usd,
+                best_bid_usd: bbo.best_bid_ticks().map(usd),
+                best_ask_usd: bbo.best_ask_ticks().map(usd),
+                position,
+            });
+        }
+        Ok(steps)
     }
 }
 
@@ -995,42 +1217,38 @@ impl Account for PerpAccount {
     }
 
     fn moment(&self, at: u64) -> Moment {
-        let path = &self.scenario.path;
-        Moment {
-            at,
-            level_usd: self.start_mark_usd * (1.0 + level_at(path, at) / 100.0),
-            book_usd: self.start_mark_usd * (1.0 + book_at(path, at) / 100.0),
-            fair_usd: self.scenario.fair_value_usd(self.start_mark_usd, at),
-        }
+        self.own().moment(at)
     }
 
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
         self.scan(slot).await?;
-        let scenario = &self.scenario;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
-        let position = position_in(&now, &self.market_id);
+        let positions = self.positions(&now);
+        let position = positions[self.primary];
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
         let value_usd = self
-            .value_with_desk(grader_f64(now.value_usd), position, slot)
+            .value_with_desk(grader_f64(now.value_usd), &positions, slot)
             .await?;
         self.peak_value_usd = self.peak_value_usd.max(value_usd);
         self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        let own = &self.markets[self.primary];
         let hawkeye = self.phoenix.hawkeye(self.bot);
-        let bbo = patiently("the book", || hawkeye.view_bbo(&scenario.symbol))
+        let bbo = patiently("the book", || hawkeye.view_bbo(&own.scenario.symbol))
             .await?
             .value;
-        let usd = |ticks: u64| self.phoenix.ticks_to_usd(&self.market, ticks);
-        let start_mark_usd = self.start_mark_usd;
+        let usd = |ticks: u64| self.phoenix.ticks_to_usd(&own.market, ticks);
+        let start_mark_usd = own.start_mark_usd;
+        let path = &own.scenario.path;
         Ok(StepRecord {
             k,
             at,
             mark_usd: usd(bbo.mark_price_ticks),
             index_usd: usd(bbo.index_price_ticks),
-            level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
-            book_usd: (scenario.valuation() == "book")
-                .then(|| start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0)),
-            fair_usd: scenario.fair_value_usd(start_mark_usd, at),
+            level_usd: start_mark_usd * (1.0 + level_at(path, at) / 100.0),
+            book_usd: (own.valuation == "book")
+                .then(|| start_mark_usd * (1.0 + book_at(path, at) / 100.0)),
+            fair_usd: own.scenario.fair_value_usd(start_mark_usd, at),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
             position,
@@ -1038,6 +1256,7 @@ impl Account for PerpAccount {
             pnl_usd: value_usd - self.start_value_usd,
             turn_ms: None,
             answered: None,
+            markets: self.market_steps(at, &positions).await?,
         })
     }
 
@@ -1056,25 +1275,45 @@ impl Account for PerpAccount {
         env: &BotEnv,
         mandate: &Mandate,
     ) -> Result<Desk> {
-        // The bot's own trader, through the guard's host side: its sends
-        // are the bot's, its reads aren't.
-        let trader = Arc::new(self.perp.trader(bot.insecure_clone(), host_url)?);
+        // The bot's own trader on each market, through the guard's host
+        // side: its sends are the bot's, its reads aren't. The primary
+        // market's seat is first: a line that names no market goes there.
+        let own = self.own();
+        let trader = Arc::new(own.perp.trader(bot.insecure_clone(), host_url)?);
         let venue = std::fs::read_to_string(&env.exchange_path)
             .map_err(crate::error::io_error(&env.exchange_path))?;
         let mut seats: Vec<Box<dyn Seat>> = vec![Box::new(crate::venue::perps::PerpSeat::new(
-            self.perp.instrument().to_string(),
+            own.perp.instrument().to_string(),
             trader.clone(),
         ))];
+        for (i, market) in self.markets.iter().enumerate() {
+            if i != self.primary {
+                seats.push(Box::new(crate::venue::perps::PerpSeat::new(
+                    market.perp.instrument().to_string(),
+                    Arc::new(market.perp.trader(bot.insecure_clone(), host_url)?),
+                )));
+            }
+        }
         if let Some(board) = &self.rfqs {
             seats.push(Box::new(RfqSeat::new(board.clone())));
         }
-        Ok(Desk {
-            rfqs: self.rfqs.clone(),
-            markets: mtx_kit::VenueInfo::of_perp_session(
+        let markets = if self.markets.len() < 2 {
+            mtx_kit::VenueInfo::of_perp_session(
                 mandate,
                 &env.symbol,
                 mtx_kit::phoenix_market_address(&venue, &env.symbol),
-            ),
+            )
+        } else {
+            let addresses = self
+                .markets
+                .iter()
+                .map(|m| (m.scenario.symbol.clone(), m.market.market_pubkey.clone()))
+                .collect();
+            mtx_kit::VenueInfo::of_perp_markets(mandate, &env.symbol, &addresses)
+        };
+        Ok(Desk {
+            rfqs: self.rfqs.clone(),
+            markets,
             seats,
             symbol: env.symbol.clone(),
             venue,
@@ -1084,47 +1323,112 @@ impl Account for PerpAccount {
     }
 
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord {
-        decode_instruction(ix, keys, &self.market)
+        // The market the instruction names, if it names one of the
+        // session's: an order's price and size are in its own units.
+        let named: Vec<&str> = ix["accounts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|i| keys.get(i.as_u64()? as usize)?.as_str())
+            .collect();
+        let market = self
+            .markets
+            .iter()
+            .find(|m| named.contains(&m.market.market_pubkey.as_str()))
+            .unwrap_or_else(|| self.own());
+        decode_instruction(ix, keys, &market.market)
     }
 
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         self.scan(done.end_slot).await?;
-        let scenario = &self.scenario;
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
-        let end_position = position_in(&end, &self.market_id);
+        let end_positions = self.positions(&end);
         let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
-            .value(grader_f64(end.value_usd), end_position, done.end_slot)
+            .value(grader_f64(end.value_usd), &end_positions, done.end_slot)
             .await?
             + end_desk.map_or(0.0, |held| held.base_usd());
         let positions_outside_universe = self.positions_outside_universe.max(end.outside_universe);
         let liquidatable = self.meter.liquidatable().await?;
-        let instrument = scenario.instrument();
-        let end_mark_usd = self
-            .phoenix
-            .ticks_to_usd(&self.market, self.mark_ticks().await?);
+        let mut end_marks = Vec::with_capacity(self.markets.len());
+        for market in &self.markets {
+            end_marks.push(
+                self.phoenix
+                    .ticks_to_usd(&market.market, self.mark_ticks(market).await?),
+            );
+        }
         let observed = std::mem::take(&mut self.observed);
         let fills = self.fills.take().unwrap_or_default();
-        let close_usd = self
-            .moment(done.end_slot.saturating_sub(self.base_slot))
-            .level_usd;
+        let at = done.end_slot.saturating_sub(self.base_slot);
+        let legs: std::collections::BTreeMap<String, Leg> = self
+            .markets
+            .iter()
+            .zip(&end_positions)
+            .map(|(market, &end)| {
+                let leg = Leg {
+                    start: market.start_position,
+                    end,
+                    start_usd: market.start_mark_usd,
+                    close_usd: market.moment(at).level_usd,
+                };
+                (market.scenario.symbol.clone(), leg)
+            })
+            .collect();
+        let scenario = &self.scenario;
         let settled = settle(
             scenario,
-            self.start_position,
-            end_position,
-            (self.start_mark_usd, close_usd),
+            &legs,
             end_value_usd - self.start_value_usd,
             &fills.fills,
         );
+        let oracle_starts = std::mem::take(&mut self.oracle_starts);
+        let own = self.own();
+        let instrument = own.instrument.clone();
+        let mut actors = done.actors;
+        let markets = if self.markets.len() < 2 {
+            Vec::new()
+        } else {
+            self.markets
+                .iter()
+                .enumerate()
+                .map(|(i, market)| {
+                    let (flow, competitor) = if i == self.primary {
+                        (actors.flow.clone(), actors.competitor.clone())
+                    } else {
+                        let theirs = actors
+                            .markets
+                            .get(&market.scenario.symbol)
+                            .cloned()
+                            .unwrap_or_default();
+                        (theirs.flow, theirs.competitor)
+                    };
+                    MarketReport {
+                        symbol: market.scenario.symbol.clone(),
+                        start_mark_usd: market.start_mark_usd,
+                        end_mark_usd: end_marks[i],
+                        start_position: market.start_position,
+                        end_position: end_positions[i],
+                        valuation: market.valuation,
+                        flow,
+                        competitor,
+                    }
+                })
+                .collect()
+        };
+        let market_taker_orders = std::mem::take(&mut actors.markets)
+            .into_iter()
+            .filter(|(_, report)| !report.taker_orders.is_empty())
+            .map(|(symbol, report)| (symbol, report.taker_orders))
+            .collect();
         Ok(SessionReport {
             scenario: scenario.name.clone(),
-            start_mark_usd: self.start_mark_usd,
-            end_mark_usd,
+            start_mark_usd: own.start_mark_usd,
+            end_mark_usd: end_marks[self.primary],
             start_value_usd: self.start_value_usd,
             end_value_usd,
             pnl_usd: settled.pnl_usd,
-            end_position,
+            end_position: end_positions[self.primary],
             liquidatable,
             refused_calls: done.refused_calls,
             bot_exit: done.bot_exit,
@@ -1137,10 +1441,10 @@ impl Account for PerpAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
-            valuation: scenario.valuation(),
-            flow: done.actors.flow,
-            competitor: done.actors.competitor,
-            actors: done.actors.library.map(|mut library| {
+            valuation: own.valuation,
+            flow: actors.flow,
+            competitor: actors.competitor,
+            actors: actors.library.map(|mut library| {
                 library.desk = self
                     .desk_start
                     .zip(end_desk)
@@ -1163,21 +1467,34 @@ impl Account for PerpAccount {
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
             crank_refusals: done.crank_refusals,
-            oracle_starts: std::mem::take(&mut self.oracle_starts),
+            oracle_starts,
+            markets,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
                 start_slot: done.start_slot,
                 end_slot: done.end_slot,
                 slots_per_step: crate::session::SLOTS_PER_STEP,
-                start_mark_usd: self.start_mark_usd,
+                start_mark_usd: own.start_mark_usd,
                 steps: done.steps,
                 transactions: done.transactions,
                 calls: done.calls,
-                taker_orders: done.actors.taker_orders,
+                taker_orders: actors.taker_orders,
+                market_taker_orders,
             },
         })
     }
+}
+
+/// One market's part of a session's settlement: the position at the start
+/// and the end, in base units, and the start mark and the scenario's level
+/// at the end, in USD.
+#[derive(Debug, Clone, Copy)]
+struct Leg {
+    start: f64,
+    end: f64,
+    start_usd: f64,
+    close_usd: f64,
 }
 
 /// What a perp session's PnL comes to, with its order and close-outs.
@@ -1187,32 +1504,53 @@ struct Settled {
     close_outs: Vec<CloseOutReport>,
 }
 
-/// Settle a session in the scenario's market: from `start` to `end` base
-/// units, valued at the start mark and at `close_usd`, the scenario's level
-/// at the end, with the account's value changing by `value_change_usd`.
-/// An order is scored against its broker, as on spot (`fills`, the bot's,
-/// say whether it traded the other way); a close-out charges the haircut on
-/// what is left. Without either, the PnL is the value change.
+/// Settle a session from each market's [`Leg`] (`legs`, by symbol), with
+/// the account's value changing by `value_change_usd`. An order is scored
+/// against its broker on its market's leg, as on spot (`fills`, the bot's
+/// on that market, say whether it traded the other way); a close-out
+/// charges the haircut on what is left in its market. Without either, the
+/// PnL is the value change.
 fn settle(
     scenario: &Scenario,
-    start: f64,
-    end: f64,
-    (start_usd, close_usd): (f64, f64),
+    legs: &std::collections::BTreeMap<String, Leg>,
     value_change_usd: f64,
     fills: &[PerpFillRecord],
 ) -> Settled {
+    let flat = Leg {
+        start: 0.0,
+        end: 0.0,
+        start_usd: 0.0,
+        close_usd: 0.0,
+    };
+    let leg = |symbol: &str| legs.get(symbol).copied().unwrap_or(flat);
     let order = scenario.order.as_ref().map(|order| {
         let mut order = order.clone();
-        order
+        let instrument = order
             .instrument
-            .get_or_insert_with(|| scenario.instrument());
-        let own: Vec<(CoreSide, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
-        order.report(start, end, start_usd, close_usd, value_change_usd, &own)
+            .get_or_insert_with(|| scenario.instrument())
+            .clone();
+        let own: Vec<(CoreSide, f64)> = fills
+            .iter()
+            .filter(|f| f.instrument == instrument)
+            .map(|f| (f.side, f.base))
+            .collect();
+        let at = leg(&instrument.symbol);
+        order.report(
+            at.start,
+            at.end,
+            at.start_usd,
+            at.close_usd,
+            value_change_usd,
+            &own,
+        )
     });
     let close_outs: Vec<CloseOutReport> = scenario
         .close_out
         .iter()
-        .map(|(symbol, close_out)| close_out.report(symbol, end, close_usd))
+        .map(|(symbol, close_out)| {
+            let at = leg(symbol);
+            close_out.report(symbol, at.end, at.close_usd)
+        })
         .collect();
     let pnl_usd = order
         .as_ref()
@@ -1397,6 +1735,89 @@ mod tests {
 
     use super::*;
 
+    /// [`settle`] on the scenario's one market.
+    fn settle_one(
+        scenario: &Scenario,
+        start: f64,
+        end: f64,
+        (start_usd, close_usd): (f64, f64),
+        value_change_usd: f64,
+        fills: &[PerpFillRecord],
+    ) -> Settled {
+        let leg = Leg {
+            start,
+            end,
+            start_usd,
+            close_usd,
+        };
+        settle(
+            scenario,
+            &[(scenario.symbol.clone(), leg)].into(),
+            value_change_usd,
+            fills,
+        )
+    }
+
+    #[test]
+    fn each_market_settles_on_its_own_leg() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.order = Some(crate::orders::ExecutionOrder {
+            instrument: Some("phoenix:perp:NVDA".parse().unwrap()),
+            side: CoreSide::Buy,
+            quantity: 10.0,
+            haircut_bps: 50.0,
+            reduce_only: false,
+        });
+        scenario.close_out.insert(
+            "SPCX".into(),
+            crate::orders::CloseOut { haircut_bps: 100.0 },
+        );
+        let legs = [
+            (
+                "NVDA".to_string(),
+                Leg {
+                    start: 0.0,
+                    end: 6.0,
+                    start_usd: 180.0,
+                    close_usd: 190.0,
+                },
+            ),
+            (
+                "SPCX".to_string(),
+                Leg {
+                    start: 0.0,
+                    end: -4.0,
+                    start_usd: 100.0,
+                    close_usd: 200.0,
+                },
+            ),
+        ]
+        .into();
+        // A sell on SPCX is not a sell against the NVDA order.
+        let fills = [
+            PerpFillRecord {
+                instrument: "phoenix:perp:NVDA".parse().unwrap(),
+                ..fill(CoreSide::Buy, 6.0)
+            },
+            fill(CoreSide::Sell, 4.0),
+        ];
+        let settled = settle(&scenario, &legs, 70.0, &fills);
+        let order = settled.order.unwrap();
+        assert_eq!(order.breach(), None);
+        let alone = crate::orders::ExecutionOrder {
+            instrument: Some("phoenix:perp:NVDA".parse().unwrap()),
+            side: CoreSide::Buy,
+            quantity: 10.0,
+            haircut_bps: 50.0,
+            reduce_only: false,
+        }
+        .report(0.0, 6.0, 180.0, 190.0, 70.0, &[(CoreSide::Buy, 6.0)]);
+        // The SPCX residual short is charged at its own level.
+        assert_eq!(settled.close_outs.len(), 1);
+        assert!((settled.close_outs[0].broker_usd - 202.0).abs() < 1e-9);
+        assert!((settled.pnl_usd - (alone.pnl_usd() - 8.0)).abs() < 1e-9);
+    }
+
     fn fill(side: CoreSide, base: f64) -> PerpFillRecord {
         PerpFillRecord {
             at: 2,
@@ -1419,13 +1840,13 @@ mod tests {
         };
         scenario.order = Some(order.clone());
         // Doing nothing scores 0 whatever the close.
-        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), 0.0, &[]);
+        let nop = settle_one(&scenario, 0.0, 0.0, (100.0, 110.0), 0.0, &[]);
         assert_eq!(nop.pnl_usd, 0.0);
         // Bought 6 at 101 against a close of 110, 1 of fees: the same PnL
         // as the spot formula, and the order names its market.
         let fills = [fill(CoreSide::Buy, 6.0)];
         let value_change = 6.0 * (110.0 - 101.0) - 1.0;
-        let bought = settle(&scenario, 0.0, 6.0, (100.0, 110.0), value_change, &fills);
+        let bought = settle_one(&scenario, 0.0, 6.0, (100.0, 110.0), value_change, &fills);
         let spot = order.report(
             0.0,
             6.0,
@@ -1442,7 +1863,7 @@ mod tests {
         // A sell inside the session is caught from the fills, though the
         // position never went below where it started.
         let both = [fill(CoreSide::Buy, 6.0), fill(CoreSide::Sell, 1.0)];
-        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &both);
+        let sold = settle_one(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &both);
         assert!(
             sold.order
                 .unwrap()
@@ -1457,7 +1878,7 @@ mod tests {
             reduce_only: true,
             ..order
         });
-        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), -100.0, &[]);
+        let held = settle_one(&scenario, 10.0, 10.0, (100.0, 90.0), -100.0, &[]);
         assert_eq!(held.pnl_usd, 0.0);
     }
 
@@ -1468,17 +1889,17 @@ mod tests {
             "SPCX".into(),
             crate::orders::CloseOut { haircut_bps: 100.0 },
         );
-        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        let long = settle_one(&scenario, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
         assert!((long.pnl_usd - (50.0 - 4.0 * 2.0)).abs() < 1e-9);
         assert!((long.close_outs[0].broker_usd - 198.0).abs() < 1e-9);
-        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), 50.0, &[]);
+        let short = settle_one(&scenario, 0.0, -4.0, (100.0, 200.0), 50.0, &[]);
         assert!((short.close_outs[0].broker_usd - 202.0).abs() < 1e-9);
         assert!((short.pnl_usd - (50.0 - 8.0)).abs() < 1e-9);
-        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), 50.0, &[]);
+        let flat = settle_one(&scenario, 3.0, 0.0, (100.0, 200.0), 50.0, &[]);
         assert_eq!(flat.pnl_usd, 50.0);
         // Without an order or a close-out, the PnL is the value change.
         let plain = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        let settled = settle_one(&plain, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
         assert_eq!(settled.pnl_usd, 50.0);
         assert!(settled.order.is_none() && settled.close_outs.is_empty());
     }

@@ -978,6 +978,33 @@ impl WasmBot {
         if let Some(board) = &self.desk.rfqs {
             fills.extend(board.take_fills());
         }
+        // A perp account's other markets (a session on several): each
+        // seat's own position and top.
+        if matches!(self.desk.reader, Reader::Perp(_)) {
+            for view in venues.iter_mut().skip(1) {
+                let Some(seat) = self
+                    .desk
+                    .seats
+                    .iter()
+                    .skip(1)
+                    .find(|s| s.market() == view.id)
+                else {
+                    continue;
+                };
+                if let Ok(size) = seat.position().await {
+                    view.position = Some(mtx_kit::Position {
+                        size,
+                        ..Default::default()
+                    });
+                }
+                if view.best_bid.is_none()
+                    && view.best_ask.is_none()
+                    && let Ok((bid, ask)) = seat.top().await
+                {
+                    (view.best_bid, view.best_ask) = (bid, ask);
+                }
+            }
+        }
         // A measured wallet's other markets: the same SOL held, and each
         // seat's own top, where the step's depth didn't give one.
         if matches!(self.desk.reader, Reader::Wallet { .. }) {

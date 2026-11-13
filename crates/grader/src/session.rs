@@ -212,6 +212,11 @@ pub struct SessionReport {
     /// Each anchored oracle feed's start, against its account's own price.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
+    /// A perp session on several markets: each market, in symbol order, the
+    /// primary included. The fields above that name one market are the
+    /// primary's. Empty for a session on one market.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -221,6 +226,40 @@ pub struct SessionReport {
     /// [`crate::grade::GradeOptions::detail_dir`]).
     #[serde(skip)]
     pub timeline: Timeline,
+}
+
+/// One market of a perp session on several markets (see
+/// [`SessionReport::markets`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarketReport {
+    pub symbol: String,
+    /// Phoenix's mark at the start and the end, in USD: the start mark is
+    /// what the market's path, its bound and its valuation count from.
+    pub start_mark_usd: f64,
+    pub end_mark_usd: f64,
+    /// The position at the start and the end, in base units.
+    pub start_position: f64,
+    pub end_position: f64,
+    /// The price the market's position was valued at (see
+    /// [`SessionReport::valuation`]).
+    #[serde(deserialize_with = "static_name")]
+    pub valuation: StaticName,
+    /// What the market's takers and competing maker did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<FlowReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub competitor: Option<CompeteReport>,
+}
+
+impl SessionReport {
+    /// Each market's start mark, by symbol, for a session on several
+    /// markets; empty for one.
+    pub fn start_marks_usd(&self) -> BTreeMap<String, f64> {
+        self.markets
+            .iter()
+            .map(|m| (m.symbol.clone(), m.start_mark_usd))
+            .collect()
+    }
 }
 
 /// A session step by step: the market and the account at every step, what
@@ -242,6 +281,10 @@ pub struct Timeline {
     /// Market making: the grader's taker orders, as sent.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub taker_orders: Vec<TakerRecord>,
+    /// A session on several markets: the taker orders on each market but
+    /// the primary, by symbol.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub market_taker_orders: BTreeMap<String, Vec<TakerRecord>>,
 }
 
 /// The world and the account after a step's blocks landed, before the bot's
@@ -278,6 +321,29 @@ pub struct StepRecord {
     pub turn_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answered: Option<bool>,
+    /// A session on several markets: each market at this step, in symbol
+    /// order. The fields above that name one market are the primary's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketStep>,
+}
+
+/// One market of a session on several markets at a step (see
+/// [`StepRecord`]'s fields of the same names).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarketStep {
+    pub symbol: String,
+    pub mark_usd: f64,
+    pub index_usd: f64,
+    pub level_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fair_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_bid_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_ask_usd: Option<f64>,
+    pub position: f64,
 }
 
 /// One of the bot's transactions, looked up once the session ended.
