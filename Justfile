@@ -239,6 +239,8 @@ push-image jobs="3":
 pin-image:
     #!/usr/bin/env bash
     set -euo pipefail
+    # In place, with GNU sed (Linux, CI) or BSD sed (macOS).
+    sedi() { if sed --version > /dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
     pin() {
       local ref="$1"; shift
       # The registry occasionally fails a lookup; retry before giving up.
@@ -249,7 +251,7 @@ pin-image:
       done
       [ -n "$digest" ] || { echo "no digest for $ref"; exit 1; }
       echo "$ref@$digest"
-      sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
+      sedi -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
     }
     pin {{registry}}/{{image}}:{{tag}} {{tasks}}/*/environment/Dockerfile
     pin {{registry}}/{{image}}:{{tag}}-runtime {{tasks}}/*/tests/Dockerfile
@@ -267,7 +269,7 @@ pin-image:
         done
         [ -n "$digest" ] || { echo "no digest for $ref"; exit 1; }
         echo "$ref@$digest"
-        sed -i '' -E "s|^docker_image = \"{{registry}}/{{image}}:[^\"]*-$task$suffix(@sha256:[0-9a-f]+)?\"|docker_image = \"$ref@$digest\"|" "$dir/task.toml"
+        sedi -E "s|^docker_image = \"{{registry}}/{{image}}:[^\"]*-$task$suffix(@sha256:[0-9a-f]+)?\"|docker_image = \"$ref@$digest\"|" "$dir/task.toml"
       done
     done
 
@@ -285,6 +287,15 @@ release: check-solution
     [ "$(git rev-parse HEAD)" = "$head" ] && git diff --quiet && git diff --cached --quiet \
       && [ -z "$(git ls-files --others --exclude-standard)" ] \
       || { echo "the tree changed while the images built; release from a clean worktree"; exit 1; }
+    just release-publish
+
+# The second half of a release, once both images are pushed under `tag`:
+# pin every task to them, check, and publish the dataset to Harbor. The
+# release workflow (.github/workflows/release.yml) builds the images itself,
+# then runs this.
+release-publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
     just pin-image
     for task in {{tasks}}/*/; do harbor lint "$task" --select ALL; done
     harbor sync {{tasks}}
