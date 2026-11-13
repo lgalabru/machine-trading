@@ -512,6 +512,7 @@ impl ScenarioV2 {
         }
         self.assets.validate()?;
         self.venues.validate()?;
+        self.spot_markets_trade_the_symbol()?;
         self.market_model
             .validate(self.duration_slots, &self.actors.takers)?;
         self.actors.validate(
@@ -539,20 +540,10 @@ impl ScenarioV2 {
         }
     }
 
-    /// A spot scenario trades a pair its venues' profiles name from a
-    /// wallet, and has no path or market making. A tape trades the session's
-    /// first venue; an arbitrageur, its pools.
+    /// A spot scenario trades from a wallet, and has no path or market
+    /// making. A tape trades the session's first venue; an arbitrageur, its
+    /// pools.
     fn spot_is_alone(&self) -> Result<(), String> {
-        for venue in self.venues.spot.iter().flat_map(|s| &s.markets) {
-            let named = crate::venue::books::named_markets(venue).map_err(|e| e.to_string())?;
-            if !named.iter().any(|m| m.symbol == self.assets.symbol) {
-                return Err(format!(
-                    "spot: the symbol {} has no market on {venue}; its profile names {:?}",
-                    self.assets.symbol,
-                    named.iter().map(|m| m.symbol).collect::<Vec<_>>()
-                ));
-            }
-        }
         if self.actors.arbitrage.is_some()
             && !self
                 .venues
@@ -579,6 +570,22 @@ impl ScenarioV2 {
                 "spot: a spot scenario has no path, fair path, market making, off-hours or funding"
                     .into(),
             );
+        }
+        Ok(())
+    }
+
+    /// Each spot market's venue profile names the scenario's symbol: the
+    /// books SOL-USDC, the pools SPCX-USDC.
+    fn spot_markets_trade_the_symbol(&self) -> Result<(), String> {
+        for venue in self.venues.spot.iter().flat_map(|s| &s.markets) {
+            let named = crate::venue::books::named_markets(venue).map_err(|e| e.to_string())?;
+            if !named.iter().any(|m| m.symbol == self.assets.symbol) {
+                return Err(format!(
+                    "spot: the symbol {} has no market on {venue}; its profile names {:?}",
+                    self.assets.symbol,
+                    named.iter().map(|m| m.symbol).collect::<Vec<_>>()
+                ));
+            }
         }
         Ok(())
     }
