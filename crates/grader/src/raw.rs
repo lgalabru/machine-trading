@@ -2468,6 +2468,37 @@ mod tests {
         eprintln!("16 heavy sends and their flush took {took:?}");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_session_simulates_no_more_raw_sends_than_its_cap() {
+        let world = world().await;
+        let mut sender = world.sender(vec![SYSTEM], Mandate::perp("phoenix", SPCX, 70.0, 1_000.0));
+        let limit = |units: u32| {
+            transaction(vec![RawInstruction {
+                program: COMPUTE_BUDGET.to_string(),
+                accounts: Vec::new(),
+                data: [vec![2], units.to_le_bytes().to_vec()].concat(),
+            }])
+        };
+        let mut units = 10_000;
+        for step in 0..u64::from(MAX_SIMULATED_PER_SESSION / MAX_SIMULATED_PER_STEP) {
+            sender.begin(step, None).await;
+            for _ in 0..MAX_SIMULATED_PER_STEP {
+                units += 1;
+                let taken = sender.take(limit(units)).await;
+                assert!(taken.is_ok(), "step {step}: {taken:?}");
+            }
+            sender.discard("not sent");
+        }
+        sender.begin(99, None).await;
+        assert_eq!(
+            sender.take(limit(1)).await,
+            Err(
+                "raw sends have had their 128 simulations this session: the rest aren't simulated"
+                    .into()
+            )
+        );
+    }
+
     #[test]
     fn only_programs_the_audit_measures_may_be_allowed() {
         use crate::scenario::RawSends;
