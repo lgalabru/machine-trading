@@ -17,6 +17,10 @@ tasks := "bench/tasks"
 # OpenAI's.
 claude_code := "2.1.312"
 codex := "0.166.0"
+# Hermes (NousResearch/hermes-agent), one harness for every provider's
+# models: `hermes:<model>` in `just bench` runs <model> in it, so a harness's
+# bias shows next to the providers' own.
+hermes := "v0.23.1"
 
 default:
     @just --list
@@ -377,7 +381,7 @@ release-publish:
 # ANTHROPIC_API_KEY and OPENAI_API_KEY (for the providers it runs) from .env
 # or ~/.machine-trading.env. Results go to jobs/bench/; read them with
 # `mtx bench review`. Arguments are positional:
-# just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0
+# just bench "claude-opus-5-5 openai/<model> hermes:openai/<model>" 5 3 0.11.0
 # `together=1` runs the models at once (each with n trials at a time)
 # instead of one after the other: grades don't depend on load.
 #
@@ -392,6 +396,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
     for model in {{models}}; do
+      model="${model#hermes:}"
       case "$model" in
         openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
         */*) [ "${model%%/*}" = anthropic ] || { echo "$model: only anthropic/ and openai/ models have a pinned harness"; exit 1; }
@@ -416,13 +421,13 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     # The plan, written before the first trial starts: what runs (models,
     # harnesses and their versions, attempts, time), what's measured and on
     # which commit. `mtx bench review` shows trials not started yet as queued.
-    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, commit = sys.argv[1:]
+    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, hm, commit = sys.argv[1:]
     models = m.split()
-    harness = lambda m: {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
+    harness = lambda m: {"agent": "hermes", "version": hm} if m.startswith("hermes:") else {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
     json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x),
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
-      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "{{hermes}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     # What the providers say when the account, not the model, is out: a
     # quota, a credit balance or a usage cap. Rate limits are retried by the
     # harnesses and don't stop a batch.
@@ -433,6 +438,17 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
       # Each harness is pinned, so numbers compare across releases, with no
       # web and no memory across trials.
       case "$model" in
+        hermes:*)
+          # Every provider's model in one harness; a bare name is Anthropic's.
+          local target="${model#hermes:}"
+          case "$target" in */*) ;; *) target="anthropic/$target" ;; esac
+          # bench/harness/mtx_hermes.py: Harbor's adapter, with the version
+          # check today's hermes-agent answers.
+          PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
+          harbor run -y -d "$dataset" -a mtx_hermes:Hermes -m "$target" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} \
+            --ak version={{hermes}} --ak disable_web_search=true
+          ;;
         openai/*)
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} \
