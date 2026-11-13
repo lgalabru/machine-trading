@@ -789,6 +789,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .max_drawdown_usd
             .unwrap_or(start.wallet.value_usd),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
+        markets: Vec::new(),
     };
     // What the steps carry beyond the clock, for either kind of bot.
     let reports = scenario.turn_data.as_ref().map(|data| turns::Reports {

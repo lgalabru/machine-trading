@@ -204,6 +204,44 @@ impl VenueInfo {
         venues
     }
 
+    /// A session on several perp markets of one account: its primary
+    /// market, `primary`'s perp, first, then the rest of the mandate's
+    /// universe. Every Phoenix perp in the universe is tradable, at its
+    /// address in `addresses` (by symbol); anything else is listed and not
+    /// tradable. On one market, the same as
+    /// [`VenueInfo::of_perp_session`].
+    pub fn of_perp_markets(
+        mandate: &Mandate,
+        primary: &str,
+        addresses: &std::collections::BTreeMap<String, String>,
+    ) -> Vec<VenueInfo> {
+        use mtx_core::mandate::{InstrumentRef, Kind};
+        let perp = |instrument: &InstrumentRef| {
+            instrument.venue == "phoenix" && instrument.kind == Kind::Perp
+        };
+        let own = mandate
+            .universe
+            .iter()
+            .map(|allowance| &allowance.instrument)
+            .find(|i| perp(i) && i.symbol == primary)
+            .cloned()
+            .unwrap_or_else(|| InstrumentRef {
+                venue: "phoenix".into(),
+                kind: Kind::Perp,
+                symbol: primary.into(),
+            });
+        let mut venues = Self::of_mandate(mandate, &own, |instrument| {
+            *instrument == own || perp(instrument)
+        });
+        for venue in &mut venues {
+            if venue.tradable {
+                let symbol = venue.id.rsplit(':').next().unwrap_or_default();
+                venue.address = addresses.get(symbol).cloned();
+            }
+        }
+        venues
+    }
+
     /// The mandate's universe, once each, with `first` (the session's own
     /// market) first, and `tradable` saying which the session can trade.
     pub fn of_mandate(
@@ -2546,6 +2584,41 @@ mod tests {
                 .map(|f| (f.side, f.size, f.role))
                 .collect::<Vec<_>>(),
             [(Side::Bid, 2.0, Role::Taker), (Side::Ask, 3.0, Role::Maker)]
+        );
+    }
+
+    #[test]
+    fn every_perp_of_a_multi_market_session_is_tradable_at_its_address() {
+        let mut mandate = Mandate::perp("phoenix", "NVDA", 40.0, 1_000.0);
+        mandate
+            .universe
+            .extend(Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0).universe);
+        mandate
+            .universe
+            .extend(Mandate::spot(&["phoenix"], "SOL-USDC", 70.0).universe);
+        let addresses: std::collections::BTreeMap<String, String> = [
+            ("NVDA".to_string(), "nvda-market".to_string()),
+            ("SPCX".to_string(), "spcx-market".to_string()),
+        ]
+        .into();
+        let venues = VenueInfo::of_perp_markets(&mandate, "SPCX", &addresses);
+        let listed: Vec<(&str, Option<&str>, bool)> = venues
+            .iter()
+            .map(|v| (v.id.as_str(), v.address.as_deref(), v.tradable))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("phoenix:perp:SPCX", Some("spcx-market"), true),
+                ("phoenix:perp:NVDA", Some("nvda-market"), true),
+                ("phoenix:spot:SOL-USDC", None, false),
+            ]
+        );
+        // One market: the one-market session's list.
+        let one = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        assert_eq!(
+            VenueInfo::of_perp_markets(&one, "SPCX", &addresses),
+            VenueInfo::of_perp_session(&one, "SPCX", Some("spcx-market".into()))
         );
     }
 

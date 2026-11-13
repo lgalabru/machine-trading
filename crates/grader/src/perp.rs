@@ -420,6 +420,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .max_drawdown_usd
             .expect("a perp scenario's mandate has a drawdown limit"),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
+        markets: Vec::new(),
     };
     let reads_fills = scenario.order.is_some()
         || scenario.mandate.universe.iter().any(|allowance| {
