@@ -6,11 +6,21 @@
 //! the open orders admin, a referrer) are passed as the program's own
 //! address, Anchor's convention for `None`.
 
+use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
-use solana_transaction::{AccountMeta, Instruction};
 
 use super::{PROGRAM_ID, market::MarketKeys};
-use crate::chain::token::{ata, token_program};
+use crate::token::{SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID, associated_token_address};
+
+/// The trader's associated token account for `mint`: the program trades
+/// SPL Token mints only.
+fn ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    associated_token_address(owner, mint, &TOKEN_PROGRAM_ID)
+}
+
+fn token_program() -> Pubkey {
+    TOKEN_PROGRAM_ID
+}
 
 const PLACE_TAKE_ORDER: [u8; 8] = [0x03, 0x2c, 0x47, 0x03, 0x1a, 0xc7, 0xcb, 0x55];
 const PLACE_ORDER: [u8; 8] = [0x33, 0xc2, 0x9b, 0xaf, 0x6d, 0x82, 0x60, 0x6a];
@@ -165,7 +175,7 @@ pub fn place_take_order(
             ro(PROGRAM_ID),
             ro(PROGRAM_ID),
             ro(token_program()),
-            ro(solana_system_interface::program::id()),
+            ro(SYSTEM_PROGRAM_ID),
             ro(PROGRAM_ID),
         ],
         data: data(PLACE_TAKE_ORDER, &body),
@@ -263,7 +273,7 @@ pub fn settle_funds(owner: &Pubkey, m: &MarketKeys, n: u32) -> Instruction {
             rw(ata(owner, &m.quote_mint)),
             ro(PROGRAM_ID),
             ro(token_program()),
-            ro(solana_system_interface::program::id()),
+            ro(SYSTEM_PROGRAM_ID),
         ],
         data: SETTLE_FUNDS.to_vec(),
     }
@@ -278,7 +288,7 @@ pub fn create_open_orders_indexer(owner: &Pubkey) -> Instruction {
             AccountMeta::new(*owner, true),
             AccountMeta::new_readonly(*owner, true),
             rw(open_orders_indexer(owner)),
-            ro(solana_system_interface::program::id()),
+            ro(SYSTEM_PROGRAM_ID),
         ],
         data: CREATE_OPEN_ORDERS_INDEXER.to_vec(),
     }
@@ -303,7 +313,7 @@ pub fn create_open_orders_account(
             rw(open_orders_indexer(owner)),
             rw(open_orders_account(owner, n)),
             ro(*market),
-            ro(solana_system_interface::program::id()),
+            ro(SYSTEM_PROGRAM_ID),
         ],
         data: data(CREATE_OPEN_ORDERS_ACCOUNT, &body),
     }

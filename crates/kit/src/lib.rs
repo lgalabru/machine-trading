@@ -61,7 +61,9 @@
 //! |---------|------|
 //! | `phoenix` (default) | [`protocols::phoenix`]: Phoenix Eternal perpetuals; and the bot plumbing on them |
 //! | `phoenix-v1` | [`protocols::phoenix::v1`]: Phoenix v1 spot order books |
+//! | `phoenix-v1-venue` | Phoenix v1's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `openbook-v2` | [`protocols::openbook::v2`]: OpenBook v2 spot order books |
+//! | `openbook-v2-venue` | OpenBook v2's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 
@@ -70,10 +72,12 @@ pub mod chain;
 pub mod core;
 #[cfg(feature = "chain")]
 pub mod lending;
-#[cfg(feature = "chain")]
+#[cfg(any(feature = "chain", feature = "spot-venue"))]
 pub mod protocols;
 pub mod raw;
 mod strategy;
+#[cfg(any(feature = "chain", feature = "spot-venue"))]
+pub mod token;
 #[cfg(feature = "venue")]
 pub mod venue;
 
@@ -104,7 +108,7 @@ pub use mtx_core::{
 pub use raw::{RawReceipt, RawTransaction, send_raw};
 /// The Solana types the kit's signatures use, so callers need not pin
 /// matching versions of the Solana crates themselves.
-#[cfg(feature = "chain")]
+#[cfg(any(feature = "chain", feature = "venue", feature = "spot-venue"))]
 pub use solana_pubkey::Pubkey;
 #[cfg(feature = "chain")]
 pub use solana_transaction::{Hash, Instruction, Signature};

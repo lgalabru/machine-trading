@@ -1,0 +1,5 @@
+# The smoke as a process bot: sells 1 SOL on each spot market in its
+# mandate. `just build` in bots/spot-smoke builds bin/bot.
+
+run:
+    @exec ../bin/bot
