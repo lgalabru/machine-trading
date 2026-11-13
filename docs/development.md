@@ -86,7 +86,7 @@ solana-foundation/machine-trading@<version>` says whether it is there.
 ```sh
 just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0   # models, attempts, at a time, version
 just review jobs/bench/<batch>                          # browse it
-just publish jobs/bench/<batch> 0.11.0                  # keep it, in bench/results/0.11.0/
+just publish jobs/bench/<batch> 0.11.0                  # upload it; writes bench/results/0.11.0/release.json
 git add bench/results/0.11.0 && git commit && git push  # the push publishes the website
 ```
 
@@ -114,13 +114,20 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
 2. **Review.** Look at what stands out before you publish: read a winning
    run's bot, and check its report for refused calls. A score
    far above the others is a leak until it isn't.
-3. **Publish.** `just publish <batch> <version>` writes
-   `bench/results/<version>/` and refuses if any file holds the batch's
-   secret or an API key. `--force` replaces a release. See
-   [bench/results](../bench/results/README.md) for what a release keeps.
+3. **Publish.** `just publish <batch> <version>` compacts the batch into a
+   release and refuses if any file holds the batch's secret or an API key.
+   It uploads the release, as one archive, to the
+   [results dataset](https://huggingface.co/datasets/solana-foundation/machine-trading-results)
+   and writes `bench/results/<version>/release.json`: the dataset revision,
+   the archive's sha256 and the release's scores. It needs the `hf` CLI
+   (`uv tool install huggingface_hub`) and `HF_TOKEN`, a token that may
+   write to the `solana-foundation` org. `--force` replaces a release;
+   `--local` keeps the whole release in `bench/results/<version>/` and
+   uploads nothing. See [bench/results](../bench/results/README.md) for
+   what a release keeps.
 4. **Commit and push.** The Pages workflow (`.github/workflows/specs.yml`)
-   rebuilds the website whenever `bench/results` changes, so pushing the
-   release publishes it. A deploy that times out is rerun with
+   rebuilds the website whenever `bench/results` changes, fetching each
+   release from the dataset, so pushing the `release.json` publishes it. A deploy that times out is rerun with
    `gh run rerun <id> --failed`.
 
 `mtx bench review <version>` browses a published release, and

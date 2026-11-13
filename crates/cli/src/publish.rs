@@ -1,6 +1,8 @@
-//! Published bench results: `mtx bench publish` copies a batch into
-//! `bench/results/<version>/`, small enough to commit, and `mtx bench review
-//! <version>` and `mtx bench compare <a>...<b>` read them back.
+//! Published bench results: `mtx bench publish` compacts a batch into a
+//! release, uploads it to the results dataset ([`crate::store`]) and writes
+//! `bench/results/<version>/release.json`, the one file the repo keeps: where
+//! the release is and its scores. `mtx bench review <version>` and `mtx bench
+//! compare <a>...<b>` fetch it back, once.
 //!
 //! A published trial keeps what the review page shows, and nothing it
 //! doesn't need:
@@ -28,10 +30,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::review::{self, Root};
+use crate::{
+    review::{self, Root},
+    store,
+};
 
 /// The largest file a release keeps.
 const MAX_FILE_BYTES: u64 = 1 << 20;
@@ -68,7 +73,9 @@ pub fn results_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench/results")
 }
 
-/// Published releases, newest first.
+/// Published releases, newest first. A release in the results dataset is
+/// fetched, once, and read from its cache; one that fails to fetch is left
+/// out, with a warning.
 pub fn releases(results: &Path) -> Vec<Root> {
     let mut found: Vec<Root> = std::fs::read_dir(results)
         .into_iter()
@@ -77,15 +84,48 @@ pub fn releases(results: &Path) -> Vec<Root> {
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| {
             let label = e.file_name().to_string_lossy().to_string();
-            (!label.starts_with('.') && e.path().join("release.json").is_file()).then(|| Root {
+            if label.starts_with('.') || !e.path().join("release.json").is_file() {
+                return None;
+            }
+            let path = match stored(&e.path()) {
+                Some(store) => match fetched(&store) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        tracing::warn!(
+                            "{label} couldn't be fetched from {}: {error:#}",
+                            store.url()
+                        );
+                        return None;
+                    }
+                },
+                None => e.path().canonicalize().unwrap_or_else(|_| e.path()),
+            };
+            Some(Root {
                 label,
-                path: e.path().canonicalize().unwrap_or_else(|_| e.path()),
+                path,
                 published: true,
             })
         })
         .collect();
     found.sort_by_key(|r| std::cmp::Reverse(version_key(&r.label)));
     found
+}
+
+/// Where a release in `bench/results` keeps its files, if in the dataset.
+pub fn stored(release: &Path) -> Option<store::Store> {
+    store::Store::of(&review::read_json(&release.join("release.json"))?)
+}
+
+/// The store's files, fetched if they aren't yet, saying so.
+fn fetched(store: &store::Store) -> Result<PathBuf> {
+    if !store.cache().join(store::COMPLETE).is_file() {
+        crate::ui::note(format!(
+            "fetching {} ({:.1} MB)",
+            store.url(),
+            store.bytes as f64 / 1e6
+        ));
+    }
+    store::fetch(store)
 }
 
 /// `0.10.0` after `0.9.0`.
@@ -105,7 +145,13 @@ pub fn resolve(arg: &str, results: &Path) -> Result<Root> {
     if path.exists() {
         let path = path.canonicalize().with_context(|| arg.to_string())?;
         // A release reviewed by its path is still that release.
-        if let Some(release) = releases(results).into_iter().find(|r| r.path == path) {
+        if let Some(release) = releases(results).into_iter().find(|r| {
+            r.path == path
+                || results
+                    .join(&r.label)
+                    .canonicalize()
+                    .is_ok_and(|p| p == path)
+        }) {
             return Ok(release);
         }
         let label = path
@@ -144,8 +190,16 @@ pub fn roots(first: Root, results: &Path) -> Vec<Root> {
     roots
 }
 
-/// Copy `batch` into `<results>/<version>`.
-pub fn publish(batch: &Path, version: &str, results: &Path, force: bool) -> Result<Value> {
+/// Compact `batch` into a release, upload it to the results dataset and
+/// write its `release.json` to `<results>/<version>`. With `local`, the
+/// whole release is written there instead, and nothing is uploaded.
+pub fn publish(
+    batch: &Path,
+    version: &str,
+    results: &Path,
+    force: bool,
+    local: bool,
+) -> Result<Value> {
     if version.is_empty()
         || version.starts_with('.')
         || !version
@@ -197,17 +251,68 @@ pub fn publish(batch: &Path, version: &str, results: &Path, force: bool) -> Resu
             return Err(error);
         }
     };
-    if out.exists() {
-        std::fs::remove_dir_all(&out)?;
+    let bytes = dir_bytes(&staging);
+    if local {
+        if out.exists() {
+            std::fs::remove_dir_all(&out)?;
+        }
+        std::fs::rename(&staging, &out)?;
+        return Ok(json!({
+            "release": version,
+            "path": out,
+            "bytes": bytes,
+            "summary": summary,
+        }));
     }
-    std::fs::rename(&staging, &out)?;
-    let bytes = dir_bytes(&out);
+    let store = match offload(&staging, &out, version) {
+        Ok(store) => store,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
     Ok(json!({
         "release": version,
         "path": out,
         "bytes": bytes,
+        "store": store.url(),
         "summary": summary,
     }))
+}
+
+/// Upload the release a full directory holds (`dir`, maybe `out` itself) to
+/// the results dataset, and leave `out` with its `release.json` alone: the
+/// release as before, its scores, and where its files are. `dir` becomes the
+/// store's cache.
+pub fn offload(dir: &Path, out: &Path, version: &str) -> Result<store::Store> {
+    let mut release = review::read_json(&dir.join("release.json"))
+        .with_context(|| format!("{} has no release.json", dir.display()))?;
+    ensure!(
+        store::Store::of(&release).is_none(),
+        "{} is in the dataset already",
+        dir.display()
+    );
+    let scores = review::scores_of(&Root {
+        label: version.to_string(),
+        path: dir.to_path_buf(),
+        published: true,
+    });
+    let store = store::upload(dir, version)?;
+    release["store"] = store.to_json();
+    release["scores"] = scores;
+    // The full directory moves to the cache before `out` is rewritten: `dir`
+    // may be `out`.
+    let cache = store::adopt(&store, dir)?;
+    if out.exists() {
+        std::fs::remove_dir_all(out)?;
+    }
+    std::fs::create_dir_all(out)?;
+    std::fs::write(
+        out.join("release.json"),
+        serde_json::to_string_pretty(&release)? + "\n",
+    )?;
+    tracing::debug!("{version} is cached at {}", cache.display());
+    Ok(store)
 }
 
 fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> Result<Value> {
@@ -775,7 +880,7 @@ mod tests {
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
-        publish(&batch, "1.0.0", &results, false).unwrap();
+        publish(&batch, "1.0.0", &results, false, true).unwrap();
         let out = results.join("1.0.0/job/task__a");
         assert!(out.join("artifacts/app/bot/src/main.rs").is_file());
         assert!(out.join("verifier/sessions/bot/hidden-1.json.gz").is_file());
@@ -789,7 +894,10 @@ mod tests {
         assert!(!out.join("artifacts/app/bot/target").exists());
         assert!(!results.join("1.0.0/.seed").exists());
         assert_eq!(releases(&results).len(), 1);
-        assert!(publish(&batch, "1.0.0", &results, false).is_err(), "exists");
+        assert!(
+            publish(&batch, "1.0.0", &results, false, true).is_err(),
+            "exists"
+        );
 
         // The seed in a bot's source: nothing is written.
         std::fs::write(
@@ -797,7 +905,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
         )
         .unwrap();
-        let error = publish(&batch, "1.0.1", &results, false).unwrap_err();
+        let error = publish(&batch, "1.0.1", &results, false, true).unwrap_err();
         assert!(error.to_string().contains("seed"), "{error}");
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());

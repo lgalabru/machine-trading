@@ -542,7 +542,19 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
     } else {
         &config["task"]
     };
-    let task = task_config["name"].as_str().unwrap_or_default().to_string();
+    // A task run from a local path has no name in its config: the trial's
+    // `task_name` has it, else the path's last part.
+    let task = task_config["name"]
+        .as_str()
+        .or(result["task_name"].as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            task_config["path"]
+                .as_str()
+                .and_then(|p| p.trim_end_matches('/').rsplit('/').next())
+                .map(|name| format!("solana-foundation/{name}"))
+        })
+        .unwrap_or_default();
     let model = result["agent_info"]["model_info"]["name"]
         .as_str()
         .map(str::to_string)
