@@ -7,7 +7,8 @@
 //! | Building transactions | [`InstructionGroup`] → [`pack`] → [`ExecutionPlan`] | |
 //! | Running them | [`preview`], [`execute`] | simulate before every signature |
 //! | Sending without waiting | [`fire_and_forget`], [`fire_and_forget_step`] | for worlds that land a transaction after the sender's turn |
-//! | Tokens | [`token`] | ATAs, SOL wrapping, balances |
+//! | Tokens | [`token`] | ATAs, SOL wrapping, balances, under SPL Token or Token-2022 |
+//! | Lookup tables | [`lookup`] | reading, creating and extending them, for v0 transactions |
 //!
 //! # Async
 //!
@@ -21,6 +22,7 @@
 
 pub mod client;
 pub mod error;
+pub mod lookup;
 #[cfg(any(test, feature = "test-util"))]
 pub mod mock;
 pub mod signer;
@@ -34,7 +36,8 @@ pub use client::{
 pub use error::{ChainError, PlanError, SignerError};
 pub use signer::{TransactionSigner, is_fully_signed, read_keypair_file};
 pub use tx::{
-    DEFAULT_COMPUTE_UNIT_LIMIT, ExecuteOptions, ExecutionPlan, ExecutionReceipt,
-    FireAndForgetOptions, InstructionGroup, MAX_TRANSACTION_SIZE, SendMode, StepPreview,
-    TransactionPlan, execute, fire_and_forget, fire_and_forget_step, pack, preview,
+    AddressLookupTableAccount, DEFAULT_COMPUTE_UNIT_LIMIT, ExecuteOptions, ExecutionPlan,
+    ExecutionReceipt, FireAndForgetOptions, InstructionGroup, MAX_TRANSACTION_SIZE, SendMode,
+    StepPreview, TransactionPlan, execute, fire_and_forget, fire_and_forget_step, pack,
+    pack_with_lookup_tables, preview,
 };

@@ -110,7 +110,7 @@ impl OpenBookV2Meter {
         {
             ids.extend(
                 OpenOrdersIndexer::decode(&account.data)
-                    .map_err(meter_error)?
+                    .map_err(|e| meter_error(e.into()))?
                     .addresses,
             );
         }

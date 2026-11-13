@@ -1,5 +1,9 @@
 //! SPL token helpers: associated token accounts, token account state,
-//! transfers and native SOL wrapping.
+//! transfers and native SOL wrapping, under SPL Token or Token-2022.
+//!
+//! A mint's owner says which program it is under; [`read_mint`] reads it,
+//! with its Token-2022 extensions ([`crate::token::Mint`]). The `_for`
+//! functions take that program; the others are SPL Token's.
 //!
 //! Most protocols only deal in SPL tokens, so using SOL means wrapping it:
 //! move lamports into the owner's wrapped-SOL associated token account and
@@ -31,6 +35,26 @@ pub fn associated_token_program() -> Pubkey {
 /// Associated token account of `owner` for `mint` under the SPL Token program.
 pub fn ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
     spl_associated_token_account_interface::address::get_associated_token_address(owner, mint)
+}
+
+/// Associated token account of `owner` for `mint` under `token_program`.
+pub fn ata_for(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
+    crate::token::associated_token_address(owner, mint, token_program)
+}
+
+/// [`create_ata_idempotent`] under `token_program`.
+pub fn create_ata_idempotent_for(
+    payer: &Pubkey,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Instruction {
+    spl_associated_token_account_interface::instruction::create_associated_token_account_idempotent(
+        payer,
+        owner,
+        mint,
+        token_program,
+    )
 }
 
 /// Creates the ATA if it does not exist; a no-op otherwise.
@@ -75,12 +99,52 @@ pub fn close_token_account(owner: &Pubkey, account: &Pubkey) -> Instruction {
 /// rent-exempt reserve for wrapped SOL.
 pub use spl_token_interface::state::Account as TokenAccount;
 
-/// Decodes an SPL token account.
+/// Decodes a token account under either program: a Token-2022 account's
+/// base fields, whatever extensions follow them.
 pub fn token_account(account: &Account) -> Result<TokenAccount, ChainError> {
-    TokenAccount::unpack(&account.data).map_err(|e| ChainError::Decode {
+    let base = if account.owner == crate::token::TOKEN_2022_PROGRAM_ID
+        && account.data.len() > TokenAccount::LEN
+    {
+        // Checks the account type and the extensions' bounds.
+        crate::token::TokenAccountInfo::decode(&account.owner, &account.data)?;
+        &account.data[..TokenAccount::LEN]
+    } else {
+        &account.data[..]
+    };
+    TokenAccount::unpack(base).map_err(|e| ChainError::Decode {
         what: "token account",
         detail: e.to_string(),
     })
+}
+
+/// The mint at `mint`, under whichever token program owns it.
+pub async fn read_mint(
+    chain: &dyn crate::chain::ChainClient,
+    mint: &Pubkey,
+) -> Result<crate::token::Mint, ChainError> {
+    let account = chain
+        .get_account(mint)
+        .await?
+        .ok_or(ChainError::AccountNotFound(*mint))?;
+    Ok(crate::token::Mint::decode(&account.owner, &account.data)?)
+}
+
+/// [`transfer_checked`] under `token_program`. Token-2022's
+/// `TransferChecked` has SPL Token's accounts and data; on a mint with a
+/// transfer fee the destination receives the amount less the fee
+/// ([`crate::token::Mint::received`]).
+pub fn transfer_checked_for(
+    token_program: &Pubkey,
+    source: &Pubkey,
+    mint: &Pubkey,
+    destination: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+    decimals: u8,
+) -> Instruction {
+    let mut ix = transfer_checked(source, mint, destination, owner, amount, decimals);
+    ix.program_id = *token_program;
+    ix
 }
 
 /// `SyncNative`: makes a wrapped-SOL account's balance match its lamports
@@ -248,5 +312,73 @@ mod tests {
             token_balance(&garbage).unwrap_err(),
             ChainError::Decode { .. }
         ));
+    }
+
+    #[test]
+    fn token_2022_accounts_and_transfers() {
+        use spl_token_2022_interface::{
+            extension::{
+                BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
+                immutable_owner::ImmutableOwner,
+            },
+            state::{Account as Account2022, AccountState as State2022},
+        };
+        let owner = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let len = ExtensionType::try_calculate_account_len::<Account2022>(&[
+            ExtensionType::ImmutableOwner,
+        ])
+        .unwrap();
+        let mut data = vec![0; len];
+        let mut state =
+            StateWithExtensionsMut::<Account2022>::unpack_uninitialized(&mut data).unwrap();
+        state.init_extension::<ImmutableOwner>(true).unwrap();
+        state.base = Account2022 {
+            mint,
+            owner,
+            amount: 11,
+            state: State2022::Initialized,
+            ..Account2022::default()
+        };
+        state.pack_base();
+        state.init_account_type().unwrap();
+        let extended = Account {
+            data,
+            owner: crate::token::TOKEN_2022_PROGRAM_ID,
+            ..Account::default()
+        };
+        let parsed = token_account(&extended).unwrap();
+        assert_eq!(
+            (parsed.mint, parsed.owner, parsed.amount),
+            (mint, owner, 11)
+        );
+        // The same bytes under SPL Token are too long for its layout.
+        let classic = Account {
+            owner: token_program(),
+            ..extended.clone()
+        };
+        assert!(token_account(&classic).is_err());
+
+        let program = crate::token::TOKEN_2022_PROGRAM_ID;
+        let account = ata_for(&owner, &mint, &program);
+        assert_ne!(account, ata(&owner, &mint));
+        let create = create_ata_idempotent_for(&owner, &owner, &mint, &program);
+        assert_eq!(create.program_id, associated_token_program());
+        assert_eq!(create.accounts[1].pubkey, account);
+        assert_eq!(create.accounts[5].pubkey, program);
+        let ix = transfer_checked_for(
+            &program,
+            &account,
+            &mint,
+            &Pubkey::new_unique(),
+            &owner,
+            5,
+            6,
+        );
+        assert_eq!(ix.program_id, program);
+        assert_eq!(
+            ix.data,
+            transfer_checked(&account, &mint, &ix.accounts[2].pubkey, &owner, 5, 6).data
+        );
     }
 }
