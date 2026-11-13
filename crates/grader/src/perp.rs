@@ -509,6 +509,7 @@ impl Account for PerpAccount {
             flow: done.actors.flow,
             competitor: done.actors.competitor,
             spot: None,
+            stake: None,
             faults: done.faults,
             order: None,
             participation: None,

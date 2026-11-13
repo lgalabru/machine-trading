@@ -3,6 +3,7 @@
 pub mod actors;
 pub mod carry;
 pub mod chain;
+pub mod epochs;
 mod error;
 pub mod faults;
 pub mod grade;
@@ -20,6 +21,7 @@ pub mod session;
 pub mod simulated;
 pub mod snapshot;
 pub mod spot;
+pub mod stake;
 pub mod venue;
 pub mod wasm;
 pub mod weekend;
