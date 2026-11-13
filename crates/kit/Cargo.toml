@@ -80,6 +80,10 @@ raydium-clmm = ["spot-venue"]
 # and position decoding, the bin math, and the trader's instructions.
 # Builds for wasm32-wasip2.
 meteora-dlmm = ["spot-venue"]
+# Orca Whirlpool pools, as the Orca venue profile's pools: pool, tick array
+# and position decoding, the pool math, and the trader's instructions.
+# Builds for wasm32-wasip2.
+orca-whirlpool = ["spot-venue"]
 # Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses;
 # the spot venues value their base assets at them.
 pyth = ["chain"]

@@ -97,6 +97,28 @@ pub struct TransactionSummary {
     /// Instructions programs invoked, in execution order, such as the log
     /// instructions programs call on themselves to record events.
     pub inner_instructions: Vec<InnerInstruction>,
+    /// How many of `account_keys`, from the first, signed it.
+    pub signers: usize,
+    /// Every instruction it ran, its own and those programs invoked, in
+    /// execution order, with their accounts.
+    pub instructions: Vec<ExecutedInstruction>,
+}
+
+/// One instruction a transaction ran: one of its own, or one a program
+/// invoked while running it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutedInstruction {
+    /// The index of the transaction's instruction it is, or that invoked it.
+    pub outer: u8,
+    /// How deep it ran: 1 for the transaction's own, 2 for one they invoked,
+    /// and so on; `None` where the node doesn't say.
+    pub depth: Option<u32>,
+    /// The program run.
+    pub program: Pubkey,
+    /// Its accounts, in order.
+    pub accounts: Vec<Pubkey>,
+    /// Its data.
+    pub data: Vec<u8>,
 }
 
 /// One instruction a program invoked while the transaction ran.
@@ -331,8 +353,57 @@ pub(crate) fn summarize(
     let post_token: Vec<UiTransactionTokenBalance> =
         Option::from(meta.post_token_balances).unwrap_or_default();
     let token_balance_changes = merge_token_balances(&account_keys, &pre_token, &post_token)?;
+    let key = |index: u8, what: &'static str| -> Result<Pubkey, ChainError> {
+        account_keys
+            .get(usize::from(index))
+            .copied()
+            .ok_or(ChainError::Decode {
+                what,
+                detail: format!("account index {index} out of range"),
+            })
+    };
+    let keys = |indices: &[u8], what: &'static str| -> Result<Vec<Pubkey>, ChainError> {
+        indices.iter().map(|i| key(*i, what)).collect()
+    };
+    let groups: Vec<_> = Option::from(meta.inner_instructions).unwrap_or_else(Vec::new);
+    let mut instructions = Vec::new();
+    for (outer, instruction) in decoded.message.instructions().iter().enumerate() {
+        let outer = u8::try_from(outer).map_err(|_| ChainError::Decode {
+            what: "instruction",
+            detail: format!("instruction {outer} past the 256 a transaction holds"),
+        })?;
+        instructions.push(ExecutedInstruction {
+            outer,
+            depth: Some(1),
+            program: key(instruction.program_id_index, "instruction")?,
+            accounts: keys(&instruction.accounts, "instruction")?,
+            data: instruction.data.clone(),
+        });
+        for group in groups.iter().filter(|g| g.index == outer) {
+            for inner in &group.instructions {
+                let UiInstruction::Compiled(ix) = inner else {
+                    return Err(ChainError::Decode {
+                        what: "inner instruction",
+                        detail: "not in compiled form".into(),
+                    });
+                };
+                instructions.push(ExecutedInstruction {
+                    outer,
+                    depth: ix.stack_height,
+                    program: key(ix.program_id_index, "inner instruction")?,
+                    accounts: keys(&ix.accounts, "inner instruction")?,
+                    data: bs58::decode(&ix.data)
+                        .into_vec()
+                        .map_err(|e| ChainError::Decode {
+                            what: "inner instruction",
+                            detail: e.to_string(),
+                        })?,
+                });
+            }
+        }
+    }
     let mut inner_instructions = Vec::new();
-    for group in Option::from(meta.inner_instructions).unwrap_or_else(Vec::new) {
+    for group in groups {
         for instruction in group.instructions {
             let UiInstruction::Compiled(ix) = instruction else {
                 return Err(ChainError::Decode {
@@ -375,6 +446,8 @@ pub(crate) fn summarize(
         post_balances: meta.post_balances,
         token_balance_changes,
         inner_instructions,
+        signers: usize::from(decoded.message.header().num_required_signatures),
+        instructions,
     })
 }
 
@@ -786,6 +859,8 @@ mod tests {
             pre_balances: vec![1_000_000, 0, 0, 0],
             post_balances: vec![900_000, 0, 0, 0],
             token_balance_changes: changes,
+            signers: 1,
+            instructions: Vec::new(),
         };
         assert_eq!(summary.token_change(&owner, &mint), -75);
         assert_eq!(summary.token_change(&Pubkey::new_unique(), &mint), 0);

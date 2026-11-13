@@ -635,6 +635,7 @@ mod tests {
         assert!(TokenAccountInfo::decode(&TOKEN_PROGRAM_ID, &data[..ACCOUNT_LEN]).is_ok());
     }
 
+    #[cfg(feature = "chain")]
     #[test]
     fn associated_accounts_differ_by_program() {
         let owner = Pubkey::new_unique();

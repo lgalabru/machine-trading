@@ -7,7 +7,7 @@
 //! |--------------|------|
 //! | `LbPair` | [`LbPair`]: the active bin, the bin step, the fee |
 //! | `BinArray` (70 bins, PDA by index) | [`BinArray`], [`bin_array_address`] |
-//! | `PositionV2` (up to 70 bins of shares) | [`Position`] |
+//! | `PositionV2` (70 bins of shares, up to 1,400 once grown) | [`Position`] |
 //! | `swap2`, `swap_exact_out2`, `initialize_position`, `add_liquidity_by_strategy2`, `remove_liquidity_by_range2`, `claim_fee2` | [`ix`] |
 //! | bin prices, a position's amounts and fees | [`math`] |
 //!
@@ -43,9 +43,10 @@ pub fn bin_array_index(bin: i32) -> i64 {
     i64::from(bin.div_euclid(BINS_PER_ARRAY))
 }
 
-/// The bin arrays a position from `lower_bin_id` names in its
-/// instructions: the one holding that bin and the next. A position spans at
-/// most [`BINS_PER_ARRAY`] bins, so the two hold it whole.
+/// The bin arrays a new position from `lower_bin_id` names in its
+/// instructions: the one holding that bin and the next. A new position spans
+/// at most [`BINS_PER_ARRAY`] bins, so the two hold it whole; a grown one
+/// names its own ([`Position::bin_arrays`]).
 pub fn position_bin_arrays(lower_bin_id: i32) -> Vec<i64> {
     let lower = bin_array_index(lower_bin_id);
     vec![lower, lower + 1]
