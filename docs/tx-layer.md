@@ -39,15 +39,23 @@ The code is in `crates/grader/src/txlayer/`.
         than the price that clears it;
       - its blockhash is still valid: 150 blocks.
    3. On a **Jito leader**, bundles are ranked:
-      - by tip per requested compute unit, then by tip;
+      - by what they bid per requested compute unit: the tip plus the
+        transactions' priority fees, over all their requested units; then
+        by tip;
       - a bundle that conflicts with one already taken is skipped. Jito's tip
         accounts don't count as a conflict;
       - a bundle with a `jitodontfront` transaction anywhere but first is
         refused.
 
-      A bundle lands whole, at the top of the block, if its tip outbids the
-      background on the hot accounts it writes, and it fits a quarter of the
-      block.
+      A bundle lands whole, at the top of the block, if it fits a quarter of
+      the block and pays at least the least tip (1,000 lamports). It buys
+      the same block space a transaction does, so its bid has to clear the
+      same price: the block's, congestion floor included, and that of every
+      hot account it writes. Its tip also has to outbid the background's
+      bundles on those hot accounts. Under congestion, a bundle with the
+      least tip waits like a transaction with no priority fee. The tip
+      floor the block engine serves is the calibration's, whatever the
+      slot: what a bundle has to pay comes from the recent fees.
    4. **Transactions** are sorted:
       - by what they pay per requested compute unit, base fee included;
       - then by arrival;
@@ -58,6 +66,10 @@ The code is in `crates/grader/src/txlayer/`.
       writes, and if its requested units fit what the background left of the
       block (100M) and of each account it writes (12M). With the calibrated
       small chance, two adjacent conflicting transactions swap places.
+   5. A **signature lands once.** A transaction sent alone and inside a
+      bundle (or in two bundles) lands with whichever the builder takes
+      first; the other send then fails, unpaid. Sent again after it landed,
+      it is refused as already processed.
 3. **Commit.** The session sends the picks to the surfnet one at a time, in
    order, each awaited: bundles through `sendBundle`, which is all or
    nothing, and transactions through `sendTransaction`. Then it produces the
@@ -89,6 +101,15 @@ The path is drawn before the session from the seed alone. A `congestion`
 fault in the same scenario becomes a floor on the block's price over its
 window.
 
+**Staging a fee spike.** Use the `congestion` fault: its floor holds every
+send in the window, bundles included, to at least that price. Pinning the
+`spike` regime replays the calibration's spike window, which, with the
+shipped calibration, is not a launch-day spike: its block price is close to
+the busy regime's (a median near 1,200 micro-lamports per compute unit),
+and its pools are contended less often than in busy slots (see
+Calibration). A spike local to one pool needs a calibration whose class has
+one; the shipped one doesn't.
+
 ## Calibration
 
 The numbers come from `calibration/tx_layer/<id>.toml`. Each file is fitted
@@ -112,8 +133,9 @@ Its limits are in its `[meta] limits`:
 
 - `book` has no sample of its own: no Phoenix market was hot enough, so it
   copies `amm_pool`.
-- The spike window's fees were block-wide, not on the pools. A task that
-  wants a local spike pins a regime window, or a congestion floor.
+- The spike window's fees were block-wide, not on the pools, and modest:
+  pinning `spike` doesn't stage a launch-day spike. A task that wants one
+  uses a congestion floor (see Staging a fee spike).
 - `oracle` (Pyth SOL/USD) is never contended: its updates are small.
 - `inversion_p` is a default, not fitted.
 - Slots sampled at about 215 ms; one sample of 300 blocks over two days.
@@ -153,7 +175,11 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
 
 - **`routes`.** `rpc` and `jito` are always there. `staked` exists only if
   the scenario lists it. A route's `fee_lamports` is its price per send. It
-  counts in the fee ledger and in PnL, but is not paid on chain.
+  counts in the fee ledger and in PnL, but is not paid on chain. By
+  default `jito` has a latency of 0 to 1 slots and loses nothing, and its
+  `sendTransaction` (without `bundleOnly`) is free, like Jito's own: it is
+  then at least as good as a paid `staked` route. A scenario that wants the
+  routes to trade off gives `jito` a latency and loss of its own.
 - **`max_pending`.** Past this many pending sends, a send is refused with
   `-32429`, as a rate-limited node would.
 - **`native_sol`.** Replaces the session's usual SOL grant.
