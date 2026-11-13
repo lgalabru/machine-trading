@@ -28,7 +28,7 @@ use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Cli, authoring};
+use crate::{Cli, authoring, tasks};
 
 /// The ladder's extra gate: the best informed policy must make at least this
 /// many times the best one that doesn't read the task's signal.
@@ -263,7 +263,9 @@ pub struct RuleResult {
 pub struct ExploitResult {
     pub bot: String,
     pub ok: bool,
-    pub ratio: f64,
+    /// Null when the reference lost money on the sets: no ratio to take.
+    #[serde(default)]
+    pub ratio: Option<f64>,
     pub profitable: f64,
     pub reasons: Vec<String>,
     /// The sample behind the verdict (absent in older summaries).
@@ -365,6 +367,10 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
     )
 }
 
+/// Why a fast set whose reference lost money can't settle the reference and
+/// order checks.
+const THIN_SAMPLE: &str = "The reference lost money on this small sample; the task's edge is too thin to judge in fast mode, and the full ladder decides";
+
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
 pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> Vec<Check> {
@@ -375,20 +381,34 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .iter()
         .filter_map(|s| s.get("reference").copied())
         .collect();
-    checks.push(Check::from(
-        SOLVABLE,
-        "reference-scores-1",
-        "Reference is the 1.0 line (makes money on every set)",
-        reference.len() == sets && reference.iter().all(|r| *r > 0.0),
-        format!(
-            "reference total PnL per set: {}",
-            reference
-                .iter()
-                .map(|r| format!("${r:.0}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ));
+    // A short set can lose money by chance for a task whose reference has a
+    // thin edge: that says nothing for or against the task.
+    let thin = fast && reference.iter().any(|r| *r <= 0.0);
+    let reference_pnl = format!(
+        "reference total PnL per set: {}",
+        reference
+            .iter()
+            .map(|r| format!("${r:.0}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    checks.push(if thin {
+        Check::new(
+            SOLVABLE,
+            "reference-scores-1",
+            "Reference is the 1.0 line (makes money on every set)",
+            Status::Inconclusive,
+            format!("{reference_pnl}. {THIN_SAMPLE}"),
+        )
+    } else {
+        Check::from(
+            SOLVABLE,
+            "reference-scores-1",
+            "Reference is the 1.0 line (makes money on every set)",
+            reference.len() == sets && reference.iter().all(|r| *r > 0.0),
+            reference_pnl,
+        )
+    });
     let nop: Vec<f64> = summary
         .totals
         .iter()
@@ -413,34 +433,45 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .filter(|r| !r.ok)
         .map(|r| r.rule.as_str())
         .collect();
-    checks.push(Check::from(
-        SOLVABLE,
-        "ladder-order",
-        "Skill ladder keeps its order",
-        broken.is_empty() && !summary.rules.is_empty(),
-        if broken.is_empty() {
-            format!(
-                "{} rule{} hold on {sets} set{} of {} sessions",
-                summary.rules.len(),
-                if summary.rules.len() == 1 { "" } else { "s" },
-                if sets == 1 { "" } else { "s" },
-                summary.sessions
-            )
-        } else {
-            summary
-                .rules
-                .iter()
-                .filter(|r| !r.ok)
-                .map(|r| {
-                    format!(
-                        "{} (holds on {}/{} sets, odds {:.2})",
-                        r.rule, r.sets_holding, r.sets, r.odds
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ")
-        },
-    ));
+    let order_detail = if broken.is_empty() {
+        format!(
+            "{} rule{} hold on {sets} set{} of {} sessions",
+            summary.rules.len(),
+            if summary.rules.len() == 1 { "" } else { "s" },
+            if sets == 1 { "" } else { "s" },
+            summary.sessions
+        )
+    } else {
+        summary
+            .rules
+            .iter()
+            .filter(|r| !r.ok)
+            .map(|r| {
+                format!(
+                    "{} (holds on {}/{} sets, odds {:.2})",
+                    r.rule, r.sets_holding, r.sets, r.odds
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    checks.push(if thin && !broken.is_empty() {
+        Check::new(
+            SOLVABLE,
+            "ladder-order",
+            "Skill ladder keeps its order",
+            Status::Inconclusive,
+            format!("{order_detail}. {THIN_SAMPLE}"),
+        )
+    } else {
+        Check::from(
+            SOLVABLE,
+            "ladder-order",
+            "Skill ladder keeps its order",
+            broken.is_empty() && !summary.rules.is_empty(),
+            order_detail,
+        )
+    });
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
     checks.push(Check::from(
@@ -551,12 +582,11 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
             .exploits
             .iter()
             .map(|e| {
-                format!(
-                    "{} {:.2}x, profitable {:.0}%",
-                    e.bot,
-                    e.ratio,
-                    e.profitable * 100.0
-                )
+                let ratio = e.ratio.map_or_else(
+                    || "no ratio (the reference lost money on this sample)".to_string(),
+                    |r| format!("{r:.2}x"),
+                );
+                format!("{} {ratio}, profitable {:.0}%", e.bot, e.profitable * 100.0)
             })
             .collect::<Vec<_>>()
             .join(", "),
@@ -970,7 +1000,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     {
         bail!("no task `{task}` in bench/tasks (`mtx task list`)");
     }
-    let family = authoring::family_of(task);
+    let family = tasks::load_one(root, task.to_string())?.mtx.generator;
     let out = opts
         .out
         .clone()
@@ -984,8 +1014,9 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
 
     // The ladder: one hidden set of a few sessions in fast mode.
     let ladder_file = root
-        .join("bench/checks/ladder")
-        .join(format!("{family}.json"));
+        .join("bench/tasks")
+        .join(task)
+        .join("checks/ladder.json");
     let config = read_json(&ladder_file)?;
     let signal: SignalGate = config
         .get("gates")
@@ -1012,7 +1043,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             let ladder_out = out.join("ladder");
             // The ladder reuses any rung report it finds: an earlier run's,
             // from another set, mustn't stand in for this one.
-            clear_dir(&ladder_out.join(&family))?;
+            clear_dir(&ladder_out.join(task))?;
             let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
             // The ladder exits nonzero when a rule fails: the summary says which.
             run_in(
@@ -1020,7 +1051,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                 "just",
                 &[
                     "ladder",
-                    &family,
+                    task,
                     &sets,
                     "4",
                     "1",
@@ -1031,15 +1062,19 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                 ],
                 true,
             )?;
-            ladder_out.join(&family).join("summary.json")
+            ladder_out.join(task).join("summary.json")
         }
     };
     match std::fs::read_to_string(&summary_path) {
-        Ok(text) => {
-            let summary: LadderSummary =
-                serde_json::from_str(&text).with_context(|| summary_path.display().to_string())?;
-            checks.extend(ladder_checks(&summary, &signal, opts.fast));
-        }
+        Ok(text) => match serde_json::from_str::<LadderSummary>(&text) {
+            Ok(summary) => checks.extend(ladder_checks(&summary, &signal, opts.fast)),
+            Err(e) => checks.push(Check::fail(
+                SOLVABLE,
+                "ladder",
+                "Skill ladder ran",
+                format!("couldn't read {}: {e}", summary_path.display()),
+            )),
+        },
         Err(e) => checks.push(Check::fail(
             SOLVABLE,
             "ladder",
@@ -1226,7 +1261,7 @@ mod tests {
         let bot = |k: usize, total: f64, odds: f64| ExploitResult {
             bot: "fable".into(),
             ok: false,
-            ratio: 0.9,
+            ratio: Some(0.9),
             profitable: k as f64 / 12.0,
             reasons: vec!["the ladder's own verdict".into()],
             sessions: Some(12),
@@ -1296,7 +1331,7 @@ mod tests {
         s.exploits.push(ExploitResult {
             bot: "x".into(),
             ok: false,
-            ratio: 3.1,
+            ratio: Some(3.1),
             profitable: 0.9,
             reasons: vec!["profitable in 90% of sessions".into()],
             ..Default::default()
@@ -1318,6 +1353,32 @@ mod tests {
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("nop-scores-0"), Status::Fail);
         assert_eq!(status("ladder-clean"), Status::Fail);
+    }
+
+    #[test]
+    fn a_reference_that_lost_money_on_a_fast_sample_is_inconclusive_not_failed() {
+        let mut s = summary(&[&[
+            ("nop", 0.0),
+            ("reference", -38.0),
+            ("fade", 18.0),
+            ("told", 850.0),
+        ]]);
+        s.rules.push(RuleResult {
+            rule: "fade < reference".into(),
+            ok: false,
+            sets_holding: 0,
+            sets: 1,
+            odds: 0.16,
+        });
+        let g = gate(&["told"], &["fade"]);
+        let status =
+            |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        let fast = ladder_checks(&s, &g, true);
+        assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
+        assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
+        let full = ladder_checks(&s, &g, false);
+        assert_eq!(status(&full, "reference-scores-1"), Status::Fail);
+        assert_eq!(status(&full, "ladder-order"), Status::Fail);
     }
 
     #[test]
@@ -1466,18 +1527,18 @@ mod tests {
     #[test]
     fn every_task_declares_its_signal_and_names_real_rungs() {
         let root = authoring::repo_root();
-        for family in [
-            "flash-crash",
-            "market-making",
-            "funding-carry",
-            "weekend-gap",
+        for task in [
+            "flash-crash-spcx",
+            "market-making-spcx",
+            "funding-carry-spcx",
+            "weekend-gap-spcx",
         ] {
             let config =
-                read_json(&root.join(format!("bench/checks/ladder/{family}.json"))).unwrap();
+                read_json(&root.join(format!("bench/tasks/{task}/checks/ladder.json"))).unwrap();
             let gate: SignalGate = serde_json::from_value(config["gates"].clone()).unwrap();
             assert!(
                 !gate.informed.is_empty() && !gate.non_reading.is_empty(),
-                "{family}"
+                "{task}"
             );
             let rungs: Vec<&str> = config["rungs"]
                 .as_array()
@@ -1486,7 +1547,7 @@ mod tests {
                 .map(|r| r["name"].as_str().unwrap())
                 .collect();
             for name in gate.informed.iter().chain(&gate.non_reading) {
-                assert!(rungs.contains(&name.as_str()), "{family}: no rung {name}");
+                assert!(rungs.contains(&name.as_str()), "{task}: no rung {name}");
             }
         }
     }

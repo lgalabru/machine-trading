@@ -20,7 +20,7 @@
 
 ```sh
 just bots                                          # build every bot's bin/bot
-just grade bots/reference bench/tasks/flash-crash-spcx/environment/practice/*.json
+just grade bench/tasks/flash-crash-spcx/reference bench/tasks/flash-crash-spcx/environment/practice/*.json
 just test lint                                     # unit tests and clippy
 ```
 
@@ -45,11 +45,39 @@ that way counts as failed.
 <threads>` busy threads alongside) and fails at the first session report,
 the reference's included, that came out differently.
 
+Sessions run in parallel with `--jobs`, each isolated: its own surfnet and
+ports, RPC guard, directory and keys, and for a component its own store and
+fuel. A strategy component runs inside the grader, with no files and no
+network, so up to 32 of its sessions run at once, as many as memory holds
+with each strategy at its 1 GiB cap (two in a 6 GB container); a process bot runs as one
+of four bot users, so at most four. Grades running at once on one machine
+never run bots as the same user at the same time (a session's end kills
+everything its user runs): a session waits for its user, and
+`--first-bot-user` ranges that don't overlap keep them from waiting. A
+session starts whenever another ends. The report doesn't depend on `--jobs`:
+`--replay-jobs` runs the replays with another number, so `--jobs 16 --replay
+2 --replay-jobs 1` checks a parallel grade against a serial one.
+
 ```sh
 MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
-  --reference /opt/mtx/anchors/flash-crash --bot bots/reference \
+  --reference /opt/mtx/anchors/flash-crash --bot bench/tasks/flash-crash-spcx/reference \
   --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
 ```
+
+A finished grade can be scored again without running a session, when a
+scoring rule changes: `mtx rescore <report.json>` reads each session's
+report and scenario from the grade's detail files (`--details`; by default
+`sessions` beside the report, as the verifier writes them), scores them with
+the grader's current rules, prints the new report, and says on stderr where
+it differs from the old one. With nothing changed it is the same report
+(`--check` fails otherwise). `mtx bench rescore <batch or version>` does it
+for every trial of a batch or published release. Compacting 0.11.0 parsed
+its session files with serde_json's default float parsing, which can land
+a last bit off, so some of its sessions read back a last bit away from the
+report: 38 of its 40 trials rescore to exactly the same reward and skill,
+the other two differ in the last bit. Floats now parse exactly, so a
+release compacted from now on rescores bit for bit. 0.10.0's sessions
+predate the reports' present shape and don't read back.
 
 ## Write a bot
 
@@ -86,7 +114,7 @@ solana-foundation/machine-trading@<version>` says whether it is there.
 ```sh
 just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0   # models, attempts, at a time, version
 just review jobs/bench/<batch>                          # browse it
-just publish jobs/bench/<batch> 0.11.0                  # keep it, in bench/results/0.11.0/
+just publish jobs/bench/<batch> 0.11.0                  # upload it; writes bench/results/0.11.0/release.json
 git add bench/results/0.11.0 && git commit && git push  # the push publishes the website
 ```
 
@@ -114,13 +142,20 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
 2. **Review.** Look at what stands out before you publish: read a winning
    run's bot, and check its report for refused calls. A score
    far above the others is a leak until it isn't.
-3. **Publish.** `just publish <batch> <version>` writes
-   `bench/results/<version>/` and refuses if any file holds the batch's
-   secret or an API key. `--force` replaces a release. See
-   [bench/results](../bench/results/README.md) for what a release keeps.
+3. **Publish.** `just publish <batch> <version>` compacts the batch into a
+   release and refuses if any file holds the batch's secret or an API key.
+   It uploads the release, as one archive, to the
+   [results dataset](https://huggingface.co/datasets/solana-foundation/machine-trading-results)
+   and writes `bench/results/<version>/release.json`: the dataset revision,
+   the archive's sha256 and the release's scores. It needs the `hf` CLI
+   (`uv tool install huggingface_hub`) and `HF_TOKEN`, a token that may
+   write to the `solana-foundation` org. `--force` replaces a release;
+   `--local` keeps the whole release in `bench/results/<version>/` and
+   uploads nothing. See [bench/results](../bench/results/README.md) for
+   what a release keeps.
 4. **Commit and push.** The Pages workflow (`.github/workflows/specs.yml`)
-   rebuilds the website whenever `bench/results` changes, so pushing the
-   release publishes it. A deploy that times out is rerun with
+   rebuilds the website whenever `bench/results` changes, fetching each
+   release from the dataset, so pushing the `release.json` publishes it. A deploy that times out is rerun with
    `gh run rerun <id> --failed`.
 
 `mtx bench review <version>` browses a published release, and
@@ -141,11 +176,16 @@ model between two.
 - **The website:** every published release is on GitHub Pages at
   `/bench/`, as the same page with its data written out as files
   (`mtx bench export <dir>`; the browser inflates the gzipped ones).
-- **Published releases:** about 7 MB a trial, most of it the bot's
-  sessions step by step, which the review page draws. 0.11.0, 40 trials,
-  is 293 MB in the repository and about 450 MB on the website with 0.10.0.
-  GitHub Pages serves at most 1 GB, so the session files will have to move
-  out of the repository within a release or two.
+- **Published releases:** compacted (see
+  [bench/results](../bench/results/README.md)), 0.11.0's 40 trials take
+  75 MB, most of it sessions step by step, bot logs and trajectories.
+  `mtx bench publish --artifacts <dir>` keeps the full release outside the
+  repository, as `<dir>/<version>`, and publishes a slim one: the reports,
+  rewards, task files and bots, about 6 MB for 0.11.0. `mtx bench slim
+  <version> --artifacts <dir>` does the same to a release published before.
+  Readers (review, export, compare, rescore) use the full copy when
+  `MTX_ARTIFACTS=<dir>` holds it; without it, a slim release still shows the
+  leaderboard, comparisons and bots, but no timelines or logs.
 
 ## Author and play scenarios
 
@@ -172,15 +212,16 @@ for the cheap checks, `mtx gates <task>` for the full set (see
 [gates](gates.md)). The pieces, one by one:
 
 ```sh
-just ladder <family>                   # the skill ladder on fresh hidden sets
+just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
 just leak-audit                        # the agent's image holds no answer
 just keypair-probe                     # a bot can't read the grader's keypairs
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
 
-After changing `bots/reference`, run `just solution` and recalibrate the
-practice scenarios (`just calibrate bots/reference FILES`). Hidden sets need
+After changing a task's `reference/`, run `mtx task sync` (it copies the
+reference into the task's `solution/`) and recalibrate the practice
+scenarios (`just calibrate bench/tasks/<task>/reference FILES`). Hidden sets need
 no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
@@ -190,9 +231,29 @@ The scenario file format, v1 and v2, is in [scenario-format.md](scenario-format.
 
 It's guided. In Claude Code, in this repository, ask for a new task: the
 `mtx` MCP server (`.mcp.json`; `just install mtx` first) interviews you
-with forms, scaffolds the task and its reference bot, then reports what's
+with forms, scaffolds the task and its reference crate, then reports what's
 left after every step (`task_status`). From a terminal: `mtx task new`
 (every answer is a flag), `mtx task status <name>`, `mtx task guide <step>`.
+
+A task is one folder, `bench/tasks/<name>/`:
+
+| | |
+| --- | --- |
+| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
+| `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
+| `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
+| `checks/` | `ladder.json`, `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates) and `exploits/` (the frozen exploit bots) |
+| `environment/`, `tests/`, `instruction.md`, `README.md`, `DESIGN.md` | As the [task template](../bench/tasks/README.md#task-readmes) |
+
+A task that draws an existing generator touches no shared file: copy a
+task's folder, edit it, and run `mtx task sync`. It writes every list that
+names the tasks (`bench/tasks/tasks.just` that the Justfile imports,
+`bench/image/anchors.txt` that the image build reads, the dataset's
+`[[tasks]]`, the README tables, each `solution/`), and `mtx task check` (and
+`cargo test`) fails when one is stale. A new generator is a family in
+`crates/grader` and one entry in `GENERATORS` (`generators.rs`). `harbor sync`
+rewrites the dataset's digests at release; run `mtx task sync` after it, and
+commit.
 
 Pick an issue labelled
 [`new task`](https://github.com/lgalabru/machine-trading/issues?q=label%3A%22new+task%22),

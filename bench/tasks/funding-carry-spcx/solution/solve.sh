@@ -1,5 +1,5 @@
 #!/bin/bash
-# Reference solution: the carry desk from bots/carry in the mtx
+# Reference solution: the carry desk from the task's reference/ in the mtx
 # repository, a strategy component built into the starter's place, with the
 # tree ensemble it embeds. It needs serde_json, which the starter doesn't
 # list; it is in the SDK's lockfile.

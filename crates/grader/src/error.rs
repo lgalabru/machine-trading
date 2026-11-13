@@ -60,6 +60,8 @@ pub enum Error {
     Replay(String),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
+    #[error("invalid market calibration {}: {reason}", path.display())]
+    InvalidCalibration { path: PathBuf, reason: String },
     #[error("oracle {name}: {reason}")]
     Oracle { name: String, reason: String },
     #[error("no bot at {}: a bot is a directory with a bot.wasm, or a Justfile whose `run` starts it", .0.display())]
@@ -68,8 +70,12 @@ pub enum Error {
     NotAComponent(PathBuf),
     #[error("the bot has a Justfile, and `just` isn't on the grader's PATH")]
     NoJust,
-    #[error("--jobs must be between 1 and {1}, one per bot user; got {0}")]
+    #[error(
+        "--jobs must be between 1 and {1} (a process bot's sessions take one bot user each); got {0}"
+    )]
     Jobs(usize, usize),
+    #[error("a process bot's session needs one of the bot users to run as")]
+    NoBotUser,
     #[error(
         "bot users {first} to {} don't exist: there are {users}; lower --first-bot-user or --jobs",
         first + jobs - 1
