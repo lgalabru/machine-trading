@@ -239,6 +239,8 @@ push-image jobs="3":
 pin-image:
     #!/usr/bin/env bash
     set -euo pipefail
+    # In place, with GNU sed (Linux, CI) or BSD sed (macOS).
+    sedi() { if sed --version > /dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
     pin() {
       local ref="$1"; shift
       # The registry occasionally fails a lookup; retry before giving up.
@@ -249,7 +251,7 @@ pin-image:
       done
       [ -n "$digest" ] || { echo "no digest for $ref"; exit 1; }
       echo "$ref@$digest"
-      sed -i '' -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
+      sedi -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
     }
     pin {{registry}}/{{image}}:{{tag}} {{tasks}}/*/environment/Dockerfile
     pin {{registry}}/{{image}}:{{tag}}-runtime {{tasks}}/*/tests/Dockerfile
@@ -267,7 +269,7 @@ pin-image:
         done
         [ -n "$digest" ] || { echo "no digest for $ref"; exit 1; }
         echo "$ref@$digest"
-        sed -i '' -E "s|^docker_image = \"{{registry}}/{{image}}:[^\"]*-$task$suffix(@sha256:[0-9a-f]+)?\"|docker_image = \"$ref@$digest\"|" "$dir/task.toml"
+        sedi -E "s|^docker_image = \"{{registry}}/{{image}}:[^\"]*-$task$suffix(@sha256:[0-9a-f]+)?\"|docker_image = \"$ref@$digest\"|" "$dir/task.toml"
       done
     done
 
@@ -285,9 +287,25 @@ release: check-solution
     [ "$(git rev-parse HEAD)" = "$head" ] && git diff --quiet && git diff --cached --quiet \
       && [ -z "$(git ls-files --others --exclude-standard)" ] \
       || { echo "the tree changed while the images built; release from a clean worktree"; exit 1; }
+    just release-publish
+
+# The second half of a release, once both images are pushed under `tag`:
+# pin every task to them, check, and publish the dataset to Harbor. The
+# release workflow (.github/workflows/release.yml) builds the images itself,
+# then runs this.
+release-publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
     just pin-image
     for task in {{tasks}}/*/; do harbor lint "$task" --select ALL; done
     harbor sync {{tasks}}
+    # Every task in the dataset has a real digest: 0.12.0 went out with two
+    # of its four tasks still at sha256:000…, and so without them.
+    if grep -q 'digest = "sha256:0\{64\}"' {{tasks}}/dataset.toml; then
+      echo "dataset.toml lists a task with no digest; harbor sync didn't reach it:"
+      grep -B1 'digest = "sha256:0\{64\}"' {{tasks}}/dataset.toml
+      exit 1
+    fi
     # The dataset keeps the layout `mtx task sync` writes.
     cargo run --release -q -- task check
     # Publishing a dataset asks for confirmation, even with -y.
@@ -299,6 +317,13 @@ release: check-solution
       harbor version tag "$(name_of "$task/task.toml")@latest" "$(version_of "$task/task.toml")" --force
     done
     harbor version tag "$(name_of {{tasks}}/dataset.toml)@latest" "$(version_of {{tasks}}/dataset.toml)" --force
+    # What a bench will pull: every task of bench/tasks, at this version.
+    check="$(mktemp -d)"
+    harbor dataset download "$(name_of {{tasks}}/dataset.toml)@$(version_of {{tasks}}/dataset.toml)" -o "$check" > /dev/null
+    want="$(ls -d {{tasks}}/*/ | wc -l | tr -d ' ')"
+    got="$(find "$check" -mindepth 2 -maxdepth 3 -name task.toml | wc -l | tr -d ' ')"
+    rm -r "$check"
+    [ "$got" = "$want" ] || { echo "the published dataset holds $got tasks, bench/tasks $want"; exit 1; }
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
 # Benchmark agents on the published dataset, on an idle machine: other load
