@@ -27,9 +27,9 @@ on:
         description: "Dataset version, as in 0.12.0 (start, publish)"
         required: false
       models:
-        description: "Models, space-separated (start); openai/<model> runs in Codex, hermes:<model> in Hermes"
+        description: "Models, space-separated (start); all run in Hermes, native:<model> in its provider's harness"
         required: false
-        default: "claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1"
+        default: "claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-2"
       attempts:
         description: Attempts per model and task (start)
         required: false
@@ -109,7 +109,7 @@ jobs:
           for v in "$K" "$N" "$LIMIT"; do [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::attempts, concurrent and limit are numbers"; exit 1; }; done
           read -r -a models <<< "$MODELS"
           for m in "${models[@]}"; do
-            [[ "$m" =~ ^(hermes:)?((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "::error::bad model: $m"; exit 1; }
+            [[ "$m" =~ ^((hermes|native):)?((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "::error::bad model: $m"; exit 1; }
           done
           ops/bench/ssh.sh start "$GITHUB_SHA" "$VERSION" "$K" "$N" "$LIMIT" "${models[@]}" | tee "$RUNNER_TEMP/start.txt"
           batch="$(sed -n 's/^batch=//p' "$RUNNER_TEMP/start.txt")"
