@@ -162,7 +162,7 @@ jobs:
           branch="results/$VERSION-$BATCH"
           git switch -c "$branch"
           git add "bench/results/$VERSION/release.json"
-          git commit -m "bench: publish $VERSION from $BATCH"
+          git commit -m "chore(bench): publish $VERSION from $BATCH"
           git push origin "$branch"
           {
             echo "## Published $VERSION from $BATCH"
