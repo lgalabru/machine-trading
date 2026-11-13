@@ -14,6 +14,7 @@ pub mod market;
 pub mod offhours;
 pub mod orders;
 pub mod phoenix;
+pub mod raw;
 pub mod recipe;
 pub mod replay;
 pub mod scenario;
