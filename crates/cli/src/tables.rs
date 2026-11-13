@@ -32,7 +32,7 @@ fn u64_of(v: &Value) -> Value {
 
 /// Seconds between a Harbor `{started_at, finished_at}`'s two times.
 fn seconds(span: &Value) -> Value {
-    let parse = |v: &Value| v.as_str().and_then(|s| chrono_like(s));
+    let parse = |v: &Value| v.as_str().and_then(chrono_like);
     match (parse(&span["started_at"]), parse(&span["finished_at"])) {
         (Some(a), Some(b)) if b >= a => json!(((b - a) * 10.0).round() / 10.0),
         _ => Value::Null,
