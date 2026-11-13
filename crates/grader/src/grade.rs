@@ -777,6 +777,23 @@ async fn run_sessions(
             users: session::BOT_USERS.len(),
         });
     }
+    // A component may grow to its memory cap in every session: run no more
+    // at once than the machine's memory holds, or the grader is killed.
+    let jobs = if components {
+        let limit = memory_limit();
+        let fit = jobs_for_memory(jobs, limit);
+        if fit < jobs {
+            info!(
+                jobs,
+                fit,
+                limit = ?limit,
+                "fewer sessions at once: the memory holds no more"
+            );
+        }
+        fit
+    } else {
+        jobs
+    };
     std::fs::create_dir_all(log_dir).map_err(io_error(log_dir))?;
     raise_open_file_limit();
     // The bot users free for a process bot's sessions: each takes one while
@@ -834,6 +851,55 @@ async fn run_sessions(
         // hold up the ones behind it.
         .buffer_unordered(jobs);
     in_order(sessions, scenarios.len(), stop_on_disqualify).await
+}
+
+/// What a component's session may take in memory beyond the strategy's own
+/// cap ([`crate::wasm::MEMORY_BYTES`]): its surfnet, guard, takers and the
+/// grader's records. A market-making session, the largest, measures about
+/// 0.8 GB; this leaves headroom.
+pub const SESSION_WORLD_BYTES: u64 = 1 << 30;
+/// What the grader holds apart from its sessions: the snapshot cache, the
+/// scenarios, the reports so far.
+pub const GRADER_BASE_BYTES: u64 = 3 << 29;
+
+/// How many of a component's sessions fit in `limit` bytes of memory at
+/// once, each at its strategy's cap (at least one, at most `jobs`).
+fn jobs_for_memory(jobs: usize, limit: Option<u64>) -> usize {
+    let Some(limit) = limit else {
+        return jobs;
+    };
+    let per_session = crate::wasm::MEMORY_BYTES as u64 + SESSION_WORLD_BYTES;
+    let fit = limit.saturating_sub(GRADER_BASE_BYTES) / per_session;
+    (fit as usize).clamp(1, jobs)
+}
+
+/// The memory this process may use: its cgroup's limit (a container's, as
+/// the verifier's), else the machine's.
+fn memory_limit() -> Option<u64> {
+    let cgroup = [
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ]
+    .iter()
+    .filter_map(|path| std::fs::read_to_string(path).ok())
+    .find_map(|text| text.trim().parse::<u64>().ok());
+    let total = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            let kb = text
+                .lines()
+                .find(|line| line.starts_with("MemTotal:"))?
+                .split_whitespace()
+                .nth(1)?
+                .parse::<u64>()
+                .ok()?;
+            Some(kb * 1024)
+        });
+    // cgroup v1 reports "no limit" as a huge number.
+    match (cgroup, total) {
+        (Some(cgroup), Some(total)) => Some(cgroup.min(total)),
+        (cgroup, total) => cgroup.or(total),
+    }
 }
 
 /// One of the free bot users, taken for a session and given back when it
@@ -1426,6 +1492,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(names(kept), ["s0", "s1"]);
+    }
+
+    #[test]
+    fn a_components_sessions_at_once_fit_the_memory() {
+        let gib = 1u64 << 30;
+        // The verifier's 6 GiB: two sessions at their cap.
+        assert_eq!(jobs_for_memory(4, Some(6 * gib)), 2);
+        assert_eq!(jobs_for_memory(4, Some(64 * gib)), 4);
+        assert_eq!(jobs_for_memory(32, Some(64 * gib)), 31);
+        // Never none, and never more than asked.
+        assert_eq!(jobs_for_memory(4, Some(gib)), 1);
+        assert_eq!(jobs_for_memory(1, Some(64 * gib)), 1);
+        assert_eq!(jobs_for_memory(8, None), 8);
+        assert!(memory_limit().is_none_or(|limit| limit > 0));
     }
 
     #[test]
