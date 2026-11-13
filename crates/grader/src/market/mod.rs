@@ -99,6 +99,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_us_equity_files_draw_jointly() {
+        use super::model::draw_joint;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../calibration/market");
+        let models: Vec<super::MarketModel> = ["nvda", "qqq", "spcx", "spy", "tsla"]
+            .iter()
+            .map(|asset| {
+                let prefix = format!("{asset}.");
+                let path = std::fs::read_dir(&dir)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| {
+                        p.extension().is_some_and(|e| e == "toml")
+                            && p.file_name().unwrap().to_string_lossy().starts_with(&prefix)
+                    })
+                    .unwrap();
+                super::MarketModel::new(Calibration::load(&path).unwrap(), Default::default())
+                    .unwrap()
+            })
+            .collect();
+        // The matrix is a design parameter here; the point is the shared block.
+        let corr: Vec<Vec<f64>> = (0..5)
+            .map(|i| (0..5).map(|j| if i == j { 1.0 } else { 0.5 }).collect())
+            .collect();
+        let refs: Vec<&super::MarketModel> = models.iter().collect();
+        let paths = draw_joint(&refs, &corr, 7, 2000).unwrap();
+        assert_eq!(paths.len(), 5);
+        assert!(paths.iter().all(|p| p.log_levels.len() == paths[0].log_levels.len()));
+    }
+
+    #[test]
     fn unknown_fields_and_models_fail() {
         let extra = SOL.replace("[book]\n", "[book]\nmystery = 1\n");
         assert!(Calibration::parse(&extra).unwrap_err().contains("mystery"));
