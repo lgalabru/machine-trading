@@ -1,0 +1,8 @@
+300 sessions from `mtx scenario generate --family levered-carry --count 300 --seed 4242`, replayed step by step
+(costs: 3.5 bp fee + 3 bp + 1 bp per 10 shares walked in a step, fitted to the engine on the fast gates' 12 sessions)
+max-lever                           -1045.0 USD/session, stop-outs 189
+fixed 30%                            -422.9 USD/session, stop-outs 69
+prem-scaled                          -211.9 USD/session, stop-outs 60
+reference (K 0.006)                   187.3 USD/session, stop-outs 2
+reference without the crowd read      -46.8 USD/session, stop-outs 35
+told                                  282.4 USD/session, stop-outs 1

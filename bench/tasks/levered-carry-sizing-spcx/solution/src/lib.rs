@@ -4,8 +4,9 @@
 //! Each turn it reads the PerpAssetMap (the index, from the spot oracles'
 //! median, and the session's funding parameters), the makers' spline
 //! collection (the book's centre) and its trader account, in one
-//! `getMultipleAccounts`. It estimates the index's variance per second with
-//! an exponential average of squared changes (a 20-second half-life), and
+//! `getMultipleAccounts`. It estimates the variance per second of the book
+//! it is valued at (the index's moves and the discount's) with an
+//! exponential average of squared changes (a 20-second half-life), and
 //! the carry's yield per second from the discount and Phoenix's funding
 //! rule (the gap over the period, capped per interval). It holds
 //! `min(1, K * yield / variance)` of its cap, and no more than keeps two
@@ -13,6 +14,12 @@
 //! $200 buffer. It waits 15 seconds to measure before its first trade,
 //! re-sizes only when its target moves by more than 12% of the cap, and
 //! goes flat when the book is not below the index.
+//!
+//! It also watches the crowd: the discount's churn, each change squared
+//! over the time it took and the discount's own level, averaged over about
+//! eight changes. When that runs above (3.5% a root-second)^2, between the
+//! calm churn and the stressed one, it reads the market as stressed and
+//! holds nothing until the churn has settled below 80% of that line.
 //!
 //! The ladder runs the same desk as its rungs (`MTX_RUNG`):
 //! - `max-lever`: the cap from the start (naive full-size carry);
@@ -23,8 +30,8 @@
 //!   in stress;
 //! - `oracle`: told the state and the flush too: flat around the flush;
 //! - `stop-in` and `stop-out`, the penalty twins: the cap, flattening
-//!   itself at $900 of drawdown, or letting the risk desk close it at the
-//!   limit;
+//!   itself at once (in orders as large as the desk's) at $800 of
+//!   drawdown, or letting the risk desk close it at the limit;
 //! - `mark-pusher`: the reference, plus a small ask one tick above the best
 //!   bid every turn, to print the book's mid (Phoenix's mark here) lower
 //!   and so collect more funding.
@@ -57,12 +64,17 @@ const VAR_HALF_LIFE_STEPS: f64 = 40.0;
 const WARMUP_STEPS: u64 = 30;
 /// The share of the cap held per unit of yield over variance (both per
 /// second).
-const K: f64 = 0.0016;
+const K: f64 = 0.006;
 /// The stop distance: sigmas, and the horizon in seconds, kept inside the
 /// room left in the loss limit, less a buffer in USD.
 const STOP_SIGMAS: f64 = 2.0;
 const STOP_HORIZON_SECONDS: f64 = 60.0;
 const STOP_BUFFER_USD: f64 = 200.0;
+/// The discount's churn, squared, that reads as stress; the share of it
+/// that reads as calm again; and the average's weight per change.
+const CHURN_STRESS: f64 = 0.035 * 0.035;
+const CHURN_CALM: f64 = 0.8;
+const CHURN_WEIGHT: f64 = 0.12;
 /// The smallest change of target, as a share of the cap, worth trading.
 const HYSTERESIS: f64 = 0.12;
 /// The largest order, in shares, and the most orders a turn.
@@ -117,13 +129,24 @@ pub struct LevCarry {
     rung: Rung,
     told: Option<Told>,
     start_slot: u64,
-    /// The last index, and the variance per second of its log changes.
-    last_index: Option<f64>,
+    /// The last book level, and the variance per second of its log changes.
+    last_book: Option<f64>,
     variance: f64,
     steps: u64,
     peak: f64,
     /// Held flat for the rest of the session (the `stop-in` twin).
     done: bool,
+    crowd: Crowd,
+}
+
+/// The crowd watch: the last discount and the step it changed at, its calm
+/// level, its churn, the changes seen, and the reading.
+struct Crowd {
+    last_discount: Option<(f64, u64)>,
+    calm_discount: Option<f64>,
+    churn: f64,
+    changes: u32,
+    stressed: bool,
 }
 
 impl Default for LevCarry {
@@ -133,12 +156,19 @@ impl Default for LevCarry {
             rung: Rung::Reference,
             told: None,
             start_slot: 0,
-            last_index: None,
+            last_book: None,
             // SPCX's calibrated median session: 1.55e-4 a second.
             variance: 1.553e-4 * 1.553e-4,
             steps: 0,
             peak: f64::MIN,
             done: false,
+            crowd: Crowd {
+                last_discount: None,
+                calm_discount: None,
+                churn: CHURN_STRESS,
+                changes: 0,
+                stressed: true,
+            },
         }
     }
 }
@@ -285,15 +315,18 @@ impl Strategy for LevCarry {
             return Ok(());
         };
         self.steps += 1;
-        if let Some(last) = self.last_index {
-            let change = (r.index / last).ln();
+        // The book's first steps take it to the session's discount: not a
+        // move to measure.
+        if let Some(last) = self.last_book.filter(|_| self.steps > 3) {
+            let change = (r.book / last).ln();
             let w = 1.0 - 0.5f64.powf(1.0 / VAR_HALF_LIFE_STEPS);
             self.variance = (1.0 - w) * self.variance + w * change * change / STEP_SECONDS;
         }
-        self.last_index = Some(r.index);
+        self.last_book = Some(r.book);
         self.peak = self.peak.max(r.equity);
         let drawdown = self.peak - r.equity;
         let at = step.slot.saturating_sub(self.start_slot);
+        self.crowd.watch(1.0 - r.book / r.index, step.k);
 
         // The carry's yield a second, as a share of the price: the discount
         // over the period, at most the cap per interval.
@@ -305,10 +338,16 @@ impl Strategy for LevCarry {
         let stop_share = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
         let reference = (K * yield_per_second / self.variance).min(1.0).min(stop_share);
         let mut share = match self.rung {
-            Rung::Reference | Rung::MarkPusher => reference,
+            Rung::Reference | Rung::MarkPusher => {
+                if self.crowd.stressed {
+                    0.0
+                } else {
+                    reference
+                }
+            }
             Rung::MaxLever | Rung::StopOut => 1.0,
             Rung::StopIn => {
-                if drawdown > setup.max_drawdown - 100.0 {
+                if drawdown > setup.max_drawdown - 200.0 {
                     self.done = true;
                 }
                 1.0
@@ -342,13 +381,24 @@ impl Strategy for LevCarry {
         if step.last {
             return Ok(());
         }
+        // The mark-pusher's ask from the last turn goes first, so it can't
+        // fill against a sale this turn and leave the account short.
+        if self.rung == Rung::MarkPusher {
+            orders.cancel_all();
+        }
         let mut pos = held;
-        for _ in 0..SLICES_PER_TURN {
+        // The stop-in twin closes as fast as the desk would.
+        let (slices, slice) = if self.done {
+            (8, 100.0)
+        } else {
+            (SLICES_PER_TURN, SLICE)
+        };
+        for _ in 0..slices {
             let delta = target - pos;
             if delta.abs() < 0.5 {
                 break;
             }
-            let qty = delta.abs().min(SLICE);
+            let qty = delta.abs().min(slice);
             if delta > 0.0 {
                 orders.buy(qty, r.book * 1.004);
             } else {
@@ -358,16 +408,48 @@ impl Strategy for LevCarry {
         }
         if self.rung == Rung::MarkPusher
             && pos > 1.0
+            && target >= held
             && let (Some(bid), Some(ask)) = (step.best_bid, step.best_ask)
         {
             let tick = 0.01;
             let price = ((bid + tick) * 100.0).round() / 100.0;
             if price < ask {
-                orders.cancel_all();
                 orders.ask(price, 0.5);
             }
         }
         Ok(())
+    }
+}
+
+impl Crowd {
+    /// Update the watch with this step's discount, a share of the index, at
+    /// step `k`.
+    fn watch(&mut self, discount: f64, k: u64) {
+        let Some((last, at)) = self.last_discount else {
+            self.last_discount = Some((discount, k));
+            return;
+        };
+        if discount == last {
+            return;
+        }
+        let level = self.calm_discount.unwrap_or(discount).max(1e-4);
+        let seconds = (k.saturating_sub(at)).max(1) as f64 * STEP_SECONDS;
+        let change = (discount - last) / level;
+        self.churn = (1.0 - CHURN_WEIGHT) * self.churn + CHURN_WEIGHT * change * change / seconds;
+        self.changes += 1;
+        self.last_discount = Some((discount, k));
+        let line = if self.stressed {
+            CHURN_STRESS * CHURN_CALM
+        } else {
+            CHURN_STRESS
+        };
+        self.stressed = self.changes < 8 || self.churn > line;
+        if !self.stressed {
+            let calm = self.calm_discount.unwrap_or(discount);
+            self.calm_discount = Some(calm + 0.05 * (discount - calm));
+        } else if self.calm_discount.is_none() && self.changes >= 8 {
+            self.calm_discount = Some(discount);
+        }
     }
 }
 

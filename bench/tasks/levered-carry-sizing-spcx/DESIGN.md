@@ -144,16 +144,19 @@ allow without a core change).
 
 ## Detectability
 
-At the calibration's median level the index's 5-second updates move about
-0.035% (sd); stressed updates about twice that. One update separates the
-states by about 0.4 sd of a log-variance estimate; ten updates (50 s) by
-about 1.3 sd; the discount's churn adds a second, independent read (its
-2-second-scale jitter is 2.5x larger in stress) that the instruction states.
-Together a good reader separates the states within roughly 30-60 seconds of
-a switch, while the flush comes 80 seconds after a switch on average:
-reading fast pays, and certainty comes too late. The level draw (log-sd
-0.4) blurs a single-session threshold: a reader must compare against the
-session's own calm.
+An estimate, not yet measured on the engine. The stressed state's variance
+is 4x the calm one's ((1.7 / 0.85)^2), and each state's level is a
+log-normal draw (log-sd 0.4), so a single session's variance only places it
+against the session's own history. The index updates every 5 seconds, so a
+minute holds 12 updates: a two-state likelihood test on the index alone
+needs several updates to separate a switch from a fat-tailed draw or a GARCH
+burst; the discount's churn (2.5x larger in stress, at every tick) is a
+second, independent read the instruction states. In the calibration model
+an approximate Bayes filter on both scores 0.8-1.0x the reference: the
+flush comes about 80 seconds after a switch on average (1.2% a second), so
+a fast reader catches some flushes and a slow one few, while the told rung
+dodges nearly all. Measuring the per-switch detection time on engine
+sessions is a follow-up.
 
 ## Fairness
 
@@ -167,7 +170,7 @@ session's own calm.
   clause by clause.
 - The stop-out is stated exactly, with when it's measured, how the desk
   closes and that it is priced, not zeroed.
-- Penalty twins: `stop-in` (flattens itself at $900) and `stop-out` (lets
+- Penalty twins: `stop-in` (flattens itself at $800, as fast as the desk would) and `stop-out` (lets
   the desk close it at $1,000). The ladder requires `stop-out < stop-in`.
 - The reference is hidden from practice: practice files carry no reference
   PnL.
@@ -210,6 +213,28 @@ index's variance and the discount's churn) scores 0.8-1.0x the reference
 in the model: most of the told rung's lead is the switch-to-flush race,
 which no reader wins every time.
 
+### On the engine's own paths
+
+The one-second model is a sketch; `hidden/gate0/pathsim.py` replays
+scenario files the generator itself writes (300 sessions, `mtx scenario
+generate --family levered-carry --seed 4242`) step by step, with funding at
+Phoenix's rule, the priced stop-out, and costs fitted to the engine's on the
+fast gates' 12 sessions. `pathsim-results.txt`, USD per session:
+
+| Rung | USD/session | stop-outs |
+| --- | ---: | ---: |
+| max-lever | -1,045 | 189/300 |
+| fixed 30% | -423 | 69 |
+| prem-scaled | -212 | 60 |
+| reference (K 0.006, the crowd read) | 187 | 2 |
+| the reference without the crowd read | -47 | 35 |
+| told | 282 | 1 |
+
+Gate 0 holds on the engine's paths too (told positive, every non-reading
+rung losing). The reference's parameters (K, the churn line, hysteresis,
+buffer) were tuned on the first 150 of these sessions and checked on the
+other 150 (`tune.py`); the crowd read is what makes it profitable.
+
 The same family with switches allowed every second (an earlier design,
 before the infra kept switches at block ends) gave 3.36, 3.50 and 8.37.
 
@@ -233,4 +258,4 @@ near 1; those that also read the discount's churn and cut early above it
 
 | Version | What happened | What changed |
 | --- | --- | --- |
-| g0 | Gate 0 on the calibration model (above). Built on infra/22 (priced stop-out, regime clock and stated regime sets). | — (new task) |
+| g0 | Gate 0 on the calibration model and on the engine's paths (above). Built on infra/22 (priced stop-out, regime clock and stated regime sets). First engine ladder (fast gates' public set, 12 sessions): told +$3,052, max-lever -$5,272, fixed -$2,389, prem-scaled -$1,671; the first reference (variance of the index only) -$1,433, so it gained the crowd read (the discount's churn) and was retuned on the engine's paths. | — (new task) |
