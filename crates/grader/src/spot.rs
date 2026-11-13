@@ -64,7 +64,7 @@ use crate::{
         SessionOptions, SessionReport, StepRecord, Timeline, World, grader_f64,
     },
     snapshot,
-    venue::{Market, books, price_usd, spot_venue, value_usd},
+    venue::{Market, books, price_usd, spot_venue, value_of_markets},
     wasm::{Desk, Reader},
 };
 
@@ -447,6 +447,7 @@ impl Venues {
         let mut open_orders = Vec::new();
         let mut pooled = Vec::new();
         let mut positions = Vec::new();
+        let mut per_market: Vec<(&dyn Market, Vec<Holding>)> = Vec::new();
         for market in &self.markets {
             let held = market.holdings(&self.owner).await?;
             if market.kind() == Kind::Amm {
@@ -468,9 +469,10 @@ impl Venues {
                     open_orders.push((market.instrument().clone(), side));
                 }
             }
-            all.extend(held);
+            all.extend(held.iter().cloned());
+            per_market.push((market.as_ref(), held));
         }
-        let value = value_usd(chain, &self.markets, &all).await?;
+        let value = value_of_markets(chain, &per_market).await?;
         let asset = |i: usize| -> Option<&Holdings> {
             match all.get(i)? {
                 Holding::Spot(asset) => Some(asset),

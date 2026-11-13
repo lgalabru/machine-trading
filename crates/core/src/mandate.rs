@@ -144,7 +144,7 @@ pub struct InstrumentRef {
 
 /// Instrument kinds this reader enforces. `specs/instruments/` defines
 /// money markets too, and reserves futures and options; this reader refuses
-/// them. `amm` is the draft profile of a pool's liquidity.
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     /// A perpetual future: no expiry, held near spot by funding payments.
@@ -624,7 +624,7 @@ impl FromStr for Kind {
             "spot" => Ok(Self::Spot),
             "amm" => Ok(Self::Amm),
             "future" | "option" | "money-market" => Err(format!(
-                "instrument kind {s:?} is reserved; this reader enforces perp, spot and amm only"
+                "instrument kind {s:?} is reserved; this reader enforces perp and spot only"
             )),
             _ => Err(format!("unknown instrument kind {s:?}")),
         }
@@ -669,6 +669,10 @@ mod tests {
                 .unwrap_err()
                 .contains("reserved")
         );
+    }
+
+    #[test]
+    fn a_pools_liquidity_is_an_amm_instrument() {
         let pool: InstrumentRef = "raydium:amm:SPCX-USDC".parse().unwrap();
         assert_eq!(pool.kind, Kind::Amm);
         assert_eq!(pool.to_string(), "raydium:amm:SPCX-USDC");
