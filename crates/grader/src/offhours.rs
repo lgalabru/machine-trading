@@ -7,7 +7,7 @@
 //! leverage around that price. When the external window reopens, the index
 //! moves to wherever the underlying opens. A scenario with [`OffHours`]
 //! carries that index and the reopen next to its path, and the taker orders
-//! the grader sends (see [`crate::flow`]); the session gives the bot the
+//! the grader sends (see [`crate::actors::takers`]); the session gives the bot the
 //! reopen's slot as `MTX_REOPEN_SLOT`. What the closed period's flow is, and
 //! how sessions are drawn, is a task family's business.
 

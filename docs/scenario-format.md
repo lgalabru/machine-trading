@@ -42,7 +42,7 @@ Each section checks only itself (`Assets::validate`, `Venues::validate`,
 `MarketModel::validate`, `Actors::validate`, `Scoring::validate`, and the
 leaf types' own). A few rules join sections and are listed, one function
 each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
-having no path or flow, the mandate covering exactly the scenario's markets,
+having no path or competitor (their takers are a tape), the mandate covering exactly the scenario's markets,
 a sell order fitting the wallet.
 
 ## Example

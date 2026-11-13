@@ -35,8 +35,6 @@ use wasmtime_wasi::{
 
 use crate::Error;
 
-pub mod spot;
-
 /// `mtx:strategy@0.2.0`, the kit's.
 pub mod v2 {
     wasmtime::component::bindgen!({
@@ -715,13 +713,59 @@ pub struct Clock<'a> {
     pub reports: mtx_kit::Reports,
 }
 
-/// A component playing one session: the strategy, and the venue the grader
-/// trades for it, with the bot's key, through the bot's guarded endpoint.
-/// Reads and sends as `mtx_kit::run` does for a process bot.
+/// The mandate a component's session runs under, as its `start` sees it.
+pub struct Terms<'a> {
+    pub end_slot: u64,
+    pub mandate: &'a mtx_core::Mandate,
+    /// The position cap on its market, and its drawdown limit.
+    pub cap: f64,
+    pub max_drawdown: f64,
+}
+
+/// What the grader trades and reads for a component: a seat on each market
+/// the session trades, with the bot's key, through the bot's guarded
+/// endpoint, and how its market is read.
+pub struct Desk {
+    /// The session's markets, the bot's own first, as `start` lists them
+    /// (the interface's `venues`).
+    pub markets: Vec<mtx_kit::VenueInfo>,
+    /// A seat on each market the session trades. A line for a market
+    /// without one comes back not sent.
+    pub seats: Vec<Box<dyn crate::venue::Seat>>,
+    /// The market traded, as the venue names it, and the venue's metadata,
+    /// as `start` gets them.
+    pub symbol: String,
+    pub venue: String,
+    /// The bot's key, base58.
+    pub authority: String,
+    pub reader: Reader,
+}
+
+/// How a component's market is read at each turn.
+pub enum Reader {
+    /// A Phoenix perp account, as a process bot's run loop reads it: the
+    /// venue's mark, oracle and index, the position there, and a PnL
+    /// estimated from the mark's moves.
+    Perp(std::sync::Arc<mtx_kit::Trader>),
+    /// A wallet the session measures (a spot session): its reading at each
+    /// turn ([`Wallet`]), valued at the oracle, and each market's top as
+    /// its seat reads it.
+    Wallet {
+        /// The account when the session starts.
+        start: Wallet,
+    },
+}
+
+/// A wallet as the session measures it, at the session's oracle price.
+pub use crate::spot::Wallet;
+
+/// A component playing one session: the strategy, and the markets the
+/// grader trades for it ([`Desk`]). Reads and sends as `mtx_kit::run` does
+/// for a process bot.
 pub struct WasmBot {
     /// `None` if the component didn't load: the session plays without it.
     strategy: Option<WasmStrategy>,
-    trader: mtx_kit::Trader,
+    desk: Desk,
     session: mtx_kit::Session,
     pnl: f64,
     peak_pnl: f64,
@@ -744,13 +788,15 @@ pub struct WasmBot {
 }
 
 impl WasmBot {
-    /// Loads the component and calls its `start`. `env` is the bot's
-    /// environment, as a process bot would get it.
+    /// Loads the component and calls its `start`. Its own `rpc` reads go to
+    /// `rpc_url`, the bot's guarded endpoint.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         path: &Path,
-        env: &mtx_kit::BotEnv,
-        mandate: &mtx_core::Mandate,
+        rpc_url: &str,
         clock: Clock<'_>,
+        terms: Terms<'_>,
+        desk: Desk,
         log: Box<dyn Write + Send>,
         observer: Option<std::sync::Arc<dyn StepObserver>>,
         raw: Option<crate::raw::RawConfig>,
@@ -763,15 +809,14 @@ impl WasmBot {
             vars,
             reports,
         } = clock;
-        let trader = mtx_kit::Trader::connect(env)?;
-        let start_mark = trader.mark_usd().await?;
-        let start_oracle = trader.oracle_usd().await?;
+        let (start_mark, start_oracle) = match &desk.reader {
+            Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
+            Reader::Wallet { start } => (start.price_usd, start.price_usd),
+        };
         let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
-        let mut strategy = match WasmStrategy::load(path, &env.rpc_url, log, seed, session_fuel)
-            .await
-        {
+        let mut strategy = match WasmStrategy::load(path, rpc_url, log, seed, session_fuel).await {
             Ok(strategy) => {
                 tracing::info!(interface = strategy.interface(), "strategy component");
                 Some(strategy)
@@ -782,38 +827,36 @@ impl WasmBot {
                 None
             }
         };
-        let venue = std::fs::read_to_string(&env.exchange_path)
-            .map_err(crate::error::io_error(&env.exchange_path))?;
         let session = mtx_kit::Session {
             steps,
             slots_per_step,
             start_slot,
-            end_slot: env.end_slot,
-            symbol: env.symbol.clone(),
+            end_slot: terms.end_slot,
+            symbol: desk.symbol.clone(),
             start_mark,
             start_oracle,
-            cap: env.max_position,
-            max_drawdown: env.max_drawdown_usd,
-            mandate: mandate.clone(),
-            authority: trader.authority().to_string(),
+            cap: terms.cap,
+            max_drawdown: terms.max_drawdown,
+            mandate: terms.mandate.clone(),
+            authority: desk.authority.clone(),
             vars,
             seed,
-            venues: mtx_kit::VenueInfo::of_perp_session(
-                mandate,
-                &env.symbol,
-                mtx_kit::phoenix_market_address(&venue, &env.symbol),
-            ),
-            venue,
+            venues: desk.markets.clone(),
+            venue: desk.venue.clone(),
             reports,
             applies_tx_options: false,
         };
-        if let (Some(strategy), Some(raw)) = (strategy.as_mut(), raw) {
+        // Raw sends are a perp session's: a scenario enables them nowhere
+        // else. They go out as the sheet's do, through the desk's trader.
+        if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
+            (strategy.as_mut(), raw, &desk.reader)
+        {
             strategy.enable_raw_sends(crate::raw::RawSender::new(
                 raw,
                 trader.authority(),
-                env.exchange()?,
-                &env.symbol,
-                &env.rpc_url,
+                trader.env.exchange()?,
+                &trader.env.symbol,
+                &trader.env.rpc_url,
             ));
         }
         if let Some(strategy) = strategy.as_mut() {
@@ -840,7 +883,7 @@ impl WasmBot {
         }
         Ok(Self {
             strategy,
-            trader,
+            desk,
             session,
             pnl: 0.0,
             peak_pnl: 0.0,
@@ -856,42 +899,88 @@ impl WasmBot {
         })
     }
 
-    /// The strategy's turn at `step`: read the market, call `step`, cut the
-    /// sheet to the mandate's cap and send it, in order, stopping at the
-    /// first order that fails. The step's turn data, if the scenario reports
-    /// any, goes into the market. Returns whether the strategy answered.
-    pub async fn turn(&mut self, step: &mtx_core::Step) -> bool {
+    /// The market at `step`, as the desk reads it: `None` if it couldn't.
+    /// `wallet` is the session's reading of a measured wallet.
+    async fn market(
+        &mut self,
+        step: &mtx_core::Step,
+        wallet: Option<&Wallet>,
+    ) -> Option<mtx_kit::Market> {
         let (k, slot, last) = (step.k, step.slot, step.last);
-        if self.stopped.is_some() {
-            return false;
-        }
-        let (top, oracle, position) = match (
-            self.trader.top().await,
-            self.trader.oracle_usd().await,
-            self.trader.position().await,
-        ) {
-            (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
-            (top, oracle, position) => {
-                tracing::warn!(step = k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
-                return false;
+        let (mark, oracle, index, best_bid, best_ask, position) = match &self.desk.reader {
+            Reader::Perp(trader) => {
+                let (top, oracle, position) = match (
+                    trader.top().await,
+                    trader.oracle_usd().await,
+                    trader.position().await,
+                ) {
+                    (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
+                    (top, oracle, position) => {
+                        tracing::warn!(step = k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
+                        return None;
+                    }
+                };
+                let mark = top.mark;
+                if let Some(previous) = self.last_mark {
+                    self.pnl += position.size * (mark - previous);
+                }
+                self.last_mark = Some(mark);
+                (
+                    mark,
+                    oracle,
+                    top.index,
+                    top.best_bid,
+                    top.best_ask,
+                    position,
+                )
+            }
+            Reader::Wallet { start } => {
+                let Some(wallet) = wallet else {
+                    tracing::warn!(step = k, "no reading of the wallet; skipping the step");
+                    return None;
+                };
+                let Some(Ok((best_bid, best_ask))) = (match self.desk.seats.first() {
+                    Some(seat) => Some(seat.top().await),
+                    None => None,
+                }) else {
+                    tracing::warn!(step = k, "couldn't read the book; skipping the step");
+                    return None;
+                };
+                self.pnl = wallet.value_usd - start.value_usd;
+                let position = mtx_kit::Position {
+                    size: wallet.base,
+                    entry_usd: start.price_usd,
+                };
+                let price = wallet.price_usd;
+                (price, price, price, best_bid, best_ask, position)
             }
         };
-        let mark = top.mark;
-        if let Some(previous) = self.last_mark {
-            self.pnl += position.size * (mark - previous);
-        }
-        self.last_mark = Some(mark);
         self.peak_pnl = self.peak_pnl.max(self.pnl);
-        let (venues, fills) = mtx_kit::venue_views(
+        let (mut venues, fills) = mtx_kit::venue_views(
             &self.session.venues,
             self.session.reports,
-            top.best_bid,
-            top.best_ask,
+            best_bid,
+            best_ask,
             position,
             &step.tape,
             &step.depth,
         );
-        let market = mtx_kit::Market {
+        // A measured wallet's other markets: the same SOL held, and each
+        // seat's own top, where the step's depth didn't give one.
+        if matches!(self.desk.reader, Reader::Wallet { .. }) {
+            for view in venues.iter_mut().skip(1) {
+                view.position = Some(position);
+                if view.best_bid.is_some() || view.best_ask.is_some() {
+                    continue;
+                }
+                if let Some(seat) = self.desk.seats.iter().find(|s| s.market() == view.id)
+                    && let Ok((bid, ask)) = seat.top().await
+                {
+                    (view.best_bid, view.best_ask) = (bid, ask);
+                }
+            }
+        }
+        Some(mtx_kit::Market {
             k,
             slot,
             last,
@@ -899,9 +988,9 @@ impl WasmBot {
             slots_left: self.session.end_slot.saturating_sub(slot),
             mark,
             oracle,
-            index: top.index,
-            best_bid: top.best_bid,
-            best_ask: top.best_ask,
+            index,
+            best_bid,
+            best_ask,
             position,
             cap: self.session.cap,
             max_drawdown: self.session.max_drawdown,
@@ -919,6 +1008,32 @@ impl WasmBot {
             rfqs: Vec::new(),
             notes: std::mem::take(&mut self.notes),
             fees: None,
+        })
+    }
+
+    /// The seat for a planned line's venue: the session's own market's for
+    /// none.
+    fn seat(&self, venue: Option<&str>) -> Option<&dyn crate::venue::Seat> {
+        match venue {
+            None => self.desk.seats.first(),
+            Some(id) => self.desk.seats.iter().find(|s| s.market() == id),
+        }
+        .map(|seat| seat.as_ref())
+    }
+
+    /// The strategy's turn at `step`: read the market, call `step`, cut the
+    /// sheet to the mandate's cap and send each line to its market, in
+    /// order, stopping at the first order that fails. The step's turn data,
+    /// if the scenario reports any, goes into the market, keyed by market;
+    /// `wallet` is the session's reading of a measured wallet. Returns
+    /// whether the strategy answered.
+    pub async fn turn(&mut self, step: &mtx_core::Step, wallet: Option<&Wallet>) -> bool {
+        let k = step.k;
+        if self.stopped.is_some() {
+            return false;
+        }
+        let Some(market) = self.market(step, wallet).await else {
+            return false;
         };
         let Some(strategy) = self.strategy.as_mut() else {
             self.last = Some(market);
@@ -985,7 +1100,7 @@ impl WasmBot {
         }
         // Only what the session executes counts toward the cap.
         let (planned, notes) = mtx_kit::plan_sheet_with(&orders, &market, |venue, action| {
-            venue.is_none() && mtx_kit::Trader::executes(action)
+            self.seat(venue).is_some_and(|seat| seat.executes(action))
         });
         for note in &notes {
             tracing::warn!(step = k, "{note}");
@@ -1004,10 +1119,8 @@ impl WasmBot {
         for planned in planned {
             let state = if failed {
                 SendState::NotSent("an earlier order of the step failed".into())
-            } else if let Some(venue) = &planned.venue {
-                SendState::NotSent(format!("{venue} isn't traded in this session"))
-            } else {
-                let sent = self.trader.send_planned(&planned).await;
+            } else if let Some(seat) = self.seat(planned.venue.as_deref()) {
+                let sent = seat.send(&planned).await;
                 if sent.sent {
                     tried.push(planned.action.clone());
                     if let SendState::Failed { reason, .. } = &sent.state {
@@ -1016,6 +1129,11 @@ impl WasmBot {
                     }
                 }
                 sent.state
+            } else {
+                SendState::NotSent(format!(
+                    "{} isn't traded in this session",
+                    planned.venue.as_deref().unwrap_or(&own)
+                ))
             };
             let Planned {
                 line,
@@ -1043,8 +1161,11 @@ impl WasmBot {
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
         // Raw sends go after the sheet, whatever became of it.
-        if let Some(raw) = self.strategy.as_mut().and_then(WasmStrategy::raw_sender) {
-            self.sends.extend(raw.flush(&self.trader.keypair).await);
+        if let (Some(raw), Reader::Perp(trader)) = (
+            self.strategy.as_mut().and_then(WasmStrategy::raw_sender),
+            &self.desk.reader,
+        ) {
+            self.sends.extend(raw.flush(&trader.keypair).await);
         }
         self.observe(trace);
         true

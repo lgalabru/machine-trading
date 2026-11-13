@@ -1341,6 +1341,8 @@ fn trace_json(trace: &StepTrace) -> Value {
         "sent": trace.sent.iter().map(|(a, r)| json!({
             "action": action_json(a),
             "ok": r.landed(),
+            // Held, to land in a later step: not a failure.
+            "pending": matches!(r, mtx_kit::SendState::Delayed),
             "error": r.reason(),
         })).collect::<Vec<_>>(),
         "fuel": trace.fuel,
