@@ -55,6 +55,14 @@ pub struct ScenarioResult {
     /// scoring v2's gap (see [`trade_markout`]). Not reported.
     #[serde(skip)]
     pub trade_markout_usd: Option<f64>,
+    /// The reference's and the informed bot's drawdowns in this session,
+    /// for scoring v2's near-breach charge: the scenario's, or the
+    /// reference's as the grade measured it when it ran the reference. Not
+    /// reported.
+    #[serde(skip)]
+    pub reference_max_drawdown_usd: Option<f64>,
+    #[serde(skip)]
+    pub informed_max_drawdown_usd: Option<f64>,
     /// The session's PnL split into markout, luck and a residual, for a
     /// scenario that reports a fair value (see [`Scenario::fair_path`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,6 +241,11 @@ impl GradeReport {
                         .disqualified
                         .clone()
                         .filter(|_| session.refused_calls.is_empty()),
+                    max_drawdown_usd: session.max_drawdown_usd,
+                    reference_max_drawdown_usd: result.reference_max_drawdown_usd,
+                    informed_max_drawdown_usd: result.informed_max_drawdown_usd,
+                    start_value_usd: session.start_value_usd,
+                    stopped_out: false,
                     traded: session.peak_position > 0.0,
                     trade_markout_usd: result.trade_markout_usd,
                 })
@@ -328,7 +341,39 @@ impl GradeReport {
                 ("score_v2_gap_risk".to_string(), v2.gap.risk),
                 ("score_v2_gap_noise".to_string(), v2.gap.noise),
                 ("breached_sessions".to_string(), v2.breached_sessions as f64),
+                ("score_v2_risk_charge_usd".to_string(), v2.risk.charge_usd),
+                ("score_v2_dd_rms".to_string(), v2.risk.dd_rms),
+                ("score_v2_risk_allowance".to_string(), v2.risk.allowance),
+                ("score_v2_risk_weight".to_string(), v2.risk.weight),
             ]);
+            if let Some(cap) = v2.breach_cap {
+                rewards.insert("score_v2_breach_cap".to_string(), cap);
+            }
+            if let Some(anchor) = v2.risk.dd_rms_anchor {
+                rewards.insert("score_v2_dd_rms_anchor".to_string(), anchor);
+            }
+            let m = &v2.metrics;
+            rewards.extend([
+                ("metric_return_on_capital".to_string(), m.return_on_capital),
+                ("metric_drawdown_to_limit_mean".to_string(), m.drawdown_to_limit_mean),
+                ("metric_drawdown_to_limit_max".to_string(), m.drawdown_to_limit_max),
+                ("metric_profitable_share".to_string(), m.profitable_share),
+                ("metric_worst_session_usd".to_string(), m.worst_session_usd),
+                ("metric_losing_sessions".to_string(), m.losing_sessions as f64),
+                ("metric_usd_lost".to_string(), m.usd_lost),
+                (
+                    "metric_breaches_per_100_sessions".to_string(),
+                    m.breaches_per_100_sessions,
+                ),
+                ("metric_stopped_out_sessions".to_string(), m.stopped_out_sessions as f64),
+                (
+                    "metric_raw_negative".to_string(),
+                    f64::from(u8::from(m.raw_negative)),
+                ),
+            ]);
+            if let Some(sharpe) = m.sharpe {
+                rewards.insert("metric_sharpe".to_string(), sharpe);
+            }
         }
         for result in &self.scenarios {
             rewards.insert(
@@ -489,6 +534,13 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
+    // The reference's drawdowns as this grade measured them, for scoring
+    // v2: kept off the scenarios, which the detail files hold.
+    for (result, anchor) in report.scenarios.iter_mut().zip(&anchored) {
+        if anchor.scenario == result.session.scenario {
+            result.reference_max_drawdown_usd = Some(anchor.max_drawdown_usd);
+        }
+    }
     report.anchors = anchored;
     info!(
         reward = report.reward,
@@ -625,6 +677,8 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
             reference_pnl_usd: scenario.reference_pnl_usd,
             informed_pnl_usd: scenario.informed_pnl_usd,
             trade_markout_usd: trade_markout(&session, scenario),
+            reference_max_drawdown_usd: scenario.reference_max_drawdown_usd,
+            informed_max_drawdown_usd: scenario.informed_max_drawdown_usd,
             markout: markout(&session, scenario),
             session,
         })
@@ -884,10 +938,13 @@ pub async fn calibrate(
         // disqualify can't be a baseline.
         if disqualification(session).is_none() {
             let pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            let drawdown_usd = Some((session.max_drawdown_usd * 100.0).round() / 100.0);
             if informed {
                 scenario.informed_pnl_usd = pnl_usd;
+                scenario.informed_max_drawdown_usd = drawdown_usd;
             } else {
                 scenario.reference_pnl_usd = pnl_usd;
+                scenario.reference_max_drawdown_usd = drawdown_usd;
             }
             scenario.save(path)?;
         } else {
@@ -1278,6 +1335,8 @@ mod tests {
             net: None,
             reference_pnl_usd,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -1550,6 +1609,32 @@ mod tests {
         assert_eq!(rewards["score_v2_edge"], v2.raw - 0.5);
         assert_eq!(rewards["breached_sessions"], 1.0);
         assert_eq!(rewards["ceiling_pnl_usd"], v2.ceiling_usd);
+    }
+
+    #[test]
+    fn v2_charges_drawdowns_against_the_references_and_reports_metrics() {
+        let mut s = scenario(Some(100.0));
+        s.reference_max_drawdown_usd = Some(50.0);
+        let mut deep = session(150.0);
+        deep.max_drawdown_usd = 950.0;
+        let mut report = score(vec![(deep.clone(), &s), (deep, &s)]);
+        // Kept out of the report: it is the scenario's, or the grade's own.
+        assert!(!serde_json::to_string(&report).unwrap().contains("reference_max_drawdown"));
+        assert_eq!(report.scenarios[0].reference_max_drawdown_usd, Some(50.0));
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!(v2.risk.anchor, "reference");
+        // ρ = 0.95, ρ_A = 0.05, s = 300 / 200 = 1.5: 1.5 · 2,000 · 0.875²,
+        // capped at the 300 it won.
+        assert!((v2.risk.allowance - 1.5).abs() < 1e-12);
+        assert_eq!(v2.risk.charge_usd, 300.0);
+        assert_eq!(v2.raw, 0.0);
+        let rewards = report.rewards();
+        assert_eq!(rewards["score_v2_risk_charge_usd"], 300.0);
+        assert_eq!(rewards["score_v2_risk_weight"], 1.0);
+        assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
+        assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
+        assert!(!rewards.contains_key("score_v2_breach_cap"));
     }
 
     #[test]

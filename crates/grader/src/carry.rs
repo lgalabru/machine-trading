@@ -514,6 +514,8 @@ impl CarryFamily {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,

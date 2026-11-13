@@ -30,8 +30,9 @@ pub enum Scoring {
     V1,
     /// Those, and scoring v2 beside them (`v2` in the report, `score_v2*`
     /// in the rewards): 0 = doing nothing, 0.5 = the reference, 1 = the
-    /// task's informed bot, losses counted 1.5 times and a breach scored per
-    /// session. Report-only: `reward` and `skill` don't change.
+    /// task's informed bot, losses counted 1.5 times, a breach scored per
+    /// session and capping the run, and a charge for drawing down far more
+    /// than the anchor. Report-only: `reward` and `skill` don't change.
     V2,
 }
 
@@ -58,14 +59,18 @@ pub struct ScoringArgs {
     /// ceiling; a weaker reference is floored there and flagged.
     #[arg(long, default_value_t = scoring_v2::ANCHOR_FLOOR)]
     pub anchor_floor: f64,
+    /// v2: the near-breach charge's weight λ (1 by default; 0 turns it
+    /// off). `<task>=<λ>` gives one task's, as `--eta` does.
+    #[arg(long, value_name = "[TASK=]LAMBDA")]
+    pub risk_weight: Vec<String>,
 }
 
 impl ScoringArgs {
     /// v2's parameters for a grade of `task`, or `None` under v1.
     pub fn params(&self, task: Option<&str>) -> Result<Option<Params>> {
         if self.scoring == Scoring::V1 {
-            if !self.eta.is_empty() || self.ceiling.is_some() {
-                bail!("--eta and --ceiling are for --scoring v2");
+            if !self.eta.is_empty() || self.ceiling.is_some() || !self.risk_weight.is_empty() {
+                bail!("--eta, --ceiling and --risk-weight are for --scoring v2");
             }
             return Ok(None);
         }
@@ -83,32 +88,43 @@ impl ScoringArgs {
         Ok(Some(Params {
             loss_weight: self.loss_weight,
             anchor_floor: self.anchor_floor,
+            risk_weight: per_task("--risk-weight", &self.risk_weight, task)?
+                .unwrap_or(scoring_v2::RISK_WEIGHT),
             ..Params::new(ceiling)
         }))
     }
 
     /// The `--eta` for `task`: its own, else the one without a task.
     fn eta(&self, task: Option<&str>) -> Result<Option<f64>> {
-        let mut any = None;
-        for given in &self.eta {
-            let (name, value) = match given.split_once('=') {
-                Some((name, value)) => (Some(name), value),
-                None => (None, given.as_str()),
-            };
-            let eta: f64 = value
-                .parse()
-                .with_context(|| format!("--eta {given}: not a number"))?;
-            if !(eta > 0.0 && eta <= 1.0) {
-                bail!("--eta {given}: a share of the bound, in (0, 1]");
-            }
-            match name {
-                Some(name) if Some(name) == task => return Ok(Some(eta)),
-                Some(_) => {}
-                None => any = Some(eta),
-            }
+        let eta = per_task("--eta", &self.eta, task)?;
+        if let Some(eta) = eta
+            && !(eta > 0.0 && eta <= 1.0)
+        {
+            bail!("--eta {eta}: a share of the bound, in (0, 1]");
         }
-        Ok(any)
+        Ok(eta)
     }
+}
+
+/// A `[TASK=]VALUE` option's value for `task`: its own, else the one
+/// without a task.
+fn per_task(flag: &str, given: &[String], task: Option<&str>) -> Result<Option<f64>> {
+    let mut any = None;
+    for given in given {
+        let (name, value) = match given.split_once('=') {
+            Some((name, value)) => (Some(name), value),
+            None => (None, given.as_str()),
+        };
+        let value: f64 = value
+            .parse()
+            .with_context(|| format!("{flag} {given}: not a number"))?;
+        match name {
+            Some(name) if Some(name) == task => return Ok(Some(value)),
+            Some(_) => {}
+            None => any = Some(value),
+        }
+    }
+    Ok(any)
 }
 
 /// A grade scored again, and where it differs from its report.
@@ -142,7 +158,16 @@ pub fn rescore(
             let name = result["scenario"]
                 .as_str()
                 .with_context(|| format!("{}: a session without a name", report.display()))?;
-            read_session(&details.join("bot"), name, release)
+            let (session, mut scenario) = read_session(&details.join("bot"), name, release)?;
+            // The reference's drawdown as the grade measured it, when it ran
+            // the reference, as the grade itself takes it: what scoring
+            // v2's charge is anchored to.
+            if v2.is_some()
+                && let Some(drawdown) = reference_drawdown(&details.join("reference"), name)?
+            {
+                scenario.reference_max_drawdown_usd = Some(drawdown);
+            }
+            Ok((session, scenario))
         })
         .collect::<Result<Vec<_>>>()?;
     let mut report = grade::rescore(sessions, verdict);
@@ -162,6 +187,23 @@ pub fn rescore(
         report,
         differences,
     })
+}
+
+/// The reference's drawdown in one session, from its detail file, if the
+/// grade wrote one.
+fn reference_drawdown(dir: &Path, name: &str) -> Result<Option<f64>> {
+    let path = dir.join(format!("{name}.json.gz"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut json = Vec::new();
+    flate2::read::GzDecoder::new(
+        std::fs::File::open(&path).with_context(|| path.display().to_string())?,
+    )
+    .read_to_end(&mut json)
+    .with_context(|| path.display().to_string())?;
+    let value: Value = serde_json::from_slice(&json).with_context(|| path.display().to_string())?;
+    Ok(value["report"]["max_drawdown_usd"].as_f64())
 }
 
 /// One session's report and scenario, from its detail file.
@@ -290,6 +332,9 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
                     "noise": v2.gap.noise,
                 },
                 "breached_sessions": v2.breached_sessions,
+                "breach_cap": v2.breach_cap,
+                "risk": v2.risk,
+                "metrics": v2.metrics,
                 "fatal": v2.fatal,
             });
             graded.entry(task_of(trial)).or_default().push((
@@ -387,7 +432,21 @@ mod tests {
             ceiling: None,
             loss_weight: scoring_v2::LOSS_WEIGHT,
             anchor_floor: scoring_v2::ANCHOR_FLOOR,
+            risk_weight: Vec::new(),
         }
+    }
+
+    #[test]
+    fn v2s_risk_weight_defaults_to_one_and_can_be_set_per_task() {
+        let lambda = |given: &ScoringArgs, task| given.params(task).unwrap().unwrap().risk_weight;
+        let mut given = args(Scoring::V2, &["0.3"]);
+        assert_eq!(lambda(&given, Some("flash-crash-spcx")), 1.0);
+        given.risk_weight = vec!["2".into(), "market-making-spcx=0".into()];
+        assert_eq!(lambda(&given, Some("flash-crash-spcx")), 2.0);
+        assert_eq!(lambda(&given, Some("market-making-spcx")), 0.0);
+        let mut v1 = args(Scoring::V1, &[]);
+        v1.risk_weight = vec!["2".into()];
+        assert!(v1.params(None).is_err());
     }
 
     #[test]
