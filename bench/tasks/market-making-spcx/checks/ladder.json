@@ -43,7 +43,8 @@
   ],
   "gates": {
     "informed": ["flow-oracle"],
-    "non_reading": ["nop", "naive-quoter", "skew-quoter"]
+    "non_reading": ["nop", "naive-quoter", "skew-quoter"],
+    "fast_seed": "gates-fast-v2"
   },
   "rules": [
     "naive-quoter < reference",
