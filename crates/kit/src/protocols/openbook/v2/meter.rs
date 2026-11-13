@@ -356,6 +356,8 @@ mod tests {
                 post_balances: Vec::new(),
                 token_balance_changes: Vec::new(),
                 inner_instructions: Vec::new(),
+                signers: 1,
+                instructions: Vec::new(),
             },
             &[named.address],
         );
