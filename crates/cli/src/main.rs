@@ -37,6 +37,7 @@ mod run;
 mod slim;
 mod store;
 mod studio;
+mod tables;
 mod tasks;
 mod tools;
 mod ui;
@@ -485,7 +486,9 @@ enum BenchCommand {
     },
     /// Move a release whose files are in bench/results to the results
     /// dataset: upload them, and leave its release.json, with where they
-    /// went and its scores.
+    /// went and its scores. For a release in the dataset already, upload
+    /// its tables (trials.jsonl, sessions.jsonl) and the dataset's card
+    /// again.
     Upload {
         /// The release's version, or `all`.
         version: String,
@@ -948,9 +951,7 @@ async fn run() -> Result<()> {
                     .flatten()
                     .map(|e| e.file_name().to_string_lossy().to_string())
                     .filter(|v| {
-                        !v.starts_with('.')
-                            && results.join(v).join("release.json").is_file()
-                            && publish::stored(&results.join(v)).is_none()
+                        !v.starts_with('.') && results.join(v).join("release.json").is_file()
                     })
                     .collect()
             } else {
@@ -964,6 +965,13 @@ async fn run() -> Result<()> {
                     "{} isn't a published release",
                     dir.display()
                 );
+                if publish::stored(&dir).is_some() {
+                    ui::start(format!("Uploading {version}'s tables"));
+                    publish::retable(&dir, &version)?;
+                    ui::done(format!("Uploaded {version}'s tables"));
+                    out.insert(version, serde_json::json!("tables"));
+                    continue;
+                }
                 ui::start(format!("Uploading {version}"));
                 let store = publish::offload(&dir, &dir, &version)?;
                 ui::done(format!(

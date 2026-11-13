@@ -109,9 +109,10 @@ fn cache_root() -> PathBuf {
 }
 
 /// Pack `dir` (a whole release) and upload it as `<version>/release.tar`,
-/// replacing whatever the version held; then check the dataset holds that
-/// archive at the new revision.
-pub fn upload(dir: &Path, version: &str) -> Result<Store> {
+/// with `beside` (its tables) next to it, replacing whatever else the
+/// version held; then check the dataset holds exactly those files at the
+/// new revision.
+pub fn upload(dir: &Path, version: &str, beside: &[(&str, String)]) -> Result<Store> {
     let repo = repo();
     ensure!(
         std::env::var_os("HF_TOKEN").is_some(),
@@ -125,10 +126,13 @@ pub fn upload(dir: &Path, version: &str) -> Result<Store> {
     let bytes = std::fs::metadata(&archive)?.len();
     let sha256 = sha256_file(&archive)?;
     let path = format!("{version}/{ARCHIVE}");
+    for (name, text) in beside {
+        std::fs::write(scratch.join(name), text)?;
+    }
     let status = std::process::Command::new("hf")
         .args(["upload", &repo])
-        .arg(&archive)
-        .arg(&path)
+        .arg(&scratch)
+        .arg(version)
         .args(["--repo-type", "dataset", "--quiet"])
         .args(["--commit-message", &format!("Release {version}")])
         .status()
@@ -142,7 +146,13 @@ pub fn upload(dir: &Path, version: &str) -> Result<Store> {
         list(&repo, &revision, version).await
     })?
     .into_iter()
-    .filter(|e| e["path"] != serde_json::json!(path))
+    .filter(|e| {
+        let at = e["path"].as_str().unwrap_or_default();
+        at != path
+            && !beside
+                .iter()
+                .any(|(name, _)| at == format!("{version}/{name}"))
+    })
     .filter_map(|e| {
         let at = e["path"].as_str()?;
         Some(if e["type"] == serde_json::json!("directory") {
@@ -169,14 +179,23 @@ pub fn upload(dir: &Path, version: &str) -> Result<Store> {
         let entries = list(&repo, &revision, version).await?;
         Ok((revision, entries))
     })?;
-    // The version's directory holds the archive alone, the one just packed.
+    // The version's directory holds the archive just packed and its tables,
+    // nothing else.
     let found: Vec<String> = entries.iter().map(|e| e["path"].to_string()).collect();
+    let archive_there = entries.iter().any(|e| {
+        e["path"] == serde_json::json!(path)
+            && e["lfs"]["oid"].as_str() == Some(sha256.as_str())
+            && e["size"].as_u64() == Some(bytes)
+    });
+    let beside_there = beside.iter().all(|(name, text)| {
+        entries.iter().any(|e| {
+            e["path"] == serde_json::json!(format!("{version}/{name}"))
+                && e["size"].as_u64() == Some(text.len() as u64)
+        })
+    });
     ensure!(
-        entries.len() == 1
-            && entries[0]["path"] == serde_json::json!(path)
-            && entries[0]["lfs"]["oid"].as_str() == Some(sha256.as_str())
-            && entries[0]["size"].as_u64() == Some(bytes),
-        "{repo}@{revision} doesn't hold the archive just uploaded under {version}/: {}",
+        archive_there && beside_there && entries.len() == 1 + beside.len(),
+        "{repo}@{revision} doesn't hold what was just uploaded under {version}/: {}",
         found.join(", ")
     );
     Ok(Store {
@@ -187,6 +206,52 @@ pub fn upload(dir: &Path, version: &str) -> Result<Store> {
         bytes,
         files,
     })
+}
+
+/// Upload `files` next to a release already in the dataset (its tables),
+/// and `README.md` (the dataset's card) if given, in one commit.
+pub fn upload_beside(
+    version: Option<&str>,
+    files: &[(&str, String)],
+    card: Option<&str>,
+) -> Result<()> {
+    let repo = repo();
+    ensure!(
+        std::env::var_os("HF_TOKEN").is_some(),
+        "HF_TOKEN isn't set: uploading to {repo} needs a write token"
+    );
+    let scratch = std::env::temp_dir().join(format!("mtx-beside-{}", std::process::id()));
+    if scratch.exists() {
+        std::fs::remove_dir_all(&scratch)?;
+    }
+    let under = match version {
+        Some(version) => scratch.join(version),
+        None => scratch.clone(),
+    };
+    std::fs::create_dir_all(&under)?;
+    for (name, text) in files {
+        std::fs::write(under.join(name), text)?;
+    }
+    if let Some(card) = card {
+        std::fs::write(scratch.join("README.md"), card)?;
+    }
+    let status = std::process::Command::new("hf")
+        .args(["upload", &repo])
+        .arg(&scratch)
+        .arg(".")
+        .args(["--repo-type", "dataset", "--quiet"])
+        .args([
+            "--commit-message",
+            &match version {
+                Some(version) => format!("Tables for {version}"),
+                None => "The dataset's card".to_string(),
+            },
+        ])
+        .status()
+        .context("running hf: install it with `uv tool install huggingface_hub`")?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    ensure!(status.success(), "hf upload failed ({status})");
+    Ok(())
 }
 
 /// The store's files, fetched and unpacked once into its cache; the
