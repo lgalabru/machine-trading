@@ -38,11 +38,15 @@
 //! score points. A reference too weak to anchor anything (its weighted sum
 //! under `φ` of the informed bot's) is floored there, and the score says so.
 //!
-//! A task without an informed bot yet falls back to a proxy, the session's
-//! hindsight bound times a task constant `η`, flagged `ceiling: "proxy"`.
-//! Otherwise the hindsight bound is never in the score: it is reported as
-//! the luck headroom above the informed bot, what only knowing the
-//! session's randomness would add.
+//! A task without an informed bot yet falls back to a model-free ceiling,
+//! the cost-aware hindsight bound (`ceiling: "hindsight"`): each session's
+//! hindsight bound scaled by what perfect foresight keeps once it pays the
+//! venue's taker fee and half-spread on every trade (see
+//! [`cost_aware_bound`]). It has no free parameter and no model run in it,
+//! but it isn't reachable, so it is an interim 1, not a headline's. A
+//! constant share `η` of the bound can still be forced for analysis
+//! (`eta_override`), never by default. The plain hindsight bound is never in
+//! the score: it is reported as the luck headroom above the ceiling.
 //!
 //! The gap to 1 is split into what it came from (see [`Gap`]). Doing
 //! nothing is taken as PnL 0, which holds for a flat start with no carry; a
@@ -55,9 +59,17 @@ use serde::{Deserialize, Serialize};
 
 /// The loss weight `k` by default.
 pub const LOSS_WEIGHT: f64 = 1.5;
-/// The reference anchor's floor `φ`, as a share of the informed bot's, by
-/// default.
+/// The reference anchor's floor `φ`, as a share of the ceiling, by default.
 pub const ANCHOR_FLOOR: f64 = 0.10;
+/// `φ` against the cost-aware hindsight ceiling by default: 0.05 of it, the
+/// same dollars as 0.10 of half of it, so the 0.5 point doesn't move with
+/// how much of the hindsight bound is called reachable.
+pub const HINDSIGHT_ANCHOR_FLOOR: f64 = 0.05;
+/// What the cost-aware hindsight ceiling pays on every trade, as a share of
+/// the price: Phoenix SPCX's taker fee (3.5 bp) and the calibration's
+/// half-spread (5 bp), from `calibration/market/spcx.20261112.d1f48be2.toml`.
+/// Venue facts, not a fitted knob; per task overridable.
+pub const HINDSIGHT_COST: f64 = 8.5e-4;
 /// Bootstrap resamples for the interval.
 pub const RESAMPLES: usize = 2_000;
 /// The intervals' level: 95%, the 2.5th and 97.5th percentiles.
@@ -68,9 +80,9 @@ const CI_TAIL: f64 = (1.0 - CI_LEVEL) / 2.0;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ceiling {
     /// The informed bot's PnL in each session, as its scenario carries it;
-    /// without it on every session, the hindsight bound times `η`, when
-    /// given, as a proxy.
-    Informed { proxy_eta: Option<f64> },
+    /// without it on every session, the cost-aware hindsight bound, or with
+    /// `eta_override`, the hindsight bound times `η` (for analysis only).
+    Informed { eta_override: Option<f64> },
     /// The ceiling PnL of each session, by scenario name, given outright.
     Given(BTreeMap<String, f64>),
 }
@@ -81,8 +93,13 @@ pub struct Params {
     /// `k`: how many times a loss counts.
     pub loss_weight: f64,
     /// `φ`: the reference anchor is at least this share of the ceiling.
-    pub anchor_floor: f64,
+    /// `None`: [`ANCHOR_FLOOR`], or [`HINDSIGHT_ANCHOR_FLOOR`] against the
+    /// cost-aware hindsight ceiling.
+    pub anchor_floor: Option<f64>,
     pub ceiling: Ceiling,
+    /// The cost the cost-aware hindsight ceiling pays per trade, as a share
+    /// of the price (see [`cost_aware_bound`]).
+    pub hindsight_cost: f64,
     pub resamples: usize,
 }
 
@@ -91,8 +108,9 @@ impl Params {
     pub fn new(ceiling: Ceiling) -> Self {
         Self {
             loss_weight: LOSS_WEIGHT,
-            anchor_floor: ANCHOR_FLOOR,
+            anchor_floor: None,
             ceiling,
+            hindsight_cost: HINDSIGHT_COST,
             resamples: RESAMPLES,
         }
     }
@@ -106,6 +124,12 @@ pub struct Session {
     pub reference_pnl_usd: f64,
     /// The informed bot's PnL, when the scenario carries it.
     pub informed_pnl_usd: Option<f64>,
+    /// The cost-aware hindsight bound (see [`cost_aware_bound`]), when the
+    /// session's steps were there to compute it.
+    pub hindsight_ceiling_usd: Option<f64>,
+    /// That bound was computed on the session's own marks, which the bot's
+    /// trades can move, because the grade has no reference session for it.
+    pub hindsight_from_bot_path: bool,
     pub nop_pnl_usd: f64,
     /// The hindsight bound (see [`crate::scenario::Scenario::bound_usd`]).
     pub bound_usd: f64,
@@ -182,8 +206,16 @@ pub struct ScoreV2 {
     /// Sessions whose mandate has no drawdown limit, where `L` is the
     /// hindsight bound instead.
     pub limit_from_bound_sessions: usize,
+    /// Under the cost-aware hindsight ceiling: sessions whose ceiling came
+    /// from the bot's own marks (no reference session), which its trades
+    /// can move.
+    pub hindsight_bot_path_sessions: usize,
+    /// The cost per trade the cost-aware hindsight ceiling paid.
+    pub hindsight_cost: f64,
     /// `k`, `φ`, and where the ceiling came from: `informed` (the task's
-    /// informed bot), `proxy` (`η` times the hindsight bound, for a task
+    /// informed bot), `hindsight` (the cost-aware hindsight bound, for a
+    /// task without one), `eta_override` (`η` times the hindsight bound,
+    /// forced for analysis), or `given`. Was: `proxy` (`η` times the hindsight bound, for a task
     /// without one) or `given`.
     pub loss_weight: f64,
     pub anchor_floor: f64,
@@ -271,15 +303,17 @@ pub fn score(
     if !(k >= 1.0 && k.is_finite()) {
         return Err(format!("loss weight {k}: it must be at least 1"));
     }
+    let (source, eta, ceilings) = ceilings(sessions, &params.ceiling)?;
+    let phi = params.anchor_floor.unwrap_or(if source == "hindsight" {
+        HINDSIGHT_ANCHOR_FLOOR
+    } else {
+        ANCHOR_FLOOR
+    });
     // Without a floor, a reference that loses would anchor 0.5 at or below
     // doing nothing.
-    if !(params.anchor_floor > 0.0 && params.anchor_floor < 1.0) {
-        return Err(format!(
-            "anchor floor {}: it must be in (0, 1)",
-            params.anchor_floor
-        ));
+    if !(phi > 0.0 && phi < 1.0) {
+        return Err(format!("anchor floor {phi}: it must be in (0, 1)"));
     }
-    let (source, eta, ceilings) = ceilings(sessions, &params.ceiling)?;
     let weigh = |x: f64| if x < 0.0 { k * x } else { x };
     let terms: Vec<SessionV2> = sessions
         .iter()
@@ -305,15 +339,15 @@ pub fn score(
             sums.ceiling
         ));
     }
-    let anchor = sums.anchor(params.anchor_floor);
+    let anchor = sums.anchor(phi);
     if anchor >= sums.ceiling {
         return Err(format!(
             "the reference ({anchor}) reaches the ceiling ({}): the ceiling is too low",
             sums.ceiling
         ));
     }
-    let measured_raw = sums.raw(params.anchor_floor);
-    let measured_unfloored = sums.raw_unfloored(params.anchor_floor);
+    let measured_raw = sums.raw(phi);
+    let measured_unfloored = sums.raw_unfloored(phi);
     let seed = seed(eval_seed_sha256);
     // A fatal grade is the floor, with no interval: its sessions don't count.
     let (raw, raw_unfloored, (ci_lo, ci_hi)) = match fatal {
@@ -321,7 +355,7 @@ pub fn score(
         None => (
             measured_raw,
             measured_unfloored,
-            interval(&terms, params, seed.unwrap_or(FIXED_SEED)),
+            interval(&terms, phi, params.resamples, seed.unwrap_or(FIXED_SEED)),
         ),
     };
     let bound_usd: f64 = sessions.iter().map(|s| s.bound_usd).sum();
@@ -336,7 +370,8 @@ pub fn score(
         within_noise: ci_lo <= 0.5 && 0.5 <= ci_hi,
         beats_informed: raw > 1.0,
         fatal,
-        anchor_floored: sums.reference < params.anchor_floor * sums.ceiling,
+        anchor_floored: sums.reference < phi * sums.ceiling,
+        anchor_floor: phi,
         bot_usd: sums.bot,
         reference_usd: anchor,
         reference_measured_usd: sums.reference,
@@ -346,6 +381,14 @@ pub fn score(
         luck_headroom_usd: bound_usd - sums.ceiling,
         breached_sessions: sessions.iter().filter(|s| s.breach.is_some()).count(),
         limit_from_bound_sessions: sessions.iter().filter(|s| s.worst_loss_from_bound).count(),
+        hindsight_bot_path_sessions: if source == "hindsight" {
+            sessions
+                .iter()
+                .filter(|s| s.hindsight_from_bot_path)
+                .count()
+        } else {
+            0
+        },
         ceiling: source.into(),
         eta,
         resamples: params.resamples,
@@ -380,17 +423,24 @@ fn ceilings(
                 .collect::<Result<_, _>>()?;
             Ok(("given", None, given))
         }
-        Ceiling::Informed { proxy_eta } => {
+        Ceiling::Informed { eta_override } => {
             if let Some(informed) = sessions.iter().map(|s| s.informed_pnl_usd).collect() {
                 return Ok(("informed", None, informed));
             }
-            let eta = proxy_eta.ok_or_else(|| {
-                "the scenarios carry no informed bot's PnL (informed_pnl_usd), and no η \
-                 was given for a proxy ceiling"
-                    .to_string()
-            })?;
-            let proxy = sessions.iter().map(|s| eta * s.bound_usd).collect();
-            Ok(("proxy", Some(eta), proxy))
+            if let Some(eta) = eta_override {
+                let share = sessions.iter().map(|s| eta * s.bound_usd).collect();
+                return Ok(("eta_override", Some(*eta), share));
+            }
+            let hindsight = sessions
+                .iter()
+                .map(|s| s.hindsight_ceiling_usd)
+                .collect::<Option<_>>()
+                .ok_or_else(|| {
+                    "the scenarios carry no informed bot's PnL (informed_pnl_usd), and a \
+                     session's steps aren't there for the cost-aware hindsight ceiling"
+                        .to_string()
+                })?;
+            Ok(("hindsight", None, hindsight))
         }
     }
 }
@@ -446,11 +496,49 @@ impl ScoreV2 {
     }
 }
 
+/// The cost-aware hindsight bound of a session: its hindsight bound `bound`
+/// (see [`crate::scenario::Scenario::bound_usd`]) scaled by what perfect
+/// foresight keeps once it pays `cost` (a share of the price) on every
+/// trade: `bound × DP(cost) / DP(0)`, with [`hindsight_dp`] on the session's
+/// marks, step by step. No free parameter and no model run: an interim 1
+/// for a task without an informed bot. The scale is measured on the moves
+/// of the mark and applied to the whole bound, spread and funding parts
+/// included, at step granularity.
+pub fn cost_aware_bound(bound: f64, marks: &[f64], cap: f64, cost: f64) -> f64 {
+    bound * hindsight_dp(marks, cap, cost) / hindsight_dp(marks, cap, 0.0).max(1e-9)
+}
+
+/// The most a trader who knew the marks in advance could make holding
+/// `−cap`, nothing or `+cap` from one step to the next, paying `cost` times
+/// the price on every unit it trades (entering included, not the last exit):
+/// a dynamic programme over the three positions.
+pub fn hindsight_dp(marks: &[f64], cap: f64, cost: f64) -> f64 {
+    let Some(&first) = marks.first() else {
+        return 0.0;
+    };
+    let held = [-cap, 0.0, cap];
+    let mut value = held.map(|x| -cost * first * x.abs());
+    for pair in marks.windows(2) {
+        let moved = held
+            .iter()
+            .zip(value)
+            .map(|(x, v)| v + x * (pair[1] - pair[0]))
+            .collect::<Vec<_>>();
+        value = held.map(|to| {
+            held.iter()
+                .zip(&moved)
+                .map(|(from, v)| v - cost * pair[1] * (to - from).abs())
+                .fold(f64::NEG_INFINITY, f64::max)
+        });
+    }
+    value.into_iter().fold(f64::NEG_INFINITY, f64::max)
+}
+
 /// v2 for a grade with no sessions to score because it was never graded
 /// (or was tampered with before any ran): 0, with why.
 pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
     let (ceiling, eta) = match params.ceiling {
-        Ceiling::Informed { proxy_eta } => ("informed", proxy_eta),
+        Ceiling::Informed { eta_override } => ("informed", eta_override),
         Ceiling::Given(_) => ("given", None),
     };
     ScoreV2 {
@@ -477,9 +565,11 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         luck_headroom_usd: 0.0,
         breached_sessions: 0,
         limit_from_bound_sessions: 0,
+        hindsight_bot_path_sessions: 0,
+        hindsight_cost: params.hindsight_cost,
         break_even_sharpe: break_even_sharpe(params.loss_weight),
         loss_weight: params.loss_weight,
-        anchor_floor: params.anchor_floor,
+        anchor_floor: params.anchor_floor.unwrap_or(ANCHOR_FLOOR),
         ceiling: ceiling.into(),
         eta,
         nop: "zero".into(),
@@ -574,16 +664,16 @@ impl Sums {
 /// The 95% interval of `raw` over resamples of the sessions,
 /// each drawn with replacement and used for the bot, the reference and the
 /// ceiling alike.
-fn interval(terms: &[SessionV2], params: &Params, seed: u64) -> (f64, f64) {
+fn interval(terms: &[SessionV2], phi: f64, resamples: usize, seed: u64) -> (f64, f64) {
     let mut rng = SplitMix64(seed);
     let n = terms.len();
-    let mut raws: Vec<f64> = (0..params.resamples)
+    let mut raws: Vec<f64> = (0..resamples)
         .map(|_| {
             let sums = Sums::of((0..n).map(|_| &terms[rng.below(n)]));
             if sums.ceiling <= 0.0 {
                 return 0.0;
             }
-            sums.raw(params.anchor_floor)
+            sums.raw(phi)
         })
         .collect();
     if raws.is_empty() {
@@ -705,7 +795,7 @@ pub fn compare(
                 if sums.ceiling <= 0.0 {
                     0.0
                 } else {
-                    sums.raw(params.anchor_floor)
+                    sums.raw(runs[i].v2.anchor_floor)
                 }
             }
             None => -1.0,
@@ -892,6 +982,8 @@ mod tests {
                 pnl_usd,
                 reference_pnl_usd,
                 informed_pnl_usd: Some(150.0),
+                hindsight_ceiling_usd: None,
+                hindsight_from_bot_path: false,
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
@@ -906,12 +998,12 @@ mod tests {
     const REFERENCE: [f64; 6] = [40.0, -10.0, 25.0, 60.0, 0.0, 15.0];
 
     fn informed() -> Params {
-        Params::new(Ceiling::Informed { proxy_eta: None })
+        Params::new(Ceiling::Informed { eta_override: None })
     }
 
     fn proxy(eta: f64) -> Params {
         Params::new(Ceiling::Informed {
-            proxy_eta: Some(eta),
+            eta_override: Some(eta),
         })
     }
 
@@ -959,17 +1051,31 @@ mod tests {
     }
 
     #[test]
-    fn without_an_informed_bot_the_proxy_is_used_and_flagged() {
-        let sessions = without_informed(set(&REFERENCE, &REFERENCE));
+    fn without_an_informed_bot_the_cost_aware_hindsight_bound_is_the_ceiling() {
+        let mut sessions = without_informed(set(&REFERENCE, &REFERENCE));
+        for s in &mut sessions {
+            s.hindsight_ceiling_usd = Some(600.0);
+        }
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.ceiling, "hindsight");
+        assert_eq!(v2.ceiling_usd, 3_600.0);
+        // Its 0.5 floor is 0.05 of it: 180, above the reference's 125.
+        assert_eq!(v2.anchor_floor, 0.05);
+        assert!(v2.anchor_floored);
+        // η only when forced, and flagged.
         let v2 = score(&sessions, &proxy(0.15), None, None).unwrap();
-        assert_eq!(v2.ceiling, "proxy");
+        assert_eq!(v2.ceiling, "eta_override");
+        assert_eq!(v2.anchor_floor, 0.10);
+        // Without steps, nothing to fall back to.
+        let bare = without_informed(set(&REFERENCE, &REFERENCE));
+        assert!(
+            score(&bare, &informed(), None, None)
+                .unwrap_err()
+                .contains("steps")
+        );
+        let v2 = score(&bare, &proxy(0.15), None, None).unwrap();
         assert_eq!(v2.eta, Some(0.15));
         assert_eq!(v2.ceiling_usd, 900.0);
-        assert!(
-            score(&sessions, &informed(), None, None)
-                .unwrap_err()
-                .contains("informed")
-        );
         // With the informed bot's PnL on every session, η isn't used.
         let both = score(&set(&REFERENCE, &REFERENCE), &proxy(0.5), None, None).unwrap();
         assert_eq!(both.ceiling, "informed");
@@ -1083,7 +1189,7 @@ mod tests {
     fn the_anchor_floor_must_be_above_zero() {
         for floor in [0.0, -0.1, 1.0] {
             let mut params = informed();
-            params.anchor_floor = floor;
+            params.anchor_floor = Some(floor);
             let refused = score(&set(&REFERENCE, &REFERENCE), &params, None, None);
             assert!(refused.unwrap_err().contains("anchor floor"), "{floor}");
         }
@@ -1411,6 +1517,23 @@ mod tests {
         let v2 = score(&set(&REFERENCE, &REFERENCE), &informed(), None, None).unwrap();
         assert_eq!(v2.ci_scope, "sessions");
         assert_eq!(v2.ci_level, 0.95);
+    }
+
+    #[test]
+    fn the_hindsight_dp_pays_its_costs() {
+        // Up 10, down 10, up 10 with a cap of 2: 60 without costs.
+        let marks = [100.0, 110.0, 100.0, 110.0];
+        assert_eq!(hindsight_dp(&marks, 2.0, 0.0), 60.0);
+        // At 1% a trade: enter long at 100 (2), flip at 110 (4.4), flip at
+        // 100 (4): 60 − 10.4 = 49.6, better than any other path.
+        assert!((hindsight_dp(&marks, 2.0, 0.01) - 49.6).abs() < 1e-9);
+        // Costs that eat a move make it sit the move out.
+        assert_eq!(hindsight_dp(&[100.0, 100.5, 100.0], 1.0, 0.01), 0.0);
+        assert_eq!(hindsight_dp(&[], 1.0, 0.0), 0.0);
+        let haircut = cost_aware_bound(1_000.0, &marks, 2.0, 0.01);
+        assert!((haircut - 1_000.0 * 49.6 / 60.0).abs() < 1e-9);
+        // A flat path: no bound to keep.
+        assert_eq!(cost_aware_bound(1_000.0, &[100.0, 100.0], 2.0, 0.01), 0.0);
     }
 
     #[test]

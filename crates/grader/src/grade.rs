@@ -203,6 +203,38 @@ impl GradeReport {
             .iter()
             .map(|result| {
                 let session = &result.session;
+                // The cost-aware hindsight ceiling, on the reference's marks
+                // when the grade ran it (a bot can't move those), else on
+                // the session's own.
+                let reference = self
+                    .anchors
+                    .iter()
+                    .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty());
+                let marks = |s: &SessionReport| -> Vec<f64> {
+                    s.timeline.steps.iter().map(|step| step.mark_usd).collect()
+                };
+                let cap = session.mandate.universe.first().map(|a| a.max_position);
+                let hindsight = match (reference, cap) {
+                    (Some(reference), Some(cap)) => Some((
+                        scoring_v2::cost_aware_bound(
+                            result.bound_pnl_usd,
+                            &marks(reference),
+                            cap,
+                            params.hindsight_cost,
+                        ),
+                        false,
+                    )),
+                    (None, Some(cap)) if !session.timeline.steps.is_empty() => Some((
+                        scoring_v2::cost_aware_bound(
+                            result.bound_pnl_usd,
+                            &marks(session),
+                            cap,
+                            params.hindsight_cost,
+                        ),
+                        true,
+                    )),
+                    _ => None,
+                };
                 let reference_pnl_usd = result.reference_pnl_usd.ok_or_else(|| {
                     format!("{}: no reference PnL to anchor to", session.scenario)
                 })?;
@@ -218,6 +250,8 @@ impl GradeReport {
                     pnl_usd: session.pnl_usd,
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
+                    hindsight_ceiling_usd: hindsight.as_ref().map(|(usd, _)| *usd),
+                    hindsight_from_bot_path: hindsight.is_some_and(|(_, bot)| bot),
                     nop_pnl_usd: 0.0,
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
@@ -319,8 +353,8 @@ impl GradeReport {
                     f64::from(u8::from(v2.beats_informed)),
                 ),
                 (
-                    "score_v2_ceiling_proxy".to_string(),
-                    f64::from(u8::from(v2.ceiling == "proxy")),
+                    "score_v2_ceiling_informed".to_string(),
+                    f64::from(u8::from(v2.ceiling == "informed")),
                 ),
                 ("score_v2_gap_wrong_read".to_string(), v2.gap.wrong_read),
                 ("score_v2_gap_missed".to_string(), v2.gap.missed),
@@ -1493,8 +1527,40 @@ mod tests {
 
     fn v2() -> scoring_v2::Params {
         scoring_v2::Params::new(scoring_v2::Ceiling::Informed {
-            proxy_eta: Some(0.5),
+            eta_override: Some(0.5),
         })
+    }
+
+    #[test]
+    fn v2s_fallback_ceiling_is_the_cost_aware_hindsight_bound() {
+        let s = scenario(Some(1.0));
+        let params = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        let mut report = score(vec![(traded_session(), &s)]);
+        report.score_v2(&params).unwrap();
+        let own = report.v2.clone().unwrap();
+        assert_eq!(own.ceiling, "hindsight");
+        assert_eq!(own.anchor_floor, scoring_v2::HINDSIGHT_ANCHOR_FLOOR);
+        assert_eq!(own.hindsight_cost, scoring_v2::HINDSIGHT_COST);
+        // No reference session: computed on the bot's own marks, flagged.
+        assert_eq!(own.hindsight_bot_path_sessions, 1);
+        let marks: Vec<f64> = traded_session()
+            .timeline
+            .steps
+            .iter()
+            .map(|step| step.mark_usd)
+            .collect();
+        let want = scoring_v2::cost_aware_bound(report.bound_pnl_usd, &marks, 100.0, 8.5e-4);
+        assert!((own.ceiling_usd - want).abs() < 1e-9);
+        assert!(own.ceiling_usd < report.bound_pnl_usd);
+
+        // With the reference's session, its marks, which the bot can't move.
+        let mut reference = traded_session();
+        reference.timeline.steps[2].mark_usd = 105.0;
+        report.anchors = vec![reference];
+        report.score_v2(&params).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!(v2.hindsight_bot_path_sessions, 0);
+        assert!(v2.ceiling_usd > own.ceiling_usd);
     }
 
     #[test]
@@ -1502,8 +1568,8 @@ mod tests {
         let mut s = scenario(Some(100.0));
         let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
         proxied.score_v2(&v2()).unwrap();
-        assert_eq!(proxied.v2.as_ref().unwrap().ceiling, "proxy");
-        assert_eq!(proxied.rewards()["score_v2_ceiling_proxy"], 1.0);
+        assert_eq!(proxied.v2.as_ref().unwrap().ceiling, "eta_override");
+        assert_eq!(proxied.rewards()["score_v2_ceiling_informed"], 0.0);
 
         s.informed_pnl_usd = Some(400.0);
         let mut informed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
@@ -1515,7 +1581,7 @@ mod tests {
         // (350 − 200) / (800 − 200) of the way from the reference.
         assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
         assert_eq!(v2.bound_usd, informed.bound_pnl_usd);
-        assert_eq!(informed.rewards()["score_v2_ceiling_proxy"], 0.0);
+        assert_eq!(informed.rewards()["score_v2_ceiling_informed"], 1.0);
     }
 
     #[test]
