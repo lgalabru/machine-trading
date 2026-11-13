@@ -1,0 +1,16 @@
+# A check, not a strategy: a component that answers every request for a
+# quote and never trades the perp, so its PnL is its RFQ desk's alone
+# (`just actors-smoke` grades it beside every actor).
+[package]
+name = "mtx-bot-rfq-desk"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }

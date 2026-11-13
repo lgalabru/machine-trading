@@ -59,6 +59,7 @@ pub(crate) mod tests {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            actors: None,
             turn_data: None,
             order: None,
             participation: None,
