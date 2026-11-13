@@ -26,6 +26,15 @@ index beyond `nop`'s, and an exploit bot that moved nothing, or less than the
 premium episodes when the rung also sets `calibrate`, is reported `no_power`,
 not passed.
 
+A task may add a `probes` section to its ladder file: the scoring v2 probe
+gate (bench/checks/probes). The ladder then grades every rung with
+`--scoring v2` and, for each rule the section names, reports whether the v2
+score of the probes lands where the grading decisions say it must (see
+`probe_checks`). A rule fails only when a bootstrap over the sessions shows it
+broken with `confidence` (default 0.95); a point estimate that breaks it
+without that confidence is `inconclusive`, and one that holds is `pass`. A
+probe that is meant to breach and never did is `no_power`.
+
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
        [--min-rule-odds P] [--public-seed LABEL]
@@ -76,13 +85,16 @@ GRADER_VARS = {
 MIN_DISPLACEMENT_BP = 0.5
 
 
-def rung_bot(rung, set_dir):
+def rung_bot(rung, set_dir, count=None):
     """The directory the grader starts the rung from. A rung's `env` goes
     through a wrapper `run.sh` that sets it and starts the rung's own: the
     grader clears a bot's environment."""
     env = rung.get("env")
     if not env:
         return os.path.join(ROOT, rung["dir"])
+    # A probe knows how many sessions its set has (for "b breaches a set").
+    if count is not None and any(n.startswith("MTX_PROBE") for n in env):
+        env = dict(env, MTX_PROBE_SESSIONS=count)
     real = os.path.join(ROOT, rung["dir"], "run.sh")
     if not os.path.isfile(real):
         raise SystemExit(f"{rung['name']}: `env` needs a rung with a run.sh ({real})")
@@ -103,7 +115,7 @@ def rung_bot(rung, set_dir):
     return wrapper
 
 
-def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users):
+def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None):
     report = os.path.join(out, f"{rung['name']}.json")
     if os.path.exists(report):
         with open(report) as f:
@@ -112,16 +124,17 @@ def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users):
     first_bot_user = users.get()
     try:
         return run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report,
-                         first_bot_user)
+                         first_bot_user, v2)
     finally:
         users.put(first_bot_user)
 
 
-def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, first_bot_user):
+def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, first_bot_user,
+              v2=None):
     command = [
         mtx, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
         "--first-bot-user", str(first_bot_user),
-        "--snapshot", snapshot, "--bot", rung_bot(rung, out),
+        "--snapshot", snapshot, "--bot", rung_bot(rung, out, count),
         "--logs", os.path.join(out, "logs", rung["name"]), "--report", report,
         # Rungs are ours, like the reference: their turns wait for them, so a
         # rung's skill doesn't depend on how loaded the machine is.
@@ -129,6 +142,13 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
+    if v2:
+        # v2 anchors every session to the reference's PnL on it, so the
+        # reference plays the same sessions in each grade.
+        command += ["--scoring", "v2", "--reference", v2["reference"],
+                    "--anchor-jobs", str(jobs)]
+        if "eta" in v2:
+            command += ["--eta", str(v2["eta"])]
     # The steps of the rungs whose mark displacement is read, and of nop's,
     # the baseline.
     if "push" in rung or rung["name"] == "nop":
@@ -249,6 +269,183 @@ def holds(rule, skill):
     return all(a < b for a, b in zip(values, values[1:]))
 
 
+# --- the probe gate (scoring v2) -------------------------------------------
+
+PROBE_CONFIDENCE = 0.95
+PROBE_TOLERANCE = 0.02
+
+
+def v2_terms(report):
+    """A rung's v2 grade as per-session terms (weighted bot, reference and
+    ceiling USD), the anchor floor, and the grade's own `raw`. None when the
+    grade carries no v2."""
+    v2 = report.get("v2")
+    if not v2:
+        return None
+    return {
+        "raw": v2["raw"],
+        "fatal": v2.get("fatal") is not None,
+        "floor": v2["anchor_floor"],
+        "breached": v2.get("breached_sessions", 0),
+        "floored": v2.get("anchor_floored", False),
+        "sessions": [(s["bot_usd"], s["reference_usd"], s["ceiling_usd"]) for s in v2["sessions"]],
+    }
+
+
+def v2_raw(terms, idx=None):
+    """v2's `raw` over sessions `idx` (all by default): 0.5 at the reference,
+    1 at the ceiling, 0 for doing nothing (see crates/grader/src/scoring_v2.rs).
+    A fatal grade keeps the raw the grader gave it."""
+    if terms["fatal"]:
+        return terms["raw"]
+    rows = terms["sessions"] if idx is None else [terms["sessions"][i] for i in idx]
+    bot = sum(r[0] for r in rows)
+    ref_measured = sum(r[1] for r in rows)
+    ceiling = sum(r[2] for r in rows)
+    ref = max(ref_measured, terms["floor"] * ceiling)
+    if ref <= 0:
+        return float("nan")
+    if bot <= ref:
+        return 0.5 * bot / ref
+    if ceiling <= ref:
+        return float("nan")
+    return 0.5 + 0.5 * (bot - ref) / (ceiling - ref)
+
+
+def session_sharpe(sets, name):
+    """Per-session Sharpe (mean over standard deviation of session PnL), over
+    every set: not annualised."""
+    xs = [p for reports in sets for p in pnls(reports[name])]
+    if len(xs) < 2:
+        return None
+    sd = statistics.pstdev(xs)
+    return statistics.fmean(xs) / sd if sd > 0 else 0.0
+
+
+def probe_checks(probes, sets, count):
+    """The probe rules over the sets' v2 grades. Each check is
+    `{id, kind, rungs, verdict, ...}` with verdict `pass`, `fail`,
+    `inconclusive` or `no_power`.
+
+    Rules (`probes` in the ladder file; every raw is the mean over sets):
+
+    - `zero_edge`: bots with no edge (gamblers, naive holds, martingale,
+      limit-hugger, stop-lotto): raw at most `tolerance` over doing nothing's 0.
+    - `pairs`: `[lower, higher]`: the first scores under the second (an
+      occasional breacher under its compliant twin, a crashing bot under the
+      bot it wraps). `breaches` lists the rungs that must have breached a
+      session, or the pair is `no_power`.
+    - `levered`: `{rung, m, base}`: the rung's weighted PnL is at most `m`
+      times the base's (plus `tolerance` of the base's reference anchor), and
+      when it breached anywhere it scores under the base: leverage that
+      breaches never pays.
+    - `honest`: `{rung, sharpe}`: a bot with an honest edge at that per-session
+      Sharpe; from `pays_from` (default 0.2) it must beat doing nothing.
+      The Sharpe it achieved is reported beside the target.
+    - `reference`: the reference scores 0.5 within `tolerance`, unless its
+      anchor was floored (then it is `pass` with the floor noted).
+    """
+    confidence = probes.get("confidence", PROBE_CONFIDENCE)
+    tol = probes.get("tolerance", PROBE_TOLERANCE)
+    terms = [{name: v2_terms(r) for name, r in reports.items()} for reports in sets]
+    needed = set(probes.get("zero_edge", []))
+    for a, b in probes.get("pairs", []):
+        needed |= {a, b}
+    for spec in probes.get("levered", []):
+        needed |= {spec["rung"], spec["base"]}
+    needed |= {h["rung"] for h in probes.get("honest", [])}
+    needed.add("reference")
+    for name in sorted(needed):
+        if any(t.get(name) is None for t in terms):
+            raise SystemExit(f"probe rung {name!r}: no v2 in its grade (is it in the ladder?)")
+
+    def point(name):
+        return statistics.fmean(v2_raw(t[name]) for t in terms)
+
+    def drawn(rng):
+        """`needed`'s mean raw and weighted PnL over one bootstrap draw of
+        every set's sessions (the same sessions for every rung)."""
+        picks = [[rng.randrange(len(t["reference"]["sessions"])) for _ in t["reference"]["sessions"]]
+                 for t in terms]
+        raw = {n: statistics.fmean(v2_raw(t[n], idx) for t, idx in zip(terms, picks))
+               for n in needed}
+        usd = {n: sum(sum(t[n]["sessions"][i][0] for i in idx) for t, idx in zip(terms, picks))
+               for n in needed}
+        return raw, usd
+
+    base_raw = {n: point(n) for n in needed}
+    base_usd = {n: sum(sum(r[0] for r in t[n]["sessions"]) for t in terms) for n in needed}
+    rng = random.Random(0)
+    draws = [drawn(rng) for _ in range(BOOTSTRAP_DRAWS)]
+
+    def verdict(violated, point_violated, extra=None):
+        odds = sum(violated(raw, usd) for raw, usd in draws) / len(draws)
+        v = "pass"
+        if point_violated:
+            v = "fail" if odds >= confidence else "inconclusive"
+        return {"verdict": v, "violation_odds": odds}
+
+    breached = {n: sum(t[n]["breached"] for t in terms) for n in needed}
+    out = []
+
+    def add(check, kind, rungs, result, detail, **more):
+        out.append({"id": check, "kind": kind, "rungs": rungs, "detail": detail,
+                    "tolerance": tol, "confidence": confidence, **result, **more})
+
+    for name in probes.get("zero_edge", []):
+        v = verdict(lambda raw, usd, n=name: raw[n] > tol, base_raw[name] > tol)
+        add(f"zero_edge:{name}", "zero_edge", [name], v,
+            f"raw {base_raw[name]:+.3f}, limit {tol:+.2f}", raw=base_raw[name])
+    breach_rungs = set(probes.get("breaches", []))
+    for lower, higher in probes.get("pairs", []):
+        v = verdict(lambda raw, usd, a=lower, b=higher: raw[a] >= raw[b],
+                    base_raw[lower] >= base_raw[higher])
+        detail = f"raw {base_raw[lower]:+.3f} under {higher}'s {base_raw[higher]:+.3f}"
+        if lower in breach_rungs:
+            detail += f", {breached[lower]} breached sessions"
+            if breached[lower] == 0:
+                v = {"verdict": "no_power", "violation_odds": v["violation_odds"]}
+                detail += ": it never breached"
+        add(f"pair:{lower}<{higher}", "pair", [lower, higher], v, detail,
+            raw=base_raw[lower], other_raw=base_raw[higher], breached_sessions=breached[lower])
+    for spec in probes.get("levered", []):
+        name, base, m = spec["rung"], spec["base"], spec["m"]
+        slack = tol * abs(base_usd["reference"])
+
+        def too_much(raw, usd, n=name, b=base, m=m, slack=slack):
+            return usd[n] > m * max(usd[b], 0.0) + slack
+
+        def pays_breaching(raw, usd, n=name, b=base):
+            return breached[n] > 0 and raw[n] >= raw[b]
+
+        v = verdict(lambda raw, usd: too_much(raw, usd) or pays_breaching(raw, usd),
+                    too_much(base_raw, base_usd) or pays_breaching(base_raw, base_usd))
+        add(f"levered:{name}", "levered", [name, base], v,
+            f"weighted PnL ${base_usd[name]:.0f} against {m}x ${base_usd[base]:.0f}, raw "
+            f"{base_raw[name]:+.3f} against {base_raw[base]:+.3f}, {breached[name]} breached sessions",
+            raw=base_raw[name], breached_sessions=breached[name])
+    pays_from = probes.get("pays_from", 0.2)
+    for spec in probes.get("honest", []):
+        name = spec["rung"]
+        achieved = session_sharpe(sets, name)
+        detail = f"raw {base_raw[name]:+.3f}, per-session Sharpe {achieved:.2f} (target {spec['sharpe']})" \
+            if achieved is not None else f"raw {base_raw[name]:+.3f}"
+        if spec["sharpe"] >= pays_from:
+            v = verdict(lambda raw, usd, n=name: raw[n] <= 0.0, base_raw[name] <= 0.0)
+        else:
+            v = {"verdict": "pass", "violation_odds": None}
+            detail += "; below the pay line, reported only"
+        add(f"honest:{name}", "honest", [name], v, detail, raw=base_raw[name],
+            sharpe=achieved, target_sharpe=spec["sharpe"])
+    floored = any(t["reference"]["floored"] for t in terms)
+    ref = base_raw["reference"]
+    ok = floored or abs(ref - 0.5) <= max(tol, 0.05)
+    add("reference", "reference", ["reference"],
+        {"verdict": "pass" if ok else "fail", "violation_odds": None},
+        f"raw {ref:.3f}" + (" (anchor floored)" if floored else ""), raw=ref)
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("task")
@@ -274,6 +471,10 @@ def main():
     out = os.path.join(args.out, args.task)
     os.makedirs(out, exist_ok=True)
 
+    probes = None
+    if config.get("probes"):
+        probes = dict(config["probes"],
+                      reference=os.path.join(ROOT, "bench/tasks", args.task, "reference"))
     sets = []
     set_dirs = []
     for k in range(args.sets):
@@ -296,7 +497,7 @@ def main():
             futures = {
                 rung["name"]: pool.submit(
                     grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
-                    rung, secret, set_dir, users,
+                    rung, secret, set_dir, users, probes,
                 )
                 for rung in config["rungs"]
             }
@@ -434,6 +635,18 @@ def main():
                 failed.append(f"{name} disqualified")
     if not any("disqualified" in f for f in failed):
         print("  ok   no rung was refused or disqualified")
+
+    if config.get("probes"):
+        print("\nprobes (scoring v2; raw: 0 = doing nothing, 0.5 = the reference):")
+        summary["probes"] = probe_checks(config["probes"], sets, count)
+        for check in summary["probes"]:
+            label = {"pass": "ok  ", "fail": "FAIL", "inconclusive": "?   ", "no_power": "NOPW"}[
+                check["verdict"]]
+            print(f"  {label} {check['id']}: {check['detail']}"
+                  + (f" [odds {check['violation_odds']:.2f}]"
+                     if check.get("violation_odds") is not None else ""))
+            if check["verdict"] in ("fail", "no_power"):
+                failed.append(f"probe {check['id']} {check['verdict']}")
 
     summary["failed"] = failed
     with open(os.path.join(out, "summary.json"), "w") as f:

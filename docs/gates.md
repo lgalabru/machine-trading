@@ -24,7 +24,8 @@ finished ladder) adjust a run.
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
 | | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
 | | the oracle scores 1.0 and nop 0 under Harbor | full: `just harbor-checks` |
-| Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |
+| Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
+| | the probe bots land in their scoring v2 bands, and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
 | | the agent's image holds no answer; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |

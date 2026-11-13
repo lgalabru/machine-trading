@@ -51,11 +51,153 @@
     {
       "name": "flash-crash-fable-0.10",
       "dir": "bench/tasks/flash-crash-spcx/checks/exploits/flash-crash-fable-0.10"
+    },
+    {
+      "name": "coin-flip-half",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip",
+        "MTX_PROBE_SIZE": "0.5"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "coin-flip-full",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "martingale",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "martingale"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "limit-hugger",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "hugger"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "stop-lotto",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "stop-lotto"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-1.5",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "1.5"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-2",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "2"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-3",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "breacher",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_BREACHES": "3"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.1",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.25"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.2",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.4"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.3",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.55"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.5",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.8"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-exit",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.4",
+        "MTX_PROBE_CRASH_BELOW": "0.3"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-fatal",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.4",
+        "MTX_PROBE_CRASH_BELOW": "0.3",
+        "MTX_PROBE_CRASH": "fatal"
+      },
+      "may_breach": true
     }
   ],
   "gates": {
-    "informed": ["regime-oracle"],
-    "non_reading": ["nop", "blind-long", "blind-short", "dip-buyer", "momentum"]
+    "informed": [
+      "regime-oracle"
+    ],
+    "non_reading": [
+      "nop",
+      "blind-long",
+      "blind-short",
+      "dip-buyer",
+      "momentum"
+    ]
   },
   "rules": [
     "max(blind-long, blind-short) < reference",
@@ -72,5 +214,72 @@
     ],
     "max_profitable": 0.75,
     "below": "regime-oracle"
+  },
+  "probes": {
+    "eta": 0.5,
+    "tolerance": 0.02,
+    "confidence": 0.95,
+    "zero_edge": [
+      "blind-long",
+      "blind-short",
+      "coin-flip-half",
+      "coin-flip-full",
+      "martingale",
+      "limit-hugger",
+      "stop-lotto"
+    ],
+    "pairs": [
+      [
+        "breacher",
+        "reference"
+      ],
+      [
+        "crash-exit",
+        "honest-0.2"
+      ],
+      [
+        "crash-fatal",
+        "honest-0.2"
+      ]
+    ],
+    "breaches": [
+      "breacher"
+    ],
+    "levered": [
+      {
+        "rung": "lever-1.5",
+        "m": 1.5,
+        "base": "reference"
+      },
+      {
+        "rung": "lever-2",
+        "m": 2.0,
+        "base": "reference"
+      },
+      {
+        "rung": "lever-3",
+        "m": 3.0,
+        "base": "reference"
+      }
+    ],
+    "honest": [
+      {
+        "rung": "honest-0.1",
+        "sharpe": 0.1
+      },
+      {
+        "rung": "honest-0.2",
+        "sharpe": 0.2
+      },
+      {
+        "rung": "honest-0.3",
+        "sharpe": 0.3
+      },
+      {
+        "rung": "honest-0.5",
+        "sharpe": 0.5
+      }
+    ],
+    "pays_from": 0.2
   }
 }

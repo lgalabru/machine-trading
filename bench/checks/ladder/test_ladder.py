@@ -138,5 +138,108 @@ class MarkDisplacement(unittest.TestCase):
         self.assertAlmostEqual(ladder.displacement([self.set_dir], "up", 1)["bp"], 0.0)
 
 
+def v2_report(bot, ref, ceiling, pnl=None, breached=0, floor=0.1, fatal=False, raw=None):
+    """A grade with a v2: per-session weighted terms, as the grader writes them."""
+    sessions = [{"bot_usd": b, "reference_usd": r, "ceiling_usd": c}
+                for b, r, c in zip(bot, ref, ceiling)]
+    terms = {"raw": 0.0 if raw is None else raw, "anchor_floor": floor,
+             "breached_sessions": breached, "sessions": sessions}
+    if fatal:
+        terms["fatal"] = "refused"
+    return {"v2": terms, "scenarios": [{"pnl_usd": p} for p in (pnl or bot)]}
+
+
+class ProbeGate(unittest.TestCase):
+    N = 40
+
+    def ladder(self, **bots):
+        """One set of N sessions: the reference earns 10 each, the ceiling 40;
+        `bots` maps a rung to its per-session weighted PnL."""
+        ref = [10.0] * self.N
+        ceiling = [40.0] * self.N
+        reports = {"reference": v2_report(ref, ref, ceiling)}
+        for name, spec in bots.items():
+            if isinstance(spec, dict):
+                bot = spec.pop("bot")
+                reports[name] = v2_report(bot, ref, ceiling, **spec)
+            else:
+                reports[name] = v2_report(spec, ref, ceiling)
+        return [reports]
+
+    def test_raw_is_half_at_the_reference_and_one_at_the_ceiling(self):
+        terms = ladder.v2_terms(v2_report([10.0] * 4, [10.0] * 4, [40.0] * 4))
+        self.assertAlmostEqual(ladder.v2_raw(terms), 0.5)
+        terms = ladder.v2_terms(v2_report([40.0] * 4, [10.0] * 4, [40.0] * 4))
+        self.assertAlmostEqual(ladder.v2_raw(terms), 1.0)
+        terms = ladder.v2_terms(v2_report([-5.0] * 4, [10.0] * 4, [40.0] * 4))
+        self.assertAlmostEqual(ladder.v2_raw(terms), -0.25)
+
+    def test_a_weak_reference_is_floored(self):
+        terms = ladder.v2_terms(v2_report([2.0] * 4, [1.0] * 4, [40.0] * 4))
+        # The floor is 10% of 160 = 16 against a measured 4.
+        self.assertAlmostEqual(ladder.v2_raw(terms), 0.5 * 8 / 16)
+
+    def test_a_fatal_grade_keeps_the_raw_it_was_given(self):
+        terms = ladder.v2_terms(v2_report([30.0] * 4, [10.0] * 4, [40.0] * 4, fatal=True, raw=-1.0))
+        self.assertEqual(ladder.v2_raw(terms, [0, 1]), -1.0)
+
+    def test_a_gambler_that_loses_passes_and_one_that_wins_by_a_lot_fails(self):
+        sets = self.ladder(loser=[-3.0, 1.0] * (self.N // 2), lucky=[8.0, -1.0] * (self.N // 2))
+        got = {c["id"]: c for c in ladder.probe_checks({"zero_edge": ["loser", "lucky"]}, sets, self.N)}
+        self.assertEqual(got["zero_edge:loser"]["verdict"], "pass")
+        self.assertEqual(got["zero_edge:lucky"]["verdict"], "fail")
+
+    def test_a_violation_the_sample_cannot_confirm_is_inconclusive(self):
+        # Mean 0.5 a session against a spread of 40: raw is barely over the limit.
+        bot = [40.0, -39.0] * (self.N // 2)
+        sets = self.ladder(noisy=bot)
+        got = ladder.probe_checks({"zero_edge": ["noisy"]}, sets, self.N)
+        self.assertEqual(got[0]["verdict"], "inconclusive")
+
+    def test_a_breacher_must_score_under_its_twin_and_must_have_breached(self):
+        twin = [10.0] * self.N
+        worse = {"bot": [10.0] * (self.N - 4) + [-30.0] * 4, "breached": 4}
+        probes = {"pairs": [["breacher", "reference"]], "breaches": ["breacher"]}
+        got = ladder.probe_checks(probes, self.ladder(breacher=worse), self.N)
+        self.assertEqual(got[0]["verdict"], "pass")
+        # One that never breached, and so equals its twin, proves nothing.
+        got = ladder.probe_checks(probes, self.ladder(breacher={"bot": twin, "breached": 0}), self.N)
+        self.assertEqual(got[0]["verdict"], "no_power")
+        # One that breached and still beats its twin fails.
+        better = {"bot": [20.0] * self.N, "breached": 2}
+        got = ladder.probe_checks(probes, self.ladder(breacher=better), self.N)
+        self.assertEqual(got[0]["verdict"], "fail")
+
+    def test_leverage_is_held_to_m_times_the_base_and_never_pays_for_a_breach(self):
+        probes = {"levered": [{"rung": "x2", "m": 2, "base": "reference"}]}
+        ok = ladder.probe_checks(probes, self.ladder(x2=[18.0] * self.N), self.N)
+        self.assertEqual(ok[0]["verdict"], "pass")
+        too_much = ladder.probe_checks(probes, self.ladder(x2=[25.0] * self.N), self.N)
+        self.assertEqual(too_much[0]["verdict"], "fail")
+        pays = {"bot": [16.0] * (self.N - 1) + [12.0], "breached": 1, "pnl": [16.0] * self.N}
+        # Beats the reference (16 > 10) despite a breach.
+        paying = ladder.probe_checks(probes, self.ladder(x2=pays), self.N)
+        self.assertEqual(paying[0]["verdict"], "fail")
+
+    def test_an_honest_bot_over_the_pay_line_must_beat_doing_nothing(self):
+        probes = {"honest": [{"rung": "h1", "sharpe": 0.1}, {"rung": "h3", "sharpe": 0.3}]}
+        sets = self.ladder(h1=[-5.0] * self.N, h3=[-5.0] * self.N)
+        got = {c["id"]: c for c in ladder.probe_checks(probes, sets, self.N)}
+        self.assertEqual(got["honest:h1"]["verdict"], "pass")
+        self.assertEqual(got["honest:h3"]["verdict"], "fail")
+
+    def test_a_probe_rung_missing_from_the_ladder_is_an_error(self):
+        with self.assertRaises(SystemExit):
+            ladder.probe_checks({"zero_edge": ["ghost"]}, self.ladder(), self.N)
+
+    def test_a_probe_rung_knows_its_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rung = {"name": "b", "dir": "bench/checks/probes", "env": {"MTX_PROBE": "coin-flip"}}
+            os.makedirs(os.path.join(ladder.ROOT, rung["dir"]), exist_ok=True)
+            path = os.path.join(ladder.rung_bot(rung, tmp, 72), "run.sh")
+            with open(path) as f:
+                self.assertIn("MTX_PROBE_SESSIONS=72", f.read())
+
+
 if __name__ == "__main__":
     unittest.main()
