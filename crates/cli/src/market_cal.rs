@@ -5,19 +5,15 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Subcommand, ValueEnum};
+use clap::Subcommand;
 use mtx_grader::{
-    carry::CarryFamily,
-    making::MakingFamily,
+    generators,
     market::{
         Calibration, MarketModel, ModelSpec,
         realism::{self, Verdict},
     },
-    scenario::{Scenario, ShockFamily},
-    weekend::WeekendFamily,
+    scenario::Scenario,
 };
-
-use crate::Family;
 
 #[derive(Subcommand)]
 pub(crate) enum MarketCalCommand {
@@ -153,13 +149,8 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
                     .map_err(anyhow::Error::msg)?
             } else if Path::new(&target).exists() {
                 realism::check_scenarios(&cal, &target, &load_scenarios(Path::new(&target))?)
-            } else if let Ok(family) = Family::from_str(&target, true) {
-                let scenarios = match family {
-                    Family::FlashCrash => ShockFamily::spcx().sample_set("check", count, seed),
-                    Family::MarketMaking => MakingFamily::spcx().sample_set("check", count, seed),
-                    Family::FundingCarry => CarryFamily::spcx().sample_set("check", count, seed),
-                    Family::WeekendGap => WeekendFamily::spcx().sample_set("check", count, seed),
-                };
+            } else if let Some(generator) = generators::generator(&target) {
+                let scenarios = (generator.practice)("check", count, seed);
                 realism::check_scenarios(&cal, &target, &scenarios)
             } else {
                 anyhow::bail!(
