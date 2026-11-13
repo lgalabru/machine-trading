@@ -525,7 +525,7 @@ impl ScenarioV2 {
     }
 
     /// A spot scenario trades the profiles' pair from a wallet, and has no
-    /// path or market making.
+    /// path or market making. A tape trades the session's first venue.
     fn spot_is_alone(&self) -> Result<(), String> {
         if self.assets.symbol != SYMBOL {
             return Err(format!(
@@ -543,10 +543,10 @@ impl ScenarioV2 {
         if !market.path.is_empty()
             || market.fair_path.is_some()
             || market.closed_period.is_some()
-            || self.actors != Actors::default()
+            || self.actors.competitor.is_some()
         {
             return Err(
-                "spot: a spot scenario has no path, fair path, market making, off-hours, funding or tape"
+                "spot: a spot scenario has no path, fair path, market making, off-hours or funding"
                     .into(),
             );
         }
@@ -790,12 +790,8 @@ impl TryFrom<&Scenario> for ScenarioV2 {
         }
         let (venues, wallet) = match &v1.spot {
             Some(spot) => {
-                if v1.making.is_some()
-                    || v1.offhours.is_some()
-                    || v1.funding.is_some()
-                    || !v1.tape.is_empty()
-                {
-                    return Err("spot: a spot scenario has no path, fair path, market making, off-hours, funding or tape".into());
+                if v1.making.is_some() || v1.offhours.is_some() || v1.funding.is_some() {
+                    return Err("spot: a spot scenario has no path, fair path, market making, off-hours or funding".into());
                 }
                 (
                     Venues {

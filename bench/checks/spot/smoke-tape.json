@@ -1,0 +1,70 @@
+{
+  "name": "smoke-tape",
+  "description": "A sell-only SOL-USDC session on Phoenix v1 with a tape: the grader's takers trade the book around the bot",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "tape": [
+    {
+      "slot": 2,
+      "side": "buy",
+      "size": 0.5,
+      "limit_bps": 100.0,
+      "account": 0
+    },
+    {
+      "slot": 6,
+      "side": "sell",
+      "size": 0.5,
+      "limit_bps": 100.0,
+      "account": 3
+    },
+    {
+      "slot": 10,
+      "side": "buy",
+      "size": 1.0,
+      "limit_bps": 100.0,
+      "account": 5
+    },
+    {
+      "slot": 18,
+      "side": "sell",
+      "size": 0.7,
+      "limit_bps": 100.0,
+      "account": 1
+    },
+    {
+      "slot": 26,
+      "side": "buy",
+      "size": 0.3,
+      "limit_bps": 100.0,
+      "account": 7
+    }
+  ],
+  "spot": {
+    "venues": [
+      "phoenix"
+    ],
+    "base": 10.0,
+    "quote": 1000.0
+  },
+  "turn_data": {
+    "tape": true,
+    "depth_levels": 0,
+    "timestamps": false,
+    "parties": true
+  }
+}
