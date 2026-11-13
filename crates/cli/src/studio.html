@@ -109,12 +109,14 @@
 
   /* Market. */
   #market-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 12px 16px 2px; flex: none; min-width: 0; white-space: nowrap; }
-  #market-stats .big { min-width: 6.4em; font: 600 24px/1 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; }
-  #market-stats .dwrap { align-self: center; margin-left: -8px; min-width: 7.5em; }
+  #market-stats .big { width: 6.6em; flex: none; overflow: hidden; font: 600 24px/1 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; }
+  #market-stats .dwrap { align-self: center; margin-left: -8px; width: 7.5em; flex: none; }
   #market-stats .d { font-size: 12px; padding: 1px 6px; font-variant-numeric: tabular-nums; }
   #market-stats .d.off { visibility: hidden; }
   /* Each stat keeps its width as its numbers change: the row never jumps. */
-  #s-step-box { min-width: 9ch; } #s-mark-box { min-width: 11ch; } #s-position-box { min-width: 13ch; } #s-drawdown-box { min-width: 17ch; } #s-reference-box { min-width: 10ch; }
+  /* Each stat has a fixed width, in its value's font: what it shows never moves the others. */
+  #market-stats .stat { flex: none; font: 600 12.5px var(--mono); overflow: hidden; }
+  #s-step-box { width: 10ch; } #s-mark-box { width: 12ch; } #s-position-box { width: 15ch; } #s-drawdown-box { width: 19ch; } #s-reference-box { width: 11ch; }
   .stat .v { padding: 0 3px; margin: 0 -3px; border-radius: 4px; }
   .stat { display: flex; flex-direction: column; gap: 1px; }
   .stat .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
@@ -122,13 +124,13 @@
   .ticker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: .02em; flex: none; }
   .ticker img { width: 18px; height: 18px; border-radius: 50%; object-fit: contain; background: #fff1; }
   .ticker img[hidden] { display: none; }
-  #market-risk { margin: 8px 16px 0; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--pane-2); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 14px; flex: none; }
-  #market-risk > div { min-width: 0; }
-  #market-risk .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
-  #market-risk .v { font: 600 12.5px var(--mono); margin-top: 1px; }
-  #market-risk .n, #market-risk .all { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #market-risk .all { grid-column: 1 / -1; color: var(--text-2); }
-  #market-risk .all b { color: var(--text); }
+  .report .risk { flex-basis: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .report .risk > div { min-width: 0; }
+  .report .risk .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+  .report .risk .v { font: 600 12.5px var(--mono); margin-top: 1px; }
+  .report .risk .n, .report .risk .all { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .report .risk .all { grid-column: 1 / -1; color: var(--text-2); }
+  .report .risk .all b { color: var(--text); }
   #market-desc { padding: 4px 16px 0; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
   #chart { position: absolute; inset: 0; }
   #chart svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
@@ -449,7 +451,6 @@
       </div>
       <div class="body market-body">
         <div id="market-stats"></div>
-        <div id="market-risk" hidden></div>
         <div id="market-desc"></div>
         <div class="plot"><div id="chart"></div></div>
       </div>
@@ -845,13 +846,11 @@ $("legend").innerHTML = `<span><i style="background:#fafafa"></i>mark</span><spa
 const cur = () => (S.sel !== null && S.steps[S.sel] ? S.sel : S.steps.length - 1);
 $("market-stats").innerHTML = `<span class="big" id="s-pnl">$0.00</span><span class="dwrap"><span class="d off" id="s-dpnl"></span></span>` +
   ["Step", "Mark", "Position", "Drawdown", "Reference"].map((key) => `<div class="stat" id="s-${key.toLowerCase()}-box"><span class="k">${key}</span><span class="v" id="s-${key.toLowerCase()}"></span></div>`).join("");
-// After a session: the money it put to work, the risk it ran and the most
+// A session's outcome: the money it put to work, the risk it ran and the most
 // it could have lost, in plain words.
-function renderRisk() {
-  const box = $("market-risk"), steps = S.steps.filter((s) => s.account && s.market);
-  const done = S.report && !S.report.error && steps.length;
-  box.hidden = !done;
-  if (!done) return;
+function riskHtml(r) {
+  const steps = S.steps.filter((s) => s.account && s.market);
+  if (!steps.length) return "";
   const sym = S.started?.symbol ?? S.plan?.scenario?.symbol ?? "";
   const first = steps[0].account;
   const capital = first.value_usd - first.pnl_usd;
@@ -861,20 +860,21 @@ function renderRisk() {
     if (at > peak.usd) peak = { usd: at, k: s.k, size, mark: s.market.mark };
     if (s.account.drawdown_usd > worst.usd) worst = { usd: s.account.drawdown_usd, k: s.k };
   }
-  const pnl = S.report.pnl_usd, limit = S.started?.max_drawdown, cap = S.started?.cap;
+  const pnl = r.pnl_usd, limit = S.started?.max_drawdown, cap = S.started?.cap;
   const capUsd = isNum(cap) ? cap * (S.started?.start_mark ?? peak.mark) : null;
   const pct = (x, of) => (isNum(x) && of > 0 ? `${(100 * x / of).toFixed(1)}%` : "–");
   const cell = (k, v, n, cls = "", more = n) => `<div title="${esc(more)}"><div class="k">${k}</div><div class="v ${cls}">${v}</div>${n ? `<div class="n">${n}</div>` : ""}</div>`;
   const side = peak.size > 0 ? "long" : "short";
   const lose = isNum(limit) ? `The loss limit is ${usd(limit, 0)}: a session that falls more than that below its best keeps trading, but its result is disqualified. The account itself can lose up to its ${usd(capital, 0)} of capital.${isNum(capUsd) ? ` A full position (${units(cap)} ${sym}, about ${usd(capUsd, 0)}) reaches the limit on a ${pct(limit, capUsd)} move against it.` : ""}` : "";
-  box.innerHTML =
+  return `<div class="risk">` +
     cell("Capital", usd(capital, 0), "collateral", "", "The account's collateral: the money the session trades with.") +
     cell("Largest position", peak.usd ? usd(peak.usd, 0) : "none", peak.usd ? `${(peak.usd / capital).toFixed(2)}× capital` : "never traded", "",
       peak.usd ? `${units(Math.abs(peak.size))} ${sym} ${side} at ${usd(peak.mark)}, step ${peak.k + 1}: ${(peak.usd / capital).toFixed(2)}× the capital.` : "It never traded.") +
     cell("Worst moment", worst.usd ? `−${usd(worst.usd)}` : "$0", isNum(limit) ? `${pct(worst.usd, limit)} of the ${usd(limit, 0)} limit` : "", worst.usd ? "neg" : "",
       worst.usd ? `${usd(worst.usd)} below its best, at step ${worst.k + 1}.` : "Never below its best.") +
-    cell("Result", susd(pnl), `${pct(pnl, capital)} on capital`, tone(pnl), `${susd(pnl)}: ${pct(pnl, capital)} on the capital${peak.usd ? `, ${pct(pnl, peak.usd)} on the largest position` : ""}.`) +
-    (lose ? `<div class="all" title="${esc(lose)}"><b>Could have lost: ${usd(limit, 0)}</b> and still count (the loss limit); the account risks its ${usd(capital, 0)}.</div>` : "");
+    cell("Return", isNum(pnl) && capital > 0 ? `${pnl > 0 ? "+" : pnl < 0 ? "−" : ""}${pct(Math.abs(pnl), capital)}` : "–", "on the capital", tone(pnl), `${susd(pnl)}: ${pct(pnl, capital)} on the capital${peak.usd ? `, ${pct(pnl, peak.usd)} on the largest position` : ""}.`) +
+    (lose ? `<div class="all" title="${esc(lose)}"><b>Could have lost: ${usd(limit, 0)}</b> and still count (the loss limit); the account risks its ${usd(capital, 0)}.</div>` : "") +
+    `</div>`;
 }
 // The scenario's market, with Phoenix's logo for it (`studio/logos/`).
 function renderTicker(symbol) {
@@ -909,7 +909,6 @@ function renderMarket() {
   $("s-reference").textContent = susd(ref); $("s-reference").className = "v " + tone(ref);
   renderCtx();
   renderTicker(sc?.symbol);
-  renderRisk();
   $("market-desc").textContent = sc?.description ?? (S.scenarios.length ? "" : "No scenarios in scenarios/ yet: ask the agent for one.");
   drawSoon();
 }
@@ -1193,7 +1192,7 @@ function reportHtml(r) {
     ${isNum(r.bound_pnl_usd) ? `<span class="muted">hindsight bound ${usd(r.bound_pnl_usd)}</span>` : ""}
     ${r.disqualified ? `<span class="neg">disqualified: ${esc(typeof r.disqualified === "string" ? r.disqualified : JSON.stringify(r.disqualified))}</span>` : ""}
     ${r.not_graded ? `<span class="neg">not graded: ${esc(r.not_graded)}</span>` : ""}
-    ${r.stopped && !r.not_graded ? `<span class="muted">stopped: ${esc(r.stopped)}</span>` : ""}</div>`;
+    ${r.stopped && !r.not_graded ? `<span class="muted">stopped: ${esc(r.stopped)}</span>` : ""}${riskHtml(r)}</div>`;
 }
 
 const onSession = {
