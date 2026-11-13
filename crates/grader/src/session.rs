@@ -40,7 +40,7 @@ use mtx_core::{
     turns::{self, Hello, Message, Step},
 };
 use mtx_kit::BotEnv;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
@@ -103,9 +103,11 @@ pub struct SessionOptions<'a> {
     pub bot_dir: &'a Path,
     /// Where the bot's stdout and stderr go.
     pub bot_log: &'a Path,
-    /// Which of [`BOT_USERS`] the bot runs as. Sessions that run at the same
-    /// time must use different slots.
-    pub slot: usize,
+    /// Which of [`BOT_USERS`] a process bot runs as. Sessions that run at the
+    /// same time must use different slots. `None` for a strategy component:
+    /// it runs inside the grader, with no files and no network, so it needs
+    /// no user, and any number of its sessions can run at once.
+    pub slot: Option<usize>,
     /// The session's regime, handed to the bot as `MTX_REGIME` (JSON): only
     /// for the ladder's regime oracle, never for a graded bot.
     pub regime: Option<&'a str>,
@@ -124,7 +126,10 @@ pub struct SessionOptions<'a> {
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A session's outcome, as the grade reports it. It reads back from the
+/// report, so a grade can be scored again from what it wrote (see
+/// [`crate::grade::rescore`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionReport {
     pub scenario: String,
     pub start_mark_usd: f64,
@@ -163,7 +168,8 @@ pub struct SessionReport {
     /// The price the account's position was valued at: the `mark`, or for
     /// market making the `oracle` the scenario sets, which a bot's own
     /// quotes can't move.
-    pub valuation: &'static str,
+    #[serde(deserialize_with = "static_name")]
+    pub valuation: StaticName,
     /// Market making: what the grader's takers sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<FlowReport>,
@@ -186,7 +192,7 @@ pub struct SessionReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     /// How the bot's turns went.
     pub turns: TurnReport,
@@ -222,7 +228,7 @@ pub struct Timeline {
 
 /// The world and the account after a step's blocks landed, before the bot's
 /// turn.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StepRecord {
     pub k: u64,
     pub at: u64,
@@ -287,7 +293,7 @@ pub struct TxRecord {
 }
 
 /// How a session's turns went.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TurnReport {
     /// The bot never answered the hello: the world moved at the slot time.
     pub legacy: bool,
@@ -459,6 +465,30 @@ pub(crate) struct Done {
 
 /// The one session loop, for every kind of session: perp, spot, and
 /// whatever venue its kind trades.
+/// A name the grader writes from its own set (a valuation, a fill's role, a
+/// fault), as a report field: read back with [`static_name`]. An alias, so
+/// that serde doesn't take the field for one borrowed from its input.
+pub type StaticName = &'static str;
+
+/// Reads back a [`StaticName`]: each distinct name is allocated once and
+/// kept for the life of the process.
+pub(crate) fn static_name<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<&'static str, D::Error> {
+    static NAMES: std::sync::Mutex<std::collections::BTreeSet<&'static str>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let name = String::deserialize(deserializer)?;
+    let mut names = NAMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(known) = names.get(name.as_str()) {
+        return Ok(known);
+    }
+    let name: &'static str = Box::leak(name.into_boxed_str());
+    names.insert(name);
+    Ok(name)
+}
+
 async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result<SessionReport> {
     let began = Instant::now();
     let scenario = opts.scenario;
@@ -490,6 +520,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     *bot_started = true;
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
     let walls = Walls::new(opts.trusted, steps);
+    let user = opts.slot.map(|slot| BOT_USERS[slot]);
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
@@ -561,6 +592,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot, end_slot, steps, "strategy component loaded"
         );
     } else {
+        if user.is_none() {
+            return Err(Error::NoBotUser);
+        }
         let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
         let child = spawn_bot(
             opts.bot_dir,
@@ -720,7 +754,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     cast.end().await;
     if let Some((mut child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
-        stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+        stop_bot(&mut child, workdir.bot_user.and(user)).await;
     }
     if let Some(bot) = wasm_bot.as_mut() {
         bot.end().await;
@@ -1060,7 +1094,9 @@ pub(crate) struct SessionDir {
 }
 
 impl SessionDir {
-    pub(crate) fn create(bot: &Keypair, user: &str) -> Result<Self> {
+    /// A directory for a bot that runs as `user` (when the grader runs as
+    /// root), or that only the grader enters.
+    pub(crate) fn create(bot: &Keypair, user: Option<&str>) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("mtx-session-{}", uuid::Uuid::new_v4()));
         // Only the bot's own user may enter: sessions graded at once run
         // their bots as different users in one container, and a bot must not
@@ -1070,7 +1106,7 @@ impl SessionDir {
             .map_err(io_error(&path))?;
         let dir = Self {
             path,
-            bot_user: bot_user(user),
+            bot_user: user.and_then(bot_user),
         };
         let keypair = serde_json::to_string(&bot.to_bytes().to_vec())?;
         let mut file = std::fs::OpenOptions::new();
@@ -1131,6 +1167,60 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
         }
         Some(((*entry).pw_uid, (*entry).pw_gid))
     }
+}
+
+/// Where graders on a machine hold the bot users their sessions run as:
+/// a fixed path, not `TMPDIR`, so that every grader finds it.
+const BOT_USER_LOCKS: &str = "/tmp/mtx-bot-users";
+
+/// One of [`BOT_USERS`], held for a session against every grader on the
+/// machine. A session's end kills every process its bot user owns (a bot can
+/// leave its process group, not its user), so two grades running at once
+/// must never run bots as the same user at the same time: a session that
+/// wants a user another grade holds waits for it. Only a grader running as
+/// root runs bots as these users; otherwise holding one is a no-op.
+pub struct BotUserLock {
+    /// The locked file, closed (and so let go) on drop.
+    _held: Option<std::fs::File>,
+}
+
+impl BotUserLock {
+    pub async fn acquire(user: &str) -> Result<Self> {
+        // SAFETY: getuid has no preconditions.
+        if unsafe { libc::getuid() } != 0 {
+            return Ok(Self { _held: None });
+        }
+        let dir = Path::new(BOT_USER_LOCKS);
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(dir)
+            .map_err(io_error(dir))?;
+        Ok(Self {
+            _held: Some(lock(&dir.join(format!("{user}.lock"))).await?),
+        })
+    }
+}
+
+/// An exclusive lock on the file at `path`, waited for: released when the
+/// file is closed, by the process ending too.
+async fn lock(path: &Path) -> Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(io_error(path))?;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::os::fd::AsRawFd;
+        // SAFETY: flock on a descriptor this file owns.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            Ok(file)
+        } else {
+            Err(io_error(&path)(std::io::Error::last_os_error()))
+        }
+    })
+    .await
+    .map_err(|e| Error::Timeout(format!("a bot user's lock: {e}")))?
 }
 
 /// How a process bot starts: `just run` from its `Justfile`, or `bash
@@ -1296,9 +1386,30 @@ mod tests {
         assert_eq!(second.unwrap(), 7);
     }
 
+    /// Two grades on one machine never hold a bot user at once: the second
+    /// waits until the first lets go.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_bot_user_is_held_by_one_session_at_a_time() {
+        let path = std::env::temp_dir().join(format!("mtx-user-{}.lock", uuid::Uuid::new_v4()));
+        let first = lock(&path).await.unwrap();
+        let second = tokio::spawn({
+            let path = path.clone();
+            async move { lock(&path).await.unwrap() }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!second.is_finished(), "both held the user");
+        drop(first);
+        let second = tokio::time::timeout(Duration::from_secs(10), second)
+            .await
+            .expect("the user was let go")
+            .unwrap();
+        drop(second);
+        std::fs::remove_file(&path).unwrap();
+    }
+
     #[test]
     fn session_dir_and_its_files_are_private() {
-        let dir = SessionDir::create(&Keypair::new(), "mtx-bot-none").unwrap();
+        let dir = SessionDir::create(&Keypair::new(), Some("mtx-bot-none")).unwrap();
         assert_eq!(mode(&dir.path), 0o700);
         assert_eq!(mode(&dir.keypair_path()), 0o600);
         let mandate = dir

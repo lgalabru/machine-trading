@@ -17,7 +17,7 @@
 
 use async_trait::async_trait;
 use mtx_kit::Side;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use super::{Actor, ActorsReport, Moment};
@@ -32,7 +32,7 @@ const SKEW_BPS_PER_UNIT: f64 = 1.0;
 const MAX_INVENTORY: f64 = 25.0;
 
 /// What the grader's maker did in a session.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CompeteReport {
     /// Times it requoted, and how many of those it stepped inside a quote
     /// better than its own.
