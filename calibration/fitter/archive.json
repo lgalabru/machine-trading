@@ -1,0 +1,9 @@
+{
+ "pull_id": "2026-11-11",
+ "file": "calibration-raw-2026-11-11.tar.gz",
+ "sha256": "da3ba79c6f681b700a84070e3541273706631dcb2742cd4000a0433cdbefdae9",
+ "bytes": 29106295,
+ "files": 358,
+ "note": "Every file's URL, SHA-256 and size are in its manifest.json and in the inputs.json beside each calibration. Rebuild the tarball from a raw folder with pack.py.",
+ "archive_url": null
+}
