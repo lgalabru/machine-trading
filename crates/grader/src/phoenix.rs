@@ -181,7 +181,7 @@ pub fn enable_trader(trader: Pubkey, slot: u64) -> Override {
 
 /// Phoenix rejects an oracle update more than 5% away from the oracle median,
 /// so a larger move has to arrive as a sequence of smaller ones.
-const MAX_MOVE_STEP_PCT: f64 = 4.0;
+pub(crate) const MAX_MOVE_STEP_PCT: f64 = 4.0;
 pub const SLOTS_BETWEEN_STEPS: u64 = 2;
 
 /// Overrides that walk `symbol` from `from_ticks` to `to_ticks` in steps

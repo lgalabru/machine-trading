@@ -703,6 +703,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World::default(),
+        )?;
+    }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -1054,6 +1062,7 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1118,6 +1127,7 @@ mod tests {
             fair_path: None,
             raw_sends: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1129,6 +1139,51 @@ mod tests {
             }),
             reference_pnl_usd: None,
         }
+    }
+
+    #[test]
+    fn a_spot_session_values_at_a_feed_that_can_move_but_not_fail() {
+        use crate::oracles::*;
+        let feed = |feed_id: &str, failing: bool| Oracles {
+            seed: 1,
+            feeds: vec![Feed {
+                name: "sol".into(),
+                source: Source::Pyth(PythOracle {
+                    feed_id: feed_id.into(),
+                    shard: 0,
+                    exponent: -8,
+                    account: None,
+                }),
+                cadence_slots: 4,
+                path: vec![Level {
+                    slot: 40,
+                    level_pct: -5.0,
+                }],
+                conf_bps: 2.0,
+                failures: if failing {
+                    vec![Failure {
+                        mode: Mode::OffPrice { bias_pct: 5.0 },
+                        window: Window {
+                            from_slot: 4,
+                            from_slot_max: None,
+                            slots: Some(8),
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                },
+            }],
+        };
+        let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+        let other = "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a";
+        let with = |oracles| Scenario {
+            oracles: Some(oracles),
+            ..scenario()
+        };
+        with(feed(sol, false)).validate().unwrap();
+        with(feed(other, true)).validate().unwrap();
+        let error = with(feed(sol, true)).validate().unwrap_err();
+        assert!(error.contains("values the account"), "{error}");
     }
 
     #[test]

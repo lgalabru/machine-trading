@@ -10,9 +10,10 @@
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
 //! | `venues`       | the perp venue's funding, the spot markets and their data    |
 //! | `market_model` | the price path, the fair value, a closed period              |
+//! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker and the grader's taker flow              |
 //! | `faults`       | execution faults on the bot's sends and reads                |
-//! | `tx`           | the transaction layer (a placeholder; nothing to set yet)    |
+//! | `tx`           | the transaction layer: raw sends                             |
 //! | `mandate`      | what the bot may trade and its limits                        |
 //! | `order`        | a quantity the bot has to trade by the end                   |
 //! | `scoring`      | the reference, the bound, charges and net scoring            |
@@ -61,6 +62,10 @@ pub struct ScenarioV2 {
     pub venues: Venues,
     #[serde(default, skip_serializing_if = "MarketModel::is_empty")]
     pub market_model: MarketModel,
+    /// The prices venues read (Phoenix's oracle, Pyth, Scope), driven along
+    /// a path and failed on purpose (see [`crate::oracles`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracles: Option<crate::oracles::Oracles>,
     #[serde(default, skip_serializing_if = "Actors::is_empty")]
     pub actors: Actors,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -462,6 +467,10 @@ impl ScenarioV2 {
         self.mandate
             .validate()
             .map_err(|reason| format!("mandate: {reason}"))?;
+        if let Some(oracles) = &self.oracles {
+            oracles.validate(self.duration_slots)?;
+            self.validate_oracles(oracles)?;
+        }
         if let Some(raw) = self.tx.as_ref().and_then(|tx| tx.raw_sends.as_ref()) {
             raw.programs()
                 .map_err(|reason| format!("raw_sends: {reason}"))?;
@@ -588,6 +597,59 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// What a scenario's oracle feeds may do beside the rest of it.
+    fn validate_oracles(&self, oracles: &crate::oracles::Oracles) -> Result<(), String> {
+        use crate::oracles::Source;
+        for feed in &oracles.feeds {
+            match &feed.source {
+                Source::Phoenix(phoenix) => {
+                    if self.venues.spot.is_some() {
+                        return Err("oracles: a Phoenix oracle is for perp scenarios".into());
+                    }
+                    // The feed's start price is the scenario market's mark.
+                    if phoenix.symbol != self.assets.symbol {
+                        return Err(format!(
+                            "oracles: {} writes {}'s oracle, and the scenario's market is {}",
+                            feed.name, phoenix.symbol, self.assets.symbol
+                        ));
+                    }
+                    // The path and an off-hours reopen move this same oracle
+                    // in steps sized from the level they know; a feed beside
+                    // them would break those steps.
+                    if !self.market_model.path.is_empty()
+                        || self.market_model.closed_period.is_some()
+                    {
+                        return Err(format!(
+                            "oracles: {} moves the oracle the scenario's own path moves; \
+                             use one or the other",
+                            feed.name
+                        ));
+                    }
+                }
+                // A spot session values the account at the chain's Pyth
+                // SOL/USD. That is the grader's yardstick, not the bot's
+                // market: a path on it is the market moving, but a failure
+                // (stale, off price, delayed, wide) would change the score
+                // without changing anything the bot did.
+                Source::Pyth(pyth) if self.venues.spot.is_some() && !feed.failures.is_empty() => {
+                    let valuation = mtx_kit::protocols::pyth::feed_account(
+                        0,
+                        &mtx_kit::protocols::pyth::SOL_USD_FEED_ID,
+                    );
+                    if pyth.address().ok() == Some(valuation) {
+                        return Err(format!(
+                            "oracles: {} is the feed a spot session values the account at; \
+                             it can move but not fail",
+                            feed.name
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn perp_instrument(&self) -> InstrumentRef {
         InstrumentRef {
             venue: VENUE.into(),
@@ -634,6 +696,7 @@ impl ScenarioV2 {
             assets,
             venues,
             market_model,
+            oracles,
             actors,
             faults,
             tx,
@@ -693,6 +756,7 @@ impl ScenarioV2 {
             reference_pnl_usd: scoring.reference_pnl_usd,
             fair_path,
             raw_sends: tx.and_then(|tx| tx.raw_sends),
+            oracles,
         })
     }
 }
@@ -788,6 +852,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 fair_path: v1.fair_path.clone(),
                 closed_period,
             },
+            oracles: v1.oracles.clone(),
             actors: Actors { competitor, takers },
             faults: v1.faults.clone(),
             tx: v1.raw_sends.clone().map(|raw_sends| Tx {

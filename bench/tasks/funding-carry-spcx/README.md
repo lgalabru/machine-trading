@@ -82,7 +82,7 @@ the one that failed (the tape's void rule wasn't in the instruction) was
 fixed. The leak audit finds no reference, solution, test or ladder file in
 the agent's image.
 
-`just ladder funding-carry` grades the ladder on fresh hidden sets. On two
+`just ladder funding-carry-spcx` grades the ladder on fresh hidden sets. On two
 fresh sets of 30 (skill; reference $13,657 and $14,901, reward about 0.24):
 
 | Rung | Set 1 | Set 2 |
