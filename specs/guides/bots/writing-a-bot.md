@@ -317,8 +317,13 @@ gets 0.1.0's market, and its sheet's lines have no options.
 - **A budget.** Each call to `start`, `step` or `end` may run ten billion
   WebAssembly instructions, and the session two billion a step in all
   (about 0.1 s of computing a step; the references spend at most 75
-  million). Memory may grow to 1 GiB. Past either, the call traps. A step
-  may make 256 `rpc` calls; past that, `rpc` returns an error.
+  million). Memory may grow to 1 GiB, all of a component's memories
+  together. Past either, the call traps. A step may make 256 `rpc` calls;
+  past that, `rpc` returns an error.
+- **A shape.** One component holds at most 8 memories, 32 core instances
+  and 16 tables (a million elements in all), and its modules use a single
+  memory each (no multi-memory). A Rust component has one memory and about
+  four instances. One past these doesn't load: it plays without trading.
 - **A component that doesn't load** (not a component, or importing what
   the grader doesn't provide) plays the session without trading. A trap, from a panic or the
   budget, ends the strategy: Wasmtime won't enter it again, so it isn't

@@ -319,7 +319,9 @@ defend, no bot users, no keypair files.
   72-session hidden set's computing near an hour on a slower core, below
   the verifier's timeout, where the process bots' 0.5 s a step allowed
   three. The spinner runs out at step 134 of 280 and plays no more. Memory
-  is capped at 1 GiB. A `bot.wasm` that doesn't load (random bytes, in the
+  is capped at 1 GiB across all of a component's memories (Wasmtime's own
+  limit is per memory), with at most 8 memories, 32 instances and 16
+  tables, and multi-memory modules refused. A `bot.wasm` that doesn't load (random bytes, in the
   check) plays the session without trading instead of failing the grade,
   and each session's report carries its fuel and why a component stopped.
 - 2026-11-11: the checks. `bench/checks/cheater-wasm` tries, from inside
