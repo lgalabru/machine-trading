@@ -105,6 +105,7 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 | --- | --- |
 | [📉 `flash-crash-spcx`](bench/tasks/flash-crash-spcx) | fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't |
 | [💸 `funding-carry-spcx`](bench/tasks/funding-carry-spcx) | earns the SPCX premium and its funding when positioning opened it, and follows when the index follows |
+| [🧮 `levered-carry-sizing-spcx`](bench/tasks/levered-carry-sizing-spcx) | sizes a levered SPCX funding carry to the index's volatility state and the risk desk's stop-out |
 | [⚖️ `market-making-spcx`](bench/tasks/market-making-spcx) | earns the SPCX spread from noise, and steps back before informed flow |
 | [🌙 `weekend-gap-spcx`](bench/tasks/weekend-gap-spcx) | reads which weekend flow on the SPCX perp knows where SPCX will open, and holds that gap into the reopen |
 <!-- mtx:tasks end -->

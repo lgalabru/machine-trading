@@ -6,4 +6,4 @@ reference_packages := "mtx-bot-reference mtx-bot-carry mtx-bot-levcarry mtx-bot-
 # Every task's bots to build: its reference, and its ladder's bots.
 task_bots := "bench/tasks/flash-crash-spcx/reference bench/tasks/flash-crash-spcx/checks/bots/dip-buyer bench/tasks/funding-carry-spcx/reference bench/tasks/funding-carry-spcx/checks/bots/carry-gbm bench/tasks/levered-carry-sizing-spcx/reference bench/tasks/market-making-spcx/reference bench/tasks/weekend-gap-spcx/reference"
 # Lines only the answers hold, `|` apart.
-leak_needles := "ride each move while it runs|then fade it once it stops|fading the premiums the crowd's positioning opened|by the carry's yield over the index's variance|one tick inside the competitor|backs off after one-sided fills|hold the gap into the reopen"
+leak_needles := "ride each move while it runs|then fade it once it stops|fading the premiums the crowd's positioning opened|by the carry's yield over the book's variance|one tick inside the competitor|backs off after one-sided fills|hold the gap into the reopen"
