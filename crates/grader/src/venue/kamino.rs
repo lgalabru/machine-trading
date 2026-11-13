@@ -168,13 +168,13 @@ impl Reading {
             .iter()
             .filter(|d| d.reserve == book.keys.address)
             .map(|d| d.amount as f64 * reserve.exchange_rate())
-            .sum();
+            .fold(0.0, |a, b| a + b);
         let borrowed: f64 = obligation
             .borrows
             .iter()
             .filter(|b| b.reserve == book.keys.address)
             .map(|b| b.amount)
-            .sum();
+            .fold(0.0, |a, b| a + b);
         (
             reserve.atoms_to_units(supplied),
             reserve.atoms_to_units(borrowed),

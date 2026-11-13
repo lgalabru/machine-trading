@@ -347,9 +347,10 @@ impl Feed {
     }
 
     /// [`Feed::plan`] for a session whose clock jumps over `gaps`, each
-    /// `(from, to)` in slots of the session: no slot strictly between them
-    /// passes, so nothing is published there, and the feed publishes at
-    /// `to`, where the clock lands.
+    /// `(from, to)` in slots of the session: no slot after `from` passes
+    /// until the clock lands on `to`, so nothing is published there, and the
+    /// feed publishes at `to + 1`, the first slot produced after the jump
+    /// (the landing slot itself plays no override).
     pub fn plan_around(
         &self,
         seed: u64,
@@ -370,8 +371,8 @@ impl Feed {
         let mut publications: Vec<Publication> = Vec::new();
         let mut slot = 0;
         while slot <= duration_slots {
-            if let Some(&(_, to)) = gaps.iter().find(|(from, to)| slot > *from && slot < *to) {
-                slot = to;
+            if let Some(&(_, to)) = gaps.iter().find(|(from, to)| slot > *from && slot <= *to) {
+                slot = to + 1;
             }
             let active = || {
                 windows
@@ -1159,8 +1160,8 @@ mod tests {
             .iter()
             .map(|p| p.slot)
             .collect();
-        assert_eq!(&slots[..5], &[0, 4, 8, 300, 304]);
-        assert_eq!(*slots.last().unwrap(), 400);
+        assert_eq!(&slots[..5], &[0, 4, 8, 301, 305]);
+        assert_eq!(*slots.last().unwrap(), 397);
     }
 
     #[test]

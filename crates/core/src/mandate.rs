@@ -249,6 +249,16 @@ impl Mandate {
                     name("min_position")
                 ));
             }
+            if allowance.instrument.kind == Kind::MoneyMarket
+                && (allowance.sides.is_some()
+                    || allowance.min_sell_price.is_some()
+                    || allowance.max_buy_price.is_some())
+            {
+                return Err(format!(
+                    "{}: sides and prices don't apply to a money market",
+                    allowance.instrument
+                ));
+            }
             if let Some(sides) = &allowance.sides {
                 if sides.is_empty() {
                     return Err(format!("{} is empty", name("sides")));
@@ -668,6 +678,12 @@ mod tests {
                 .kind,
             Kind::MoneyMarket
         );
+        let mut lending = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        lending.universe[0].instrument = "kamino:money-market:USDC".parse().unwrap();
+        lending.universe[0].min_position = Some(-50_000.0);
+        assert!(lending.validate().is_ok());
+        lending.universe[0].sides = Some(vec![Side::Buy]);
+        assert!(lending.validate().unwrap_err().contains("money market"));
         assert!(
             "drift:future:SOL"
                 .parse::<InstrumentRef>()
