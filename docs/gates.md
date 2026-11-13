@@ -51,7 +51,7 @@ and limits as measured.
 ## The signal gate
 
 A task is about reading something: the flow tape, the regime, the funding
-episode. Its ladder file (`bench/checks/ladder/<family>.json`) says which
+episode. Its ladder file (`bench/tasks/<task>/checks/ladder.json`) says which
 rungs read it and which trade without:
 
 ```json
