@@ -1,0 +1,16 @@
+# A check, not a strategy: a component that sells steadily and answers every
+# request for a quote, so the library's actors have a bot to react to
+# (`just actors-smoke` grades it in a session with every actor).
+[package]
+name = "mtx-bot-actors-smoke"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
