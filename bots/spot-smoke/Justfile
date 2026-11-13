@@ -1,17 +1,25 @@
-# A process bot: `just build` builds it into bin/bot, and the grader starts
-# it with `just run`, without building or downloading anything (it has no
-# network). Build before grading.
+# `just build` builds the strategy into components, bot.wasm (sells),
+# buyer/bot.wasm (also buys) and accumulate/bot.wasm (buys), and the same
+# smoke as a process, bin/bot, which process/ runs. The grader builds
+# nothing: build before grading.
 
-# Build the bot into bin/bot.
+# Build the components and bin/bot.
 build:
     #!/usr/bin/env bash
     set -euo pipefail
+    component() {
+      cargo build --release --lib --target wasm32-wasip2 "$@" --message-format=json-render-diagnostics \
+        | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1
+    }
+    cp "$(component)" bot.wasm
+    cp "$(component --features buy)" buyer/bot.wasm
+    cp "$(component --features accumulate)" accumulate/bot.wasm
     exe="$(cargo build --release --bin mtx-spot-smoke --message-format=json-render-diagnostics \
       | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
     mkdir -p bin
     cp "$exe" bin/bot
-    echo "built bin/bot from $exe"
+    echo "built bot.wasm, buyer/bot.wasm, accumulate/bot.wasm and bin/bot"
 
-# Start the bot: what the grader runs.
+# Start the process bot: what the grader runs where there is no bot.wasm.
 run:
     @exec ./bin/bot

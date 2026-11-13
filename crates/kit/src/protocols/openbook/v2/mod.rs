@@ -1,5 +1,7 @@
 //! OpenBook v2 spot markets on Solana (feature `openbook-v2`), as the
 //! OpenBook venue profile (`specs/venues/openbook.md`) defines them.
+//! Feature `openbook-v2-venue` alone builds what needs no chain, for a
+//! strategy component: [`state`], [`OpenBookV2Market`] and [`ix`].
 //!
 //! Anyone can create a market, so a market is named by its address, or by
 //! a symbol the profile gives it ([`MARKETS`]); instruments are
@@ -19,21 +21,32 @@
 //! into its open orders account when `consume_events` processes the event
 //! heap, which this adapter does not run.
 
+#[cfg(feature = "openbook-v2")]
 mod driver;
+#[cfg(feature = "openbook-v2")]
 mod error;
+#[cfg(feature = "openbook-v2")]
 pub mod fills;
 pub mod ix;
 mod market;
+#[cfg(feature = "openbook-v2")]
 mod meter;
 pub mod state;
+#[cfg(feature = "openbook-v2")]
 mod trader;
 
+#[cfg(feature = "openbook-v2")]
 pub use driver::OpenBookV2Driver;
+#[cfg(feature = "openbook-v2")]
 pub use error::OpenBookV2Error;
 pub use market::{MarketKeys, OpenBookV2Market};
+#[cfg(feature = "openbook-v2")]
 pub use meter::{OpenBookV2Meter, balances};
 use solana_pubkey::Pubkey;
-pub use state::{LeafOrder, MarketAccount, OpenOrdersIndexer, OpenOrdersPosition};
+pub use state::{
+    LeafOrder, MarketAccount, OpenOrdersIndexer, OpenOrdersPosition, book_side_orders,
+};
+#[cfg(feature = "openbook-v2")]
 pub use trader::{ACCOUNT_NUMBER, Book, MATCH_LIMIT, OpenBookV2Order, OpenBookV2Trader, read_book};
 
 pub use super::VENUE;
