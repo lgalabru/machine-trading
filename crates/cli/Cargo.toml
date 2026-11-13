@@ -32,7 +32,6 @@ solana-signer.workspace = true
 surfpool-core.workspace = true
 surfpool-types.workspace = true
 thiserror.workspace = true
-toml = "1"
 tokio.workspace = true
 toml = "1"
 tracing.workspace = true
