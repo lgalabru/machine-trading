@@ -113,7 +113,10 @@ pub(crate) mod tests {
                     .map(|e| e.unwrap().path())
                     .find(|p| {
                         p.extension().is_some_and(|e| e == "toml")
-                            && p.file_name().unwrap().to_string_lossy().starts_with(&prefix)
+                            && p.file_name()
+                                .unwrap()
+                                .to_string_lossy()
+                                .starts_with(&prefix)
                     })
                     .unwrap();
                 super::MarketModel::new(Calibration::load(&path).unwrap(), Default::default())
@@ -127,7 +130,11 @@ pub(crate) mod tests {
         let refs: Vec<&super::MarketModel> = models.iter().collect();
         let paths = draw_joint(&refs, &corr, 7, 2000).unwrap();
         assert_eq!(paths.len(), 5);
-        assert!(paths.iter().all(|p| p.log_levels.len() == paths[0].log_levels.len()));
+        assert!(
+            paths
+                .iter()
+                .all(|p| p.log_levels.len() == paths[0].log_levels.len())
+        );
     }
 
     #[test]
