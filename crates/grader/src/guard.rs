@@ -56,7 +56,12 @@ use std::{
 };
 
 use axum::{
-    Router, body::Bytes, extract::State, http::StatusCode, response::IntoResponse, routing::post,
+    Router,
+    body::Bytes,
+    extract::State,
+    http::{StatusCode, Uri},
+    response::IntoResponse,
+    routing::{get, post},
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -66,7 +71,12 @@ use tracing::warn;
 use crate::{
     Result,
     error::io_error,
-    faults::{FaultPlan, FaultState, Faults, FaultsReport, SendAction},
+    faults::{FaultPlan, FaultState, Faults, FaultsReport, PooledSend, SendAction},
+    txlayer::{
+        RouteKind, TxEngine,
+        engine::{Accepted, Refusal, Submission},
+        jito,
+    },
 };
 
 pub const ALLOWED_METHODS: &[&str] = &[
@@ -222,6 +232,9 @@ struct GuardState {
     calls: tokio::sync::RwLock<()>,
     /// The scenario's execution faults, if it has any.
     faults: Mutex<Option<FaultState>>,
+    /// The session's transaction layer, if the scenario has one: sends go
+    /// to its pool instead of the surfnet.
+    tx: Mutex<Option<Arc<TxEngine>>>,
 }
 
 impl GuardState {
@@ -235,6 +248,10 @@ impl GuardState {
 
     fn faults(&self) -> std::sync::MutexGuard<'_, Option<FaultState>> {
         self.faults.lock().expect("guard lock")
+    }
+
+    fn tx(&self) -> Option<Arc<TxEngine>> {
+        self.tx.lock().expect("guard lock").clone()
     }
 }
 
@@ -268,11 +285,16 @@ impl Guard {
             hook: Mutex::default(),
             calls: tokio::sync::RwLock::new(()),
             faults: Mutex::default(),
+            tx: Mutex::default(),
         });
         let host_path = format!("/host/{}", uuid::Uuid::new_v4().simple());
         let app = Router::new()
             .route("/", post(handle))
             .route(&host_path, post(handle_host))
+            .route("/staked", post(handle_staked))
+            .route("/api/v1/bundles", post(handle_jito))
+            .route("/api/v1/transactions", post(handle_jito))
+            .route("/api/v1/bundles/tip_floor", get(handle_tip_floor))
             .with_state(state.clone());
         let server = tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, app).await {
@@ -352,6 +374,20 @@ impl Guard {
     pub fn faults_report(&self) -> Option<FaultsReport> {
         self.state.faults().as_ref().map(FaultState::report)
     }
+
+    /// Send the bot's transactions to the session's transaction layer from
+    /// now on, rather than to the surfnet.
+    pub fn set_tx_layer(&self, engine: Arc<TxEngine>) {
+        *self.state.tx.lock().expect("guard lock") = Some(engine);
+    }
+
+    /// The transaction layer landed the bot's transaction `signature` in
+    /// the block of `step`: its confirmation may be one the faults lose.
+    pub fn landed(&self, signature: &str, step: u64) {
+        if let Some(faults) = &mut *self.state.faults() {
+            faults.on_landing(signature, step);
+        }
+    }
 }
 
 impl Drop for Guard {
@@ -388,8 +424,12 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
             *log.methods.entry(method.to_string()).or_default() += 1;
         }
     }
+    // The grader's own bundles for a component go to the transaction
+    // layer's pool; a bot has the block engine's endpoint for its own.
+    let host_bundle = |call: &Value| host && call["method"].as_str() == Some("sendBundle");
     let refusals: Vec<Value> = calls
         .iter()
+        .filter(|call| !host_bundle(call))
         .filter_map(|call| refusal(state, call).or_else(|| late(state, call)))
         .collect();
     if !refusals.is_empty() {
@@ -457,6 +497,9 @@ async fn batch_replies(response: axum::response::Response) -> Vec<Value> {
 /// Serve an accepted request: under the scenario's faults if it has any,
 /// otherwise forward it at once. `host`: the grader's, on the bot's behalf.
 async fn serve(state: &GuardState, request: Value, host: bool) -> axum::response::Response {
+    if let Some(engine) = state.tx() {
+        return pooled(state, &engine, request, host, RouteKind::Rpc).await;
+    }
     if state.faults().is_some() {
         return faulted(state, request, host).await;
     }
@@ -521,6 +564,337 @@ async fn forward(state: &GuardState, request: Value, log_sends: bool) -> axum::r
         }
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
     }
+}
+
+/// A send through the bot's staked route, where the scenario offers one.
+async fn handle_staked(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoResponse {
+    let request: Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => return reply(error_response(Value::Null, PARSE_ERROR, "parse error")),
+    };
+    let Some(engine) = state.tx().filter(|e| e.offers_staked()) else {
+        return (StatusCode::NOT_FOUND, "no staked route in this session").into_response();
+    };
+    let calls: Vec<&Value> = match &request {
+        Value::Array(calls) => calls.iter().collect(),
+        call => vec![call],
+    };
+    if let Some(refused) = calls
+        .iter()
+        .find_map(|call| refusal(&state, call).or_else(|| late(&state, call)))
+    {
+        return reply(refused);
+    }
+    pooled(&state, &engine, request, false, RouteKind::Staked).await
+}
+
+/// The mock block engine, Jito's JSON-RPC under `/api/v1/`: `sendBundle`,
+/// `sendTransaction` (a bundle of one with `?bundleOnly=true`),
+/// `getBundleStatuses`, `getInflightBundleStatuses`, `getTipAccounts`, and
+/// `simulateBundle`, which the surfnet's sandbox answers. Sessions without
+/// a transaction layer have none.
+async fn handle_jito(
+    State(state): State<Arc<GuardState>>,
+    uri: Uri,
+    body: Bytes,
+) -> impl IntoResponse {
+    let call: Value = match serde_json::from_slice(&body) {
+        Ok(call) => call,
+        Err(_) => return reply(error_response(Value::Null, PARSE_ERROR, "parse error")),
+    };
+    let Some(engine) = state.tx() else {
+        return (StatusCode::NOT_FOUND, "no block engine in this session").into_response();
+    };
+    let id = call["id"].clone();
+    let method = call["method"].as_str().unwrap_or("<missing>").to_string();
+    *state.log().methods.entry(method.clone()).or_default() += 1;
+    let is_send = matches!(method.as_str(), "sendBundle" | "sendTransaction");
+    if is_send && !state.turn_open.load(Ordering::SeqCst) {
+        state.late_sends.fetch_add(1, Ordering::SeqCst);
+        state.log().late.push(CallRecord {
+            step: state.step(),
+            method,
+        });
+        return reply(error_response(
+            id,
+            TURN_CLOSED,
+            "sent outside the bot's turn: the world is moving",
+        ));
+    }
+    let step = state.step().unwrap_or(0);
+    let answer = match method.as_str() {
+        "sendBundle" => {
+            let wires = match wires_of(&call["params"][0], &call["params"][1]) {
+                Ok(wires) => wires,
+                Err(e) => return reply(error_response(id, INVALID_REQUEST, &e)),
+            };
+            pool_send(
+                &state,
+                &engine,
+                wires,
+                true,
+                RouteKind::Jito,
+                None,
+                false,
+                step,
+            )
+            .await
+        }
+        "sendTransaction" => {
+            let wires = match wires_of(&json!([call["params"][0].clone()]), &call["params"][1]) {
+                Ok(wires) => wires,
+                Err(e) => return reply(error_response(id, INVALID_REQUEST, &e)),
+            };
+            let bundle_only = uri
+                .query()
+                .is_some_and(|q| q.split('&').any(|kv| kv == "bundleOnly=true"));
+            pool_send(
+                &state,
+                &engine,
+                wires,
+                bundle_only,
+                RouteKind::Jito,
+                None,
+                false,
+                step,
+            )
+            .await
+        }
+        "getTipAccounts" => Ok(json!(jito::TIP_ACCOUNTS)),
+        "getBundleStatuses" => Ok(engine.bundle_statuses(&strings(&call["params"][0]))),
+        "getInflightBundleStatuses" => Ok(engine.inflight_statuses(&strings(&call["params"][0]))),
+        "simulateBundle" => {
+            let reply = forward_call(&state, call.clone(), false).await;
+            return reply_value(reply);
+        }
+        _ => {
+            state.log().refused.push(CallRecord {
+                step: state.step(),
+                method: method.clone(),
+            });
+            state
+                .refused
+                .lock()
+                .expect("guard lock")
+                .push(method.clone());
+            return reply(error_response(
+                id,
+                METHOD_NOT_FOUND,
+                &format!("Method not found: {method}"),
+            ));
+        }
+    };
+    reply(match answer {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err(refused) => error_response(id, refused.code, &refused.message),
+    })
+}
+
+/// `GET /api/v1/bundles/tip_floor`.
+async fn handle_tip_floor(State(state): State<Arc<GuardState>>) -> impl IntoResponse {
+    match state.tx() {
+        Some(engine) => (StatusCode::OK, axum::Json(engine.tip_floor())).into_response(),
+        None => (StatusCode::NOT_FOUND, "no block engine in this session").into_response(),
+    }
+}
+
+fn reply_value(value: Value) -> axum::response::Response {
+    reply(value)
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect()
+}
+
+/// The transactions in a send's params, decoded: base58 unless the config
+/// says base64.
+fn wires_of(transactions: &Value, config: &Value) -> std::result::Result<Vec<Vec<u8>>, String> {
+    use base64::Engine;
+    let base64 = config["encoding"].as_str() == Some("base64");
+    let list = transactions.as_array().ok_or("a list of transactions")?;
+    list.iter()
+        .map(|t| {
+            let t = t.as_str().ok_or("a transaction is a string")?;
+            if base64 {
+                base64::engine::general_purpose::STANDARD
+                    .decode(t)
+                    .map_err(|e| format!("base64: {e}"))
+            } else {
+                bs58::decode(t)
+                    .into_vec()
+                    .map_err(|e| format!("base58: {e}"))
+            }
+        })
+        .collect()
+}
+
+/// Put a send in the transaction layer's pool, under the scenario's faults:
+/// an expired blockhash is refused, a dropped delivery is pooled lost, a
+/// latency delays its arrival. Logged as the bot's.
+#[allow(clippy::too_many_arguments)]
+async fn pool_send(
+    state: &GuardState,
+    engine: &TxEngine,
+    wires: Vec<Vec<u8>>,
+    bundle: bool,
+    route: RouteKind,
+    retry_until_slot: Option<u64>,
+    resign: bool,
+    step: u64,
+) -> std::result::Result<Value, Refusal> {
+    let signatures: Vec<Option<String>> = wires
+        .iter()
+        .map(|w| {
+            wincode::deserialize::<solana_transaction::versioned::VersionedTransaction>(w)
+                .ok()
+                .and_then(|tx| tx.signatures.first().map(ToString::to_string))
+        })
+        .collect();
+    let fault = match (&mut *state.faults(), &signatures[..]) {
+        (Some(faults), [Some(first), ..]) => faults.on_pooled_send(first, step),
+        _ => PooledSend::Delayed(0),
+    };
+    let result = match fault {
+        PooledSend::Expired => Err(Refusal {
+            code: BLOCKHASH_NOT_FOUND,
+            message: "Transaction simulation failed: Blockhash not found".into(),
+        }),
+        PooledSend::Dropped | PooledSend::Delayed(_) => {
+            engine
+                .submit(Submission {
+                    wires,
+                    route,
+                    bundle,
+                    retry_until_slot,
+                    resign,
+                    delay_slots: match fault {
+                        PooledSend::Delayed(slots) => slots,
+                        _ => 0,
+                    },
+                    dropped: fault == PooledSend::Dropped,
+                })
+                .await
+        }
+    };
+    if state.allowlist {
+        let mut log = state.log();
+        for signature in &signatures {
+            push_send(
+                &mut log,
+                SendRecord {
+                    step: Some(step),
+                    signature: signature.clone(),
+                    error: result.as_ref().err().map(|r| r.message.clone()),
+                },
+            );
+        }
+    }
+    result.map(|accepted| match accepted {
+        Accepted::Signature(s) | Accepted::Bundle(s) => json!(s),
+    })
+}
+
+/// Serve a request under the transaction layer: sends go to its pool, the
+/// fee and leader reads come from it, the rest as without it. The grader's
+/// sends for a component (`host`) may carry their options as `mtx` in the
+/// send's config: a route, a bundle, retries.
+async fn pooled(
+    state: &GuardState,
+    engine: &TxEngine,
+    request: Value,
+    host: bool,
+    route: RouteKind,
+) -> axum::response::Response {
+    let step = state.step().unwrap_or(0);
+    let batch = request.is_array();
+    let calls: Vec<Value> = match request {
+        Value::Array(calls) => calls,
+        call => vec![call],
+    };
+    // The faults' reads count as without the layer.
+    let unavailable: bool = !host && {
+        let mut faults = state.faults();
+        match faults.as_mut() {
+            Some(faults) => calls
+                .iter()
+                .filter(|call| !is_send(call))
+                .map(|call| faults.on_read(call["method"].as_str().unwrap_or_default(), step))
+                .fold(false, |a, b| a | b),
+            None => false,
+        }
+    };
+    if unavailable {
+        let body = error_response(Value::Null, TOO_MANY_REQUESTS, "Too many requests");
+        return (StatusCode::TOO_MANY_REQUESTS, axum::Json(body)).into_response();
+    }
+    let mut replies = Vec::with_capacity(calls.len());
+    for call in calls {
+        let id = call["id"].clone();
+        let method = call["method"].as_str().unwrap_or_default().to_string();
+        let answer = match method.as_str() {
+            "sendTransaction" | "sendBundle" if method == "sendTransaction" || host => {
+                let options = &call["params"][1]["mtx"];
+                let route = match (host, options["route"].as_str()) {
+                    (true, Some("jito")) => RouteKind::Jito,
+                    (true, Some("staked")) => RouteKind::Staked,
+                    (true, _) => RouteKind::Rpc,
+                    (false, _) => route,
+                };
+                let transactions = if method == "sendBundle" {
+                    call["params"][0].clone()
+                } else {
+                    json!([call["params"][0].clone()])
+                };
+                match wires_of(&transactions, &call["params"][1]) {
+                    Ok(wires) => Some(
+                        pool_send(
+                            state,
+                            engine,
+                            wires,
+                            method == "sendBundle",
+                            route,
+                            if host {
+                                options["retryUntilSlot"].as_u64()
+                            } else {
+                                None
+                            },
+                            host && options["resign"].as_bool() == Some(true),
+                            step,
+                        )
+                        .await,
+                    ),
+                    Err(e) => Some(Err(Refusal {
+                        code: INVALID_REQUEST,
+                        message: e,
+                    })),
+                }
+            }
+            "getRecentPrioritizationFees" => {
+                let filter: Vec<solana_pubkey::Pubkey> = strings(&call["params"][0])
+                    .iter()
+                    .filter_map(|k| k.parse().ok())
+                    .collect();
+                Some(Ok(engine.recent_fees(&filter)))
+            }
+            method => engine.leader_answer(method, &call["params"]).map(Ok),
+        };
+        replies.push(match answer {
+            Some(Ok(result)) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            Some(Err(refused)) => error_response(id, refused.code, &refused.message),
+            None if state.faults().is_some() => read_under_faults(state, call, step).await,
+            None => forward_call(state, call, true).await,
+        });
+    }
+    reply(if batch {
+        Value::Array(replies)
+    } else {
+        replies.remove(0)
+    })
 }
 
 /// HTTP 429 and the JSON-RPC code clusters answer a rate-limited caller with.
@@ -933,6 +1307,7 @@ mod tests {
             hook: Mutex::default(),
             calls: tokio::sync::RwLock::new(()),
             faults: Mutex::default(),
+            tx: Mutex::default(),
         }
     }
 

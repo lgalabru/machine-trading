@@ -1060,6 +1060,7 @@ mod tests {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            tx_layer: None,
             crank_refusals: Vec::new(),
             oracle_starts: Default::default(),
             turns: Default::default(),
@@ -1169,6 +1170,7 @@ mod tests {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
         }
     }
 

@@ -29,6 +29,7 @@ pub mod simulated;
 pub mod snapshot;
 pub mod spot;
 pub mod stake;
+pub mod txlayer;
 pub mod venue;
 pub mod wasm;
 pub mod weekend;

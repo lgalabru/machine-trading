@@ -45,6 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
+use solana_signer::Signer;
 use surfpool_sdk::{SimnetCommand, Surfnet};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -214,6 +215,10 @@ pub struct SessionReport {
     pub perp_fills: Vec<crate::perp::PerpFillRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perp_open_orders: Vec<(InstrumentRef, mtx_core::Side)>,
+    /// The transaction layer: each slot's block in order, what became of
+    /// each of the bot's sends, and what it paid.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::report::TxLayerReport>,
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
@@ -341,8 +346,8 @@ pub struct TurnReport {
     /// didn't load, or it trapped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped: Option<String>,
-    /// A component's lines that carried transaction options, which the
-    /// session accepted and didn't apply (no session does yet).
+    /// A component's lines that carried transaction options: applied under
+    /// a transaction layer, accepted and not applied elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_options: Option<u64>,
 }
@@ -383,8 +388,7 @@ impl SessionReport {
 /// the grader may run it again from scratch.
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut bot_started = false;
-    let session = run_session(opts, &mut bot_started).await;
-    match session {
+    match run_session(opts, &mut bot_started).await {
         // Already wrapped: a crank's grader failure, after the bot started.
         Err(error @ Error::Setup(_)) => Err(error),
         Err(error) if !bot_started => Err(Error::Setup(Box::new(error))),
@@ -486,13 +490,15 @@ pub(crate) trait Account: Send + Sync {
     fn wallet(&self) -> Option<&crate::spot::Wallet>;
 
     /// The markets a component trades through the grader, its seats signed
-    /// with `bot` through `host_url` (the bot's guard, on its behalf).
+    /// with `bot` through `host_url` (the bot's guard, on its behalf), and
+    /// under the session's transaction layer `tx`, if it has one.
     async fn desk(
         &self,
         host_url: &str,
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<crate::wasm::Desk>;
 
     /// One instruction of a bot's transaction, as the report shows it.
@@ -581,6 +587,30 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     let start_slot = base_slot;
     guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
+    // The transaction layer, if the scenario has one: the bot's sends go to
+    // its pool, and each slot lands what its builder picks.
+    let tx = match &scenario.tx_layer {
+        Some(layer) => {
+            let congestion = scenario
+                .faults
+                .as_ref()
+                .and_then(|faults| crate::faults::FaultPlan::new(faults).congestion());
+            let engine = crate::txlayer::TxEngine::start(
+                layer,
+                internal.url(),
+                base_slot,
+                end_slot,
+                SLOTS_PER_STEP,
+                congestion,
+                bot_key.insecure_clone(),
+            )
+            .await?;
+            guard.set_tx_layer(engine.clone());
+            let wallet = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+            Some((engine, layer.clone(), wallet))
+        }
+        None => None,
+    };
     let hooks = cast.send_hooks();
     if !hooks.is_empty() {
         guard.set_send_hook(std::sync::Arc::new(crate::actors::Hooks(hooks)));
@@ -620,7 +650,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             None => None,
         };
         let desk = account
-            .desk(&guard.host_url(), &bot_key, &env, &mandate)
+            .desk(
+                &guard.host_url(),
+                &bot_key,
+                &env,
+                &mandate,
+                tx.as_ref().map(|(engine, ..)| engine.clone()),
+            )
             .await?;
         wasm_bot = Some(
             crate::wasm::WasmBot::start(
@@ -730,8 +766,19 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
+            // Under the transaction layer, the slot's block: what its
+            // builder picks, committed in order before the slot closes.
+            if let Some((engine, ..)) = &tx {
+                let picks = engine.plan(slot + 1);
+                for signature in engine.commit(slot + 1, picks).await {
+                    guard.landed(&signature, k);
+                }
+            }
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
+            if let Some((engine, ..)) = &tx {
+                engine.produced(slot).await?;
+            }
         }
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
@@ -749,7 +796,16 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             )
             .await?;
         cast.after_blocks(account.moment(at)).await;
-        steps_seen.push(account.step(k, slot, at).await?);
+        let mut record = account.step(k, slot, at).await?;
+        if let Some((engine, layer, start)) = &tx
+            && let Some(sol_usd) = layer.sol_usd.filter(|_| layer.fees_in_pnl)
+        {
+            let paid = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?
+                .value_change_usd(start, engine.route_fees(), sol_usd);
+            record.value_usd += paid;
+            record.pnl_usd += paid;
+        }
+        steps_seen.push(record);
         if bot_exit.is_none()
             && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
@@ -767,6 +823,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
 
         // The bot's turn.
         guard.set_step(k);
+        if let Some((engine, ..)) = &tx {
+            engine.set_step(k);
+        }
         guard.set_turn(true);
         let mut step = Step::new(k, slot, k + 1 == steps);
         if let Some(bot) = wasm_bot.as_mut() {
@@ -855,7 +914,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         account.decode(ix, keys)
     });
     let actors = cast.report().await;
-    let report = account
+    let mut report = account
         .finish(Done {
             began,
             start_slot,
@@ -873,6 +932,16 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             crank_refusals: cranks.into_refusals(),
         })
         .await?;
+    if let Some((engine, layer, start)) = &tx {
+        let end = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+        report.tx_layer = Some(engine.report(Some(end.change_since(start))));
+        if let Some(sol_usd) = layer.sol_usd.filter(|_| layer.fees_in_pnl) {
+            fees_in_pnl(
+                &mut report,
+                end.value_change_usd(start, engine.route_fees(), sol_usd),
+            );
+        }
+    }
     info!(
         scenario = report.scenario,
         pnl_usd = report.pnl_usd,
@@ -884,6 +953,27 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         observer.keep(Box::new(world));
     }
     Ok(report)
+}
+
+/// Count what the bot's wallet paid in SOL, `paid_usd` at the end, in the
+/// session's value: its end value and PnL, and its drawdown over the steps,
+/// whose values already count it.
+fn fees_in_pnl(report: &mut SessionReport, paid_usd: f64) {
+    report.end_value_usd += paid_usd;
+    report.pnl_usd += paid_usd;
+    let mut peak = report.start_value_usd;
+    let mut drawdown: f64 = 0.0;
+    for value in report
+        .timeline
+        .steps
+        .iter()
+        .map(|s| s.value_usd)
+        .chain(std::iter::once(report.end_value_usd))
+    {
+        peak = peak.max(value);
+        drawdown = drawdown.max(peak - value);
+    }
+    report.max_drawdown_usd = report.max_drawdown_usd.max(drawdown);
 }
 
 /// One instruction of a bot's transaction.

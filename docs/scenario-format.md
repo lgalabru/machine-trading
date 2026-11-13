@@ -30,7 +30,7 @@ docs together.
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`), and a pools' `arbitrage` |
 | `faults` | Execution faults on the bot's sends and reads |
-| `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
+| `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
 | `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |

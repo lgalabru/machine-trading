@@ -149,6 +149,12 @@ pub struct Scenario {
     /// [`crate::raw`]). Absent, the session refuses every one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_sends: Option<RawSends>,
+    /// Opt-in: the transaction layer (see [`crate::txlayer`]). The bot's
+    /// sends go into a pool and land as a seeded block builder orders them,
+    /// against background demand for block space, with fees and Jito tips
+    /// paid from the bot's wallet. Absent, sends land on receipt, as ever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::TxLayer>,
 }
 
 /// What a scenario's raw sends may do.
@@ -930,6 +936,7 @@ impl ShockFamily {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
         };
         let shape = Shape {
             direction,
@@ -1564,6 +1571,7 @@ mod tests {
                     raw_sends: None,
                     start_positions: Default::default(),
                     close_out: Default::default(),
+                    tx_layer: None,
                     ..marked.clone()
                 },
                 plain
@@ -1649,6 +1657,7 @@ mod tests {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1723,6 +1732,7 @@ mod tests {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
         }
     }
 

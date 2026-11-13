@@ -440,6 +440,7 @@ impl WeekendFamily {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
         };
         (scenario, shape)
     }
