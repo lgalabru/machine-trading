@@ -237,16 +237,14 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         }
         // A published trial is <release>/<job>/<trial>.
         let release: Option<PathBuf> = trial.parent().and_then(Path::parent).map(Path::to_path_buf);
-        let rescored = match scoring
-            .params(Some(&task_of(trial)))
-            .and_then(|v2| {
-                rescore(
-                    &report,
-                    &trial.join("verifier/sessions"),
-                    release.as_deref(),
-                    v2.as_ref(),
-                )
-            }) {
+        let rescored = match scoring.params(Some(&task_of(trial))).and_then(|v2| {
+            rescore(
+                &report,
+                &trial.join("verifier/sessions"),
+                release.as_deref(),
+                v2.as_ref(),
+            )
+        }) {
             Ok(rescored) => rescored,
             Err(error) => {
                 failed += 1;

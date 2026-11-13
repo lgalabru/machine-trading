@@ -326,10 +326,7 @@ fn interval(terms: &[SessionV2], params: &Params, seed: u64) -> (f64, f64) {
         return (f64::NAN, f64::NAN);
     }
     raws.sort_by(f64::total_cmp);
-    (
-        percentile(&raws, CI_TAIL),
-        percentile(&raws, 1.0 - CI_TAIL),
-    )
+    (percentile(&raws, CI_TAIL), percentile(&raws, 1.0 - CI_TAIL))
 }
 
 /// The `q` quantile of sorted values, interpolated between neighbours.
@@ -490,7 +487,9 @@ mod tests {
                         .collect();
                     let mut v2 = Params::new(Ceiling::BoundShare(0.3));
                     v2.resamples = 0;
-                    score(&set(&pnl, &reference), &v2, None, None).unwrap().score
+                    score(&set(&pnl, &reference), &v2, None, None)
+                        .unwrap()
+                        .score
                 })
                 .sum::<f64>()
                 / runs as f64;

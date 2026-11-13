@@ -227,12 +227,7 @@ impl GradeReport {
             })
             .collect::<std::result::Result<Vec<_>, String>>()
             .and_then(|sessions| {
-                scoring_v2::score(
-                    &sessions,
-                    params,
-                    fatal,
-                    self.eval_seed_sha256.as_deref(),
-                )
+                scoring_v2::score(&sessions, params, fatal, self.eval_seed_sha256.as_deref())
             })
             .map_err(Error::ScoringV2)?;
         self.v2 = Some(v2);
@@ -307,10 +302,7 @@ impl GradeReport {
                 ),
                 ("nop_pnl_usd".to_string(), v2.nop_usd),
                 ("ceiling_pnl_usd".to_string(), v2.ceiling_usd),
-                (
-                    "breached_sessions".to_string(),
-                    v2.breached_sessions as f64,
-                ),
+                ("breached_sessions".to_string(), v2.breached_sessions as f64),
             ]);
         }
         for result in &self.scenarios {
@@ -1479,7 +1471,13 @@ mod tests {
         report.score_v2(&v2()).unwrap();
         let v2_cheat = report.v2.as_ref().unwrap();
         assert_eq!(v2_cheat.score, 0.0);
-        assert!(v2_cheat.fatal.as_deref().unwrap().contains("surfnet_setTokenAccount"));
+        assert!(
+            v2_cheat
+                .fatal
+                .as_deref()
+                .unwrap()
+                .contains("surfnet_setTokenAccount")
+        );
         assert_eq!(v2_cheat.breached_sessions, 0, "not a risk breach");
         assert_eq!(report.rewards()["score_v2_fatal"], 1.0);
 
