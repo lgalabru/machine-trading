@@ -1,0 +1,50 @@
+{
+  "schema": 2,
+  "name": "smoke-net",
+  "description": "Net-scored: a sell-only bot holding 10 SOL; PnL leaves out the starting holding's drift, with a 50 bps inventory charge",
+  "duration_slots": 40,
+  "assets": {
+    "symbol": "SOL-USDC",
+    "wallet": {
+      "base": 10.0,
+      "quote": 1000.0
+    }
+  },
+  "venues": {
+    "spot": {
+      "markets": [
+        "phoenix",
+        "openbook"
+      ]
+    }
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "scoring": {
+    "net": {
+      "inventory_bps": 50.0,
+      "venue_position": {
+        "limit": 0.0,
+        "price_bps": 100.0
+      }
+    }
+  }
+}
