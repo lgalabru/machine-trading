@@ -27,6 +27,7 @@
 //! the slot time, whatever the bot does.
 
 use std::{
+    collections::BTreeMap,
     os::{fd::AsRawFd, unix::net::UnixStream as StdUnixStream},
     path::{Path, PathBuf},
     process::Stdio,
@@ -202,6 +203,9 @@ pub struct SessionReport {
     /// scenario prices a breach (see [`crate::risk`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forced_closes: Vec<crate::risk::ForcedClose>,
+    /// Each anchored oracle feed's start, against its account's own price.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
