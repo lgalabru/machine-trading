@@ -120,6 +120,7 @@ A spec states every departure from the calibration (TOML, all optional):
 ```toml
 vol_mult = 1.0                 # stress beyond the calibration, stated
 regime = "stressed"            # hold one regime; default: drawn, switching
+regime_clock = 1.0             # switch this many times faster than the hourly rates
 waypoint_slots = 4
 jumps = false                  # background jumps on top of the fitted tails
 gaps = true
@@ -127,6 +128,38 @@ gaps = true
 mode = "before"                # draw | session | before | at
 kind = "regular"
 lead_seconds = 60
+```
+
+
+**Regimes at session timescale.** Calibrations switch regimes at hourly
+rates, so a task minutes long almost never sees a switch. Two stated
+departures change that, and the record keeps both (`regime_clock`, and the
+whole chain as `regime_set`); a record without them serialises as before:
+
+- `regime_clock` multiplies every state's leave rate. It changes how often
+  the state changes, not what each state is: GARCH, the tails, the level
+  draw and the calendar are untouched. Switches are drawn at block ends, as
+  always. A clock at which some state would leave within one block more
+  than half the time is refused, with the largest allowed value.
+- `[regimes]` replaces the calibration's regime chain with a stated one,
+  in the calibration's own form (`model = "markov"`, `names`, `vol_mult`,
+  `log_sd_within`, `share`, `transition_per_hour`, and a `source` saying
+  where the numbers come from), checked by the same rules. The median
+  session is normalised over the stated chain, so it still runs at
+  `per_second_sd`. This is how a family switches states on a calibration
+  fitted with one (SPCX's): ground the states in the fitted level spread
+  and say so in `source`.
+
+```toml
+regime_clock = 51.0
+[regimes]
+model = "markov"
+names = ["calm", "stressed"]
+vol_mult = [0.85, 1.7]
+log_sd_within = [0.4, 0.4]
+share = [0.7, 0.3]
+transition_per_hour = [[0.9, 0.1], [0.25, 0.75]]
+source = "SPCX's fitted level spread (log-sd 0.54) split into two states"
 ```
 
 ```sh
