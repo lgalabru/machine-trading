@@ -135,7 +135,8 @@ actors-smoke:
     "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/{{snapshot}}" --bot bots/actors-smoke \
       --logs target/logs/actors-library --report "$report" --details "$details" bench/checks/actors/everyone.json > /dev/null
     jq -e '.scenarios[0].actors | .actions.failed == 0
-      and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)' "$report" > /dev/null \
+      and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)
+      and all(.actors[]; .on_chain >= .actions.took + .actions.placed + .actions.cancelled)' "$report" > /dev/null \
       || { echo "actors-library: an actor didn't act, or failed: $(jq -c '.scenarios[0].actors.actions' "$report")"; exit 1; }
     python3 bench/checks/actors/read.py "$report" "$details/bot/actors-everyone.json.gz"
 

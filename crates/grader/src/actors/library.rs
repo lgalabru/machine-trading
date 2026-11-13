@@ -42,7 +42,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
+use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
+use solana_rpc_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 
 pub use self::{
     arbitrageur::Arbitrageur,
@@ -667,7 +669,13 @@ impl Actor for Reporter {
                     let Ok(pubkey) = wallet.parse::<Pubkey>() else {
                         continue;
                     };
-                    match rpc.get_signatures_for_address(&pubkey) {
+                    // At `processed`: the session's last slots aren't
+                    // confirmed when it ends.
+                    let config = GetConfirmedSignaturesForAddress2Config {
+                        commitment: Some(CommitmentConfig::processed()),
+                        ..Default::default()
+                    };
+                    match rpc.get_signatures_for_address_with_config(&pubkey, config) {
                         Ok(signatures) => listed += signatures.len(),
                         Err(error) => {
                             tracing::warn!(%wallet, %error, "listing an actor's transactions")
