@@ -1,0 +1,91 @@
+"""Read a Hermes harness check (probe.sh): the stand-in provider's request
+log and the two trials Harbor kept. Exits non-zero on any failure.
+
+    python3 -I read.py <jobs dir>
+"""
+
+import json
+import sys
+from pathlib import Path
+
+ALLOWED = {
+    "terminal",
+    "process_manage",
+    "read_file",
+    "write_file",
+    "patch",
+    "search_files",
+    "todo_list",
+    "delegate_task",
+    "execute_code",
+}
+
+
+def main():
+    jobs = Path(sys.argv[1])
+    logged = [json.loads(line) for line in (jobs / "requests.jsonl").read_text().splitlines()]
+    requests = [r for r in logged if "unsupported_path" not in r]
+    fails = sorted({f"a request to {r['unsupported_path']}" for r in logged if "unsupported_path" in r})
+    agent_turns = [r for r in requests if r["tools"]]
+    if not agent_turns:
+        sys.exit("hermes probe: FAIL, the provider got no request with tools")
+    offered = set().union(*(r["tools"] for r in agent_turns))
+    if offered != ALLOWED:
+        fails.append(f"tools offered {sorted(offered)}, not the bench's {sorted(ALLOWED)}")
+    if not all(r["key_ok"] for r in requests):
+        fails.append("a request came without the provider's key")
+    efforts = {json.dumps(r["reasoning_effort"] or r["reasoning"]) for r in agent_turns}
+    if not any("high" in e for e in efforts):
+        fails.append(f"no request asked for high effort: {sorted(efforts)}")
+    if any(r["system_mentions_leak_probe"] for r in requests):
+        fails.append("a system prompt mentions what a trial planted")
+    inventories = [r["last_tool_result"] for r in agent_turns if r["tool_results"] == 1]
+    plants = [r["last_tool_result"] for r in agent_turns if r["tool_results"] == 2]
+    if len(inventories) < 2 or not plants or "PLANTED" not in plants[0]:
+        fails.append(f"the script didn't run through twice ({len(inventories)} inventories, {len(plants)} plants)")
+    else:
+        for i, seen in enumerate(inventories):
+            if "INVENTORY-END" not in seen:
+                fails.append(f"trial {i + 1}'s inventory didn't finish: {seen[:200]!r}")
+            if "held:" in seen:
+                fails.append(f"trial {i + 1} started with: {seen}")
+
+    trials = sorted(p.parent for p in jobs.glob("*/*/result.json"))
+    if len(trials) != 2:
+        fails.append(f"{len(trials)} trials, not 2")
+    for trial in trials:
+        agent = trial / "agent"
+        result = json.loads((trial / "result.json").read_text())
+        if result.get("exception_info"):
+            fails.append(f"{trial.name}: {result['exception_info'].get('exception_message', '')[:300]}")
+        start = agent / "hermes-home-start.txt"
+        end = agent / "hermes-home-end.txt"
+        if not start.exists() or start.read_text().strip():
+            fails.append(f"{trial.name}: Hermes's home at the start: {start.read_text() if start.exists() else 'not recorded'}")
+        if not end.exists() or "leak-probe" not in end.read_text() or "MEMORY.md" not in end.read_text():
+            fails.append(f"{trial.name}: the end inventory doesn't show what the trial planted")
+        trajectory = agent / "trajectory.json"
+        if not trajectory.exists():
+            fails.append(f"{trial.name}: no trajectory.json")
+        else:
+            steps = json.loads(trajectory.read_text())["steps"]
+            calls = [c["function_name"] for s in steps for c in s.get("tool_calls") or []]
+            if calls != ["terminal", "terminal", "write_file", "read_file"]:
+                fails.append(f"{trial.name}: trajectory tool calls {calls}")
+        usage = result.get("agent_result") or {}
+        if not usage.get("n_input_tokens"):
+            fails.append(f"{trial.name}: no token counts")
+
+    if fails:
+        print("hermes probe: FAIL")
+        for f in fails:
+            print(f"  {f}")
+        sys.exit(1)
+    print(
+        f"hermes probe: pass, 2 trials, {len(requests)} provider requests, tools {sorted(offered)}, "
+        f"effort {sorted(efforts)}, nothing carried from trial 1 to trial 2, no key in the trial files"
+    )
+
+
+if __name__ == "__main__":
+    main()

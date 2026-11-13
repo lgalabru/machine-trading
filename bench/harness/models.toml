@@ -1,0 +1,45 @@
+# The models `just bench` runs in Hermes by a short name, one table each:
+#   model       Harbor's `provider/model`: `openai/`, `anthropic/` and
+#               `openrouter/` are Hermes's own clients; any other provider
+#               needs `base_url` and `api_format`
+#   key         the environment variable on the bench machine holding the
+#               provider's key (from .env or ~/.machine-trading.env)
+#   base_url    an OpenAI-compatible endpoint, for providers Hermes has no
+#               client for
+#   api_format  how to talk to `base_url`: openai_chat_completions
+# A name not listed here runs as before: `openai/<model>`, or Anthropic's
+# for a bare name. Check a name and its key with `just preflight <name>`.
+
+[gpt-6-1-sol]
+model = "openai/gpt-6.1-sol"
+key = "OPENAI_API_KEY"
+
+[claude-opus-5-5]
+model = "anthropic/claude-opus-5-5"
+key = "ANTHROPIC_API_KEY"
+
+[gemini-3-1-pro]
+model = "google/gemini-3.1-pro-preview"
+key = "GEMINI_API_KEY"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_format = "openai_chat_completions"
+
+[muse-spark-1-3]
+model = "openrouter/meta/muse-spark-1.3"
+key = "OPENROUTER_API_KEY"
+
+[kimi-k3]
+model = "openrouter/moonshotai/kimi-k3"
+key = "OPENROUTER_API_KEY"
+
+[glm-5-3]
+model = "openrouter/z-ai/glm-5.3"
+key = "OPENROUTER_API_KEY"
+
+[nemotron-3-ultra]
+model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b"
+key = "OPENROUTER_API_KEY"
+
+[inkling]
+model = "openrouter/thinkingmachines/inkling"
+key = "OPENROUTER_API_KEY"
