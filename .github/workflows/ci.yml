@@ -137,7 +137,7 @@ jobs:
         # sends land as its fee spike lets them.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-amm-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-amm-smoke mtx-bot-kamino-probe mtx-bot-searcher-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm --lib --target wasm32-wasip2 -- -D warnings

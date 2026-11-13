@@ -276,6 +276,18 @@ tx-probe:
     just --justfile bots/tx-probe/Justfile build
     cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/tx-probe --logs target/logs/tx-probe bots/tx-probe/scenario.json
 
+# The transaction layer's searchers in whole sessions (bench/checks/searchers):
+# a sandwich costs a public sale and a private or tight one escapes, JIT
+# liquidity takes a public swap's fee, a backrun costs the second of two
+# sales, fee bidders land first, a pool-reading front-runner lands ahead,
+# and liquidators race; every ledger explains its wallet. One TABLE line
+# per check.
+searchers:
+    just --justfile bots/searcher-probe/Justfile build
+    just --justfile bots/kamino-probe/Justfile build
+    MTX_TEST_SEARCHER_PROBE_WASM=$PWD/bots/searcher-probe/bot.wasm MTX_TEST_KAMINO_PROBE_WASM=$PWD/bots/kamino-probe/bot.wasm \
+      cargo test --release -p mtx-grader --lib actors::searchers::live -- --ignored --nocapture --test-threads 2
+
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
