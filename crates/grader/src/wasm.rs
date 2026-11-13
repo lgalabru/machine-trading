@@ -35,6 +35,8 @@ use wasmtime_wasi::{
 
 use crate::Error;
 
+pub mod spot;
+
 /// `mtx:strategy@0.2.0`, the kit's.
 pub mod v2 {
     wasmtime::component::bindgen!({

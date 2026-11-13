@@ -8,7 +8,7 @@
 //! holds [`SpotBalances`](crate::core::SpotBalances), and trades through an
 //! [`ExecutionDriver`](crate::core::ExecutionDriver).
 
-#[cfg(feature = "openbook-v2")]
+#[cfg(feature = "openbook-v2-venue")]
 pub mod v2;
 
 /// The venue every OpenBook instrument trades on.

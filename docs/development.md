@@ -185,6 +185,8 @@ scenarios (`just calibrate bench/tasks/<task>/reference FILES`). Hidden sets nee
 no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
+The scenario file format, v1 and v2, is in [scenario-format.md](scenario-format.md).
+
 ## Add a task
 
 It's guided. In Claude Code, in this repository, ask for a new task: the

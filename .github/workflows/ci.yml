@@ -93,21 +93,26 @@ jobs:
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
       - name: Strategy components
-        # The starter and the references build for wasm32-wasip2 too, the
-        # flash-crash reference's component loads in the grader's host, the
-        # probe's sheet and market round-trip through the interface, and the
-        # raw-send probe is answered in a session as its scenario allows.
+        # The starter, the references and the spot smoke build for
+        # wasm32-wasip2 too, as do the kit's spot venue decoders, the
+        # flash-crash reference's and the spot smoke's components load in
+        # the grader's host, the probe's sheet and market round-trip
+        # through the interface, and the raw-send probe is answered in a
+        # session as its scenario allows.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-wit-probe mtx-bot-raw-probe $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-wit-probe mtx-bot-raw-probe $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
+          cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
           just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
+          just --justfile bots/spot-smoke/Justfile build
           just --justfile bots/wit-probe/Justfile build
           just --justfile bots/raw-probe/Justfile build
           MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-grader wasm::tests -- --ignored
+          MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
           MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
             cargo test -p mtx-grader raw::tests -- --ignored
 

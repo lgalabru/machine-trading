@@ -228,7 +228,7 @@ pub struct Funding {
 
 /// Lowest level a waypoint may target. Past this, Phoenix's risk checks and
 /// the market's resting liquidity stop behaving like a real market.
-const MIN_LEVEL_PCT: f64 = -40.0;
+pub(crate) const MIN_LEVEL_PCT: f64 = -40.0;
 
 /// Market time per slot in a session: the surfnet's clock, which Phoenix's
 /// funding reads.
@@ -240,7 +240,13 @@ pub const VENUE: &str = "phoenix";
 impl Scenario {
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
-        let scenario: Self = serde_json::from_str(&contents)?;
+        let scenario = crate::scenario_v2::parse(&contents).map_err(|e| match e {
+            crate::scenario_v2::ParseError::Json(e) => Error::Json(e),
+            other => Error::InvalidScenario {
+                path: path.to_path_buf(),
+                reason: other.to_string(),
+            },
+        })?;
         scenario
             .validate()
             .map_err(|reason| Error::InvalidScenario {
@@ -250,8 +256,23 @@ impl Scenario {
         Ok(scenario)
     }
 
+    /// Write the scenario as a v1 file, which everything that reads a
+    /// scenario file (the task images, CI, the practice files) expects.
+    /// [`Scenario::save_v2`] writes the v2 layout.
     pub fn save(&self, path: &Path) -> Result<()> {
         let contents = serde_json::to_string_pretty(self)? + "\n";
+        std::fs::write(path, contents).map_err(io_error(path))
+    }
+
+    /// Write the scenario as a v2 file (see [`crate::scenario_v2`]).
+    pub fn save_v2(&self, path: &Path) -> Result<()> {
+        let v2 = crate::scenario_v2::ScenarioV2::try_from(self).map_err(|reason| {
+            Error::InvalidScenario {
+                path: path.to_path_buf(),
+                reason,
+            }
+        })?;
+        let contents = serde_json::to_string_pretty(&v2)? + "\n";
         std::fs::write(path, contents).map_err(io_error(path))
     }
 
@@ -286,165 +307,7 @@ impl Scenario {
     /// unenforced. Waypoints must be in order, each move must finish before
     /// the next one starts, and the last must finish before the session ends.
     pub fn validate(&self) -> std::result::Result<(), String> {
-        self.mandate
-            .validate()
-            .map_err(|reason| format!("mandate: {reason}"))?;
-        if let Some(raw) = &self.raw_sends {
-            raw.programs()
-                .map_err(|reason| format!("raw_sends: {reason}"))?;
-            if self.spot.is_some() {
-                return Err("raw_sends: only perp sessions take raw sends yet".into());
-            }
-        }
-        if let Some(spot) = &self.spot {
-            if let Some(faults) = &self.faults {
-                faults
-                    .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
-                    .map_err(|reason| format!("faults: {reason}"))?;
-            }
-            return spot.validate(self);
-        }
-        if self.turn_data.is_some()
-            || self.order.is_some()
-            || self.participation.is_some()
-            || self.net.is_some()
-        {
-            return Err("turn_data, order, participation and net are for spot scenarios".into());
-        }
-        if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
-        {
-            return Err(format!(
-                "mandate: the universe must be exactly {}, the scenario's market",
-                self.instrument()
-            ));
-        }
-        if self.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if self.mandate.limits.max_drawdown_usd.is_none() {
-            return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
-        }
-        let mut book = 0.0;
-        let mut free_from = 0;
-        // The move before the waypoint: from, to, and the slot it started.
-        let mut before: Option<(f64, f64, u64)> = None;
-        for (i, waypoint) in self.path.iter().enumerate() {
-            if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
-                return Err(format!(
-                    "waypoint {i}: level {}% is outside [{MIN_LEVEL_PCT}, 100]",
-                    waypoint.level_pct
-                ));
-            }
-            if waypoint.slot < free_from {
-                let why = before.map_or(String::new(), |(from, to, at)| {
-                    let parts = move_slots(from, to) / SLOTS_BETWEEN_STEPS;
-                    format!(
-                        ": the move before it, from {from}% to {to}% at slot {at}, lands in {parts} of Phoenix's 4% steps of {SLOTS_BETWEEN_STEPS} slots each"
-                    )
-                });
-                return Err(format!(
-                    "waypoint {i} starts at slot {} while the previous move runs until {free_from}{why}; start it at slot {free_from} or later, or make that move smaller",
-                    waypoint.slot
-                ));
-            }
-            if !(-MAX_PREMIUM_PCT..=MAX_PREMIUM_PCT).contains(&waypoint.premium_pct) {
-                return Err(format!(
-                    "waypoint {i}: premium {}% is outside [-{MAX_PREMIUM_PCT}, {MAX_PREMIUM_PCT}]",
-                    waypoint.premium_pct
-                ));
-            }
-            // An off-hours reopen lands at once, in one slot, however many
-            // of Phoenix's steps it takes.
-            free_from = match &self.offhours {
-                Some(off) if waypoint.slot == off.reopen_slot => {
-                    waypoint.slot + SLOTS_BETWEEN_STEPS + 1
-                }
-                _ => waypoint.slot + move_slots(book, waypoint.book_pct()) + 1,
-            };
-            before = Some((book, waypoint.book_pct(), waypoint.slot));
-            book = waypoint.book_pct();
-        }
-        if let Some(funding) = &self.funding
-            && (funding.interval_seconds == 0
-                || funding.period_seconds < funding.interval_seconds
-                || funding.max_rate <= 0)
-        {
-            return Err(format!(
-                "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
-            ));
-        }
-        if let Some(off) = &self.offhours {
-            if self.making.is_some() {
-                return Err("a scenario has either making or offhours, not both".into());
-            }
-            if !self.tape.is_empty() {
-                return Err("an off-hours scenario's takers are its offhours', not a tape".into());
-            }
-            if self.path.iter().any(|w| w.premium_pct != 0.0) {
-                return Err("an off-hours scenario's waypoints carry no premium".into());
-            }
-            off.validate(&self.path, self.duration_slots)
-                .map_err(|reason| format!("offhours: {reason}"))?;
-            if !self.path.iter().any(|w| w.slot == off.reopen_slot) {
-                return Err("offhours: the path has no waypoint at the reopen".into());
-            }
-        }
-        if let Some(fair) = &self.fair_path {
-            let mut previous = 0;
-            for (i, waypoint) in fair.iter().enumerate() {
-                if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
-                    return Err(format!(
-                        "fair value waypoint {i}: level {}% is outside [{MIN_LEVEL_PCT}, 100]",
-                        waypoint.level_pct
-                    ));
-                }
-                if waypoint.slot < previous || waypoint.slot > self.duration_slots {
-                    return Err(format!(
-                        "fair value waypoint {i} at slot {} is out of order or past the session end",
-                        waypoint.slot
-                    ));
-                }
-                previous = waypoint.slot;
-            }
-        }
-        if let Some(making) = &self.making {
-            making
-                .validate(self.duration_slots)
-                .map_err(|reason| format!("making: {reason}"))?;
-            if !self.tape.is_empty() {
-                return Err(
-                    "a market-making scenario's takers are its making's, not a tape".into(),
-                );
-            }
-        }
-        if let Some(faults) = &self.faults {
-            faults
-                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
-                .map_err(|reason| format!("faults: {reason}"))?;
-        }
-        let mut last = 0;
-        for (i, order) in self.tape.iter().enumerate() {
-            if order.slot < last || order.slot >= self.duration_slots {
-                return Err(format!(
-                    "tape order {i} at slot {} is out of order or past the session",
-                    order.slot
-                ));
-            }
-            if !(order.size.is_finite() && order.size > 0.0)
-                || !(order.limit_bps.is_finite() && order.limit_bps > 0.0)
-                || order.account >= crate::making::TAKER_ACCOUNTS
-            {
-                return Err(format!("tape order {i} is malformed: {order:?}"));
-            }
-            last = order.slot;
-        }
-        if free_from > self.duration_slots {
-            return Err(format!(
-                "the last move runs until slot {free_from}, past the session end at {}",
-                self.duration_slots
-            ));
-        }
-        Ok(())
+        crate::scenario_v2::ScenarioV2::try_from(self)?.validate()
     }
 
     /// The scenario's fair value in USD at `slot`, counted from the session
@@ -558,7 +421,7 @@ impl Scenario {
 /// The largest premium a waypoint may give the book, in percent: Phoenix
 /// refuses oracle reports more than 5% from its median, and a move steps the
 /// oracles from the index to the book.
-const MAX_PREMIUM_PCT: f64 = 3.0;
+pub(crate) const MAX_PREMIUM_PCT: f64 = 3.0;
 
 /// Set the market's funding parameters, `slot` slots after the override is
 /// registered. The session plays it in setup, before the bot starts (see

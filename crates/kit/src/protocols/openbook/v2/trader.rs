@@ -169,6 +169,11 @@ impl OpenBookV2Trader {
         self.authority
     }
 
+    /// The chain client plans are sent through.
+    pub fn chain(&self) -> &dyn ChainClient {
+        &*self.chain
+    }
+
     /// The trader's open orders account (it may not exist yet).
     pub fn open_orders_account(&self) -> Pubkey {
         ix::open_orders_account(&self.authority, ACCOUNT_NUMBER)
