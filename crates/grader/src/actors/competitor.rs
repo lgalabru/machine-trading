@@ -257,8 +257,8 @@ impl Competitor {
         let state = self.reactive.as_mut().expect("reactive");
         let delay = (c.react_slots as f64
             * (1.0 + rules.jitter * (2.0 * state.rng.next_f64() - 1.0)))
-        .round()
-        .max(1.0) as u64;
+            .round()
+            .max(1.0) as u64;
         self.next_look = now.at + delay;
 
         let tick = self.seat.tick();
@@ -331,12 +331,18 @@ impl Competitor {
             .min(half(state.bid_off))
             .min(half(state.ask_off));
         if held < MAX_INVENTORY
-            && let Err(error) = self.seat.rest(Side::Bid, from_ticks(bid, tick), c.size).await
+            && let Err(error) = self
+                .seat
+                .rest(Side::Bid, from_ticks(bid, tick), c.size)
+                .await
         {
             warn!("competitor bidding: {error}");
         }
         if held > -MAX_INVENTORY
-            && let Err(error) = self.seat.rest(Side::Ask, from_ticks(ask, tick), c.size).await
+            && let Err(error) = self
+                .seat
+                .rest(Side::Ask, from_ticks(ask, tick), c.size)
+                .await
         {
             warn!("competitor offering: {error}");
         }
@@ -639,7 +645,9 @@ mod tests {
                 );
             }
             assert_eq!(drift, 0, "{symbol}: {drift} of {n} prices drift");
-            eprintln!("{symbol} tick {tick}: {n} prices, whole-tick drift {drift}, float drift {legacy_drift}");
+            eprintln!(
+                "{symbol} tick {tick}: {n} prices, whole-tick drift {drift}, float drift {legacy_drift}"
+            );
         }
     }
 
@@ -665,8 +673,8 @@ mod tests {
                 // The first look quotes the full width from the level's
                 // whole ticks; later looks keep to that or step in.
                 assert!(
-                    bid <= (level_t + TICK_EPS).floor() as i64 - 1
-                        && ask >= (level_t - TICK_EPS).ceil() as i64 + 1,
+                    bid < (level_t + TICK_EPS).floor() as i64
+                        && ask > (level_t - TICK_EPS).ceil() as i64,
                     "{symbol}: {bid}/{ask} around {level_t}"
                 );
                 assert!(
@@ -744,7 +752,11 @@ mod tests {
         let (bid, ask) = rig.quotes();
         assert!(bid <= before.0 && ask >= before.1, "it never moved in");
         // The same quotes at the reaction size are a rival.
-        rig.book.lock().unwrap().rival_asks.push((level_t + 20, 0.01));
+        rig.book
+            .lock()
+            .unwrap()
+            .rival_asks
+            .push((level_t + 20, 0.01));
         rig.at(44, level).await;
         assert_eq!(rig.quotes().1, level_t + 19);
     }
@@ -778,7 +790,10 @@ mod tests {
         let (c, report_c) = run(10).await;
         assert_eq!(a, b, "the same seed replays the same");
         assert_eq!(report_a, report_b);
-        assert!(a != c || report_a.requotes != report_c.requotes, "another seed differs");
+        assert!(
+            a != c || report_a.requotes != report_c.requotes,
+            "another seed differs"
+        );
         // Looks fall 2..=6 slots apart (4 ± 50%), and use the range.
         let mut gaps = std::collections::BTreeSet::new();
         let mut last = None;
@@ -800,7 +815,9 @@ mod tests {
         let mut rng = SplitMix64(42);
         let mut seen = std::collections::BTreeSet::new();
         for _ in 0..500 {
-            let delay = (4.0 * (1.0 + 0.5 * (2.0 * rng.next_f64() - 1.0))).round().max(1.0) as u64;
+            let delay = (4.0 * (1.0 + 0.5 * (2.0 * rng.next_f64() - 1.0)))
+                .round()
+                .max(1.0) as u64;
             assert!((2..=6).contains(&delay));
             seen.insert(delay);
         }
@@ -834,8 +851,15 @@ mod tests {
         rig.at(25, level).await;
         let (bid, ask) = rig.quotes();
         let skew = (5.0_f64 * level_t as f64 / 10_000.0).round() as i64;
-        assert_eq!(bid, level_t - wide - skew, "the hit side is at its full width");
-        assert!(ask < level_t + wide - skew, "the other side stays tight: {ask}");
+        assert_eq!(
+            bid,
+            level_t - wide - skew,
+            "the hit side is at its full width"
+        );
+        assert!(
+            ask < level_t + wide - skew,
+            "the other side stays tight: {ask}"
+        );
         let mut report = ActorsReport::default();
         rig.maker.report(&mut report).await;
         assert_eq!(report.competitor.unwrap().widenings, 1);
@@ -872,10 +896,9 @@ mod tests {
         let parsed: Competition = serde_json::from_str(old).unwrap();
         assert_eq!(parsed.reactive, None);
         assert_eq!(serde_json::to_string(&parsed).unwrap(), old);
-        let on: Competition = serde_json::from_str(
-            r#"{"floor_bps":3.97,"react_slots":2,"size":4.98,"reactive":{}}"#,
-        )
-        .unwrap();
+        let on: Competition =
+            serde_json::from_str(r#"{"floor_bps":3.97,"react_slots":2,"size":4.98,"reactive":{}}"#)
+                .unwrap();
         assert_eq!(on.reactive, Some(Reactive::default()));
         assert!(
             serde_json::from_str::<Competition>(

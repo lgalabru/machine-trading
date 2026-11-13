@@ -251,7 +251,7 @@ impl Seat for PerpSeat {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "the orderbook account is missing".to_string())?;
         let book = phoenix_rise::accounts::owned::Orderbook::try_from_account_bytes(&account.data)
-        .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
         let sized = |entries: &[phoenix_rise::accounts::owned::OrderbookEntry],
                      best: fn(u64, u64) -> u64| {
             let mut levels: std::collections::BTreeMap<u64, u64> = Default::default();

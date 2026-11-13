@@ -97,7 +97,10 @@ impl Default for Reactive {
 impl Reactive {
     pub fn validate(&self) -> std::result::Result<(), String> {
         if !(self.q_react.is_finite() && self.q_react >= 0.0) {
-            return Err(format!("reactive q_react {} must be 0 or more", self.q_react));
+            return Err(format!(
+                "reactive q_react {} must be 0 or more",
+                self.q_react
+            ));
         }
         if !(self.jitter.is_finite() && (0.0..1.0).contains(&self.jitter)) {
             return Err(format!("reactive jitter {} must be in [0, 1)", self.jitter));
