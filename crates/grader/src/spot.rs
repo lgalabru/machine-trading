@@ -1936,6 +1936,310 @@ mod tests {
         );
     }
 
+    /// Sign `instructions` as one transaction paid by `payer`, with `others`
+    /// signing too, and land it.
+    fn land(
+        rpc: &RpcClient,
+        payer: &Keypair,
+        others: &[&Keypair],
+        instructions: Vec<mtx_kit::Instruction>,
+    ) {
+        use mtx_kit::chain::{InstructionGroup, TransactionPlan};
+
+        let plan =
+            TransactionPlan::from_group(&InstructionGroup::new("attack", instructions), 1_000_000);
+        let blockhash = rpc.get_latest_blockhash().unwrap();
+        let mut tx = plan.transaction(&payer.pubkey(), blockhash);
+        let mut signers = vec![payer];
+        signers.extend(others);
+        tx.try_sign(&signers, blockhash).unwrap();
+        let simulation = rpc.simulate_transaction(&tx).unwrap().value;
+        assert!(
+            simulation.err.is_none(),
+            "{:?}\n{}",
+            simulation.err,
+            simulation.logs.unwrap_or_default().join("\n")
+        );
+        rpc.send_and_confirm_transaction(&tx).unwrap();
+    }
+
+    /// The pool snapshot, live: what an account does through each pool's
+    /// liquidity is read from the chain instruction by instruction and
+    /// owner by owner, whatever transaction carries it and whoever pays
+    /// for it, as a process bot or a hand-built transaction could send it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pool_moves_are_read_per_instruction_and_per_owner() {
+        use mtx_kit::{AmountUnit, PriceRange, Side as KitSide};
+
+        use crate::venue::pools::{self, Deposit, SwapOrder};
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../snapshots/spcx-pools-2026-11-13")
+            .canonicalize()
+            .unwrap();
+        let (surfnet, _) = snapshot::start_snapshot(&dir, snapshot::Access::Open)
+            .await
+            .unwrap();
+        let url = surfnet.rpc_url().to_string();
+        let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(&url));
+        let rpc = mtx_kit::rpc_client(&url);
+        let (owner, payer) = (Keypair::new(), Keypair::new());
+        let mut funded = Vec::new();
+        for venue in POOLS {
+            for named in books::named_markets(venue).unwrap() {
+                if !funded.contains(&named.base_mint) {
+                    fund_pair(
+                        &surfnet,
+                        &rpc,
+                        &owner,
+                        &named.base_mint,
+                        10.0,
+                        2_000.0,
+                        true,
+                    )
+                    .unwrap();
+                    funded.push(named.base_mint);
+                }
+            }
+        }
+        for key in [&owner, &payer] {
+            surfnet
+                .cheatcodes()
+                .fund_sol(&key.pubkey(), 10_000_000_000)
+                .unwrap();
+        }
+        let me = owner.pubkey();
+        for venue in POOLS {
+            let named = &books::named_markets(venue).unwrap()[0];
+            let pool = pools::connect(venue, chain.as_ref(), named).await.unwrap();
+            let instrument = |kind| InstrumentRef {
+                venue: venue.into(),
+                kind,
+                symbol: named.symbol.into(),
+            };
+            let spot = spot_venue(venue, &url)
+                .unwrap()
+                .market(&instrument(Kind::Spot))
+                .await
+                .unwrap();
+            let amm = spot_venue(venue, &url)
+                .unwrap()
+                .market(&instrument(Kind::Amm))
+                .await
+                .unwrap();
+            let mid = pool.price(chain.as_ref()).await.unwrap().price;
+            let range = |lower: f64, upper: f64| {
+                Some(PriceRange {
+                    lower: mid * lower,
+                    upper: mid * upper,
+                })
+            };
+            let deposit = |position: Option<Pubkey>, new: Pubkey, base, quote, range| {
+                let pool = pool.clone();
+                let chain = chain.clone();
+                async move {
+                    pool.deposit(
+                        chain.as_ref(),
+                        &me,
+                        position.as_ref(),
+                        &new,
+                        &Deposit {
+                            base,
+                            quote,
+                            range,
+                            shape: None,
+                        },
+                    )
+                    .await
+                    .unwrap()
+                    .0
+                }
+            };
+            let swap = |side, amount, limit| {
+                let pool = pool.clone();
+                let chain = chain.clone();
+                async move {
+                    pool.swap(
+                        chain.as_ref(),
+                        &me,
+                        &SwapOrder {
+                            side,
+                            amount,
+                            unit: AmountUnit::Base,
+                            limit,
+                            partial: false,
+                        },
+                    )
+                    .await
+                    .unwrap()
+                }
+            };
+            let slot = || rpc.get_slot().unwrap();
+            let sell_only = {
+                let mut mandate = Mandate::spot(&[venue], named.symbol, 100.0);
+                mandate.universe.push(mtx_core::mandate::Allowance {
+                    instrument: instrument(Kind::Amm),
+                    max_position: 100.0,
+                    min_position: None,
+                    sides: Some(vec![Side::Sell]),
+                    min_sell_price: None,
+                    max_buy_price: None,
+                });
+                mandate
+            };
+            let audit = |moves: Vec<Side>, mandate: &Mandate| {
+                mandate.audit(&Observed {
+                    liquidity: moves
+                        .into_iter()
+                        .map(|s| (instrument(Kind::Amm), s))
+                        .collect(),
+                    ..Observed::default()
+                })
+            };
+
+            // An honest position, opened and topped up by the owner: a buy,
+            // within a mandate that allows both sides.
+            let start = slot();
+            let opened = Keypair::new();
+            let ixs = deposit(None, opened.pubkey(), 0.05, 5.0, range(0.97, 1.03)).await;
+            land(&rpc, &owner, &[&opened], ixs);
+            let held = pool
+                .position(chain.as_ref(), &me, &opened.pubkey())
+                .await
+                .unwrap()
+                .expect("the position opened");
+            let moves = amm.liquidity_moves(start, &me).await.unwrap();
+            assert_eq!(moves, vec![Side::Buy], "{venue}");
+            let open = Mandate::spot(&[venue], named.symbol, 100.0);
+            assert_eq!(audit(moves.clone(), &open), None, "{venue}");
+            assert!(audit(moves, &sell_only).is_some(), "{venue}");
+
+            // A sale and a deposit in one transaction: the vaults net to a
+            // bigger sale, but the deposit is still read, as a buy, and the
+            // sale as only what was swapped.
+            let after = slot();
+            let mut ixs = swap(KitSide::Ask, 0.05, mid * 0.9).await;
+            ixs.extend(deposit(Some(held.id), Keypair::new().pubkey(), 0.01, 1.0, None).await);
+            land(&rpc, &owner, &[], ixs);
+            assert_eq!(
+                amm.liquidity_moves(after, &me).await.unwrap(),
+                vec![Side::Buy],
+                "{venue}: the deposit beside a sale"
+            );
+            let fills = spot.fills(after, &me).await.unwrap();
+            assert_eq!(fills.len(), 1, "{venue}");
+            let (fill, ids) = &fills[0];
+            assert_eq!(
+                (fill.side_for(ids), fill.quantity),
+                (Some(Side::Sell), Decimal::new(5, 2)),
+                "{venue}"
+            );
+
+            // A throwaway pays the fees, the owner co-signs: a purchase and
+            // a deposit, both the owner's.
+            let after = slot();
+            let ixs = swap(KitSide::Bid, 0.02, mid * 1.1).await;
+            land(&rpc, &payer, &[&owner], ixs);
+            let ixs = deposit(Some(held.id), Keypair::new().pubkey(), 0.01, 1.0, None).await;
+            land(&rpc, &payer, &[&owner], ixs);
+            let fills = spot.fills(after, &me).await.unwrap();
+            assert!(
+                fills.len() == 1
+                    && fills[0].0.taker == me
+                    && fills[0].0.side_for(&fills[0].1) == Some(Side::Buy),
+                "{venue}: {fills:?}"
+            );
+            assert_eq!(
+                amm.liquidity_moves(after, &me).await.unwrap(),
+                vec![Side::Buy],
+                "{venue}: a deposit someone else paid for"
+            );
+
+            // Quote alone, in a range below the price: it rests to buy base
+            // as the price falls, so a sell-only mandate is broken.
+            let after = slot();
+            let below = Keypair::new();
+            let ixs = deposit(None, below.pubkey(), 0.0, 5.0, range(0.8, 0.9)).await;
+            land(&rpc, &owner, &[&below], ixs);
+            let moves = amm.liquidity_moves(after, &me).await.unwrap();
+            assert_eq!(
+                moves,
+                vec![Side::Buy],
+                "{venue}: quote alone below the price"
+            );
+            assert!(audit(moves, &sell_only).is_some(), "{venue}");
+
+            // The position's NFT moved to another token account of the
+            // owner's, its associated one closed: still the owner's, in the
+            // cap and in the value.
+            if venue != "meteora" {
+                let before = amm.holdings(&me).await.unwrap();
+                let value = amm.value_usd(chain.as_ref(), &before).await.unwrap();
+                let program = mtx_kit::token::TOKEN_2022_PROGRAM_ID;
+                let ata = token::ata_for(&me, &held.id, &program);
+                let other = Keypair::new();
+                let rent = rpc.get_minimum_balance_for_rent_exemption(165).unwrap();
+                land(
+                    &rpc,
+                    &owner,
+                    &[&other],
+                    vec![
+                        solana_system_interface::instruction::create_account(
+                            &me,
+                            &other.pubkey(),
+                            rent,
+                            165,
+                            &program,
+                        ),
+                        spl_token_2022_interface::instruction::initialize_account3(
+                            &program,
+                            &other.pubkey(),
+                            &held.id,
+                            &me,
+                        )
+                        .unwrap(),
+                        spl_token_2022_interface::instruction::transfer_checked(
+                            &program,
+                            &ata,
+                            &held.id,
+                            &other.pubkey(),
+                            &me,
+                            &[],
+                            1,
+                            0,
+                        )
+                        .unwrap(),
+                        spl_token_2022_interface::instruction::close_account(
+                            &program,
+                            &ata,
+                            &me,
+                            &me,
+                            &[],
+                        )
+                        .unwrap(),
+                    ],
+                );
+                assert!(
+                    rpc.get_account(&ata).is_err(),
+                    "{venue}: the NFT's account closed"
+                );
+                let after = amm.holdings(&me).await.unwrap();
+                assert_eq!(after, before, "{venue}");
+                assert!(
+                    after
+                        .iter()
+                        .any(|h| matches!(h, Holding::Amm(p) if p.id == held.id.to_string())),
+                    "{venue}"
+                );
+                assert_eq!(
+                    amm.value_usd(chain.as_ref(), &after).await.unwrap(),
+                    value,
+                    "{venue}"
+                );
+            }
+        }
+    }
+
     /// A spot session's setup on a stepped surfnet: funding wraps SOL by a
     /// transaction, which must land through the grader's own client without
     /// a block (the surfnet produces none until the grader steps it).

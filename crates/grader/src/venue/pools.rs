@@ -13,12 +13,14 @@
 //! A pool's program is behind [`Pool`]: Raydium CLMM's in
 //! [`super::raydium`], Meteora DLMM's in [`super::meteora`], Orca
 //! Whirlpool's in [`super::orca`]. What is the same for all is here: a market's top (the price of a small trade each
-//! way: the pool's price less or plus its fee), its fills (read from the
-//! pool's vaults, which every swap moves: the vault deltas give the side,
-//! the size and the price paid, fee included, and the fee payer the taker),
-//! the valuation of a position (its assets at the reference prices, not the
-//! pool's own, so a pool moved by its holder can't inflate it), and the
-//! seats, which send each order as one transaction.
+//! way: the pool's price less or plus its fee), its fills and liquidity
+//! moves (read instruction by instruction from the token transfers each of
+//! the pool's instructions makes to and from its vaults: base in and quote
+//! out is a sale, the reverse a purchase, and one way only a deposit or a
+//! withdrawal; each is the account's whose tokens, position or signature it
+//! takes), the valuation of a position (its assets at the reference prices,
+//! not the pool's own, so a pool moved by its holder can't inflate it), and
+//! the seats, which send each order as one transaction.
 
 use std::sync::{
     Arc,
@@ -33,8 +35,12 @@ use mtx_core::{
 use mtx_kit::{
     Action, AmountUnit, Instruction, LiquidityPosition, LiquidityShape, Planned, PriceRange,
     SendState, Sent, Side, VenueInfo, VenueView,
-    chain::{ChainClient, InstructionGroup, RpcChainClient, TransactionPlan, token},
+    chain::{
+        ChainClient, ExecutedInstruction, InstructionGroup, RpcChainClient, TransactionPlan,
+        TransactionSummary, token,
+    },
     protocols::{NamedMarket, spot::MarketFill},
+    token::{TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID},
 };
 use sha2::{Digest, Sha256};
 use solana_keypair::Keypair;
@@ -53,6 +59,8 @@ const COMPUTE_UNIT_LIMIT: u32 = 1_000_000;
 #[derive(Debug, Clone)]
 pub struct PoolAssets {
     pub address: Pubkey,
+    /// The pool's program.
+    pub program: Pubkey,
     pub base: Asset,
     pub quote: Asset,
     pub base_mint: Pubkey,
@@ -176,6 +184,19 @@ pub trait Pool: Send + Sync {
         min_base: Option<f64>,
         min_quote: Option<f64>,
     ) -> SeatResult<Vec<Instruction>>;
+
+    /// The owners of the positions among `accounts`, where a position names
+    /// its owner in its own account (Meteora's). A position held by its NFT
+    /// (Raydium's, Orca's) is the owner's of the token account holding it,
+    /// which its instructions pass, so it needs none.
+    async fn position_owners(
+        &self,
+        chain: &dyn ChainClient,
+        accounts: &[Pubkey],
+    ) -> Result<Vec<Pubkey>> {
+        let _ = (chain, accounts);
+        Ok(Vec::new())
+    }
 }
 
 /// One instrument of a pool's: the spot one, or the amm one.
@@ -202,6 +223,31 @@ impl PoolMarket {
 
     fn assets(&self) -> &PoolAssets {
         self.pool.assets()
+    }
+
+    /// Every transaction through the pool since `after_slot` that
+    /// succeeded, oldest first.
+    async fn transactions(&self, after_slot: u64) -> Result<Vec<TransactionSummary>> {
+        let chain = self.chain.as_ref();
+        let mut found = Vec::new();
+        for (signature, _) in chain
+            .signatures_for_address(&self.assets().address, after_slot)
+            .await
+            .map_err(chain_error("the pool's transactions"))?
+        {
+            let summary = chain
+                .get_transaction(&signature)
+                .await
+                .map_err(chain_error("a pool transaction"))?
+                .ok_or_else(|| Error::Transaction {
+                    label: "a pool transaction".into(),
+                    reason: format!("{signature} is listed but not found"),
+                })?;
+            if summary.error.is_none() {
+                found.push(summary);
+            }
+        }
+        Ok(found)
     }
 }
 
@@ -248,49 +294,150 @@ fn holding(assets: &PoolAssets, lp: &Lp) -> Holding {
     })
 }
 
-/// How a transaction moved a pool's base and quote vaults, in atoms.
-fn vault_deltas(summary: &mtx_kit::chain::TransactionSummary, assets: &PoolAssets) -> (i128, i128) {
-    let delta = |vault: &Pubkey| -> i128 {
+/// What one of a pool's instructions moved through its vaults, from the
+/// token transfers it made, in atoms, and the accounts it was made for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct VaultFlow {
+    /// Where it ran in its transaction, among the pool's instructions.
+    index: u16,
+    base_in: u64,
+    base_out: u64,
+    quote_in: u64,
+    quote_out: u64,
+    /// The transaction's signers, the owners of the token accounts the
+    /// instruction passes (a wallet's, a position NFT's), and its accounts,
+    /// for the owners of positions held in an account of their own.
+    parties: Vec<Pubkey>,
+    accounts: Vec<Pubkey>,
+}
+
+impl VaultFlow {
+    /// The taker's side, base and quote, if it was a swap: base in and quote
+    /// out is a sale, base out and quote in a purchase.
+    fn swap(&self) -> Option<(CoreSide, u64, u64)> {
+        match (self.base_in, self.base_out, self.quote_in, self.quote_out) {
+            (base, 0, 0, quote) if base > 0 && quote > 0 => Some((CoreSide::Sell, base, quote)),
+            (0, base, quote, 0) if base > 0 && quote > 0 => Some((CoreSide::Buy, base, quote)),
+            _ => None,
+        }
+    }
+
+    /// The sides of the base a deposit or withdrawal moved, for the
+    /// mandate's sides rule. Base into the pool is a buy, base out of it
+    /// (principal or fees) a sell. A deposit of quote alone (a range below
+    /// the price) buys base as the price falls, so it is a buy too; a
+    /// deposit of base alone (a range above it) sells as the price rises, so
+    /// it is a sell as well as a buy.
+    fn liquidity_sides(&self) -> Vec<CoreSide> {
+        if self.swap().is_some() {
+            return Vec::new();
+        }
+        let deposit = self.base_out == 0 && self.quote_out == 0;
+        let mut sides = Vec::new();
+        if self.base_in > 0 || (deposit && self.quote_in > 0) {
+            sides.push(CoreSide::Buy);
+        }
+        if self.base_out > 0 || (deposit && self.base_in > 0 && self.quote_in == 0) {
+            sides.push(CoreSide::Sell);
+        }
+        sides
+    }
+}
+
+/// A token transfer's source, destination and amount, if `ix` is one.
+fn token_transfer(ix: &ExecutedInstruction) -> Option<(Pubkey, Pubkey, u64)> {
+    if ix.program != TOKEN_PROGRAM_ID && ix.program != TOKEN_2022_PROGRAM_ID {
+        return None;
+    }
+    let amount = |at: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(
+            ix.data.get(at..at + 8)?.try_into().ok()?,
+        ))
+    };
+    let account = |i: usize| ix.accounts.get(i).copied();
+    match ix.data.first()? {
+        // Transfer: source, destination, authority.
+        3 => Some((account(0)?, account(1)?, amount(1)?)),
+        // TransferChecked: source, mint, destination, authority.
+        12 => Some((account(0)?, account(2)?, amount(1)?)),
+        // Token-2022's TransferCheckedWithFee, the same accounts.
+        26 if ix.data.get(1) == Some(&1) => Some((account(0)?, account(2)?, amount(2)?)),
+        _ => None,
+    }
+}
+
+/// Every instruction of the pool's in a transaction (run by the
+/// transaction or by a program it called), and what each moved through the
+/// pool's vaults: a transfer counts toward the pool instruction that made
+/// it, never toward the transaction's net, so a swap and a deposit in one
+/// transaction are each seen.
+fn vault_flows(summary: &TransactionSummary, assets: &PoolAssets) -> Vec<VaultFlow> {
+    let signers = &summary.account_keys[..summary.signers.min(summary.account_keys.len())];
+    let owner_of = |account: &Pubkey| {
         summary
             .token_balance_changes
             .iter()
-            .filter(|c| c.account == *vault)
-            .map(|c| i128::from(c.post_amount) - i128::from(c.pre_amount))
-            .sum()
+            .find(|c| c.account == *account)
+            .and_then(|c| c.owner)
     };
-    (delta(&assets.base_vault), delta(&assets.quote_vault))
-}
-
-/// The side of the base a transaction's liquidity moved, from its vaults'
-/// deltas: base into the pool (a deposit) is a buy, base out (a withdrawal
-/// or collected fees) a sell. `None` for a swap (the vaults moved opposite
-/// ways) or a transaction that moved no base.
-fn vault_liquidity(
-    summary: &mtx_kit::chain::TransactionSummary,
-    assets: &PoolAssets,
-) -> Option<CoreSide> {
-    let (base, quote) = vault_deltas(summary, assets);
-    match (base.signum(), quote.signum()) {
-        (1, 0 | 1) => Some(CoreSide::Buy),
-        (-1, 0 | -1) => Some(CoreSide::Sell),
-        _ => None,
+    let is_pool = |ix: &ExecutedInstruction| {
+        ix.program == assets.program && ix.accounts.contains(&assets.address)
+    };
+    // Where the node gives every instruction's depth, a transfer is the
+    // pool's when the pool's instruction called it; where it doesn't, when
+    // it follows the pool's instruction within the same instruction of the
+    // transaction's.
+    let nested = summary.instructions.iter().all(|ix| ix.depth.is_some());
+    let mut flows: Vec<VaultFlow> = Vec::new();
+    // Per instruction run, the flow it adds to, if it is the pool's.
+    let mut flow_of: Vec<Option<usize>> = Vec::with_capacity(summary.instructions.len());
+    for (i, ix) in summary.instructions.iter().enumerate() {
+        if is_pool(ix) {
+            let mut parties = signers.to_vec();
+            for owner in ix.accounts.iter().filter_map(owner_of) {
+                if !parties.contains(&owner) {
+                    parties.push(owner);
+                }
+            }
+            flow_of.push(Some(flows.len()));
+            flows.push(VaultFlow {
+                index: u16::try_from(flows.len()).unwrap_or(u16::MAX),
+                parties,
+                accounts: ix.accounts.clone(),
+                ..VaultFlow::default()
+            });
+            continue;
+        }
+        flow_of.push(None);
+        let Some((source, destination, amount)) = token_transfer(ix) else {
+            continue;
+        };
+        let caller = summary.instructions[..i]
+            .iter()
+            .enumerate()
+            .rev()
+            .take_while(|(_, before)| before.outer == ix.outer)
+            .find(|(_, before)| {
+                if nested {
+                    before.depth < ix.depth
+                } else {
+                    is_pool(before)
+                }
+            })
+            .and_then(|(j, _)| flow_of[j]);
+        let Some(flow) = caller.map(|f| &mut flows[f]) else {
+            continue;
+        };
+        let add = |total: &mut u64| *total = total.saturating_add(amount);
+        match (source, destination) {
+            (_, to) if to == assets.base_vault => add(&mut flow.base_in),
+            (_, to) if to == assets.quote_vault => add(&mut flow.quote_in),
+            (from, _) if from == assets.base_vault => add(&mut flow.base_out),
+            (from, _) if from == assets.quote_vault => add(&mut flow.quote_out),
+            _ => {}
+        }
     }
-}
-
-/// A transaction's swap through a pool, from its vaults' deltas: the
-/// taker's side, base and quote, in atoms. `None` for a transaction that
-/// moved both vaults the same way (liquidity in or out) or neither.
-fn vault_swap(
-    summary: &mtx_kit::chain::TransactionSummary,
-    assets: &PoolAssets,
-) -> Option<(CoreSide, u64, u64)> {
-    let (base, quote) = vault_deltas(summary, assets);
-    let atoms = |x: i128| u64::try_from(x.unsigned_abs()).ok();
-    match (base.signum(), quote.signum()) {
-        (1, -1) => Some((CoreSide::Sell, atoms(base)?, atoms(quote)?)),
-        (-1, 1) => Some((CoreSide::Buy, atoms(base)?, atoms(quote)?)),
-        _ => None,
-    }
+    flows
 }
 
 #[async_trait]
@@ -369,7 +516,9 @@ impl Market for PoolMarket {
     }
 
     /// Every swap through the pool since `after_slot`, for the spot
-    /// instrument: the pool is every trade's maker.
+    /// instrument: the pool is every trade's maker, and the taker is
+    /// `owner` where the swap took its tokens or its signature, whoever paid
+    /// the fee, and otherwise the transaction's fee payer.
     async fn fills(
         &self,
         after_slot: u64,
@@ -378,89 +527,79 @@ impl Market for PoolMarket {
         if self.instrument.kind != Kind::Spot {
             return Ok(Vec::new());
         }
-        let chain = self.chain.as_ref();
         let assets = self.assets();
         let id = InstrumentId::new(self.instrument.to_string());
+        let units = |atoms: u64, asset: &Asset| {
+            Decimal::from(atoms) / Decimal::from(10u64.pow(asset.decimals.into()))
+        };
         let mut fills = Vec::new();
-        for (signature, slot) in chain
-            .signatures_for_address(&assets.address, after_slot)
-            .await
-            .map_err(chain_error("the pool's transactions"))?
-        {
-            let summary = chain
-                .get_transaction(&signature)
-                .await
-                .map_err(chain_error("a pool transaction"))?
-                .ok_or_else(|| Error::Transaction {
-                    label: "a pool transaction".into(),
-                    reason: format!("{signature} is listed but not found"),
-                })?;
-            if summary.error.is_some() {
-                continue;
-            }
-            let Some((side, base, quote)) = vault_swap(&summary, assets) else {
+        for summary in self.transactions(after_slot).await? {
+            let Some(payer) = summary.account_keys.first().copied() else {
                 continue;
             };
-            let Some(taker) = summary.account_keys.first().copied() else {
-                continue;
-            };
-            let units = |atoms: u64, asset: &Asset| {
-                Decimal::from(atoms) / Decimal::from(10u64.pow(asset.decimals.into()))
-            };
-            let quantity = units(base, &assets.base);
-            let sequence = u128::from_le_bytes(
-                signature.as_ref()[..16]
+            let first = u128::from_le_bytes(
+                summary.signature.as_ref()[..16]
                     .try_into()
                     .expect("a signature has 64 bytes"),
             );
-            fills.push((
-                MarketFill {
-                    slot,
-                    instrument: id.clone(),
-                    sequence,
-                    taker,
-                    maker: assets.address,
-                    taker_side: side,
-                    price: units(quote, &assets.quote) / quantity,
-                    quantity,
-                    unix_timestamp: summary.block_time.map_or(0, |t| t.timestamp()),
-                },
-                vec![*owner],
-            ));
+            for flow in vault_flows(&summary, assets) {
+                let Some((side, base, quote)) = flow.swap() else {
+                    continue;
+                };
+                let quantity = units(base, &assets.base);
+                fills.push((
+                    MarketFill {
+                        slot: summary.slot,
+                        instrument: id.clone(),
+                        sequence: first.wrapping_add(u128::from(flow.index)),
+                        taker: if flow.parties.contains(owner) {
+                            *owner
+                        } else {
+                            payer
+                        },
+                        maker: assets.address,
+                        taker_side: side,
+                        price: units(quote, &assets.quote) / quantity,
+                        quantity,
+                        unix_timestamp: summary.block_time.map_or(0, |t| t.timestamp()),
+                    },
+                    vec![*owner],
+                ));
+            }
         }
         Ok(fills)
     }
 
-    /// The sides of the base `owner`'s transactions through the pool's
-    /// liquidity moved since `after_slot`, for the amm instrument: read from
-    /// the vaults, so a bot's own transactions count as much as its seat's.
+    /// The sides of the base `owner`'s deposits and withdrawals through the
+    /// pool moved since `after_slot`, for the amm instrument: read from the
+    /// chain instruction by instruction, so a transaction the bot builds
+    /// itself counts as much as its seat's, whoever pays its fee, and a
+    /// deposit beside a swap is still a deposit.
     async fn liquidity_moves(&self, after_slot: u64, owner: &Pubkey) -> Result<Vec<CoreSide>> {
         if self.instrument.kind != Kind::Amm {
             return Ok(Vec::new());
         }
-        let chain = self.chain.as_ref();
-        let assets = self.assets();
         let mut moves = Vec::new();
-        for (signature, _) in chain
-            .signatures_for_address(&assets.address, after_slot)
-            .await
-            .map_err(chain_error("the pool's transactions"))?
-        {
-            let summary = chain
-                .get_transaction(&signature)
-                .await
-                .map_err(chain_error("a pool transaction"))?
-                .ok_or_else(|| Error::Transaction {
-                    label: "a pool transaction".into(),
-                    reason: format!("{signature} is listed but not found"),
-                })?;
-            if summary.error.is_some() || summary.account_keys.first() != Some(owner) {
-                continue;
-            }
-            if let Some(side) = vault_liquidity(&summary, assets)
-                && !moves.contains(&side)
-            {
-                moves.push(side);
+        for summary in self.transactions(after_slot).await? {
+            for flow in vault_flows(&summary, self.assets()) {
+                let sides = flow.liquidity_sides();
+                if sides.is_empty() {
+                    continue;
+                }
+                if !flow.parties.contains(owner)
+                    && !self
+                        .pool
+                        .position_owners(self.chain.as_ref(), &flow.accounts)
+                        .await?
+                        .contains(owner)
+                {
+                    continue;
+                }
+                for side in sides {
+                    if !moves.contains(&side) {
+                        moves.push(side);
+                    }
+                }
             }
         }
         Ok(moves)
@@ -756,23 +895,23 @@ impl Seat for PoolSeat {
         }
     }
 
-    /// A deposit that takes base into the pool moves it on the buy side, a
-    /// withdrawal that returns base on the sell side. A deposit of base into
-    /// a range that lies wholly below the price takes none.
-    async fn base_moved(&self, action: &Action) -> SeatResult<Option<CoreSide>> {
+    /// What the chain audit will read of the order ([`VaultFlow`]): a
+    /// deposit that takes base in is a buy, and so is one of quote alone (a
+    /// range below the price, which buys as the price falls); one of base
+    /// alone (a range above it) is a sell too. A withdrawal that returns
+    /// base, or fees in base, is a sell.
+    async fn base_moved(&self, action: &Action) -> SeatResult<Vec<CoreSide>> {
         if self.kind != Kind::Amm {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         match action {
             Action::AddLiquidity {
                 base,
+                quote,
                 range,
                 position,
                 ..
             } => {
-                if base.is_nan() || *base <= 0.0 {
-                    return Ok(None);
-                }
                 let range = match position {
                     Some(id) => self.position(Some(id)).await?.range,
                     None => *range,
@@ -782,18 +921,31 @@ impl Seat for PoolSeat {
                     .price(self.chain.as_ref())
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(range
-                    .is_none_or(|r| r.upper > price)
-                    .then_some(CoreSide::Buy))
+                let (base, quote) = (*base > 0.0, *quote > 0.0);
+                let above = range.is_none_or(|r| r.upper > price);
+                let below = range.is_none_or(|r| r.lower < price);
+                let mut sides = Vec::new();
+                if (base && above) || (quote && below) {
+                    sides.push(CoreSide::Buy);
+                }
+                if base && range.is_some_and(|r| r.lower >= price) {
+                    sides.push(CoreSide::Sell);
+                }
+                Ok(sides)
             }
             Action::RemoveLiquidity {
                 position, share, ..
             } => {
                 let held = self.position(position.as_deref()).await?;
-                Ok(((*share > 0.0 && held.base > 0.0) || held.fees_base > 0.0)
-                    .then_some(CoreSide::Sell))
+                Ok(
+                    if (*share > 0.0 && held.base > 0.0) || held.fees_base > 0.0 {
+                        vec![CoreSide::Sell]
+                    } else {
+                        Vec::new()
+                    },
+                )
             }
-            _ => Ok(None),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -1016,6 +1168,7 @@ mod tests {
     fn assets() -> PoolAssets {
         PoolAssets {
             address: Pubkey::new_unique(),
+            program: Pubkey::new_unique(),
             base: Asset::new(SPCX_MINT.to_string(), "SPCX", 6).unwrap(),
             quote: Asset::new(USDC_MINT.to_string(), "USDC", 6).unwrap(),
             base_mint: SPCX_MINT,
@@ -1064,63 +1217,226 @@ mod tests {
         assert!(swap_atoms(&order(Side::Ask, 1e-9, AmountUnit::Base, 1.0), &assets).is_err());
     }
 
-    #[test]
-    fn vault_deltas_tell_swaps_from_liquidity() {
-        let assets = assets();
-        let change = |account, pre, post| mtx_kit::chain::TokenBalanceChange {
-            account,
-            mint: Pubkey::new_unique(),
-            owner: None,
-            pre_amount: pre,
-            post_amount: post,
-        };
-        let summary = |changes| mtx_kit::chain::TransactionSummary {
+    /// A token transfer of `amount` from `from` to `to`, as Token-2022's
+    /// `transfer_checked`, run at `depth` in instruction `outer`.
+    fn transfer(
+        outer: u8,
+        depth: u32,
+        from: Pubkey,
+        to: Pubkey,
+        amount: u64,
+    ) -> ExecutedInstruction {
+        let mut data = vec![12];
+        data.extend(amount.to_le_bytes());
+        data.push(6);
+        ExecutedInstruction {
+            outer,
+            depth: Some(depth),
+            program: TOKEN_2022_PROGRAM_ID,
+            accounts: vec![from, Pubkey::new_unique(), to, Pubkey::new_unique()],
+            data,
+        }
+    }
+
+    /// An instruction of the pool's, passing `accounts` beside the pool.
+    fn pool_ix(
+        assets: &PoolAssets,
+        outer: u8,
+        depth: u32,
+        accounts: &[Pubkey],
+    ) -> ExecutedInstruction {
+        ExecutedInstruction {
+            outer,
+            depth: Some(depth),
+            program: assets.program,
+            accounts: [&[assets.address][..], accounts].concat(),
+            data: vec![0; 8],
+        }
+    }
+
+    /// A transaction paid for and signed by `signers`, running `instructions`,
+    /// where `owners` own the token accounts named.
+    fn summary(
+        signers: &[Pubkey],
+        owners: &[(Pubkey, Pubkey)],
+        instructions: Vec<ExecutedInstruction>,
+    ) -> TransactionSummary {
+        TransactionSummary {
             signature: Default::default(),
             slot: 1,
             block_time: None,
             fee_lamports: 0,
             error: None,
             logs: Vec::new(),
-            account_keys: Vec::new(),
+            account_keys: signers.to_vec(),
             pre_balances: Vec::new(),
             post_balances: Vec::new(),
-            token_balance_changes: changes,
+            token_balance_changes: owners
+                .iter()
+                .map(|(account, owner)| mtx_kit::chain::TokenBalanceChange {
+                    account: *account,
+                    mint: Pubkey::new_unique(),
+                    owner: Some(*owner),
+                    pre_amount: 0,
+                    post_amount: 0,
+                })
+                .collect(),
             inner_instructions: Vec::new(),
-        };
-        let sold = summary(vec![
-            change(assets.base_vault, 100, 102),
-            change(assets.quote_vault, 1000, 720),
-        ]);
-        assert_eq!(vault_swap(&sold, &assets), Some((CoreSide::Sell, 2, 280)));
-        let bought = summary(vec![
-            change(assets.base_vault, 100, 99),
-            change(assets.quote_vault, 1000, 1141),
-        ]);
-        assert_eq!(vault_swap(&bought, &assets), Some((CoreSide::Buy, 1, 141)));
-        let added = summary(vec![
-            change(assets.base_vault, 100, 110),
-            change(assets.quote_vault, 1000, 2000),
-        ]);
-        assert_eq!(vault_swap(&added, &assets), None);
-        assert_eq!(vault_swap(&summary(Vec::new()), &assets), None);
+            signers: signers.len(),
+            instructions,
+        }
+    }
 
-        // The side the liquidity moved: base in is a buy, out a sell, however
-        // the quote went; a swap is neither.
-        let liquidity = |base: (u64, u64), quote: (u64, u64)| {
-            vault_liquidity(
-                &summary(vec![
-                    change(assets.base_vault, base.0, base.1),
-                    change(assets.quote_vault, quote.0, quote.1),
-                ]),
+    #[test]
+    fn each_pool_instruction_is_read_from_its_own_transfers() {
+        let assets = assets();
+        let (base, quote) = (assets.base_vault, assets.quote_vault);
+        let (owner, wallet_base, wallet_quote) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let owners = [(wallet_base, owner), (wallet_quote, owner)];
+        let flows = |instructions| {
+            vault_flows(&summary(&[owner], &owners, instructions), &assets)
+                .iter()
+                .map(|f| (f.swap(), f.liquidity_sides()))
+                .collect::<Vec<_>>()
+        };
+        use CoreSide::{Buy, Sell};
+        // A sale and a purchase, one swap each.
+        assert_eq!(
+            flows(vec![
+                pool_ix(&assets, 0, 1, &[wallet_base, wallet_quote]),
+                transfer(0, 2, wallet_base, base, 2),
+                transfer(0, 2, quote, wallet_quote, 280),
+                pool_ix(&assets, 1, 1, &[wallet_base, wallet_quote]),
+                transfer(1, 2, wallet_quote, quote, 141),
+                transfer(1, 2, base, wallet_base, 1),
+            ]),
+            vec![
+                (Some((Sell, 2, 280)), vec![]),
+                (Some((Buy, 1, 141)), vec![])
+            ]
+        );
+        // A sale of 2 and a deposit of 1 base in one transaction: the vaults
+        // net to a sale of 3, but each instruction is read on its own, and
+        // the deposit is a buy.
+        assert_eq!(
+            flows(vec![
+                pool_ix(&assets, 0, 1, &[wallet_base, wallet_quote]),
+                transfer(0, 2, wallet_base, base, 2),
+                transfer(0, 2, quote, wallet_quote, 280),
+                pool_ix(&assets, 1, 1, &[wallet_base, wallet_quote]),
+                transfer(1, 2, wallet_base, base, 1),
+                transfer(1, 2, wallet_quote, quote, 100),
+            ]),
+            vec![(Some((Sell, 2, 280)), vec![]), (None, vec![Buy])]
+        );
+        // The same, run by another program through the pool: the transfers
+        // are the pool's, one level down.
+        assert_eq!(
+            flows(vec![
+                ExecutedInstruction {
+                    outer: 0,
+                    depth: Some(1),
+                    program: Pubkey::new_unique(),
+                    accounts: Vec::new(),
+                    data: Vec::new(),
+                },
+                pool_ix(&assets, 0, 2, &[wallet_base, wallet_quote]),
+                transfer(0, 3, wallet_base, base, 2),
+                transfer(0, 3, quote, wallet_quote, 280),
+                pool_ix(&assets, 0, 2, &[wallet_base, wallet_quote]),
+                transfer(0, 3, wallet_base, base, 1),
+                // Sent by the calling program, not the pool: a gift to the
+                // vault, nobody's trade.
+                transfer(0, 2, wallet_quote, quote, 100),
+            ]),
+            vec![(Some((Sell, 2, 280)), vec![]), (None, vec![Buy, Sell])]
+        );
+        // A deposit of quote alone rests to buy; one of base alone, to sell
+        // (and takes base in); a withdrawal of base, or of fees in base,
+        // sells; one of quote alone moves no base.
+        let one = |transfers: &[(Pubkey, Pubkey, u64)]| {
+            let mut instructions = vec![pool_ix(&assets, 0, 1, &[wallet_base, wallet_quote])];
+            instructions.extend(transfers.iter().map(|(f, t, n)| transfer(0, 2, *f, *t, *n)));
+            flows(instructions).remove(0).1
+        };
+        assert_eq!(one(&[(wallet_quote, quote, 100)]), vec![Buy]);
+        assert_eq!(one(&[(wallet_base, base, 1)]), vec![Buy, Sell]);
+        assert_eq!(
+            one(&[(wallet_base, base, 1), (wallet_quote, quote, 100)]),
+            vec![Buy]
+        );
+        assert_eq!(
+            one(&[(base, wallet_base, 1), (quote, wallet_quote, 100)]),
+            vec![Sell]
+        );
+        assert_eq!(one(&[(base, wallet_base, 1)]), vec![Sell]);
+        assert_eq!(one(&[(quote, wallet_quote, 100)]), Vec::<CoreSide>::new());
+        // A transfer to the vault outside any pool instruction is no one's.
+        assert!(flows(vec![transfer(0, 1, wallet_base, base, 5)]).is_empty());
+    }
+
+    #[test]
+    fn a_flow_is_the_owners_whoever_pays_the_fee() {
+        let assets = assets();
+        let (owner, payer, wallet, nft) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let deposit = |signers: &[Pubkey], owners: &[(Pubkey, Pubkey)], accounts: &[Pubkey]| {
+            vault_flows(
+                &summary(
+                    signers,
+                    owners,
+                    vec![
+                        pool_ix(&assets, 0, 1, accounts),
+                        transfer(0, 2, wallet, assets.base_vault, 1),
+                    ],
+                ),
                 &assets,
             )
+            .remove(0)
+            .parties
         };
-        assert_eq!(liquidity((100, 110), (1000, 2000)), Some(CoreSide::Buy));
-        assert_eq!(liquidity((100, 110), (1000, 1000)), Some(CoreSide::Buy));
-        assert_eq!(liquidity((110, 100), (2000, 1000)), Some(CoreSide::Sell));
-        assert_eq!(liquidity((100, 100), (1000, 900)), None);
-        assert_eq!(liquidity((100, 102), (1000, 720)), None);
-        assert_eq!(vault_liquidity(&summary(Vec::new()), &assets), None);
+        // A throwaway pays, the owner co-signs as the position's authority.
+        assert!(deposit(&[payer, owner], &[], &[]).contains(&owner));
+        // The owner doesn't sign (a delegate moves its tokens), but the
+        // tokens are its own.
+        assert!(deposit(&[payer], &[(wallet, owner)], &[wallet]).contains(&owner));
+        // The position's NFT is the owner's, in whatever token account.
+        assert!(deposit(&[payer], &[(nft, owner)], &[nft]).contains(&owner));
+        // Nothing of the owner's: not its.
+        assert!(!deposit(&[payer], &[(wallet, payer)], &[wallet]).contains(&owner));
+    }
+
+    #[test]
+    fn without_depths_a_transfer_is_the_pool_instructions_it_follows() {
+        let assets = assets();
+        let owner = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let mut instructions = vec![
+            pool_ix(&assets, 0, 1, &[wallet]),
+            transfer(0, 2, wallet, assets.base_vault, 2),
+            transfer(0, 2, assets.quote_vault, wallet, 280),
+            pool_ix(&assets, 1, 1, &[wallet]),
+            transfer(1, 2, wallet, assets.base_vault, 1),
+        ];
+        for ix in &mut instructions {
+            if ix.depth == Some(2) {
+                ix.depth = None;
+            }
+        }
+        let flows = vault_flows(&summary(&[owner], &[], instructions), &assets);
+        assert_eq!(flows[0].swap(), Some((CoreSide::Sell, 2, 280)));
+        assert_eq!(
+            flows[1].liquidity_sides(),
+            vec![CoreSide::Buy, CoreSide::Sell]
+        );
     }
 
     /// A pool at a fixed price holding a fixed set of positions.
@@ -1216,58 +1532,75 @@ mod tests {
 
     #[tokio::test]
     async fn a_deposit_that_takes_base_is_a_buy_and_a_withdrawal_that_returns_it_a_sell() {
+        use CoreSide::{Buy, Sell};
         let held = lp(2.0, 0.0);
         let id = held.id.to_string();
         let seat = amm_seat(vec![held, lp(0.0, 0.0), lp(0.0, 0.01)]);
-        let add =
-            |base, range: Option<(f64, f64)>, position: Option<String>| Action::AddLiquidity {
+        let add = |base, quote, range: Option<(f64, f64)>, position: Option<String>| {
+            Action::AddLiquidity {
                 base,
-                quote: 100.0,
+                quote,
                 range: range.map(|(lower, upper)| PriceRange { lower, upper }),
                 position,
                 shape: None,
-            };
+            }
+        };
         let remove = |position: Option<String>, share| Action::RemoveLiquidity {
             position,
             share,
             min_base: None,
             min_quote: None,
         };
-        // A range over the price, or the whole curve, takes base in.
-        let buy = Some(CoreSide::Buy);
+        let moved = |action| {
+            let seat = &seat;
+            async move { seat.base_moved(&action).await }
+        };
+        // The pool is at 140. A range over the price, or the whole curve,
+        // takes base in.
         assert_eq!(
-            seat.base_moved(&add(1.0, Some((130.0, 150.0)), None)).await,
-            Ok(buy)
+            moved(add(1.0, 100.0, Some((130.0, 150.0)), None)).await,
+            Ok(vec![Buy])
         );
-        assert_eq!(seat.base_moved(&add(1.0, None, None)).await, Ok(buy));
-        // A range below it takes quote only, and no base asked takes none.
+        assert_eq!(moved(add(1.0, 100.0, None, None)).await, Ok(vec![Buy]));
+        // A range below it takes quote alone, and rests to buy base as the
+        // price falls: a buy.
         assert_eq!(
-            seat.base_moved(&add(1.0, Some((100.0, 130.0)), None)).await,
-            Ok(None)
+            moved(add(1.0, 100.0, Some((100.0, 130.0)), None)).await,
+            Ok(vec![Buy])
         );
         assert_eq!(
-            seat.base_moved(&add(0.0, Some((130.0, 150.0)), None)).await,
-            Ok(None)
+            moved(add(0.0, 100.0, Some((100.0, 130.0)), None)).await,
+            Ok(vec![Buy])
+        );
+        // A range above it takes base alone, and rests to sell it as the
+        // price rises: a buy and a sell.
+        assert_eq!(
+            moved(add(1.0, 0.0, Some((150.0, 160.0)), None)).await,
+            Ok(vec![Buy, Sell])
+        );
+        // Nothing asked moves nothing.
+        assert_eq!(
+            moved(add(0.0, 0.0, Some((130.0, 150.0)), None)).await,
+            Ok(vec![])
         );
         // Into a position, the position's range decides.
         assert_eq!(
-            seat.base_moved(&add(1.0, None, Some(id.clone()))).await,
-            Ok(buy)
+            moved(add(1.0, 100.0, None, Some(id.clone()))).await,
+            Ok(vec![Buy])
         );
         // Taking out a position that holds base, or fees in base, sells.
-        let sell = Some(CoreSide::Sell);
-        assert_eq!(
-            seat.base_moved(&remove(Some(id.clone()), 0.5)).await,
-            Ok(sell)
-        );
-        assert_eq!(seat.base_moved(&remove(Some(id), 0.0)).await, Ok(None));
+        assert_eq!(moved(remove(Some(id.clone()), 0.5)).await, Ok(vec![Sell]));
+        assert_eq!(moved(remove(Some(id), 0.0)).await, Ok(vec![]));
         // Not the only position: it can't say which, and the order fails on
         // its own.
-        assert!(seat.base_moved(&remove(None, 1.0)).await.is_err());
+        assert!(moved(remove(None, 1.0)).await.is_err());
         let fees_only = amm_seat(vec![lp(0.0, 0.01)]);
-        assert_eq!(fees_only.base_moved(&remove(None, 0.0)).await, Ok(sell));
+        assert_eq!(
+            fees_only.base_moved(&remove(None, 0.0)).await,
+            Ok(vec![Sell])
+        );
         let empty = amm_seat(vec![lp(0.0, 0.0)]);
-        assert_eq!(empty.base_moved(&remove(None, 1.0)).await, Ok(None));
+        assert_eq!(empty.base_moved(&remove(None, 1.0)).await, Ok(vec![]));
         // A swap moves no liquidity.
         let swap = Action::Swap {
             side: Side::Bid,
@@ -1275,6 +1608,6 @@ mod tests {
             unit: AmountUnit::Base,
             limit: 150.0,
         };
-        assert_eq!(seat.base_moved(&swap).await, Ok(None));
+        assert_eq!(moved(swap).await, Ok(vec![]));
     }
 }

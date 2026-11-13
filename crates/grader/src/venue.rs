@@ -238,13 +238,14 @@ pub trait Seat: Send + Sync {
     /// a spot account holds, or a money market's supply less its debt.
     async fn position(&self) -> SeatResult<f64>;
 
-    /// The side of the base `action` would move on this market for the
-    /// mandate's sides rule, if it moves any: a deposit that takes base in
-    /// is a buy, a withdrawal that returns base a sell. `None` for any other
-    /// action.
-    async fn base_moved(&self, action: &Action) -> SeatResult<Option<mtx_core::Side>> {
+    /// The sides of the base `action` would move on this market for the
+    /// mandate's sides rule: a deposit that takes base in, or rests to buy
+    /// it (quote alone, below the price), is a buy; a withdrawal that
+    /// returns base, or a deposit that rests to sell it (base alone, above
+    /// the price), a sell. None for any other action.
+    async fn base_moved(&self, action: &Action) -> SeatResult<Vec<mtx_core::Side>> {
         let _ = action;
-        Ok(None)
+        Ok(Vec::new())
     }
 
     /// The market's tick, in quote units; 0 without a book.

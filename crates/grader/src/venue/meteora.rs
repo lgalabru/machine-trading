@@ -130,6 +130,7 @@ impl DlmmPool {
         Ok(Self {
             assets: PoolAssets {
                 address: named.address,
+                program: dlmm::PROGRAM_ID,
                 base,
                 quote,
                 base_mint: pair.mint_x,
@@ -353,6 +354,30 @@ impl Pool for DlmmPool {
         let pair = self.pair(chain).await?;
         let arrays = self.bin_arrays(chain, &position.bin_arrays()).await;
         Ok(Some(self.lp(&pair, &position, &arrays)))
+    }
+
+    /// A position's owner is in its account.
+    async fn position_owners(
+        &self,
+        chain: &dyn ChainClient,
+        accounts: &[Pubkey],
+    ) -> Result<Vec<Pubkey>> {
+        let read = chain
+            .get_multiple_accounts(accounts)
+            .await
+            .map_err(read_error("meteora positions"))?;
+        Ok(accounts
+            .iter()
+            .zip(read)
+            .filter_map(|(address, account)| {
+                let account = account
+                    .filter(|a| a.owner == dlmm::PROGRAM_ID && a.data.len() == Position::LEN)?;
+                Position::decode(*address, &account.data)
+                    .ok()
+                    .filter(|p| p.pair == self.assets.address)
+                    .map(|p| p.owner)
+            })
+            .collect())
     }
 
     async fn deposit(

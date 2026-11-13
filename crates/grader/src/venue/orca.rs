@@ -19,7 +19,6 @@ use mtx_kit::{
             math,
         },
     },
-    token::{TOKEN_2022_PROGRAM_ID, associated_token_address},
 };
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
@@ -28,7 +27,7 @@ use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
         Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units,
+        swap_atoms, units, wallet_atoms,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
@@ -157,6 +156,7 @@ impl WhirlpoolPool {
         Ok(Self {
             assets: PoolAssets {
                 address: named.address,
+                program: wp::PROGRAM_ID,
                 base,
                 quote,
                 base_mint: named.base_mint,
@@ -259,20 +259,18 @@ impl WhirlpoolPool {
     }
 
     /// Whether `owner` holds `position`'s NFT, which makes the position its
-    /// own.
+    /// own: in any of its token accounts for the NFT's mint, as the wallet
+    /// is read, not only the associated one. A mint the chain can't read
+    /// is held by no one.
     async fn holds_nft(
         &self,
         chain: &dyn ChainClient,
         owner: &Pubkey,
         position: &Position,
     ) -> bool {
-        let nft = associated_token_address(owner, &position.position_mint, &TOKEN_2022_PROGRAM_ID);
-        match chain.get_account(&nft).await {
-            Ok(Some(account)) => {
-                mtx_kit::chain::token::token_balance(&account).is_ok_and(|n| n > 0)
-            }
-            _ => false,
-        }
+        wallet_atoms(chain, owner, &position.position_mint)
+            .await
+            .is_ok_and(|atoms| atoms > 0)
     }
 
     async fn position_of(
