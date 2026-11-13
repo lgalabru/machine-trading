@@ -515,6 +515,7 @@ impl CarryFamily {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),

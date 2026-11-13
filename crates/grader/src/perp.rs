@@ -47,7 +47,7 @@ use crate::{
     chain,
     guard::Guard,
     making::{TAKER_ACCOUNTS, book_at, level_at},
-    orders::{CloseOutReport, OrderReport},
+    orders::{CloseOutReport, NetReport, OrderReport},
     phoenix::{self, Phoenix},
     scenario::Scenario,
     session::{
@@ -1108,11 +1108,16 @@ impl Account for PerpAccount {
         let close_usd = self
             .moment(done.end_slot.saturating_sub(self.base_slot))
             .level_usd;
+        let fair_close_usd = scenario.fair_value_usd(
+            self.start_mark_usd,
+            done.end_slot.saturating_sub(self.base_slot),
+        );
         let settled = settle(
             scenario,
             self.start_position,
             end_position,
             (self.start_mark_usd, close_usd),
+            fair_close_usd,
             end_value_usd - self.start_value_usd,
             &fills.fills,
         );
@@ -1157,7 +1162,7 @@ impl Account for PerpAccount {
             faults: done.faults,
             order: settled.order,
             participation: None,
-            net: None,
+            net: settled.net,
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
@@ -1183,6 +1188,7 @@ impl Account for PerpAccount {
 struct Settled {
     pnl_usd: f64,
     order: Option<OrderReport>,
+    net: Option<NetReport>,
     close_outs: Vec<CloseOutReport>,
 }
 
@@ -1191,12 +1197,17 @@ struct Settled {
 /// at the end, with the account's value changing by `value_change_usd`.
 /// An order is scored against its broker, as on spot (`fills`, the bot's,
 /// say whether it traded the other way); a close-out charges the haircut on
-/// what is left. Without either, the PnL is the value change.
+/// what is left. A net-scored session's PnL is the value change less what
+/// holding the start position gained from the price moving, at the fair
+/// value at the close where the scenario has one (`fair_close_usd`), else at
+/// the level, so a bot that holds scores 0. Without any, the PnL is the
+/// value change.
 fn settle(
     scenario: &Scenario,
     start: f64,
     end: f64,
     (start_usd, close_usd): (f64, f64),
+    fair_close_usd: Option<f64>,
     value_change_usd: f64,
     fills: &[PerpFillRecord],
 ) -> Settled {
@@ -1213,12 +1224,25 @@ fn settle(
         .iter()
         .map(|(symbol, close_out)| close_out.report(symbol, end, close_usd))
         .collect();
+    let net = scenario.net.as_ref().map(|net| {
+        net.report(
+            start,
+            end,
+            (start_usd, fair_close_usd.unwrap_or(close_usd)),
+            value_change_usd,
+            &[],
+            &[],
+        )
+    });
     let pnl_usd = order
         .as_ref()
-        .map_or(value_change_usd, OrderReport::pnl_usd)
+        .map(OrderReport::pnl_usd)
+        .or_else(|| net.as_ref().map(NetReport::pnl_usd))
+        .unwrap_or(value_change_usd)
         - close_outs.iter().map(|c| c.charge_usd).sum::<f64>();
     Settled {
         pnl_usd,
+        net,
         order,
         close_outs,
     }
@@ -1418,13 +1442,21 @@ mod tests {
         };
         scenario.order = Some(order.clone());
         // Doing nothing scores 0 whatever the close.
-        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), 0.0, &[]);
+        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), None, 0.0, &[]);
         assert_eq!(nop.pnl_usd, 0.0);
         // Bought 6 at 101 against a close of 110, 1 of fees: the same PnL
         // as the spot formula, and the order names its market.
         let fills = [fill(CoreSide::Buy, 6.0)];
         let value_change = 6.0 * (110.0 - 101.0) - 1.0;
-        let bought = settle(&scenario, 0.0, 6.0, (100.0, 110.0), value_change, &fills);
+        let bought = settle(
+            &scenario,
+            0.0,
+            6.0,
+            (100.0, 110.0),
+            None,
+            value_change,
+            &fills,
+        );
         let spot = order.report(
             0.0,
             6.0,
@@ -1441,7 +1473,7 @@ mod tests {
         // A sell inside the session is caught from the fills, though the
         // position never went below where it started.
         let both = [fill(CoreSide::Buy, 6.0), fill(CoreSide::Sell, 1.0)];
-        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &both);
+        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), None, 0.0, &both);
         assert!(
             sold.order
                 .unwrap()
@@ -1456,8 +1488,38 @@ mod tests {
             reduce_only: true,
             ..order
         });
-        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), -100.0, &[]);
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), None, -100.0, &[]);
         assert_eq!(held.pnl_usd, 0.0);
+    }
+
+    #[test]
+    fn a_net_scored_perp_scores_what_it_made_over_holding() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.net = Some(crate::orders::NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        // Holding 10 through a fall from 100 to 90 loses 100: it scores 0.
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), None, -100.0, &[]);
+        assert_eq!(held.pnl_usd, 0.0);
+        // Cutting to 4 at 100 before the fall keeps 60 of it: +60.
+        let cut = settle(&scenario, 10.0, 4.0, (100.0, 90.0), None, -40.0, &[]);
+        assert_eq!(cut.pnl_usd, 60.0);
+        // Adding 5 at 100 before the fall loses 50 more: -50.
+        let added = settle(&scenario, 10.0, 15.0, (100.0, 90.0), None, -150.0, &[]);
+        assert_eq!(added.pnl_usd, -50.0);
+        // The drift is at the fair close where there is one.
+        let fair = settle(
+            &scenario,
+            10.0,
+            10.0,
+            (100.0, 90.0),
+            Some(95.0),
+            -100.0,
+            &[],
+        );
+        assert_eq!(fair.pnl_usd, -50.0);
+        assert_eq!(fair.net.unwrap().drift_usd, -50.0);
     }
 
     #[test]
@@ -1467,17 +1529,17 @@ mod tests {
             "SPCX".into(),
             crate::orders::CloseOut { haircut_bps: 100.0 },
         );
-        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), None, 50.0, &[]);
         assert!((long.pnl_usd - (50.0 - 4.0 * 2.0)).abs() < 1e-9);
         assert!((long.close_outs[0].broker_usd - 198.0).abs() < 1e-9);
-        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), 50.0, &[]);
+        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), None, 50.0, &[]);
         assert!((short.close_outs[0].broker_usd - 202.0).abs() < 1e-9);
         assert!((short.pnl_usd - (50.0 - 8.0)).abs() < 1e-9);
-        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), 50.0, &[]);
+        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), None, 50.0, &[]);
         assert_eq!(flat.pnl_usd, 50.0);
         // Without an order or a close-out, the PnL is the value change.
         let plain = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), None, 50.0, &[]);
         assert_eq!(settled.pnl_usd, 50.0);
         assert!(settled.order.is_none() && settled.close_outs.is_empty());
     }

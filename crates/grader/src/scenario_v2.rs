@@ -42,7 +42,8 @@ use crate::{
     orders::{CloseOut, ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
-        Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
+        BoundOn, Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint,
+        move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
 };
@@ -231,6 +232,10 @@ pub struct Scoring {
     /// Score the PnL net of the starting holding's price drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetScoring>,
+    /// The path the hindsight bound is valued on (see
+    /// [`crate::scenario::BoundOn`]).
+    #[serde(default, skip_serializing_if = "BoundOn::is_default")]
+    pub bound_on: BoundOn,
     /// Perp markets, by symbol, whose residual position a broker takes at
     /// the close, at a haircut the PnL pays. An order's market has its own
     /// broker, the order's.
@@ -599,9 +604,29 @@ impl ScenarioV2 {
         if self.assets.wallet.is_some()
             || self.scoring.bound_usd.is_some()
             || self.scoring.participation.is_some()
-            || self.scoring.net.is_some()
         {
-            return Err("turn_data, participation and net are for spot scenarios".into());
+            return Err("turn_data and participation are for spot scenarios".into());
+        }
+        if let Some(net) = &self.scoring.net {
+            if net.venue_position.is_some() {
+                return Err("net: venue_position is for spot scenarios".into());
+            }
+            if self
+                .venues
+                .perp
+                .as_ref()
+                .is_some_and(|p| p.funding.is_some())
+                && self.start_position() != 0.0
+            {
+                return Err(
+                    "net: a funded start position needs a measured hold baseline, \
+                     which net scoring doesn't have"
+                        .into(),
+                );
+            }
+        }
+        if self.scoring.bound_on == BoundOn::FairPath && self.market_model.fair_path.is_none() {
+            return Err("scoring: bound_on fair_path needs market_model.fair_path".into());
         }
         Ok(())
     }
@@ -936,6 +961,7 @@ impl ScenarioV2 {
             order,
             participation: scoring.participation,
             net: scoring.net,
+            bound_on: scoring.bound_on,
             start_positions: assets.start_positions,
             close_out: scoring.close_out,
             reference_pnl_usd: scoring.reference_pnl_usd,
@@ -1054,6 +1080,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
+                bound_on: v1.bound_on,
                 close_out: v1.close_out.clone(),
             },
         })
@@ -1388,6 +1415,66 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    #[test]
+    fn a_perp_can_be_net_scored_against_holding_its_start_position() {
+        let mut s = shock();
+        let half = s.mandate.universe[0].max_position / 2.0;
+        s.assets.start_positions.insert("SPCX".into(), half);
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert!(v1.net.is_some());
+        assert_eq!(v1.valuation(), "oracle");
+
+        let mut with_venue = s.clone();
+        with_venue.scoring.net.as_mut().unwrap().venue_position =
+            Some(crate::orders::VenuePosition {
+                limit: 1.0,
+                price_bps: 1.0,
+            });
+        assert!(
+            with_venue
+                .validate()
+                .unwrap_err()
+                .contains("venue_position")
+        );
+
+        let mut funded = s.clone();
+        funded.venues.perp = Some(PerpVenue {
+            funding: Some(Funding {
+                interval_seconds: 3_600,
+                period_seconds: 86_400,
+                max_rate: 1,
+                mark: None,
+            }),
+        });
+        assert!(
+            funded
+                .validate()
+                .unwrap_err()
+                .contains("funded start position")
+        );
+        funded.assets.start_positions.clear();
+        funded.validate().unwrap();
+
+        let mut bound = s.clone();
+        bound.scoring.bound_on = BoundOn::FairPath;
+        assert!(bound.validate().unwrap_err().contains("fair_path"));
+        bound.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0), Waypoint::at(20, 0.0)]);
+        bound.validate().unwrap();
+        let on_fair = bound.clone().into_scenario().unwrap();
+        let mut on_path = on_fair.clone();
+        on_path.bound_on = BoundOn::Path;
+        let fair_tv = on_fair.hindsight_bound_usd(100.0);
+        assert!((fair_tv - on_fair.max_position() * 100.0 * 0.08).abs() < 1e-9);
+        assert_ne!(fair_tv, on_path.hindsight_bound_usd(100.0));
+        let json = serde_json::to_string(&on_path).unwrap();
+        assert!(!json.contains("bound_on"));
     }
 
     #[test]
