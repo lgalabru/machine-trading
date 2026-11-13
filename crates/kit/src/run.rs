@@ -28,8 +28,9 @@ use solana_rpc_client_api::request::RpcRequest;
 use tracing::{info, warn};
 
 use crate::{
-    Action, BotEnv, BotResult, Market, Orders, Session, Strategy, Trader, Turns, plan,
-    resting_after, rpc_client,
+    Action, BotEnv, BotResult, Market, Orders, Planned, SendSource, SendStatus, Session, Strategy,
+    Trader, Turns, VenueInfo, phoenix_market_address, plan_sheet_with, resting_after, rpc_client,
+    venue_views,
 };
 
 /// The endpoint [`crate::rpc`] calls in a process: the session's.
@@ -96,6 +97,7 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     let _ = RPC_URL.set(env.rpc_url.clone());
     let start_mark = trader.mark_usd().await?;
     let start_oracle = trader.oracle_usd().await?;
+    let venue = std::fs::read_to_string(&env.exchange_path)?;
     let session = Session {
         steps: hello.steps,
         slots_per_step: hello.slots_per_step,
@@ -106,14 +108,23 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         start_oracle,
         cap: env.max_position,
         max_drawdown: env.max_drawdown_usd,
-        mandate,
-        venue: std::fs::read_to_string(&env.exchange_path)?,
+        mandate: mandate.clone(),
+        venue: venue.clone(),
         authority: trader.authority().to_string(),
         vars: crate::SESSION_VARS
             .iter()
             .filter_map(|name| Some((name.to_string(), std::env::var(name).ok()?)))
             .collect(),
-        seed: hello.start_slot,
+        // The scenario's seed, as a component gets it; a grader from
+        // before seeds sent none.
+        seed: hello.seed.unwrap_or(hello.start_slot),
+        venues: VenueInfo::of_perp_session(
+            &mandate,
+            &env.symbol,
+            phoenix_market_address(&venue, &env.symbol),
+        ),
+        reports: hello.reports.into(),
+        applies_tx_options: false,
     };
     strategy.start(&session)?;
     info!(authority = %trader.authority(), end_slot = session.end_slot, "started");
@@ -122,6 +133,8 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     let mut last_market: Option<Market> = None;
     // What the loop has resting: see [`Market::resting_bids`].
     let (mut resting_bids, mut resting_asks) = (0.0, 0.0);
+    // What became of the last sheet, for the next step's market.
+    let (mut sends, mut notes) = (Vec::new(), Vec::new());
     while let Some(step) = turns.next()? {
         let (top, oracle, position) = match (
             trader.top().await,
@@ -140,6 +153,15 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
         }
         last_mark = Some(mark);
         peak_pnl = peak_pnl.max(pnl);
+        let (venues, fills) = venue_views(
+            &session.venues,
+            session.reports,
+            top.best_bid,
+            top.best_ask,
+            position,
+            &step.tape,
+            &step.depth,
+        );
         let market = Market {
             k: step.k,
             slot: step.slot,
@@ -162,18 +184,26 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             tape: step.tape,
             depth: step.depth,
             unix_timestamp: step.unix_timestamp,
+            venues,
+            sends: std::mem::take(&mut sends),
+            fills,
+            rfqs: Vec::new(),
+            notes: std::mem::take(&mut notes),
+            fees: None,
         };
         let mut orders = Orders::new();
         match strategy.step(&market, &mut orders) {
             Ok(()) => {
-                let (actions, notes) = plan(orders.intents(), &market);
-                for note in notes {
+                let planned;
+                (planned, notes) = plan_sheet_with(&orders, &market, |venue, action| {
+                    venue.is_none() && Trader::executes(action)
+                });
+                for note in &notes {
                     warn!(step = step.k, "{note}");
                 }
-                send(&trader, &actions).await;
-                // A resting order that failed to send counts anyway: the
-                // ledger only ever over-counts.
-                (resting_bids, resting_asks) = resting_after(resting_bids, resting_asks, &actions);
+                let tried;
+                (sends, tried) = send(&trader, step.k, &session.venues[0].id, &planned).await;
+                (resting_bids, resting_asks) = resting_after(resting_bids, resting_asks, &tried);
             }
             Err(error) => warn!(step = step.k, %error, "the strategy failed; no orders this step"),
         }
@@ -183,21 +213,47 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
     Ok(())
 }
 
-/// Send planned orders, in order. A failed order is logged, and the rest of
-/// the step's orders still go: each is its own transaction.
-async fn send(trader: &Trader, actions: &[Action]) {
-    for action in actions {
-        let result = match *action {
-            Action::Market { side, size, limit } => {
-                trader.place_market(side, size, limit).await.map(|_| ())
+/// Send planned orders, in order, and say what became of each, with the
+/// orders that reached the chain: a resting order that failed counts toward
+/// what rests anyway, as the ledger only over-counts. A failed order is
+/// logged, and the rest of the step's orders still go: each is its own
+/// transaction. Only the session's own market is traded.
+async fn send(
+    trader: &Trader,
+    k: u64,
+    own: &str,
+    planned: &[Planned],
+) -> (Vec<SendStatus>, Vec<Action>) {
+    let mut sends = Vec::with_capacity(planned.len());
+    let mut tried = Vec::new();
+    for planned in planned {
+        let state = match &planned.venue {
+            Some(venue) => {
+                crate::SendState::NotSent(format!("{venue} isn't traded in this session"))
             }
-            Action::Limit { side, price, size } => {
-                trader.place_limit(side, price, size).await.map(|_| ())
+            None => {
+                let sent = trader.send_planned(planned).await;
+                if sent.sent {
+                    tried.push(planned.action.clone());
+                }
+                if let crate::SendState::Failed { reason, .. } = &sent.state {
+                    warn!(action = ?planned.action, error = %reason, "order failed");
+                }
+                sent.state
             }
-            Action::CancelAll => trader.cancel_all().map(|_| ()),
         };
-        if let Err(error) = result {
-            warn!(?action, %error, "order failed");
-        }
+        sends.push(SendStatus {
+            step: k,
+            source: SendSource::Line(planned.line as u32),
+            venue: planned.venue.clone().unwrap_or_else(|| own.to_string()),
+            client_id: planned.client_id,
+            order: Some(planned.action.clone()),
+            expires_slot: planned.expires_slot,
+            state,
+            slot: None,
+            fee: None,
+            tip: None,
+        });
     }
+    (sends, tried)
 }

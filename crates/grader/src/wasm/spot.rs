@@ -3,13 +3,13 @@
 //! OpenBook v2 book with the bot's key, through the bot's guarded endpoint,
 //! as [`WasmBot`](super::WasmBot) does on Phoenix's perpetuals.
 //!
-//! The `mtx:strategy@0.1.0` world's intents name no venue, so a component
-//! trades on one: the first of the scenario's venues. It reads the others,
-//! and their books, through `rpc` with the kit's `phoenix-v1-venue` and
-//! `openbook-v2-venue` decoders, and `start`'s `venue` lists them all.
-// TODO(wit 0.2): route each intent to the venue it names, and hand the
-// component the step's turn data (tape, depth, clock) as a process bot gets
-// it.
+//! A component trades on one venue: the first of the scenario's venues, its
+//! session's own market. A line of the sheet that names another market
+//! comes back as not sent. It reads the others, and their books, through
+//! `rpc` with the kit's `phoenix-v1-venue` and `openbook-v2-venue`
+//! decoders, and `start`'s `venue` lists them all.
+// TODO: route each line to the venue it names, and hand the component the
+// step's turn data (tape, depth, clock) as a process bot gets it.
 //
 // The market a component sees:
 //
@@ -22,7 +22,10 @@
 
 use std::{io::Write, path::Path, sync::Arc};
 
-use mtx_core::{Decimal, Side as CoreSide};
+use mtx_core::{
+    Decimal, Side as CoreSide,
+    mandate::{InstrumentRef, Kind},
+};
 use mtx_kit::{
     chain::{ChainClient, FireAndForgetOptions, RpcChainClient, SendMode},
     protocols::{
@@ -34,9 +37,7 @@ use mtx_kit::{
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 
-use super::{
-    Clock, FUEL_PER_STEP, Market, Outcome, Position, Session, WasmStrategy, kit_intent, seed_of,
-};
+use super::{Clock, FUEL_PER_STEP, Outcome, WasmStrategy};
 use crate::spot::Wallet;
 
 /// The book a component's orders go to, and the grader's trader on it.
@@ -137,7 +138,7 @@ impl Book {
         size: Decimal,
         limit: Decimal,
         signer: &Keypair,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         match self {
             Self::Phoenix(t) => t
                 .submit(
@@ -150,7 +151,7 @@ impl Book {
                     signer,
                 )
                 .await
-                .map(|_| ())
+                .map(|signature| signature.to_string())
                 .map_err(|e| e.to_string()),
             Self::OpenBook(t) => t
                 .submit(
@@ -162,7 +163,7 @@ impl Book {
                     signer,
                 )
                 .await
-                .map(|_| ())
+                .map(|signature| signature.to_string())
                 .map_err(|e| e.to_string()),
         }
     }
@@ -174,7 +175,7 @@ impl Book {
         price: Decimal,
         size: Decimal,
         signer: &Keypair,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         match self {
             Self::Phoenix(t) => t
                 .submit(
@@ -186,7 +187,7 @@ impl Book {
                     signer,
                 )
                 .await
-                .map(|_| ())
+                .map(|signature| signature.to_string())
                 .map_err(|e| e.to_string()),
             Self::OpenBook(t) => t
                 .submit(
@@ -198,25 +199,25 @@ impl Book {
                     signer,
                 )
                 .await
-                .map(|_| ())
+                .map(|signature| signature.to_string())
                 .map_err(|e| e.to_string()),
         }
     }
 
-    async fn cancel_all(&self, signer: &Keypair) -> Result<(), String> {
+    async fn cancel_all(&self, signer: &Keypair) -> Result<String, String> {
         match self {
             Self::Phoenix(t) => {
                 let plan = t.plan_cancel_all().map_err(|e| e.to_string())?;
                 t.send(&plan, signer)
                     .await
-                    .map(|_| ())
+                    .map(|signature| signature.to_string())
                     .map_err(|e| e.to_string())
             }
             Self::OpenBook(t) => {
                 let plan = t.plan_cancel_all().map_err(|e| e.to_string())?;
                 t.send(&plan, signer)
                     .await
-                    .map(|_| ())
+                    .map(|signature| signature.to_string())
                     .map_err(|e| e.to_string())
             }
         }
@@ -299,14 +300,18 @@ pub struct SpotWasmBot {
     strategy: Option<WasmStrategy>,
     book: Book,
     signer: Keypair,
-    session: Session,
+    session: mtx_kit::Session,
     start_value_usd: f64,
     start_price_usd: f64,
     peak_pnl: f64,
     resting: (f64, f64),
     /// Whether the account resting orders need is known to exist.
     account_open: bool,
-    last: Option<Market>,
+    last: Option<mtx_kit::Market>,
+    /// What became of the last sheet, and the planner's notes on it: the
+    /// next step's market carries them.
+    sends: Vec<mtx_kit::SendStatus>,
+    notes: Vec<String>,
     /// Why the strategy plays no more of the session, if it doesn't.
     pub stopped: Option<String>,
 }
@@ -326,6 +331,17 @@ pub struct SpotStart<'a> {
     pub wallet: &'a Wallet,
 }
 
+/// What a spot session executes of a sheet: orders on its own market.
+fn executes(venue: Option<&str>, action: &mtx_kit::Action) -> bool {
+    venue.is_none()
+        && matches!(
+            action,
+            mtx_kit::Action::Market { .. }
+                | mtx_kit::Action::Limit { .. }
+                | mtx_kit::Action::CancelAll
+        )
+}
+
 impl SpotWasmBot {
     /// Loads the component and calls its `start`.
     pub async fn start(
@@ -340,25 +356,34 @@ impl SpotWasmBot {
             start_slot,
             scenario,
             vars,
+            reports,
         } = clock;
         let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(start.rpc_url));
         let owner = start.signer.pubkey();
         let venue = start.venues.first().map_or("phoenix", String::as_str);
         let book = Book::connect(venue, chain, owner).await?;
-        let seed = seed_of(scenario);
+        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, start.rpc_url, log, seed, session_fuel)
             .await
         {
-            Ok(strategy) => Some(strategy),
+            Ok(strategy) => {
+                tracing::info!(interface = strategy.interface(), "strategy component");
+                Some(strategy)
+            }
             Err(error) => {
                 tracing::warn!(%error, "the component didn't load; the session plays without it");
                 stopped = Some(format!("didn't load: {error}"));
                 None
             }
         };
-        let session = Session {
+        let own = InstrumentRef {
+            venue: venue.into(),
+            kind: Kind::Spot,
+            symbol: crate::spot::SYMBOL.into(),
+        };
+        let session = mtx_kit::Session {
             steps,
             slots_per_step,
             start_slot,
@@ -368,11 +393,14 @@ impl SpotWasmBot {
             start_oracle: start.wallet.price_usd,
             cap: start.max_position,
             max_drawdown: start.max_drawdown_usd,
-            mandate: serde_json::to_string(start.mandate)?,
+            mandate: start.mandate.clone(),
             venue: serde_json::to_string(&spot_venues(start.venues)?)?,
             authority: owner.to_string(),
             vars,
             seed,
+            venues: mtx_kit::VenueInfo::of_mandate(start.mandate, &own, |i| *i == own),
+            reports,
+            applies_tx_options: false,
         };
         if let Some(strategy) = strategy.as_mut() {
             match strategy.start(&session).await {
@@ -397,6 +425,8 @@ impl SpotWasmBot {
             resting: (0.0, 0.0),
             account_open: false,
             last: None,
+            sends: Vec::new(),
+            notes: Vec::new(),
             stopped,
         })
     }
@@ -423,7 +453,20 @@ impl SpotWasmBot {
         let pnl = wallet.value_usd - self.start_value_usd;
         self.peak_pnl = self.peak_pnl.max(pnl);
         let price = wallet.price_usd;
-        let market = Market {
+        let position = mtx_kit::Position {
+            size: wallet.base,
+            entry_usd: self.start_price_usd,
+        };
+        let (venues, fills) = mtx_kit::venue_views(
+            &self.session.venues,
+            self.session.reports,
+            best_bid,
+            best_ask,
+            position,
+            &[],
+            &[],
+        );
+        let market = mtx_kit::Market {
             k,
             slot,
             last,
@@ -434,10 +477,7 @@ impl SpotWasmBot {
             index: price,
             best_bid,
             best_ask,
-            position: Position {
-                size: wallet.base,
-                entry_usd: self.start_price_usd,
-            },
+            position,
             cap: self.session.cap,
             max_drawdown: self.session.max_drawdown,
             resting_bids: self.resting.0,
@@ -445,73 +485,96 @@ impl SpotWasmBot {
             pnl,
             peak_pnl: self.peak_pnl,
             drawdown: self.peak_pnl - pnl,
+            venues,
+            sends: std::mem::take(&mut self.sends),
+            fills,
+            notes: std::mem::take(&mut self.notes),
+            ..mtx_kit::Market::default()
         };
-        self.last = Some(market);
         let Some(strategy) = self.strategy.as_mut() else {
+            self.last = Some(market);
             return false;
         };
-        let intents = match strategy.step(&market).await {
-            Outcome::Done(intents) => intents,
+        let lines = match strategy.step(&market).await {
+            Outcome::Done(lines) => lines,
             Outcome::Failed(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy failed; no orders this step");
+                self.last = Some(market);
                 return true;
             }
             Outcome::Trapped(e) => {
                 tracing::warn!(step = k, error = %e, "the strategy trapped; it plays no more of the session");
                 self.stopped = Some(format!("trapped at step {k}: {e}"));
+                self.last = Some(market);
                 return false;
             }
         };
-        let intents: Vec<mtx_kit::Intent> = intents.into_iter().map(kit_intent).collect();
-        let kit = mtx_kit::Market {
-            k,
-            slot,
-            last,
-            steps_left: market.steps_left,
-            slots_left: market.slots_left,
-            mark: price,
-            oracle: price,
-            index: price,
-            best_bid,
-            best_ask,
-            position: mtx_kit::Position {
-                size: wallet.base,
-                entry_usd: self.start_price_usd,
-            },
-            cap: market.cap,
-            max_drawdown: market.max_drawdown,
-            resting_bids: market.resting_bids,
-            resting_asks: market.resting_asks,
-            pnl,
-            peak_pnl: self.peak_pnl,
-            drawdown: market.drawdown,
-            ..mtx_kit::Market::default()
-        };
-        let (actions, notes) = mtx_kit::plan(&intents, &kit);
-        for note in notes {
+        let mut orders = mtx_kit::Orders::new();
+        for (intent, options) in lines {
+            orders.push(intent, options);
+        }
+        // Only what the session executes counts toward the cap.
+        let (planned, notes) = mtx_kit::plan_sheet_with(&orders, &market, executes);
+        for note in &notes {
             tracing::warn!(step = k, "{note}");
         }
-        let mut sent = 0;
-        for action in &actions {
-            if let Err(error) = self.send(action).await {
-                tracing::warn!(step = k, ?action, %error, "order failed; the step's other orders aren't sent");
-                break;
-            }
-            sent += 1;
+        self.notes = notes;
+        self.last = Some(market);
+        let own = self.session.venues[0].id.clone();
+        // The orders that reached the venue, the one that failed included:
+        // the ledger of what rests only over-counts.
+        let mut tried = Vec::new();
+        let mut failed = false;
+        for planned in planned {
+            let state = if failed {
+                mtx_kit::SendState::NotSent("an earlier order of the step failed".into())
+            } else if let Some(venue) = &planned.venue {
+                mtx_kit::SendState::NotSent(format!("{venue} isn't traded in this session"))
+            } else if !executes(None, &planned.action) {
+                mtx_kit::SendState::NotSent("a spot session doesn't execute this action".into())
+            } else {
+                tried.push(planned.action.clone());
+                match self.send(&planned.action).await {
+                    Ok(Some(signature)) => mtx_kit::SendState::Landed(signature),
+                    Ok(None) => {
+                        mtx_kit::SendState::NotSent("nothing to send on this market's grid".into())
+                    }
+                    Err(error) => {
+                        tracing::warn!(step = k, action = ?planned.action, %error, "order failed; the step's other orders aren't sent");
+                        failed = true;
+                        mtx_kit::SendState::failed(error)
+                    }
+                }
+            };
+            let mtx_kit::Planned {
+                line,
+                venue,
+                client_id,
+                action,
+                expires_slot,
+                ..
+            } = planned;
+            self.sends.push(mtx_kit::SendStatus {
+                step: k,
+                source: mtx_kit::SendSource::Line(line as u32),
+                venue: venue.unwrap_or_else(|| own.clone()),
+                client_id,
+                order: Some(action),
+                expires_slot,
+                state,
+                slot: None,
+                fee: None,
+                tip: None,
+            });
         }
-        // A failed resting order counts anyway: the ledger only over-counts.
-        self.resting = mtx_kit::resting_after(
-            self.resting.0,
-            self.resting.1,
-            &actions[..(sent + 1).min(actions.len())],
-        );
+        self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
         true
     }
 
     /// One order of the sheet on the book's grid: sizes rounded down to
     /// whole lots, prices rounded away from a worse fill (a bid's down, an
-    /// ask's up). An order of no lots is skipped.
-    async fn send(&mut self, action: &mtx_kit::Action) -> Result<(), String> {
+    /// ask's up). An order of no lots is skipped: `None`.
+    async fn send(&mut self, action: &mtx_kit::Action) -> Result<Option<String>, String> {
         let (tick, lot) = self.book.grid();
         let off_grid = || "a price or size no market grid can hold".to_string();
         match *action {
@@ -520,18 +583,19 @@ impl SpotWasmBot {
                 let limit =
                     on_grid(limit, tick, side == mtx_kit::Side::Ask).ok_or_else(off_grid)?;
                 if size.is_zero() {
-                    return Ok(());
+                    return Ok(None);
                 }
                 self.book
                     .take(core_side(side), size, limit, &self.signer)
                     .await
+                    .map(Some)
             }
             mtx_kit::Action::Limit { side, price, size } => {
                 let size = on_grid(size, lot, false).ok_or_else(off_grid)?;
                 let price =
                     on_grid(price, tick, side == mtx_kit::Side::Ask).ok_or_else(off_grid)?;
                 if size.is_zero() || price.is_zero() {
-                    return Ok(());
+                    return Ok(None);
                 }
                 // The setup is sent with the order, unconfirmed: count the
                 // account open only once it is seen, and send the setup again
@@ -546,22 +610,24 @@ impl SpotWasmBot {
                 self.book
                     .rest(core_side(side), price, size, &self.signer)
                     .await
+                    .map(Some)
             }
             mtx_kit::Action::CancelAll => {
                 if !self.account_open {
                     if !self.book.has_account().await {
-                        return Ok(());
+                        return Ok(None);
                     }
                     self.account_open = true;
                 }
-                self.book.cancel_all(&self.signer).await
+                self.book.cancel_all(&self.signer).await.map(Some)
             }
+            _ => Err("a spot session doesn't execute this action".into()),
         }
     }
 
     /// The session is over: the strategy's `end`.
     pub async fn end(&mut self) {
-        let last = self.last;
+        let last = self.last.take();
         if self.stopped.is_some() {
             return;
         }
@@ -642,7 +708,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let session = Session {
+        let mandate = mtx_core::Mandate::spot(&crate::spot::VENUES, crate::spot::SYMBOL, 10.0);
+        let own = InstrumentRef {
+            venue: "phoenix".into(),
+            kind: Kind::Spot,
+            symbol: crate::spot::SYMBOL.into(),
+        };
+        let session = mtx_kit::Session {
             steps: 20,
             slots_per_step: 2,
             start_slot: 100,
@@ -652,12 +724,8 @@ mod tests {
             start_oracle: 150.0,
             cap: 10.0,
             max_drawdown: 1_500.0,
-            mandate: serde_json::to_string(&mtx_core::Mandate::spot(
-                &crate::spot::VENUES,
-                crate::spot::SYMBOL,
-                10.0,
-            ))
-            .unwrap(),
+            venues: mtx_kit::VenueInfo::of_mandate(&mandate, &own, |i| *i == own),
+            mandate,
             venue: serde_json::to_string(
                 &spot_venues(&["phoenix".into(), "openbook".into()]).unwrap(),
             )
@@ -665,9 +733,11 @@ mod tests {
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
+            reports: mtx_kit::Reports::default(),
+            applies_tx_options: false,
         };
         assert!(matches!(strategy.start(&session).await, Outcome::Done(())));
-        let market = |k| Market {
+        let market = |k| mtx_kit::Market {
             k,
             slot: 100 + 2 * k,
             last: false,
@@ -678,31 +748,27 @@ mod tests {
             index: 150.0,
             best_bid: Some(149.9),
             best_ask: Some(150.1),
-            position: Position {
+            position: mtx_kit::Position {
                 size: 10.0,
                 entry_usd: 150.0,
             },
             cap: 10.0,
             max_drawdown: 1_500.0,
-            resting_bids: 0.0,
-            resting_asks: 0.0,
-            pnl: 0.0,
-            peak_pnl: 0.0,
-            drawdown: 0.0,
+            ..mtx_kit::Market::default()
         };
         // It reads the books through rpc, which this test doesn't answer,
         // and trades anyway: a sell, and the buyer's buy.
         let Outcome::Done(first) = strategy.step(&market(0)).await else {
             panic!()
         };
-        let sides: Vec<crate::wasm::Side> = first
+        let sides: Vec<mtx_kit::Side> = first
             .iter()
-            .map(|i| match i {
-                crate::wasm::Intent::Market((side, _, _)) => *side,
+            .map(|(intent, _)| match intent {
+                mtx_kit::Intent::Market { side, .. } => *side,
                 other => panic!("{other:?}"),
             })
             .collect();
-        assert_eq!(sides, [crate::wasm::Side::Ask, crate::wasm::Side::Bid]);
+        assert_eq!(sides, [mtx_kit::Side::Ask, mtx_kit::Side::Bid]);
         let Outcome::Done(second) = strategy.step(&market(1)).await else {
             panic!()
         };

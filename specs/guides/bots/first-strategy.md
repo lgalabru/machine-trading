@@ -9,10 +9,16 @@ recovery, in under twenty lines, and shows the two ways that ends. Both are
 in the repository, as `bots/printer` and `bots/first-strategy`; the
 [guide to writing a bot](writing-a-bot.md) has the rest of the details.
 
-They trade SPCX, a perpetual on SpaceX shares, on Phoenix, through the
-flash-crash task's practice scenarios: a minute or two of market each, with
-a sudden shock somewhere in it. The strategy may hold up to 70 SPCX either
-way.
+They trade SPCX, a perpetual on SpaceX shares, on Phoenix, through two
+short scenarios made for reading step by step:
+
+| Scenario | Steps | What happens |
+| --- | --- | --- |
+| `practice-101` | 5 | SPCX falls 3% at step 2, holds at step 3, and is back where it started at step 4 |
+| `practice-102` | 10 | SPCX rises 3% at step 3 and is back at step 5; then it falls 3% at step 7, and 3% more at step 9, and doesn't come back |
+
+The strategy may hold up to 70 SPCX either way. `mtx bot run` plays
+`practice-101` unless you name another.
 
 :::glance
 - **You write:** a `Strategy`, in Rust, built into `bot.wasm`
@@ -90,12 +96,12 @@ mtx bot run --debug
 what it printed. With `--debug` it stops after every step:
 
 ```
-━━ SPCX · 280 steps of 2 slots · slots 462882345–462882905 ━━━━━━━━━━━━━
+━━ SPCX · 5 steps of 2 slots · slots 462882345–462882355 ━━━━━━━━━━━━━━━
  session  mark 143.11   oracle 143.05   cap 70   drawdown limit $1000.00
- printed  │ SPCX for 280 steps, from slot 462882345 to 462882905
+ printed  │ SPCX for 5 steps, from slot 462882345 to 462882355
           │ the mark starts at 143.11; I may hold up to 70 SPCX either way
 
-━━ step 1 of 280 · slot 462882347 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━ step 1 of 5 · slot 462882347 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  market   mark 143.11   oracle 143.05   index 143.05   bid 143.03 · ask 143.06
           position flat   resting 0/0   pnl +$0.00   drawdown $0.00
  printed  │ mark 143.11, oracle 143.05, holding 0
@@ -111,12 +117,12 @@ Each block is one step:
 | `market` | What `step` was handed: Phoenix's mark (which values the account), the oracle, the index, the book's best bid and ask, the position, the orders resting, and an estimate of the session's PnL and drawdown |
 | `printed` | What the strategy printed during the call, `println!` and `eprintln!` alike |
 | `sheet` | What it asked for |
-| `sent` | The orders the grader sent for it, and whether each went through |
+| `sent` | The orders the grader planned from it, and what became of each: ✓ landed, ✗ failed (with the venue's reason), – not sent (with why); the strategy gets the same in the next step's `market.sends` |
 | `cost` | What the call spent: fuel (about one unit per WebAssembly instruction) and `rpc` reads |
 
 Press enter for the next step, `c` to run to the end, `q` to stop showing
 steps. `--auto 200` plays on, 200 ms a step; `--from 40` starts showing at
-step 40; `--scenario practice-4` plays another practice scenario. The world
+step 40; `--scenario practice-102` plays the other scenario. The world
 waits for the strategy, so stopping changes nothing: the session plays
 exactly as it would graded.
 
@@ -162,56 +168,59 @@ mtx_kit::export!(BuyTheDip);
 
 The strategy keeps state between steps: here, the starting mark, read once
 in `start`. It doesn't send orders. `target_position(35.0)` says where it
-wants to be, and the grader works out the orders. Practice scenario 4 has a
-crash that recovers:
+wants to be, and the grader works out the orders. In `practice-101` the
+dip recovers:
 
 ```sh
-mtx bot run --debug --scenario practice-4 --from 30
+mtx bot run --debug
 ```
 
 ```
-━━ step 33 of 260 · slot 462882411 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- market   mark 140.90   oracle 140.83   index 140.83   bid 141.00 · ask 140.84
+━━ step 2 of 5 · slot 462882349 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ market   mark 138.97   oracle 138.82   index 138.82   bid 141.00 · ask 138.83
           position flat   resting 0/0   pnl +$0.00   drawdown $0.00
- printed  │ down 1.54% from the start: buying
+ printed  │ down 2.89% from the start: buying
  sheet    target_position(+35)
- sent     ✓ market buy 10 ≤ 143.72
-          ✓ market buy 10 ≤ 143.72
-          ✓ market buy 10 ≤ 143.72
-          ✓ market buy 5 ≤ 143.72
+ sent     ✓ market buy 10 ≤ 141.75
+          ✓ market buy 10 ≤ 141.75
+          ✓ market buy 10 ≤ 141.75
+          ✓ market buy 5 ≤ 141.75
  cost     5.4K fuel · 0 rpc
 
-━━ step 34 of 260 · slot 462882413 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- market   mark 140.86   oracle 140.83   index 140.83   bid 140.83 · ask 140.86
-          position +35 @ 140.85   resting 0/0   pnl −$1.40   drawdown $1.40
+━━ step 3 of 5 · slot 462882351 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ market   mark 138.85   oracle 138.82   index 138.82   bid 138.82 · ask 138.85
+          position +35 @ 138.84   resting 0/0   pnl −$4.20   drawdown $4.20
  sheet    empty: no orders
  cost     600 fuel · 0 rpc
 ```
 
-At step 33 the mark is 1.54% below the start, so the strategy asks for 35
+At step 2 the mark is 2.89% below the start, so the strategy asks for 35
 SPCX. The grader sends four market orders: one order that crosses much of
 the book could exceed a transaction's budget, so `target_position` slices
-them, 10 at a time. Each may fill up to 2% past the mark (143.72). At step
-34 the position is there, bought at 140.85. On step 34 the strategy is
-holding and the mark hasn't recovered, so it asks for nothing. When the
-mark is back at the start, it sells. The session ends up **+$124.03**,
-where the reference bot, which rides moves and fades them, lost $17.95.
+them, 10 at a time. Each may fill up to 2% past the mark (141.75). At step
+3 the position is there, bought at 138.84, and the strategy asks for
+nothing: it holds, and the mark hasn't recovered. (The book's bid, 141.00,
+sits above its ask at step 2: the makers' bid takes a step to follow a 3%
+drop.) At step 4 the mark is back at the start, and it sells. The session
+ends up **+$145.38**.
 
 ## 4. When the dip doesn't come back
 
-Not every shock reverts. Practice scenario 5 crashes, and keeps going:
+Not every shock reverts. In `practice-102`, SPCX first rises 3% and comes
+back, which the strategy ignores: it only buys dips. Then it falls 3%, and
+3% more, and stays there:
 
 ```sh
-mtx bot run --scenario practice-5
+mtx bot run --scenario practice-102
 ```
 
 ```
-│ down 1.22% from the start: buying
+│ down 2.95% from the start: buying
 
-practice-5  −$232.83   bound $948.78   reference +$171.36
+practice-102  −$152.72   bound $1202.12   reference —
 ```
 
-The strategy bought the first 1% and then held all the way down, because
+The strategy bought the first 3% and then held all the way down, because
 it only sells at the start. That is the lesson of a strategy this simple:
 it is right about the scenarios it was written for, and has no plan for
 the others. A next version might cut the position past a loss, or wait for
@@ -220,7 +229,8 @@ the fall to slow before buying.
 ## 5. Grade it
 
 `mtx bot run` plays one session. `mtx bot practice` grades the strategy the
-way the benchmark does, on all of the task's practice scenarios:
+way the benchmark does, on all of the task's practice scenarios (a minute
+or two of market each, with a sudden shock somewhere in it):
 
 ```sh
 mtx bot practice
