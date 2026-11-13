@@ -19,9 +19,8 @@ phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Hashes recipes and programs (src/recipe.rs), derives each session's
-# keypairs from the grade's secret (src/keys.rs), and pins
-# market-calibration files (src/market).
+# Derives each session's keypairs from the grade's secret (see src/keys.rs),
+# hashes a snapshot recipe, and pins market-calibration files (src/market).
 sha2 = "0.10"
 solana-keypair.workspace = true
 solana-pubkey.workspace = true
@@ -42,11 +41,3 @@ wasmtime = "50.0.1"
 wasmtime-wasi = "50.0.1"
 # Seeds the strategies' WASI randomness.
 rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
-
-[dev-dependencies]
-# A Token-2022 mint with a transfer fee, and v0 transactions, on a surfnet
-# behind the guard (tests/tokens_and_v0.rs).
-solana-system-interface = { version = "3", features = ["wincode"] }
-solana-transaction.workspace = true
-spl-token-2022-interface = "3.1"
-wincode = "0.6"
