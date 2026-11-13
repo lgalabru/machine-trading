@@ -22,11 +22,11 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     they now repeat from grade to grade. A `funding-carry-spcx` session no
     longer wobbles by cents to dollars between grades.
   - Process bots get the session's seed in the hello, as components do.
-  - The verifier grades the bot's sessions four at a time, as it did the
-    reference's: a component runs inside the grader with no files and no
-    network, so its sessions can't reach each other, and the report is
-    the one they'd give one at a time (`mtx grade --replay-jobs` checks
-    it). Scores don't change.
+  - The verifier grades the bot's sessions several at a time: as many as
+    its memory holds with every strategy at its 1 GiB cap, two in 6 GB (up
+    to four). A component runs inside the grader with no files and no
+    network, so its sessions can't reach each other, and the report is the
+    one they'd give one at a time (`mtx grade --replay-jobs` checks it).
 
 - **0.12.0.** Bots are strategy components, and two new tasks on new
   scenario hooks in the engine (book premiums, a taker tape, per-session

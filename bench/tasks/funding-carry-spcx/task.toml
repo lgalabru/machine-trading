@@ -23,7 +23,8 @@ practice_reference = false
 
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
-# reference on the same sessions first, four sessions at a time each. Each
+# reference on the same sessions first: four of its sessions at a time,
+# and of the bot's as many as the memory holds (two in 6 GB). Each
 # session onboards the tape's takers first (a few seconds), then the world
 # moves only between the bot's turns, so a session takes as long as the
 # bot thinks: about a minute for most bots, about seven at worst. A
