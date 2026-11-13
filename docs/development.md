@@ -288,7 +288,9 @@ public. Pull requests from forks use it from then on.
 ## Automation
 
 Releases and benches can run from GitHub instead of a laptop. Every step
-that spends money or publishes waits for a reviewer.
+that spends money or publishes waits for a reviewer. [automation.md](automation.md)
+walks through each one with diagrams: its sequence, what runs in parallel,
+and where the secrets are.
 
 | What | How | Asks a reviewer |
 | --- | --- | --- |
