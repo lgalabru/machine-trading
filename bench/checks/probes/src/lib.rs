@@ -616,8 +616,9 @@ pub fn build(config: &Config, reference: Option<Box<dyn Strategy>>) -> Result<Bo
         ..Frame::default()
     };
     let reference = || {
-        reference
-            .context("this probe wraps the task's reference: start it from the task's `checks/rungs/probe`")
+        reference.context(
+            "this probe wraps the task's reference: start it from the task's `checks/rungs/probe`",
+        )
     };
     let mut base: Boxed = match config.kind {
         Kind::CoinFlip => Boxed(Box::new(CoinFlip {
@@ -875,9 +876,10 @@ mod tests {
             })
             .collect();
         assert_eq!(sizes, [10.0, 10.0, 1.0]);
-        assert!(sent.iter().any(
-            |i| matches!(i, Intent::Target { position, .. } if *position == 120.0)
-        ));
+        assert!(
+            sent.iter()
+                .any(|i| matches!(i, Intent::Target { position, .. } if *position == 120.0))
+        );
         assert!(sent.iter().any(|i| matches!(i, Intent::CancelAll)));
     }
 

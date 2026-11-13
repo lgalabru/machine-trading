@@ -585,7 +585,11 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
     }
     // A bot that was to move the mark and moved nothing proves nothing by
     // losing: no power fails the gate, as a leak would.
-    for e in summary.exploits.iter().filter(|e| e.verdict.as_deref() == Some("no_power")) {
+    for e in summary
+        .exploits
+        .iter()
+        .filter(|e| e.verdict.as_deref() == Some("no_power"))
+    {
         failed.push(format!(
             "{} (no power: {})",
             e.bot,
@@ -1407,7 +1411,11 @@ mod tests {
         });
         let c = exploit_check(&s, false);
         assert_eq!(c.status, Status::Fail);
-        assert!(c.detail.contains("no power: moved the mark 0.10 bp"), "{}", c.detail);
+        assert!(
+            c.detail.contains("no power: moved the mark 0.10 bp"),
+            "{}",
+            c.detail
+        );
         s.exploits[0].verdict = Some("pass".into());
         assert_eq!(exploit_check(&s, false).status, Status::Pass);
     }
@@ -1434,9 +1442,16 @@ mod tests {
         assert!(held.detail.contains("2 probe rules"));
         let unsure = check(Some(vec![probe("a", "pass"), probe("b", "inconclusive")]));
         assert_eq!(unsure.status, Status::Inconclusive);
-        let broken = check(Some(vec![probe("zero_edge:coin", "fail"), probe("b", "pass")]));
+        let broken = check(Some(vec![
+            probe("zero_edge:coin", "fail"),
+            probe("b", "pass"),
+        ]));
         assert_eq!(broken.status, Status::Fail);
-        assert!(broken.detail.contains("out of band: zero_edge:coin (raw +0.100)"));
+        assert!(
+            broken
+                .detail
+                .contains("out of band: zero_edge:coin (raw +0.100)")
+        );
         let powerless = check(Some(vec![probe("pair:breacher", "no_power")]));
         assert_eq!(powerless.status, Status::Fail);
         assert!(powerless.detail.contains("no power"));
