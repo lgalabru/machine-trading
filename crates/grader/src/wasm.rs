@@ -636,6 +636,9 @@ pub struct Desk {
     /// The bot's key, base58.
     pub authority: String,
     pub reader: Reader,
+    /// The requests for quotes open to the bot, where clients send any
+    /// (see [`crate::actors::library::rfq`]).
+    pub rfqs: Option<crate::actors::library::RfqBoard>,
 }
 
 /// How a component's market is read at each turn.
@@ -887,7 +890,12 @@ impl WasmBot {
             venues,
             sends: std::mem::take(&mut self.sends),
             fills,
-            rfqs: Vec::new(),
+            rfqs: self
+                .desk
+                .rfqs
+                .as_ref()
+                .map(crate::actors::library::RfqBoard::open)
+                .unwrap_or_default(),
             notes: std::mem::take(&mut self.notes),
             fees: None,
         })

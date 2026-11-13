@@ -1046,6 +1046,7 @@ impl Account for SpotAccount {
                 .map(|(_, address)| address.clone());
         }
         Ok(Desk {
+            rfqs: None,
             markets: venues,
             seats,
             symbol: env.symbol.clone(),
@@ -1146,6 +1147,7 @@ impl Account for SpotAccount {
             valuation: "pyth",
             flow: done.actors.flow,
             competitor: done.actors.competitor,
+            actors: done.actors.library,
             faults: done.faults,
             spot: Some(SpotReport {
                 start: start.wallet.clone(),
@@ -1217,6 +1219,7 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             faults: None,
+            actors: None,
             fair_path: None,
             turn_data: None,
             order: None,

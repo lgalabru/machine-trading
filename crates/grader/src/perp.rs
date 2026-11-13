@@ -30,7 +30,10 @@ use surfpool_sdk::{CheatcodeFilter, SimnetCommand};
 
 use crate::{
     Error, Result,
-    actors::{Cast, Competitor, Moment, Pricing, Takers},
+    actors::{
+        Cast, Competitor, FlowWatch, Moment, Pricing, Takers,
+        library::{RfqBoard, RfqSeat, Setting, WalletSeat},
+    },
     chain,
     guard::Guard,
     making::{TAKER_ACCOUNTS, book_at, level_at},
@@ -158,6 +161,27 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .remove(0);
         cast.add(Box::new(Competitor::new(seat, making)));
     }
+    // The library's actors: a wallet each, onboarded like the takers. They
+    // are built once the session's first slot is known.
+    let library = match &scenario.actors {
+        Some(library) if !library.wallets().is_empty() => {
+            let keypairs: Vec<Keypair> = library
+                .wallets()
+                .into_iter()
+                .map(|(role, n)| opts.keys.keypair(role, n))
+                .collect();
+            let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
+            let seats = onboard(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
+            tracing::info!(wallets = seats.len(), "library actors ready");
+            let seats: Vec<WalletSeat> = pubkeys
+                .into_iter()
+                .zip(seats)
+                .map(|(pubkey, seat)| WalletSeat { pubkey, seat })
+                .collect();
+            Some((library, seats))
+        }
+        _ => None,
+    };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
@@ -232,6 +256,42 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
+    let mut rfqs = None;
+    if let Some((library, seats)) = library {
+        let (path, start) = (scenario.path.clone(), start_mark_usd);
+        let path = Arc::new(move |at| Moment {
+            at,
+            level_usd: start * (1.0 + level_at(&path, at) / 100.0),
+            book_usd: start * (1.0 + book_at(&path, at) / 100.0),
+        });
+        // RFQ fills settle through a seat trading as the bot; front-runners
+        // read the bot's trading through another.
+        let bot_seat = match &library.rfq_clients {
+            Some(_) => Some(perp.seat(bot.insecure_clone(), internal.url()).await?),
+            None => None,
+        };
+        if !library.front_runners.is_empty() {
+            cast.watch(FlowWatch::new(vec![
+                perp.seat(bot.insecure_clone(), internal.url()).await?,
+            ]));
+        }
+        let built = library.build(
+            seats,
+            Setting {
+                symbol: scenario.symbol.clone(),
+                base_slot,
+                path,
+                bot_seat,
+                liquidations: None,
+                rpc_url: Some(internal.url().to_string()),
+            },
+            &|role, n| opts.keys.seed(role, n),
+        );
+        for actor in built.actors {
+            cast.add(actor);
+        }
+        rfqs = built.rfq;
+    }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
     let mandate = Mandate {
@@ -269,6 +329,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
+        rfqs,
     };
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
@@ -342,6 +403,8 @@ struct PerpAccount {
     max_drawdown_usd: f64,
     /// Phoenix positions (or orders) in markets other than the scenario's.
     positions_outside_universe: u32,
+    /// The requests for quotes open to the bot, if RFQ clients send any.
+    rfqs: Option<RfqBoard>,
 }
 
 impl PerpAccount {
@@ -449,16 +512,21 @@ impl Account for PerpAccount {
         let trader = Arc::new(self.perp.trader(bot.insecure_clone(), host_url)?);
         let venue = std::fs::read_to_string(&env.exchange_path)
             .map_err(crate::error::io_error(&env.exchange_path))?;
+        let mut seats: Vec<Box<dyn Seat>> = vec![Box::new(crate::venue::perps::PerpSeat::new(
+            self.perp.instrument().to_string(),
+            trader.clone(),
+        ))];
+        if let Some(board) = &self.rfqs {
+            seats.push(Box::new(RfqSeat::new(board.clone())));
+        }
         Ok(Desk {
+            rfqs: self.rfqs.clone(),
             markets: mtx_kit::VenueInfo::of_perp_session(
                 mandate,
                 &env.symbol,
                 mtx_kit::phoenix_market_address(&venue, &env.symbol),
             ),
-            seats: vec![Box::new(crate::venue::perps::PerpSeat::new(
-                self.perp.instrument().to_string(),
-                trader.clone(),
-            ))],
+            seats,
             symbol: env.symbol.clone(),
             venue,
             authority: bot.pubkey().to_string(),
@@ -508,6 +576,7 @@ impl Account for PerpAccount {
             valuation: scenario.valuation(),
             flow: done.actors.flow,
             competitor: done.actors.competitor,
+            actors: done.actors.library,
             spot: None,
             faults: done.faults,
             order: None,
