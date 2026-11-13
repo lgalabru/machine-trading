@@ -12,13 +12,14 @@ reader, never by it.
    against the index, takes that a later price rewards), and the classes are
    checked against the truth. A wallet whose orders never landed shows
    nothing to read, and isn't counted.
-2. **The edge of reading.** Two followers trade one unit on every signal,
-   marked out `--horizon` slots later net of the half spread:
-   - informed flow: the blind follower copies every taker; the reader copies
-     only wallets whose past takes, already marked out, were rewarded;
-   - spoofing: the blind follower buys when a large bid appears near the
-     touch, as support; the reader does so only for wallets it hasn't seen
-     pull most of their orders.
+2. **The edge of reading.** Informed flow: two followers trade one unit on
+   every signal, marked out `--horizon` slots later net of the half spread;
+   the blind one copies every taker, the reader only wallets whose past
+   takes, already marked out, were rewarded.
+   Spoofing is read as depth: a seller sizing to the displayed bids counts
+   every large order near the touch; the reader skips wallets it has seen
+   pull most of their orders. The edge is the depth, in USD, the blind
+   seller leaned on that never traded and the reader didn't.
    Both readers decide on each signal from what was public before it.
 
 Usage: read.py <report.json> <details.json.gz> [--horizon 40]
@@ -41,11 +42,14 @@ def load(report_path, details_path):
         details = json.load(f)
     steps = details["timeline"]["steps"]
     library = session["actors"]
-    truth = {}
+    truth, bought = {}, {}
     for actor in library["actors"]:
         for wallet in actor["wallets"]:
             truth[wallet] = actor["kind"]
-    return library["tape"], steps, truth
+            # Takes buy too; a wallet that only rests and takes the other
+            # way shows its resting bids' fills here.
+            bought[wallet] = actor["bought"]
+    return library["tape"], steps, truth, bought
 
 
 class Book:
@@ -156,7 +160,7 @@ def classify(f):
         return "front-runner"
     if f["paired"] >= 0.8:
         return "stop-hunter"
-    if f["against_index"] >= 0.9 and f["markout"] < 5:
+    if f["against_index"] >= 0.9 and f["takes"] >= 5:
         return "arbitrageur"
     if f["markout"] >= 5 and f["hit_rate"] >= 0.75:
         return "informed"
@@ -206,27 +210,42 @@ def follow_edges(tape, book, horizon):
             reader.append(pnl)
     informed = summary(blind, reader)
 
-    # Spoofing: a bid order resting more than 2 ticks under the touch and
-    # many times a take's size reads as support. A wallet is believed a
-    # spoofer once at least 3 of its orders came and 80% of them went
-    # without trading.
+    # Spoofing: a seller sizing to the displayed bids counts every large
+    # order resting near the touch as depth it can sell into. The blind one
+    # counts all of them; the reader skips a wallet once at least 3 of its
+    # orders came and 80% of them went again. What it counted that never
+    # traded is depth it leaned on and didn't have.
     sizes = [t["size"] for t in takes]
     big = 5 * statistics.median(sizes) if sizes else 0.0
     blind, reader = [], []
     for r in rests:
-        if r["action"] != "rest" or r.get("side") != "bid" or r["size"] < big:
+        if r["action"] != "rest" or r["size"] < big:
             continue
-        if r["at"] + horizon > end:
-            continue
-        pnl = net(r["at"], "bid")
-        blind.append(pnl)
+        usd = r["size"] * r["price_usd"]
+        blind.append((r["wallet"], usd))
         past = [e for e in rests if e["wallet"] == r["wallet"] and e["at"] < r["at"]]
         placed = sum(1 for e in past if e["action"] == "rest")
         pulled = sum(1 for e in past if e["action"] == "cancel")
         if not (placed >= 3 and pulled >= 0.8 * placed):
-            reader.append(pnl)
-    spoofing = summary(blind, reader)
+            reader.append((r["wallet"], usd))
+    spoofing = {"blind": blind, "reader": reader}
     return informed, spoofing
+
+
+def phantom(walls, traded):
+    """Depth leaned on that never traded, in USD, blind and read."""
+
+    def never(entries):
+        return round(sum(usd for wallet, usd in entries if traded.get(wallet, 0.0) == 0.0), 2)
+
+    b, r = never(walls["blind"]), never(walls["reader"])
+    return {
+        "walls": len(walls["blind"]),
+        "blind_phantom_usd": b,
+        "reader_phantom_usd": r,
+        "reader_walls_counted": len(walls["reader"]),
+        "edge_usd": round(b - r, 2),
+    }
 
 
 def summary(blind, reader):
@@ -252,7 +271,7 @@ def main():
     parser.add_argument("details")
     parser.add_argument("--horizon", type=int, default=40)
     args = parser.parse_args()
-    tape, steps, truth = load(args.report, args.details)
+    tape, steps, truth, bought = load(args.report, args.details)
     book = Book(steps)
     rows = tell_apart(tape, book, truth, args.horizon)
     right = sum(1 for kind, guess, _, _ in rows if kind == guess)
@@ -260,7 +279,11 @@ def main():
     for kind, guess, _, _ in rows:
         by_kind[kind][1] += 1
         by_kind[kind][0] += kind == guess
-    informed, spoofing = follow_edges(tape, book, args.horizon)
+    informed, walls = follow_edges(tape, book, args.horizon)
+    # Whether a wall's depth was there to sell into: its wallet's buying,
+    # from the report (a bid wall that traded bought).
+    traded = {w: a for w, a in bought.items()}
+    spoofing = phantom(walls, traded)
     print(
         json.dumps(
             {
