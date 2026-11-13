@@ -630,6 +630,86 @@ pub fn draw_joint(
     Ok(walkers.into_iter().map(Walker::finish).collect())
 }
 
+/// A template scenario on several markets with every market's path drawn
+/// jointly ([`draw_joint`]): `models` names each market's model by symbol,
+/// in the matrix's order, and the template's markets are those symbols.
+/// Each market's `path` and `fair_path` are its drawn waypoints;
+/// [`Scenario::joint`] records the draw and where the matrix came from
+/// (`matrix_source`: `design` for a matrix the author states). Everything
+/// else is the template's.
+pub fn joint_scenario(
+    models: &[(&str, &MarketModel)],
+    correlation: &[Vec<f64>],
+    matrix_source: &str,
+    template: &Scenario,
+    name: &str,
+    seed: u64,
+) -> std::result::Result<Scenario, String> {
+    let mut scenario = template.clone();
+    let mut symbols: Vec<&str> = models.iter().map(|(symbol, _)| *symbol).collect();
+    symbols.sort();
+    let markets: Vec<&str> = scenario.markets.iter().map(|m| m.symbol.as_str()).collect();
+    if symbols != markets {
+        return Err(format!(
+            "the models are for {symbols:?}, and the template's markets are {markets:?}"
+        ));
+    }
+    let only: Vec<&MarketModel> = models.iter().map(|(_, model)| *model).collect();
+    let drawn = draw_joint(&only, correlation, seed, template.duration_slots)?;
+    let mut records = std::collections::BTreeMap::new();
+    for ((symbol, model), drawn) in models.iter().zip(drawn) {
+        let path = drawn.waypoints(model.spec.waypoint_slots);
+        let market = scenario
+            .markets
+            .iter_mut()
+            .find(|m| m.symbol == *symbol)
+            .expect("checked above");
+        market.fair_path = Some(path.clone());
+        market.path = path;
+        market.market_model = None;
+        records.insert(symbol.to_string(), drawn.record);
+    }
+    scenario.name = name.into();
+    scenario.joint = Some(crate::scenario::JointDraw {
+        matrix_source: matrix_source.into(),
+        matrix_sha256: None,
+        assets: models
+            .iter()
+            .map(|(symbol, _)| symbol.to_string())
+            .collect(),
+        matrix: correlation.to_vec(),
+        records,
+    });
+    scenario.validate()?;
+    Ok(scenario)
+}
+
+/// `count` [`joint_scenario`]s from a template, named `<prefix>-<n>`, each
+/// seed drawn as [`MarketModel::sample_set`] draws its.
+pub fn joint_sample_set(
+    models: &[(&str, &MarketModel)],
+    correlation: &[Vec<f64>],
+    matrix_source: &str,
+    template: &Scenario,
+    prefix: &str,
+    count: usize,
+    seed: u64,
+) -> std::result::Result<Vec<Scenario>, String> {
+    (0..count)
+        .map(|i| {
+            let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(i as u64);
+            joint_scenario(
+                models,
+                correlation,
+                matrix_source,
+                template,
+                &format!("{prefix}-{}", i + 1),
+                draw_seed,
+            )
+        })
+        .collect()
+}
+
 fn cholesky(a: &[Vec<f64>]) -> std::result::Result<Vec<Vec<f64>>, String> {
     let n = a.len();
     let mut l = vec![vec![0.0; n]; n];
@@ -792,8 +872,10 @@ fn gamma(rng: &mut SplitMix64, shape: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use mtx_core::mandate::Mandate;
+
     use super::*;
-    use crate::market::tests::{sol, spcx};
+    use crate::market::tests::{sol, spcx, template};
 
     #[test]
     fn draws_are_deterministic_and_seeded() {
@@ -1006,6 +1088,56 @@ mod tests {
         assert!(draw_joint(&[&a, &b], &[vec![1.0, 1.2], vec![1.2, 1.0]], 1, 100).is_err());
         let spcx = MarketModel::new(spcx(), ModelSpec::default()).unwrap();
         assert!(draw_joint(&[&a, &spcx], &corr, 1, 100).is_err());
+    }
+
+    #[test]
+    fn a_joint_draw_fills_each_market_and_records_the_draw() {
+        let model = MarketModel::new(spcx(), ModelSpec::default()).unwrap();
+        let mut template = template();
+        template.symbol = "NVDA".into();
+        template.mandate = Mandate::perp(crate::scenario::VENUE, "NVDA", 40.0, 1_000.0);
+        template
+            .mandate
+            .universe
+            .extend(Mandate::perp(crate::scenario::VENUE, "SPCX", 70.0, 1_000.0).universe);
+        template.markets = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| crate::scenario::MarketScenario {
+                symbol: symbol.into(),
+                path: Vec::new(),
+                fair_path: None,
+                funding: None,
+                making: None,
+                tape: Vec::new(),
+                takers_pricing: None,
+                market_model: None,
+            })
+            .collect();
+        let corr = vec![vec![1.0, 0.6], vec![0.6, 1.0]];
+        let models = [("SPCX", &model), ("NVDA", &model)];
+        let set = joint_sample_set(&models, &corr, "design", &template, "j", 3, 9).unwrap();
+        let again = joint_sample_set(&models, &corr, "design", &template, "j", 3, 9).unwrap();
+        assert_eq!(set, again);
+        for s in &set {
+            s.validate().unwrap();
+            let joint = s.joint.as_ref().unwrap();
+            assert_eq!(joint.assets, ["SPCX", "NVDA"]);
+            assert_eq!(joint.matrix_source, "design");
+            assert_eq!(
+                joint.records["NVDA"].start_unix,
+                joint.records["SPCX"].start_unix
+            );
+            for market in &s.markets {
+                assert!(!market.path.is_empty());
+                assert_eq!(market.fair_path.as_ref(), Some(&market.path));
+            }
+            assert_ne!(s.markets[0].path, s.markets[1].path);
+            // The v2 file says it and reads back the same.
+            let v2 = crate::scenario_v2::ScenarioV2::try_from(s).unwrap();
+            let text = serde_json::to_string(&v2).unwrap();
+            assert_eq!(&crate::scenario_v2::parse(&text).unwrap(), s);
+        }
+        assert!(joint_scenario(&models[..1], &corr[..1], "design", &template, "x", 1).is_err());
     }
 
     #[test]

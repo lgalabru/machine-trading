@@ -42,7 +42,8 @@ use crate::{
     orders::{CloseOut, ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
-        Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
+        Funding, JointDraw, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, MarketScenario, RawSends, Scenario,
+        VENUE, Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
 };
@@ -123,6 +124,20 @@ pub struct PerpVenue {
     /// the snapshot's own apply (hourly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub funding: Option<Funding>,
+    /// A session on several markets of one cross-margin account: each
+    /// market, by symbol, with what is set on it. Not with `funding`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub markets: BTreeMap<String, PerpMarketVenue>,
+}
+
+/// One market of a session on several perp markets.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PerpMarketVenue {
+    /// Phoenix's funding parameters for the market, as
+    /// [`PerpVenue::funding`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<Funding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -154,6 +169,31 @@ pub struct MarketModel {
     /// are what sessions replay; this records where they came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<crate::market::MarketModelRecord>,
+    /// A session on several markets: each market's path, by symbol. Not
+    /// with the fields above.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub markets: BTreeMap<String, MarketPath>,
+    /// Opt-in: the joint draw the markets' paths came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joint: Option<JointDraw>,
+}
+
+/// One market's path in a session on several markets: as
+/// [`MarketModel`]'s fields of the same names. A closed period stays a
+/// one-market scenario's.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MarketPath {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<Waypoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_path: Option<Vec<Waypoint>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<crate::market::MarketModelRecord>,
+    /// Read only to be refused by name: a closed period stays a one-market
+    /// scenario's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_period: Option<ClosedPeriod>,
 }
 
 /// The closed period before the underlying's market reopens, and Phoenix's
@@ -188,6 +228,24 @@ pub struct Actors {
     /// Without it, the scenario's kind picks (the level for a market-making
     /// or closed-period flow, the book for a tape). `fair` needs the market
     /// model's `fair_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takers_pricing: Option<crate::actors::Pricing>,
+    /// A session on several markets: each market's competing maker and
+    /// taker flow, by symbol. Not with `competitor`, `takers` and
+    /// `takers_pricing`. One pool of taker accounts trades every market.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub markets: BTreeMap<String, MarketActors>,
+}
+
+/// One market's actors in a session on several markets: as [`Actors`]'
+/// fields of the same names. The library trades the primary market.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MarketActors {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub competitor: Option<Competitor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub takers: Vec<TakerOrder>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub takers_pricing: Option<crate::actors::Pricing>,
 }
@@ -524,6 +582,7 @@ impl ScenarioV2 {
             }
         }
         self.venues_are_one_kind()?;
+        self.markets_agree()?;
         self.flows_do_not_mix()?;
         self.library_is_for_perps()?;
         self.takers_pricing_is_valid()?;
@@ -545,6 +604,7 @@ impl ScenarioV2 {
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
                 .map_err(|reason| format!("faults: {reason}"))?;
         }
+        self.each_market_validates()?;
         if let Some(order) = &self.order {
             order.validate()?;
         }
@@ -616,6 +676,7 @@ impl ScenarioV2 {
             return Ok(());
         }
         let market = self.perp_instrument();
+        let markets = self.perp_symbols();
         let symbols = self
             .assets
             .start_positions
@@ -623,30 +684,60 @@ impl ScenarioV2 {
             .map(|s| ("start_positions", s))
             .chain(self.scoring.close_out.keys().map(|s| ("close_out", s)));
         for (field, symbol) in symbols {
-            if *symbol != market.symbol {
-                return Err(format!(
-                    "{field}: {symbol} is not the scenario's market, {}",
-                    market.symbol
-                ));
+            if !markets.contains(&symbol.as_str()) {
+                return Err(if self.is_multi_market() {
+                    format!(
+                        "{field}: {symbol} is not one of the session's markets, {}",
+                        markets.join(", ")
+                    )
+                } else {
+                    format!(
+                        "{field}: {symbol} is not the scenario's market, {}",
+                        market.symbol
+                    )
+                });
             }
         }
-        let Some(allowance) = self.mandate.allowance(&market) else {
-            return Ok(());
-        };
-        let min = allowance.min_position.unwrap_or(-allowance.max_position);
-        let start = self.start_position();
-        if start > allowance.max_position || start < min {
-            return Err(format!(
-                "start_positions: {start} {} is outside the mandate's range, {min} to {}",
-                market.symbol, allowance.max_position
-            ));
+        for symbol in &markets {
+            let instrument = crate::scenario::perp_instrument(symbol);
+            let Some(allowance) = self.mandate.allowance(&instrument) else {
+                continue;
+            };
+            let min = allowance.min_position.unwrap_or(-allowance.max_position);
+            let start = self.start_position_in(symbol);
+            if start > allowance.max_position || start < min {
+                return Err(format!(
+                    "start_positions: {start} {symbol} is outside the mandate's range, {min} to {}",
+                    allowance.max_position
+                ));
+            }
         }
         let Some(order) = &self.order else {
             return Ok(());
         };
-        if order.instrument.as_ref().is_some_and(|i| *i != market) {
-            return Err(format!("order: the scenario's market is {market}"));
-        }
+        let market = match &order.instrument {
+            Some(i) if self.is_multi_market() => {
+                if !(i.venue == VENUE
+                    && i.kind == Kind::Perp
+                    && markets.contains(&i.symbol.as_str()))
+                {
+                    return Err(format!(
+                        "order: {i} is not one of the session's markets, {}",
+                        markets.join(", ")
+                    ));
+                }
+                i.clone()
+            }
+            Some(i) if *i != market => {
+                return Err(format!("order: the scenario's market is {market}"));
+            }
+            _ => market,
+        };
+        let Some(allowance) = self.mandate.allowance(&market) else {
+            return Ok(());
+        };
+        let min = allowance.min_position.unwrap_or(-allowance.max_position);
+        let start = self.start_position_in(&market.symbol);
         if self.scoring.close_out.contains_key(&market.symbol) {
             return Err(format!(
                 "close_out: {} has the order's broker; it can't have another",
@@ -666,13 +757,259 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// The starting position in the scenario's market, in base units.
+    /// The starting position in the order's market (the scenario's, if it
+    /// names none), in base units.
     fn start_position(&self) -> f64 {
+        let symbol = self
+            .order
+            .as_ref()
+            .and_then(|o| o.instrument.as_ref())
+            .map_or(&self.assets.symbol, |i| &i.symbol);
+        self.start_position_in(symbol)
+    }
+
+    /// The starting position in `symbol`, in base units.
+    fn start_position_in(&self, symbol: &str) -> f64 {
         self.assets
             .start_positions
-            .get(&self.assets.symbol)
+            .get(symbol)
             .copied()
             .unwrap_or(0.0)
+    }
+
+    /// Whether the session trades several perp markets.
+    pub fn is_multi_market(&self) -> bool {
+        self.venues
+            .perp
+            .as_ref()
+            .is_some_and(|perp| !perp.markets.is_empty())
+    }
+
+    /// The perp markets the session trades, by symbol, in order: the keyed
+    /// map's, or the scenario's one.
+    fn perp_symbols(&self) -> Vec<&str> {
+        match &self.venues.perp {
+            Some(perp) if !perp.markets.is_empty() => {
+                perp.markets.keys().map(String::as_str).collect()
+            }
+            _ => vec![self.assets.symbol.as_str()],
+        }
+    }
+
+    fn perp_instruments(&self) -> Vec<InstrumentRef> {
+        self.perp_symbols()
+            .into_iter()
+            .map(crate::scenario::perp_instrument)
+            .collect()
+    }
+
+    /// A session on several markets says each market's facts in the keyed
+    /// maps, never in the flat fields beside them, and every map names the
+    /// same markets: `venues.perp.markets`' (at least two, the primary
+    /// `assets.symbol` among them), `market_model.markets`' and
+    /// `actors.markets`', where they're given. A session on one market has
+    /// no keyed maps.
+    fn markets_agree(&self) -> Result<(), String> {
+        let model = &self.market_model;
+        let actors = &self.actors;
+        if !self.is_multi_market() {
+            if !model.markets.is_empty() || model.joint.is_some() || !actors.markets.is_empty() {
+                return Err(
+                    "market_model.markets, market_model.joint and actors.markets are for a session \
+                     on several markets: name them in venues.perp.markets"
+                        .into(),
+                );
+            }
+            return Ok(());
+        }
+        let perp = self
+            .venues
+            .perp
+            .as_ref()
+            .expect("a session on several markets");
+        if perp.funding.is_some() {
+            return Err(
+                "venues.perp: funding is one market's; on several markets each market's goes in venues.perp.markets"
+                    .into(),
+            );
+        }
+        if perp.markets.len() < 2 {
+            return Err(
+                "venues.perp.markets: name at least two markets; a session on one market uses the flat fields"
+                    .into(),
+            );
+        }
+        if !perp.markets.contains_key(&self.assets.symbol) {
+            return Err(format!(
+                "assets: the primary market {} is not one of venues.perp.markets",
+                self.assets.symbol
+            ));
+        }
+        if !model.path.is_empty()
+            || model.fair_path.is_some()
+            || model.closed_period.is_some()
+            || model.record.is_some()
+        {
+            return Err(
+                "market_model: on several markets, each market's path goes in market_model.markets"
+                    .into(),
+            );
+        }
+        if actors.competitor.is_some()
+            || !actors.takers.is_empty()
+            || actors.takers_pricing.is_some()
+        {
+            return Err(
+                "actors: on several markets, each market's competitor and takers go in actors.markets"
+                    .into(),
+            );
+        }
+        let names = |keys: Vec<&String>| keys.into_iter().cloned().collect::<Vec<_>>();
+        let wanted = names(perp.markets.keys().collect());
+        for (section, keys) in [
+            (
+                "market_model.markets",
+                names(model.markets.keys().collect()),
+            ),
+            ("actors.markets", names(actors.markets.keys().collect())),
+        ] {
+            if keys.is_empty() {
+                continue;
+            }
+            if let Some(missing) = wanted.iter().find(|s| !keys.contains(s)) {
+                return Err(format!("{section}: {missing} is missing"));
+            }
+            if let Some(extra) = keys.iter().find(|s| !wanted.contains(s)) {
+                return Err(format!(
+                    "{section}: {extra} is not one of venues.perp.markets"
+                ));
+            }
+        }
+        if let Some(joint) = &model.joint {
+            self.joint_is_valid(joint)?;
+        }
+        Ok(())
+    }
+
+    /// A joint draw's matrix is a correlation matrix over the session's
+    /// markets, and it records each asset's draw once.
+    fn joint_is_valid(&self, joint: &JointDraw) -> Result<(), String> {
+        let k = joint.assets.len();
+        for (i, asset) in joint.assets.iter().enumerate() {
+            if !self.perp_symbols().contains(&asset.as_str()) || joint.assets[..i].contains(asset) {
+                return Err(format!(
+                    "market_model.joint: {asset} is listed twice or isn't one of the session's markets"
+                ));
+            }
+            if self
+                .market_model
+                .markets
+                .get(asset)
+                .is_some_and(|m| m.record.is_some())
+            {
+                return Err(format!(
+                    "markets.{asset}: its draw is recorded both on its own and in the joint draw"
+                ));
+            }
+        }
+        if joint.matrix_source.is_empty()
+            || joint
+                .matrix_sha256
+                .as_ref()
+                .is_some_and(|sha| sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(
+                "market_model.joint: names where its matrix came from, and a file's SHA-256 in hex"
+                    .into(),
+            );
+        }
+        let square = joint.matrix.len() == k && joint.matrix.iter().all(|row| row.len() == k);
+        let correlation = square
+            && (0..k).all(|i| {
+                (0..k).all(|j| {
+                    let c = joint.matrix[i][j];
+                    c.is_finite()
+                        && (-1.0..=1.0).contains(&c)
+                        && c == joint.matrix[j][i]
+                        && (i != j || c == 1.0)
+                })
+            });
+        if !correlation {
+            return Err(format!(
+                "market_model.joint: the matrix must be a {k} by {k} correlation matrix: symmetric, a unit diagonal, entries in [-1, 1]"
+            ));
+        }
+        let recorded: Vec<&String> = joint.records.keys().collect();
+        let mut assets: Vec<&String> = joint.assets.iter().collect();
+        assets.sort();
+        if recorded != assets {
+            return Err(
+                "market_model.joint: records each of its assets' draws, and no other".into(),
+            );
+        }
+        for (asset, record) in &joint.records {
+            record
+                .validate(self.duration_slots)
+                .map_err(|reason| format!("markets.{asset}: market_model: {reason}"))?;
+        }
+        Ok(())
+    }
+
+    /// Each market of a session on several markets checks its own funding,
+    /// path and flow, as the flat sections check one market's. A closed
+    /// period stays a one-market scenario's.
+    fn each_market_validates(&self) -> Result<(), String> {
+        let Some(perp) = self.venues.perp.as_ref().filter(|_| self.is_multi_market()) else {
+            return Ok(());
+        };
+        for (symbol, venue) in &perp.markets {
+            let named = |reason: String| format!("markets.{symbol}: {reason}");
+            Venues {
+                perp: Some(PerpVenue {
+                    funding: venue.funding,
+                    markets: BTreeMap::new(),
+                }),
+                spot: None,
+            }
+            .validate()
+            .map_err(named)?;
+            let path = self
+                .market_model
+                .markets
+                .get(symbol)
+                .cloned()
+                .unwrap_or_default();
+            if path.closed_period.is_some() {
+                return Err(named(
+                    "a closed period stays a one-market scenario's".into(),
+                ));
+            }
+            let actors = self.actors.markets.get(symbol).cloned().unwrap_or_default();
+            MarketModel {
+                path: path.path,
+                fair_path: path.fair_path.clone(),
+                record: path.record,
+                ..MarketModel::default()
+            }
+            .validate(self.duration_slots, &actors.takers)
+            .map_err(named)?;
+            if actors.takers_pricing == Some(crate::actors::Pricing::Fair)
+                && path.fair_path.is_none()
+            {
+                return Err(named(
+                    "actors: takers_pricing fair needs the market's fair_path".into(),
+                ));
+            }
+            Actors {
+                competitor: actors.competitor,
+                takers: actors.takers,
+                takers_pricing: actors.takers_pricing,
+                ..Actors::default()
+            }
+            .validate(self.duration_slots, false)
+            .map_err(named)?;
+        }
+        Ok(())
     }
 
     /// The mandate covers exactly the scenario's markets: a session measures
@@ -692,6 +1029,31 @@ impl ScenarioV2 {
             if wanted != universe {
                 return Err(format!(
                     "mandate: the universe must be exactly the spot markets, {}",
+                    wanted
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        } else if self.is_multi_market() {
+            let mut wanted = self.perp_instruments();
+            let mut universe: Vec<InstrumentRef> = self
+                .mandate
+                .universe
+                .iter()
+                .map(|a| a.instrument.clone())
+                .collect();
+            wanted.sort();
+            universe.sort();
+            if let Some(missing) = wanted.iter().find(|i| !universe.contains(i)) {
+                return Err(format!(
+                    "mandate: the universe misses {missing}, one of the session's markets"
+                ));
+            }
+            if wanted != universe {
+                return Err(format!(
+                    "mandate: the universe must be exactly the session's markets, {}",
                     wanted
                         .iter()
                         .map(ToString::to_string)
@@ -722,7 +1084,7 @@ impl ScenarioV2 {
         let session: Vec<InstrumentRef> = if self.venues.spot.is_some() {
             self.venues.spot_instruments()
         } else {
-            vec![self.perp_instrument()]
+            self.perp_instruments()
         };
         for feed in &oracles.feeds {
             if let Some(Anchor::Market { instrument, .. }) = &feed.anchor
@@ -737,6 +1099,27 @@ impl ScenarioV2 {
                 Source::Phoenix(phoenix) => {
                     if self.venues.spot.is_some() {
                         return Err("oracles: a Phoenix oracle is for perp scenarios".into());
+                    }
+                    if self.is_multi_market() {
+                        if !self.perp_symbols().contains(&phoenix.symbol.as_str()) {
+                            return Err(format!(
+                                "oracles: {} writes {}'s oracle, which isn't one of the session's markets",
+                                feed.name, phoenix.symbol
+                            ));
+                        }
+                        if self
+                            .market_model
+                            .markets
+                            .get(&phoenix.symbol)
+                            .is_some_and(|market| !market.path.is_empty())
+                        {
+                            return Err(format!(
+                                "oracles: {} moves {}'s oracle, which that market's own path moves; \
+                                 use one or the other",
+                                feed.name, phoenix.symbol
+                            ));
+                        }
+                        continue;
                     }
                     // The feed's start price is the scenario market's mark.
                     if phoenix.symbol != self.assets.symbol {
@@ -887,13 +1270,48 @@ impl ScenarioV2 {
             fair_path,
             closed_period,
             record,
+            markets: mut market_paths,
+            joint,
         } = market_model;
         let Actors {
             competitor,
             takers,
             library,
             takers_pricing,
+            markets: mut market_actors,
         } = actors;
+        let (funding, perp_markets) = match venues.perp {
+            Some(perp) => (perp.funding, perp.markets),
+            None => (None, BTreeMap::new()),
+        };
+        let markets = perp_markets
+            .into_iter()
+            .map(|(symbol, venue)| {
+                let path = market_paths.remove(&symbol).unwrap_or_default();
+                let actors = market_actors.remove(&symbol).unwrap_or_default();
+                let (making, tape) = match actors.competitor {
+                    Some(c) => (
+                        Some(Making {
+                            competitor_bps: c.competitor_bps,
+                            competition: c.competition,
+                            takers: actors.takers,
+                        }),
+                        Vec::new(),
+                    ),
+                    None => (None, actors.takers),
+                };
+                MarketScenario {
+                    symbol,
+                    path: path.path,
+                    fair_path: path.fair_path,
+                    funding: venue.funding,
+                    making,
+                    tape,
+                    takers_pricing: actors.takers_pricing,
+                    market_model: path.record,
+                }
+            })
+            .collect();
         let (making, offhours, tape) = match (competitor, closed_period) {
             (Some(c), _) => (
                 Some(Making {
@@ -928,7 +1346,7 @@ impl ScenarioV2 {
             path,
             making,
             offhours,
-            funding: venues.perp.and_then(|p| p.funding),
+            funding,
             tape,
             spot,
             faults,
@@ -945,6 +1363,8 @@ impl ScenarioV2 {
             oracles,
             actors: library,
             takers_pricing,
+            markets,
+            joint,
         })
     }
 }
@@ -991,6 +1411,11 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                     Venues {
                         perp: Some(PerpVenue {
                             funding: v1.funding,
+                            markets: v1
+                                .markets
+                                .iter()
+                                .map(|m| (m.symbol.clone(), PerpMarketVenue { funding: m.funding }))
+                                .collect(),
                         }),
                         spot: None,
                     },
@@ -1035,6 +1460,8 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 fair_path: v1.fair_path.clone(),
                 closed_period,
                 record: v1.market_model.clone(),
+                markets: market_paths(&v1.markets),
+                joint: v1.joint.clone(),
             },
             oracles: v1.oracles.clone(),
             actors: Actors {
@@ -1042,6 +1469,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 takers,
                 library: v1.actors.clone(),
                 takers_pricing: v1.takers_pricing,
+                markets: market_actors(&v1.markets),
             },
             faults: v1.faults.clone(),
             tx: v1.raw_sends.clone().map(|raw_sends| Tx {
@@ -1058,6 +1486,57 @@ impl TryFrom<&Scenario> for ScenarioV2 {
             },
         })
     }
+}
+
+/// Each market's path, for a session on several markets: none if no market
+/// has one.
+fn market_paths(markets: &[MarketScenario]) -> BTreeMap<String, MarketPath> {
+    let paths: BTreeMap<String, MarketPath> = markets
+        .iter()
+        .map(|m| {
+            let path = MarketPath {
+                path: m.path.clone(),
+                fair_path: m.fair_path.clone(),
+                record: m.market_model.clone(),
+                closed_period: None,
+            };
+            (m.symbol.clone(), path)
+        })
+        .collect();
+    if paths.values().all(|p| *p == MarketPath::default()) {
+        return BTreeMap::new();
+    }
+    paths
+}
+
+/// Each market's actors, for a session on several markets: none if no
+/// market has any.
+fn market_actors(markets: &[MarketScenario]) -> BTreeMap<String, MarketActors> {
+    let actors: BTreeMap<String, MarketActors> = markets
+        .iter()
+        .map(|m| {
+            let actors = match &m.making {
+                Some(making) => MarketActors {
+                    competitor: Some(Competitor {
+                        competitor_bps: making.competitor_bps,
+                        competition: making.competition,
+                    }),
+                    takers: making.takers.clone(),
+                    takers_pricing: m.takers_pricing,
+                },
+                None => MarketActors {
+                    competitor: None,
+                    takers: m.tape.clone(),
+                    takers_pricing: m.takers_pricing,
+                },
+            };
+            (m.symbol.clone(), actors)
+        })
+        .collect();
+    if actors.values().all(|a| *a == MarketActors::default()) {
+        return BTreeMap::new();
+    }
+    actors
 }
 
 /// What a file says about its version, and nothing else.
@@ -1276,6 +1755,7 @@ mod tests {
                 max_rate: 1,
                 mark: None,
             }),
+            markets: BTreeMap::new(),
         });
         assert!(s.venues.validate().unwrap_err().contains("funding"));
 
@@ -1388,6 +1868,292 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    /// NVDA (the primary) and SPCX: each with its own path, NVDA with
+    /// funding, both with a tape from the shared pool.
+    fn multi() -> ScenarioV2 {
+        let mut s = shock();
+        let path = std::mem::take(&mut s.market_model.path);
+        let tape = |slot: u64, account: u8| TakerOrder {
+            slot,
+            side: crate::making::TakerSide::Buy,
+            size: 1.0,
+            limit_bps: 100.0,
+            account,
+        };
+        s.assets.symbol = "NVDA".into();
+        s.venues.perp = Some(PerpVenue {
+            funding: None,
+            markets: [
+                (
+                    "NVDA".to_string(),
+                    PerpMarketVenue {
+                        funding: Some(Funding {
+                            interval_seconds: 4,
+                            period_seconds: 32,
+                            max_rate: 1_500,
+                            mark: None,
+                        }),
+                    },
+                ),
+                ("SPCX".to_string(), PerpMarketVenue::default()),
+            ]
+            .into(),
+        });
+        s.market_model.markets = [
+            (
+                "NVDA".to_string(),
+                MarketPath {
+                    path: vec![Waypoint::at(20, 1.5)],
+                    ..MarketPath::default()
+                },
+            ),
+            (
+                "SPCX".to_string(),
+                MarketPath {
+                    path,
+                    ..MarketPath::default()
+                },
+            ),
+        ]
+        .into();
+        s.actors.markets = [
+            (
+                "NVDA".to_string(),
+                MarketActors {
+                    takers: vec![tape(10, 0), tape(30, 1)],
+                    ..MarketActors::default()
+                },
+            ),
+            (
+                "SPCX".to_string(),
+                MarketActors {
+                    takers: vec![tape(12, 0)],
+                    ..MarketActors::default()
+                },
+            ),
+        ]
+        .into();
+        s.mandate = Mandate::perp(VENUE, "NVDA", 40.0, 1_000.0);
+        s.mandate
+            .universe
+            .extend(Mandate::perp(VENUE, "SPCX", 70.0, 1_000.0).universe);
+        s
+    }
+
+    #[test]
+    fn a_session_on_several_markets_round_trips() {
+        let s = multi();
+        assert_eq!(s.validate(), Ok(()));
+        let scenario = s.clone().into_scenario().unwrap();
+        assert!(scenario.path.is_empty() && scenario.funding.is_none());
+        let symbols: Vec<&str> = scenario.markets.iter().map(|m| m.symbol.as_str()).collect();
+        assert_eq!(symbols, ["NVDA", "SPCX"]);
+        assert!(scenario.markets[0].funding.is_some());
+        assert_eq!(scenario.markets[1].tape.len(), 1);
+        assert_eq!(ScenarioV2::try_from(&scenario).unwrap(), s);
+        let text = serde_json::to_string_pretty(&s).unwrap();
+        assert_eq!(parse(&text).unwrap(), scenario);
+        assert_eq!(scenario.validate(), Ok(()));
+        // Each market's own cap, start mark and funding make its bound.
+        let marks = [("NVDA".to_string(), 180.0), ("SPCX".to_string(), 100.0)].into();
+        let nvda = scenario.markets[0].bound_usd(40.0, 180.0, scenario.duration_slots);
+        let spcx = scenario.markets[1].bound_usd(70.0, 100.0, scenario.duration_slots);
+        assert!(nvda > 0.0 && spcx > 0.0);
+        assert_eq!(scenario.markets_bound_usd(&marks), nvda + spcx);
+        assert_eq!(scenario.max_position(), 40.0);
+        // Two markets take one more market's setup.
+        assert_eq!(
+            scenario.setup_slots(),
+            crate::scenario::TAPE_SETUP_SLOTS + crate::scenario::MARKET_SETUP_SLOTS
+        );
+        // There is no v1 file for it.
+        let dir = std::env::temp_dir().join(format!("mtx-multi-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(scenario.save(&dir.join("v1.json")).is_err());
+        scenario.save_v2(&dir.join("v2.json")).unwrap();
+        assert_eq!(Scenario::load(&dir.join("v2.json")).unwrap(), scenario);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_session_on_several_markets_names_the_market_at_fault() {
+        let err = |s: ScenarioV2| s.validate().unwrap_err();
+
+        // Mismatched key sets.
+        let mut s = multi();
+        s.market_model.markets.remove("SPCX");
+        assert_eq!(err(s), "market_model.markets: SPCX is missing");
+        let mut s = multi();
+        s.actors
+            .markets
+            .insert("TSLA".into(), MarketActors::default());
+        assert!(err(s).contains("actors.markets: TSLA is not one of"));
+        // A universe that misses a market, or holds another.
+        let mut s = multi();
+        s.mandate.universe.pop();
+        assert!(err(s).contains("misses phoenix:perp:SPCX"));
+        let mut s = multi();
+        s.mandate
+            .universe
+            .extend(Mandate::perp(VENUE, "TSLA", 5.0, 1_000.0).universe);
+        assert!(err(s).contains("exactly the session's markets"));
+        // Flat and keyed fields mixed in one section.
+        let mut s = multi();
+        s.venues.perp.as_mut().unwrap().funding = shock_funding();
+        assert!(err(s).contains("venues.perp: funding is one market's"));
+        let mut s = multi();
+        s.market_model.path.push(Waypoint::at(4, 1.0));
+        assert!(err(s).contains("market_model: on several markets"));
+        let mut s = multi();
+        s.actors.takers = s.actors.markets["SPCX"].takers.clone();
+        assert!(err(s).contains("actors: on several markets"));
+        // A Phoenix oracle feed on a market with a path; on one without,
+        // it is fine.
+        let feed = |symbol: &str| {
+            serde_json::from_value::<crate::oracles::Oracles>(serde_json::json!({
+                "seed": 1,
+                "feeds": [{ "name": "px", "source": { "kind": "phoenix", "symbol": symbol } }]
+            }))
+            .unwrap()
+        };
+        let mut s = multi();
+        s.oracles = Some(feed("SPCX"));
+        assert!(err(s).contains("moves SPCX's oracle"));
+        let mut s = multi();
+        s.market_model.markets.get_mut("NVDA").unwrap().path.clear();
+        s.oracles = Some(feed("NVDA"));
+        assert_eq!(s.validate(), Ok(()));
+        s.oracles = Some(feed("TSLA"));
+        assert!(err(s).contains("TSLA's oracle, which isn't one"));
+        // A closed period inside markets.
+        let mut s = multi();
+        s.market_model
+            .markets
+            .get_mut("SPCX")
+            .unwrap()
+            .closed_period = weekend().market_model.closed_period;
+        assert_eq!(
+            err(s),
+            "markets.SPCX: a closed period stays a one-market scenario's"
+        );
+        // A market's own path or flow, named.
+        let mut s = multi();
+        s.market_model.markets.get_mut("NVDA").unwrap().path = vec![Waypoint::at(5, 150.0)];
+        assert!(err(s).starts_with("markets.NVDA: "));
+        let mut s = multi();
+        s.actors.markets.get_mut("SPCX").unwrap().takers[0].account = 200;
+        assert!(err(s).starts_with("markets.SPCX: tape order 0"));
+        let mut s = multi();
+        s.actors.markets.get_mut("SPCX").unwrap().takers_pricing =
+            Some(crate::actors::Pricing::Fair);
+        assert!(err(s).contains("markets.SPCX: actors: takers_pricing fair"));
+        // One market is the flat form; keyed maps need the markets.
+        let mut s = multi();
+        s.venues.perp.as_mut().unwrap().markets.remove("SPCX");
+        s.market_model.markets.remove("SPCX");
+        s.actors.markets.remove("SPCX");
+        s.mandate.universe.pop();
+        assert!(err(s).contains("name at least two markets"));
+        let mut s = shock();
+        s.actors.markets = multi().actors.markets;
+        assert!(err(s).contains("name them in venues.perp.markets"));
+        let mut s = multi();
+        s.assets.symbol = "TSLA".into();
+        assert!(err(s).contains("primary market TSLA"));
+        // A start position and a close-out on any of the markets; an
+        // order on one of them.
+        let mut s = multi();
+        s.assets.start_positions.insert("SPCX".into(), -5.0);
+        s.scoring
+            .close_out
+            .insert("NVDA".into(), CloseOut { haircut_bps: 10.0 });
+        assert_eq!(s.validate(), Ok(()));
+        s.assets.start_positions.insert("SPCX".into(), -75.0);
+        assert!(err(s).contains("-75 SPCX is outside the mandate's range"));
+        let mut s = multi();
+        s.assets.start_positions.insert("TSLA".into(), 1.0);
+        assert!(err(s).contains("TSLA is not one of the session's markets"));
+        let mut s = multi();
+        s.order = Some(ExecutionOrder {
+            instrument: Some("phoenix:perp:SPCX".parse().unwrap()),
+            side: Side::Buy,
+            quantity: 10.0,
+            haircut_bps: 20.0,
+            reduce_only: false,
+        });
+        assert_eq!(s.validate(), Ok(()));
+        s.order.as_mut().unwrap().instrument = Some("phoenix:perp:TSLA".parse().unwrap());
+        assert!(err(s).contains("order: phoenix:perp:TSLA is not one of"));
+    }
+
+    fn shock_funding() -> Option<Funding> {
+        Some(Funding {
+            interval_seconds: 4,
+            period_seconds: 32,
+            max_rate: 1_500,
+            mark: None,
+        })
+    }
+
+    #[test]
+    fn a_joint_draw_is_a_correlation_matrix_over_the_markets() {
+        let record = || crate::market::MarketModelRecord {
+            calibration: "spcx.20261112.d1f48be2".into(),
+            calibration_sha256: "a".repeat(64),
+            process: crate::market::calibration::FairValueModel::RegimeGarchT,
+            vol_mult: 1.0,
+            slot_seconds: 0.25,
+            start_unix: 0,
+            regime_vol: vec![1.0],
+            regimes: Vec::new(),
+            sessions: Vec::new(),
+            events: Vec::new(),
+        };
+        let joint = |matrix: Vec<Vec<f64>>| JointDraw {
+            matrix_source: "design".into(),
+            matrix_sha256: None,
+            assets: vec!["SPCX".into(), "NVDA".into()],
+            matrix,
+            records: [
+                ("NVDA".to_string(), record()),
+                ("SPCX".to_string(), record()),
+            ]
+            .into(),
+        };
+        let mut s = multi();
+        s.market_model.joint = Some(joint(vec![vec![1.0, 0.8], vec![0.8, 1.0]]));
+        assert_eq!(s.validate(), Ok(()));
+        let scenario = s.clone().into_scenario().unwrap();
+        assert_eq!(ScenarioV2::try_from(&scenario).unwrap(), s);
+        for bad in [
+            vec![vec![1.0, 0.8], vec![0.7, 1.0]],
+            vec![vec![0.9, 0.8], vec![0.8, 1.0]],
+            vec![vec![1.0, 1.5], vec![1.5, 1.0]],
+            vec![vec![1.0]],
+        ] {
+            let mut s = multi();
+            s.market_model.joint = Some(joint(bad));
+            assert!(s.validate().unwrap_err().contains("correlation matrix"));
+        }
+        let mut s = multi();
+        let mut j = joint(vec![vec![1.0, 0.8], vec![0.8, 1.0]]);
+        j.records.remove("NVDA");
+        s.market_model.joint = Some(j);
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("records each of its assets")
+        );
+        let mut s = multi();
+        s.market_model.joint = Some(joint(vec![vec![1.0, 0.8], vec![0.8, 1.0]]));
+        s.market_model.markets.get_mut("NVDA").unwrap().record = Some(record());
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("markets.NVDA: its draw is recorded both")
+        );
     }
 
     #[test]

@@ -137,6 +137,65 @@ pub struct Scenario {
     /// [`crate::raw`]). Absent, the session refuses every one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_sends: Option<RawSends>,
+    /// For a session on several perp markets of one cross-margin account:
+    /// each market's path, funding and flow, in symbol order. `symbol` is
+    /// then the primary market, the one `MTX_SYMBOL` names, and the flat
+    /// fields above that describe one market (`path`, `fair_path`,
+    /// `funding`, `making`, `tape`, `takers_pricing`, `market_model`) are
+    /// empty. Empty for a session on one market, which those fields are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketScenario>,
+    /// Opt-in: the joint draw the markets' paths came from (see
+    /// [`JointDraw`]). Sessions replay the paths; this records where they
+    /// came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joint: Option<JointDraw>,
+}
+
+/// One market of a session on several perp markets (see
+/// [`Scenario::markets`]): what the flat fields of a one-market scenario
+/// say about its market.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MarketScenario {
+    pub symbol: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<Waypoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_path: Option<Vec<Waypoint>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<Funding>,
+    /// The market's competing maker and its flow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub making: Option<Making>,
+    /// Outside market making: the market's taker tape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tape: Vec<crate::making::TakerOrder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takers_pricing: Option<crate::actors::Pricing>,
+    /// The calibration the market's path was drawn from on its own; a joint
+    /// draw records every market's in [`Scenario::joint`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_model: Option<crate::market::MarketModelRecord>,
+}
+
+/// Where several markets' paths were drawn from together
+/// ([`crate::market::model::draw_joint`]): the correlation used, and each
+/// asset's draw. Like a single draw, it never records its seed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JointDraw {
+    /// Where the matrix came from: `design` for one the scenario's author
+    /// states, or a correlation file's id.
+    pub matrix_source: String,
+    /// The correlation file's SHA-256, when the matrix came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix_sha256: Option<String>,
+    /// The assets in the matrix's order, and the matrix.
+    pub assets: Vec<String>,
+    pub matrix: Vec<Vec<f64>>,
+    /// Each asset's draw.
+    pub records: BTreeMap<String, crate::market::MarketModelRecord>,
 }
 
 /// What a scenario's raw sends may do.
@@ -288,6 +347,12 @@ impl Scenario {
     /// scenario file (the task images, CI, the practice files) expects.
     /// [`Scenario::save_v2`] writes the v2 layout.
     pub fn save(&self, path: &Path) -> Result<()> {
+        if !self.markets.is_empty() {
+            return Err(Error::InvalidScenario {
+                path: path.to_path_buf(),
+                reason: "a scenario on several markets has no v1 form; save it with save_v2".into(),
+            });
+        }
         let contents = serde_json::to_string_pretty(self)? + "\n";
         std::fs::write(path, contents).map_err(io_error(path))
     }
@@ -350,13 +415,7 @@ impl Scenario {
     /// from the starting mark through each waypoint.
     /// With premiums, the path is the book's: the price a bot trades at.
     pub fn total_variation_pct(&self) -> f64 {
-        let mut level = 0.0;
-        let mut total = 0.0;
-        for waypoint in &self.path {
-            total += (waypoint.book_pct() - level).abs();
-            level = waypoint.book_pct();
-        }
-        total
+        total_variation_pct(&self.path)
     }
 
     /// The most a bot could make on this scenario with perfect hindsight:
@@ -364,22 +423,21 @@ impl Scenario {
     /// cost. No bot reaches it (fills cost fees and slippage, and the path is
     /// unknown), so a score against it never saturates.
     pub fn hindsight_bound_usd(&self, start_mark_usd: f64) -> f64 {
-        self.max_position() * start_mark_usd * self.total_variation_pct() / 100.0
+        hindsight_bound_usd(&self.path, self.max_position(), start_mark_usd)
     }
 
     /// What the reward divides PnL by: the hindsight bound, plus, for a
     /// market-making scenario, the spread bound (see
     /// [`Making::spread_bound_usd`]). A maker can earn both: the spread on
     /// every taker order, and the moves it trades or leans into, so a bound
-    /// on the spread alone is one a bot can pass.
+    /// on the spread alone is one a bot can pass. A session on several
+    /// markets has one per market: see [`Scenario::markets_bound_usd`].
     pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
         if let Some(spot) = &self.spot {
             return spot.bound_usd.unwrap_or(0.0);
         }
-        let spread = self.making.as_ref().map_or(0.0, |making| {
-            making.spread_bound_usd(&self.path, start_mark_usd)
-        });
-        spread + self.hindsight_bound_usd(start_mark_usd) + self.funding_bound_usd(start_mark_usd)
+        self.flat_market()
+            .bound_usd(self.max_position(), start_mark_usd, self.duration_slots)
     }
 
     /// The most funding the cap could collect: held against every premium
@@ -387,7 +445,126 @@ impl Scenario {
     /// at Phoenix's rate of the premium times the time over the funding
     /// period.
     pub fn funding_bound_usd(&self, start_mark_usd: f64) -> f64 {
-        let Some(funding) = &self.funding else {
+        self.flat_market().funding_bound_usd(
+            self.max_position(),
+            start_mark_usd,
+            self.duration_slots,
+        )
+    }
+
+    /// A session on several markets' bound: each market's
+    /// [`Scenario::bound_usd`] terms at its own cap and its own start mark
+    /// (`start_marks_usd`, by symbol), summed. A market missing from
+    /// `start_marks_usd` adds nothing.
+    pub fn markets_bound_usd(&self, start_marks_usd: &BTreeMap<String, f64>) -> f64 {
+        self.market_scenarios()
+            .iter()
+            .filter_map(|market| {
+                let start = *start_marks_usd.get(&market.symbol)?;
+                Some(market.bound_usd(
+                    self.max_position_of(&market.symbol),
+                    start,
+                    self.duration_slots,
+                ))
+            })
+            .sum()
+    }
+
+    /// Surfpool overrides for the whole path, with slots relative to when
+    /// they are registered, given the mark at that moment.
+    pub fn overrides(&self, perp_asset_map: Pubkey, start_mark_ticks: u64) -> Vec<Override> {
+        if let Some(off) = &self.offhours {
+            return self.offhours_overrides(off, perp_asset_map, start_mark_ticks);
+        }
+        self.flat_market()
+            .overrides(perp_asset_map, start_mark_ticks)
+    }
+
+    /// The scenario's markets: [`Scenario::markets`], or the one market its
+    /// flat fields describe.
+    pub fn market_scenarios(&self) -> std::borrow::Cow<'_, [MarketScenario]> {
+        if self.markets.is_empty() {
+            std::borrow::Cow::Owned(vec![self.flat_market().into_owned()])
+        } else {
+            std::borrow::Cow::Borrowed(&self.markets)
+        }
+    }
+
+    /// The market the flat fields describe, borrowed.
+    fn flat_market(&self) -> MarketRef<'_> {
+        MarketRef {
+            symbol: &self.symbol,
+            path: &self.path,
+            fair_path: self.fair_path.as_deref(),
+            funding: self.funding.as_ref(),
+            making: self.making.as_ref(),
+            tape: &self.tape,
+            takers_pricing: self.takers_pricing,
+            market_model: self.market_model.as_ref(),
+        }
+    }
+
+    /// The mandate's position cap on the perp `symbol`.
+    pub fn max_position_of(&self, symbol: &str) -> f64 {
+        self.mandate
+            .allowance(&perp_instrument(symbol))
+            .map_or(0.0, |a| a.max_position)
+    }
+}
+
+/// The perp `symbol`, as the mandate names it.
+pub fn perp_instrument(symbol: &str) -> InstrumentRef {
+    InstrumentRef {
+        venue: VENUE.into(),
+        kind: Kind::Perp,
+        symbol: symbol.into(),
+    }
+}
+
+/// One market's part of a scenario, borrowed: from the flat fields of a
+/// one-market scenario, or a [`MarketScenario`].
+#[derive(Clone, Copy)]
+struct MarketRef<'a> {
+    symbol: &'a str,
+    path: &'a [Waypoint],
+    fair_path: Option<&'a [Waypoint]>,
+    funding: Option<&'a Funding>,
+    making: Option<&'a Making>,
+    tape: &'a [crate::making::TakerOrder],
+    takers_pricing: Option<crate::actors::Pricing>,
+    market_model: Option<&'a crate::market::MarketModelRecord>,
+}
+
+impl MarketRef<'_> {
+    fn into_owned(self) -> MarketScenario {
+        MarketScenario {
+            symbol: self.symbol.to_string(),
+            path: self.path.to_vec(),
+            fair_path: self.fair_path.map(<[Waypoint]>::to_vec),
+            funding: self.funding.copied(),
+            making: self.making.cloned(),
+            tape: self.tape.to_vec(),
+            takers_pricing: self.takers_pricing,
+            market_model: self.market_model.cloned(),
+        }
+    }
+
+    fn bound_usd(&self, max_position: f64, start_mark_usd: f64, duration_slots: u64) -> f64 {
+        let spread = self.making.map_or(0.0, |making| {
+            making.spread_bound_usd(self.path, start_mark_usd)
+        });
+        spread
+            + hindsight_bound_usd(self.path, max_position, start_mark_usd)
+            + self.funding_bound_usd(max_position, start_mark_usd, duration_slots)
+    }
+
+    fn funding_bound_usd(
+        &self,
+        max_position: f64,
+        start_mark_usd: f64,
+        duration_slots: u64,
+    ) -> f64 {
+        let Some(funding) = self.funding else {
             return 0.0;
         };
         let cap_pct = funding.max_rate as f64 / 1_000.0 / start_mark_usd
@@ -399,7 +576,7 @@ impl Scenario {
             .iter()
             .skip(1)
             .map(|w| w.slot)
-            .chain(std::iter::once(self.duration_slots));
+            .chain(std::iter::once(duration_slots));
         let premium_seconds: f64 = self
             .path
             .iter()
@@ -408,32 +585,24 @@ impl Scenario {
                 w.premium_pct.abs().min(cap_pct) * end.saturating_sub(w.slot) as f64 * SLOT_SECONDS
             })
             .sum();
-        self.max_position() * start_mark_usd * premium_seconds
-            / 100.0
-            / funding.period_seconds as f64
+        max_position * start_mark_usd * premium_seconds / 100.0 / funding.period_seconds as f64
     }
 
-    /// Surfpool overrides for the whole path, with slots relative to when
-    /// they are registered, given the mark at that moment.
-    pub fn overrides(&self, perp_asset_map: Pubkey, start_mark_ticks: u64) -> Vec<Override> {
+    fn overrides(&self, perp_asset_map: Pubkey, start_mark_ticks: u64) -> Vec<Override> {
         let ticks_at =
             |level_pct: f64| (start_mark_ticks as f64 * (1.0 + level_pct / 100.0)).round() as u64;
-        if let Some(off) = &self.offhours {
-            return self.offhours_overrides(off, perp_asset_map, start_mark_ticks);
-        }
         let mut from = start_mark_ticks;
         let mut overrides = Vec::new();
-        for waypoint in &self.path {
+        for waypoint in self.path {
             let to = ticks_at(waypoint.book_pct());
-            let (mut moves, at) =
-                market_move(perp_asset_map, &self.symbol, from, to, waypoint.slot);
+            let (mut moves, at) = market_move(perp_asset_map, self.symbol, from, to, waypoint.slot);
             // The makers stay at the book's level; the oracles go back to
             // the index in the slot of the last step, before the uncross.
             if waypoint.premium_pct != 0.0 {
                 let uncross = moves.pop().expect("a move ends with its uncross");
                 moves.push(oracle_move(
                     perp_asset_map,
-                    &self.symbol,
+                    self.symbol,
                     ticks_at(waypoint.level_pct),
                     at - SLOTS_BETWEEN_STEPS,
                 ));
@@ -444,6 +613,87 @@ impl Scenario {
         }
         overrides
     }
+
+    fn valuation(&self, prices_the_close: bool) -> &'static str {
+        if self.making.is_some() || prices_the_close {
+            "oracle"
+        } else if self.path.iter().any(|w| w.premium_pct != 0.0) || self.funding.is_some() {
+            "book"
+        } else {
+            "mark"
+        }
+    }
+}
+
+impl MarketScenario {
+    fn as_ref(&self) -> MarketRef<'_> {
+        MarketRef {
+            symbol: &self.symbol,
+            path: &self.path,
+            fair_path: self.fair_path.as_deref(),
+            funding: self.funding.as_ref(),
+            making: self.making.as_ref(),
+            tape: &self.tape,
+            takers_pricing: self.takers_pricing,
+            market_model: self.market_model.as_ref(),
+        }
+    }
+
+    /// The market as the mandate names it.
+    pub fn instrument(&self) -> InstrumentRef {
+        perp_instrument(&self.symbol)
+    }
+
+    /// [`Scenario::bound_usd`] for this market, at its cap `max_position`.
+    pub fn bound_usd(&self, max_position: f64, start_mark_usd: f64, duration_slots: u64) -> f64 {
+        self.as_ref()
+            .bound_usd(max_position, start_mark_usd, duration_slots)
+    }
+
+    /// [`Scenario::funding_bound_usd`] for this market.
+    pub fn funding_bound_usd(
+        &self,
+        max_position: f64,
+        start_mark_usd: f64,
+        duration_slots: u64,
+    ) -> f64 {
+        self.as_ref()
+            .funding_bound_usd(max_position, start_mark_usd, duration_slots)
+    }
+
+    /// The market's path as overrides (see [`Scenario::overrides`]).
+    pub fn overrides(&self, perp_asset_map: Pubkey, start_mark_ticks: u64) -> Vec<Override> {
+        self.as_ref().overrides(perp_asset_map, start_mark_ticks)
+    }
+
+    /// The price this market's position is valued at (see
+    /// [`Scenario::valuation`]); `prices_the_close` is the scenario's.
+    pub fn valuation(&self, prices_the_close: bool) -> &'static str {
+        self.as_ref().valuation(prices_the_close)
+    }
+
+    /// The market's fair value in USD at `slot` (see
+    /// [`Scenario::fair_value_usd`]).
+    pub fn fair_value_usd(&self, start_mark_usd: f64, slot: u64) -> Option<f64> {
+        let path = self.fair_path.as_ref()?;
+        Some(start_mark_usd * (1.0 + level_at(path, slot) / 100.0))
+    }
+}
+
+/// Total variation of `path`, in percent (see
+/// [`Scenario::total_variation_pct`]).
+fn total_variation_pct(path: &[Waypoint]) -> f64 {
+    let mut level = 0.0;
+    let mut total = 0.0;
+    for waypoint in path {
+        total += (waypoint.book_pct() - level).abs();
+        level = waypoint.book_pct();
+    }
+    total
+}
+
+fn hindsight_bound_usd(path: &[Waypoint], max_position: f64, start_mark_usd: f64) -> f64 {
+    max_position * start_mark_usd * total_variation_pct(path) / 100.0
 }
 
 /// The largest premium a waypoint may give the book, in percent: Phoenix
@@ -482,13 +732,7 @@ impl Scenario {
     /// book trades at a premium: what the position would close at, which
     /// Phoenix's mark, a blend of the book and the index, is not).
     pub fn valuation(&self) -> &'static str {
-        if self.making.is_some() || self.prices_the_close() {
-            "oracle"
-        } else if self.path.iter().any(|w| w.premium_pct != 0.0) || self.funding.is_some() {
-            "book"
-        } else {
-            "mark"
-        }
+        self.flat_market().valuation(self.prices_the_close())
     }
 
     /// Slots the session's setup gets before the bot's first slot: setup
@@ -497,7 +741,8 @@ impl Scenario {
     /// same slot every time). Onboarding takers takes longer, and longer
     /// still under load.
     pub fn setup_slots(&self) -> u64 {
-        let slots = if !self.tape.is_empty() {
+        let tape = self.market_scenarios().iter().any(|m| !m.tape.is_empty());
+        let slots = if tape {
             TAPE_SETUP_SLOTS
         } else if self.offhours.is_some() {
             OFFHOURS_SETUP_SLOTS
@@ -508,11 +753,10 @@ impl Scenario {
             Some(_) => slots.max(LIBRARY_SETUP_SLOTS),
             None => slots,
         };
-        if self.start_positions.is_empty() {
-            slots
-        } else {
-            slots + SEED_SLOTS
-        }
+        // Each market past the first: its competitor's onboarding and its
+        // seats; each starting position: its seeding.
+        let markets = self.markets.len().saturating_sub(1) as u64;
+        slots + markets * MARKET_SETUP_SLOTS + self.start_positions.len() as u64 * SEED_SLOTS
     }
 
     /// Whether a broker prices what the bot leaves at the close (a perp
@@ -612,6 +856,9 @@ pub const LIBRARY_SETUP_SLOTS: u64 = 120;
 /// What a perp session's starting positions add: the counterparty's
 /// onboarding, and the slot after the seeding fill (see [`crate::perp`]).
 pub const SEED_SLOTS: u64 = 8;
+/// What each market past the first adds to a session on several markets:
+/// its competitor's onboarding, under load.
+pub const MARKET_SETUP_SLOTS: u64 = 60;
 
 /// The largest part of an at-once move, in percent of the level it starts
 /// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
@@ -910,6 +1157,8 @@ impl ShockFamily {
             }),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
         };
@@ -1251,6 +1500,68 @@ impl SplitMix64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn projected(overrides: Vec<Override>) -> Vec<(String, Pubkey, String, u64, String)> {
+        overrides
+            .into_iter()
+            .map(|o| {
+                (
+                    o.template_id.to_string(),
+                    o.account,
+                    o.values.to_string(),
+                    o.slot,
+                    o.label.to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// Every shipped practice file is a one-market scenario whose one
+    /// market, as a session on several markets would hold it, gives the
+    /// same overrides, bound and valuation as its flat fields.
+    #[test]
+    fn a_one_market_scenario_is_its_one_market() {
+        let tasks = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/tasks");
+        let map = Pubkey::new_unique();
+        let mut checked = 0;
+        for task in std::fs::read_dir(&tasks).unwrap() {
+            let practice = task.unwrap().path().join("environment/practice");
+            let Ok(files) = std::fs::read_dir(&practice) else {
+                continue;
+            };
+            for file in files {
+                let scenario = Scenario::load(&file.unwrap().path()).unwrap();
+                assert!(scenario.markets.is_empty());
+                let markets = scenario.market_scenarios();
+                let [market] = &*markets else {
+                    panic!("{} has one market", scenario.name)
+                };
+                assert_eq!(market.symbol, scenario.symbol);
+                assert_eq!(
+                    market.valuation(scenario.prices_the_close()),
+                    scenario.valuation()
+                );
+                let start = 187.25;
+                let bound = scenario.bound_usd(start);
+                assert_eq!(
+                    market.bound_usd(scenario.max_position(), start, scenario.duration_slots),
+                    bound
+                );
+                assert_eq!(
+                    scenario.markets_bound_usd(&[(scenario.symbol.clone(), start)].into()),
+                    bound
+                );
+                if scenario.offhours.is_none() {
+                    assert_eq!(
+                        projected(market.overrides(map, 18_725)),
+                        projected(scenario.overrides(map, 18_725))
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 18, "checked {checked} practice files");
+    }
 
     #[test]
     fn sets_are_stratified_by_direction_and_aftermath() {
@@ -1626,6 +1937,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
         };
@@ -1697,6 +2010,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
         }

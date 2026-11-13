@@ -22,10 +22,19 @@ pub(crate) enum MarketCalCommand {
     Show { calibration: PathBuf },
     /// Draw scenarios from a calibration's market model: each is the
     /// template scenario (mandate, flow, funding...) with its path and fair
-    /// value drawn, and the draw recorded in `market_model`.
+    /// value drawn, and the draw recorded in `market_model`. A template on
+    /// several markets takes one `--calibration SYMBOL=FILE` per market, in
+    /// the order the draw lists them, and `--correlation`: their paths are
+    /// drawn jointly and written as v2 files.
     Generate {
+        /// A calibration file, or `SYMBOL=FILE` for each market of a
+        /// template on several.
+        #[arg(long, required = true)]
+        calibration: Vec<String>,
+        /// The correlation of every pair of markets' moves, in [-1, 1], for
+        /// a template on several markets; recorded as a `design` matrix.
         #[arg(long)]
-        calibration: PathBuf,
+        correlation: Option<f64>,
         /// A scenario file whose everything-but-the-path the drawn ones keep.
         #[arg(long)]
         template: PathBuf,
@@ -114,6 +123,7 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
         }
         MarketCalCommand::Generate {
             calibration,
+            correlation,
             template,
             model,
             out,
@@ -121,17 +131,52 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
             count,
             seed,
         } => {
-            let cal = Calibration::load(&calibration)?;
             let template = Scenario::load(&template)?;
-            let model = MarketModel::new(cal, model.spec()?).map_err(anyhow::Error::msg)?;
-            let scenarios = model
-                .sample_set(&template, &prefix, count, seed)
-                .map_err(anyhow::Error::msg)?;
+            let spec = model.spec()?;
+            let scenarios = if template.markets.is_empty() {
+                let [calibration] = calibration.as_slice() else {
+                    anyhow::bail!("a template on one market takes one --calibration");
+                };
+                let cal = Calibration::load(Path::new(calibration))?;
+                let model = MarketModel::new(cal, spec).map_err(anyhow::Error::msg)?;
+                model
+                    .sample_set(&template, &prefix, count, seed)
+                    .map_err(anyhow::Error::msg)?
+            } else {
+                let rho = correlation.context(
+                    "a template on several markets needs --correlation for the joint draw",
+                )?;
+                let mut models = Vec::new();
+                for named in &calibration {
+                    let (symbol, file) = named
+                        .split_once('=')
+                        .with_context(|| format!("--calibration {named}: give SYMBOL=FILE"))?;
+                    let cal = Calibration::load(Path::new(file))?;
+                    models.push((
+                        symbol.to_string(),
+                        MarketModel::new(cal, spec.clone()).map_err(anyhow::Error::msg)?,
+                    ));
+                }
+                let k = models.len();
+                let matrix: Vec<Vec<f64>> = (0..k)
+                    .map(|i| (0..k).map(|j| if i == j { 1.0 } else { rho }).collect())
+                    .collect();
+                let named: Vec<(&str, &MarketModel)> =
+                    models.iter().map(|(s, m)| (s.as_str(), m)).collect();
+                mtx_grader::market::model::joint_sample_set(
+                    &named, &matrix, "design", &template, &prefix, count, seed,
+                )
+                .map_err(anyhow::Error::msg)?
+            };
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
-                scenario.save(&path)?;
+                if scenario.markets.is_empty() {
+                    scenario.save(&path)?;
+                } else {
+                    scenario.save_v2(&path)?;
+                }
                 written.push(path);
             }
             Ok(serde_json::to_string_pretty(&written)?)
