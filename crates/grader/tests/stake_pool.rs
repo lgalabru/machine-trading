@@ -14,6 +14,7 @@ use mtx_core::{
 };
 use mtx_grader::{
     epochs::{EpochEvent, Epochs, LANDING_SLOTS, WARP_BLOCKS},
+    guard::Guard,
     snapshot,
     venue::{
         marinade::{self, MarinadeState},
@@ -47,13 +48,27 @@ fn marinade_pool() -> InstrumentRef {
     "marinade:stake-pool:MSOL".parse().unwrap()
 }
 
-/// A world with no clock: blocks land when the test forwards a slot.
-async fn world() -> (Surfnet, RpcClient) {
+/// A world with no clock: blocks land when the test forwards a slot. It is
+/// read through the grader's own proxy, as a session reads it: a
+/// transaction is final once it executed.
+struct World {
+    surfnet: Surfnet,
+    guard: Guard,
+}
+
+impl World {
+    fn url(&self) -> &str {
+        self.guard.url()
+    }
+}
+
+async fn world() -> (World, RpcClient) {
     let (surfnet, _) = snapshot::start_snapshot_stepped(&snapshot_dir())
         .await
         .unwrap();
-    let rpc = mtx_grader::chain::rpc_client(&surfnet);
-    (surfnet, rpc)
+    let guard = Guard::internal(surfnet.rpc_url()).await.unwrap();
+    let rpc = mtx_kit::rpc_client(guard.url());
+    (World { surfnet, guard }, rpc)
 }
 
 async fn forward(surfnet: &Surfnet, rpc: &RpcClient, slots: u64) -> u64 {
@@ -139,30 +154,38 @@ fn marinade_state(rpc: &RpcClient) -> MarinadeState {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn staking_mints_at_the_pool_s_rate_and_redeeming_stops_at_the_reserve() {
-    let (surfnet, rpc) = world().await;
-    let wallet = funded(&surfnet, 100 * SOL);
-    let market = stake_venue("jito-stake-pool", surfnet.rpc_url())
+    let (world, rpc) = world().await;
+    let surfnet = &world.surfnet;
+    let wallet = funded(surfnet, 200 * SOL);
+    // A holder of about 76 jitoSOL, staked before: the reserve doesn't keep
+    // its SOL.
+    let reserve = jito_state(&rpc).reserve_stake;
+    let held_before = rpc.get_balance(&reserve).unwrap();
+    stake_pool::stake_before_session(surfnet, &rpc, &wallet, &POOLS[0], 100 * SOL).unwrap();
+    assert_eq!(rpc.get_balance(&reserve).unwrap(), held_before);
+    let market = stake_venue("jito-stake-pool", world.url())
         .unwrap()
         .market(&jito_pool())
         .await
         .unwrap();
     assert_eq!(market.kind(), Kind::StakePool);
     let seat = market
-        .seat(wallet.insecure_clone(), surfnet.rpc_url())
+        .seat(wallet.insecure_clone(), world.url())
         .await
         .unwrap();
     let state = jito_state(&rpc);
     let tokens = token::ata(&wallet.pubkey(), &state.pool_mint);
+    let start = u128::from(balance(&rpc, &tokens));
 
     // Staking 5 SOL mints what the program's own math gives.
     let sent = seat
         .send(&planned(Action::Deposit { amount: Some(5.0) }))
         .await;
     assert!(sent.sent, "{:?}", sent.state);
-    forward(&surfnet, &rpc, 1).await;
+    forward(surfnet, &rpc, 1).await;
     let minted = u128::from(5 * SOL) * u128::from(state.pool_token_supply)
         / u128::from(state.total_lamports);
-    assert_eq!(u128::from(balance(&rpc, &tokens)), minted);
+    assert_eq!(u128::from(balance(&rpc, &tokens)) - start, minted);
 
     // The reserve pays a small redemption at once, at the rate less the
     // withdrawal fee.
@@ -178,7 +201,7 @@ async fn staking_mints_at_the_pool_s_rate_and_redeeming_stops_at_the_reserve() {
         .send(&planned(Action::Withdraw { amount: Some(1.0) }))
         .await;
     assert!(sent.sent, "{:?}", sent.state);
-    forward(&surfnet, &rpc, 1).await;
+    forward(surfnet, &rpc, 1).await;
     let paid = rpc.get_balance(&wallet.pubkey()).unwrap() + 5_000 - before;
     let expected = rate * 0.999 * 1e9;
     assert!(
@@ -187,7 +210,7 @@ async fn staking_mints_at_the_pool_s_rate_and_redeeming_stops_at_the_reserve() {
     );
 
     // Redeeming more than the reserve holds fails on chain, with the
-    // program's reason, and moves nothing.
+    // program's reason (SolWithdrawalTooLarge, 35), and moves nothing.
     let stats = seat.stats().await.unwrap();
     let capacity = stats
         .iter()
@@ -199,15 +222,17 @@ async fn staking_mints_at_the_pool_s_rate_and_redeeming_stops_at_the_reserve() {
     let sent = seat
         .send(&planned(Action::Withdraw { amount: Some(30.0) }))
         .await;
-    forward(&surfnet, &rpc, 1).await;
+    forward(surfnet, &rpc, 1).await;
     match sent.state {
-        SendState::Failed { reason, .. } => assert!(!reason.is_empty()),
+        SendState::Failed { reason, .. } => {
+            assert!(reason.contains("custom program error: 0x23"), "{reason}")
+        }
         other => panic!("a redemption past the reserve came back {other:?}"),
     }
     assert_eq!(balance(&rpc, &tokens), held);
 
     // The token is worth the pool's rate in SOL, at the Pyth price.
-    let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(surfnet.rpc_url()));
+    let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(world.url()));
     let holdings = market.holdings(&wallet.pubkey()).await.unwrap();
     let Holding::Spot(token_held) = &holdings[0] else {
         panic!("{holdings:?}")
@@ -236,15 +261,16 @@ async fn staking_mints_at_the_pool_s_rate_and_redeeming_stops_at_the_reserve() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn marinade_s_liquid_unstake_costs_more_the_more_it_drains() {
-    let (surfnet, rpc) = world().await;
-    let wallet = funded(&surfnet, 1_000 * SOL);
-    let market = stake_venue("marinade", surfnet.rpc_url())
+    let (world, rpc) = world().await;
+    let surfnet = &world.surfnet;
+    let wallet = funded(surfnet, 1_000 * SOL);
+    let market = stake_venue("marinade", world.url())
         .unwrap()
         .market(&marinade_pool())
         .await
         .unwrap();
     let seat = market
-        .seat(wallet.insecure_clone(), surfnet.rpc_url())
+        .seat(wallet.insecure_clone(), world.url())
         .await
         .unwrap();
     let sent = seat
@@ -253,7 +279,7 @@ async fn marinade_s_liquid_unstake_costs_more_the_more_it_drains() {
         }))
         .await;
     assert!(sent.sent, "{:?}", sent.state);
-    forward(&surfnet, &rpc, 1).await;
+    forward(surfnet, &rpc, 1).await;
     let rate: f64 = marinade_state(&rpc).rate().to_string().parse().unwrap();
     let mut fees = Vec::new();
     for msol in [1.0, 500.0] {
@@ -262,7 +288,7 @@ async fn marinade_s_liquid_unstake_costs_more_the_more_it_drains() {
             .send(&planned(Action::Withdraw { amount: Some(msol) }))
             .await;
         assert!(sent.sent, "{:?}", sent.state);
-        forward(&surfnet, &rpc, 1).await;
+        forward(surfnet, &rpc, 1).await;
         let paid = (rpc.get_balance(&wallet.pubkey()).unwrap() + 5_000 - before) as f64 / 1e9;
         fees.push(1.0 - paid / (msol * rate));
     }
@@ -271,9 +297,10 @@ async fn marinade_s_liquid_unstake_costs_more_the_more_it_drains() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
-    let (surfnet, rpc) = world().await;
-    let wallet = funded(&surfnet, 100 * SOL);
-    let crank = funded(&surfnet, 10 * SOL);
+    let (world, rpc) = world().await;
+    let surfnet = &world.surfnet;
+    let wallet = funded(surfnet, 100 * SOL);
+    let crank = funded(surfnet, 10 * SOL);
     let owner = wallet.pubkey();
     let jito = POOLS[0];
     let state = jito_state(&rpc);
@@ -281,7 +308,7 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
     let mstate = marinade_state(&rpc);
     let msol = token::ata(&owner, &mstate.msol_mint);
     send(
-        &surfnet,
+        surfnet,
         &rpc,
         &[&wallet],
         vec![
@@ -323,7 +350,7 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
         .get_minimum_balance_for_rent_exemption(STAKE_ACCOUNT_LEN as usize)
         .unwrap();
     send(
-        &surfnet,
+        surfnet,
         &rpc,
         &[&wallet, &stake],
         vec![
@@ -349,7 +376,7 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
         .get_minimum_balance_for_rent_exemption(marinade::TICKET_LEN as usize)
         .unwrap();
     send(
-        &surfnet,
+        surfnet,
         &rpc,
         &[&wallet, &ticket],
         vec![
@@ -359,7 +386,7 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
     )
     .await
     .unwrap();
-    let chain = RpcChainClient::new(surfnet.rpc_url());
+    let chain = RpcChainClient::new(world.url());
     let waiting = marinade::tickets(&chain, &owner).await.unwrap();
     assert_eq!(waiting.len(), 1);
     let staked = rpc.get_account(&stake.pubkey()).unwrap().lamports;
@@ -367,13 +394,13 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
     // Neither pays before the epoch ends.
     let claim = marinade::ix::claim(&ticket.pubkey(), &owner);
     assert!(
-        send(&surfnet, &rpc, &[&wallet], vec![claim.clone()])
+        send(surfnet, &rpc, &[&wallet], vec![claim.clone()])
             .await
             .is_err()
     );
     let withdraw = stake_ix::withdraw(&stake.pubkey(), &owner, &owner, staked);
     assert!(
-        send(&surfnet, &rpc, &[&wallet], vec![withdraw.clone()])
+        send(surfnet, &rpc, &[&wallet], vec![withdraw.clone()])
             .await
             .is_err()
     );
@@ -389,11 +416,11 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
         Epochs::schedule(&rpc, &events, &[jito_pool(), marinade_pool()], base, crank).unwrap();
     surfnet.cheatcodes().lock(CheatcodeFilter::all()).unwrap();
     let epoch_before = rpc.get_epoch_info().unwrap().epoch;
-    let slot = forward(&surfnet, &rpc, 4 * 2).await;
+    let slot = forward(surfnet, &rpc, 4 * 2).await;
     for k in 0..3 {
-        assert_eq!(epochs.warp(&surfnet, &rpc, k, slot).await.unwrap(), slot);
+        assert_eq!(epochs.warp(surfnet, &rpc, k, slot).await.unwrap(), slot);
     }
-    let landed = epochs.warp(&surfnet, &rpc, 3, slot).await.unwrap();
+    let landed = epochs.warp(surfnet, &rpc, 3, slot).await.unwrap();
     assert_eq!(landed, slot + added, "the plan's slots");
     let info = rpc.get_epoch_info().unwrap();
     assert_eq!(info.epoch, epoch_before + 1);
@@ -423,7 +450,7 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
     // The pool takes deposits again, and both delayed exits pay.
     let before = rpc.get_balance(&owner).unwrap();
     send(
-        &surfnet,
+        surfnet,
         &rpc,
         &[&wallet],
         vec![stake_pool::ix::deposit_sol(
@@ -437,8 +464,8 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
     )
     .await
     .unwrap();
-    send(&surfnet, &rpc, &[&wallet], vec![claim]).await.unwrap();
-    send(&surfnet, &rpc, &[&wallet], vec![withdraw])
+    send(surfnet, &rpc, &[&wallet], vec![claim]).await.unwrap();
+    send(surfnet, &rpc, &[&wallet], vec![withdraw])
         .await
         .unwrap();
     let gained = rpc.get_balance(&owner).unwrap() as i128 - before as i128;
