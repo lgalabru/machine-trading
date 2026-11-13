@@ -369,7 +369,7 @@
   body[data-layout="phone"] #switch button.on { color: var(--accent); }
   body[data-layout="phone"] #nav .badge { position: absolute; top: 5px; left: calc(50% + 8px); }
   body[data-layout="phone"] .bar { height: 34px; padding: 0 14px; }
-  body[data-layout="phone"] #task-tag, body[data-layout="phone"] .conn span { display: none; }
+  body[data-layout="phone"] .conn span { display: none; }
   body[data-layout="phone"] .pane { border-radius: 14px; }
   body[data-layout="phone"] #market-desc { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
@@ -394,7 +394,6 @@
 <div class="bar">
   <span class="brand"><span class="dot"></span>mtx studio</span>
   <span class="sep">›</span><span class="ws" id="ws-name">…</span>
-  <span class="tag" id="task-tag" hidden></span>
   <span class="tag mock" id="mock-tag" hidden>mock</span>
   <span class="grow"></span>
   <span class="conn" id="conn"><i></i><span>connecting</span></span>
@@ -1635,7 +1634,9 @@ async function refreshLists() {
   S.files = init.files; S.scenarios = init.scenarios; S.task = init.task;
   $("ws-name").textContent = String(init.workspace).split("/").filter(Boolean).pop() || "workspace";
   $("ws-name").title = init.workspace;
-  $("task-tag").textContent = init.task; $("task-tag").hidden = !init.task;
+  // The bench task only picks the default snapshot and practice set: not
+  // worth a chip, now that a scenario names its own market.
+  if (init.task) $("ws-name").title = `${init.workspace}\nbench task: ${init.task}`;
   $("scenario").innerHTML = S.scenarios.map((n) => `<option>${esc(n)}</option>`).join("");
   if (S.scenario) $("scenario").value = S.scenario;
   renderTabs();
