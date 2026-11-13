@@ -1010,8 +1010,8 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 )
             }
             None => {
-                if v1.turn_data.is_some() || v1.participation.is_some() || v1.net.is_some() {
-                    return Err("turn_data, participation and net are for spot scenarios".into());
+                if v1.turn_data.is_some() || v1.participation.is_some() {
+                    return Err("turn_data and participation are for spot scenarios".into());
                 }
                 (
                     Venues {
@@ -1429,6 +1429,8 @@ mod tests {
         s.validate().unwrap();
         let v1 = s.clone().into_scenario().unwrap();
         assert!(v1.net.is_some());
+        let round = ScenarioV2::try_from(&v1).unwrap();
+        assert_eq!(round.scoring.net, s.scoring.net);
         assert_eq!(v1.valuation(), "oracle");
 
         let mut with_venue = s.clone();
