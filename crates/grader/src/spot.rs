@@ -1866,8 +1866,9 @@ mod tests {
         unknown.spot.as_mut().unwrap().venues[1] = "orca".into();
         assert!(unknown.validate().unwrap_err().contains("unknown venue"));
         let mut pool = scenario();
-        pool.spot.as_mut().unwrap().venues[1] = "raydium".into();
-        assert!(pool.validate().unwrap_err().contains("no SOL-USDC market"));
+        pool.spot.as_mut().unwrap().venues = vec!["raydium".into(), "meteora".into()];
+        pool.symbol = "BTC-USDC".into();
+        assert!(pool.validate().unwrap_err().contains("no BTC-USDC market"));
 
         let mut moving = scenario();
         moving.path.push(crate::scenario::Waypoint::at(4, -1.0));

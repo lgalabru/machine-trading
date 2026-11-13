@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn a_component_is_told_every_market_and_where_its_orders_go() {
         let venues = SessionVenues::of(&["openbook".into(), "phoenix".into()], "SOL-USDC").unwrap();
-        assert!(SessionVenues::of(&["raydium".into()], "SOL-USDC").is_err());
+        assert!(SessionVenues::of(&["raydium".into()], "BTC-USDC").is_err());
         let pools = SessionVenues::of(&["raydium".into(), "meteora".into()], "SPCX-USDC").unwrap();
         let pools = serde_json::to_value(&pools).unwrap();
         assert_eq!(
