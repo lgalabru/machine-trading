@@ -69,7 +69,7 @@ over.
 | cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend a session |
 | sneaky | 0.0 | The surfnet's own port answers nothing without its secret path |
 
-`just ladder market-making` grades the ladder (`bench/checks/ladder`) on
+`just ladder market-making-spcx` grades the ladder (`checks/`) on
 fresh hidden sets. Naive and skewed quoters must score below the reference,
 and the reference below a flow oracle that is told which taker orders are
 informed. The frozen exploit bots must score below the flow oracle.
