@@ -215,15 +215,6 @@ struct GuardState {
 }
 
 impl GuardState {
-    /// Take back `n` router calls of this step, whose answers the bot never
-    /// got to use.
-    fn refund_router_calls(&self, n: usize) {
-        let mut calls = self.router_calls.lock().expect("guard lock");
-        if calls.0 == self.step().unwrap_or(NO_STEP) {
-            calls.1 = calls.1.saturating_sub(n as u32);
-        }
-    }
-
     fn step(&self) -> Option<u64> {
         Some(self.step.load(Ordering::SeqCst)).filter(|k| *k != NO_STEP)
     }
@@ -972,11 +963,6 @@ async fn mixed_batch(state: &GuardState, calls: &[&Value], host: bool) -> axum::
     let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
         return StatusCode::BAD_GATEWAY.into_response();
     };
-    // A read the faults rate-limit fails the whole batch, and the bot retries
-    // it: the router calls it will send again don't count twice.
-    if parts.status == StatusCode::TOO_MANY_REQUESTS {
-        state.refund_router_calls(replies.len());
-    }
     match serde_json::from_slice::<Value>(&bytes) {
         Ok(Value::Array(served)) => replies.extend(served),
         // The upstream refused the batch as a whole, with one error object.
@@ -1431,7 +1417,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_rate_limited_mixed_batch_does_not_spend_the_router_cap() {
+    async fn a_rate_limited_mixed_batch_still_spends_the_router_cap() {
         let (url, _) = upstream().await;
         let guard = Guard::start(url.clone()).await.unwrap();
         guard.set_router(bare_router(&url));
@@ -1450,10 +1436,10 @@ mod tests {
         let (status, reply) = call(&guard, json!([router_call_body(1), read])).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         assert!(reply.as_array().unwrap().iter().any(|r| r["id"] == 1));
-        assert_eq!(guard.state.router_calls.lock().unwrap().1, 0);
+        assert_eq!(guard.state.router_calls.lock().unwrap().1, 1);
         let (status, _) = call(&guard, router_call_body(3)).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(guard.state.router_calls.lock().unwrap().1, 1);
+        assert_eq!(guard.state.router_calls.lock().unwrap().1, 2);
     }
 
     async fn call(guard: &Guard, body: Value) -> (StatusCode, Value) {
