@@ -228,6 +228,7 @@ impl GradeReport {
                         .limits
                         .max_drawdown_usd
                         .unwrap_or(result.bound_pnl_usd),
+                    worst_loss_from_bound: session.mandate.limits.max_drawdown_usd.is_none(),
                     breach: result
                         .disqualified
                         .clone()

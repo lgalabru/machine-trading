@@ -105,6 +105,9 @@ pub struct Session {
     pub bound_usd: f64,
     /// `L`: the mandate's drawdown limit, the most a compliant session can lose.
     pub worst_loss_usd: f64,
+    /// The mandate has no drawdown limit, and `L` is the session's hindsight
+    /// bound instead.
+    pub worst_loss_from_bound: bool,
     /// Why the session breached its mandate or order, if it did.
     pub breach: Option<String>,
     /// The bot held a position at some point.
@@ -154,6 +157,9 @@ pub struct ScoreV2 {
     pub bound_usd: f64,
     pub luck_headroom_usd: f64,
     pub breached_sessions: usize,
+    /// Sessions whose mandate has no drawdown limit, where `L` is the
+    /// hindsight bound instead.
+    pub limit_from_bound_sessions: usize,
     /// `k`, `φ`, and where the ceiling came from: `informed` (the task's
     /// informed bot), `proxy` (`η` times the hindsight bound, for a task
     /// without one) or `given`.
@@ -166,7 +172,7 @@ pub struct ScoreV2 {
     pub nop: String,
     pub resamples: usize,
     /// The bootstrap's seed came from the grade's `eval_seed_sha256`; without
-    /// one, from a fixed seed.
+    /// one, or with one that isn't hex, from a fixed seed.
     pub seeded_from_eval: bool,
     /// Where the gap from `raw` to 1 came from.
     pub gap: Gap,
@@ -243,9 +249,11 @@ pub fn score(
     if !(k >= 1.0 && k.is_finite()) {
         return Err(format!("loss weight {k}: it must be at least 1"));
     }
-    if !(0.0..1.0).contains(&params.anchor_floor) {
+    // Without a floor, a reference that loses would anchor 0.5 at or below
+    // doing nothing.
+    if !(params.anchor_floor > 0.0 && params.anchor_floor < 1.0) {
         return Err(format!(
-            "anchor floor {}: it must be in [0, 1)",
+            "anchor floor {}: it must be in (0, 1)",
             params.anchor_floor
         ));
     }
@@ -257,7 +265,9 @@ pub fn score(
         .map(|(s, ceiling)| SessionV2 {
             scenario: s.scenario.clone(),
             bot_usd: match s.breach {
-                Some(_) => -k * s.worst_loss_usd,
+                // At least the worst allowed loss, and never less than what
+                // the session really lost: a breach doesn't cap a loss.
+                Some(_) => (-k * s.worst_loss_usd).min(weigh(s.pnl_usd - s.nop_pnl_usd)),
                 None => weigh(s.pnl_usd - s.nop_pnl_usd),
             },
             reference_usd: weigh(s.reference_pnl_usd - s.nop_pnl_usd),
@@ -281,7 +291,8 @@ pub fn score(
         ));
     }
     let raw = sums.raw(params.anchor_floor);
-    let (ci_lo, ci_hi) = interval(&terms, params, seed(eval_seed_sha256));
+    let seed = seed(eval_seed_sha256);
+    let (ci_lo, ci_hi) = interval(&terms, params, seed.unwrap_or(FIXED_SEED));
     let bound_usd: f64 = sessions.iter().map(|s| s.bound_usd).sum();
     Ok(ScoreV2 {
         score: if fatal.is_some() {
@@ -305,10 +316,11 @@ pub fn score(
         bound_usd,
         luck_headroom_usd: bound_usd - sums.ceiling,
         breached_sessions: sessions.iter().filter(|s| s.breach.is_some()).count(),
+        limit_from_bound_sessions: sessions.iter().filter(|s| s.worst_loss_from_bound).count(),
         ceiling: source.into(),
         eta,
         resamples: params.resamples,
-        seeded_from_eval: eval_seed_sha256.is_some(),
+        seeded_from_eval: seed.is_some(),
         gap: gap(sessions, &ceilings, &terms, raw, (ci_hi - ci_lo) / 2.0),
         sessions: terms,
         ..unscored(params, String::new())
@@ -408,6 +420,7 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         bound_usd: 0.0,
         luck_headroom_usd: 0.0,
         breached_sessions: 0,
+        limit_from_bound_sessions: 0,
         loss_weight: params.loss_weight,
         anchor_floor: params.anchor_floor,
         ceiling: ceiling.into(),
@@ -491,14 +504,16 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
 }
 
 /// The bootstrap's seed: the first 16 hex digits of the grade's
-/// `eval_seed_sha256`, so a rescore draws the same resamples; a fixed one
-/// without it.
-fn seed(eval_seed_sha256: Option<&str>) -> u64 {
+/// `eval_seed_sha256`, so a rescore draws the same resamples; `None`
+/// without one, or when it isn't hex.
+fn seed(eval_seed_sha256: Option<&str>) -> Option<u64> {
     eval_seed_sha256
         .and_then(|hash| hash.get(..16))
         .and_then(|hex| u64::from_str_radix(hex, 16).ok())
-        .unwrap_or(0x6d74_785f_7632)
 }
+
+/// The bootstrap's seed without one from the grade.
+const FIXED_SEED: u64 = 0x6d74_785f_7632;
 
 /// A small, portable generator: the same draws on every platform and
 /// version, which a library's generator doesn't promise.
@@ -537,6 +552,7 @@ mod tests {
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
+                worst_loss_from_bound: false,
                 breach: None,
                 traded: pnl_usd != 0.0,
                 trade_markout_usd: Some(-5.0),
@@ -658,6 +674,52 @@ mod tests {
         assert_eq!(breached.raw, compliant_worst.raw);
         // One breach no longer zeroes the set.
         assert!(breached.score > 0.0);
+    }
+
+    #[test]
+    fn a_breach_never_caps_a_loss() {
+        let mut sessions = set(&[60.0; 6], &REFERENCE);
+        for s in &mut sessions {
+            s.worst_loss_usd = 1_000.0;
+        }
+        sessions[2].pnl_usd = -9_000.0;
+        sessions[2].breach = Some("drew down past its limit".into());
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.sessions[2].bot_usd, -18_000.0);
+        assert!(v2.gap.usd.risk >= 0.0 && v2.gap.risk >= 0.0, "{:?}", v2.gap);
+        // A breach that made money still counts the worst allowed loss.
+        sessions[2].pnl_usd = 400.0;
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.sessions[2].bot_usd, -2_000.0);
+        assert!(v2.gap.usd.risk >= 0.0);
+    }
+
+    #[test]
+    fn the_anchor_floor_must_be_above_zero() {
+        for floor in [0.0, -0.1, 1.0] {
+            let mut params = informed();
+            params.anchor_floor = floor;
+            let refused = score(&set(&REFERENCE, &REFERENCE), &params, None, None);
+            assert!(refused.unwrap_err().contains("anchor floor"), "{floor}");
+        }
+    }
+
+    #[test]
+    fn only_a_hex_eval_seed_seeds_the_bootstrap() {
+        let sessions = set(&REFERENCE, &REFERENCE);
+        let not_hex = score(&sessions, &informed(), None, Some("not a sha256 at all")).unwrap();
+        assert!(!not_hex.seeded_from_eval);
+        let none = score(&sessions, &informed(), None, None).unwrap();
+        assert!(!none.seeded_from_eval);
+        assert_eq!((not_hex.ci_lo, not_hex.ci_hi), (none.ci_lo, none.ci_hi));
+    }
+
+    #[test]
+    fn a_limit_taken_from_the_bound_is_reported() {
+        let mut sessions = set(&REFERENCE, &REFERENCE);
+        sessions[0].worst_loss_from_bound = true;
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.limit_from_bound_sessions, 1);
     }
 
     #[test]
