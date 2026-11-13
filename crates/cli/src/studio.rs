@@ -1028,6 +1028,11 @@ struct Control {
     /// Fired by `terminate`: the session's runtime drops the grader's future,
     /// which stops its surfnet and its bot.
     cancel: tokio::sync::Notify,
+    /// The session's RPC: its transactions' explorer links read from it.
+    rpc: Mutex<Option<String>>,
+    /// The session's chain once it's over, kept so its RPC stays up for the
+    /// explorer until the next session replaces this one.
+    world: Mutex<Option<Box<dyn std::any::Any + Send>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1098,6 +1103,8 @@ impl Control {
             studio,
             launch: args.clone(),
             cancel: tokio::sync::Notify::new(),
+            rpc: Mutex::new(None),
+            world: Mutex::new(None),
         }
     }
 
@@ -1180,6 +1187,14 @@ impl Control {
 }
 
 impl StepObserver for Control {
+    fn rpc(&self, url: &str) {
+        *self.rpc.lock().unwrap_or_else(|e| e.into_inner()) = Some(url.to_string());
+    }
+
+    fn keep(&self, world: Box<dyn std::any::Any + Send>) {
+        *self.world.lock().unwrap_or_else(|e| e.into_inner()) = Some(world);
+    }
+
     fn started(&self, session: &Session, printed: &[String], failed: Option<&str>) {
         *self
             .studio
@@ -1188,9 +1203,10 @@ impl StepObserver for Control {
             .unwrap_or_else(|e| e.into_inner()) =
             Some((session.symbol.clone(), session.start_mark));
         self.lock().started = true;
+        let rpc = self.rpc.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.event(
             "started",
-            json!({ "session": session_json(session), "printed": printed, "failed": failed }),
+            json!({ "session": session_json(session), "printed": printed, "failed": failed, "rpc": rpc }),
         );
         let state = self.lock();
         if state.stop_on_entry && state.mode == Mode::Running {
@@ -1346,6 +1362,11 @@ fn trace_json(trace: &StepTrace) -> Value {
             // Held, to land in a later step: not a failure.
             "pending": matches!(r, mtx_kit::SendState::Delayed),
             "error": r.reason(),
+            "signature": match r {
+                mtx_kit::SendState::Landed(signature) => Some(signature.as_str()),
+                mtx_kit::SendState::Failed { signature, .. } => signature.as_deref(),
+                _ => None,
+            },
         })).collect::<Vec<_>>(),
         "fuel": trace.fuel,
         "rpc_calls": trace.rpc_calls,

@@ -513,6 +513,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         crate::perp::prepare(&opts).await?
     };
     let surfnet = world.surfnet();
+    if let Some(observer) = &opts.observer {
+        observer.rpc(surfnet.rpc_url());
+    }
     let start_slot = base_slot;
     guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
 
@@ -796,6 +799,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         overran = report.turns.overran,
         "session finished"
     );
+    if let Some(observer) = &opts.observer {
+        observer.keep(Box::new(world));
+    }
     Ok(report)
 }
 

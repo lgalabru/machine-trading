@@ -202,6 +202,12 @@
   .report { position: sticky; bottom: 8px; z-index: 2; box-shadow: 0 -8px 16px -6px rgba(0, 0, 0, .6); margin: 10px 12px 2px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--pane-2); font-family: var(--sans); display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
   .report .big { font: 600 20px/1 var(--sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
   .report.bad { border-color: rgba(255, 95, 87, .45); }
+  table.txs { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+  table.txs :is(th, td) { padding: 5px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.txs th { font: 700 9.5px var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); position: sticky; top: 0; background: var(--pane); }
+  table.txs td:nth-child(2) { white-space: normal; color: var(--text-2); }
+  table.txs a { color: #7aa2f7; text-decoration: none; } table.txs a:hover { text-decoration: underline; }
+  #txs .note { padding: 8px 12px; font-size: 11px; }
   #buildlog .l { padding: 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
   #buildlog .l.err { color: var(--down); } #buildlog .l.warn { color: var(--warn); } #buildlog .l.ok { color: var(--accent); }
   .diag { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; margin: 6px 10px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--pane-2); cursor: pointer; font-family: var(--sans); font-size: 12.5px; }
@@ -459,7 +465,7 @@
     <section class="pane" id="p-exec" data-pane="exec">
       <div class="head">
         <span class="title">Execution</span>
-        <div class="view-tabs" id="views"><button data-view="session" class="on">Session</button><button data-view="build">Build<span class="cnt" id="build-cnt"></span></button></div>
+        <div class="view-tabs" id="views"><button data-view="session" class="on">Session</button><button data-view="build">Build<span class="cnt" id="build-cnt"></span></button><button data-view="txs" title="The strategy's transactions, each opening in Solana's explorer on the session's own RPC">Transactions<span class="cnt" id="txs-cnt"></span></button></div>
         <span class="grow"></span>
         <span class="state" id="state"><i></i><span>idle</span></span>
         <button class="ib max-b" title="Maximize"></button>
@@ -478,6 +484,7 @@
         </div>
         <div class="scroll" id="session-view"><div id="steps"></div></div>
         <div class="scroll" id="build-view" hidden><div id="buildlog"></div></div>
+        <div class="scroll" id="txs-view" hidden><div id="txs"></div></div>
       </div>
     </section>
   </div>
@@ -1079,14 +1086,34 @@ function setSession(state) { S.session = state; renderControls(); renderCtx(); }
 function setView(v) {
   S.view = v;
   for (const b of $("views").children) b.classList.toggle("on", b.dataset.view === v);
-  $("session-view").hidden = v !== "session"; $("build-view").hidden = v !== "build";
+  $("session-view").hidden = v !== "session"; $("build-view").hidden = v !== "build"; $("txs-view").hidden = v !== "txs";
+  if (v === "txs") renderTxs();
+}
+// The strategy's transactions so far, each a link to Solana's explorer on
+// the session's own RPC (local: it opens on this machine, while the studio
+// keeps the session's chain, until the next Play).
+const explorer = (sig) => `https://explorer.solana.com/tx/${encodeURIComponent(sig)}?cluster=custom&customUrl=${encodeURIComponent(S.started?.rpc ?? "")}`;
+function txList() {
+  const out = [];
+  for (const st of S.steps) if (st) for (const x of st.sent || []) out.push({ k: st.k, ...x });
+  return out;
+}
+function renderTxs() {
+  const list = txList(), signed = list.filter((x) => x.signature);
+  $("txs-cnt").textContent = signed.length || "";
+  if ($("txs-view").hidden) return;
+  if (!list.length) { $("txs").innerHTML = `<div class="empty"><div>${S.started ? "No transactions yet: the strategy hasn't sent an order." : "Press <b>Play</b>: every transaction the strategy sends is listed here, with a link to it in Solana's explorer."}</div></div>`; return; }
+  const status = (x) => (x.ok ? `<span class="pos">landed</span>` : x.pending ? `<span class="muted">pending</span>` : `<span class="neg" title="${esc(x.error ?? "")}">failed</span>`);
+  $("txs").innerHTML = `<table class="txs"><thead><tr><th>step</th><th>order</th><th>status</th><th>signature</th></tr></thead><tbody>${list.map((x) =>
+    `<tr><td>${x.k + 1}</td><td>${orderText(x.action)}</td><td>${status(x)}</td><td>${x.signature && S.started?.rpc ? `<a href="${explorer(x.signature)}" target="_blank" rel="noopener" title="${esc(x.signature)}">${esc(x.signature.slice(0, 8))}…${esc(x.signature.slice(-6))} ↗</a>` : `<span class="muted">${x.signature ? esc(x.signature.slice(0, 8)) + "…" : "–"}</span>`}</td></tr>`).join("")}</tbody></table>
+    ${S.report ? `<div class="note muted">The links read the session's chain at ${esc(String(S.started?.rpc ?? "").replace(/\/[^/]*$/, "/…"))}. It stays up until the next Play, on this machine only.</div>` : ""}`;
 }
 $("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setView(b.dataset.view); });
 
 const EMPTY = `<div class="empty"><div>Press <b>Play</b> to build the strategy and run it on this scenario, or <b>Step</b> to go one step at a time.<br><span class="muted">Each step shows what the strategy printed and did, and what moved. Tap the chart's axis, or hold a step, to stop there.</span></div></div>`;
 function clearSession() {
   S.steps = []; S.started = null; S.report = null; S.sel = null; pending.length = 0;
-  $("steps").innerHTML = EMPTY; follow = true;
+  $("steps").innerHTML = EMPTY; follow = true; renderTxs();
   if (!live() && S.session !== "building" && S.session !== "starting") setSession("idle");
   renderMarket();
 }
@@ -1151,6 +1178,7 @@ function flush() {
   if (!replaying) flashStats(S.steps[S.steps.length - 1 - pending.length], S.steps.at(-1));
   pending.length = 0;
   $("steps").insertAdjacentHTML("beforeend", html);
+  renderTxs();
   markCurrent();
   if (follow && S.sel === null) scroller.scrollTop = scroller.scrollHeight;
   renderMarket();
@@ -1198,7 +1226,7 @@ function reportHtml(r) {
 const onSession = {
   started(b) {
     S.steps = []; pending.length = 0; S.report = null; S.sel = null; follow = true;
-    S.started = { ...b.session, printed: b.printed, failed: b.failed };
+    S.started = { ...b.session, printed: b.printed, failed: b.failed, rpc: b.rpc };
     $("steps").innerHTML = startedHtml();
     setSession("running"); setView("session"); renderMarket();
   },
@@ -1210,7 +1238,7 @@ const onSession = {
   },
   continued() { setSession("running"); },
   terminated(b) {
-    flush(); S.report = b;
+    flush(); S.report = b; renderTxs();
     if ($("steps").querySelector(".empty")) $("steps").innerHTML = "";
     $("steps").insertAdjacentHTML("beforeend", reportHtml(b));
     setSession(b.error ? "failed" : "terminated"); renderMarket();
