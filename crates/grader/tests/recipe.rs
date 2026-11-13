@@ -396,3 +396,144 @@ async fn the_keys_of_a_simulated_market_depend_on_a_secret_nobody_records() {
     assert_eq!(&account.data[..4], &[0; 4], "no mint authority");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Reads a snapshot's accounts: address to the account's JSON.
+fn accounts_of(dir: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let file = std::fs::File::open(dir.join("surfnet.json.gz")).unwrap();
+    serde_json::from_reader(flate2::read::GzDecoder::new(file)).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pyth_accounts_are_layered_onto_the_perps_snapshot_without_touching_it() {
+    use base64::Engine;
+    use mtx_kit::protocols::pyth::PriceUpdate;
+
+    let recipe_path = root().join("snapshots/phoenix-perps-oracles-2026-11-13/recipe.toml");
+    let base = root().join("snapshots/phoenix-perps-2026-11-13");
+    let tmp = std::env::temp_dir().join(format!("mtx-pyth-{}", uuid::Uuid::new_v4().simple()));
+    let build = |out: &str| {
+        let opts = BuildOptions {
+            out_dir: Some(tmp.join(out)),
+            fork_rpc_url: String::new(),
+            force: false,
+            secret: Some("test-secret".into()),
+        };
+        recipe::build(&recipe_path, opts)
+    };
+    let manifest = build("a").await.unwrap();
+    build("b").await.unwrap();
+
+    let oracles: Vec<_> = manifest
+        .sources
+        .iter()
+        .filter(|s| s.role == "oracle")
+        .collect();
+    assert_eq!(oracles.len(), 9);
+
+    let mut a = accounts_of(&tmp.join("a"));
+    let before = accounts_of(&base);
+    for (address, account) in &before {
+        assert_eq!(a.get(address), Some(account), "{address} changed");
+    }
+    for source in &oracles {
+        let account = a.remove(&source.address).expect("the feed's account");
+        assert_eq!(
+            account["owner"],
+            "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ"
+        );
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(account["data"].as_str().unwrap())
+            .unwrap();
+        let update = PriceUpdate::decode(&data).unwrap();
+        assert!(update.price().unwrap() > Decimal::ZERO, "{}", source.name);
+    }
+    // Nothing but the nine accounts was added.
+    let extra: Vec<_> = a.keys().filter(|k| !before.contains_key(*k)).collect();
+    assert!(extra.is_empty(), "unexpected accounts {extra:?}");
+
+    let source: Manifest =
+        serde_json::from_str(&std::fs::read_to_string(base.join("manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest.mark_price_usd, source.mark_price_usd);
+    assert_eq!(manifest.marks, source.marks);
+    assert_eq!(manifest.fork_slot, source.fork_slot);
+
+    for file in ["surfnet.json.gz", "manifest.json", "exchange.json"] {
+        assert_eq!(
+            std::fs::read(tmp.join("a").join(file)).unwrap(),
+            std::fs::read(tmp.join("b").join(file)).unwrap(),
+            "{file} differs between two builds"
+        );
+    }
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_layered_pyth_feed_is_driven_stale_and_wide_on_an_nvda_session_world() {
+    use mtx_grader::{chain, oracles};
+    use mtx_kit::protocols::pyth::{PriceUpdate, feed_account};
+
+    const NVDAX: &str = "4244d07890e4610f46bbde67de8f43a4bf8b569eebe904f136b469f148503b7f";
+    let recipe_path = root().join("snapshots/phoenix-perps-oracles-2026-11-13/recipe.toml");
+    let tmp = std::env::temp_dir().join(format!("mtx-pyth-{}", uuid::Uuid::new_v4().simple()));
+    let opts = BuildOptions {
+        out_dir: Some(tmp.clone()),
+        fork_rpc_url: String::new(),
+        force: false,
+        secret: Some("test-secret".into()),
+    };
+    recipe::build(&recipe_path, opts).await.unwrap();
+
+    let (surfnet, _) = snapshot::start_snapshot_stepped(&tmp).await.unwrap();
+    let rpc = chain::rpc_client(&surfnet);
+    let mut id = [0u8; 32];
+    for (byte, pair) in id.iter_mut().zip(NVDAX.as_bytes().chunks(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap();
+    }
+    let address = feed_account(0, &id);
+    let read = || {
+        let data = rpc.get_account(&address).unwrap().data;
+        PriceUpdate::decode_feed(&data, &id).unwrap()
+    };
+    let start = read();
+    assert!(start.price_f64() > 1.0, "a plausible NVDAX price");
+
+    let oracles: oracles::Oracles = serde_json::from_value(serde_json::json!({
+        "seed": 1,
+        "feeds": [{
+            "name": "nvdax",
+            "source": { "kind": "pyth", "feed_id": NVDAX },
+            "cadence_slots": 4,
+            "conf_bps": 2.0,
+            "path": [{ "slot": 40, "level_pct": -10.0 }],
+            "failures": [
+                { "mode": { "kind": "stale" }, "window": { "from_slot": 12, "slots": 12 } },
+                { "mode": { "kind": "wide_confidence", "factor": 10.0 },
+                  "window": { "from_slot": 28, "slots": 12 } }
+            ]
+        }]
+    }))
+    .unwrap();
+    oracles::register(&rpc, &oracles, 48, &oracles::World::default()).unwrap();
+
+    let mut seen = Vec::new();
+    for _ in 0..48 {
+        chain::next_slot(&surfnet, &rpc).await.unwrap();
+        let u = read();
+        seen.push((u.publish_time, u.conf_raw, u.price_f64()));
+    }
+    let (frozen_from, frozen_to) = (seen[14].0, seen[22].0);
+    assert_eq!(frozen_from, frozen_to, "publish_time freezes while stale");
+    assert!(seen[30].0 > frozen_to, "and resumes after");
+    let healthy = seen[8].1;
+    assert!(
+        seen[34].1 >= healthy * 5,
+        "confidence widens: {} vs {healthy}",
+        seen[34].1
+    );
+    assert!(
+        seen[47].2 < start.price_f64() * 0.95,
+        "the path's drop lands"
+    );
+    std::fs::remove_dir_all(&tmp).ok();
+}

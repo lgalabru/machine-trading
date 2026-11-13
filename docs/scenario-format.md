@@ -28,7 +28,7 @@ docs together.
 | `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the market calibration the path was drawn from |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
-| `actors` | The `competitor` maker and the grader's `takers` |
+| `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
