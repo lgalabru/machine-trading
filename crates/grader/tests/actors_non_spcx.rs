@@ -1198,6 +1198,7 @@ fn phoenix_off_price(symbol: &str, bias_pct: f64, from_slot: u64, slots: u64) ->
             source: Source::Phoenix(PhoenixOracle {
                 symbol: symbol.into(),
             }),
+            anchor: None,
             cadence_slots: 4,
             path: Vec::new(),
             conf_bps: 2.0,
@@ -1224,6 +1225,7 @@ async fn oracle_run(symbol: &str) {
         100,
         &oracles::World {
             phoenix: Some((rig.perp_asset_map(), rig.start_ticks)),
+            prices: Default::default(),
         },
     )
     .unwrap();
@@ -1280,6 +1282,7 @@ async fn fair_run(symbol: &str) {
         100,
         &oracles::World {
             phoenix: Some((rig.perp_asset_map(), rig.start_ticks)),
+            prices: Default::default(),
         },
     )
     .unwrap();
