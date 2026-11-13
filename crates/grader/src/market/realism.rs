@@ -1256,7 +1256,33 @@ mod tests {
         );
         println!("|---|---|---|---|---|---|---|---|");
         let mut false_fails = Vec::new();
-        for cal in [sol(), spcx()] {
+        // FFR_ASSETS=nvda,tsla measures those shipped files instead of SOL and SPCX.
+        let assets = std::env::var("FFR_ASSETS").unwrap_or_default();
+        let cals: Vec<Calibration> = if assets.is_empty() {
+            vec![sol(), spcx()]
+        } else {
+            let dir =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../calibration/market");
+            assets
+                .split(',')
+                .map(|asset| {
+                    let prefix = format!("{asset}.");
+                    let path = std::fs::read_dir(&dir)
+                        .unwrap()
+                        .map(|e| e.unwrap().path())
+                        .find(|p| {
+                            p.extension().is_some_and(|e| e == "toml")
+                                && p.file_name()
+                                    .unwrap()
+                                    .to_string_lossy()
+                                    .starts_with(&prefix)
+                        })
+                        .unwrap_or_else(|| panic!("no file for {asset}"));
+                    Calibration::load(&path).unwrap()
+                })
+                .collect()
+        };
+        for cal in cals {
             for (count, base) in [(300, 1000), (1000, 2000)] {
                 let range = base * 1000 + offset..base * 1000 + offset + seeds;
                 let (pass, fail, unjudged, names) = run(&cal, count, range.clone());
@@ -1273,11 +1299,15 @@ mod tests {
                         "| {name} | {} | {count} | {seeds} | {pass} | {fail} | {unjudged} | {names} |",
                         cal.meta.asset
                     );
-                    // SPCX's 30-minute windows can't reliably tell no GARCH
-                    // from its short-lived clustering at 300 sessions (about
-                    // 90-98% caught); 1000 sessions catch it every time.
-                    let required =
-                        !(name == "no GARCH" && cal.meta.asset == "spcx" && count < 1000);
+                    // The 30-minute windows of the US equities (SPCX, and
+                    // the files fitted the same way) can't reliably tell no
+                    // GARCH from their short-lived clustering at 300
+                    // sessions (about 90-98% caught for SPCX); 1000
+                    // sessions catch it every time.
+                    let required = !(name == "no GARCH"
+                        && cal.calendar.model
+                            == crate::market::calibration::CalendarModel::Sessions
+                        && count < 1000);
                     assert!(
                         !required || fail as f64 >= 0.95 * seeds as f64,
                         "{name} caught {fail}/{seeds}"

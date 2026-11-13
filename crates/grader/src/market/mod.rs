@@ -75,7 +75,7 @@ pub(crate) mod tests {
     #[test]
     fn the_shipped_files_load() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../calibration/market");
-        let mut loaded = 0;
+        let mut assets = Vec::new();
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|e| e == "toml") {
@@ -90,10 +90,12 @@ pub(crate) mod tests {
                         .iter()
                         .all(|i| i["sha256"].as_str().is_some_and(|s| s.len() == 64))
                 );
-                loaded += 1;
+                assets.push(cal.meta.asset.clone());
             }
         }
-        assert_eq!(loaded, 2);
+        for asset in ["nvda", "qqq", "sol-usd", "spcx", "spy", "tsla"] {
+            assert!(assets.iter().any(|a| a == asset), "no file for {asset}");
+        }
     }
 
     #[test]
