@@ -310,6 +310,10 @@ pub struct TurnReport {
     /// didn't load, or it trapped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped: Option<String>,
+    /// A component's lines that carried transaction options, which the
+    /// session accepted and didn't apply (no session does yet).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_options: Option<u64>,
 }
 
 impl SessionReport {
@@ -648,6 +652,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .into_iter()
                         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
                         .collect(),
+                    reports: mtx_kit::Reports::default(),
                 },
                 Box::new(log),
                 opts.observer.clone(),
@@ -689,6 +694,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
+            reports: None,
             seed: Some(turns::scenario_seed(&scenario.name)),
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
@@ -834,7 +840,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 });
             }
             let started = Instant::now();
-            let answered = bot.turn(k, slot, k + 1 == steps).await;
+            let answered = bot.turn(&Step::new(k, slot, k + 1 == steps)).await;
             let took = started.elapsed();
             if !answered {
                 turns.overran += 1;
@@ -879,6 +885,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         turns.fuel_used = Some(used);
         turns.fuel_max_call = Some(max_call);
         turns.stopped = bot.stopped.clone();
+        turns.tx_options = (bot.tx_options > 0).then_some(bot.tx_options);
     }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;

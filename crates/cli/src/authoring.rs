@@ -312,7 +312,12 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     let justfile = std::fs::read_to_string(bot_to.join("Justfile"))?
         .replace(&format!("--bin {old_bin}"), &format!("--bin {new_bin}"));
     std::fs::write(bot_to.join("Justfile"), justfile)?;
-    std::fs::copy(bot_to.join("src/main.rs"), to.join("solution/src/main.rs"))?;
+    for name in strategy_sources(&bot_to) {
+        std::fs::copy(
+            bot_to.join("src").join(&name),
+            to.join("solution/src").join(&name),
+        )?;
+    }
     written.push(format!(
         "bots/{family}/ (from bots/{}, package mtx-bot-{family})",
         base.bot()
@@ -523,6 +528,21 @@ fn bot_of(root: &Path, task: &str) -> Option<String> {
         .find_map(|pair| pair.strip_prefix(&format!("{task}=")).map(str::to_string))
 }
 
+/// A reference bot's strategy sources, by file name: everything in its `src`
+/// but the process entry point, as `just solution` copies them.
+fn strategy_sources(bot_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(bot_dir.join("src"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "rs"))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "main.rs")
+        .collect();
+    names.sort();
+    names
+}
+
 /// Which steps are done for a task, and what to do next.
 pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
     let dir = root.join("bench/tasks").join(task);
@@ -589,19 +609,32 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
     ));
 
     let bot = bot_of(root, task);
-    let solution = read(&dir.join("solution/src/main.rs"));
-    let bot_src = bot
+    // The oracle is the bot's strategy: every source but the process's
+    // `main.rs` (the bot is a component, `lib.rs`, since bots became wasm).
+    let sources = bot
         .as_ref()
-        .map(|b| read(&root.join("bots").join(b).join("src/main.rs")))
+        .map(|b| strategy_sources(&root.join("bots").join(b)))
         .unwrap_or_default();
+    let drift: Vec<String> = sources
+        .iter()
+        .filter(|name| {
+            let bot_file = root
+                .join("bots")
+                .join(bot.as_deref().unwrap_or(""))
+                .join("src")
+                .join(name);
+            read(&bot_file) != read(&dir.join("solution/src").join(name))
+        })
+        .cloned()
+        .collect();
     steps.push(Step::new(
         "reference",
         "Reference bot and oracle",
-        bot.is_some() && !bot_src.is_empty() && solution == bot_src,
+        bot.is_some() && !sources.is_empty() && drift.is_empty(),
         match &bot {
             None => "the Justfile's `references` has no bot for this task".into(),
-            Some(b) if bot_src.is_empty() => format!("bots/{b}/src/main.rs is missing"),
-            Some(b) if solution != bot_src => format!("solution/src/main.rs differs from bots/{b}/src/main.rs"),
+            Some(b) if sources.is_empty() => format!("bots/{b}/src has no strategy source (lib.rs)"),
+            Some(b) if !drift.is_empty() => format!("solution/src differs from bots/{b}/src: {}", drift.join(", ")),
             Some(b) => format!("bots/{b}, and the oracle matches it"),
         },
         "Write the reference strategy in its bot (task_guide step=reference), then `just solution` to copy it into the oracle.".into(),

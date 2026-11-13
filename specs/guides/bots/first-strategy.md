@@ -117,7 +117,7 @@ Each block is one step:
 | `market` | What `step` was handed: Phoenix's mark (which values the account), the oracle, the index, the book's best bid and ask, the position, the orders resting, and an estimate of the session's PnL and drawdown |
 | `printed` | What the strategy printed during the call, `println!` and `eprintln!` alike |
 | `sheet` | What it asked for |
-| `sent` | The orders the grader sent for it, and whether each went through |
+| `sent` | The orders the grader planned from it, and what became of each: ✓ landed, ✗ failed (with the venue's reason), – not sent (with why); the strategy gets the same in the next step's `market.sends` |
 | `cost` | What the call spent: fuel (about one unit per WebAssembly instruction) and `rpc` reads |
 
 Press enter for the next step, `c` to run to the end, `q` to stop showing
