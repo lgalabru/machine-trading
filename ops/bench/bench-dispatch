@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# The only command GitHub's bench workflows can run on the bench machine.
+#
+# Each workflow's SSH key is pinned to this script in ~/.ssh/authorized_keys
+# (`restrict,command="…/bench-dispatch"`), so whatever a workflow asks for
+# arrives as SSH_ORIGINAL_COMMAND and is parsed here, never run by a shell.
+# A key installed with `--read-only` may only ask for `status`.
+#
+#   start <commit> <version> <attempts> <concurrent> <limit> <model>...
+#   status [<batch>]
+#   publish <batch> <version> [force]
+#
+# Everything it runs is `main`'s code: <commit> must be on origin/main. The
+# API keys stay on this machine, in the env file `just bench` reads; nothing
+# here prints them.
+set -euo pipefail
+umask 077
+
+repo="${MTX_BENCH_REPO:-$HOME/machine-trading}"
+logs="$HOME/logs"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+
+fail() { echo "bench-dispatch: $*" >&2; exit 2; }
+
+read_only=false
+[ "${1:-}" = --read-only ] && read_only=true
+
+# Split on spaces only; no quoting, globbing or expansion.
+IFS=' ' read -r -a argv <<< "${SSH_ORIGINAL_COMMAND:-}"
+[ "${#argv[@]}" -ge 1 ] || fail "no command"
+[ "${#argv[@]}" -le 16 ] || fail "too many arguments"
+verb="${argv[0]}"
+args=("${argv[@]:1}")
+if $read_only && [ "$verb" != status ]; then
+  fail "this key may only ask for status"
+fi
+
+is() { [[ "$2" =~ $1 ]]; }
+commit_re='^[0-9a-f]{40}$'
+version_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+batch_re='^[0-9]{8}-[0-9]{6}-x[0-9]+$'
+model_re='^((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$'
+int_in() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
+
+running() { pgrep -u "$(id -u)" -f 'harbor run' > /dev/null; }
+
+# Check out <commit>, which must be on origin/main, in a clean tree.
+checkout() {
+  local commit="$1"
+  cd "$repo"
+  [ -z "$(git status --porcelain)" ] || fail "$repo has local changes; not touching it"
+  git fetch -q origin main
+  git merge-base --is-ancestor "$commit" origin/main || fail "$commit isn't on origin/main"
+  git -c advice.detachedHead=false checkout -q --detach "$commit"
+}
+
+case "$verb" in
+  start)
+    [ "${#args[@]}" -ge 6 ] || fail "start <commit> <version> <attempts> <concurrent> <limit> <model>..."
+    commit="${args[0]}" version="${args[1]}" k="${args[2]}" n="${args[3]}" limit="${args[4]}"
+    models=("${args[@]:5}")
+    is "$commit_re" "$commit" || fail "bad commit"
+    is "$version_re" "$version" || fail "bad version"
+    int_in "$k" 1 20 || fail "attempts: 1 to 20"
+    int_in "$n" 1 32 || fail "concurrent: 1 to 32"
+    int_in "$limit" 1 4 || fail "limit: 1 to 4"
+    [ "${#models[@]}" -le 8 ] || fail "8 models at most"
+    for model in "${models[@]}"; do is "$model_re" "$model" || fail "bad model: $model"; done
+    running && fail "a bench is running already"
+    checkout "$commit"
+    mkdir -p "$logs" jobs/bench
+    marker="$(mktemp)"
+    log="$logs/bench-$(date -u +%Y%m%d-%H%M%S).log"
+    # Detached from this SSH session: the run takes hours.
+    setsid nohup just bench "${models[*]}" "$k" "$n" "$version" "$limit" > "$log" 2>&1 < /dev/null &
+    # `just bench` names the batch; wait for it to appear.
+    for _ in $(seq 60); do
+      batch="$(find jobs/bench -mindepth 1 -maxdepth 1 -type d -newer "$marker" -printf '%f\n' | sort | tail -1)"
+      [ -n "$batch" ] && break
+      sleep 1
+    done
+    rm -f "$marker"
+    [ -n "${batch:-}" ] || { tail -20 "$log" >&2; fail "the bench didn't start"; }
+    echo "batch=$batch"
+    echo "commit=$commit"
+    echo "log=$log"
+    ;;
+  status)
+    cd "$repo"
+    if [ "${#args[@]}" -ge 1 ]; then
+      batch="${args[0]}"
+      is "$batch_re" "$batch" || fail "bad batch"
+    else
+      batch="$(find jobs/bench -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+        | grep -E "$batch_re" | sort | tail -1 || true)"
+      [ -n "$batch" ] || fail "no batch yet"
+    fi
+    dir="jobs/bench/$batch"
+    [ -d "$dir" ] || fail "no batch $batch"
+    planned="$(python3 -I -c 'import json,sys; b=json.load(open(sys.argv[1])); print(len(b["models"])*b["attempts"])' "$dir/batch.json" 2>/dev/null || echo "?")"
+    finished="$(find "$dir" -mindepth 3 -maxdepth 3 -name result.json | wc -l)"
+    echo "batch=$batch"
+    echo "running=$(running && echo true || echo false)"
+    echo "trials_finished=$finished"
+    echo "trials_per_task=$planned"
+    echo "commit=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("commit",""))' "$dir/batch.json" 2>/dev/null || true)"
+    if ! running && [ "$finished" -gt 0 ]; then
+      # The report bench/report.py prints: skill by model and task.
+      python3 -I bench/report.py "$dir" 2>&1 | tail -40 || true
+    fi
+    ;;
+  publish)
+    [ "${#args[@]}" -ge 2 ] || fail "publish <batch> <version> [force]"
+    batch="${args[0]}" version="${args[1]}" force="${args[2]:-}"
+    is "$batch_re" "$batch" || fail "bad batch"
+    is "$version_re" "$version" || fail "bad version"
+    [ -z "$force" ] || [ "$force" = force ] || fail "the third argument is 'force' or nothing"
+    cd "$repo"
+    [ -d "jobs/bench/$batch" ] || fail "no batch $batch"
+    running && fail "a bench is running; publish when it's done"
+    set -a
+    # shellcheck source=/dev/null
+    . "$HOME/.machine-trading.env"
+    set +a
+    # Published into a copy of bench/results, so the checkout stays clean
+    # and the dataset's card still lists every release.
+    scratch="$(mktemp -d)"
+    cp -R bench/results "$scratch/results"
+    cargo run --release -q -- bench publish "jobs/bench/$batch" "$version" \
+      --results "$scratch/results" ${force:+--force} > "$logs/publish-$batch.log" 2>&1 \
+      || { tail -20 "$logs/publish-$batch.log" >&2; fail "publish failed"; }
+    # What the repo keeps; the workflow commits it. It holds no secret:
+    # publish checked every file of the release for the seed and the keys.
+    echo "release_json<<EOF_RELEASE_JSON"
+    cat "$scratch/results/$version/release.json"
+    echo "EOF_RELEASE_JSON"
+    rm -r "$scratch"
+    ;;
+  *)
+    fail "unknown command: $verb"
+    ;;
+esac
