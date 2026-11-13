@@ -1057,6 +1057,7 @@ mod tests {
             net: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
+            oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
