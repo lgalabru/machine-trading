@@ -116,11 +116,6 @@ spot-smoke:
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
 
-# The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
-# SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
-actors-markets:
-    cargo test -p mtx-grader --test actors_non_spcx -- --ignored --nocapture
-
 # Pools end to end, on SPCX-USDC in Raydium's CLMM pool and Meteora's DLMM
 # pool: the smoke component swaps both ways on each and opens, halves and
 # closes a position on each, among the grader's takers and arbitrageur. The
@@ -180,6 +175,11 @@ kamino-smoke:
     grep -rq 'drain: sent all SOL away' target/logs/kamino-drain
     jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
     echo "kamino-smoke: ok"
+
+# The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
+# SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
+actors-markets:
+    cargo test -p mtx-grader --test actors_non_spcx -- --ignored --nocapture
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
