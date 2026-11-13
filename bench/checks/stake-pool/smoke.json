@@ -1,0 +1,40 @@
+{
+  "name": "stake-pool-smoke",
+  "description": "Stake into Jito's pool and Marinade, redeem at once within and past Jito's reserve, and cross an epoch boundary",
+  "symbol": "JITOSOL",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "jito-stake-pool:stake-pool:JITOSOL",
+        "max_position": 200.0
+      },
+      {
+        "instrument": "marinade:stake-pool:MSOL",
+        "max_position": 100.0
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "stake": {
+    "pools": [
+      "jito-stake-pool:stake-pool:JITOSOL",
+      "marinade:stake-pool:MSOL"
+    ],
+    "sol": 100.0,
+    "tokens": [
+      {
+        "pool": "jito-stake-pool:stake-pool:JITOSOL",
+        "amount": 100.0
+      }
+    ],
+    "epochs": [
+      {
+        "step": 10,
+        "reward_bps": 1.4
+      }
+    ]
+  }
+}
