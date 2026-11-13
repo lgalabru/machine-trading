@@ -49,7 +49,6 @@ use crate::{
         marinade::{self, MarinadeState},
         stake_pool::{
             self, CLOCK, NamedPool, POOLS, PoolState, VALIDATOR_LIST_HEADER, VALIDATOR_STAKE_LEN,
-            ValidatorStake,
         },
     },
 };
@@ -246,7 +245,7 @@ impl Epochs {
             let state = PoolState::decode(&rpc.get_account(&named.address)?.data)?;
             let list_data = rpc.get_account(&state.validator_list)?.data;
             let list = stake_pool::decode_validator_list(&list_data)?;
-            let target = untouchable(rpc, named, &list)?;
+            let target = stake_pool::untouchable_validator(rpc, named, &list)?;
             // What the program's update would sum today, against what the
             // pool says it holds: the first boundary's reward makes up the
             // difference, so that the rate moves by the reward alone.
@@ -512,29 +511,6 @@ fn reward(lamports: u64, bps: f64) -> u64 {
     let reward = Decimal::from(lamports) * Decimal::try_from(bps).unwrap_or_default()
         / Decimal::from(10_000);
     reward.floor().try_into().unwrap_or(0)
-}
-
-/// The validator whose entry an epoch's reward goes to: the active one
-/// with the most stake whose stake account the world doesn't hold, so no
-/// transaction can split from it or update it.
-fn untouchable(rpc: &RpcClient, named: &NamedPool, list: &[ValidatorStake]) -> Result<usize> {
-    let mut order: Vec<usize> = (0..list.len()).filter(|&i| list[i].status == 0).collect();
-    order.sort_by_key(|&i| (std::cmp::Reverse(list[i].active_stake_lamports), i));
-    for i in order {
-        let address = stake_pool::validator_stake_address(
-            &named.program,
-            &named.address,
-            &list[i].vote_account,
-            list[i].validator_seed_suffix,
-        );
-        if rpc.get_account(&address).is_err() {
-            return Ok(i);
-        }
-    }
-    Err(epoch_error(format!(
-        "{}: every validator's stake account is in the world",
-        named.symbol
-    )))
 }
 
 /// An account's bytes as Surfpool's override reads them: its first 8

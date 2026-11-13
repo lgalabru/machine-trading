@@ -33,6 +33,7 @@ use mtx_kit::{
 };
 use solana_keypair::Keypair;
 use solana_pubkey::{Pubkey, pubkey};
+use solana_rpc_client::rpc_client::RpcClient;
 use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use solana_signer::Signer;
 use solana_transaction::{AccountMeta, Instruction};
@@ -322,6 +323,92 @@ fn tagged(tag: u8, amount: Option<u64>) -> Vec<u8> {
         data.extend_from_slice(&amount.to_le_bytes());
     }
     data
+}
+
+/// The validator nothing in a session can touch: the active one with the
+/// most stake whose stake account the world doesn't hold, so no
+/// transaction can split from it or update it. An epoch's reward goes to
+/// it ([`crate::epochs`]), and so does what a session's setup stakes.
+pub fn untouchable_validator(
+    rpc: &RpcClient,
+    named: &NamedPool,
+    list: &[ValidatorStake],
+) -> Result<usize> {
+    let mut order: Vec<usize> = (0..list.len()).filter(|&i| list[i].status == 0).collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(list[i].active_stake_lamports), i));
+    for i in order {
+        let address = validator_stake_address(
+            &named.program,
+            &named.address,
+            &list[i].vote_account,
+            list[i].validator_seed_suffix,
+        );
+        if rpc.get_account(&address).is_err() {
+            return Ok(i);
+        }
+    }
+    Err(decode_error(format!(
+        "{}: every validator's stake account is in the world",
+        named.symbol
+    )))
+}
+
+/// Stake `lamports` of `owner`'s SOL in `named` for the token, then move
+/// them from the pool's reserve to [`untouchable_validator`], as the
+/// pool's staker delegates what its reserve takes in each epoch. Setup
+/// only, by cheatcode: a session's wallet that starts with the token holds
+/// it as a holder who bought it before, and the reserve's instant exits
+/// stay what they were.
+pub fn stake_before_session(
+    surfnet: &surfpool_sdk::Surfnet,
+    rpc: &RpcClient,
+    owner: &Keypair,
+    named: &NamedPool,
+    lamports: u64,
+) -> Result<()> {
+    let state = PoolState::decode(&rpc.get_account(&named.address)?.data)?;
+    let to = token::ata_for(&owner.pubkey(), &state.pool_mint, &state.token_program);
+    mtx_kit::send(
+        rpc,
+        owner,
+        vec![
+            token::create_ata_idempotent_for(
+                &owner.pubkey(),
+                &owner.pubkey(),
+                &state.pool_mint,
+                &state.token_program,
+            ),
+            ix::deposit_sol(
+                &named.program,
+                &named.address,
+                &state,
+                &owner.pubkey(),
+                &to,
+                lamports,
+            ),
+        ],
+        "a holding staked before the session",
+    )?;
+    let cheats = surfnet.cheatcodes();
+    let reserve = rpc.get_account(&state.reserve_stake)?;
+    cheats.set_account(
+        &state.reserve_stake,
+        reserve.lamports - lamports,
+        &reserve.data,
+        &reserve.owner,
+    )?;
+    let mut list = rpc.get_account(&state.validator_list)?;
+    let target = untouchable_validator(rpc, named, &decode_validator_list(&list.data)?)?;
+    let at = VALIDATOR_LIST_HEADER + target * VALIDATOR_STAKE_LEN;
+    let active = u64::from_le_bytes(list.data[at..at + 8].try_into().expect("8 bytes"));
+    list.data[at..at + 8].copy_from_slice(&(active + lamports).to_le_bytes());
+    cheats.set_account(
+        &state.validator_list,
+        list.lamports,
+        &list.data,
+        &list.owner,
+    )?;
+    Ok(())
 }
 
 /// The program's instructions a session sends.

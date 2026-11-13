@@ -72,6 +72,10 @@ pub struct Stake {
     pub pools: Vec<InstrumentRef>,
     /// Native SOL the wallet starts with.
     pub sol: f64,
+    /// Pool tokens the wallet starts with: staked before the session, at
+    /// the pool's rate, and delegated by the pool as its staker would.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tokens: Vec<StartingTokens>,
     /// The epoch boundaries the session crosses, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub epochs: Vec<EpochEvent>,
@@ -79,6 +83,14 @@ pub struct Stake {
     /// is 0 and only `skill` against the reference is reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_usd: Option<f64>,
+}
+
+/// Tokens of one pool a wallet starts with.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StartingTokens {
+    pub pool: InstrumentRef,
+    pub amount: f64,
 }
 
 impl Stake {
@@ -104,6 +116,23 @@ impl Stake {
         }
         if !(self.sol.is_finite() && self.sol >= 0.0) {
             return Err("stake: sol must be a number of at least 0".into());
+        }
+        for (i, held) in self.tokens.iter().enumerate() {
+            if !self.pools.contains(&held.pool) {
+                return Err(format!(
+                    "stake: tokens of {}, not one of the pools",
+                    held.pool
+                ));
+            }
+            if self.tokens[..i].iter().any(|t| t.pool == held.pool) {
+                return Err(format!("stake: tokens of {} are listed twice", held.pool));
+            }
+            if !(held.amount.is_finite() && held.amount > 0.0) {
+                return Err(format!(
+                    "stake: tokens of {} must be more than 0",
+                    held.pool
+                ));
+            }
         }
         if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
             return Err("stake: bound_usd must be a number".into());
@@ -342,7 +371,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
 
     let bot = opts.keys.keypair("bot", 0);
     let pools = Pools::connect(chain.clone(), internal.url(), &stake.pools, bot.pubkey()).await?;
-    fund(&surfnet, &rpc, &bot, stake.sol, &pools.mints().await?)?;
+    fund(&surfnet, &rpc, &bot, stake, &pools.mints().await?)?;
     let crank = opts.keys.keypair("crank", 0);
     surfnet.cheatcodes().fund_sol(&crank.pubkey(), CRANK_SOL)?;
     let start = pools.read().await?;
@@ -417,22 +446,70 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     })
 }
 
-/// Give `owner` `sol` native SOL and SOL for fees, and a token account for
-/// each pool's token. Setup only.
+/// Give `owner` `sol` native SOL and SOL for fees, a token account for
+/// each of `mints`, and the starting tokens, staked at each pool's rate.
+/// Setup only.
 fn fund(
     surfnet: &Surfnet,
     rpc: &RpcClient,
     owner: &Keypair,
-    sol: f64,
+    stake: &Stake,
     mints: &[Pubkey],
 ) -> Result<()> {
-    let lamports = ((sol + FEE_SOL) * 1e9).round() as u64;
+    use crate::venue::{
+        marinade::{self, MarinadeState},
+        stake_pool::{self, POOLS, PoolState},
+    };
+
+    // What each pool takes for the starting tokens, rounded up.
+    let mut staked = Vec::new();
+    for held in &stake.tokens {
+        let atoms = u128::from((held.amount * 1e9).round() as u64);
+        let (total, supply) = if held.pool.venue == marinade::VENUE {
+            let state = MarinadeState::decode(&rpc.get_account(&marinade::STATE)?.data)?;
+            (state.total_virtual_staked_lamports(), state.msol_supply)
+        } else {
+            let named = POOLS
+                .iter()
+                .find(|p| p.venue == held.pool.venue && p.symbol == held.pool.symbol)
+                .ok_or_else(|| Error::UnknownMarket(held.pool.to_string()))?;
+            let state = PoolState::decode(&rpc.get_account(&named.address)?.data)?;
+            (state.total_lamports, state.pool_token_supply)
+        };
+        let lamports = (atoms * u128::from(total)).div_ceil(u128::from(supply.max(1))) as u64;
+        staked.push((held.pool.clone(), lamports));
+    }
+    let lamports =
+        ((stake.sol + FEE_SOL) * 1e9).round() as u64 + staked.iter().map(|(_, l)| l).sum::<u64>();
     surfnet.cheatcodes().fund_sol(&owner.pubkey(), lamports)?;
     let instructions = mints
         .iter()
         .map(|mint| token::create_ata_idempotent(&owner.pubkey(), &owner.pubkey(), mint))
         .collect();
     mtx_kit::send(rpc, owner, instructions, "token accounts")?;
+    for (pool, lamports) in staked {
+        if pool.venue == marinade::VENUE {
+            let state = MarinadeState::decode(&rpc.get_account(&marinade::STATE)?.data)?;
+            let to = token::ata(&owner.pubkey(), &state.msol_mint);
+            mtx_kit::send(
+                rpc,
+                owner,
+                vec![marinade::ix::deposit(
+                    &state,
+                    &owner.pubkey(),
+                    &to,
+                    lamports,
+                )],
+                "a holding staked before the session",
+            )?;
+        } else {
+            let named = POOLS
+                .iter()
+                .find(|p| p.venue == pool.venue && p.symbol == pool.symbol)
+                .expect("found above");
+            stake_pool::stake_before_session(surfnet, rpc, owner, named, lamports)?;
+        }
+    }
     Ok(())
 }
 
