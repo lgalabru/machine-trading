@@ -27,9 +27,8 @@ calibration/market/<asset>.<date>.<hash>.inputs.json   every input: url, sha256,
   (`mtx_grader::market::calibration`). Unknown fields and unknown models
   fail to load.
 
-Two files ship. Both were written by the prototype fitter
-(`infra-calib`, `calib/fit.py` and `calib/export_v1.py`) from keyless
-public data pulled on 2026-11-11 and 2026-11-12.
+Two files ship. Both were written by the fitter in `calibration/fitter`
+from keyless public data pulled on 2026-11-11 and 2026-11-12.
 
 | File | Fair value from | Main limits |
 |---|---|---|
@@ -37,6 +36,23 @@ public data pulled on 2026-11-11 and 2026-11-12.
 | `spcx.20261112.d1f48be2` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
 
 Each file lists its sources and limits under `[meta]`.
+
+### Rerunning the fitter
+
+`calibration/fitter` is stdlib-only Python (3.11 or later). The raw pull is
+archived once outside git (`calibration/fitter/archive.json` names it by
+SHA-256), and a rerun from it is offline and deterministic:
+
+```sh
+python3 -I calibration/fitter/run.py --from-archive calibration-raw-2026-11-11.tar.gz --out /tmp/cal
+```
+
+This writes `sol-usd.20261112.0dbc6cdf` and `spcx.20261112.d1f48be2`, with
+their inputs files, byte for byte as shipped. The run checks every archived
+file against the archive's manifest first and refuses to touch the network.
+`--fetch` downloads fresh sources instead and stamps the files with today's
+date and time. The id's hash covers `calibration/fitter/calib/*.py`, so any
+change to the fitter makes a new id.
 
 ### Sections
 
