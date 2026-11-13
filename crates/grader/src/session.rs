@@ -459,7 +459,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let scenario = opts.scenario;
     let Prepared {
         world,
-        internal: _internal,
+        internal,
         rpc,
         guard,
         workdir,
@@ -499,6 +499,15 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         let desk = account
             .desk(&guard.host_url(), &bot_key, &env, &mandate)
             .await?;
+        // A scenario that enables raw sends lists their programs: checked
+        // when it loaded.
+        let raw_programs = match &scenario.raw_sends {
+            Some(raw) => Some(raw.programs().map_err(|reason| Error::InvalidScenario {
+                path: scenario.name.clone().into(),
+                reason: format!("raw_sends: {reason}"),
+            })?),
+            None => None,
+        };
         wasm_bot = Some(
             crate::wasm::WasmBot::start(
                 &component,
@@ -513,6 +522,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
                         .into_iter()
                         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
+                        .chain(raw_programs.as_ref().map(|programs| {
+                            let programs: Vec<String> =
+                                programs.iter().map(ToString::to_string).collect();
+                            ("MTX_RAW_PROGRAMS".to_string(), programs.join(","))
+                        }))
                         .collect(),
                     reports: reports.into(),
                 },
@@ -525,6 +539,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 desk,
                 Box::new(log),
                 opts.observer.clone(),
+                raw_programs.map(|programs| crate::raw::RawConfig {
+                    programs,
+                    fresh: opts.keys.fresh(),
+                    internal_url: internal.url().to_string(),
+                    mandate: mandate.clone(),
+                    instrument: scenario.instrument(),
+                    unsettled_funding: scenario.funding.is_some(),
+                }),
             )
             .await?,
         );
@@ -635,6 +657,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     position: now.position,
                     position_change: now.position - before,
                     level_usd: now.level_usd,
+                    valued_at_usd: match scenario.valuation() {
+                        "oracle" => Some(now.level_usd),
+                        "book" => now.book_usd,
+                        _ => None,
+                    },
                 });
             }
             let started = Instant::now();

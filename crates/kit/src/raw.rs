@@ -4,8 +4,11 @@
 //!
 //! The grader makes the transaction's fresh signers, resolves its derived
 //! addresses, simulates it against the paused chain, signs it with the bot's
-//! key and the fresh signers, and sends it after the step's sheet. No
-//! session enables raw sends yet: [`send_raw`] returns the grader's refusal.
+//! key and the fresh signers, and sends it after the step's sheet. Only a
+//! session whose scenario enables raw sends takes them, and only for the
+//! programs it lists, which a component reads from
+//! [`Session::var`](crate::Session::var)`("MTX_RAW_PROGRAMS")`; any other
+//! refuses every one.
 
 use crate::TxOptions;
 
@@ -181,8 +184,8 @@ impl RawTransaction {
 }
 
 /// Ask the grader to sign and send `tx` after this step's sheet: its
-/// receipt, or why it was refused. Only a component can; and no session
-/// enables raw sends yet.
+/// receipt, or why it was refused. Only a component can, from `step`, in a
+/// session that enables raw sends.
 pub fn send_raw(tx: &RawTransaction) -> Result<RawReceipt, String> {
     #[cfg(all(feature = "component", target_arch = "wasm32"))]
     {

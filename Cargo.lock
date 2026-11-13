@@ -4967,6 +4967,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-raw-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-reference"
 version = "0.1.0"
 dependencies = [
@@ -4990,6 +4997,15 @@ name = "mtx-bot-starter"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-subaccount-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+ "solana-compute-budget-interface",
+ "tracing",
 ]
 
 [[package]]
@@ -5078,6 +5094,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "solana-keypair",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
  "solana-rpc-client-api",
