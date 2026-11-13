@@ -7,11 +7,21 @@
 //! move tokens add the trader's two associated token accounts, the market's
 //! vaults and the token program.
 
+use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
-use solana_transaction::{AccountMeta, Instruction};
 
 use super::{PROGRAM_ID, SEAT_MANAGER_ID, state::BookSide};
-use crate::chain::token::{ata, token_program};
+use crate::token::{SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID, associated_token_address};
+
+/// The trader's associated token account for `mint`: the program trades
+/// SPL Token mints only.
+fn ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    associated_token_address(owner, mint, &TOKEN_PROGRAM_ID)
+}
+
+fn token_program() -> Pubkey {
+    TOKEN_PROGRAM_ID
+}
 
 /// What a Phoenix instruction needs to know about its market.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,7 +533,7 @@ pub fn claim_seat(m: &MarketKeys, trader: &Pubkey) -> Instruction {
             AccountMeta::new_readonly(*trader, true),
             AccountMeta::new(*trader, true),
             rw(seat(&market, trader)),
-            ro(solana_system_interface::program::id()),
+            ro(SYSTEM_PROGRAM_ID),
         ],
         data: vec![1],
     }

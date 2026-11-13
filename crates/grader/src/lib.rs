@@ -3,6 +3,7 @@
 pub mod carry;
 pub mod chain;
 pub mod compete;
+pub mod crank;
 mod error;
 pub mod faults;
 pub mod flow;
@@ -12,6 +13,7 @@ pub mod keys;
 pub mod making;
 pub mod market;
 pub mod offhours;
+pub mod oracles;
 pub mod orders;
 pub mod phoenix;
 pub mod raw;
