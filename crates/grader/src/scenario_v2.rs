@@ -9,7 +9,7 @@
 //! |----------------|--------------------------------------------------------------|
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
 //! | `venues`       | the perp venue's funding, the spot markets and their data    |
-//! | `market_model` | the price path, the fair value, a closed period              |
+//! | `market_model` | the price path, the fair value, a closed period, the calibration record |
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker and the grader's taker flow              |
 //! | `faults`       | execution faults on the bot's sends and reads                |
@@ -143,6 +143,11 @@ pub struct MarketModel {
     /// For a scenario where the underlying's own market is closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_period: Option<ClosedPeriod>,
+    /// Opt-in: the market calibration the path was drawn from, and what was
+    /// drawn (see [`crate::market::model`]). The path and fair value above
+    /// are what sessions replay; this records where they came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<crate::market::MarketModelRecord>,
 }
 
 /// The closed period before the underlying's market reopens, and Phoenix's
@@ -371,6 +376,11 @@ impl MarketModel {
                 }
                 previous = waypoint.slot;
             }
+        }
+        if let Some(record) = &self.record {
+            record
+                .validate(duration_slots)
+                .map_err(|reason| format!("market_model: {reason}"))?;
         }
         if free_from > duration_slots {
             return Err(format!(
@@ -709,6 +719,7 @@ impl ScenarioV2 {
             path,
             fair_path,
             closed_period,
+            record,
         } = market_model;
         let Actors { competitor, takers } = actors;
         let (making, offhours, tape) = match (competitor, closed_period) {
@@ -756,6 +767,7 @@ impl ScenarioV2 {
             reference_pnl_usd: scoring.reference_pnl_usd,
             fair_path,
             raw_sends: tx.and_then(|tx| tx.raw_sends),
+            market_model: record,
             oracles,
         })
     }
@@ -855,6 +867,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 path: v1.path.clone(),
                 fair_path: v1.fair_path.clone(),
                 closed_period,
+                record: v1.market_model.clone(),
             },
             oracles: v1.oracles.clone(),
             actors: Actors { competitor, takers },

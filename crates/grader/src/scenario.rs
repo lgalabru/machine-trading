@@ -108,6 +108,11 @@ pub struct Scenario {
     /// told. It is not shown to the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_path: Option<Vec<Waypoint>>,
+    /// Opt-in: the market calibration the path was drawn from, and what was
+    /// drawn (see [`crate::market::model`]). The path and fair value above
+    /// are what sessions replay; this records where they came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_model: Option<crate::market::MarketModelRecord>,
     /// Opt-in: a strategy component may build transactions itself, for
     /// what its sheet can't say, and the grader signs them (`send`, see
     /// [`crate::raw`]). Absent, the session refuses every one.
@@ -860,6 +865,7 @@ impl ShockFamily {
                     premium_pct: 0.0,
                 }]
             }),
+            market_model: None,
             raw_sends: None,
         };
         let shape = Shape {
@@ -1569,6 +1575,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -1635,6 +1642,7 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
         }
     }
