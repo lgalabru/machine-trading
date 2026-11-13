@@ -1,4 +1,4 @@
-//! Gradient-boosted trees, as `bots/weekend/model/forecast.json` holds them:
+//! Gradient-boosted trees, as `model/forecast.json` holds them:
 //! the reference's forecaster, trained offline on generated sessions. Each node is `[feature,
 //! threshold, left, right, value, is_leaf, missing_left]`; a prediction is the
 //! baseline plus every tree's leaf. The forecast is antisymmetric: the

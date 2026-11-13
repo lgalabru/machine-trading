@@ -17,6 +17,14 @@ name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:2edb3b46ab8b75929853f6a8e1958954977f311eccbfcbf5b18fa0e9122501fa"
 
 [[tasks]]
+name = "solana-foundation/funding-carry-spcx"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
 name = "solana-foundation/market-making-spcx"
 digest = "sha256:1c0360762736f73ec9e6a6a23a7619a97d69536122bb54ff5fd4b2a758bd78d6"
+
+[[tasks]]
+name = "solana-foundation/weekend-gap-spcx"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
