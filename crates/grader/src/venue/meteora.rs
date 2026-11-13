@@ -37,6 +37,8 @@ const SWAP_BIN_ARRAYS: usize = 3;
 /// How far the active bin may move between a deposit's planning and its
 /// landing.
 const MAX_ACTIVE_BIN_SLIPPAGE: i32 = BINS_PER_ARRAY;
+/// The most accounts one `getMultipleAccounts` reads.
+const MAX_ACCOUNTS_PER_READ: usize = 100;
 
 /// Meteora, read and traded through one endpoint.
 pub struct Meteora {
@@ -207,6 +209,25 @@ impl DlmmPool {
         }
     }
 
+    /// `initialize_bin_array`, paid by `owner`, for each of `indexes` not
+    /// made yet.
+    async fn missing_bin_arrays(
+        &self,
+        chain: &dyn ChainClient,
+        pair: &LbPair,
+        owner: &Pubkey,
+        indexes: &[i64],
+    ) -> Vec<Instruction> {
+        let mut instructions = Vec::new();
+        for index in indexes {
+            let address = dlmm::bin_array_address(&self.assets.address, *index);
+            if !matches!(chain.get_account(&address).await, Ok(Some(_))) {
+                instructions.push(ix::initialize_bin_array(pair, owner, *index));
+            }
+        }
+        instructions
+    }
+
     async fn read_position(
         &self,
         chain: &dyn ChainClient,
@@ -307,11 +328,13 @@ impl Pool for DlmmPool {
 
     async fn positions(&self, chain: &dyn ChainClient, owner: &Pubkey) -> Result<Vec<Lp>> {
         let pair = self.pair(chain).await?;
+        // Any size: `increase_position_length` grows a position's account
+        // past `Position::LEN`.
         let mut accounts = chain
             .get_program_accounts(
                 &dlmm::PROGRAM_ID,
                 vec![
-                    RpcFilterType::DataSize(Position::LEN as u64),
+                    RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &Position::DISCRIMINATOR)),
                     RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
                         Position::PAIR_OFFSET,
                         self.assets.address.as_ref(),
@@ -356,28 +379,27 @@ impl Pool for DlmmPool {
         Ok(Some(self.lp(&pair, &position, &arrays)))
     }
 
-    /// A position's owner is in its account.
+    /// A position's owner is in its account, whatever its size.
     async fn position_owners(
         &self,
         chain: &dyn ChainClient,
         accounts: &[Pubkey],
     ) -> Result<Vec<Pubkey>> {
-        let read = chain
-            .get_multiple_accounts(accounts)
-            .await
-            .map_err(read_error("meteora positions"))?;
-        Ok(accounts
-            .iter()
-            .zip(read)
-            .filter_map(|(address, account)| {
-                let account = account
-                    .filter(|a| a.owner == dlmm::PROGRAM_ID && a.data.len() == Position::LEN)?;
+        let mut owners = Vec::new();
+        for chunk in accounts.chunks(MAX_ACCOUNTS_PER_READ) {
+            let read = chain
+                .get_multiple_accounts(chunk)
+                .await
+                .map_err(read_error("meteora positions"))?;
+            owners.extend(chunk.iter().zip(read).filter_map(|(address, account)| {
+                let account = account.filter(|a| a.owner == dlmm::PROGRAM_ID)?;
                 Position::decode(*address, &account.data)
                     .ok()
                     .filter(|p| p.pair == self.assets.address)
                     .map(|p| p.owner)
-            })
-            .collect())
+            }));
+        }
+        Ok(owners)
     }
 
     async fn deposit(
@@ -429,15 +451,13 @@ impl Pool for DlmmPool {
         if lower > pair.active_id && amount_x == 0 || upper < pair.active_id && amount_y == 0 {
             return Err("this range at this price takes the other asset: none given".into());
         }
-        let mut instructions = Vec::new();
-        // The range's bin arrays must exist.
-        let indexes = dlmm::position_bin_arrays(lower);
-        for index in &indexes {
-            let address = dlmm::bin_array_address(&self.assets.address, *index);
-            if !matches!(chain.get_account(&address).await, Ok(Some(_))) {
-                instructions.push(ix::initialize_bin_array(&pair, owner, *index));
-            }
-        }
+        // The range's bin arrays must exist: a grown position's may reach
+        // arrays nobody has made yet.
+        let indexes = match &existing {
+            Some(p) => p.bin_arrays(),
+            None => dlmm::position_bin_arrays(lower),
+        };
+        let mut instructions = self.missing_bin_arrays(chain, &pair, owner, &indexes).await;
         let target = match &existing {
             Some(p) => p.address,
             None => {
@@ -494,7 +514,9 @@ impl Pool for DlmmPool {
             return Err("the position would pay out less than the minimum".into());
         }
         let bps = (share * 10_000.0).round() as u16;
-        let mut instructions = Vec::new();
+        let mut instructions = self
+            .missing_bin_arrays(chain, &pair, owner, &held.bin_arrays())
+            .await;
         if bps > 0 && position.live {
             instructions.push(ix::remove_liquidity(&pair, owner, &held, bps));
         }
