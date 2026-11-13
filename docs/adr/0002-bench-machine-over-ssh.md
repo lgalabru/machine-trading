@@ -1,11 +1,11 @@
 # 0002. GitHub reaches the bench machine over SSH, through one command
 
 - **Status:** Accepted (2026-11-13).
-- **Scope:** `.github/workflows/bench.yml`, `ops/sunburst/`.
+- **Scope:** `.github/workflows/bench.yml`, `ops/bench/`.
 
 ## Context
 
-A bench runs for hours on a large machine, sunburst, and spends API
+A bench runs for hours on a large machine, and spends API
 credits. We want to start, follow and publish one from GitHub Actions.
 GitHub-hosted runners stop a job after six hours and are too small to grade
 40 trials, so the work has to run on the machine. Two ways to get it there:
@@ -27,9 +27,9 @@ pattern. It runs only commits on `origin/main` and keeps a dirty checkout
 untouched. A second key, `--read-only`, may only ask for `status`.
 
 The keys live in GitHub environments that deploy from `main` alone, so a
-workflow edited on a branch never sees them. `sunburst`, the key that
-starts and publishes, waits for a reviewer. The machine's host key is
-pinned in the environment, and the API keys never leave the machine:
+workflow edited on a branch never sees them. `bench`, the key that
+starts and publishes, waits for a reviewer. The machine's address, login and host key
+are environment secrets, and the API keys never leave the machine:
 `publish` uploads to the results dataset from there and hands back only
 `release.json`.
 
