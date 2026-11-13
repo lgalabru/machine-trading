@@ -93,6 +93,10 @@ pub struct Scenario {
     /// Not with an `order`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetScoring>,
+    /// The prices venues read, written by the grader over the session, and
+    /// how they fail (see [`crate::oracles`]). Without it, none are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracles: Option<crate::oracles::Oracles>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -109,6 +113,72 @@ pub struct Scenario {
     /// told. It is not shown to the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_path: Option<Vec<Waypoint>>,
+    /// Opt-in: the market calibration the path was drawn from, and what was
+    /// drawn (see [`crate::market::model`]). The path and fair value above
+    /// are what sessions replay; this records where they came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_model: Option<crate::market::MarketModelRecord>,
+    /// Opt-in: a strategy component may build transactions itself, for
+    /// what its sheet can't say, and the grader signs them (`send`, see
+    /// [`crate::raw`]). Absent, the session refuses every one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_sends: Option<RawSends>,
+}
+
+/// What a scenario's raw sends may do.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RawSends {
+    /// The programs, base58, a raw transaction may run, at the top level or
+    /// through another program. The compute budget program is always
+    /// allowed: it only sets the transaction's own limits and fee.
+    pub programs: Vec<String>,
+}
+
+/// The programs a raw send may be allowed to run: those whose effects the
+/// grader's audit of a raw send measures (Phoenix's main trader account, the
+/// wallet's tokens), and the system, associated token and compute budget
+/// programs. A venue's program joins when its venue adds its own audit;
+/// until then a position it holds would go unmeasured.
+pub const RAW_SEND_PROGRAMS: [(&str, &str); 5] = [
+    ("Phoenix", "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih"),
+    ("system", "11111111111111111111111111111111"),
+    ("token", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    (
+        "associated token",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    ),
+    (
+        "compute budget",
+        "ComputeBudget111111111111111111111111111111",
+    ),
+];
+
+impl RawSends {
+    /// The programs, parsed and in order.
+    pub fn programs(&self) -> std::result::Result<Vec<Pubkey>, String> {
+        let mut programs = Vec::with_capacity(self.programs.len());
+        for program in &self.programs {
+            let key = program
+                .parse::<Pubkey>()
+                .map_err(|_| format!("{program} is not a base58 address"))?;
+            if !RAW_SEND_PROGRAMS.iter().any(|(_, p)| p == program) {
+                let audited: Vec<&str> = RAW_SEND_PROGRAMS.iter().map(|(name, _)| *name).collect();
+                return Err(format!(
+                    "{program}: raw sends can't run it yet, since the audit can't measure what it holds; only the {} programs",
+                    audited.join(", ")
+                ));
+            }
+            if programs.contains(&key) {
+                return Err(format!("{program} is listed twice"));
+            }
+            programs.push(key);
+        }
+        if programs.is_empty() {
+            return Err("no programs: leave raw_sends out to turn raw sends off".into());
+        }
+        Ok(programs)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -172,7 +242,7 @@ pub struct Funding {
 
 /// Lowest level a waypoint may target. Past this, Phoenix's risk checks and
 /// the market's resting liquidity stop behaving like a real market.
-const MIN_LEVEL_PCT: f64 = -40.0;
+pub(crate) const MIN_LEVEL_PCT: f64 = -40.0;
 
 /// Market time per slot in a session: the surfnet's clock, which Phoenix's
 /// funding reads.
@@ -184,7 +254,13 @@ pub const VENUE: &str = "phoenix";
 impl Scenario {
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
-        let scenario: Self = serde_json::from_str(&contents)?;
+        let scenario = crate::scenario_v2::parse(&contents).map_err(|e| match e {
+            crate::scenario_v2::ParseError::Json(e) => Error::Json(e),
+            other => Error::InvalidScenario {
+                path: path.to_path_buf(),
+                reason: other.to_string(),
+            },
+        })?;
         scenario
             .validate()
             .map_err(|reason| Error::InvalidScenario {
@@ -194,8 +270,23 @@ impl Scenario {
         Ok(scenario)
     }
 
+    /// Write the scenario as a v1 file, which everything that reads a
+    /// scenario file (the task images, CI, the practice files) expects.
+    /// [`Scenario::save_v2`] writes the v2 layout.
     pub fn save(&self, path: &Path) -> Result<()> {
         let contents = serde_json::to_string_pretty(self)? + "\n";
+        std::fs::write(path, contents).map_err(io_error(path))
+    }
+
+    /// Write the scenario as a v2 file (see [`crate::scenario_v2`]).
+    pub fn save_v2(&self, path: &Path) -> Result<()> {
+        let v2 = crate::scenario_v2::ScenarioV2::try_from(self).map_err(|reason| {
+            Error::InvalidScenario {
+                path: path.to_path_buf(),
+                reason,
+            }
+        })?;
+        let contents = serde_json::to_string_pretty(&v2)? + "\n";
         std::fs::write(path, contents).map_err(io_error(path))
     }
 
@@ -230,149 +321,7 @@ impl Scenario {
     /// unenforced. Waypoints must be in order, each move must finish before
     /// the next one starts, and the last must finish before the session ends.
     pub fn validate(&self) -> std::result::Result<(), String> {
-        self.mandate
-            .validate()
-            .map_err(|reason| format!("mandate: {reason}"))?;
-        if let Some(actors) = &self.actors {
-            if self.spot.is_some() {
-                return Err("actors: the library runs in perp sessions".into());
-            }
-            actors.validate()?;
-        }
-        if let Some(spot) = &self.spot {
-            if let Some(faults) = &self.faults {
-                faults
-                    .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
-                    .map_err(|reason| format!("faults: {reason}"))?;
-            }
-            return spot.validate(self);
-        }
-        if self.turn_data.is_some()
-            || self.order.is_some()
-            || self.participation.is_some()
-            || self.net.is_some()
-        {
-            return Err("turn_data, order, participation and net are for spot scenarios".into());
-        }
-        if self.mandate.universe.len() != 1 || self.mandate.allowance(&self.instrument()).is_none()
-        {
-            return Err(format!(
-                "mandate: the universe must be exactly {}, the scenario's market",
-                self.instrument()
-            ));
-        }
-        if self.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if self.mandate.limits.max_drawdown_usd.is_none() {
-            return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
-        }
-        let mut book = 0.0;
-        let mut free_from = 0;
-        // The move before the waypoint: from, to, and the slot it started.
-        let mut before: Option<(f64, f64, u64)> = None;
-        for (i, waypoint) in self.path.iter().enumerate() {
-            if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
-                return Err(format!(
-                    "waypoint {i}: level {}% is outside [{MIN_LEVEL_PCT}, 100]",
-                    waypoint.level_pct
-                ));
-            }
-            if waypoint.slot < free_from {
-                let why = before.map_or(String::new(), |(from, to, at)| {
-                    let parts = move_slots(from, to) / SLOTS_BETWEEN_STEPS;
-                    format!(
-                        ": the move before it, from {from}% to {to}% at slot {at}, lands in {parts} of Phoenix's 4% steps of {SLOTS_BETWEEN_STEPS} slots each"
-                    )
-                });
-                return Err(format!(
-                    "waypoint {i} starts at slot {} while the previous move runs until {free_from}{why}; start it at slot {free_from} or later, or make that move smaller",
-                    waypoint.slot
-                ));
-            }
-            if !(-MAX_PREMIUM_PCT..=MAX_PREMIUM_PCT).contains(&waypoint.premium_pct) {
-                return Err(format!(
-                    "waypoint {i}: premium {}% is outside [-{MAX_PREMIUM_PCT}, {MAX_PREMIUM_PCT}]",
-                    waypoint.premium_pct
-                ));
-            }
-            // An off-hours reopen lands at once, in one slot, however many
-            // of Phoenix's steps it takes.
-            free_from = match &self.offhours {
-                Some(off) if waypoint.slot == off.reopen_slot => {
-                    waypoint.slot + SLOTS_BETWEEN_STEPS + 1
-                }
-                _ => waypoint.slot + move_slots(book, waypoint.book_pct()) + 1,
-            };
-            before = Some((book, waypoint.book_pct(), waypoint.slot));
-            book = waypoint.book_pct();
-        }
-        if let Some(funding) = &self.funding
-            && (funding.interval_seconds == 0
-                || funding.period_seconds < funding.interval_seconds
-                || funding.max_rate <= 0)
-        {
-            return Err(format!(
-                "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
-            ));
-        }
-        if let Some(off) = &self.offhours {
-            if self.making.is_some() {
-                return Err("a scenario has either making or offhours, not both".into());
-            }
-            if !self.tape.is_empty() {
-                return Err("an off-hours scenario's takers are its offhours', not a tape".into());
-            }
-            if self.path.iter().any(|w| w.premium_pct != 0.0) {
-                return Err("an off-hours scenario's waypoints carry no premium".into());
-            }
-            off.validate(&self.path, self.duration_slots)
-                .map_err(|reason| format!("offhours: {reason}"))?;
-            if !self.path.iter().any(|w| w.slot == off.reopen_slot) {
-                return Err("offhours: the path has no waypoint at the reopen".into());
-            }
-        }
-        if let Some(fair) = &self.fair_path {
-            let mut previous = 0;
-            for (i, waypoint) in fair.iter().enumerate() {
-                if !(MIN_LEVEL_PCT..=100.0).contains(&waypoint.level_pct) {
-                    return Err(format!(
-                        "fair value waypoint {i}: level {}% is outside [{MIN_LEVEL_PCT}, 100]",
-                        waypoint.level_pct
-                    ));
-                }
-                if waypoint.slot < previous || waypoint.slot > self.duration_slots {
-                    return Err(format!(
-                        "fair value waypoint {i} at slot {} is out of order or past the session end",
-                        waypoint.slot
-                    ));
-                }
-                previous = waypoint.slot;
-            }
-        }
-        if let Some(making) = &self.making {
-            making
-                .validate(self.duration_slots)
-                .map_err(|reason| format!("making: {reason}"))?;
-            if !self.tape.is_empty() {
-                return Err(
-                    "a market-making scenario's takers are its making's, not a tape".into(),
-                );
-            }
-        }
-        if let Some(faults) = &self.faults {
-            faults
-                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
-                .map_err(|reason| format!("faults: {reason}"))?;
-        }
-        self.validate_tape()?;
-        if free_from > self.duration_slots {
-            return Err(format!(
-                "the last move runs until slot {free_from}, past the session end at {}",
-                self.duration_slots
-            ));
-        }
-        Ok(())
+        crate::scenario_v2::ScenarioV2::try_from(self)?.validate()
     }
 
     /// The scenario's fair value in USD at `slot`, counted from the session
@@ -486,7 +435,7 @@ impl Scenario {
 /// The largest premium a waypoint may give the book, in percent: Phoenix
 /// refuses oracle reports more than 5% from its median, and a move steps the
 /// oracles from the index to the book.
-const MAX_PREMIUM_PCT: f64 = 3.0;
+pub(crate) const MAX_PREMIUM_PCT: f64 = 3.0;
 
 /// Set the market's funding parameters, `slot` slots after the override is
 /// registered. The session plays it in setup, before the bot starts (see
@@ -526,28 +475,6 @@ impl Scenario {
         } else {
             "mark"
         }
-    }
-
-    /// The tape's orders are in slot order, within the session, and each a
-    /// positive size and limit from one of the takers' accounts.
-    pub(crate) fn validate_tape(&self) -> std::result::Result<(), String> {
-        let mut last = 0;
-        for (i, order) in self.tape.iter().enumerate() {
-            if order.slot < last || order.slot >= self.duration_slots {
-                return Err(format!(
-                    "tape order {i} at slot {} is out of order or past the session",
-                    order.slot
-                ));
-            }
-            if !(order.size.is_finite() && order.size > 0.0)
-                || !(order.limit_bps.is_finite() && order.limit_bps > 0.0)
-                || order.account >= crate::making::TAKER_ACCOUNTS
-            {
-                return Err(format!("tape order {i} is malformed: {order:?}"));
-            }
-            last = order.slot;
-        }
-        Ok(())
     }
 
     /// Slots the session's setup gets before the bot's first slot: setup
@@ -708,7 +635,7 @@ pub enum Aftermath {
 ///
 /// The path is built so that its shape gives nothing away beyond what a
 /// trader would see in a real market, and so that what it does give away
-/// doesn't pay for certain (the exploit checks in `bench/checks/exploits`
+/// doesn't pay for certain (the exploit checks in `bench/tasks/<task>/checks/exploits`
 /// hold it to that):
 /// - Leg sizes are log-uniform over a wide range, and most legs land at
 ///   once, so a move's first print says little about how far it goes and
@@ -938,6 +865,7 @@ impl ShockFamily {
             faults: None,
             actors: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -949,6 +877,8 @@ impl ShockFamily {
                     premium_pct: 0.0,
                 }]
             }),
+            market_model: None,
+            raw_sends: None,
         };
         let shape = Shape {
             direction,
@@ -1580,6 +1510,7 @@ mod tests {
             assert_eq!(
                 Scenario {
                     fair_path: None,
+                    raw_sends: None,
                     ..marked.clone()
                 },
                 plain
@@ -1651,11 +1582,14 @@ mod tests {
             faults: None,
             actors: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
+            raw_sends: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1716,12 +1650,79 @@ mod tests {
             faults: None,
             actors: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
+            raw_sends: None,
         }
+    }
+
+    fn oracles_with(source: crate::oracles::Source, failing: bool) -> crate::oracles::Oracles {
+        use crate::oracles::*;
+        Oracles {
+            seed: 1,
+            feeds: vec![Feed {
+                name: "f".into(),
+                source,
+                cadence_slots: 4,
+                path: Vec::new(),
+                conf_bps: 2.0,
+                failures: if failing {
+                    vec![Failure {
+                        mode: Mode::Stale,
+                        window: Window {
+                            from_slot: 10,
+                            from_slot_max: None,
+                            slots: Some(10),
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                },
+            }],
+        }
+    }
+
+    fn phoenix_feed(symbol: &str) -> crate::oracles::Source {
+        crate::oracles::Source::Phoenix(crate::oracles::PhoenixOracle {
+            symbol: symbol.into(),
+        })
+    }
+
+    #[test]
+    fn a_phoenix_feed_needs_the_scenarios_market_and_no_path_of_its_own() {
+        let quiet = Scenario {
+            path: Vec::new(),
+            oracles: Some(oracles_with(phoenix_feed("SPCX"), true)),
+            ..plain()
+        };
+        quiet.validate().unwrap();
+        let other = Scenario {
+            oracles: Some(oracles_with(phoenix_feed("AAPL"), false)),
+            ..quiet.clone()
+        };
+        assert!(other.validate().unwrap_err().contains("AAPL"));
+        let pathed = Scenario {
+            path: vec![Waypoint::at(10, -2.0)],
+            ..quiet.clone()
+        };
+        assert!(pathed.validate().unwrap_err().contains("own path"));
+    }
+
+    #[test]
+    fn a_scenario_with_oracles_round_trips() {
+        let scenario = Scenario {
+            path: Vec::new(),
+            oracles: Some(oracles_with(phoenix_feed("SPCX"), true)),
+            ..plain()
+        };
+        let again: Scenario =
+            serde_json::from_str(&serde_json::to_string(&scenario).unwrap()).unwrap();
+        assert_eq!(scenario, again);
     }
 
     #[test]

@@ -204,7 +204,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     );
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    let user = opts.slot.map(|slot| BOT_USERS[slot]);
+    let workdir = SessionDir::create(&bot, user)?;
     let mut slot = rpc.get_slot()?;
     // Slots from the surfnet's start to the session's. Setup produces a few
     // of its own (each onboarding, one), the same ones every run; the world
@@ -273,6 +274,16 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World {
+                phoenix: Some((perp_asset_map, start_mark_ticks)),
+            },
+        )?;
+    }
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -588,6 +599,22 @@ fn fund_rfq(
     Ok((Arc::new(swaps), desk))
 }
 
+/// What `owner`'s token accounts of `token` hold, in whole units, as the
+/// meter counts a wallet's USDC: none once it has closed them.
+async fn wallet_holds(
+    chain: &dyn mtx_kit::chain::ChainClient,
+    owner: &Pubkey,
+    token: &Token,
+) -> Result<f64> {
+    let atoms = mtx_kit::chain::token::owned_amount(chain, owner, &token.mint)
+        .await
+        .map_err(|e| Error::Transaction {
+            label: "the RFQ desk's balances".into(),
+            reason: e.to_string(),
+        })?;
+    Ok(atoms as f64 / 10f64.powi(token.decimals as i32))
+}
+
 impl PerpAccount {
     async fn measure(&self) -> Result<Measurement> {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
@@ -595,18 +622,15 @@ impl PerpAccount {
 
     /// What the bot's wallet holds for its RFQ desk, and the asset's
     /// reference price, Phoenix's index for the perp. Nothing without a
-    /// desk.
+    /// desk. The wallet holds what its token accounts of each mint hold, as
+    /// the meter counts its USDC: none if the bot closed them.
     async fn desk_holdings(&self) -> Result<Option<DeskHoldings>> {
         let Some(desk) = &self.desk else {
             return Ok(None);
         };
-        let rpc = mtx_kit::rpc_client_with_timeout(desk.rpc_url.clone(), INTERNAL_RPC_TIMEOUT);
-        let held = |token: &Token| -> Result<f64> {
-            let amount = rpc.get_token_account_balance(&token.account(&self.bot))?;
-            let atoms: f64 = amount.amount.parse().unwrap_or(0.0);
-            Ok(atoms / 10f64.powi(token.decimals as i32))
-        };
-        let (base, usdc) = (held(&desk.base)?, held(&desk.quote)?);
+        let chain = RpcChainClient::with_timeout(&desk.rpc_url, INTERNAL_RPC_TIMEOUT);
+        let base = wallet_holds(&chain, &self.bot, &desk.base).await?;
+        let usdc = wallet_holds(&chain, &self.bot, &desk.quote).await?;
         let hawkeye = self.phoenix.hawkeye(self.bot);
         let symbol = &self.scenario.symbol;
         let index = patiently("the book", || hawkeye.view_bbo(symbol))
@@ -820,6 +844,7 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -999,4 +1024,41 @@ async fn would_run(client: &reqwest::Client, rpc_url: &str, call: &serde_json::V
     reply.is_some_and(|reply| {
         reply["result"]["value"].is_object() && reply["result"]["value"]["err"].is_null()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use mtx_kit::chain::mock::MockChainClient;
+    use solana_account::Account;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_desk_whose_account_the_bot_closed_holds_nothing() {
+        let usdc = Token {
+            mint: phoenix::USDC_MINT,
+            program: mtx_kit::token::TOKEN_PROGRAM_ID,
+            decimals: 6,
+        };
+        let bot = Pubkey::new_unique();
+        let mut data = vec![0; 165];
+        data[..32].copy_from_slice(&usdc.mint.to_bytes());
+        data[32..64].copy_from_slice(&bot.to_bytes());
+        data[64..72].copy_from_slice(&2_500_000u64.to_le_bytes());
+        data[108] = 1;
+        let chain = MockChainClient::new();
+        chain.set_account(
+            usdc.account(&bot),
+            Account {
+                lamports: 2_039_280,
+                data,
+                owner: usdc.program,
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+        assert_eq!(wallet_holds(&chain, &bot, &usdc).await.unwrap(), 2.5);
+        chain.remove_account(&usdc.account(&bot));
+        assert_eq!(wallet_holds(&chain, &bot, &usdc).await.unwrap(), 0.0);
+    }
 }

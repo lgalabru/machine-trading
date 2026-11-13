@@ -376,7 +376,10 @@ impl Library {
         }
         if let Some(spec) = &self.rfq_clients {
             let clients = ledger.wallets("rfq-client", take(spec.clients));
-            let board = RfqBoard::new(format!("rfq:{}", setting.symbol));
+            let board = RfqBoard::new(
+                format!("rfq:{}", setting.symbol),
+                setting.settlement.clone(),
+            );
             built.actors.push(Box::new(
                 rfq::Clients::new(
                     spec.clone(),
@@ -441,7 +444,7 @@ pub struct Built {
 }
 
 /// Counts of actions: those that landed, by kind, and those that failed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Actions {
     pub placed: usize,
     pub cancelled: usize,
@@ -457,25 +460,25 @@ impl Actions {
 }
 
 /// What one of the library's actors did.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ActorTally {
     /// Its role (`noise`, `spoofer`, …) and its wallets.
     pub kind: String,
     pub wallets: Vec<String>,
     /// It acts on the bot's own trading, so its failures don't count
     /// toward [`LibraryReport::degraded`].
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reacts_to_bot: bool,
     pub actions: Actions,
     /// Base units it bought and sold by taking.
     pub bought: f64,
     pub sold: f64,
     /// What its kind counts beyond that (walls pulled, requests sent, …).
-    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub counts: std::collections::BTreeMap<String, u64>,
     /// With [`Library::record`]: how many of its actions' transactions the
     /// chain has, executed without error.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_chain: Option<usize>,
     /// Its actions' transactions, for that count.
     #[serde(skip)]
@@ -503,16 +506,16 @@ pub struct TapeEntry {
 }
 
 /// What the library's actors did in a session.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LibraryReport {
     /// Every actor's actions, summed.
     pub actions: Actions,
     pub actors: Vec<ActorTally>,
     /// Every action in order, with [`Library::record`].
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tape: Vec<TapeEntry>,
     /// With RFQ clients: the bot's desk at the start and the end.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desk: Option<DeskReport>,
 }
 

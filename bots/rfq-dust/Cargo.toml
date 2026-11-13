@@ -1,0 +1,16 @@
+# A check, not a strategy: a component that answers every request for a
+# quote with a price or a size too small to settle, so no client can take
+# it (`just actors-smoke` grades it in a session of RFQ clients alone).
+[package]
+name = "mtx-bot-rfq-dust"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }

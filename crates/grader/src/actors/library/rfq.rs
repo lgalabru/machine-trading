@@ -32,6 +32,10 @@
 //! client's that has traded its funds away with the bot, and no fault of
 //! the session's. Any other failure is the infrastructure's, and counts
 //! against the session like any other actor's.
+//!
+//! An answer the settlement couldn't move (a price or size so small a leg
+//! comes to nothing in its token's smallest units) is refused on the
+//! board, as no answer: the bot's own doing, never a client's action.
 
 use std::{
     collections::BTreeMap,
@@ -192,23 +196,30 @@ struct BoardState {
 }
 
 /// The requests open to the bot, and its answers: shared by the clients
-/// and the bot's desk.
+/// and the bot's desk. With a settlement, it takes only answers the
+/// settlement could move.
 #[derive(Clone)]
-pub struct RfqBoard(Arc<Mutex<BoardState>>);
+pub struct RfqBoard {
+    state: Arc<Mutex<BoardState>>,
+    settlement: Option<Arc<dyn Settlement>>,
+}
 
 impl RfqBoard {
-    pub fn new(venue: String) -> Self {
-        Self(Arc::new(Mutex::new(BoardState {
-            venue,
-            slot: 0,
-            open: Vec::new(),
-            responses: BTreeMap::new(),
-            fills: Vec::new(),
-        })))
+    pub fn new(venue: String, settlement: Option<Arc<dyn Settlement>>) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BoardState {
+                venue,
+                slot: 0,
+                open: Vec::new(),
+                responses: BTreeMap::new(),
+                fills: Vec::new(),
+            })),
+            settlement,
+        }
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, BoardState> {
-        self.0.lock().expect("rfq board lock")
+        self.state.lock().expect("rfq board lock")
     }
 
     pub fn venue(&self) -> String {
@@ -262,6 +273,14 @@ impl RfqBoard {
             .any(|v| !(v.is_finite() && v > 0.0))
         {
             return Err("a response's prices and size must be positive".into());
+        }
+        // Both prices, whichever side the client wants: a refusal mustn't
+        // tell a two-way request's side.
+        if let Some(settlement) = &self.settlement {
+            let size = response.size.map_or(request.size, |s| s.min(request.size));
+            for quoted in [response.bid, response.ask].into_iter().flatten() {
+                settlement.settles(size, quoted)?;
+            }
         }
         if request.shown.is_some() && price.is_none() {
             return Err(format!("request {id} needs a price on the side it asks"));
@@ -361,6 +380,10 @@ pub trait Settlement: Send + Sync {
         size: f64,
         price: f64,
     ) -> Result<String, SwapError>;
+
+    /// Whether `size` base units at `price` is an amount it can swap: each
+    /// leg at least one of its token's smallest units.
+    fn settles(&self, size: f64, price: f64) -> Result<(), String>;
 }
 
 /// Why an RFQ trade didn't settle.
@@ -368,6 +391,8 @@ pub trait Settlement: Send + Sync {
 pub enum SwapError {
     /// A wallet can't settle it: the bot's (`bot`), or the client's.
     Unfunded { bot: bool, reason: String },
+    /// The bot's answer is no amount to swap.
+    Unsettleable(String),
     /// Anything else: the RPC, the chain, the trade itself.
     Failed(String),
 }
@@ -377,6 +402,7 @@ impl std::fmt::Display for SwapError {
         match self {
             Self::Unfunded { bot: true, reason } => write!(f, "the bot's wallet {reason}"),
             Self::Unfunded { bot: false, reason } => write!(f, "the client's wallet {reason}"),
+            Self::Unsettleable(reason) => f.write_str(reason),
             Self::Failed(error) => f.write_str(error),
         }
     }
@@ -385,7 +411,7 @@ impl std::fmt::Display for SwapError {
 /// The bot's RFQ desk at the start and the end of a session: its wallet's
 /// asset and USDC, and the asset's reference price. The session values the
 /// asset at that price; the USDC is in the account's metered value.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeskReport {
     pub start_base: f64,
     pub start_usdc: f64,
@@ -600,11 +626,13 @@ impl Settlement for Swaps {
             Side::Bid => (client.pubkey(), bot.pubkey()),
             Side::Ask => (bot.pubkey(), client.pubkey()),
         };
+        // The bot chose the size and the price: an answer that comes to
+        // nothing is its own.
         let (base, usdc) = amounts(size, price, self.base.decimals, self.quote.decimals)
-            .map_err(SwapError::Failed)?;
+            .map_err(SwapError::Unsettleable)?;
         let instructions = self
             .instructions(&buyer, &seller, size, price)
-            .map_err(SwapError::Failed)?;
+            .map_err(SwapError::Unsettleable)?;
         let bot_key = bot.pubkey();
         let legs: Vec<Leg> = [bot_key, client.pubkey()]
             .into_iter()
@@ -646,6 +674,10 @@ impl Settlement for Swaps {
         })
         .await
         .map_err(|e| SwapError::Failed(e.to_string()))?
+    }
+
+    fn settles(&self, size: f64, price: f64) -> Result<(), String> {
+        amounts(size, price, self.base.decimals, self.quote.decimals).map(|_| ())
     }
 }
 
@@ -842,6 +874,11 @@ impl Clients {
                 wallet.count(if bot { "unsettled" } else { "client_unfunded" }, 1);
                 return 0.0;
             }
+            Err(error @ SwapError::Unsettleable(_)) => {
+                tracing::info!(%error, id = request.id, "an RFQ fill didn't settle");
+                wallet.count("unsettled", 1);
+                return 0.0;
+            }
             Err(SwapError::Failed(error)) => {
                 tracing::warn!(%error, id = request.id, "an RFQ fill didn't settle");
                 Err(error)
@@ -926,6 +963,10 @@ mod tests {
                 .push((*client, wants, size, price));
             Ok("sig".into())
         }
+
+        fn settles(&self, size: f64, price: f64) -> Result<(), String> {
+            amounts(size, price, 6, 6).map(|_| ())
+        }
     }
 
     fn clients(
@@ -943,7 +984,8 @@ mod tests {
             })
             .collect();
         let wallets = ledger.wallets("rfq-client", seats);
-        let board = RfqBoard::new("rfq:SPCX".into());
+        let settlement: Arc<dyn Settlement> = settlement;
+        let board = RfqBoard::new("rfq:SPCX".into(), Some(settlement.clone()));
         let clients = Clients::new(
             spec,
             scale,
@@ -1084,6 +1126,104 @@ mod tests {
         assert!(!report.actors[0].counts.contains_key("unsettled"));
         assert!(report.degraded(), "an RFQ client's own failures void it");
         assert!(board.take_fills().is_empty());
+    }
+
+    /// A response line answering `id` with `bid` and `ask` for `size`.
+    fn sized(id: &str, bid: Option<f64>, ask: Option<f64>, size: f64) -> Planned {
+        let mut line = planned(id, bid, ask);
+        if let Action::Respond { size: s, .. } = &mut line.action {
+            *s = Some(size);
+        }
+        line
+    }
+
+    #[tokio::test]
+    async fn a_dust_answer_is_no_answer_and_never_a_failed_action() {
+        let noted = Arc::new(Noted::default());
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| at(s, 100.0));
+        let spec = RfqClients {
+            clients: 2,
+            per_100_slots: 50.0,
+            tolerance_bps: 1_000_000.0,
+            ..RfqClients::default()
+        };
+        let (mut clients, board, ledger) = clients(spec, scale(), noted.clone(), path);
+        let seat = RfqSeat::new(board.clone());
+        let mut s = 0;
+        // A price that buys no USDC unit, on either side (a two-way
+        // request's side stays hidden), and a size of no base unit.
+        let dust = [
+            planned("", Some(1e-9), Some(1e-9)),
+            planned("", Some(100.0), Some(1e-9)),
+            planned("", Some(1e-9), Some(100.0)),
+            sized("", Some(100.0), Some(100.0), 1e-9),
+        ];
+        for line in dust.iter().cycle().take(40) {
+            let request = next_request(&mut clients, &board, &mut s).await;
+            let mut line = line.clone();
+            if let Action::Respond { id, .. } = &mut line.action {
+                *id = request.id.clone();
+            }
+            let sent = seat.send(&line).await;
+            assert!(
+                matches!(&sent.state, SendState::Failed { reason, .. } if reason.contains("no amount")),
+                "{:?}",
+                sent.state
+            );
+            clients.before_blocks(&at(s, 100.0)).await;
+        }
+        assert!(noted.swaps.lock().unwrap().is_empty());
+        assert!(board.take_fills().is_empty());
+        let report = ledger.report();
+        assert_eq!(report.actions, Actions::default(), "no action tried");
+        assert!(!report.degraded());
+        let counts = &report.actors[0].counts;
+        assert!(!counts.contains_key("answered") || counts["answered"] == 0);
+        assert!(!counts.contains_key("fills"));
+
+        // The smallest answer that settles, one base unit for its cents,
+        // is taken.
+        let request = next_request(&mut clients, &board, &mut s).await;
+        let sent = seat
+            .send(&sized(&request.id, Some(100.0), Some(100.0), 1e-6))
+            .await;
+        assert!(sent.state.landed());
+        clients.before_blocks(&at(s, 100.0)).await;
+        assert_eq!(noted.swaps.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_swap_of_no_amount_is_the_bots_own() {
+        let (report, board) =
+            twenty_answered(SwapError::Unsettleable("1e-9 at 100 is no amount".into())).await;
+        assert_eq!(report.actors[0].counts["unsettled"], 20);
+        assert_eq!(report.actions, Actions::default(), "no action tried");
+        assert!(!report.degraded());
+        assert!(board.take_fills().is_empty());
+
+        // The chain's settlement says so before it reaches the chain.
+        let token = Token {
+            mint: Pubkey::new_unique(),
+            program: Pubkey::new_unique(),
+            decimals: 6,
+        };
+        let client = Keypair::new();
+        let swaps = Swaps::new(
+            "http://127.0.0.1:1".into(),
+            Keypair::new(),
+            vec![client.insecure_clone()],
+            token,
+            token,
+        );
+        for (size, price) in [(1e-9, 100.0), (1.0, 1e-9)] {
+            let swapped = swaps.swap(&client.pubkey(), Side::Bid, size, price).await;
+            assert!(
+                matches!(swapped, Err(SwapError::Unsettleable(_))),
+                "{swapped:?}"
+            );
+            assert!(swaps.settles(size, price).is_err());
+        }
+        assert_eq!(swaps.settles(1e-6, 1.0), Ok(()));
     }
 
     /// A token account's data: `mint`, `owner`, `amount`, its state, and
@@ -1262,7 +1402,7 @@ mod tests {
             },
             scale(),
             wallets,
-            RfqBoard::new("rfq:X".into()),
+            RfqBoard::new("rfq:X".into(), None),
             None,
             path,
             Rng::new([1; 32]),

@@ -508,11 +508,14 @@ impl CarryFamily {
             faults: None,
             actors: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
+            raw_sends: None,
         };
         let shape = Shape {
             informed_share,

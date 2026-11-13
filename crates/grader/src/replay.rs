@@ -15,7 +15,8 @@
 //! with the first run's, the reference's sessions included, byte for byte
 //! once serialized. The `wall_ms` fields are left out: they measure the
 //! machine, not the session. The first field that differs, per session, is
-//! reported.
+//! reported. With `--replay-jobs`, the later runs run their sessions that
+//! many at a time: a grade must not depend on how many ran at once either.
 
 use std::sync::{
     Arc,
@@ -38,6 +39,10 @@ pub struct ReplayCheck {
     pub runs: usize,
     /// Threads kept busy while it ran (see [`Load`]).
     pub load_threads: usize,
+    /// Sessions the later runs ran at once, when not the first run's
+    /// (`--replay-jobs`): a parallel grade checked against a serial one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<usize>,
     /// Reports compared each run: the grade's totals, the bot's sessions and
     /// the reference's.
     pub reports: usize,
