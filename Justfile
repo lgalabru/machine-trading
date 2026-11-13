@@ -128,19 +128,39 @@ actors-smoke:
     takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
     takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
     # The library: every actor beside a bot that sells and answers requests
-    # for quotes. Each acts, none acting on its own fails, RFQ fills
-    # settle, and reading the chain pays: told makes at least twice what a
-    # careful blind strategy does.
+    # for quotes, in six sessions of fresh wallets. In each, every actor
+    # acts, none acting on its own fails, and RFQ fills settle; over the
+    # six, reading the chain pays: told makes at least twice what a careful
+    # blind strategy does.
     just --justfile bots/actors-smoke/Justfile build
-    report=target/logs/actors-library.json details=target/logs/actors-library-details
-    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/{{snapshot}}" --bot bots/actors-smoke \
-      --logs target/logs/actors-library --report "$report" --details "$details" bench/checks/actors/everyone.json > /dev/null
-    jq -e '.scenarios[0].actors | ([.actors[] | select(.reacts_to_bot | not) | .actions.failed] | add) == 0
-      and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)
-      and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)
-      and any(.actors[]; .kind == "rfq-client" and .counts.fills > 0)' "$report" > /dev/null \
-      || { echo "actors-library: an actor didn't act, or failed: $(jq -c '.scenarios[0].actors.actions' "$report")"; exit 1; }
-    python3 bench/checks/actors/read.py --require-edge "$report" "$details/bot/actors-everyone.json.gz"
+    just --justfile bots/rfq-desk/Justfile build
+    library() {
+      local name=$1 bot=$2
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/{{snapshot}}" --bot "$bot" \
+        --logs "target/logs/$name" --report "target/logs/$name.json" --details "target/logs/$name-details" \
+        bench/checks/actors/everyone.json > /dev/null
+    }
+    sessions=()
+    for i in 1 2 3 4 5 6; do
+      name=actors-library-$i report=target/logs/actors-library-$i.json
+      library "$name" bots/actors-smoke
+      jq -e '.scenarios[0].actors | ([.actors[] | select(.reacts_to_bot | not) | .actions.failed] | add) == 0
+        and all(.actors[]; .actions.took + .actions.placed > 0 or .counts.no_lending_venue == 1)
+        and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)
+        and any(.actors[]; .kind == "rfq-client" and .counts.fills > 0)' "$report" > /dev/null \
+        || { echo "$name: an actor didn't act, or failed: $(jq -c '.scenarios[0].actors.actions' "$report")"; exit 1; }
+      sessions+=("$report" "target/logs/$name-details/bot/actors-everyone.json.gz")
+    done
+    python3 bench/checks/actors/read.py --require-edge "${sessions[@]}" > target/logs/actors-library-read.json
+    echo "actors-library: $(jq -c .edge target/logs/actors-library-read.json)"
+    # The RFQ desk's accounting: an idle bot's PnL is its desk asset's move
+    # at the index, and a bot that only answers requests changes by what
+    # its fills earn against the index, no more.
+    library actors-desk-idle bots/starter
+    python3 bench/checks/actors/desk.py --idle target/logs/actors-desk-idle.json > /dev/null
+    library actors-desk bots/rfq-desk
+    python3 bench/checks/actors/desk.py target/logs/actors-desk.json > /dev/null
+    echo "actors-desk: idle $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk-idle.json) USD, answering $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk.json) USD, both the desk's own"
 
 # The strategy interface end to end: the probe puts one line of each kind
 # on its first sheet in a flash-crash session, and its log

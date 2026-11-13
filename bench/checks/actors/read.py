@@ -22,8 +22,13 @@ score the reader, and to give the "told" strategy its answer key.
      the market's net taker flow and following the price's move;
    - **reader** follows the net flow of the wallets whose takes, already
      marked out, have been rewarded lately: it learns them online.
-   Reading pays when told makes at least twice what the careful blind does
-   (`--require-edge` fails the check otherwise).
+   Reading pays when told makes at least twice what the careful blind does,
+   summed over every session given (`--require-edge` fails the check
+   otherwise). One session's flow is a few hundred takes from wallets drawn
+   fresh, and the careful blind's total swings by thousands of bps from one
+   to the next; the sum over several sessions is what the edge is judged
+   on, and each session's careful blind is its own better rule, picked in
+   hindsight.
    Spoofing is read as support: a follower of walls buys one unit as a big
    bid goes up (sells as an ask does), marked out the same way. The blind
    one follows every wall; the reader fades the walls of wallets it has
@@ -31,8 +36,14 @@ score the reader, and to give the "told" strategy its answer key.
    blind one's.
    Every strategy decides from what was public before its decision.
 
-Usage: read.py <report.json> <details.json.gz> [--horizon 40]
-           [--lookback 40] [--every 4] [--require-edge]
+The edge is only there to find on a path whose own history doesn't
+already predict its next move: on a long trend, following the price makes
+about as much as knowing the future does, and no reading can add to it.
+The scenario the check runs (`everyone.json`) moves in a spike, a reversal
+and a range, where following the price loses.
+
+Usage: read.py [--horizon 40] [--lookback 40] [--every 4] [--require-edge]
+           <report.json> <details.json.gz> [<report.json> <details.json.gz> ...]
 """
 
 import argparse
@@ -292,25 +303,18 @@ def stats(xs):
     }
 
 
-def edge(table):
+def edge(told, blind):
     """Whether told makes at least twice what the careful blind does."""
-    told, blind = table["told"]["total_bps"], table["careful_blind"]["total_bps"]
     return {
+        "told_bps": round(told, 1),
+        "careful_blind_bps": round(blind, 1),
         "told_over_blind": round(told / blind, 2) if blind > 0 else None,
         "pass": told > 0 and told >= 2 * max(blind, 0.0),
     }
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("report")
-    parser.add_argument("details")
-    parser.add_argument("--horizon", type=int, default=40)
-    parser.add_argument("--lookback", type=int, default=40)
-    parser.add_argument("--every", type=int, default=4)
-    parser.add_argument("--require-edge", action="store_true")
-    args = parser.parse_args()
-    tape, steps, truth = load(args.report, args.details)
+def read(report, details, args):
+    tape, steps, truth = load(report, details)
     book = Book(steps)
     rows = tell_apart(tape, book, truth, args.horizon)
     right = sum(1 for kind, guess, _, _ in rows if kind == guess)
@@ -319,26 +323,39 @@ def main():
         by_kind[kind][1] += 1
         by_kind[kind][0] += kind == guess
     table = strategies(tape, book, truth, args.horizon, args.lookback, args.every)
-    gate = edge(table)
-    print(
-        json.dumps(
-            {
-                "wallets": len(rows),
-                "classified_right": right,
-                "by_kind": {k: f"{v[0]}/{v[1]}" for k, v in sorted(by_kind.items())},
-                "wallets_read": [
-                    {"truth": kind, "read": guess, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in f.items()}}
-                    for kind, guess, _, f in rows
-                ],
-                "pnl": table,
-                "edge": gate,
-                "spoofing": walls(tape, book, args.horizon),
-            },
-            indent=1,
-        )
-    )
+    return {
+        "report": report,
+        "wallets": len(rows),
+        "classified_right": right,
+        "by_kind": {k: f"{v[0]}/{v[1]}" for k, v in sorted(by_kind.items())},
+        "wallets_read": [
+            {"truth": kind, "read": guess, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in f.items()}}
+            for kind, guess, _, f in rows
+        ],
+        "pnl": table,
+        "edge": edge(table["told"]["total_bps"], table["careful_blind"]["total_bps"]),
+        "spoofing": walls(tape, book, args.horizon),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("sessions", nargs="+", help="a report and its details, per session")
+    parser.add_argument("--horizon", type=int, default=40)
+    parser.add_argument("--lookback", type=int, default=40)
+    parser.add_argument("--every", type=int, default=4)
+    parser.add_argument("--require-edge", action="store_true")
+    args = parser.parse_args()
+    if len(args.sessions) % 2:
+        parser.error("give a report and its details for each session")
+    pairs = list(zip(args.sessions[::2], args.sessions[1::2]))
+    sessions = [read(report, details, args) for report, details in pairs]
+    told = sum(s["pnl"]["told"]["total_bps"] for s in sessions)
+    blind = sum(s["pnl"]["careful_blind"]["total_bps"] for s in sessions)
+    gate = edge(told, blind)
+    print(json.dumps({"sessions": sessions, "edge": gate}, indent=1))
     if args.require_edge and not gate["pass"]:
-        sys.exit(f"reading doesn't pay: told {table['told']['total_bps']} bps, careful blind {table['careful_blind']['total_bps']} bps")
+        sys.exit(f"reading doesn't pay: told {gate['told_bps']} bps, careful blind {gate['careful_blind_bps']} bps over {len(sessions)} sessions")
 
 
 if __name__ == "__main__":

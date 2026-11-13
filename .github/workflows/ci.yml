@@ -106,7 +106,7 @@ jobs:
         # grader's host, and the probe's sheet and market round-trip through
         # the interface.
         run: |
-          for bot in starter printer first-strategy reference maker carry weekend spot-smoke wit-probe actors-smoke; do
+          for bot in starter printer first-strategy reference maker carry weekend spot-smoke wit-probe actors-smoke rfq-desk; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
