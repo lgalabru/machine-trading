@@ -1,0 +1,25 @@
+# Build the component, then atomically replace the last working artifact.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo_bin="$(command -v cargo || true)"
+    if [[ -z "$cargo_bin" ]]; then cargo_bin=/usr/local/cargo/bin/cargo; fi
+    export PATH="$(dirname "$cargo_bin"):$PATH"
+    # The SDK uses a shared Cargo target directory across strategy worktrees.
+    touch src/lib.rs
+    wasm="$("$cargo_bin" build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    test -n "$wasm"
+    cp "$wasm" bot.wasm.tmp
+    mv -f bot.wasm.tmp bot.wasm
+    echo "built bot.wasm from $wasm"
+
+# Run the strategy's native safety tests without a chain.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo_bin="$(command -v cargo || true)"
+    if [[ -z "$cargo_bin" ]]; then cargo_bin=/usr/local/cargo/bin/cargo; fi
+    export PATH="$(dirname "$cargo_bin"):$PATH"
+    touch src/lib.rs
+    "$cargo_bin" test --release --lib

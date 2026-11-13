@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "bench/tasks/flash-crash-spcx"
+    },
+    "trial_name": "flash-crash-spcx__DSrnyf5",
+    "trials_dir": "/home/michaelcrystal/mtx012/batch/2026-11-13__03-40-42_flash-crash-spcx_gpt-6.1-sol",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6.1-sol",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high",
+            "reasoning_summary": "detailed"
+        }
+    },
+    "job_id": "ed0d3bd2-45b7-4a57-9c25-92785554d8f8"
+}

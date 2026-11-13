@@ -1,0 +1,29 @@
+{
+  "models": [
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-astra"
+  ],
+  "attempts": 5,
+  "concurrent": 2,
+  "version": "0.12.0",
+  "timeout_multiplier": 1.0,
+  "harness": {
+    "openai/gpt-6.1-sol": {
+      "agent": "codex",
+      "version": "0.166.0"
+    },
+    "openai/gpt-6-astra": {
+      "agent": "codex",
+      "version": "0.166.0"
+    }
+  },
+  "web": false,
+  "reasoning_effort": "high",
+  "reasoning_summary": "detailed",
+  "metric": "skill: total PnL over the hidden set / the reference bot's, mean over attempts, 90% bootstrap interval",
+  "commit": "92e6aed8",
+  "notes": [
+    "Task images built from main 92e6aed8 (after #37, #41, #42) on each machine, the way `just image` builds them; not the 0.12.0 release digests.",
+    "One secret/hidden set for all 40 trials; 2 trials at a time on each of 6 machines (16 vCPU, arm64)."
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "scenario_family": "weekend-gap",
+  "scenario_seed": 50194726,
+  "scenario_count": 72,
+  "bot_wasm_sha256": "d27546e07efb69dfa1823c260dad88d6e6ee440aa080b9026ffb1a6a08f2ea32",
+  "reward": 0.21105991486871772,
+  "pnl_usd": 16762.024293000006,
+  "risk": {
+    "worst_pnl_usd": -167.97645799999918,
+    "tail_pnl_usd": -72.21633983333338,
+    "max_drawdown_usd": 347.21665799999937,
+    "profitable_share": 0.7777777777777778,
+    "sharpe": 0.9867761112791182
+  },
+  "disqualifications": 0,
+  "maximum_position": 70.0,
+  "maximum_call_fuel": 10156526,
+  "refused_rpc_calls": 0,
+  "traps": 0,
+  "liquidatable_sessions": 0,
+  "outside_market_positions": 0,
+  "model_replay_test": "passed",
+  "scenario_generation_command": "mtx scenario generate --family weekend-gap --out scenarios --prefix final --count 72 --seed 50194726"
+}

@@ -1,0 +1,555 @@
+{
+    "id": "c2c939bc-fba4-4099-afb0-8f61a84e169c",
+    "started_at": "2026-11-13T05:22:34.366613",
+    "updated_at": "2026-11-13T06:29:22.859702",
+    "finished_at": "2026-11-13T06:29:22.859702",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 0,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "codex__gpt-6.1-sol__adhoc": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "bound_pnl_usd": 93647.46314,
+                        "disqualified": 0.0,
+                        "max_drawdown_usd": 581.8902080000007,
+                        "not_graded": 0.0,
+                        "pnl_hidden-1": 429.385816,
+                        "pnl_hidden-10": 11.818067000000156,
+                        "pnl_hidden-11": 587.8509329999997,
+                        "pnl_hidden-12": 1091.3310399999991,
+                        "pnl_hidden-13": -55.112348000000566,
+                        "pnl_hidden-14": 472.18998099999953,
+                        "pnl_hidden-15": -163.70573700000023,
+                        "pnl_hidden-16": 450.25260399999934,
+                        "pnl_hidden-17": 1548.2575180000003,
+                        "pnl_hidden-18": -50.36433600000055,
+                        "pnl_hidden-19": 384.21120399999927,
+                        "pnl_hidden-2": -518.0293280000005,
+                        "pnl_hidden-20": 902.7325199999996,
+                        "pnl_hidden-21": 665.1849700000002,
+                        "pnl_hidden-22": 494.073273,
+                        "pnl_hidden-23": 1130.7432700000008,
+                        "pnl_hidden-24": 323.41438000000016,
+                        "pnl_hidden-25": 285.36780499999986,
+                        "pnl_hidden-26": 332.10616800000025,
+                        "pnl_hidden-27": 530.872147,
+                        "pnl_hidden-28": -85.00598100000025,
+                        "pnl_hidden-29": 798.5123899999999,
+                        "pnl_hidden-3": 137.90369199999986,
+                        "pnl_hidden-30": 682.2503680000009,
+                        "pnl_hidden-31": -165.73744500000066,
+                        "pnl_hidden-32": 1498.2425779999994,
+                        "pnl_hidden-33": 607.8053650000002,
+                        "pnl_hidden-34": 475.3881000000001,
+                        "pnl_hidden-35": -179.77442300000075,
+                        "pnl_hidden-36": 507.98029300000053,
+                        "pnl_hidden-37": 1047.2675249999993,
+                        "pnl_hidden-38": 38.740147000000434,
+                        "pnl_hidden-39": 530.0445990000007,
+                        "pnl_hidden-4": 579.2380670000002,
+                        "pnl_hidden-40": 954.5632559999995,
+                        "pnl_hidden-41": 469.27774800000043,
+                        "pnl_hidden-42": 299.6331219999993,
+                        "pnl_hidden-43": 276.73209900000074,
+                        "pnl_hidden-44": 860.2409160000007,
+                        "pnl_hidden-45": 140.2917269999998,
+                        "pnl_hidden-46": 262.0610199999992,
+                        "pnl_hidden-47": 767.5574379999998,
+                        "pnl_hidden-48": 126.95290999999997,
+                        "pnl_hidden-49": 1619.544984,
+                        "pnl_hidden-5": 125.16484800000035,
+                        "pnl_hidden-50": -28.91369499999928,
+                        "pnl_hidden-51": 559.5257770000007,
+                        "pnl_hidden-52": -220.5464090000005,
+                        "pnl_hidden-53": 1295.0306110000001,
+                        "pnl_hidden-54": 434.69602400000076,
+                        "pnl_hidden-55": -41.849779000000126,
+                        "pnl_hidden-56": 647.7211979999993,
+                        "pnl_hidden-57": -63.98016599999937,
+                        "pnl_hidden-58": 750.0757510000003,
+                        "pnl_hidden-59": -316.6682779999992,
+                        "pnl_hidden-6": 69.76854900000035,
+                        "pnl_hidden-60": 385.90446899999915,
+                        "pnl_hidden-61": 331.79524200000014,
+                        "pnl_hidden-62": -296.7153039999994,
+                        "pnl_hidden-63": 178.39997500000027,
+                        "pnl_hidden-64": -102.73156500000005,
+                        "pnl_hidden-65": 214.886348,
+                        "pnl_hidden-66": 66.5931240000009,
+                        "pnl_hidden-67": 65.08806399999958,
+                        "pnl_hidden-68": 122.4019530000005,
+                        "pnl_hidden-69": -27.85198599999967,
+                        "pnl_hidden-7": 66.75069199999962,
+                        "pnl_hidden-70": 537.2092329999996,
+                        "pnl_hidden-71": -163.10693700000047,
+                        "pnl_hidden-72": 343.29315400000087,
+                        "pnl_hidden-8": 862.9116410000006,
+                        "pnl_hidden-9": 995.0956380000007,
+                        "pnl_usd": 27892.238614,
+                        "profitable_share": 0.7777777777777778,
+                        "reference_pnl_usd": 10973.490000000002,
+                        "reference_ratio": 2.541783754666929,
+                        "refused_calls": 0.0,
+                        "reward": 0.2978429706344739,
+                        "sharpe": 0.846455446330699,
+                        "skill": 2.541783754666929,
+                        "tail_pnl_usd": -194.25949341666683,
+                        "tampered": 0.0,
+                        "worst_pnl_usd": -518.0293280000005
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "bound_pnl_usd": {
+                        "93647.46314": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "disqualified": {
+                        "0.0": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "max_drawdown_usd": {
+                        "581.8902080000007": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "not_graded": {
+                        "0.0": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-1": {
+                        "429.385816": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-10": {
+                        "11.818067000000156": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-11": {
+                        "587.8509329999997": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-12": {
+                        "1091.3310399999991": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-13": {
+                        "-55.112348000000566": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-14": {
+                        "472.18998099999953": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-15": {
+                        "-163.70573700000023": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-16": {
+                        "450.25260399999934": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-17": {
+                        "1548.2575180000003": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-18": {
+                        "-50.36433600000055": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-19": {
+                        "384.21120399999927": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-2": {
+                        "-518.0293280000005": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-20": {
+                        "902.7325199999996": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-21": {
+                        "665.1849700000002": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-22": {
+                        "494.073273": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-23": {
+                        "1130.7432700000008": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-24": {
+                        "323.41438000000016": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-25": {
+                        "285.36780499999986": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-26": {
+                        "332.10616800000025": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-27": {
+                        "530.872147": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-28": {
+                        "-85.00598100000025": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-29": {
+                        "798.5123899999999": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-3": {
+                        "137.90369199999986": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-30": {
+                        "682.2503680000009": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-31": {
+                        "-165.73744500000066": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-32": {
+                        "1498.2425779999994": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-33": {
+                        "607.8053650000002": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-34": {
+                        "475.3881000000001": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-35": {
+                        "-179.77442300000075": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-36": {
+                        "507.98029300000053": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-37": {
+                        "1047.2675249999993": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-38": {
+                        "38.740147000000434": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-39": {
+                        "530.0445990000007": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-4": {
+                        "579.2380670000002": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-40": {
+                        "954.5632559999995": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-41": {
+                        "469.27774800000043": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-42": {
+                        "299.6331219999993": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-43": {
+                        "276.73209900000074": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-44": {
+                        "860.2409160000007": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-45": {
+                        "140.2917269999998": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-46": {
+                        "262.0610199999992": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-47": {
+                        "767.5574379999998": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-48": {
+                        "126.95290999999997": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-49": {
+                        "1619.544984": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-5": {
+                        "125.16484800000035": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-50": {
+                        "-28.91369499999928": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-51": {
+                        "559.5257770000007": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-52": {
+                        "-220.5464090000005": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-53": {
+                        "1295.0306110000001": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-54": {
+                        "434.69602400000076": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-55": {
+                        "-41.849779000000126": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-56": {
+                        "647.7211979999993": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-57": {
+                        "-63.98016599999937": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-58": {
+                        "750.0757510000003": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-59": {
+                        "-316.6682779999992": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-6": {
+                        "69.76854900000035": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-60": {
+                        "385.90446899999915": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-61": {
+                        "331.79524200000014": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-62": {
+                        "-296.7153039999994": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-63": {
+                        "178.39997500000027": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-64": {
+                        "-102.73156500000005": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-65": {
+                        "214.886348": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-66": {
+                        "66.5931240000009": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-67": {
+                        "65.08806399999958": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-68": {
+                        "122.4019530000005": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-69": {
+                        "-27.85198599999967": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-7": {
+                        "66.75069199999962": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-70": {
+                        "537.2092329999996": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-71": {
+                        "-163.10693700000047": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-72": {
+                        "343.29315400000087": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-8": {
+                        "862.9116410000006": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_hidden-9": {
+                        "995.0956380000007": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "pnl_usd": {
+                        "27892.238614": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "profitable_share": {
+                        "0.7777777777777778": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "reference_pnl_usd": {
+                        "10973.490000000002": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "reference_ratio": {
+                        "2.541783754666929": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "refused_calls": {
+                        "0.0": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "reward": {
+                        "0.2978429706344739": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "sharpe": {
+                        "0.846455446330699": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "skill": {
+                        "2.541783754666929": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "tail_pnl_usd": {
+                        "-194.25949341666683": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "tampered": {
+                        "0.0": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    },
+                    "worst_pnl_usd": {
+                        "-518.0293280000005": [
+                            "flash-crash-spcx__S95xRPi"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 12735851,
+        "n_cache_tokens": 12608384,
+        "n_output_tokens": 82435,
+        "cost_usd": 2.340122399999999
+    }
+}

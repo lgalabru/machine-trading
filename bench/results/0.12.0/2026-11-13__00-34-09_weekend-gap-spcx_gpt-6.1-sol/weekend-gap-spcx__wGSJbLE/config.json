@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "bench/tasks/weekend-gap-spcx"
+    },
+    "trial_name": "weekend-gap-spcx__wGSJbLE",
+    "trials_dir": "/home/michaelcrystal/mtx012/batch/2026-11-13__00-34-09_weekend-gap-spcx_gpt-6.1-sol",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6.1-sol",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high",
+            "reasoning_summary": "detailed"
+        }
+    },
+    "job_id": "3a8af3b5-a9e6-49aa-baa8-60f153d7b28b"
+}

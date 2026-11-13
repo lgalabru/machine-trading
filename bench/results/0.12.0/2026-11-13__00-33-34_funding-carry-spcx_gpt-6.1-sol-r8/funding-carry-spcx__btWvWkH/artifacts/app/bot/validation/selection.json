@@ -1,0 +1,14 @@
+{
+  "selected_version": 3,
+  "matched_sessions": 60,
+  "version_2_pnl_usd": 38369.56386098472,
+  "version_3_pnl_usd": 38703.46720946547,
+  "candidate_advantage_usd": 333.90334848074417,
+  "generated_scenario_seed": 129492673,
+  "noise_augmentation_seed": 28721,
+  "generated_wobble_range_pct": [
+    0.03,
+    0.25
+  ],
+  "wasm_sha256": "b3c173428e63004507d8ab218bc60bf50f16b3c8e8e9466bb5bdb491c968dee9"
+}

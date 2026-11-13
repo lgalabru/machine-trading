@@ -1,0 +1,18 @@
+{
+  "unique_sessions": 51,
+  "pnl_usd": 28146.000122302747,
+  "profitable_sessions": 51,
+  "max_drawdown_usd": 447.3507632596502,
+  "worst_pnl_usd": 13.210633120279454,
+  "peak_position": 70.0,
+  "refused_rpc_calls": 0,
+  "disqualifications": 0,
+  "tape_failures": 0,
+  "max_fuel_per_call": 76338071,
+  "bot_sha256": "71c501d5a94a6a27b17a2a48f0b73031d7f0b91236dd98ac54e417c0eeedf323",
+  "replay": {
+    "runs": 2,
+    "sessions": 2,
+    "identical": true
+  }
+}

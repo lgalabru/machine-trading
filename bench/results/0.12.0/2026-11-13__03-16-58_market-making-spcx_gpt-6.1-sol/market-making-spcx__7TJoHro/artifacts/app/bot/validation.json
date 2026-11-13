@@ -1,0 +1,89 @@
+{
+  "artifact": "bot.wasm",
+  "target": "wasm32-wasip2",
+  "sha256": "cdc42000de5c70def87d07da5bc6daac834110f391e4bce2c88acf3c7908ac51",
+  "checks": {
+    "generated_validation": {
+      "sessions": 24,
+      "pnl_usdc": 1544.6174060467001,
+      "reward": 0.2787613040198694,
+      "max_drawdown_usdc": 47.76737249600046,
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "largest_position": 19.9,
+      "liquidatable_sessions": 0,
+      "generator": {
+        "family": "market-making",
+        "count": 24,
+        "seed": 986123,
+        "prefix": "valid"
+      }
+    },
+    "generated_train_comparison": {
+      "sessions": 24,
+      "pnl_usdc": 1085.5135946777955,
+      "reward": 0.18072791989006726,
+      "max_drawdown_usdc": 32.73366674999852,
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "largest_position": 19.9,
+      "liquidatable_sessions": 0,
+      "generator": {
+        "family": "market-making",
+        "count": 24,
+        "seed": 763219,
+        "prefix": "train"
+      }
+    },
+    "generated_stress": {
+      "sessions": 72,
+      "pnl_usdc": 4119.5057311732035,
+      "reward": 0.22710601426912977,
+      "max_drawdown_usdc": 87.90510456680022,
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "largest_position": 19.9,
+      "liquidatable_sessions": 0,
+      "generator": {
+        "family": "market-making",
+        "count": 72,
+        "seed": 55982104,
+        "prefix": "stress"
+      }
+    },
+    "adverse_risk": {
+      "sessions": 3,
+      "pnl_usdc": -577.0476310000013,
+      "reward": 0.0,
+      "max_drawdown_usdc": 202.91750599999978,
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "largest_position": 19.9,
+      "liquidatable_sessions": 0,
+      "description": "Deliberately misleading bursts before repeated adverse 4% jumps; these are risk tests, not sampled performance scenarios."
+    },
+    "delivered_practice": {
+      "sessions": 6,
+      "pnl_usdc": 329.1591949102967,
+      "reward": 0.2291307759446038,
+      "max_drawdown_usdc": 26.85753055909845,
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "largest_position": 19.9
+    }
+  },
+  "model_inference_parity": {
+    "cases": 11722,
+    "maximum_absolute_error": 0.0
+  },
+  "standard_summary": {
+    "sessions": 126,
+    "pnl_usdc": 7078.795926807996,
+    "max_drawdown_usdc": 87.90510456680022,
+    "disqualifications": 0,
+    "refused_rpc_calls": 0,
+    "largest_position": 19.9,
+    "liquidatable_sessions": 0,
+    "max_fuel_per_call": 10768727
+  }
+}

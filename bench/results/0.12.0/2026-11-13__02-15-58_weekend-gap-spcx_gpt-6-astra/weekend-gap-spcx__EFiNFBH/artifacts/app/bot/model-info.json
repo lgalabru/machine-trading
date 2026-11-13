@@ -1,0 +1,27 @@
+{
+  "model_type": "HistGradientBoostingRegressor",
+  "training_family": "weekend-gap",
+  "scenario_generation_seed": 30948239,
+  "generated_scenarios": 20000,
+  "training_scenarios": 17000,
+  "feature_count": 256,
+  "parameters": {
+    "max_iter": 400,
+    "max_leaf_nodes": 31,
+    "learning_rate": 0.06,
+    "l2_regularization": 40,
+    "min_samples_leaf": 100,
+    "early_stopping": false
+  },
+  "units": "percentage points, with sign normalized by the leading directional account",
+  "forecasts": {
+    "model1.bin": "Return over the next 100 slots, or to the reopen when sooner",
+    "model2.bin": "Return to the reopen",
+    "model3.bin": "Return over the next 40 slots, capped at the closed period end"
+  },
+  "sha256": {
+    "model1.bin": "feef176f679819f0f7fdb0890a0648d5c0c404b1902e61a7cba4762789699bb8",
+    "model2.bin": "613d90864ce4d8440fc95f38b396e6f8016e5df78dd9d159f081d4bc17b57b7b",
+    "model3.bin": "c08ba99c6ac8dad62649c25bbd173db06a525c17c356803e79f988f6135a4b1f"
+  }
+}

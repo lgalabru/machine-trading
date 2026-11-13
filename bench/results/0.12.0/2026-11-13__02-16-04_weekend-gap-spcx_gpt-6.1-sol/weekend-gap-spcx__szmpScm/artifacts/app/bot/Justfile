@@ -1,0 +1,34 @@
+# Build atomically: an unsuccessful build leaves the last working component intact.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo >/dev/null 2>&1; then
+      for task_rust_bin in "${RUSTUP_HOME:-/usr/local/rustup}"/toolchains/*/bin; do
+        if [[ -x "$task_rust_bin/cargo" ]]; then
+          export PATH="$task_rust_bin:$PATH"
+          break
+        fi
+      done
+    fi
+    # Several research crates share a target directory; force this crate to rebuild.
+    touch src/lib.rs
+    wasm="$(cargo build --locked --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    test -s "$wasm"
+    cp "$wasm" bot.wasm.next
+    mv -f bot.wasm.next bot.wasm
+    echo "built bot.wasm from $wasm"
+
+# Native checks of the loss limit and reopening stress calculations.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo >/dev/null 2>&1; then
+      for task_rust_bin in "${RUSTUP_HOME:-/usr/local/rustup}"/toolchains/*/bin; do
+        if [[ -x "$task_rust_bin/cargo" ]]; then
+          export PATH="$task_rust_bin:$PATH"
+          break
+        fi
+      done
+    fi
+    cargo test --locked --lib

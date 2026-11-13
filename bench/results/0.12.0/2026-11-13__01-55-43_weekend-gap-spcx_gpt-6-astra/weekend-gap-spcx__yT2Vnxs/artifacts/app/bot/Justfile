@@ -1,0 +1,18 @@
+# Compile into a temporary artifact; a failed build leaves the last bot intact.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="/usr/local/cargo/bin:$PATH"
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    test -n "$wasm"
+    test -f "$wasm"
+    cp "$wasm" bot.wasm.tmp
+    mv -f bot.wasm.tmp bot.wasm
+    echo "built bot.wasm from $wasm"
+
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="/usr/local/cargo/bin:$PATH"
+    cargo test --release --lib

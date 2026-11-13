@@ -1,0 +1,24 @@
+{
+    "job_name": "2026-11-13__03-45-30_market-making-spcx_gpt-6-astra",
+    "jobs_dir": "/home/michaelcrystal/mtx012/batch",
+    "agent_timeout_multiplier": 1.0,
+    "n_concurrent_trials": 1,
+    "agents": [
+        {
+            "name": "codex",
+            "model_name": "openai/gpt-6-astra",
+            "kwargs": {
+                "version": "0.166.0",
+                "web_search": "disabled",
+                "disable_web_search": true,
+                "reasoning_effort": "high",
+                "reasoning_summary": "detailed"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "path": "bench/tasks/market-making-spcx"
+        }
+    ]
+}

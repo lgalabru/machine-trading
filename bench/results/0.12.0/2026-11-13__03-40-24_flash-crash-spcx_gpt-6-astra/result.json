@@ -1,0 +1,555 @@
+{
+    "id": "e02918b7-6104-40b0-856d-ce2efdbaae33",
+    "started_at": "2026-11-13T03:40:25.360669",
+    "updated_at": "2026-11-13T04:46:59.193827",
+    "finished_at": "2026-11-13T04:46:59.193827",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 0,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "codex__gpt-6-astra__adhoc": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "bound_pnl_usd": 93647.46314,
+                        "disqualified": 0.0,
+                        "max_drawdown_usd": 651.7103800000004,
+                        "not_graded": 0.0,
+                        "pnl_hidden-1": 536.1451130000005,
+                        "pnl_hidden-10": -12.904169999999795,
+                        "pnl_hidden-11": 660.6776310000005,
+                        "pnl_hidden-12": 285.23420799999985,
+                        "pnl_hidden-13": 207.97015099999953,
+                        "pnl_hidden-14": 234.4088300000003,
+                        "pnl_hidden-15": -108.6330109999999,
+                        "pnl_hidden-16": 474.7454839999991,
+                        "pnl_hidden-17": 1498.242295,
+                        "pnl_hidden-18": 19.237817999999606,
+                        "pnl_hidden-19": 418.77083400000083,
+                        "pnl_hidden-2": 244.39266700000007,
+                        "pnl_hidden-20": 830.8700690000005,
+                        "pnl_hidden-21": 677.8676209999994,
+                        "pnl_hidden-22": 186.92794200000026,
+                        "pnl_hidden-23": 822.8693569999996,
+                        "pnl_hidden-24": 331.73799399999916,
+                        "pnl_hidden-25": 618.2667560000009,
+                        "pnl_hidden-26": 490.9337350000005,
+                        "pnl_hidden-27": 521.1218200000003,
+                        "pnl_hidden-28": -52.70516999999927,
+                        "pnl_hidden-29": 779.1388449999995,
+                        "pnl_hidden-3": 59.66004099999918,
+                        "pnl_hidden-30": 682.2503680000009,
+                        "pnl_hidden-31": -161.37129500000083,
+                        "pnl_hidden-32": 1532.0744950000008,
+                        "pnl_hidden-33": 338.65531399999963,
+                        "pnl_hidden-34": 844.8806000000004,
+                        "pnl_hidden-35": -412.5345980000002,
+                        "pnl_hidden-36": -35.92602799999986,
+                        "pnl_hidden-37": 850.32035,
+                        "pnl_hidden-38": 358.39479199999914,
+                        "pnl_hidden-39": 640.8374060000006,
+                        "pnl_hidden-4": 331.5222439999998,
+                        "pnl_hidden-40": 1146.4874710000004,
+                        "pnl_hidden-41": 363.82814999999937,
+                        "pnl_hidden-42": -327.7344699999994,
+                        "pnl_hidden-43": -415.9033500000005,
+                        "pnl_hidden-44": 860.2409160000007,
+                        "pnl_hidden-45": -90.28928900000028,
+                        "pnl_hidden-46": 262.0610199999992,
+                        "pnl_hidden-47": 957.1244339999994,
+                        "pnl_hidden-48": -500.7250100000001,
+                        "pnl_hidden-49": 1270.075331,
+                        "pnl_hidden-5": 134.02750399999968,
+                        "pnl_hidden-50": 181.33191400000032,
+                        "pnl_hidden-51": 527.8744399999996,
+                        "pnl_hidden-52": -174.48381100000006,
+                        "pnl_hidden-53": 1512.8790200000003,
+                        "pnl_hidden-54": 434.69602400000076,
+                        "pnl_hidden-55": -62.67758599999979,
+                        "pnl_hidden-56": 659.4890660000001,
+                        "pnl_hidden-57": 36.00249900000017,
+                        "pnl_hidden-58": 486.41822200000024,
+                        "pnl_hidden-59": -215.30098700000053,
+                        "pnl_hidden-6": 118.88195199999973,
+                        "pnl_hidden-60": 274.8493760000001,
+                        "pnl_hidden-61": 823.5128789999999,
+                        "pnl_hidden-62": -350.5632229999992,
+                        "pnl_hidden-63": 558.7654610000009,
+                        "pnl_hidden-64": -318.01468399999976,
+                        "pnl_hidden-65": -34.60425700000087,
+                        "pnl_hidden-66": 63.463496000000305,
+                        "pnl_hidden-67": -7.421329999999216,
+                        "pnl_hidden-68": 122.4019530000005,
+                        "pnl_hidden-69": -4.394363999999769,
+                        "pnl_hidden-7": 118.41594199999963,
+                        "pnl_hidden-70": 407.7948290000004,
+                        "pnl_hidden-71": -223.6775890000008,
+                        "pnl_hidden-72": 343.29315400000087,
+                        "pnl_hidden-8": 955.6709429999992,
+                        "pnl_hidden-9": 997.0823959999998,
+                        "pnl_usd": 25584.95895,
+                        "profitable_share": 0.7361111111111112,
+                        "reference_pnl_usd": 10973.490000000002,
+                        "reference_ratio": 2.331524332732795,
+                        "refused_calls": 0.0,
+                        "reward": 0.27320504039443433,
+                        "sharpe": 0.7560221794249385,
+                        "skill": 2.331524332732795,
+                        "tail_pnl_usd": -274.9359430833335,
+                        "tampered": 0.0,
+                        "worst_pnl_usd": -500.7250100000001
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "bound_pnl_usd": {
+                        "93647.46314": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "disqualified": {
+                        "0.0": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "max_drawdown_usd": {
+                        "651.7103800000004": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "not_graded": {
+                        "0.0": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-1": {
+                        "536.1451130000005": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-10": {
+                        "-12.904169999999795": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-11": {
+                        "660.6776310000005": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-12": {
+                        "285.23420799999985": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-13": {
+                        "207.97015099999953": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-14": {
+                        "234.4088300000003": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-15": {
+                        "-108.6330109999999": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-16": {
+                        "474.7454839999991": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-17": {
+                        "1498.242295": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-18": {
+                        "19.237817999999606": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-19": {
+                        "418.77083400000083": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-2": {
+                        "244.39266700000007": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-20": {
+                        "830.8700690000005": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-21": {
+                        "677.8676209999994": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-22": {
+                        "186.92794200000026": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-23": {
+                        "822.8693569999996": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-24": {
+                        "331.73799399999916": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-25": {
+                        "618.2667560000009": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-26": {
+                        "490.9337350000005": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-27": {
+                        "521.1218200000003": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-28": {
+                        "-52.70516999999927": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-29": {
+                        "779.1388449999995": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-3": {
+                        "59.66004099999918": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-30": {
+                        "682.2503680000009": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-31": {
+                        "-161.37129500000083": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-32": {
+                        "1532.0744950000008": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-33": {
+                        "338.65531399999963": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-34": {
+                        "844.8806000000004": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-35": {
+                        "-412.5345980000002": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-36": {
+                        "-35.92602799999986": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-37": {
+                        "850.32035": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-38": {
+                        "358.39479199999914": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-39": {
+                        "640.8374060000006": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-4": {
+                        "331.5222439999998": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-40": {
+                        "1146.4874710000004": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-41": {
+                        "363.82814999999937": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-42": {
+                        "-327.7344699999994": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-43": {
+                        "-415.9033500000005": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-44": {
+                        "860.2409160000007": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-45": {
+                        "-90.28928900000028": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-46": {
+                        "262.0610199999992": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-47": {
+                        "957.1244339999994": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-48": {
+                        "-500.7250100000001": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-49": {
+                        "1270.075331": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-5": {
+                        "134.02750399999968": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-50": {
+                        "181.33191400000032": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-51": {
+                        "527.8744399999996": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-52": {
+                        "-174.48381100000006": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-53": {
+                        "1512.8790200000003": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-54": {
+                        "434.69602400000076": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-55": {
+                        "-62.67758599999979": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-56": {
+                        "659.4890660000001": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-57": {
+                        "36.00249900000017": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-58": {
+                        "486.41822200000024": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-59": {
+                        "-215.30098700000053": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-6": {
+                        "118.88195199999973": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-60": {
+                        "274.8493760000001": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-61": {
+                        "823.5128789999999": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-62": {
+                        "-350.5632229999992": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-63": {
+                        "558.7654610000009": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-64": {
+                        "-318.01468399999976": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-65": {
+                        "-34.60425700000087": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-66": {
+                        "63.463496000000305": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-67": {
+                        "-7.421329999999216": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-68": {
+                        "122.4019530000005": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-69": {
+                        "-4.394363999999769": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-7": {
+                        "118.41594199999963": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-70": {
+                        "407.7948290000004": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-71": {
+                        "-223.6775890000008": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-72": {
+                        "343.29315400000087": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-8": {
+                        "955.6709429999992": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_hidden-9": {
+                        "997.0823959999998": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "pnl_usd": {
+                        "25584.95895": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "profitable_share": {
+                        "0.7361111111111112": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "reference_pnl_usd": {
+                        "10973.490000000002": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "reference_ratio": {
+                        "2.331524332732795": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "refused_calls": {
+                        "0.0": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "reward": {
+                        "0.27320504039443433": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "sharpe": {
+                        "0.7560221794249385": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "skill": {
+                        "2.331524332732795": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "tail_pnl_usd": {
+                        "-274.9359430833335": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "tampered": {
+                        "0.0": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    },
+                    "worst_pnl_usd": {
+                        "-500.7250100000001": [
+                            "flash-crash-spcx__ArnPhwi"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 14479149,
+        "n_cache_tokens": 14363520,
+        "n_output_tokens": 81015,
+        "cost_usd": 19.570559999999993
+    }
+}

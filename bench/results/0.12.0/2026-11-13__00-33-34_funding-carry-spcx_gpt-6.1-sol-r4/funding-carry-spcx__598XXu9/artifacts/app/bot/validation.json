@@ -1,0 +1,49 @@
+{
+  "target": "wasm32-wasip2",
+  "bot_wasm_sha256": "37c1760d2f817539c9669778c5e65295c1bb804714a56cf62e8985df8da972ae",
+  "final_export": {
+    "practice": {
+      "sessions": 6,
+      "pnl_usd": 2072.021054975221,
+      "hindsight_bound_usd": 9406.086166997786,
+      "reward": 0.22028514497827145,
+      "profitable_sessions": 6,
+      "worst_pnl_usd": 198.51798100000087,
+      "max_drawdown_usd": 181.78941783428854,
+      "peak_absolute_position": 70.0,
+      "disqualifications": [],
+      "refused_rpc_calls": 0
+    },
+    "generated_stress": {
+      "sessions": 24,
+      "pnl_usd": 14384.738862722843,
+      "hindsight_bound_usd": 55399.27861428314,
+      "reward": 0.2596557071234885,
+      "profitable_sessions": 24,
+      "worst_pnl_usd": 97.74917317000109,
+      "max_drawdown_usd": 274.7200754361693,
+      "peak_absolute_position": 70.0,
+      "disqualifications": [],
+      "refused_rpc_calls": 0
+    },
+    "model_parity_max_absolute_error": 5.1e-13,
+    "final_directory_smoke_pnl_usd": 399.54172700000345
+  },
+  "prior_threshold_serialization": {
+    "description": "Same strategy with lower-precision tree threshold serialization. The final export matched PnL on all 24 compared stress sessions and all six practice sessions.",
+    "stress_72": {
+      "sessions": 72,
+      "pnl_usd": 38210.68460028898,
+      "hindsight_bound_usd": 156348.6290799409,
+      "reward": 0.24439411349588422,
+      "profitable_sessions": 71,
+      "worst_pnl_usd": -17.631419105333407,
+      "max_drawdown_usd": 290.48323617188726,
+      "peak_absolute_position": 70.0,
+      "disqualifications": [],
+      "refused_rpc_calls": 0
+    },
+    "stress_comparison_matched": true
+  },
+  "note": "Development scenarios are generated practice-family paths; stress paths vary common price noise. These are not hidden grading results."
+}

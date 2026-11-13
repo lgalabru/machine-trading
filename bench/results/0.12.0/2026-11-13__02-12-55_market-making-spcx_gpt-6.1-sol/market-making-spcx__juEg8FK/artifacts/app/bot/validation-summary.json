@@ -1,0 +1,18 @@
+{
+  "component_sha256": "f19ce855ce9155e00e9cec58f52e91e7bbc76a006ee2b97d8f3fe63bb1d98894",
+  "target": "wasm32-wasip2",
+  "generated": {
+    "sessions": 71,
+    "pnl_usd": 2001.658480142809,
+    "reward": 0.11920999317890482,
+    "max_drawdown_usd": 42.073313800399774,
+    "violations": 0
+  },
+  "practice": {
+    "sessions": 6,
+    "pnl_usd": 146.8509129355025,
+    "reward": 0.10222428584519716,
+    "max_drawdown_usd": 34.76096546950066,
+    "violations": 0
+  }
+}

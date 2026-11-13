@@ -1,0 +1,555 @@
+{
+    "id": "6dbdc58e-59a4-4d2d-83e2-86909290f9d7",
+    "started_at": "2026-11-13T00:32:04.568130",
+    "updated_at": "2026-11-13T02:07:10.890748",
+    "finished_at": "2026-11-13T02:07:10.890748",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 0,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "codex__gpt-6-astra__adhoc": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "bound_pnl_usd": 183919.34055004962,
+                        "disqualified": 0.0,
+                        "max_drawdown_usd": 505.0417934320958,
+                        "not_graded": 0.0,
+                        "pnl_hidden-1": 884.7449369999995,
+                        "pnl_hidden-10": 528.548294247581,
+                        "pnl_hidden-11": 1280.39219590207,
+                        "pnl_hidden-12": 349.5815795836006,
+                        "pnl_hidden-13": 731.9082046572021,
+                        "pnl_hidden-14": 597.6142394636408,
+                        "pnl_hidden-15": 629.0591590000004,
+                        "pnl_hidden-16": 433.69111638155664,
+                        "pnl_hidden-17": 811.1269718568019,
+                        "pnl_hidden-18": 364.2827459236905,
+                        "pnl_hidden-19": 1080.174133999999,
+                        "pnl_hidden-2": 420.52007799999774,
+                        "pnl_hidden-20": 452.72662500000115,
+                        "pnl_hidden-21": 832.6717376784381,
+                        "pnl_hidden-22": 681.5254509999995,
+                        "pnl_hidden-23": 346.3911960000005,
+                        "pnl_hidden-24": 518.3649619999997,
+                        "pnl_hidden-25": 1443.5203943667966,
+                        "pnl_hidden-26": 910.3878134427705,
+                        "pnl_hidden-27": 362.0638678638479,
+                        "pnl_hidden-28": 589.3836360000023,
+                        "pnl_hidden-29": 402.97294500000135,
+                        "pnl_hidden-3": 702.5339812019629,
+                        "pnl_hidden-30": 567.6564089999993,
+                        "pnl_hidden-31": 731.5417640000032,
+                        "pnl_hidden-32": 515.9825587665182,
+                        "pnl_hidden-33": 218.50199131889894,
+                        "pnl_hidden-34": 757.4964511712387,
+                        "pnl_hidden-35": 301.5278065331804,
+                        "pnl_hidden-36": 583.8396787628899,
+                        "pnl_hidden-37": 611.8487640000003,
+                        "pnl_hidden-38": 56.13910399999986,
+                        "pnl_hidden-39": 632.6528259999995,
+                        "pnl_hidden-4": 1150.4909882267184,
+                        "pnl_hidden-40": 591.34789385968,
+                        "pnl_hidden-41": 655.1529703348788,
+                        "pnl_hidden-42": 386.57465684534145,
+                        "pnl_hidden-43": 178.4164649999966,
+                        "pnl_hidden-44": 435.0856910000002,
+                        "pnl_hidden-45": 432.5322925239998,
+                        "pnl_hidden-46": 186.47672769625933,
+                        "pnl_hidden-47": 413.5071182860993,
+                        "pnl_hidden-48": 769.4503109999987,
+                        "pnl_hidden-49": 854.646645731209,
+                        "pnl_hidden-5": 427.7126590000007,
+                        "pnl_hidden-50": 418.32671891639984,
+                        "pnl_hidden-51": 526.0750278713003,
+                        "pnl_hidden-52": 1147.4480729999996,
+                        "pnl_hidden-53": 541.5401852380801,
+                        "pnl_hidden-54": 577.0306710000004,
+                        "pnl_hidden-55": 315.49690733831994,
+                        "pnl_hidden-56": 708.8192868856968,
+                        "pnl_hidden-57": 131.9713632207804,
+                        "pnl_hidden-58": 835.1268830000008,
+                        "pnl_hidden-59": 572.011217596948,
+                        "pnl_hidden-6": 990.2415180969601,
+                        "pnl_hidden-60": 218.76276384878838,
+                        "pnl_hidden-61": 863.2823459605206,
+                        "pnl_hidden-62": 488.52543200000036,
+                        "pnl_hidden-63": 472.8333479999983,
+                        "pnl_hidden-64": 115.07391100000132,
+                        "pnl_hidden-65": 332.9643834351973,
+                        "pnl_hidden-66": 261.28166280524965,
+                        "pnl_hidden-67": 1183.5720034163987,
+                        "pnl_hidden-68": 947.406136351201,
+                        "pnl_hidden-69": 597.4079379999985,
+                        "pnl_hidden-7": 177.22685078574068,
+                        "pnl_hidden-70": -370.3119140000017,
+                        "pnl_hidden-71": 430.30601399999796,
+                        "pnl_hidden-72": 715.7107360000009,
+                        "pnl_hidden-8": 634.13320757558,
+                        "pnl_hidden-9": 591.9326988736011,
+                        "pnl_usd": 41236.963408843636,
+                        "profitable_share": 0.9861111111111112,
+                        "reference_pnl_usd": 37360.18,
+                        "reference_ratio": 1.1037677925760432,
+                        "refused_calls": 0.0,
+                        "reward": 0.2242122187123757,
+                        "sharpe": 1.8669423470982889,
+                        "skill": 1.1037677925760432,
+                        "tail_pnl_usd": 149.2136366289345,
+                        "tampered": 0.0,
+                        "worst_pnl_usd": -370.3119140000017
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "bound_pnl_usd": {
+                        "183919.34055004962": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "disqualified": {
+                        "0.0": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "max_drawdown_usd": {
+                        "505.0417934320958": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "not_graded": {
+                        "0.0": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-1": {
+                        "884.7449369999995": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-10": {
+                        "528.548294247581": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-11": {
+                        "1280.39219590207": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-12": {
+                        "349.5815795836006": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-13": {
+                        "731.9082046572021": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-14": {
+                        "597.6142394636408": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-15": {
+                        "629.0591590000004": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-16": {
+                        "433.69111638155664": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-17": {
+                        "811.1269718568019": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-18": {
+                        "364.2827459236905": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-19": {
+                        "1080.174133999999": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-2": {
+                        "420.52007799999774": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-20": {
+                        "452.72662500000115": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-21": {
+                        "832.6717376784381": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-22": {
+                        "681.5254509999995": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-23": {
+                        "346.3911960000005": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-24": {
+                        "518.3649619999997": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-25": {
+                        "1443.5203943667966": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-26": {
+                        "910.3878134427705": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-27": {
+                        "362.0638678638479": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-28": {
+                        "589.3836360000023": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-29": {
+                        "402.97294500000135": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-3": {
+                        "702.5339812019629": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-30": {
+                        "567.6564089999993": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-31": {
+                        "731.5417640000032": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-32": {
+                        "515.9825587665182": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-33": {
+                        "218.50199131889894": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-34": {
+                        "757.4964511712387": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-35": {
+                        "301.5278065331804": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-36": {
+                        "583.8396787628899": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-37": {
+                        "611.8487640000003": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-38": {
+                        "56.13910399999986": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-39": {
+                        "632.6528259999995": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-4": {
+                        "1150.4909882267184": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-40": {
+                        "591.34789385968": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-41": {
+                        "655.1529703348788": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-42": {
+                        "386.57465684534145": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-43": {
+                        "178.4164649999966": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-44": {
+                        "435.0856910000002": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-45": {
+                        "432.5322925239998": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-46": {
+                        "186.47672769625933": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-47": {
+                        "413.5071182860993": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-48": {
+                        "769.4503109999987": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-49": {
+                        "854.646645731209": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-5": {
+                        "427.7126590000007": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-50": {
+                        "418.32671891639984": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-51": {
+                        "526.0750278713003": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-52": {
+                        "1147.4480729999996": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-53": {
+                        "541.5401852380801": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-54": {
+                        "577.0306710000004": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-55": {
+                        "315.49690733831994": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-56": {
+                        "708.8192868856968": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-57": {
+                        "131.9713632207804": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-58": {
+                        "835.1268830000008": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-59": {
+                        "572.011217596948": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-6": {
+                        "990.2415180969601": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-60": {
+                        "218.76276384878838": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-61": {
+                        "863.2823459605206": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-62": {
+                        "488.52543200000036": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-63": {
+                        "472.8333479999983": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-64": {
+                        "115.07391100000132": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-65": {
+                        "332.9643834351973": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-66": {
+                        "261.28166280524965": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-67": {
+                        "1183.5720034163987": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-68": {
+                        "947.406136351201": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-69": {
+                        "597.4079379999985": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-7": {
+                        "177.22685078574068": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-70": {
+                        "-370.3119140000017": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-71": {
+                        "430.30601399999796": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-72": {
+                        "715.7107360000009": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-8": {
+                        "634.13320757558": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_hidden-9": {
+                        "591.9326988736011": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "pnl_usd": {
+                        "41236.963408843636": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "profitable_share": {
+                        "0.9861111111111112": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "reference_pnl_usd": {
+                        "37360.18": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "reference_ratio": {
+                        "1.1037677925760432": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "refused_calls": {
+                        "0.0": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "reward": {
+                        "0.2242122187123757": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "sharpe": {
+                        "1.8669423470982889": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "skill": {
+                        "1.1037677925760432": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "tail_pnl_usd": {
+                        "149.2136366289345": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "tampered": {
+                        "0.0": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    },
+                    "worst_pnl_usd": {
+                        "-370.3119140000017": [
+                            "funding-carry-spcx__q9YjJGM"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 10763956,
+        "n_cache_tokens": 10645632,
+        "n_output_tokens": 74610,
+        "cost_usd": 15.559371999999998
+    }
+}

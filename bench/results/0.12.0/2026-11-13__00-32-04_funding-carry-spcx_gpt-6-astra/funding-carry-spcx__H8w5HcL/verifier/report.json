@@ -1,0 +1,4338 @@
+{
+  "reward": 0.2598385942600546,
+  "pnl_usd": 47789.34290576116,
+  "bound_pnl_usd": 183919.34055004962,
+  "reference_pnl_usd": 37360.18,
+  "reference_ratio": 1.2791518377524187,
+  "skill": 1.2791518377524187,
+  "eval_seed_sha256": "eb93508e26b157978d5b1af6ed1a259e18140ff097f623a364547f84a2862560",
+  "risk": {
+    "worst_pnl_usd": -7.693730999999389,
+    "tail_pnl_usd": 154.54220186166808,
+    "max_drawdown_usd": 330.7305673696028,
+    "profitable_share": 0.9861111111111112,
+    "sharpe": 1.7311178028968415
+  },
+  "scenarios": [
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2129.2990211670617,
+      "reference_pnl_usd": 559.88,
+      "scenario": "hidden-1",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.24,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10704.012584,
+      "pnl_usd": 604.0125840000001,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884165
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 75.7612380752089,
+      "valuation": "book",
+      "flow": {
+        "orders": 229,
+        "sent": 229,
+        "failed": 0,
+        "volume": 103.45000000000009,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 640,
+        "overran": 0,
+        "wall_ms": 8664,
+        "late_sends": 0,
+        "fuel_used": 43303039857,
+        "fuel_max_call": 67929224
+      },
+      "wall_ms": 24532
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2413.366296869209,
+      "reference_pnl_usd": 227.05,
+      "scenario": "hidden-2",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 146.63,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10635.263466,
+      "pnl_usd": 535.2634660000003,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883899
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 134.1964743869412,
+      "valuation": "book",
+      "flow": {
+        "orders": 183,
+        "sent": 183,
+        "failed": 0,
+        "volume": 91.81000000000007,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 507,
+        "overran": 0,
+        "wall_ms": 7206,
+        "late_sends": 0,
+        "fuel_used": 34292334958,
+        "fuel_max_call": 67962620
+      },
+      "wall_ms": 19608
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2026.1536431973682,
+      "reference_pnl_usd": 908.0,
+      "scenario": "hidden-3",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 132.87,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11017.507665201963,
+      "pnl_usd": 917.5076652019634,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883944
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 69.82130417752887,
+      "valuation": "book",
+      "flow": {
+        "orders": 193,
+        "sent": 193,
+        "failed": 0,
+        "volume": 96.08999999999996,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 529,
+        "overran": 0,
+        "wall_ms": 6812,
+        "late_sends": 0,
+        "fuel_used": 35782616953,
+        "fuel_max_call": 67832845
+      },
+      "wall_ms": 19485
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3201.592456172992,
+      "reference_pnl_usd": 742.08,
+      "scenario": "hidden-4",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 137.54,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11101.228812226718,
+      "pnl_usd": 1001.2288122267182,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883879
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 264.685312961401,
+      "valuation": "book",
+      "flow": {
+        "orders": 169,
+        "sent": 169,
+        "failed": 0,
+        "volume": 83.45000000000002,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 497,
+        "overran": 0,
+        "wall_ms": 7480,
+        "late_sends": 0,
+        "fuel_used": 33616834164,
+        "fuel_max_call": 67887302
+      },
+      "wall_ms": 19865
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3451.6918945264983,
+      "reference_pnl_usd": 1029.76,
+      "scenario": "hidden-5",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 141.81,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11185.075200999998,
+      "pnl_usd": 1085.0752009999978,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884273
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 167.53061499999785,
+      "valuation": "book",
+      "flow": {
+        "orders": 253,
+        "sent": 253,
+        "failed": 0,
+        "volume": 123.45000000000006,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 694,
+        "overran": 0,
+        "wall_ms": 9429,
+        "late_sends": 0,
+        "fuel_used": 46962802111,
+        "fuel_max_call": 67856509
+      },
+      "wall_ms": 26561
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 4435.957024856947,
+      "reference_pnl_usd": 1070.01,
+      "scenario": "hidden-6",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 139.96,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11490.43720909696,
+      "pnl_usd": 1390.4372090969591,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884310
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 133.23541000000114,
+      "valuation": "book",
+      "flow": {
+        "orders": 263,
+        "sent": 263,
+        "failed": 0,
+        "volume": 128.40999999999997,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 712,
+        "overran": 0,
+        "wall_ms": 11387,
+        "late_sends": 0,
+        "fuel_used": 48185981497,
+        "fuel_max_call": 67927595
+      },
+      "wall_ms": 29271
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1438.7657555088626,
+      "reference_pnl_usd": 275.04,
+      "scenario": "hidden-7",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 147.94,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10268.701756,
+      "pnl_usd": 168.7017560000004,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884049
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 54.770407761443494,
+      "valuation": "book",
+      "flow": {
+        "orders": 217,
+        "sent": 217,
+        "failed": 0,
+        "volume": 107.78999999999999,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 582,
+        "overran": 0,
+        "wall_ms": 7983,
+        "late_sends": 0,
+        "fuel_used": 39372194596,
+        "fuel_max_call": 67942502
+      },
+      "wall_ms": 22246
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2154.0793773170144,
+      "reference_pnl_usd": 936.98,
+      "scenario": "hidden-8",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 125.07000000000001,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10986.022413575578,
+      "pnl_usd": 886.022413575578,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884039
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 101.0020790292856,
+      "valuation": "book",
+      "flow": {
+        "orders": 217,
+        "sent": 217,
+        "failed": 0,
+        "volume": 99.84000000000002,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 577,
+        "overran": 0,
+        "wall_ms": 7799,
+        "late_sends": 0,
+        "fuel_used": 39036437002,
+        "fuel_max_call": 67924466
+      },
+      "wall_ms": 22056
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2295.3811316042725,
+      "reference_pnl_usd": 874.45,
+      "scenario": "hidden-9",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 137.94,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11449.992595126398,
+      "pnl_usd": 1349.9925951263976,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884158
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 118.12443042861923,
+      "valuation": "book",
+      "flow": {
+        "orders": 235,
+        "sent": 235,
+        "failed": 0,
+        "volume": 119.07,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 636,
+        "overran": 0,
+        "wall_ms": 8170,
+        "late_sends": 0,
+        "fuel_used": 43032581568,
+        "fuel_max_call": 67858146
+      },
+      "wall_ms": 23643
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1471.393271281217,
+      "reference_pnl_usd": 347.79,
+      "scenario": "hidden-10",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.23,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10563.394419,
+      "pnl_usd": 463.3944190000002,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883944
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 57.701952000003075,
+      "valuation": "book",
+      "flow": {
+        "orders": 188,
+        "sent": 188,
+        "failed": 0,
+        "volume": 89.04000000000006,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 529,
+        "overran": 0,
+        "wall_ms": 7302,
+        "late_sends": 0,
+        "fuel_used": 35779966275,
+        "fuel_max_call": 67935381
+      },
+      "wall_ms": 19746
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3607.9509144906388,
+      "reference_pnl_usd": 1371.85,
+      "scenario": "hidden-11",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 115.5,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11798.34831290207,
+      "pnl_usd": 1698.3483129020697,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883863
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 191.0654866167788,
+      "valuation": "book",
+      "flow": {
+        "orders": 177,
+        "sent": 177,
+        "failed": 0,
+        "volume": 79.97,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 489,
+        "overran": 0,
+        "wall_ms": 7231,
+        "late_sends": 0,
+        "fuel_used": 33077650267,
+        "fuel_max_call": 67850263
+      },
+      "wall_ms": 19241
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2940.585998584529,
+      "reference_pnl_usd": 363.42,
+      "scenario": "hidden-12",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.32,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10748.320718,
+      "pnl_usd": 648.3207180000009,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884116
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 94.76762655148195,
+      "valuation": "book",
+      "flow": {
+        "orders": 216,
+        "sent": 216,
+        "failed": 0,
+        "volume": 102.24000000000004,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 615,
+        "overran": 0,
+        "wall_ms": 10309,
+        "late_sends": 0,
+        "fuel_used": 41613041606,
+        "fuel_max_call": 67931785
+      },
+      "wall_ms": 25555
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3708.318982210504,
+      "reference_pnl_usd": 615.82,
+      "scenario": "hidden-13",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 140.06,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11126.237002,
+      "pnl_usd": 1026.2370019999998,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884343
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 146.48348376090144,
+      "valuation": "book",
+      "flow": {
+        "orders": 265,
+        "sent": 265,
+        "failed": 0,
+        "volume": 123.10999999999996,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 729,
+        "overran": 0,
+        "wall_ms": 11442,
+        "late_sends": 0,
+        "fuel_used": 49332358360,
+        "fuel_max_call": 67923573
+      },
+      "wall_ms": 30029
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1327.508283443944,
+      "reference_pnl_usd": 520.46,
+      "scenario": "hidden-14",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.82,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10606.855542463642,
+      "pnl_usd": 506.85554246364154,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883876
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 99.77710277359802,
+      "valuation": "book",
+      "flow": {
+        "orders": 184,
+        "sent": 184,
+        "failed": 0,
+        "volume": 93.87999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 495,
+        "overran": 0,
+        "wall_ms": 6518,
+        "late_sends": 0,
+        "fuel_used": 33477224934,
+        "fuel_max_call": 67916375
+      },
+      "wall_ms": 18978
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1482.5682970876076,
+      "reference_pnl_usd": 575.9,
+      "scenario": "hidden-15",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 141.12,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10569.672590999999,
+      "pnl_usd": 469.67259099999865,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884237
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 120.86601485420033,
+      "valuation": "book",
+      "flow": {
+        "orders": 249,
+        "sent": 249,
+        "failed": 0,
+        "volume": 122.82999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 676,
+        "overran": 0,
+        "wall_ms": 9422,
+        "late_sends": 0,
+        "fuel_used": 45742901056,
+        "fuel_max_call": 67943319
+      },
+      "wall_ms": 25274
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2479.6380791498277,
+      "reference_pnl_usd": 397.97,
+      "scenario": "hidden-16",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.76,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10728.154382381557,
+      "pnl_usd": 628.1543823815573,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883876
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 91.18838125551156,
+      "valuation": "book",
+      "flow": {
+        "orders": 175,
+        "sent": 175,
+        "failed": 0,
+        "volume": 88.71000000000004,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 495,
+        "overran": 0,
+        "wall_ms": 7394,
+        "late_sends": 0,
+        "fuel_used": 33478411517,
+        "fuel_max_call": 67958422
+      },
+      "wall_ms": 19958
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3162.901154809086,
+      "reference_pnl_usd": 475.01,
+      "scenario": "hidden-17",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.03,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10778.323718,
+      "pnl_usd": 678.3237179999996,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884180
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 162.74260557940215,
+      "valuation": "book",
+      "flow": {
+        "orders": 226,
+        "sent": 226,
+        "failed": 0,
+        "volume": 107.41000000000008,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 647,
+        "overran": 0,
+        "wall_ms": 10262,
+        "late_sends": 0,
+        "fuel_used": 43777147201,
+        "fuel_max_call": 67932489
+      },
+      "wall_ms": 26611
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2466.8567734761727,
+      "reference_pnl_usd": 772.3,
+      "scenario": "hidden-18",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 136.63,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10764.665861923691,
+      "pnl_usd": 664.6658619236914,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884343
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 142.05864669134826,
+      "valuation": "book",
+      "flow": {
+        "orders": 260,
+        "sent": 260,
+        "failed": 0,
+        "volume": 132.56000000000003,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 729,
+        "overran": 0,
+        "wall_ms": 10351,
+        "late_sends": 0,
+        "fuel_used": 49334067933,
+        "fuel_max_call": 67921307
+      },
+      "wall_ms": 28237
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3578.2663063004097,
+      "reference_pnl_usd": 1089.42,
+      "scenario": "hidden-19",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 132.01,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11264.344117,
+      "pnl_usd": 1164.3441170000006,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884169
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 72.02360011935161,
+      "valuation": "book",
+      "flow": {
+        "orders": 229,
+        "sent": 229,
+        "failed": 0,
+        "volume": 110.55000000000003,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 642,
+        "overran": 0,
+        "wall_ms": 9934,
+        "late_sends": 0,
+        "fuel_used": 43441606478,
+        "fuel_max_call": 67938954
+      },
+      "wall_ms": 25560
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2974.6140392580523,
+      "reference_pnl_usd": 719.36,
+      "scenario": "hidden-20",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 139.44,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10458.525371,
+      "pnl_usd": 358.5253709999997,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883944
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 277.1479735803696,
+      "valuation": "book",
+      "flow": {
+        "orders": 197,
+        "sent": 197,
+        "failed": 0,
+        "volume": 95.92000000000003,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 529,
+        "overran": 0,
+        "wall_ms": 7935,
+        "late_sends": 0,
+        "fuel_used": 35781515159,
+        "fuel_max_call": 67960327
+      },
+      "wall_ms": 21524
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3060.878777134965,
+      "reference_pnl_usd": 854.59,
+      "scenario": "hidden-21",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 129.69,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11120.020491678439,
+      "pnl_usd": 1020.0204916784387,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884377
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 141.41641134463862,
+      "valuation": "book",
+      "flow": {
+        "orders": 282,
+        "sent": 282,
+        "failed": 0,
+        "volume": 138.58000000000007,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 746,
+        "overran": 0,
+        "wall_ms": 9663,
+        "late_sends": 0,
+        "fuel_used": 50486804959,
+        "fuel_max_call": 67839004
+      },
+      "wall_ms": 27495
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2676.505949787931,
+      "reference_pnl_usd": 135.45,
+      "scenario": "hidden-22",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 140.86,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10818.445462,
+      "pnl_usd": 718.4454619999997,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883936
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 119.52018629775012,
+      "valuation": "book",
+      "flow": {
+        "orders": 191,
+        "sent": 191,
+        "failed": 0,
+        "volume": 89.55999999999997,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 525,
+        "overran": 0,
+        "wall_ms": 7767,
+        "late_sends": 0,
+        "fuel_used": 35512243618,
+        "fuel_max_call": 67930253
+      },
+      "wall_ms": 20463
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 932.7361887145782,
+      "reference_pnl_usd": 382.57,
+      "scenario": "hidden-23",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.08,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10507.646967,
+      "pnl_usd": 407.6469670000006,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883940
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 41.49910676758009,
+      "valuation": "book",
+      "flow": {
+        "orders": 192,
+        "sent": 192,
+        "failed": 0,
+        "volume": 87.80000000000003,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 527,
+        "overran": 0,
+        "wall_ms": 7049,
+        "late_sends": 0,
+        "fuel_used": 35644750722,
+        "fuel_max_call": 67836068
+      },
+      "wall_ms": 19543
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2054.7272750251414,
+      "reference_pnl_usd": 611.55,
+      "scenario": "hidden-24",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.9,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10570.693394,
+      "pnl_usd": 470.6933939999999,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884271
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 135.1805048096994,
+      "valuation": "book",
+      "flow": {
+        "orders": 253,
+        "sent": 253,
+        "failed": 0,
+        "volume": 118.87999999999997,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 693,
+        "overran": 0,
+        "wall_ms": 9359,
+        "late_sends": 0,
+        "fuel_used": 46890360430,
+        "fuel_max_call": 67875888
+      },
+      "wall_ms": 25722
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 4725.95514148242,
+      "reference_pnl_usd": 992.31,
+      "scenario": "hidden-25",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 146.07,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11744.886328366798,
+      "pnl_usd": 1644.886328366798,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884366
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 204.21902695613971,
+      "valuation": "book",
+      "flow": {
+        "orders": 265,
+        "sent": 265,
+        "failed": 0,
+        "volume": 128.55999999999995,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 740,
+        "overran": 0,
+        "wall_ms": 11747,
+        "late_sends": 0,
+        "fuel_used": 50083856924,
+        "fuel_max_call": 67936943
+      },
+      "wall_ms": 30754
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2719.0690406472827,
+      "reference_pnl_usd": 1113.49,
+      "scenario": "hidden-26",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 141.74,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11305.33152955723,
+      "pnl_usd": 1205.3315295572302,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884054
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 190.74513219599248,
+      "valuation": "book",
+      "flow": {
+        "orders": 214,
+        "sent": 214,
+        "failed": 0,
+        "volume": 104.52,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 584,
+        "overran": 0,
+        "wall_ms": 7725,
+        "late_sends": 0,
+        "fuel_used": 39512116202,
+        "fuel_max_call": 67949102
+      },
+      "wall_ms": 22450
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1619.1439923951743,
+      "reference_pnl_usd": 386.83,
+      "scenario": "hidden-27",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.58,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10418.63831586385,
+      "pnl_usd": 318.63831586384913,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884120
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 109.07983208019868,
+      "valuation": "book",
+      "flow": {
+        "orders": 220,
+        "sent": 220,
+        "failed": 0,
+        "volume": 106.83000000000001,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 617,
+        "overran": 0,
+        "wall_ms": 8016,
+        "late_sends": 0,
+        "fuel_used": 41742297831,
+        "fuel_max_call": 67822586
+      },
+      "wall_ms": 23719
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1497.548986203066,
+      "reference_pnl_usd": 737.38,
+      "scenario": "hidden-28",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 132.91,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10953.515682000001,
+      "pnl_usd": 853.5156820000011,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884212
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 35.580338537241914,
+      "valuation": "book",
+      "flow": {
+        "orders": 235,
+        "sent": 235,
+        "failed": 0,
+        "volume": 109.77,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 663,
+        "overran": 0,
+        "wall_ms": 8359,
+        "late_sends": 0,
+        "fuel_used": 44861649273,
+        "fuel_max_call": 67939383
+      },
+      "wall_ms": 25115
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3254.793739121272,
+      "reference_pnl_usd": 325.84,
+      "scenario": "hidden-29",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 137.43,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10856.974313,
+      "pnl_usd": 756.9743130000006,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884335
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 62.401045973982036,
+      "valuation": "book",
+      "flow": {
+        "orders": 268,
+        "sent": 268,
+        "failed": 0,
+        "volume": 121.39,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 725,
+        "overran": 0,
+        "wall_ms": 10299,
+        "late_sends": 0,
+        "fuel_used": 49064088325,
+        "fuel_max_call": 67908403
+      },
+      "wall_ms": 28739
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2027.848051898385,
+      "reference_pnl_usd": 806.66,
+      "scenario": "hidden-30",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 147.71,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10725.767694999999,
+      "pnl_usd": 625.7676949999986,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883967
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 84.31906017081565,
+      "valuation": "book",
+      "flow": {
+        "orders": 202,
+        "sent": 202,
+        "failed": 0,
+        "volume": 96.62999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 541,
+        "overran": 0,
+        "wall_ms": 7667,
+        "late_sends": 0,
+        "fuel_used": 36594427428,
+        "fuel_max_call": 67841554
+      },
+      "wall_ms": 21499
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2222.3319365432926,
+      "reference_pnl_usd": -11.86,
+      "scenario": "hidden-31",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.56,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10363.732440999998,
+      "pnl_usd": 263.7324409999983,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883791
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 145.5374641628605,
+      "valuation": "book",
+      "flow": {
+        "orders": 170,
+        "sent": 170,
+        "failed": 0,
+        "volume": 83.36,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 453,
+        "overran": 0,
+        "wall_ms": 6021,
+        "late_sends": 0,
+        "fuel_used": 30630311089,
+        "fuel_max_call": 67877874
+      },
+      "wall_ms": 17113
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2433.0221760690074,
+      "reference_pnl_usd": 279.95,
+      "scenario": "hidden-32",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 146.11,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10685.751354766518,
+      "pnl_usd": 585.7513547665185,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884284
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 63.616640962638485,
+      "valuation": "book",
+      "flow": {
+        "orders": 255,
+        "sent": 255,
+        "failed": 0,
+        "volume": 124.72000000000004,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 699,
+        "overran": 0,
+        "wall_ms": 9791,
+        "late_sends": 0,
+        "fuel_used": 47298176137,
+        "fuel_max_call": 67925656
+      },
+      "wall_ms": 26880
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1513.2659779131732,
+      "reference_pnl_usd": 251.64,
+      "scenario": "hidden-33",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.9,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10362.397943,
+      "pnl_usd": 262.39794299999994,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883979
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 122.80458638210075,
+      "valuation": "book",
+      "flow": {
+        "orders": 191,
+        "sent": 191,
+        "failed": 0,
+        "volume": 83.95999999999992,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 547,
+        "overran": 0,
+        "wall_ms": 7006,
+        "late_sends": 0,
+        "fuel_used": 36997860039,
+        "fuel_max_call": 67916480
+      },
+      "wall_ms": 20717
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3659.6805932356647,
+      "reference_pnl_usd": -206.75,
+      "scenario": "hidden-34",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.34,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11056.46955517124,
+      "pnl_usd": 956.4695551712393,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884222
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 204.98157312722287,
+      "valuation": "book",
+      "flow": {
+        "orders": 242,
+        "sent": 242,
+        "failed": 0,
+        "volume": 106.05999999999999,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 668,
+        "overran": 0,
+        "wall_ms": 9774,
+        "late_sends": 0,
+        "fuel_used": 45201263408,
+        "fuel_max_call": 67922115
+      },
+      "wall_ms": 26191
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1754.3572597924322,
+      "reference_pnl_usd": 620.93,
+      "scenario": "hidden-35",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 137.15,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10733.12106253318,
+      "pnl_usd": 633.1210625331805,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884100
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 103.73613033921902,
+      "valuation": "book",
+      "flow": {
+        "orders": 223,
+        "sent": 223,
+        "failed": 0,
+        "volume": 113.50000000000007,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 607,
+        "overran": 0,
+        "wall_ms": 7803,
+        "late_sends": 0,
+        "fuel_used": 41066144264,
+        "fuel_max_call": 67834675
+      },
+      "wall_ms": 22468
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 4236.349380826729,
+      "reference_pnl_usd": 438.92,
+      "scenario": "hidden-36",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 151.96,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10861.29015076289,
+      "pnl_usd": 761.2901507628903,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884300
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 306.51309557530294,
+      "valuation": "book",
+      "flow": {
+        "orders": 258,
+        "sent": 258,
+        "failed": 0,
+        "volume": 119.53000000000004,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 707,
+        "overran": 0,
+        "wall_ms": 10698,
+        "late_sends": 0,
+        "fuel_used": 47844322164,
+        "fuel_max_call": 67922161
+      },
+      "wall_ms": 27967
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3231.8539258347087,
+      "reference_pnl_usd": 361.05,
+      "scenario": "hidden-37",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 140.64000000000001,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11121.0373694275,
+      "pnl_usd": 1021.0373694275004,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884111
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 74.67546824360215,
+      "valuation": "book",
+      "flow": {
+        "orders": 223,
+        "sent": 223,
+        "failed": 0,
+        "volume": 106.91000000000001,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 613,
+        "overran": 0,
+        "wall_ms": 8678,
+        "late_sends": 0,
+        "fuel_used": 41473845466,
+        "fuel_max_call": 67915222
+      },
+      "wall_ms": 23738
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1262.903060696988,
+      "reference_pnl_usd": 84.89,
+      "scenario": "hidden-38",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 138.8,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10262.838056,
+      "pnl_usd": 162.8380560000005,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883883
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 89.37154154215932,
+      "valuation": "book",
+      "flow": {
+        "orders": 182,
+        "sent": 182,
+        "failed": 0,
+        "volume": 81.03999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 499,
+        "overran": 0,
+        "wall_ms": 7252,
+        "late_sends": 0,
+        "fuel_used": 33750650404,
+        "fuel_max_call": 67932026
+      },
+      "wall_ms": 19527
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2861.7712678637813,
+      "reference_pnl_usd": 405.43,
+      "scenario": "hidden-39",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.81,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10690.895386000002,
+      "pnl_usd": 590.895386000002,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884132
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 114.27710368354929,
+      "valuation": "book",
+      "flow": {
+        "orders": 223,
+        "sent": 223,
+        "failed": 0,
+        "volume": 106.64,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 623,
+        "overran": 0,
+        "wall_ms": 8398,
+        "late_sends": 0,
+        "fuel_used": 42151545696,
+        "fuel_max_call": 67924297
+      },
+      "wall_ms": 24112
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3055.9614191760325,
+      "reference_pnl_usd": 580.48,
+      "scenario": "hidden-40",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 148.07,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10974.93753885968,
+      "pnl_usd": 874.93753885968,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884059
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 118.67234336004185,
+      "valuation": "book",
+      "flow": {
+        "orders": 215,
+        "sent": 215,
+        "failed": 0,
+        "volume": 103.89000000000013,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 587,
+        "overran": 0,
+        "wall_ms": 8946,
+        "late_sends": 0,
+        "fuel_used": 39711976069,
+        "fuel_max_call": 67933763
+      },
+      "wall_ms": 24103
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3821.331439536205,
+      "reference_pnl_usd": 797.51,
+      "scenario": "hidden-41",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 141.53,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10950.192199086037,
+      "pnl_usd": 850.1921990860374,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884103
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 165.09704484000395,
+      "valuation": "book",
+      "flow": {
+        "orders": 215,
+        "sent": 215,
+        "failed": 0,
+        "volume": 102.55999999999999,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 609,
+        "overran": 0,
+        "wall_ms": 9080,
+        "late_sends": 0,
+        "fuel_used": 41206132996,
+        "fuel_max_call": 67928847
+      },
+      "wall_ms": 24526
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1955.5324199075553,
+      "reference_pnl_usd": 478.31,
+      "scenario": "hidden-42",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.08,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10557.463506,
+      "pnl_usd": 457.46350600000005,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883790
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 128.91936034179525,
+      "valuation": "book",
+      "flow": {
+        "orders": 168,
+        "sent": 168,
+        "failed": 0,
+        "volume": 82.02999999999997,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 452,
+        "overran": 0,
+        "wall_ms": 6226,
+        "late_sends": 0,
+        "fuel_used": 30566751106,
+        "fuel_max_call": 67918273
+      },
+      "wall_ms": 17533
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1053.872103899257,
+      "reference_pnl_usd": 166.51,
+      "scenario": "hidden-43",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.57,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10274.623413999998,
+      "pnl_usd": 174.62341399999787,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883877
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 64.92324066140282,
+      "valuation": "book",
+      "flow": {
+        "orders": 185,
+        "sent": 185,
+        "failed": 0,
+        "volume": 88.13000000000001,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 496,
+        "overran": 0,
+        "wall_ms": 6599,
+        "late_sends": 0,
+        "fuel_used": 33540820368,
+        "fuel_max_call": 67872303
+      },
+      "wall_ms": 19195
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2143.0885933316213,
+      "reference_pnl_usd": 309.54,
+      "scenario": "hidden-44",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.48,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10563.373994,
+      "pnl_usd": 463.3739939999996,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884039
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 96.24469511450116,
+      "valuation": "book",
+      "flow": {
+        "orders": 208,
+        "sent": 208,
+        "failed": 0,
+        "volume": 103.22000000000003,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 577,
+        "overran": 0,
+        "wall_ms": 7897,
+        "late_sends": 0,
+        "fuel_used": 39033931588,
+        "fuel_max_call": 67847452
+      },
+      "wall_ms": 22156
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3180.1261497767373,
+      "reference_pnl_usd": 319.47,
+      "scenario": "hidden-45",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 131.46,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10798.099662222001,
+      "pnl_usd": 698.0996622220009,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884027
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 176.5774020000008,
+      "valuation": "book",
+      "flow": {
+        "orders": 199,
+        "sent": 199,
+        "failed": 0,
+        "volume": 91.92999999999999,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 571,
+        "overran": 0,
+        "wall_ms": 8156,
+        "late_sends": 0,
+        "fuel_used": 38631619777,
+        "fuel_max_call": 67852061
+      },
+      "wall_ms": 21951
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1634.2789529344864,
+      "reference_pnl_usd": 561.93,
+      "scenario": "hidden-46",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 145.88,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10533.80267669626,
+      "pnl_usd": 433.80267669625937,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883832
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 96.57215403135888,
+      "valuation": "book",
+      "flow": {
+        "orders": 170,
+        "sent": 170,
+        "failed": 0,
+        "volume": 79.24999999999996,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 473,
+        "overran": 0,
+        "wall_ms": 6161,
+        "late_sends": 0,
+        "fuel_used": 31986636913,
+        "fuel_max_call": 67922694
+      },
+      "wall_ms": 17871
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2712.8610747228654,
+      "reference_pnl_usd": 51.48,
+      "scenario": "hidden-47",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 140.29,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10671.035584,
+      "pnl_usd": 571.0355839999993,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883928
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 231.29854319806873,
+      "valuation": "book",
+      "flow": {
+        "orders": 183,
+        "sent": 183,
+        "failed": 0,
+        "volume": 82.34999999999995,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 521,
+        "overran": 0,
+        "wall_ms": 7522,
+        "late_sends": 0,
+        "fuel_used": 35241457901,
+        "fuel_max_call": 67948087
+      },
+      "wall_ms": 20556
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3646.0823404655507,
+      "reference_pnl_usd": 1057.71,
+      "scenario": "hidden-48",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 135.17000000000002,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11249.431653000001,
+      "pnl_usd": 1149.4316530000015,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884350
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 65.41446290715066,
+      "valuation": "book",
+      "flow": {
+        "orders": 264,
+        "sent": 264,
+        "failed": 0,
+        "volume": 127.86,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 732,
+        "overran": 0,
+        "wall_ms": 10172,
+        "late_sends": 0,
+        "fuel_used": 49541069917,
+        "fuel_max_call": 67919624
+      },
+      "wall_ms": 28842
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2387.8883075888007,
+      "reference_pnl_usd": 961.33,
+      "scenario": "hidden-49",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.44,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11047.34786373121,
+      "pnl_usd": 947.3478637312091,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883974
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 39.645285711521865,
+      "valuation": "book",
+      "flow": {
+        "orders": 196,
+        "sent": 196,
+        "failed": 0,
+        "volume": 95.51000000000005,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 544,
+        "overran": 0,
+        "wall_ms": 7569,
+        "late_sends": 0,
+        "fuel_used": 36796711007,
+        "fuel_max_call": 67924185
+      },
+      "wall_ms": 21179
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2462.254203804875,
+      "reference_pnl_usd": -88.69,
+      "scenario": "hidden-50",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.44,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10128.038838717042,
+      "pnl_usd": 28.03883871704238,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883837
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 260.0622495163989,
+      "valuation": "book",
+      "flow": {
+        "orders": 169,
+        "sent": 169,
+        "failed": 0,
+        "volume": 78.29999999999997,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 476,
+        "overran": 0,
+        "wall_ms": 7182,
+        "late_sends": 0,
+        "fuel_used": 32192543771,
+        "fuel_max_call": 67929180
+      },
+      "wall_ms": 18653
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2008.1271563431997,
+      "reference_pnl_usd": 300.45,
+      "scenario": "hidden-51",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 146.45000000000002,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10633.2924738713,
+      "pnl_usd": 533.2924738713009,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883824
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 116.28725464929812,
+      "valuation": "book",
+      "flow": {
+        "orders": 173,
+        "sent": 173,
+        "failed": 0,
+        "volume": 80.76000000000005,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 469,
+        "overran": 0,
+        "wall_ms": 6503,
+        "late_sends": 0,
+        "fuel_used": 31717148273,
+        "fuel_max_call": 67916856
+      },
+      "wall_ms": 17748
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3942.332304819429,
+      "reference_pnl_usd": 816.15,
+      "scenario": "hidden-52",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 131.72,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11548.914294,
+      "pnl_usd": 1448.9142940000002,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884129
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 124.27500982749916,
+      "valuation": "book",
+      "flow": {
+        "orders": 222,
+        "sent": 222,
+        "failed": 0,
+        "volume": 104.84000000000006,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 622,
+        "overran": 0,
+        "wall_ms": 9474,
+        "late_sends": 0,
+        "fuel_used": 42084801274,
+        "fuel_max_call": 68193921
+      },
+      "wall_ms": 25190
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1785.0667375710366,
+      "reference_pnl_usd": 449.62,
+      "scenario": "hidden-53",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.77,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10508.287769238079,
+      "pnl_usd": 408.2877692380789,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884057
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 78.50499446125468,
+      "valuation": "book",
+      "flow": {
+        "orders": 211,
+        "sent": 211,
+        "failed": 0,
+        "volume": 93.00999999999993,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 586,
+        "overran": 0,
+        "wall_ms": 7826,
+        "late_sends": 0,
+        "fuel_used": 39640539739,
+        "fuel_max_call": 67859778
+      },
+      "wall_ms": 22579
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1748.0654433503285,
+      "reference_pnl_usd": 554.53,
+      "scenario": "hidden-54",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 152.85,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10444.834523,
+      "pnl_usd": 344.83452299999954,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884013
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 103.839348308431,
+      "valuation": "book",
+      "flow": {
+        "orders": 204,
+        "sent": 204,
+        "failed": 0,
+        "volume": 100.77000000000002,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 564,
+        "overran": 0,
+        "wall_ms": 7374,
+        "late_sends": 0,
+        "fuel_used": 38154514755,
+        "fuel_max_call": 67840715
+      },
+      "wall_ms": 20902
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1043.785502951523,
+      "reference_pnl_usd": 323.01,
+      "scenario": "hidden-55",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.22,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10489.045740338319,
+      "pnl_usd": 389.04574033831886,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884159
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 46.19730643766343,
+      "valuation": "book",
+      "flow": {
+        "orders": 229,
+        "sent": 229,
+        "failed": 0,
+        "volume": 104.05,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 637,
+        "overran": 0,
+        "wall_ms": 8328,
+        "late_sends": 0,
+        "fuel_used": 43098721116,
+        "fuel_max_call": 67930758
+      },
+      "wall_ms": 23780
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 4311.197504990983,
+      "reference_pnl_usd": 821.27,
+      "scenario": "hidden-56",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.32,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11170.910621885698,
+      "pnl_usd": 1070.9106218856978,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884288
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 164.9783819999975,
+      "valuation": "book",
+      "flow": {
+        "orders": 255,
+        "sent": 255,
+        "failed": 0,
+        "volume": 127.77000000000005,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 701,
+        "overran": 0,
+        "wall_ms": 11131,
+        "late_sends": 0,
+        "fuel_used": 47439293630,
+        "fuel_max_call": 67950689
+      },
+      "wall_ms": 28375
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2743.874325126797,
+      "reference_pnl_usd": 116.13,
+      "scenario": "hidden-57",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 141.92000000000002,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10364.29687722078,
+      "pnl_usd": 264.2968772207805,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884263
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 126.97151599999597,
+      "valuation": "book",
+      "flow": {
+        "orders": 243,
+        "sent": 243,
+        "failed": 0,
+        "volume": 121.17000000000004,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 689,
+        "overran": 0,
+        "wall_ms": 10737,
+        "late_sends": 0,
+        "fuel_used": 46623317171,
+        "fuel_max_call": 67936768
+      },
+      "wall_ms": 27560
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3670.1941170357263,
+      "reference_pnl_usd": 808.75,
+      "scenario": "hidden-58",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 138.81,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10824.688689999999,
+      "pnl_usd": 724.688689999999,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884278
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 200.0639093926202,
+      "valuation": "book",
+      "flow": {
+        "orders": 252,
+        "sent": 252,
+        "failed": 0,
+        "volume": 121.60000000000002,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 696,
+        "overran": 0,
+        "wall_ms": 9427,
+        "late_sends": 0,
+        "fuel_used": 47099026639,
+        "fuel_max_call": 67937935
+      },
+      "wall_ms": 25914
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3075.3814986452053,
+      "reference_pnl_usd": -18.13,
+      "scenario": "hidden-59",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 151.44,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10277.484700596948,
+      "pnl_usd": 177.48470059694773,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884024
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 192.36382548950132,
+      "valuation": "book",
+      "flow": {
+        "orders": 214,
+        "sent": 214,
+        "failed": 0,
+        "volume": 111.11999999999999,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 569,
+        "overran": 0,
+        "wall_ms": 8311,
+        "late_sends": 0,
+        "fuel_used": 38492694131,
+        "fuel_max_call": 67947814
+      },
+      "wall_ms": 22210
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2419.1677074648387,
+      "reference_pnl_usd": 224.11,
+      "scenario": "hidden-60",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.0,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10513.672987848788,
+      "pnl_usd": 413.67298784878767,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884202
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 115.10414599999967,
+      "valuation": "book",
+      "flow": {
+        "orders": 236,
+        "sent": 236,
+        "failed": 0,
+        "volume": 120.75999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 658,
+        "overran": 0,
+        "wall_ms": 8864,
+        "late_sends": 0,
+        "fuel_used": 44518748330,
+        "fuel_max_call": 67921199
+      },
+      "wall_ms": 24394
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3186.0767207808067,
+      "reference_pnl_usd": 951.72,
+      "scenario": "hidden-61",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 150.33,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11163.962949960522,
+      "pnl_usd": 1063.9629499605217,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884235
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 102.3172585960001,
+      "valuation": "book",
+      "flow": {
+        "orders": 244,
+        "sent": 244,
+        "failed": 0,
+        "volume": 118.64999999999995,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 675,
+        "overran": 0,
+        "wall_ms": 9093,
+        "late_sends": 0,
+        "fuel_used": 45675445703,
+        "fuel_max_call": 67928213
+      },
+      "wall_ms": 24593
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1408.9790657726105,
+      "reference_pnl_usd": 482.49,
+      "scenario": "hidden-62",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 139.92000000000002,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10277.310972,
+      "pnl_usd": 177.3109719999993,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883966
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 130.91530298532052,
+      "valuation": "book",
+      "flow": {
+        "orders": 196,
+        "sent": 196,
+        "failed": 0,
+        "volume": 97.49,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 540,
+        "overran": 0,
+        "wall_ms": 7150,
+        "late_sends": 0,
+        "fuel_used": 36525316584,
+        "fuel_max_call": 67913134
+      },
+      "wall_ms": 19940
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1966.3981818434786,
+      "reference_pnl_usd": 641.78,
+      "scenario": "hidden-63",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.08,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10726.426719000001,
+      "pnl_usd": 626.426719000001,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884050
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 71.15988222594751,
+      "valuation": "book",
+      "flow": {
+        "orders": 212,
+        "sent": 212,
+        "failed": 0,
+        "volume": 103.71000000000001,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 582,
+        "overran": 0,
+        "wall_ms": 8206,
+        "late_sends": 0,
+        "fuel_used": 39375439303,
+        "fuel_max_call": 67940219
+      },
+      "wall_ms": 22205
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1801.5027118442447,
+      "reference_pnl_usd": -82.48,
+      "scenario": "hidden-64",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 149.54,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10188.178123,
+      "pnl_usd": 88.17812299999969,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883818
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 108.28951199999756,
+      "valuation": "book",
+      "flow": {
+        "orders": 166,
+        "sent": 166,
+        "failed": 0,
+        "volume": 79.42999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 466,
+        "overran": 0,
+        "wall_ms": 6341,
+        "late_sends": 0,
+        "fuel_used": 31512519200,
+        "fuel_max_call": 67923313
+      },
+      "wall_ms": 17941
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1472.182246643632,
+      "reference_pnl_usd": 441.04,
+      "scenario": "hidden-65",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 151.97,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10441.187975435198,
+      "pnl_usd": 341.1879754351976,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883839
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 79.6229770000009,
+      "valuation": "book",
+      "flow": {
+        "orders": 167,
+        "sent": 167,
+        "failed": 0,
+        "volume": 83.97000000000001,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 477,
+        "overran": 0,
+        "wall_ms": 6096,
+        "late_sends": 0,
+        "fuel_used": 32258156462,
+        "fuel_max_call": 67840154
+      },
+      "wall_ms": 17279
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1317.8512864457878,
+      "reference_pnl_usd": 44.85,
+      "scenario": "hidden-66",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 143.02,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10194.59703180525,
+      "pnl_usd": 94.59703180524957,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462883824
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 134.63895499999853,
+      "valuation": "book",
+      "flow": {
+        "orders": 172,
+        "sent": 172,
+        "failed": 0,
+        "volume": 82.74000000000005,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 469,
+        "overran": 0,
+        "wall_ms": 6909,
+        "late_sends": 0,
+        "fuel_used": 31715891259,
+        "fuel_max_call": 67888419
+      },
+      "wall_ms": 17965
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3055.8826443239273,
+      "reference_pnl_usd": 731.08,
+      "scenario": "hidden-67",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 152.06,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11137.906184416399,
+      "pnl_usd": 1037.906184416399,
+      "end_position": -70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884238
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 88.60584718044265,
+      "valuation": "book",
+      "flow": {
+        "orders": 250,
+        "sent": 250,
+        "failed": 0,
+        "volume": 129.32999999999996,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 676,
+        "overran": 0,
+        "wall_ms": 9155,
+        "late_sends": 0,
+        "fuel_used": 45742979422,
+        "fuel_max_call": 67949140
+      },
+      "wall_ms": 24880
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 2836.791972634621,
+      "reference_pnl_usd": 472.05,
+      "scenario": "hidden-68",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 150.08,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 11094.900326351202,
+      "pnl_usd": 994.9003263512022,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884001
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 61.16612470664222,
+      "valuation": "book",
+      "flow": {
+        "orders": 200,
+        "sent": 200,
+        "failed": 0,
+        "volume": 100.84999999999997,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 558,
+        "overran": 0,
+        "wall_ms": 7594,
+        "late_sends": 0,
+        "fuel_used": 37750969386,
+        "fuel_max_call": 67901041
+      },
+      "wall_ms": 21249
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3210.049615606378,
+      "reference_pnl_usd": 722.36,
+      "scenario": "hidden-69",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 144.41,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10653.713985,
+      "pnl_usd": 553.7139850000003,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884346
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 119.94466663584171,
+      "valuation": "book",
+      "flow": {
+        "orders": 270,
+        "sent": 270,
+        "failed": 0,
+        "volume": 131.64999999999998,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 730,
+        "overran": 0,
+        "wall_ms": 10171,
+        "late_sends": 0,
+        "fuel_used": 49401665607,
+        "fuel_max_call": 67839455
+      },
+      "wall_ms": 27914
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3319.422550974868,
+      "reference_pnl_usd": -11.27,
+      "scenario": "hidden-70",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 137.9,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10092.306269,
+      "pnl_usd": -7.693730999999389,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884123
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 330.7305673696028,
+      "valuation": "book",
+      "flow": {
+        "orders": 214,
+        "sent": 214,
+        "failed": 0,
+        "volume": 93.11000000000006,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 619,
+        "overran": 0,
+        "wall_ms": 9353,
+        "late_sends": 0,
+        "fuel_used": 41881259819,
+        "fuel_max_call": 67945050
+      },
+      "wall_ms": 24418
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 1946.4982221816626,
+      "reference_pnl_usd": 363.08,
+      "scenario": "hidden-71",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 138.35,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10503.261102,
+      "pnl_usd": 403.2611020000004,
+      "end_position": 0.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884093
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 99.21878241576269,
+      "valuation": "book",
+      "flow": {
+        "orders": 217,
+        "sent": 217,
+        "failed": 0,
+        "volume": 98.94000000000003,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 604,
+        "overran": 0,
+        "wall_ms": 8055,
+        "late_sends": 0,
+        "fuel_used": 40861969544,
+        "fuel_max_call": 67917736
+      },
+      "wall_ms": 22314
+    },
+    {
+      "disqualified": null,
+      "bound_pnl_usd": 3105.6046050563077,
+      "reference_pnl_usd": 568.59,
+      "scenario": "hidden-72",
+      "start_mark_usd": 143.11,
+      "end_mark_usd": 142.49,
+      "start_value_usd": 10100.0,
+      "end_value_usd": 10587.278424454222,
+      "pnl_usd": 487.27842445422175,
+      "end_position": 70.0,
+      "liquidatable": false,
+      "refused_calls": [],
+      "bot_exit": null,
+      "late_slots": 0,
+      "mandate": {
+        "version": "v0",
+        "term": {
+          "until_slot": 462884097
+        },
+        "universe": [
+          {
+            "instrument": "phoenix:perp:SPCX",
+            "max_position": 70.0
+          }
+        ],
+        "limits": {
+          "max_drawdown_usd": 1000.0
+        }
+      },
+      "instrument": "phoenix:perp:SPCX",
+      "peak_position": 70.0,
+      "positions": [
+        {
+          "instrument": "phoenix:perp:SPCX",
+          "lowest": -70.0,
+          "highest": 70.0
+        }
+      ],
+      "positions_outside_universe": 0,
+      "max_drawdown_usd": 127.53532199999972,
+      "valuation": "book",
+      "flow": {
+        "orders": 222,
+        "sent": 222,
+        "failed": 0,
+        "volume": 104.08999999999999,
+        "makers_widened_ticks": 0
+      },
+      "turns": {
+        "legacy": false,
+        "steps": 606,
+        "overran": 0,
+        "wall_ms": 8745,
+        "late_sends": 0,
+        "fuel_used": 40996577526,
+        "fuel_max_call": 67921754
+      },
+      "wall_ms": 23809
+    }
+  ]
+}

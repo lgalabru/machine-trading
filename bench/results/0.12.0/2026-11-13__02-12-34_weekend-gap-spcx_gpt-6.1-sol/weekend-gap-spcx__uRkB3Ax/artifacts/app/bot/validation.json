@@ -1,0 +1,45 @@
+{
+  "component_sha256": "680bcd319715ea01bc9c4fe2367af1c6d79db3fd99b42dc9a26b0974675b8fd4",
+  "strategy": "analytical flow ensemble with censored observations at the price band",
+  "generated_72_chain_sessions": {
+    "sessions": 72,
+    "pnl_usd": 16229.712901000004,
+    "hindsight_bound_usd": 81044.79583200002,
+    "reward": 0.20025607732596454,
+    "max_drawdown_usd": 556.3019850000001,
+    "worst_pnl_usd": -79.67634299999918,
+    "profitable_sessions": 60,
+    "disqualified_sessions": 0,
+    "refused_rpc_calls": 0,
+    "max_call_fuel": 10331854
+  },
+  "additional_band_cases": {
+    "sessions": 6,
+    "pnl_usd": 3877.6744369999997,
+    "hindsight_bound_usd": 8703.077228999999,
+    "reward": 0.4455521116231152,
+    "max_drawdown_usd": 284.6322089999994,
+    "worst_pnl_usd": 430.850547,
+    "profitable_sessions": 6,
+    "disqualified_sessions": 0,
+    "refused_rpc_calls": 0,
+    "max_call_fuel": 9863068
+  },
+  "native_generated_path_replays": {
+    "sessions": 1472,
+    "drawdown_breaches": 0,
+    "maximum_drawdown_usd": 627.9213996527134,
+    "pnl_improvement_over_timing_revision_usd": 5583.33870590413
+  },
+  "final_build_replay": {
+    "scenario": "learn-447",
+    "report": {
+      "runs": 2,
+      "load_threads": 0,
+      "reports": 2,
+      "identical": true
+    },
+    "pnl_usd": 697.5300069999994,
+    "disqualified_sessions": 0
+  }
+}

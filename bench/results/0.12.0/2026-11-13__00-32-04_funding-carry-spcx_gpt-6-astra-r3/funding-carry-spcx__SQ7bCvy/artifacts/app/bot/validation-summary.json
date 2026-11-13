@@ -1,0 +1,18 @@
+{
+  "component_sha256": "7a635fd69de83d64cbf0cd6cfa3ecbf39af9a7c67409073872a3280a9b647e1b",
+  "baseline_sessions": 72,
+  "baseline_pnl": 24128.209588991158,
+  "baseline_max_drawdown": 501.71364935825295,
+  "final_checks": 16,
+  "final_ordinary_sessions": 12,
+  "final_ordinary_pnl": 4723.0197714169135,
+  "same_sessions_previous_pnl": 4618.93584231929,
+  "final_risk": {
+    "worst_pnl_usd": -981.1890800000001,
+    "tail_pnl_usd": -826.9437929999998,
+    "max_drawdown_usd": 981.1890800000001,
+    "profitable_share": 0.8125,
+    "sharpe": 0.26848707769160934
+  },
+  "all_checks_passed": true
+}

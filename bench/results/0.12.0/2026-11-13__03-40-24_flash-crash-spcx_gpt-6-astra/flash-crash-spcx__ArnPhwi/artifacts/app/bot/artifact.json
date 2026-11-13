@@ -1,0 +1,28 @@
+{
+  "artifact": "bot.wasm",
+  "target": "wasm32-wasip2",
+  "sha256": "6558eb6e3ae84c44f80e72e1018b71c58a8f400ac83f67505ef8c9922446dca7",
+  "verified_at_utc": "2026-11-13T04:36:07.342142+00:00",
+  "ordinary_sessions": 246,
+  "adverse_stress_sessions": 12,
+  "disqualifications": 0,
+  "unit_tests_passed": 4,
+  "maximum_call_fuel": 12175479,
+  "fresh_validation": {
+    "reward": 0.2876342088940042,
+    "pnl_usd": 52080.86803500001,
+    "bound_pnl_usd": 181066.321128,
+    "risk": {
+      "worst_pnl_usd": -536.0209940000004,
+      "tail_pnl_usd": -205.57331487499997,
+      "max_drawdown_usd": 574.9453329999997,
+      "profitable_share": 0.7708333333333334,
+      "sharpe": 0.724760772677378
+    }
+  },
+  "reports": [
+    "reports/comparison-102.json",
+    "reports/final-144.json",
+    "reports/adverse-stress-12.json"
+  ]
+}

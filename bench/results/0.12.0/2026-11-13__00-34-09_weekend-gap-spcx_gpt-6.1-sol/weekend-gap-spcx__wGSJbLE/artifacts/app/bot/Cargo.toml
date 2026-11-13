@@ -1,0 +1,20 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "spcx-weekend-bot"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# A strategy component: `just build` builds wasm32-wasip2 into bot.wasm,
+# which the grader loads and calls (docs/rfd/0002-wasm-strategies.md).
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "/opt/mtx/sdk/crates/kit", default-features = false, features = ["component", "venue"] }
+
+serde_json = "1"
+bs58 = "0.5"

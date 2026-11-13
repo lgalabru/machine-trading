@@ -1,0 +1,18 @@
+{
+  "sessions": 72,
+  "pnl_usd": 43720.26807080468,
+  "bound_pnl_usd": 160139.4975570419,
+  "profitable_sessions": 72,
+  "worst_pnl_usd": 31.332328999998936,
+  "max_drawdown_usd": 236.2597195203889,
+  "peak_position": 70.0,
+  "disqualified": [],
+  "refused_rpc_calls": 0,
+  "positions_outside_universe": 0,
+  "liquidatable_sessions": 0,
+  "strategy_exits": [],
+  "tape_failed": 0,
+  "fuel_max_call": 67974940,
+  "reward": 0.27301364583856935,
+  "wasm_sha256": "65640f38d51ca1183090bf38322fa2cbd7108fe386efaf20b160a8328a65d021"
+}

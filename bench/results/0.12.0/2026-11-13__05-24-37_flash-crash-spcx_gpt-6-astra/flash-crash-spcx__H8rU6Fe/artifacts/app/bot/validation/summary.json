@@ -1,0 +1,74 @@
+{
+  "component_sha256": "429bdc5b67e2240aeb073cff94fe36754fcd929bbe63595ece836f7418ea3c2e",
+  "model": {
+    "trees": 1000,
+    "nodes": 144904,
+    "features": 52,
+    "entry_edge_bps": 12,
+    "hold_edge_bps": 10
+  },
+  "unit_tests": [
+    "forecast parity",
+    "risk sizing under a price jump and execution costs"
+  ],
+  "main_suite": {
+    "reward": 0.2804435328507628,
+    "pnl_usd": 43508.406548000006,
+    "bound_pnl_usd": 155141.41512100006,
+    "risk": {
+      "worst_pnl_usd": -489.7629309999993,
+      "tail_pnl_usd": -159.6612646315788,
+      "max_drawdown_usd": 547.4094999999998,
+      "profitable_share": 0.8421052631578947,
+      "sharpe": 0.8427437436457121
+    }
+  },
+  "main_suite_sessions": 114,
+  "disqualifications": 0,
+  "practice": {
+    "sessions": 6,
+    "pnl_usd": 913.5141380000005,
+    "max_drawdown_usd": 287.2167040000004,
+    "reward": 0.1408035443869256
+  },
+  "train": {
+    "sessions": 36,
+    "pnl_usd": 18527.947067999994,
+    "max_drawdown_usd": 546.3408810000001,
+    "reward": 0.3376905578327935
+  },
+  "val": {
+    "sessions": 72,
+    "pnl_usd": 24066.945342000014,
+    "max_drawdown_usd": 547.4094999999998,
+    "reward": 0.2566130546805287
+  },
+  "stress": {
+    "pnl_usd": 9401.210548999992,
+    "bound_pnl_usd": 92128.27893500001,
+    "risk": {
+      "worst_pnl_usd": -777.7832629999994,
+      "tail_pnl_usd": -665.1599717142859,
+      "max_drawdown_usd": 778.5481089999994,
+      "profitable_share": 0.36585365853658536,
+      "sharpe": 0.21961109348368896
+    },
+    "sessions": 41
+  },
+  "total_sessions": 191,
+  "overall_max_drawdown_usd": 778.5481089999994,
+  "fresh": {
+    "reward": 0.2787109145805482,
+    "pnl_usd": 14070.301874,
+    "bound_pnl_usd": 50483.49791099999,
+    "risk": {
+      "worst_pnl_usd": -317.71886900000027,
+      "tail_pnl_usd": -183.38404450000021,
+      "max_drawdown_usd": 544.6151969999992,
+      "profitable_share": 0.6944444444444444,
+      "sharpe": 0.7826853819832492
+    },
+    "sessions": 36
+  },
+  "all_checks_passed": true
+}

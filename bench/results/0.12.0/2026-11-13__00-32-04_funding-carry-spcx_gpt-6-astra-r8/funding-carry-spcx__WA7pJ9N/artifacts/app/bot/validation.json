@@ -1,0 +1,78 @@
+{
+  "artifact": "bot.wasm",
+  "sha256": "cd6d24e59613551f929bdc1ab1c11eecacd63a8690af78f7e689033a138ff439",
+  "normal_scenario_validation": {
+    "sessions": 54,
+    "total_pnl_usd": 31419.624745789253,
+    "bound_pnl_usd": 122842.14209178332,
+    "profitable_sessions": 54,
+    "worst_session_pnl_usd": 20.148053740840624,
+    "maximum_drawdown_usd": 227.60998408355408,
+    "maximum_position": 70.0,
+    "disqualifications": [],
+    "liquidatable_sessions": 0,
+    "refused_rpc_calls": 0,
+    "maximum_call_fuel": 67276830
+  },
+  "supplied_practice": {
+    "sessions": 6,
+    "total_pnl_usd": 2285.4175869752235,
+    "bound_pnl_usd": 9406.086166997786,
+    "profitable_sessions": 6,
+    "worst_session_pnl_usd": 138.66830098801802,
+    "maximum_drawdown_usd": 174.9572138342901,
+    "maximum_position": 70.0,
+    "disqualifications": [],
+    "liquidatable_sessions": 0,
+    "refused_rpc_calls": 0,
+    "maximum_call_fuel": 67246032
+  },
+  "additional_noisy_scenarios": {
+    "sessions": 12,
+    "total_pnl_usd": 7183.2161470466635,
+    "bound_pnl_usd": 24622.370232279183,
+    "profitable_sessions": 12,
+    "worst_session_pnl_usd": 185.76575729133583,
+    "maximum_drawdown_usd": 217.2232546218347,
+    "maximum_position": 70.0,
+    "disqualifications": [],
+    "liquidatable_sessions": 0,
+    "refused_rpc_calls": 0,
+    "maximum_call_fuel": 67276830
+  },
+  "fresh_out_of_sample_scenarios": {
+    "sessions": 36,
+    "total_pnl_usd": 21950.991011767364,
+    "bound_pnl_usd": 88813.68569250635,
+    "profitable_sessions": 36,
+    "worst_session_pnl_usd": 20.148053740840624,
+    "maximum_drawdown_usd": 227.60998408355408,
+    "maximum_position": 70.0,
+    "disqualifications": [],
+    "liquidatable_sessions": 0,
+    "refused_rpc_calls": 0,
+    "maximum_call_fuel": 67255999
+  },
+  "out_of_family_loss_guard_stress": {
+    "sessions": 2,
+    "total_pnl_usd": -1264.7598609999986,
+    "bound_pnl_usd": 7841.769021894352,
+    "profitable_sessions": 0,
+    "worst_session_pnl_usd": -657.3198859999993,
+    "maximum_drawdown_usd": 662.8957263284465,
+    "maximum_position": 70.0,
+    "disqualifications": [],
+    "liquidatable_sessions": 0,
+    "refused_rpc_calls": 0,
+    "maximum_call_fuel": 67232405
+  },
+  "guard_stress_final_positions": [
+    0.0,
+    0.0
+  ],
+  "unit_tests": [
+    "feature_and_model_parity",
+    "execution_respects_cap_and_consumed_liquidity"
+  ],
+  "final_rebuild_practice_pnl_exactly_matches_tested_strategy": true
+}

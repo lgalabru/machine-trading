@@ -1,0 +1,18 @@
+# Your strategy: `just build` builds it into bot.wasm, the component the
+# grader loads. Build after every change: the grader loads bot.wasm as it
+# is, and builds nothing.
+
+# Build the strategy into bot.wasm.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="/usr/local/cargo/bin:$PATH"
+    wasm="$(cargo build --locked --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm.new
+    mv -f bot.wasm.new bot.wasm
+    echo "built bot.wasm from $wasm"
+
+# Run deterministic strategy safety checks without a chain.
+test:
+    PATH="/usr/local/cargo/bin:$PATH" cargo test --locked --lib

@@ -1,0 +1,20 @@
+{
+  "distinct_scenarios": 222,
+  "pnl_usd": 72909.27599099997,
+  "bound_pnl_usd": 288995.61845,
+  "max_drawdown_usd": 531.062688,
+  "peak_position": 70.0,
+  "disqualifications": 0,
+  "refused_calls": 0,
+  "liquidatable_sessions": 0,
+  "profitable_sessions": 175,
+  "max_call_fuel": 11077919,
+  "replay": {
+    "runs": 2,
+    "load_threads": 0,
+    "reports": 7,
+    "identical": true
+  },
+  "aggregate_reward": 0.252285056714845,
+  "wasm_sha256": "b2e232bc9d3ed9f64aa9ce0ac136107f390a5a267cf84d605e261323f864977b"
+}

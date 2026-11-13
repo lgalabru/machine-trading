@@ -1,0 +1,14 @@
+PATH="/usr/local/cargo/bin:$PATH" cargo test --locked --lib
+   Compiling bot v0.1.0 (/app/bot)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.13s
+     Running unittests src/lib.rs (/opt/mtx/target/debug/deps/bot-5cf8b9226dc9c969)
+
+running 5 tests
+test tests::drawdown_stop_is_persistent_and_only_reduces_inventory ... ok
+test tests::invalid_oracle_cancels_without_trading ... ok
+test tests::strong_signal_reaches_target_in_bounded_slices ... ok
+test tests::trend_posterior_is_symmetric_and_resets_after_a_jump ... ok
+test tests::passive_orders_respect_both_inventory_boundaries ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

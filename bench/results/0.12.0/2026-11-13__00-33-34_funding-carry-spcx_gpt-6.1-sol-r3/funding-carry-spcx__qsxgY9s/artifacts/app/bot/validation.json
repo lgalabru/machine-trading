@@ -1,0 +1,16 @@
+{
+  "component_sha256": "60c75ce30189e608b089abc4a66a3481b4ded46a021855c3576d240ecc06f4d3",
+  "sessions": 90,
+  "profitable_sessions": 90,
+  "pnl_usd": 59134.20408368719,
+  "six_practice_pnl_usd": 2180.3672589872003,
+  "independent_stress_sessions": 72,
+  "independent_stress_pnl_usd": 49905.181333898334,
+  "max_drawdown_usd": 244.12618771013513,
+  "peak_absolute_position": 70.0,
+  "tape_orders": 19699,
+  "failed_tape_orders": 0,
+  "max_call_fuel": 69253226,
+  "limit_violations": [],
+  "note": "Six official practice sessions, twelve augmented public-family scenarios, and seventy-two independent public-family stress scenarios. No hidden sessions used."
+}

@@ -1,0 +1,20 @@
+{
+  "target": "wasm32-wasip2",
+  "artifact": "bot.wasm",
+  "sha256": "d16336176f3341f3a476a27378b3bd3d29e5f69690dbf843028f01b9f6af7795",
+  "bytes": 555776,
+  "unit_tests": {
+    "passed": 2,
+    "failed": 0
+  },
+  "reopening_stress_check": {
+    "cases": 300000,
+    "adverse_external_move": 0.16,
+    "execution_cost_bps": 60,
+    "worst_drawdown_usd": 960.99
+  },
+  "source_sha256": {
+    "src/lib.rs": "72728da4304540217692946fc078164c1773bacdbc0784019c0cb1ed5a2e9dc1",
+    "src/model.rs": "4eeba2314bf31f76f2c8a0118839419e48bebb74871f19252a2088fc219cf8ae"
+  }
+}

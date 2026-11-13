@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "bench/tasks/weekend-gap-spcx"
+    },
+    "trial_name": "weekend-gap-spcx__TdnxL7E",
+    "trials_dir": "/home/michaelcrystal/mtx012/batch/2026-11-13__00-32-39_weekend-gap-spcx_gpt-6-astra",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6-astra",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high",
+            "reasoning_summary": "detailed"
+        }
+    },
+    "job_id": "1dba939d-9662-4563-8c96-2b2b7e379857"
+}

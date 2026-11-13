@@ -1,0 +1,17 @@
+{
+  "model": "one-second forecast, 1349 regression trees",
+  "training_scenarios": 30000,
+  "chain_sessions": 162,
+  "random_sessions": 144,
+  "random_pnl_usd": 44948.21047800002,
+  "random_bound_pnl_usd": 195264.80804600008,
+  "random_reward": 0.23019104634262216,
+  "practice_pnl_usd": 1260.5933710000008,
+  "practice_reference_ratio": 2.3367689374559766,
+  "max_drawdown_usd": 740.174203999999,
+  "peak_position": 70.0,
+  "disqualifications": [],
+  "fuel_max_call": 10296793,
+  "wasm_sha256": "31019cdb53fc5a0313cdc80666af0d3a3d545b15aca7fe39a4d806c04270788b",
+  "model_sha256": "c1617d526d7297da5a73bd30f3fbc55429370ced3cc7cd4c5e7fecea1f1db822"
+}

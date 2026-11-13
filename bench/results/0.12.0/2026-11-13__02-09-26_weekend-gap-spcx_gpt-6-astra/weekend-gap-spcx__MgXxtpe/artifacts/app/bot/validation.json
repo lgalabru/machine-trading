@@ -1,0 +1,19 @@
+{
+  "fresh_sessions": 72,
+  "fresh_reward": 0.20710576622394958,
+  "fresh_pnl_usd": 14950.228848,
+  "fresh_risk": {
+    "worst_pnl_usd": -280.1898110000002,
+    "tail_pnl_usd": -103.50109541666673,
+    "max_drawdown_usd": 518.4399999999987,
+    "profitable_share": 0.7361111111111112,
+    "sharpe": 0.8008080443697194
+  },
+  "stress_sessions": 20,
+  "stress_pnl_usd": 14384.250700000004,
+  "stress_max_drawdown_usd": 203.90728800000034,
+  "disqualifications": 0,
+  "exact_replays": 4,
+  "unit_tests_passed": 3,
+  "wasm_sha256": "fe2243fb36bbf6252093c8ef38e2e63dd94338d16f3e390222f505646a8256da"
+}

@@ -1,0 +1,43 @@
+{
+  "features": 53,
+  "short_model": {
+    "trees": 600,
+    "max_leaves": 63,
+    "discount_decay_steps": 4,
+    "training_scenarios": 28000,
+    "draw_seed": 348117,
+    "draw_count": 32000,
+    "training_indices": [
+      1,
+      28000
+    ],
+    "validation_indices": [
+      28001,
+      32000
+    ],
+    "canonical_directions": true,
+    "training_row_selection": "Every third step, plus new moves > 0.22 percentage points and the first second after a significant move."
+  },
+  "medium_model": {
+    "trees": 158,
+    "max_leaves": 47,
+    "discount_decay_steps": 16,
+    "training_scenarios": 6000,
+    "draw_seed": 731893,
+    "draw_count": 12000,
+    "training_indices": [
+      1,
+      6000
+    ],
+    "validation_indices": [
+      6001,
+      8000
+    ],
+    "canonical_directions": true
+  },
+  "signal": "short + 0.1 * medium; percentage points",
+  "entry_threshold": 0.1,
+  "holding_threshold": -0.08,
+  "runtime_inputs": "Current session metadata, oracle history, current position, and read-only trader-account equity.",
+  "runtime_files_required": []
+}

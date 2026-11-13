@@ -1,0 +1,23 @@
+# Your strategy: `just build` builds it into bot.wasm, the component the
+# grader loads. Build after every change: the grader loads bot.wasm as it
+# is, and builds nothing.
+
+# Build the strategy into bot.wasm.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH=/usr/local/rustup/toolchains/1.97.1-aarch64-unknown-linux-gnu/bin:$PATH
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm
+    echo "built bot.wasm from $wasm"
+
+# Check the Rust feature pipeline and embedded models against an independent replay.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH=/usr/local/rustup/toolchains/1.97.1-aarch64-unknown-linux-gnu/bin:$PATH
+    test_dir="$(mktemp -d)"
+    trap 'rm -rf "$test_dir"' EXIT
+    rustc --edition 2024 --test tests/parity.rs -o "$test_dir/parity"
+    "$test_dir/parity"

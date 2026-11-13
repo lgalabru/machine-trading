@@ -1,0 +1,555 @@
+{
+    "id": "a4754ac9-a12f-46b6-be85-5c4b0c69cfde",
+    "started_at": "2026-11-13T05:24:38.332590",
+    "updated_at": "2026-11-13T06:33:52.109460",
+    "finished_at": "2026-11-13T06:33:52.109460",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 0,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "codex__gpt-6-astra__adhoc": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "bound_pnl_usd": 93647.46314,
+                        "disqualified": 0.0,
+                        "max_drawdown_usd": 659.4087989999989,
+                        "not_graded": 0.0,
+                        "pnl_hidden-1": 541.8818499999998,
+                        "pnl_hidden-10": -27.862796999999773,
+                        "pnl_hidden-11": 656.0141800000001,
+                        "pnl_hidden-12": 244.04365300000063,
+                        "pnl_hidden-13": 9.59455700000035,
+                        "pnl_hidden-14": 583.2025109999995,
+                        "pnl_hidden-15": -108.6330109999999,
+                        "pnl_hidden-16": 482.7191779999994,
+                        "pnl_hidden-17": 1317.0001749999992,
+                        "pnl_hidden-18": 229.979867,
+                        "pnl_hidden-19": 564.2803179999992,
+                        "pnl_hidden-2": 498.8674859999992,
+                        "pnl_hidden-20": 905.0116429999998,
+                        "pnl_hidden-21": 596.2391810000008,
+                        "pnl_hidden-22": -160.2737730000008,
+                        "pnl_hidden-23": 771.2574519999998,
+                        "pnl_hidden-24": 249.3169969999999,
+                        "pnl_hidden-25": 191.23166300000048,
+                        "pnl_hidden-26": 329.07568399999946,
+                        "pnl_hidden-27": 453.00897500000065,
+                        "pnl_hidden-28": -77.48994800000037,
+                        "pnl_hidden-29": 748.5733240000009,
+                        "pnl_hidden-3": 87.33524399999988,
+                        "pnl_hidden-30": 421.4370720000006,
+                        "pnl_hidden-31": -131.7373520000001,
+                        "pnl_hidden-32": 1388.4907120000007,
+                        "pnl_hidden-33": 379.0808990000005,
+                        "pnl_hidden-34": 808.6101479999998,
+                        "pnl_hidden-35": -593.7265709999992,
+                        "pnl_hidden-36": 332.8917070000007,
+                        "pnl_hidden-37": 1254.6459680000007,
+                        "pnl_hidden-38": -16.031533999999738,
+                        "pnl_hidden-39": 524.3510569999999,
+                        "pnl_hidden-4": 213.3174569999992,
+                        "pnl_hidden-40": 1142.4864300000008,
+                        "pnl_hidden-41": 615.5260529999996,
+                        "pnl_hidden-42": 301.1769289999993,
+                        "pnl_hidden-43": -220.83187800000087,
+                        "pnl_hidden-44": 860.2409160000007,
+                        "pnl_hidden-45": -9.077731999999742,
+                        "pnl_hidden-46": 222.17514499999925,
+                        "pnl_hidden-47": 971.5206469999994,
+                        "pnl_hidden-48": -82.88474400000086,
+                        "pnl_hidden-49": 1416.4864020000005,
+                        "pnl_hidden-5": 108.04145000000062,
+                        "pnl_hidden-50": 181.33191400000032,
+                        "pnl_hidden-51": 605.4793740000005,
+                        "pnl_hidden-52": 32.11189000000013,
+                        "pnl_hidden-53": 1320.9086640000005,
+                        "pnl_hidden-54": 486.2871759999998,
+                        "pnl_hidden-55": -52.88101599999936,
+                        "pnl_hidden-56": 645.4880859999994,
+                        "pnl_hidden-57": -25.205518999999185,
+                        "pnl_hidden-58": 692.0186150000009,
+                        "pnl_hidden-59": 249.7674709999992,
+                        "pnl_hidden-6": 360.0746199999994,
+                        "pnl_hidden-60": 202.8320249999997,
+                        "pnl_hidden-61": 690.7017799999994,
+                        "pnl_hidden-62": -224.25280799999928,
+                        "pnl_hidden-63": 326.73608799999965,
+                        "pnl_hidden-64": -120.55426400000033,
+                        "pnl_hidden-65": 183.70614899999964,
+                        "pnl_hidden-66": 74.48572899999999,
+                        "pnl_hidden-67": -157.36968399999932,
+                        "pnl_hidden-68": -129.30441900000005,
+                        "pnl_hidden-69": -27.985608000000866,
+                        "pnl_hidden-7": 220.50513599999977,
+                        "pnl_hidden-70": 436.2755180000004,
+                        "pnl_hidden-71": -387.86884199999986,
+                        "pnl_hidden-72": 462.7515110000004,
+                        "pnl_hidden-8": 939.2271170000004,
+                        "pnl_hidden-9": 777.4780599999995,
+                        "pnl_usd": 26753.308353,
+                        "profitable_share": 0.75,
+                        "reference_pnl_usd": 10973.490000000002,
+                        "reference_ratio": 2.4379945079459677,
+                        "refused_calls": 0.0,
+                        "reward": 0.285681079400994,
+                        "sharpe": 0.8440645885928335,
+                        "skill": 2.4379945079459677,
+                        "tail_pnl_usd": -199.57727450000007,
+                        "tampered": 0.0,
+                        "worst_pnl_usd": -593.7265709999992
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "bound_pnl_usd": {
+                        "93647.46314": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "disqualified": {
+                        "0.0": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "max_drawdown_usd": {
+                        "659.4087989999989": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "not_graded": {
+                        "0.0": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-1": {
+                        "541.8818499999998": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-10": {
+                        "-27.862796999999773": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-11": {
+                        "656.0141800000001": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-12": {
+                        "244.04365300000063": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-13": {
+                        "9.59455700000035": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-14": {
+                        "583.2025109999995": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-15": {
+                        "-108.6330109999999": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-16": {
+                        "482.7191779999994": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-17": {
+                        "1317.0001749999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-18": {
+                        "229.979867": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-19": {
+                        "564.2803179999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-2": {
+                        "498.8674859999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-20": {
+                        "905.0116429999998": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-21": {
+                        "596.2391810000008": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-22": {
+                        "-160.2737730000008": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-23": {
+                        "771.2574519999998": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-24": {
+                        "249.3169969999999": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-25": {
+                        "191.23166300000048": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-26": {
+                        "329.07568399999946": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-27": {
+                        "453.00897500000065": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-28": {
+                        "-77.48994800000037": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-29": {
+                        "748.5733240000009": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-3": {
+                        "87.33524399999988": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-30": {
+                        "421.4370720000006": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-31": {
+                        "-131.7373520000001": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-32": {
+                        "1388.4907120000007": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-33": {
+                        "379.0808990000005": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-34": {
+                        "808.6101479999998": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-35": {
+                        "-593.7265709999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-36": {
+                        "332.8917070000007": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-37": {
+                        "1254.6459680000007": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-38": {
+                        "-16.031533999999738": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-39": {
+                        "524.3510569999999": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-4": {
+                        "213.3174569999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-40": {
+                        "1142.4864300000008": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-41": {
+                        "615.5260529999996": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-42": {
+                        "301.1769289999993": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-43": {
+                        "-220.83187800000087": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-44": {
+                        "860.2409160000007": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-45": {
+                        "-9.077731999999742": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-46": {
+                        "222.17514499999925": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-47": {
+                        "971.5206469999994": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-48": {
+                        "-82.88474400000086": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-49": {
+                        "1416.4864020000005": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-5": {
+                        "108.04145000000062": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-50": {
+                        "181.33191400000032": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-51": {
+                        "605.4793740000005": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-52": {
+                        "32.11189000000013": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-53": {
+                        "1320.9086640000005": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-54": {
+                        "486.2871759999998": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-55": {
+                        "-52.88101599999936": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-56": {
+                        "645.4880859999994": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-57": {
+                        "-25.205518999999185": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-58": {
+                        "692.0186150000009": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-59": {
+                        "249.7674709999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-6": {
+                        "360.0746199999994": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-60": {
+                        "202.8320249999997": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-61": {
+                        "690.7017799999994": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-62": {
+                        "-224.25280799999928": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-63": {
+                        "326.73608799999965": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-64": {
+                        "-120.55426400000033": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-65": {
+                        "183.70614899999964": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-66": {
+                        "74.48572899999999": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-67": {
+                        "-157.36968399999932": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-68": {
+                        "-129.30441900000005": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-69": {
+                        "-27.985608000000866": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-7": {
+                        "220.50513599999977": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-70": {
+                        "436.2755180000004": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-71": {
+                        "-387.86884199999986": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-72": {
+                        "462.7515110000004": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-8": {
+                        "939.2271170000004": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_hidden-9": {
+                        "777.4780599999995": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "pnl_usd": {
+                        "26753.308353": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "profitable_share": {
+                        "0.75": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "reference_pnl_usd": {
+                        "10973.490000000002": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "reference_ratio": {
+                        "2.4379945079459677": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "refused_calls": {
+                        "0.0": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "reward": {
+                        "0.285681079400994": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "sharpe": {
+                        "0.8440645885928335": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "skill": {
+                        "2.4379945079459677": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "tail_pnl_usd": {
+                        "-199.57727450000007": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "tampered": {
+                        "0.0": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    },
+                    "worst_pnl_usd": {
+                        "-593.7265709999992": [
+                            "flash-crash-spcx__H8rU6Fe"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 11057146,
+        "n_cache_tokens": 10948736,
+        "n_output_tokens": 75929,
+        "cost_usd": 15.829286000000003
+    }
+}

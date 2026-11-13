@@ -1,0 +1,88 @@
+{
+  "artifact": {
+    "file": "bot.wasm",
+    "target": "wasm32-wasip2",
+    "sha256": "bb86959678be2b9d5cf7156eb5c7d5974202926d8ad34a1dd2399353f71e0818",
+    "bytes": 5991081
+  },
+  "checks": {
+    "development_30": {
+      "sessions": 30,
+      "pnl_usd": 12156.162425,
+      "reward": 0.31836696018563,
+      "risk": {
+        "worst_pnl_usd": -124.63325000000077,
+        "tail_pnl_usd": -59.53452240000043,
+        "max_drawdown_usd": 359.49980199999845,
+        "profitable_share": 0.8,
+        "sharpe": 0.9617464927630389
+      },
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "liquidatable_sessions": 0,
+      "peak_position": 70.0,
+      "max_fuel_per_call": 10140892
+    },
+    "validation_72": {
+      "sessions": 72,
+      "pnl_usd": 28019.613728000004,
+      "reward": 0.31155681617603653,
+      "risk": {
+        "worst_pnl_usd": -454.77599999999984,
+        "tail_pnl_usd": -183.90452200000013,
+        "max_drawdown_usd": 538.0644429999993,
+        "profitable_share": 0.8194444444444444,
+        "sharpe": 0.8962205822499281
+      },
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "liquidatable_sessions": 0,
+      "peak_position": 70.0,
+      "max_fuel_per_call": 10609678
+    },
+    "adverse_22": {
+      "sessions": 22,
+      "pnl_usd": -8059.371174999998,
+      "reward": 0.0,
+      "risk": {
+        "worst_pnl_usd": -710.7429759999995,
+        "tail_pnl_usd": -674.3553052499997,
+        "max_drawdown_usd": 762.1826149999997,
+        "profitable_share": 0.18181818181818182,
+        "sharpe": -1.1043855000426206
+      },
+      "disqualifications": 0,
+      "refused_rpc_calls": 0,
+      "liquidatable_sessions": 0,
+      "peak_position": 70.0,
+      "max_fuel_per_call": 10297154
+    }
+  },
+  "adverse_case_selection": "Largest simulated drawdowns and losses from 10,000 separate generated paths; this deliberately adverse set is not representative of expected PnL.",
+  "replay": {
+    "runs": 2,
+    "load_threads": 0,
+    "reports": 4,
+    "identical": true
+  },
+  "numerical_parity": {
+    "turns": 7968,
+    "max_feature_error": 5.000000413701855e-11,
+    "max_forecast_error": 4.999889391399392e-13
+  },
+  "independent_simulation": {
+    "paths": 10000,
+    "mean_pnl_usd": 393.5968944404372,
+    "execution_cost_per_notional": 0.0009,
+    "max_drawdown_usd": 767.0056982948686
+  },
+  "training": {
+    "generated_paths": 50000,
+    "runtime_features": 65,
+    "forecast_horizons_seconds": [
+      2,
+      5
+    ],
+    "uses_future_runtime_observations": false
+  }
+}

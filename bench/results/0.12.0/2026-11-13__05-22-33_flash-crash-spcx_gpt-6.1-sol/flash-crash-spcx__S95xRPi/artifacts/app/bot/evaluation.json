@@ -1,0 +1,117 @@
+{
+  "component": "bot.wasm",
+  "target": "wasm32-wasip2",
+  "sha256": "4ed8b77243fa075d3b4731d57b8dcc23d1c3bb8318494d1fe5b9b4315af54f13",
+  "model": {
+    "training": "12000 generated scenarios, every fourth observed step",
+    "forecast_decay_steps": [
+      2,
+      8
+    ],
+    "trees_per_model": 400,
+    "feature_slots": 96,
+    "forecast_mix": [
+      0.5,
+      0.5
+    ],
+    "turnover_penalty_pct": 0.07,
+    "exposure_penalty_pct": 0.015
+  },
+  "checks": {
+    "feature_unit_tests": 3,
+    "prediction_parity_holdout_paths": 3000,
+    "prediction_parity_observations": 776585,
+    "prediction_export_max_error": 0.0,
+    "regression_sessions_with_exact_pnl_match": 294,
+    "practice_replay": {
+      "runs": 2,
+      "load_threads": 0,
+      "reports": 7,
+      "identical": true
+    }
+  },
+  "aggregate": {
+    "distinct_sessions": 294,
+    "pnl_usd": 122273.95502300005,
+    "bound_pnl_usd": 408092.0466700002,
+    "reward": 0.29962346980478094,
+    "worst_session_pnl_usd": -428.2469400000009,
+    "max_drawdown_usd": 605.5477129999999,
+    "profitable_share": 0.7755102040816326,
+    "disqualifications": 0,
+    "refused_rpc_calls": 0,
+    "outside_market_positions": 0,
+    "liquidatable_sessions": 0,
+    "peak_position": 70.0
+  },
+  "batches": [
+    {
+      "label": "generated calibration",
+      "sessions": 72,
+      "reward": 0.32984300281917267,
+      "pnl_usd": 33714.076758999996,
+      "bound_pnl_usd": 102212.49646300003,
+      "risk": {
+        "worst_pnl_usd": -360.65987099999984,
+        "tail_pnl_usd": -138.25569108333335,
+        "max_drawdown_usd": 588.5063709999995,
+        "profitable_share": 0.8194444444444444,
+        "sharpe": 0.9093147871305107
+      }
+    },
+    {
+      "label": "independent validation plus practice",
+      "sessions": 78,
+      "reward": 0.29162243763886103,
+      "pnl_usd": 31183.167301,
+      "bound_pnl_usd": 106929.93156999999,
+      "risk": {
+        "worst_pnl_usd": -428.2469400000009,
+        "tail_pnl_usd": -187.41359461538448,
+        "max_drawdown_usd": 576.6461619999991,
+        "profitable_share": 0.7692307692307693,
+        "sharpe": 0.843378200909068
+      }
+    },
+    {
+      "label": "independent stress",
+      "sessions": 144,
+      "reward": 0.28839819526213106,
+      "pnl_usd": 57376.710963000034,
+      "bound_pnl_usd": 198949.618637,
+      "risk": {
+        "worst_pnl_usd": -341.36339699999917,
+        "tail_pnl_usd": -178.50678370833316,
+        "max_drawdown_usd": 605.5477129999999,
+        "profitable_share": 0.7569444444444444,
+        "sharpe": 0.8237820620410776
+      }
+    }
+  ],
+  "final_artifact_practice": {
+    "reward": 0.21248184117854246,
+    "pnl_usd": 1378.5531240000018,
+    "bound_pnl_usd": 6487.863228,
+    "reference_pnl_usd": 539.4599999999999,
+    "reference_ratio": 2.555431587142702,
+    "skill": 2.555431587142702,
+    "risk": {
+      "worst_pnl_usd": 116.9657700000007,
+      "tail_pnl_usd": 116.9657700000007,
+      "max_drawdown_usd": 290.41341900000043,
+      "profitable_share": 1.0,
+      "sharpe": 1.2963691379470286
+    },
+    "replay": {
+      "runs": 2,
+      "load_threads": 0,
+      "reports": 7,
+      "identical": true
+    }
+  },
+  "instructions": {
+    "largest_call": 10610405,
+    "largest_session_average_per_step": 588666.5
+  },
+  "scope": "Generated and practice sessions only; hidden grading scenarios were unavailable."
+}

@@ -1,0 +1,63 @@
+{
+  "normal_scenarios": {
+    "count": 150,
+    "pnl_usd": 59972.87050900001,
+    "hindsight_bound_usd": 208445.39646699998,
+    "reward": 0.2877150156611619,
+    "profitable_count": 116,
+    "max_drawdown_usd": 586.7088469999999,
+    "worst_pnl_usd": -403.05114499999945,
+    "disqualifications": 0
+  },
+  "stress_scenarios": {
+    "count": 6,
+    "max_drawdown_usd": 800.1342539999987,
+    "disqualifications": 0
+  },
+  "native_safety_tests": 3,
+  "runs": [
+    {
+      "reward": 0.23782103446311118,
+      "pnl_usd": 13414.929279999995,
+      "bound_pnl_usd": 56407.66516,
+      "risk": {
+        "worst_pnl_usd": -319.65051700000004,
+        "tail_pnl_usd": -161.6084834285713,
+        "max_drawdown_usd": 544.0715920000002,
+        "profitable_share": 0.7619047619047619,
+        "sharpe": 0.7954038917452565
+      }
+    },
+    {
+      "reward": 0.2904954425635898,
+      "pnl_usd": 15285.338466000005,
+      "bound_pnl_usd": 52618.169603999995,
+      "risk": {
+        "worst_pnl_usd": -344.8617379999996,
+        "tail_pnl_usd": -143.17177766666677,
+        "max_drawdown_usd": 411.4401120000002,
+        "profitable_share": 0.8611111111111112,
+        "sharpe": 0.8988542056699915
+      }
+    },
+    {
+      "reward": 0.31455180678045924,
+      "pnl_usd": 31272.60276300001,
+      "bound_pnl_usd": 99419.56170300003,
+      "risk": {
+        "worst_pnl_usd": -403.05114499999945,
+        "tail_pnl_usd": -182.12168916666647,
+        "max_drawdown_usd": 586.7088469999999,
+        "profitable_share": 0.7361111111111112,
+        "sharpe": 0.7566360882426812
+      }
+    }
+  ],
+  "final_replay": {
+    "runs": 2,
+    "load_threads": 0,
+    "reports": 13,
+    "identical": true
+  },
+  "final_component_sha256": "59ef6e9cd1ba94f63e1b56df6a3d06b3cbb53b46a35746d8fc989ca4ebb94a3d"
+}

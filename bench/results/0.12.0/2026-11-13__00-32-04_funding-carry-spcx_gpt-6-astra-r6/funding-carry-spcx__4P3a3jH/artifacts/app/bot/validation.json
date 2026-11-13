@@ -1,0 +1,556 @@
+{
+  "description": "Practice and constructed stress scenarios; not hidden grader sessions. Repeated scenario names counted once.",
+  "strategy": "750-tree SPCX forecast, 15bp decision band, drawdown-dependent sizing, current-book order limits",
+  "distinct_scenarios": 58,
+  "pnl_usd": 28729.291094722652,
+  "max_drawdown_usd": 378.51408894556516,
+  "profitable_scenarios": 56,
+  "violations": 0,
+  "native_tests": {
+    "passed": 2,
+    "failed": 0
+  },
+  "scenarios": [
+    {
+      "scenario": "practice-1",
+      "pnl_usd": 450.01806300000317,
+      "max_drawdown_usd": 128.22524152452388,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "practice-2",
+      "pnl_usd": 349.14240399999835,
+      "max_drawdown_usd": 181.78941783428854,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "practice-3",
+      "pnl_usd": 299.36585000000014,
+      "max_drawdown_usd": 65.27515686801235,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "practice-4",
+      "pnl_usd": 224.39563898801862,
+      "max_drawdown_usd": 63.31987715301693,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "practice-5",
+      "pnl_usd": 253.71754499999952,
+      "max_drawdown_usd": 139.1229949225144,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "practice-6",
+      "pnl_usd": 401.9105410127995,
+      "max_drawdown_usd": 148.01556000576238,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-1",
+      "pnl_usd": 464.7109879388754,
+      "max_drawdown_usd": 92.02031992666343,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-2",
+      "pnl_usd": 444.4310847900015,
+      "max_drawdown_usd": 86.7611707383985,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-3",
+      "pnl_usd": 398.53103207115964,
+      "max_drawdown_usd": 187.15134752324775,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-4",
+      "pnl_usd": 646.0134028461543,
+      "max_drawdown_usd": 115.25685357971815,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-5",
+      "pnl_usd": 1053.8308213202781,
+      "max_drawdown_usd": 227.65127380272133,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-6",
+      "pnl_usd": 321.07841164465754,
+      "max_drawdown_usd": 138.39314016441494,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-7",
+      "pnl_usd": 364.2905211163925,
+      "max_drawdown_usd": 232.8094942755506,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-8",
+      "pnl_usd": 891.0653992221305,
+      "max_drawdown_usd": 142.56084290887884,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-9",
+      "pnl_usd": 683.7608052330033,
+      "max_drawdown_usd": 169.32058064024204,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-10",
+      "pnl_usd": 838.3957438750513,
+      "max_drawdown_usd": 118.79105083045579,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-11",
+      "pnl_usd": 719.65186558608,
+      "max_drawdown_usd": 197.53793575646523,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "stress-12",
+      "pnl_usd": 438.5187081877175,
+      "max_drawdown_usd": 100.9667865128049,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-1",
+      "pnl_usd": -187.59658650105666,
+      "max_drawdown_usd": 345.875611127487,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-2",
+      "pnl_usd": 102.58871853542041,
+      "max_drawdown_usd": 194.49587938432887,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-3",
+      "pnl_usd": 413.2995459460599,
+      "max_drawdown_usd": 251.52367667693397,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-4",
+      "pnl_usd": 912.7802262158912,
+      "max_drawdown_usd": 229.0240656391834,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-5",
+      "pnl_usd": 229.9113351626129,
+      "max_drawdown_usd": 146.23236809738773,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-6",
+      "pnl_usd": 466.3520962500006,
+      "max_drawdown_usd": 176.9981669050685,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-7",
+      "pnl_usd": 524.0449924899985,
+      "max_drawdown_usd": 155.26935094504734,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-8",
+      "pnl_usd": 565.5351474181389,
+      "max_drawdown_usd": 109.82617652557747,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-9",
+      "pnl_usd": 328.89653542999986,
+      "max_drawdown_usd": 92.13081306344793,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-10",
+      "pnl_usd": 568.23972159,
+      "max_drawdown_usd": 184.23365392000233,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-11",
+      "pnl_usd": 639.7158005500023,
+      "max_drawdown_usd": 88.53283249152628,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "vs-12",
+      "pnl_usd": 1304.021052480257,
+      "max_drawdown_usd": 109.82227276227968,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-111",
+      "pnl_usd": 320.41596193439,
+      "max_drawdown_usd": 81.14711350773541,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-29",
+      "pnl_usd": 479.48693808086864,
+      "max_drawdown_usd": 109.53452130319965,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-33",
+      "pnl_usd": 575.5908805304516,
+      "max_drawdown_usd": 123.60746373171241,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-34",
+      "pnl_usd": 477.9940416672871,
+      "max_drawdown_usd": 141.2078561110011,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-46",
+      "pnl_usd": 246.79712394200033,
+      "max_drawdown_usd": 145.46430789581973,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-58",
+      "pnl_usd": 700.5196391788777,
+      "max_drawdown_usd": 128.64312051757224,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-65",
+      "pnl_usd": 239.83903475250008,
+      "max_drawdown_usd": 124.17556027264436,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-75",
+      "pnl_usd": 291.6741970000003,
+      "max_drawdown_usd": 172.0016269592179,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-1",
+      "pnl_usd": 102.82056399999965,
+      "max_drawdown_usd": 125.68036607760405,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-2",
+      "pnl_usd": -34.41441936599949,
+      "max_drawdown_usd": 190.07188148082423,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-3",
+      "pnl_usd": 155.21368792724024,
+      "max_drawdown_usd": 136.88821583924982,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-4",
+      "pnl_usd": 991.5337793243962,
+      "max_drawdown_usd": 224.88812757371124,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-5",
+      "pnl_usd": 162.0262519468779,
+      "max_drawdown_usd": 146.97116005312273,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-6",
+      "pnl_usd": 433.48439900000085,
+      "max_drawdown_usd": 84.72878304147707,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-7",
+      "pnl_usd": 513.2186230000007,
+      "max_drawdown_usd": 153.03083722223892,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-8",
+      "pnl_usd": 361.68040319712236,
+      "max_drawdown_usd": 93.5613870697598,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-9",
+      "pnl_usd": 234.36354299999948,
+      "max_drawdown_usd": 68.34722986788256,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-10",
+      "pnl_usd": 286.32819200000085,
+      "max_drawdown_usd": 158.53511025450098,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-11",
+      "pnl_usd": 698.2829809999985,
+      "max_drawdown_usd": 86.23336018628288,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "valid-12",
+      "pnl_usd": 1292.7707023515086,
+      "max_drawdown_usd": 142.34951536651897,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-1",
+      "pnl_usd": 413.4177293990397,
+      "max_drawdown_usd": 177.91956125102297,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-2",
+      "pnl_usd": 362.87079485745926,
+      "max_drawdown_usd": 378.51408894556516,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-3",
+      "pnl_usd": 647.8223595399977,
+      "max_drawdown_usd": 293.13891428937495,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-4",
+      "pnl_usd": 249.68617889000052,
+      "max_drawdown_usd": 304.0139882224594,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-5",
+      "pnl_usd": 336.8206047999993,
+      "max_drawdown_usd": 141.32259233262266,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-6",
+      "pnl_usd": 2484.054455721118,
+      "max_drawdown_usd": 149.60227691966793,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-7",
+      "pnl_usd": 349.6674124000001,
+      "max_drawdown_usd": 220.3949932617943,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    },
+    {
+      "scenario": "extreme-8",
+      "pnl_usd": 244.70762324786847,
+      "max_drawdown_usd": 288.9458910867579,
+      "peak_position": 70.0,
+      "liquidatable": false,
+      "disqualified": null,
+      "refused_calls": []
+    }
+  ],
+  "practice_replay": {
+    "runs": 2,
+    "load_threads": 0,
+    "reports": 7,
+    "identical": true
+  },
+  "practice_pnl_usd": 1978.5500420008193,
+  "practice_max_drawdown_usd": 181.78941783428854,
+  "bot_wasm_sha256": "33aa2023c9dca68916a2d13ec70c265d463ffa2d9f3a6f79926d46073e10eb10",
+  "final_artifact_replay": {
+    "scenario": "practice-6",
+    "pnl_usd": 401.9105410127995,
+    "replay": {
+      "runs": 2,
+      "load_threads": 0,
+      "reports": 2,
+      "identical": true
+    }
+  }
+}

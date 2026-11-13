@@ -1,0 +1,20 @@
+# Your strategy: `just build` builds it into bot.wasm, the component the
+# grader loads. Build after every change: the grader loads bot.wasm as it
+# is, and builds nothing.
+
+# Build the strategy into bot.wasm.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo >/dev/null 2>&1; then
+      for toolchain_bin in /usr/local/rustup/toolchains/*/bin; do
+        if [[ -x "$toolchain_bin/cargo" ]]; then
+          export PATH="$toolchain_bin:$PATH"
+          break
+        fi
+      done
+    fi
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm
+    echo "built bot.wasm from $wasm"

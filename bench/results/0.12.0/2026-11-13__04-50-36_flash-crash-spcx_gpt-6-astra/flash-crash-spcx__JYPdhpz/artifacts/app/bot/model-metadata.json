@@ -1,0 +1,21 @@
+{
+  "model_type": "gradient_boosted_regression_trees",
+  "training_family": "flash-crash",
+  "generated_scenarios": 50000,
+  "training_scenarios": 45000,
+  "held_out_scenarios": 5000,
+  "generation_seed": 909170112,
+  "trees": 600,
+  "causal_features": 54,
+  "selected_training_features": 33,
+  "label": "sum over future increments with per-step discount 0.8, normalized to initial mark",
+  "runtime_inputs": [
+    "current index",
+    "observed price history",
+    "step",
+    "steps remaining",
+    "current position",
+    "current marked account equity"
+  ],
+  "wasm_sha256": "595adadea10c9e2809374cf1af6c61164749751e311b0ec654a3c3d1d021595e"
+}

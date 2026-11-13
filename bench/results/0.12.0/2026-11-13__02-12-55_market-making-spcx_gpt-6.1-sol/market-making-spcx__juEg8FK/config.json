@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "bench/tasks/market-making-spcx"
+    },
+    "trial_name": "market-making-spcx__juEg8FK",
+    "trials_dir": "/home/michaelcrystal/mtx012/batch/2026-11-13__02-12-55_market-making-spcx_gpt-6.1-sol",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6.1-sol",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high",
+            "reasoning_summary": "detailed"
+        }
+    },
+    "job_id": "3d69c235-b977-4b0d-aa88-ae6539eb2ab1"
+}

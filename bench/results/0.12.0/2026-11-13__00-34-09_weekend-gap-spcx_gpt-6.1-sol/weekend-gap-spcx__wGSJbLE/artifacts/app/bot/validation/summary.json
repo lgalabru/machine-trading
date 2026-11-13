@@ -1,0 +1,22 @@
+{
+  "artifact": "bot.wasm",
+  "sha256": "e7a52b9897d21a690b80cf5c6c706802a78bd14683827976a6d75e639508c264",
+  "fresh_scenarios": 72,
+  "reward": 0.24006690268741213,
+  "pnl_usd": 17515.139576999998,
+  "risk": {
+    "worst_pnl_usd": -231.9182980000005,
+    "tail_pnl_usd": -56.189251583333466,
+    "max_drawdown_usd": 411.51632099999915,
+    "profitable_share": 0.8472222222222222,
+    "sharpe": 0.9601299202091345
+  },
+  "disqualifications": 0,
+  "artifact_replay": {
+    "runs": 2,
+    "load_threads": 0,
+    "reports": 5,
+    "identical": true
+  },
+  "parity_test": "passed"
+}

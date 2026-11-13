@@ -1,0 +1,546 @@
+{
+  "component_sha256": "98cb8910c6c71713d4bec1789d4bdfdc95d9e16ec8bbdfe3f2bf25a71bda4504",
+  "scenario_family": "market-making",
+  "scenarios": 72,
+  "regimes": {
+    "calm": 18,
+    "jumps": 36,
+    "trend": 18
+  },
+  "pnl_usdc": 1314.132161,
+  "bound_usdc": 17639.738104,
+  "reward": 0.0744983941,
+  "worst_session_pnl_usdc": -85.667452,
+  "worst_decile_mean_pnl_usdc": -61.700031,
+  "maximum_drawdown_usdc": 143.33912,
+  "maximum_absolute_position_spcx": 18.03,
+  "profitable_sessions": 33,
+  "sharpe_across_sessions": 0.28904407834631174,
+  "violations": [],
+  "maximum_fuel_per_call": 59275836,
+  "native_safety_tests": {
+    "passed": 5,
+    "failed": 0
+  },
+  "notes": [
+    "Fresh generated scenarios, independent of model training and development scenarios.",
+    "The first 24 scenarios compared two strategy variants. The following 48 used the selected final component without further tuning.",
+    "After the first 24 runs, only formatting, comments, native tests and the build recipe changed; the strategy logic and model stayed identical."
+  ],
+  "sessions": [
+    {
+      "name": "validation-1",
+      "pnl_usdc": 98.33992,
+      "max_drawdown_usdc": 24.655862,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-2",
+      "pnl_usdc": -85.667452,
+      "max_drawdown_usdc": 114.159889,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-3",
+      "pnl_usdc": -13.251734,
+      "max_drawdown_usdc": 19.706892,
+      "peak_position_spcx": 10.78,
+      "disqualified": null
+    },
+    {
+      "name": "validation-4",
+      "pnl_usdc": 152.166668,
+      "max_drawdown_usdc": 35.350423,
+      "peak_position_spcx": 18.03,
+      "disqualified": null
+    },
+    {
+      "name": "validation-5",
+      "pnl_usdc": -12.230784,
+      "max_drawdown_usdc": 13.308726,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-6",
+      "pnl_usdc": 1.788444,
+      "max_drawdown_usdc": 0.445752,
+      "peak_position_spcx": 2.558,
+      "disqualified": null
+    },
+    {
+      "name": "validation-7",
+      "pnl_usdc": -9.30953,
+      "max_drawdown_usdc": 49.698266,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-8",
+      "pnl_usdc": 5.616463,
+      "max_drawdown_usdc": 28.539526,
+      "peak_position_spcx": 18.005,
+      "disqualified": null
+    },
+    {
+      "name": "validation-9",
+      "pnl_usdc": 3.375797,
+      "max_drawdown_usdc": 8.531382,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-10",
+      "pnl_usdc": -11.532456,
+      "max_drawdown_usdc": 12.584391,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-11",
+      "pnl_usdc": 164.174938,
+      "max_drawdown_usdc": 16.351572,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-12",
+      "pnl_usdc": 148.942147,
+      "max_drawdown_usdc": 12.43289,
+      "peak_position_spcx": 18.004,
+      "disqualified": null
+    },
+    {
+      "name": "validation-13",
+      "pnl_usdc": -14.886688,
+      "max_drawdown_usdc": 29.511633,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-14",
+      "pnl_usdc": -48.133356,
+      "max_drawdown_usdc": 50.809932,
+      "peak_position_spcx": 18.017,
+      "disqualified": null
+    },
+    {
+      "name": "validation-15",
+      "pnl_usdc": -70.360857,
+      "max_drawdown_usdc": 71.138356,
+      "peak_position_spcx": 18.013,
+      "disqualified": null
+    },
+    {
+      "name": "validation-16",
+      "pnl_usdc": -10.261125,
+      "max_drawdown_usdc": 15.670981,
+      "peak_position_spcx": 18.019,
+      "disqualified": null
+    },
+    {
+      "name": "validation-17",
+      "pnl_usdc": 215.294141,
+      "max_drawdown_usdc": 41.0416,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-18",
+      "pnl_usdc": -15.969698,
+      "max_drawdown_usdc": 16.740774,
+      "peak_position_spcx": 18.004,
+      "disqualified": null
+    },
+    {
+      "name": "validation-19",
+      "pnl_usdc": 137.668467,
+      "max_drawdown_usdc": 24.861212,
+      "peak_position_spcx": 18.004,
+      "disqualified": null
+    },
+    {
+      "name": "validation-20",
+      "pnl_usdc": 102.028331,
+      "max_drawdown_usdc": 27.6742,
+      "peak_position_spcx": 18.005,
+      "disqualified": null
+    },
+    {
+      "name": "validation-21",
+      "pnl_usdc": -22.462787,
+      "max_drawdown_usdc": 24.80358,
+      "peak_position_spcx": 18.003,
+      "disqualified": null
+    },
+    {
+      "name": "validation-22",
+      "pnl_usdc": 43.578374,
+      "max_drawdown_usdc": 9.216032,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-23",
+      "pnl_usdc": -13.101227,
+      "max_drawdown_usdc": 23.067349,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-24",
+      "pnl_usdc": -72.07883,
+      "max_drawdown_usdc": 100.772306,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-25",
+      "pnl_usdc": 2.142319,
+      "max_drawdown_usdc": 1.654884,
+      "peak_position_spcx": 4.308,
+      "disqualified": null
+    },
+    {
+      "name": "validation-26",
+      "pnl_usdc": 75.667459,
+      "max_drawdown_usdc": 9.334555,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-27",
+      "pnl_usdc": -2.676382,
+      "max_drawdown_usdc": 4.694281,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-28",
+      "pnl_usdc": -51.051895,
+      "max_drawdown_usdc": 52.886696,
+      "peak_position_spcx": 18.008,
+      "disqualified": null
+    },
+    {
+      "name": "validation-29",
+      "pnl_usdc": 84.736206,
+      "max_drawdown_usdc": 15.678161,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-30",
+      "pnl_usdc": -1.314485,
+      "max_drawdown_usdc": 7.655334,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-31",
+      "pnl_usdc": -25.33744,
+      "max_drawdown_usdc": 27.645589,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-32",
+      "pnl_usdc": 2.192267,
+      "max_drawdown_usdc": 0.997162,
+      "peak_position_spcx": 2.606,
+      "disqualified": null
+    },
+    {
+      "name": "validation-33",
+      "pnl_usdc": -18.447963,
+      "max_drawdown_usdc": 23.206842,
+      "peak_position_spcx": 18.003,
+      "disqualified": null
+    },
+    {
+      "name": "validation-34",
+      "pnl_usdc": -52.231298,
+      "max_drawdown_usdc": 52.553649,
+      "peak_position_spcx": 18.003,
+      "disqualified": null
+    },
+    {
+      "name": "validation-35",
+      "pnl_usdc": -21.578263,
+      "max_drawdown_usdc": 25.94881,
+      "peak_position_spcx": 18.016,
+      "disqualified": null
+    },
+    {
+      "name": "validation-36",
+      "pnl_usdc": 31.802767,
+      "max_drawdown_usdc": 21.255411,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-37",
+      "pnl_usdc": -18.337761,
+      "max_drawdown_usdc": 20.912978,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-38",
+      "pnl_usdc": 3.867246,
+      "max_drawdown_usdc": 1.06901,
+      "peak_position_spcx": 6.237,
+      "disqualified": null
+    },
+    {
+      "name": "validation-39",
+      "pnl_usdc": -11.373265,
+      "max_drawdown_usdc": 16.078362,
+      "peak_position_spcx": 18.008,
+      "disqualified": null
+    },
+    {
+      "name": "validation-40",
+      "pnl_usdc": 73.083447,
+      "max_drawdown_usdc": 5.566903,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-41",
+      "pnl_usdc": -4.066835,
+      "max_drawdown_usdc": 7.212104,
+      "peak_position_spcx": 18.004,
+      "disqualified": null
+    },
+    {
+      "name": "validation-42",
+      "pnl_usdc": 48.812983,
+      "max_drawdown_usdc": 14.831162,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-43",
+      "pnl_usdc": 152.64784,
+      "max_drawdown_usdc": 14.850791,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-44",
+      "pnl_usdc": 50.486843,
+      "max_drawdown_usdc": 32.677526,
+      "peak_position_spcx": 18.007,
+      "disqualified": null
+    },
+    {
+      "name": "validation-45",
+      "pnl_usdc": -15.1342,
+      "max_drawdown_usdc": 17.207621,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-46",
+      "pnl_usdc": -40.464084,
+      "max_drawdown_usdc": 41.078682,
+      "peak_position_spcx": 18.003,
+      "disqualified": null
+    },
+    {
+      "name": "validation-47",
+      "pnl_usdc": 18.232203,
+      "max_drawdown_usdc": 18.406807,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-48",
+      "pnl_usdc": -19.423078,
+      "max_drawdown_usdc": 21.024661,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-49",
+      "pnl_usdc": 41.350057,
+      "max_drawdown_usdc": 76.317384,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-50",
+      "pnl_usdc": 50.528465,
+      "max_drawdown_usdc": 15.451595,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-51",
+      "pnl_usdc": -3.160109,
+      "max_drawdown_usdc": 14.58422,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-52",
+      "pnl_usdc": 91.471885,
+      "max_drawdown_usdc": 5.86504,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-53",
+      "pnl_usdc": -34.401861,
+      "max_drawdown_usdc": 42.577583,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-54",
+      "pnl_usdc": 125.354312,
+      "max_drawdown_usdc": 12.385001,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-55",
+      "pnl_usdc": -10.470744,
+      "max_drawdown_usdc": 17.472937,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-56",
+      "pnl_usdc": -6.286808,
+      "max_drawdown_usdc": 11.7245,
+      "peak_position_spcx": 18.007,
+      "disqualified": null
+    },
+    {
+      "name": "validation-57",
+      "pnl_usdc": -30.905978,
+      "max_drawdown_usdc": 32.003163,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-58",
+      "pnl_usdc": -18.56573,
+      "max_drawdown_usdc": 20.675676,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-59",
+      "pnl_usdc": -21.705828,
+      "max_drawdown_usdc": 53.919909,
+      "peak_position_spcx": 18.004,
+      "disqualified": null
+    },
+    {
+      "name": "validation-60",
+      "pnl_usdc": 33.628952,
+      "max_drawdown_usdc": 30.932334,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-61",
+      "pnl_usdc": -18.110973,
+      "max_drawdown_usdc": 20.071473,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-62",
+      "pnl_usdc": 148.149622,
+      "max_drawdown_usdc": 16.027247,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-63",
+      "pnl_usdc": -5.856338,
+      "max_drawdown_usdc": 8.860379,
+      "peak_position_spcx": 18.001,
+      "disqualified": null
+    },
+    {
+      "name": "validation-64",
+      "pnl_usdc": -3.153553,
+      "max_drawdown_usdc": 4.63687,
+      "peak_position_spcx": 18.006,
+      "disqualified": null
+    },
+    {
+      "name": "validation-65",
+      "pnl_usdc": -4.046659,
+      "max_drawdown_usdc": 6.210991,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-66",
+      "pnl_usdc": 5.983352,
+      "max_drawdown_usdc": 0.879194,
+      "peak_position_spcx": 4.461,
+      "disqualified": null
+    },
+    {
+      "name": "validation-67",
+      "pnl_usdc": 93.609771,
+      "max_drawdown_usdc": 10.837334,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    },
+    {
+      "name": "validation-68",
+      "pnl_usdc": 1.149418,
+      "max_drawdown_usdc": 6.431219,
+      "peak_position_spcx": 17.999,
+      "disqualified": null
+    },
+    {
+      "name": "validation-69",
+      "pnl_usdc": 45.935633,
+      "max_drawdown_usdc": 15.976926,
+      "peak_position_spcx": 18.004,
+      "disqualified": null
+    },
+    {
+      "name": "validation-70",
+      "pnl_usdc": -55.782909,
+      "max_drawdown_usdc": 58.085168,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-71",
+      "pnl_usdc": -58.293654,
+      "max_drawdown_usdc": 143.33912,
+      "peak_position_spcx": 18.002,
+      "disqualified": null
+    },
+    {
+      "name": "validation-72",
+      "pnl_usdc": 11.75004,
+      "max_drawdown_usdc": 12.921921,
+      "peak_position_spcx": 18.0,
+      "disqualified": null
+    }
+  ],
+  "phase_results": {
+    "comparison_24": {
+      "pnl_usdc": 983.309551,
+      "reward": 0.16183022571304298
+    },
+    "final_holdout_48": {
+      "pnl_usdc": 330.82261,
+      "reward": 0.028609066679835086
+    }
+  }
+}

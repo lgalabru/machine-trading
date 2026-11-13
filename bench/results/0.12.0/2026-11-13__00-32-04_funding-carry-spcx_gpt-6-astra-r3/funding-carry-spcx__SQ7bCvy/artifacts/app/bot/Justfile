@@ -1,0 +1,35 @@
+# Your strategy: `just build` builds it into bot.wasm, the component the
+# grader loads. Build after every change: the grader loads bot.wasm as it
+# is, and builds nothing.
+
+# Build the strategy into bot.wasm.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo >/dev/null; then
+      for task_toolchain in /usr/local/rustup/toolchains/*/bin; do
+        if [[ -x "$task_toolchain/cargo" ]]; then
+          export PATH="$task_toolchain:$PATH"
+          break
+        fi
+      done
+    fi
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm
+    echo "built bot.wasm from $wasm"
+
+# Exercise the loss-budget invariants without a chain.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v rustc >/dev/null; then
+      for task_toolchain in /usr/local/rustup/toolchains/*/bin; do
+        if [[ -x "$task_toolchain/rustc" ]]; then
+          export PATH="$task_toolchain:$PATH"
+          break
+        fi
+      done
+    fi
+    rustc --edition=2024 --test src/risk.rs -o /tmp/spcx-risk-tests
+    /tmp/spcx-risk-tests

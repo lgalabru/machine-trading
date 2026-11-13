@@ -1,0 +1,555 @@
+{
+    "id": "3d69c235-b977-4b0d-aa88-ae6539eb2ab1",
+    "started_at": "2026-11-13T02:12:55.850263",
+    "updated_at": "2026-11-13T03:45:25.193240",
+    "finished_at": "2026-11-13T03:45:25.193240",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 0,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "codex__gpt-6.1-sol__adhoc": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "bound_pnl_usd": 16705.102200005684,
+                        "disqualified": 0.0,
+                        "max_drawdown_usd": 59.370224400299776,
+                        "not_graded": 0.0,
+                        "pnl_hidden-1": 145.5604835735994,
+                        "pnl_hidden-10": -30.23882174440041,
+                        "pnl_hidden-11": -11.0448808018009,
+                        "pnl_hidden-12": -23.31560589199944,
+                        "pnl_hidden-13": 48.82799628560133,
+                        "pnl_hidden-14": 61.83743205199971,
+                        "pnl_hidden-15": 3.269297468001241,
+                        "pnl_hidden-16": 122.0374089142988,
+                        "pnl_hidden-17": 1.9604990008010645,
+                        "pnl_hidden-18": 100.74736968619982,
+                        "pnl_hidden-19": 3.2568780222991336,
+                        "pnl_hidden-2": -2.3402392845000577,
+                        "pnl_hidden-20": -7.2847247688005154,
+                        "pnl_hidden-21": 51.145732409999255,
+                        "pnl_hidden-22": 3.368513161800365,
+                        "pnl_hidden-23": 79.9123592203996,
+                        "pnl_hidden-24": 84.90264886439945,
+                        "pnl_hidden-25": 14.145667501099524,
+                        "pnl_hidden-26": 7.200056562600366,
+                        "pnl_hidden-27": 52.0982790606995,
+                        "pnl_hidden-28": 25.043980785001622,
+                        "pnl_hidden-29": -19.539345710400084,
+                        "pnl_hidden-3": 108.76040091599862,
+                        "pnl_hidden-30": -6.862145544399027,
+                        "pnl_hidden-31": -9.223968921500273,
+                        "pnl_hidden-32": 27.85662581719953,
+                        "pnl_hidden-33": -7.6109019644009095,
+                        "pnl_hidden-34": 0.24382691039863857,
+                        "pnl_hidden-35": 55.10777200820121,
+                        "pnl_hidden-36": 53.82727064990104,
+                        "pnl_hidden-37": -3.8001546820014482,
+                        "pnl_hidden-38": -10.518568432000393,
+                        "pnl_hidden-39": 23.09306602599827,
+                        "pnl_hidden-4": 3.0337357650005288,
+                        "pnl_hidden-40": 15.943332262899276,
+                        "pnl_hidden-41": 82.2644298681007,
+                        "pnl_hidden-42": -24.694649281600505,
+                        "pnl_hidden-43": 73.09938059620072,
+                        "pnl_hidden-44": -14.586863148000702,
+                        "pnl_hidden-45": 23.162934654599667,
+                        "pnl_hidden-46": 109.84610299760061,
+                        "pnl_hidden-47": 103.55095297919979,
+                        "pnl_hidden-48": -6.4488273759998265,
+                        "pnl_hidden-49": 65.3304166755006,
+                        "pnl_hidden-5": 13.040903881801569,
+                        "pnl_hidden-50": -10.228583382400757,
+                        "pnl_hidden-51": 37.460254321498724,
+                        "pnl_hidden-52": 0.33269409999957134,
+                        "pnl_hidden-53": 84.05723179649976,
+                        "pnl_hidden-54": 6.196029404798537,
+                        "pnl_hidden-55": 182.60006160800003,
+                        "pnl_hidden-56": 1.3800807238003472,
+                        "pnl_hidden-57": 1.7879767838003318,
+                        "pnl_hidden-58": 15.006405824700778,
+                        "pnl_hidden-59": 24.239859585199156,
+                        "pnl_hidden-6": -14.074716613100463,
+                        "pnl_hidden-60": 15.601257297699703,
+                        "pnl_hidden-61": -1.7318893832998583,
+                        "pnl_hidden-62": -15.94300963529895,
+                        "pnl_hidden-63": 0.22316474069884862,
+                        "pnl_hidden-64": 0.29075430140073877,
+                        "pnl_hidden-65": 148.4888346591997,
+                        "pnl_hidden-66": 48.14099053680002,
+                        "pnl_hidden-67": 32.52992575999997,
+                        "pnl_hidden-68": 69.43510183880062,
+                        "pnl_hidden-69": -1.572783537199939,
+                        "pnl_hidden-7": 38.88129656879937,
+                        "pnl_hidden-70": 73.87021362000087,
+                        "pnl_hidden-71": -12.059308442499969,
+                        "pnl_hidden-72": 5.4214027352009,
+                        "pnl_hidden-8": 48.028127532399594,
+                        "pnl_hidden-9": 142.03540908409923,
+                        "pnl_usd": 2306.3628388551933,
+                        "profitable_share": 0.7222222222222222,
+                        "reference_pnl_usd": 161.09,
+                        "reference_ratio": 14.31723160255257,
+                        "refused_calls": 0.0,
+                        "reward": 0.13806337795732904,
+                        "sharpe": 0.6661906838230437,
+                        "skill": 14.31723160255257,
+                        "tail_pnl_usd": -16.28902683375024,
+                        "tampered": 0.0,
+                        "worst_pnl_usd": -30.23882174440041
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "bound_pnl_usd": {
+                        "16705.102200005684": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "disqualified": {
+                        "0.0": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "max_drawdown_usd": {
+                        "59.370224400299776": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "not_graded": {
+                        "0.0": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-1": {
+                        "145.5604835735994": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-10": {
+                        "-30.23882174440041": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-11": {
+                        "-11.0448808018009": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-12": {
+                        "-23.31560589199944": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-13": {
+                        "48.82799628560133": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-14": {
+                        "61.83743205199971": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-15": {
+                        "3.269297468001241": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-16": {
+                        "122.0374089142988": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-17": {
+                        "1.9604990008010645": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-18": {
+                        "100.74736968619982": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-19": {
+                        "3.2568780222991336": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-2": {
+                        "-2.3402392845000577": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-20": {
+                        "-7.2847247688005154": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-21": {
+                        "51.145732409999255": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-22": {
+                        "3.368513161800365": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-23": {
+                        "79.9123592203996": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-24": {
+                        "84.90264886439945": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-25": {
+                        "14.145667501099524": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-26": {
+                        "7.200056562600366": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-27": {
+                        "52.0982790606995": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-28": {
+                        "25.043980785001622": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-29": {
+                        "-19.539345710400084": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-3": {
+                        "108.76040091599862": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-30": {
+                        "-6.862145544399027": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-31": {
+                        "-9.223968921500273": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-32": {
+                        "27.85662581719953": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-33": {
+                        "-7.6109019644009095": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-34": {
+                        "0.24382691039863857": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-35": {
+                        "55.10777200820121": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-36": {
+                        "53.82727064990104": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-37": {
+                        "-3.8001546820014482": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-38": {
+                        "-10.518568432000393": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-39": {
+                        "23.09306602599827": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-4": {
+                        "3.0337357650005288": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-40": {
+                        "15.943332262899276": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-41": {
+                        "82.2644298681007": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-42": {
+                        "-24.694649281600505": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-43": {
+                        "73.09938059620072": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-44": {
+                        "-14.586863148000702": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-45": {
+                        "23.162934654599667": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-46": {
+                        "109.84610299760061": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-47": {
+                        "103.55095297919979": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-48": {
+                        "-6.4488273759998265": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-49": {
+                        "65.3304166755006": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-5": {
+                        "13.040903881801569": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-50": {
+                        "-10.228583382400757": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-51": {
+                        "37.460254321498724": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-52": {
+                        "0.33269409999957134": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-53": {
+                        "84.05723179649976": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-54": {
+                        "6.196029404798537": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-55": {
+                        "182.60006160800003": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-56": {
+                        "1.3800807238003472": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-57": {
+                        "1.7879767838003318": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-58": {
+                        "15.006405824700778": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-59": {
+                        "24.239859585199156": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-6": {
+                        "-14.074716613100463": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-60": {
+                        "15.601257297699703": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-61": {
+                        "-1.7318893832998583": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-62": {
+                        "-15.94300963529895": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-63": {
+                        "0.22316474069884862": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-64": {
+                        "0.29075430140073877": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-65": {
+                        "148.4888346591997": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-66": {
+                        "48.14099053680002": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-67": {
+                        "32.52992575999997": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-68": {
+                        "69.43510183880062": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-69": {
+                        "-1.572783537199939": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-7": {
+                        "38.88129656879937": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-70": {
+                        "73.87021362000087": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-71": {
+                        "-12.059308442499969": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-72": {
+                        "5.4214027352009": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-8": {
+                        "48.028127532399594": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_hidden-9": {
+                        "142.03540908409923": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "pnl_usd": {
+                        "2306.3628388551933": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "profitable_share": {
+                        "0.7222222222222222": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "reference_pnl_usd": {
+                        "161.09": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "reference_ratio": {
+                        "14.31723160255257": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "refused_calls": {
+                        "0.0": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "reward": {
+                        "0.13806337795732904": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "sharpe": {
+                        "0.6661906838230437": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "skill": {
+                        "14.31723160255257": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "tail_pnl_usd": {
+                        "-16.28902683375024": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "tampered": {
+                        "0.0": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    },
+                    "worst_pnl_usd": {
+                        "-30.23882174440041": [
+                            "market-making-spcx__juEg8FK"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 14753818,
+        "n_cache_tokens": 14604544,
+        "n_output_tokens": 72784,
+        "cost_usd": 2.4868423999999996
+    }
+}

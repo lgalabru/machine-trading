@@ -1,0 +1,57 @@
+{
+  "validation": {
+    "reward": 0.2795841540039355,
+    "pnl_usd": 55182.82058399998,
+    "bound_pnl_usd": 197374.63584299994,
+    "risk": {
+      "worst_pnl_usd": -428.6466079999991,
+      "tail_pnl_usd": -170.9575452083333,
+      "max_drawdown_usd": 576.1281640000016,
+      "profitable_share": 0.8194444444444444,
+      "sharpe": 0.85396119562233
+    },
+    "sessions": 144,
+    "max_fuel_per_call": 10768015,
+    "disqualifications": 0
+  },
+  "stress": {
+    "reward": 0.4202063437884705,
+    "pnl_usd": 33520.172991,
+    "bound_pnl_usd": 79770.744746,
+    "risk": {
+      "worst_pnl_usd": -157.77656299999944,
+      "tail_pnl_usd": 175.5050107500001,
+      "max_drawdown_usd": 736.848320000001,
+      "profitable_share": 0.9583333333333334,
+      "sharpe": 1.3971324960802936
+    },
+    "sessions": 24,
+    "max_fuel_per_call": 10142921,
+    "disqualifications": 0
+  },
+  "practice_replay": {
+    "reward": 0.13354837556695803,
+    "pnl_usd": 866.4435950000006,
+    "bound_pnl_usd": 6487.863228,
+    "reference_pnl_usd": 539.4599999999999,
+    "reference_ratio": 1.6061313072331604,
+    "skill": 1.6061313072331604,
+    "risk": {
+      "worst_pnl_usd": 115.06904500000019,
+      "tail_pnl_usd": 115.06904500000019,
+      "max_drawdown_usd": 287.218304,
+      "profitable_share": 1.0,
+      "sharpe": 3.5182832818432708
+    },
+    "replay": {
+      "runs": 2,
+      "load_threads": 0,
+      "reports": 7,
+      "identical": true
+    },
+    "sessions": 6,
+    "max_fuel_per_call": 10455491,
+    "disqualifications": 0
+  },
+  "component_sha256": "f4c00a2b8d7a39eb8e0943013e5700cb6c2fd24fc0b8c456c6a576c514fa272d"
+}

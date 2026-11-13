@@ -1,0 +1,32 @@
+{
+  "artifact_sha256": "3144cb2734e7be7dd27ba4c249f54490f763d41ee7c7eb72eacbab3d30265ddc",
+  "sessions": 78,
+  "pnl_usd": 3119.7095594244965,
+  "reward": 0.17397268245984746,
+  "risk": {
+    "worst_pnl_usd": -36.00625904000117,
+    "tail_pnl_usd": -21.85153079723862,
+    "max_drawdown_usd": 81.15998360549929,
+    "profitable_share": 0.7051282051282052,
+    "sharpe": 0.6223053314122204
+  },
+  "peak_position": 19.0,
+  "fuel_max_call": 10303755,
+  "disqualifications": 0,
+  "sets": [
+    [
+      "72 fresh scenarios",
+      72,
+      2912.1206842364954,
+      0.17653897683960176,
+      81.15998360549929
+    ],
+    [
+      "6 practice scenarios",
+      6,
+      207.5888751880011,
+      0.14450454608219812,
+      28.8954545778015
+    ]
+  ]
+}

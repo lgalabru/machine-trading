@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "bench/tasks/funding-carry-spcx"
+    },
+    "trial_name": "funding-carry-spcx__WA7pJ9N",
+    "trials_dir": "/home/michaelcrystal/mtx012/batch/2026-11-13__00-32-04_funding-carry-spcx_gpt-6-astra",
+    "agent_timeout_multiplier": 1.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "openai/gpt-6-astra",
+        "kwargs": {
+            "version": "0.166.0",
+            "web_search": "disabled",
+            "disable_web_search": true,
+            "reasoning_effort": "high",
+            "reasoning_summary": "detailed"
+        }
+    },
+    "job_id": "bb61b0dc-3ee0-415d-98f2-ea9067feeb3b"
+}

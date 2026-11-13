@@ -1,0 +1,55 @@
+{
+  "target": "wasm32-wasip2",
+  "sha256": "06bb8362a5fe389159160568e4665a0a4f4f8a84bbd8cf50637f380ae2d30b67",
+  "bytes": 1543819,
+  "reports": {
+    "final-72.json": {
+      "sessions": 72,
+      "pnl_usd": 25985.933544999993,
+      "reward": 0.2616820647053616,
+      "max_drawdown_usd": 588.0457800000004,
+      "max_call_fuel": 10766100,
+      "disqualifications": 0
+    },
+    "practice.json": {
+      "sessions": 6,
+      "pnl_usd": 929.0163789999988,
+      "reward": 0.143192966058624,
+      "max_drawdown_usd": 291.6754089999995,
+      "max_call_fuel": 9828528,
+      "disqualifications": 0
+    },
+    "replay.json": {
+      "sessions": 2,
+      "pnl_usd": 1834.3260649999993,
+      "reward": 0.3035014659668643,
+      "max_drawdown_usd": 588.0457800000004,
+      "max_call_fuel": 9672266,
+      "disqualifications": 0
+    },
+    "stress.json": {
+      "sessions": 23,
+      "pnl_usd": 7484.767571999995,
+      "reward": 0.1826689324263164,
+      "max_drawdown_usd": 650.9250979999997,
+      "max_call_fuel": 10141052,
+      "disqualifications": 0
+    },
+    "training.json": {
+      "sessions": 36,
+      "pnl_usd": 12463.194666,
+      "reward": 0.25340297431979825,
+      "max_drawdown_usd": 429.4699010000004,
+      "max_call_fuel": 10297314,
+      "disqualifications": 0
+    },
+    "validation.json": {
+      "sessions": 36,
+      "pnl_usd": 14996.85887,
+      "reward": 0.3069376345345734,
+      "max_drawdown_usd": 466.5317130000003,
+      "max_call_fuel": 10297314,
+      "disqualifications": 0
+    }
+  }
+}
