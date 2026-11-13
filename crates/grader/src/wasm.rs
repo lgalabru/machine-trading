@@ -861,6 +861,16 @@ impl WasmBot {
                     (view.best_bid, view.best_ask) = (bid, ask);
                 }
             }
+            // The venues' own numbers, where a seat reads any: a stake pool's
+            // rate and fees.
+            for view in &mut venues {
+                if let Some(seat) = self.desk.seats.iter().find(|s| s.market() == view.id)
+                    && let Ok(stats) = seat.stats().await
+                    && !stats.is_empty()
+                {
+                    view.stats = stats;
+                }
+            }
         }
         Some(mtx_kit::Market {
             k,

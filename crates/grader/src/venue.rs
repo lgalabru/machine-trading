@@ -22,7 +22,7 @@
 //! | `spot` | `spot` | [`Holding::Spot`] |
 //! | `lending` | `money-market` | [`Holding::MoneyMarket`] |
 //! | `amm` | `amm` (draft profile) | none yet |
-//! | `stake-pool` | `stake-pool` (draft profile) | none yet |
+//! | `stake-pool` | `stake-pool` (proposed profile) | [`Holding::Spot`]: the token, valued at the pool's rate ([`Market::value_usd`]) |
 //!
 //! A market answers what it can and leaves the rest at the defaults. Its
 //! seat says which of the sheet's actions it executes ([`Seat::executes`]);
@@ -35,17 +35,21 @@
 //! - [`phoenix`]: Phoenix, its Eternal perpetuals ([`perps`]) and its v1
 //!   spot books ([`books`]).
 //! - [`openbook`]: OpenBook v2 and its spot books ([`books`]).
+//! - [`stake_pool`]: SPL stake pools (Jito's), and [`marinade`]: Marinade,
+//!   each pool's token a `stake-pool` instrument.
 
 pub mod books;
+pub mod marinade;
 pub mod openbook;
 pub mod perps;
 pub mod phoenix;
+pub mod stake_pool;
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use mtx_core::{
-    Decimal, Holding, MeterError, VenueId,
+    Decimal, Holding, Holdings, MeterError, VenueId,
     mandate::{InstrumentRef, Kind},
     turns::BookLevels,
 };
@@ -62,6 +66,9 @@ use crate::{Error, Result};
 
 /// What a seat's own orders come to: the venue's error, as text.
 pub type SeatResult<T = ()> = std::result::Result<T, String>;
+
+/// The chain a session's markets read.
+pub type Chain = dyn ChainClient;
 
 /// A protocol, and the instruments it offers.
 #[async_trait]
@@ -87,6 +94,20 @@ pub fn spot_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
             reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
         }),
     }
+}
+
+/// The venue `name` names, for stake-pool sessions: its pools read
+/// through `rpc_url`.
+pub fn stake_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
+    if name == marinade::VENUE {
+        return Ok(Box::new(marinade::Marinade::new(rpc_url)));
+    }
+    if stake_pool::POOLS.iter().any(|p| p.venue == name) {
+        return Ok(Box::new(stake_pool::SplStakePools::new(name, rpc_url)));
+    }
+    Err(Error::UnknownMarket(format!(
+        "{name} is not a stake-pool venue"
+    )))
 }
 
 /// An instrument a venue doesn't offer.
@@ -141,6 +162,15 @@ pub trait Market: Send + Sync {
     /// [`value_usd`] values them.
     async fn holdings(&self, owner: &Pubkey) -> Result<Vec<Holding>>;
 
+    /// What `holdings` are worth in USD, where the instrument's profile
+    /// values them itself (a stake pool's token at the pool's rate), or
+    /// `None` for [`value_usd`]'s reference prices. [`value_usd`] hands each
+    /// market every asset the account holds, one at a time.
+    async fn value_usd(&self, chain: &Chain, holdings: &[Holding]) -> Result<Option<Decimal>> {
+        let _ = (chain, holdings);
+        Ok(None)
+    }
+
     /// Every match the market recorded in slots after `after_slot`, each
     /// with the ids `owner` trades under there (its wallet, and an account
     /// of the venue's of its): a fill naming one of them is its own.
@@ -172,24 +202,48 @@ pub trait Seat: Send + Sync {
     /// the venue has them.
     async fn send(&self, planned: &Planned) -> Sent;
 
-    /// Take up to `size` base units on `side`, at no worse than `limit`.
-    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult;
+    /// Take up to `size` base units on `side`, at no worse than `limit`. A
+    /// market without a book refuses it, as the rest of a book's methods.
+    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
+        let _ = (side, size, limit);
+        Err(no_book(self.market()))
+    }
 
     /// Rest `size` base units on `side` at `price`.
-    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult;
+    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {
+        let _ = (side, price, size);
+        Err(no_book(self.market()))
+    }
 
     /// Cancel every order the seat has resting.
-    async fn cancel_all(&self) -> SeatResult;
+    async fn cancel_all(&self) -> SeatResult {
+        Err(no_book(self.market()))
+    }
 
     /// The best bid and ask, as the seat reads them.
-    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)>;
+    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
+        Err(no_book(self.market()))
+    }
 
     /// The account's position here, in base units: a perp's, or the base
     /// asset a spot account holds.
     async fn position(&self) -> SeatResult<f64>;
 
-    /// The market's tick, in quote units.
-    fn tick(&self) -> f64;
+    /// The market's tick, in quote units: none without a book.
+    fn tick(&self) -> f64 {
+        0.0
+    }
+
+    /// The venue's own numbers, by name, as the interface's `venue-view`
+    /// carries them: a stake pool's rate and fees, say. None by default.
+    async fn stats(&self) -> SeatResult<Vec<(String, f64)>> {
+        Ok(Vec::new())
+    }
+}
+
+/// What a seat without an order book says to a book's method.
+fn no_book(market: &str) -> String {
+    format!("{market} has no order book")
 }
 
 /// An asset's reference price in USD, as the spot profile values it: USDC
@@ -208,13 +262,18 @@ pub async fn price_usd(chain: &dyn ChainClient, mint: &Pubkey) -> Result<Decimal
         })
 }
 
-/// What `holdings`, read across a session's markets, are worth in USD at
-/// the reference prices ([`price_usd`]). A spot asset counts its wallet
-/// once, however many markets report it, and what it has on each venue.
-/// Holdings that need their own valuation (a perp's, which the session
-/// meters; a money market's) are refused.
-pub async fn value_usd(chain: &dyn ChainClient, holdings: &[Holding]) -> Result<Decimal> {
-    let mut held: BTreeMap<String, (Decimal, Decimal)> = BTreeMap::new();
+/// What `holdings`, read across a session's markets, are worth in USD. A
+/// spot asset counts its wallet once, however many markets report it, and
+/// what it has on each venue; the first of `markets` that values it
+/// ([`Market::value_usd`]) does, and the reference price ([`price_usd`])
+/// otherwise. Holdings that need their own valuation (a perp's, which the
+/// session meters; a money market's) are refused.
+pub async fn value_usd(
+    chain: &Chain,
+    markets: &[&dyn Market],
+    holdings: &[Holding],
+) -> Result<Decimal> {
+    let mut held: BTreeMap<String, Holdings> = BTreeMap::new();
     for holding in holdings {
         let Holding::Spot(asset) = holding else {
             return Err(MeterError::Unsupported(format!(
@@ -222,25 +281,36 @@ pub async fn value_usd(chain: &dyn ChainClient, holdings: &[Holding]) -> Result<
             ))
             .into());
         };
-        let (wallet, on_venue) = held.entry(asset.base.id.0.clone()).or_default();
-        *wallet = asset.wallet;
-        *on_venue += asset.free + asset.locked;
+        let total = held
+            .entry(asset.base.id.0.clone())
+            .or_insert_with(|| Holdings::empty(asset.base.clone()));
+        total.wallet = asset.wallet;
+        total.free += asset.free;
+        total.locked += asset.locked;
     }
     let mut value = Decimal::ZERO;
-    for (id, (wallet, on_venue)) in held {
+    'assets: for (id, asset) in held {
+        let amount = asset.wallet + asset.free + asset.locked;
+        let one = [Holding::Spot(asset)];
+        for market in markets {
+            if let Some(worth) = market.value_usd(chain, &one).await? {
+                value += worth;
+                continue 'assets;
+            }
+        }
         let mint: Pubkey = id.parse().map_err(|_| {
             MeterError::Unsupported(format!(
                 "asset {id} is not a mint, so it has no reference price"
             ))
         })?;
-        value += (wallet + on_venue) * price_usd(chain, &mint).await?;
+        value += amount * price_usd(chain, &mint).await?;
     }
     Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
-    use mtx_core::{Asset, Holdings, Position};
+    use mtx_core::{Asset, Position};
     use mtx_kit::chain::RpcChainClient;
 
     use super::*;
@@ -294,6 +364,7 @@ mod tests {
         let chain = RpcChainClient::new("http://127.0.0.1:1");
         let value = value_usd(
             &chain,
+            &[],
             &[
                 held(Decimal::from(100), Decimal::from(5), Decimal::from(1)),
                 held(Decimal::from(100), Decimal::from(2), Decimal::from(0)),
@@ -310,6 +381,6 @@ mod tests {
             mtx_core::InstrumentId::new("phoenix:perp:SPCX"),
             VenueId::new("phoenix"),
         ));
-        assert!(value_usd(&chain, &[perp]).await.is_err());
+        assert!(value_usd(&chain, &[], &[perp]).await.is_err());
     }
 }
