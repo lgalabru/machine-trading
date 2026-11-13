@@ -230,6 +230,81 @@ impl GhostPath {
     }
 }
 
+/// How far the background demand a calibration draws is from what it was
+/// fitted to: for one class in one regime, the largest gap between the
+/// drawn clearing prices' distribution and the observed one, at 0 (the
+/// uncontended share) and at each observed percentile above it. A
+/// Kolmogorov-Smirnov distance on the points the calibration keeps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Realism {
+    pub class: &'static str,
+    pub regime: &'static str,
+    pub distance: f64,
+    /// The observed sample's size: the distance a sample that size could
+    /// show by chance is about `1.36 / sqrt(n)`.
+    pub n: u64,
+}
+
+/// [`Realism`] for every class and regime the calibration observed, over
+/// `slots` drawn slots each.
+pub fn realism(calibration: &Calibration, seed: u64, slots: u64) -> Vec<Realism> {
+    let mut out = Vec::new();
+    for class in ["block", "amm_pool", "book", "oracle"] {
+        for regime in REGIMES {
+            let Some(observed) = calibration.observed.get(class).and_then(|o| o.get(regime)) else {
+                continue;
+            };
+            let address = Pubkey::new_from_array([7; 32]);
+            let layer = TxLayer {
+                seed,
+                calibration: calibration.meta.calibration_id.clone(),
+                hot_accounts: vec![super::HotAccount {
+                    address: address.to_string(),
+                    class: if class == "block" { "amm_pool" } else { class }.into(),
+                }],
+                regimes: vec![super::RegimeWindow {
+                    from_step: 0,
+                    to_step: u64::MAX,
+                    regime: regime.to_string(),
+                }],
+                drawn_regimes: false,
+                routes: super::Routes::default(),
+                validators: 1,
+                max_pending: 1,
+                fees_in_pnl: false,
+                native_sol: None,
+                sol_usd: None,
+            };
+            let base = RECENT_SLOTS;
+            let path = GhostPath::new(&layer, calibration, base, base + slots, 1, None);
+            let drawn: Vec<u64> = (base + 1..=base + slots)
+                .map(|s| {
+                    if class == "block" {
+                        path.block(s).price
+                    } else {
+                        path.account(&address, s).price
+                    }
+                })
+                .collect();
+            let cdf =
+                |x: u64| drawn.iter().filter(|p| **p <= x).count() as f64 / drawn.len() as f64;
+            let mut distance = (cdf(0) - observed.zero_share).abs();
+            for (p, q) in &observed.quantiles {
+                if *q > 0 {
+                    distance = distance.max((cdf(*q) - *p as f64 / 100.0).abs());
+                }
+            }
+            out.push(Realism {
+                class,
+                regime,
+                distance,
+                n: observed.n,
+            });
+        }
+    }
+    out
+}
+
 /// The `p`-th percentile of sorted `values`, nearest rank.
 pub fn quantile(sorted: &[u64], p: u8) -> u64 {
     if sorted.is_empty() {
@@ -302,12 +377,35 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_calibration_draws_what_it_observed() {
+        let calibration = Calibration::builtin("mainnet-fees.20261113.43786520").unwrap();
+        for check in realism(&calibration, 5, 20_000) {
+            if check.n < 30 {
+                continue;
+            }
+            // What a sample of n could show by chance, at 5%, and what
+            // 20,000 drawn slots could.
+            let allowed = 1.36 / (check.n as f64).sqrt() + 0.02;
+            assert!(
+                check.distance <= allowed,
+                "{}.{}: {:.3} over {allowed:.3}",
+                check.class,
+                check.regime,
+                check.distance
+            );
+        }
+    }
+
+    #[test]
     fn a_congestion_window_is_a_floor_on_the_block() {
         let calibration = Calibration::builtin(&layer().calibration).unwrap();
         let p = GhostPath::new(&layer(), &calibration, 1_000, 1_080, 2, Some((2, 4, 7_000)));
         // Steps 2 and 3: slots 1_005..=1_008.
         assert!((1_005..=1_008).all(|s| p.block(s).price >= 7_000));
-        assert_eq!(p.block(1_004).price.min(1), p.block(1_004).price.min(1));
-        assert!(p.block(1_009).price < 7_000 || p.regime(1_009) != "calm");
+        // Outside it, the block is as the background left it.
+        let free = GhostPath::new(&layer(), &calibration, 1_000, 1_080, 2, None);
+        for s in (950..1_005).chain(1_009..1_080) {
+            assert_eq!(p.block(s), free.block(s), "slot {s}");
+        }
     }
 }

@@ -541,7 +541,12 @@ impl TxEngine {
                     slot: *slot,
                     ok: error.is_none(),
                     fee: tx.fee(),
-                    tip: if error.is_none() { entry.tip() } else { 0 },
+                    // A bundle's tip shows on its first transaction.
+                    tip: if error.is_none() && tx.signature == entry.txs[0].signature {
+                        entry.tip()
+                    } else {
+                        0
+                    },
                     error,
                     signature: tx.signature.clone(),
                 }

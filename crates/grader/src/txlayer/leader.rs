@@ -108,7 +108,7 @@ mod tests {
     use super::*;
 
     fn leaders(seed: u64) -> Leaders {
-        let calibration = Calibration::builtin("mainnet-fees.20261113.0000test").unwrap();
+        let calibration = Calibration::builtin("fixture-fees.20261113.00000000").unwrap();
         Leaders::new(seed, 24, &calibration)
     }
 

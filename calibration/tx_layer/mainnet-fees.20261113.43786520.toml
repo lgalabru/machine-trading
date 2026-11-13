@@ -1,0 +1,193 @@
+# Tx-layer fee calibration mainnet-fees.20261113.43786520 (schema 1.0). Written by infra17a calib (export.py) from fit.json;
+# never edited by hand. A refit is a new file with a new id.
+# Every input (url, request, sha256, bytes, fetch time) is in mainnet-fees.20261113.43786520.inputs.json.
+
+[meta]
+schema_version = "1.0"
+calibration_id = "mainnet-fees.20261113.43786520"
+network = "mainnet-beta"
+fitted_at = "2026-11-13T06:38:00+00:00"
+fitter = "infra17a calib (fees_fit.py)"
+fitter_code_sha256_12 = "638f475d5af1"
+inputs_file = "mainnet-fees.20261113.43786520.inputs.json"
+inputs_digest = "99459685032087b9"
+inputs_count = 754
+sources = ["Solana public RPC getBlock (json, full transactions, maxSupportedTransactionVersion 1): 300 blocks in six runs of 50 consecutive slots, two per regime window", "Solana public RPC getBlock (rewards only): one slot per 1,500 from 468167733 to 468817233 (about 39 h), the leader's fee reward per block, for the regimes", "Solana public RPC getBlockProduction (current epoch), getVoteAccounts, getRecentPerformanceSamples, getAccountInfo (to check each hot account's program and mints)", "Jito public validator list (kobe.mainnet.jito.network /api/v1/validators) and six polls of the tip floor (bundles.jito.wtf /api/v1/bundles/tip_floor), 3 minutes apart"]
+limits = ["Price per block and account: the 25th percentile of the compute-unit price among the landed transactions that write it and pay a price, when the account is contended: their consumed compute units at least 2% of the 12M account cap (10% of the 100M block cap for the block); 0 otherwise. Unpriced transactions are left out because most land through Jito bundles that pay tips instead (about two thirds of non-vote transactions carry no price); the percentile rather than the minimum keeps one outlier from setting the price.", "Utilization counts consumed compute units, not requested ones: requested limits (and the 200k-per-instruction default) add up to more than the block cap in ordinary blocks, while the scheduler refunds what isn't used.", "amm_pool pools three SOL/USDC pools, each its own sample: Orca Whirlpool Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE, Raydium CLMM 3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv, Meteora DLMM BGm1tav58oGcsQJehL9WXBFXF7D27vZsKefj4xJKD5Y (program owner and both mints checked on chain).", "oracle is Pyth's SOL/USD push feed 7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE (feed id checked): its updates are small transactions, so it is never contended by the threshold; its price parameters are amm_pool's, unused while p_contended is 0.", "book has no sample: Phoenix v1 SOL/USDC (4DoNfFBfF7UokCC2FQzriy7yHK6DY6NVdYpuekQ5pRgg) and OpenBook v2 had no transactions in the 300 blocks, and Phoenix Eternal's perp markets weren't identified. Every ghost.book number copies amm_pool; observed.book copies amm_pool's quantiles with n = 0 to mark that it has no sample of its own.", "Regimes come from the leader's fee reward per block (half the base fees plus the priority fees, tips excluded) sampled every 1,500 slots: calm below its median (6023057 lamports), spike at or above its 95th percentile (31267392), busy between. Per-slot transitions take each regime's stay probability over 1,500 slots to the 1/1,500th power and split the rest in proportion to the observed moves; 39 hours hold few regime switches (spike: [7, 13, 2]).", "The windows are labelled by that same series: calm is 2026-11-13 near 05:30-06:00 UTC, busy 2026-11-12 15:45-15:50 UTC (US open hours), spike 2026-11-11 18:20-18:52 UTC, the highest sustained fee rewards of the scan. No token launch was identified in it; a launch-day spike is likely higher.", "log_price_mean and log_price_sd are not moment estimates: for every class and regime with at least 30 samples they minimise the realism gate's distance, max(|F_sim(0) - zero_share|, |F_sim(q) - p/100| over the observed (p, q > 0)), for the model simulated over 20000 slots with the regime pinned, p_contended = 1 - zero_share, the AR(1) at the class's phi and price = round(exp(x)) (a 0.1 x 0.05 grid on (mean, sd), then a 0.01 x 0.005 one around its best, on one fixed draw). The moment fit's sd was too wide for the body of the distribution.", "phi is the lag-1 correlation of the log price across consecutive slots where both are contended; where fewer than 10 such pairs exist it is the default 0.6 (said per class in its source).", "Slots are about 215 ms (getRecentPerformanceSamples), not 400 ms; per-slot rates here are per slot as sampled.", "inversion_p is not fitted (block order mixes Jito bundles, which can't be told apart from the RPC): a default.", "Tips: a lognormal fitted by least squares to the medians of six tip-floor polls' percentiles (landed tips over the engine's recent window); the real distribution has a floor at 1,000 lamports and a heavier tail, so p25 and p99 are the poll medians, not the lognormal's.", "The spike window's high fees were block-wide, not on these pools: amm_pool's spike regime is less often contended than its busy one (6% vs 18%), with a log-sd of about 5 from 18 contended samples (a few priced at single micro-lamports, one near 700k). A task that wants a local spike on a pool pins a regime window in its scenario rather than relying on this one.", "One sample of 300 blocks over two days; other days would add day-to-day spread."]
+
+[meta.windows]
+calm = [[468813000, 468813049], [468817000, 468817049]]
+busy = [[468580000, 468580049], [468581500, 468581549]]
+spike = [[468224000, 468224049], [468230500, 468230549]]
+
+[block]
+cu_cap = 100000000
+account_cu_cap = 12000000
+lamports_per_signature = 5000
+slots_per_leader = 4
+skip_rate = 0.000565031
+skip_rate_source = "getBlockProduction over slots 468720000..468824418 of the current epoch: 1 - blocks produced / leader slots, all identities"
+jito_stake_share = 0.983805
+jito_stake_share_source = "activated stake of the 635 vote accounts Jito lists as running its client, over all activated stake in getVoteAccounts"
+inversion_p = 0.02
+inversion_p_source = "default, not fitted: Agave's scheduler is close to a priority order among conflicting transactions; 2% of adjacent conflicting pairs swap"
+
+[regimes]
+names = ["calm", "busy", "spike"]
+transitions = [[0.999653336802, 0.000311209007184, 3.54541906918e-05], [0.000377264894637, 0.999571501601, 5.12335042099e-05], [0.000559061920617, 0.00103825785257, 0.998402680227]]
+share = [0.5, 0.449309, 0.0506912]
+source = "the leader fee-reward series (434 blocks, one per 1,500 slots, slots 468167733..468817233): shares are each regime's share of the samples, transitions per slot from the 1,500-slot moves [[129, 79, 9], [81, 102, 11], [7, 13, 2]]"
+
+[ghost.block]
+source = "fitted per regime from the whole block (all non-vote transactions) against the 100M cap; p_contended = 1 - zero_share; log_price_mean and log_price_sd minimise the realism gate's distance (see meta.limits)"
+[ghost.block.calm]
+p_contended = 0.69
+log_price_mean = 5.87
+log_price_sd = 0.85
+phi = 0.452858
+utilization = 0.158204
+[ghost.block.busy]
+p_contended = 0.98
+log_price_mean = 6.72
+log_price_sd = 1.4
+phi = 0.851526
+utilization = 0.167227
+[ghost.block.spike]
+p_contended = 0.98
+log_price_mean = 7.12
+log_price_sd = 0.915
+phi = 0.637548
+utilization = 0.227597
+
+[ghost.amm_pool]
+source = "fitted per regime from the three SOL/USDC pools against the 12M account cap; p_contended = 1 - zero_share; log_price_mean and log_price_sd minimise the realism gate's distance (see meta.limits); spike: phi default 0.6 (7 consecutive pairs)"
+[ghost.amm_pool.calm]
+p_contended = 0.143333
+log_price_mean = 7.11
+log_price_sd = 1.1
+phi = 0.0174175
+utilization = 0.057565
+[ghost.amm_pool.busy]
+p_contended = 0.183333
+log_price_mean = 7.37
+log_price_sd = 0.985
+phi = 0.292716
+utilization = 0.0976328
+[ghost.amm_pool.spike]
+p_contended = 0.06
+log_price_mean = 6.96
+log_price_sd = 5.165
+phi = 0.6
+utilization = 0.0873944
+
+[ghost.book]
+source = "not fitted: amm_pool's numbers (no book account was written in the sample); calm: all from amm_pool; busy: all from amm_pool; spike: all from amm_pool; phi default 0.6 (7 consecutive pairs)"
+[ghost.book.calm]
+p_contended = 0.143333
+log_price_mean = 7.11
+log_price_sd = 1.1
+phi = 0.0174175
+utilization = 0.057565
+[ghost.book.busy]
+p_contended = 0.183333
+log_price_mean = 7.37
+log_price_sd = 0.985
+phi = 0.292716
+utilization = 0.0976328
+[ghost.book.spike]
+p_contended = 0.06
+log_price_mean = 6.96
+log_price_sd = 5.165
+phi = 0.6
+utilization = 0.0873944
+
+[ghost.oracle]
+source = "p_contended (1 - zero_share) and utilization fitted from Pyth SOL/USD's writes; calm: price from amm_pool (no contended sample); busy: price from amm_pool (no contended sample); spike: price from amm_pool (no contended sample); phi default 0.6 (7 consecutive pairs)"
+[ghost.oracle.calm]
+p_contended = 0.0
+log_price_mean = 7.11
+log_price_sd = 1.1
+phi = 0.0174175
+utilization = 0.0
+[ghost.oracle.busy]
+p_contended = 0.0
+log_price_mean = 7.37
+log_price_sd = 0.985
+phi = 0.292716
+utilization = 0.0
+[ghost.oracle.spike]
+p_contended = 0.0
+log_price_mean = 6.96
+log_price_sd = 5.165
+phi = 0.6
+utilization = 0.0
+
+[tips]
+p25 = 1000
+p50 = 1333
+p75 = 10000
+p95 = 105025
+p99 = 1402542
+log_mean = 7.83731
+log_sd = 2.47847
+source = "medians over six polls of Jito's public tip floor (2026-11-13T05:58:04+00:00 to 2026-11-13T06:13:04+00:00), SOL to lamports; log_mean and log_sd by least squares on the normal scores of the five percentiles"
+
+[observed.block.calm]
+quantiles = [[10,0], [25,0], [50,200], [75,510], [90,791], [95,1483], [99,7825]]
+zero_share = 0.31
+n = 100
+
+[observed.block.busy]
+quantiles = [[10,34], [25,244], [50,1149], [75,1478], [90,2960], [95,4602], [99,8771]]
+zero_share = 0.02
+n = 100
+
+[observed.block.spike]
+quantiles = [[10,300], [25,563], [50,1390], [75,2512], [90,3143], [95,3890], [99,6865]]
+zero_share = 0.02
+n = 100
+
+[observed.amm_pool.calm]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,809], [95,1533], [99,13123]]
+zero_share = 0.856667
+n = 300
+
+[observed.amm_pool.busy]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,1539], [95,2657], [99,10115]]
+zero_share = 0.816667
+n = 300
+
+[observed.amm_pool.spike]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,0], [95,2], [99,700746]]
+zero_share = 0.94
+n = 300
+
+[observed.book.calm]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,809], [95,1533], [99,13123]]
+zero_share = 0.856667
+n = 0
+
+[observed.book.busy]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,1539], [95,2657], [99,10115]]
+zero_share = 0.816667
+n = 0
+
+[observed.book.spike]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,0], [95,2], [99,700746]]
+zero_share = 0.94
+n = 0
+
+[observed.oracle.calm]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,0], [95,0], [99,0]]
+zero_share = 1.0
+n = 100
+
+[observed.oracle.busy]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,0], [95,0], [99,0]]
+zero_share = 1.0
+n = 100
+
+[observed.oracle.spike]
+quantiles = [[10,0], [25,0], [50,0], [75,0], [90,0], [95,0], [99,0]]
+zero_share = 1.0
+n = 100

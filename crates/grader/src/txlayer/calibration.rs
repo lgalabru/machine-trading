@@ -18,8 +18,14 @@ use serde::{Deserialize, Serialize};
 
 /// The calibrations the grader ships, by id.
 const BUILTIN: &[(&str, &str)] = &[(
-    "mainnet-fees.20261113.0000test",
-    include_str!("testdata/mainnet-fees.20261113.0000test.toml"),
+    "mainnet-fees.20261113.43786520",
+    include_str!("../../../../calibration/tx_layer/mainnet-fees.20261113.43786520.toml"),
+)];
+/// A fixture for the tests: round numbers, with a sharp local spike.
+#[cfg(test)]
+const FIXTURES: &[(&str, &str)] = &[(
+    "fixture-fees.20261113.00000000",
+    include_str!("testdata/fixture-fees.20261113.00000000.toml"),
 )];
 
 /// The regimes, in the order the calibration's arrays index them.
@@ -161,8 +167,12 @@ pub struct Observed {
 impl Calibration {
     /// A shipped calibration, by id.
     pub fn builtin(id: &str) -> Result<Self, String> {
-        let (_, text) = BUILTIN
-            .iter()
+        #[cfg(test)]
+        let shipped = BUILTIN.iter().chain(FIXTURES);
+        #[cfg(not(test))]
+        let shipped = BUILTIN.iter();
+        let (_, text) = shipped
+            .into_iter()
             .find(|(known, _)| *known == id)
             .ok_or_else(|| {
                 let known: Vec<&str> = BUILTIN.iter().map(|(id, _)| *id).collect();
@@ -262,7 +272,7 @@ mod tests {
 
     #[test]
     fn unknown_fields_and_bad_numbers_fail_to_load() {
-        let (_, text) = BUILTIN[0];
+        let (_, text) = FIXTURES[0];
         let extra = text.replacen("[block]\n", "[block]\nextra = 1\n", 1);
         assert!(Calibration::parse(&extra).is_err());
         let bad = text.replacen("phi = ", "phi = 1.5 # ", 1);

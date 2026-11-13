@@ -58,7 +58,7 @@ struct ClientState {
     /// The units the last simulation consumed.
     units: Option<u64>,
     /// Bundles being gathered, by the sheet's bundle id: each transaction's
-    /// wire and its line's tip, and whether a line asked not to be fronted.
+    /// wire and its lines' tips.
     bundles: BTreeMap<u32, Gathered>,
     /// Tips paid so far, to pick each tip account in turn.
     tips: u64,
@@ -70,7 +70,6 @@ struct ClientState {
 struct Gathered {
     wires: Vec<Vec<u8>>,
     tip: u64,
-    dont_front: bool,
     retry_until_slot: Option<u64>,
 }
 
@@ -114,12 +113,7 @@ impl PoolClient {
         for (_, gathered) in bundles {
             let signatures = signatures_of(&gathered.wires);
             let sent = self
-                .bundle(
-                    gathered.wires,
-                    gathered.tip,
-                    gathered.dont_front,
-                    gathered.retry_until_slot,
-                )
+                .bundle(gathered.wires, gathered.tip, gathered.retry_until_slot)
                 .await;
             out.push((signatures, sent.err()));
         }
@@ -166,16 +160,8 @@ impl PoolClient {
         &self,
         mut wires: Vec<Vec<u8>>,
         tip: u64,
-        dont_front: bool,
         retry_until_slot: Option<u64>,
     ) -> Result<(), String> {
-        if dont_front && let Some(first) = wires.first_mut() {
-            let tx: VersionedTransaction =
-                wincode::deserialize(first).map_err(|e| e.to_string())?;
-            let mut message = tx.message;
-            ensure_key(&mut message, jito::DONT_FRONT)?;
-            *first = self.sign(message)?;
-        }
         if tip > 0 {
             wires.push(self.tip_transaction(tip).await?);
         }
@@ -247,23 +233,6 @@ impl PoolClient {
             .map_err(fail)?;
             return Ok(transaction.signatures[0]);
         };
-        let wire = if keep_budget {
-            wincode::serialize(transaction).map_err(|e| fail(e.to_string()))?
-        } else {
-            let mut message = transaction.message.clone();
-            let limit = match options.cu_limit {
-                Some(limit) => Some(limit as u64),
-                None => units.map(|u| {
-                    ((u as f64 * (1.0 + UNITS_MARGIN)) as u64 + UNITS_FLOOR)
-                        .min(pool::MAX_COMPUTE_UNITS)
-                }),
-            };
-            set_budget(&mut message, limit, options.cu_price).map_err(fail)?;
-            self.sign(message).map_err(fail)?
-        };
-        let signature = signatures_of(std::slice::from_ref(&wire))[0]
-            .parse()
-            .expect("a signature");
         let (bundle_only, dont_front, route) = match options.route {
             Some(Route::Jito {
                 bundle_only,
@@ -272,18 +241,47 @@ impl PoolClient {
             Some(Route::Staked) => (false, false, "staked"),
             Some(Route::Rpc) | None => (false, false, "rpc"),
         };
+        // `dont-front` marks the bundle's first transaction.
+        let first = options.bundle.is_none_or(|id| {
+            self.state()
+                .bundles
+                .get(&id)
+                .is_none_or(|g| g.wires.is_empty())
+        });
+        let front = dont_front && first;
+        let wire = if keep_budget && !front {
+            wincode::serialize(transaction).map_err(|e| fail(e.to_string()))?
+        } else {
+            let mut message = transaction.message.clone();
+            if !keep_budget {
+                let limit = match options.cu_limit {
+                    Some(limit) => Some(limit as u64),
+                    None => units.map(|u| {
+                        ((u as f64 * (1.0 + UNITS_MARGIN)) as u64 + UNITS_FLOOR)
+                            .min(pool::MAX_COMPUTE_UNITS)
+                    }),
+                };
+                set_budget(&mut message, limit, options.cu_price).map_err(fail)?;
+            }
+            if front {
+                ensure_key(&mut message, jito::DONT_FRONT).map_err(fail)?;
+            }
+            self.sign(message).map_err(fail)?
+        };
+        let signature = signatures_of(std::slice::from_ref(&wire))[0]
+            .parse()
+            .expect("a signature");
         let tip = options.tip.unwrap_or(0);
         if let Some(id) = options.bundle {
             let mut state = self.state();
             let gathered = state.bundles.entry(id).or_default();
             gathered.wires.push(wire);
             gathered.tip += tip;
-            gathered.dont_front |= dont_front;
             gathered.retry_until_slot = gathered.retry_until_slot.max(options.retry_until_slot);
             return Ok(signature);
         }
         if tip > 0 || bundle_only || dont_front {
-            self.bundle(vec![wire], tip, dont_front, options.retry_until_slot)
+            self.bundle(vec![wire], tip, options.retry_until_slot)
                 .await
                 .map_err(fail)?;
             return Ok(signature);

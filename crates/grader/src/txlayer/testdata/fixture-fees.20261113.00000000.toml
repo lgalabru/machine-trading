@@ -1,16 +1,17 @@
-# Placeholder until the fitted file lands.
+# A fixture for the grader's tests, not a calibration: round numbers with a sharp
+# local spike on the pool class, so the tests can tell a spike from calm.
 [meta]
 schema_version = "1.0"
-calibration_id = "mainnet-fees.20261113.0000test"
+calibration_id = "fixture-fees.20261113.00000000"
 network = "mainnet-beta"
 fitted_at = "2026-11-13T00:00:00+00:00"
-fitter = "placeholder"
+fitter = "hand-written test fixture"
 fitter_code_sha256_12 = "000000000000"
-inputs_file = "mainnet-fees.20261113.0000test.inputs.json"
+inputs_file = "fixture-fees.20261113.00000000.inputs.json"
 inputs_digest = "0000000000000000"
 inputs_count = 0
 sources = []
-limits = []
+limits = ["Not fitted to anything: a test fixture."]
 [meta.windows]
 calm = []
 busy = []

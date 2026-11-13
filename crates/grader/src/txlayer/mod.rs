@@ -33,6 +33,8 @@ pub mod fees;
 pub mod ghost;
 pub mod jito;
 pub mod leader;
+#[cfg(test)]
+mod live;
 pub mod pool;
 pub mod report;
 
@@ -321,7 +323,7 @@ pub(crate) mod tests {
     pub(crate) fn layer() -> TxLayer {
         TxLayer {
             seed: 7,
-            calibration: "mainnet-fees.20261113.0000test".into(),
+            calibration: "fixture-fees.20261113.00000000".into(),
             hot_accounts: vec![HotAccount {
                 address: "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE".into(),
                 class: "amm_pool".into(),
