@@ -103,10 +103,11 @@ jobs:
         # The starter, the references and the spot and pool smokes build for
         # wasm32-wasip2 too, as do the kit's spot venue decoders; the
         # flash-crash reference's and the spot smoke's components load in the
-        # grader's host, and the probe's sheet and market round-trip through
-        # the interface.
+        # grader's host, the probe's sheet and market round-trip through the
+        # interface, and the raw-send probe is answered in a session as its
+        # scenario allows.
         run: |
-          for bot in starter printer first-strategy reference maker carry weekend spot-smoke amm-smoke wit-probe; do
+          for bot in starter printer first-strategy reference maker carry weekend spot-smoke amm-smoke wit-probe raw-probe; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm --lib --target wasm32-wasip2 -- -D warnings
@@ -114,9 +115,12 @@ jobs:
           just --justfile bots/reference/Justfile build
           just --justfile bots/wit-probe/Justfile build
           just --justfile bots/spot-smoke/Justfile build
+          just --justfile bots/raw-probe/Justfile build
           MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-grader wasm::tests -- --ignored
           MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
+          MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
+            cargo test -p mtx-grader raw::tests -- --ignored
 
   # The quality bar's cheap checks (`mtx gates --fast`: task files, a
   # one-set ladder) for each task a pull request or a push to main changes;
