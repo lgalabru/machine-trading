@@ -991,6 +991,7 @@ pub(crate) mod tests {
             at,
             level_usd,
             book_usd: level_usd,
+            fair_usd: None,
         }
     }
 
