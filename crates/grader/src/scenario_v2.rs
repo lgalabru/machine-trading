@@ -27,6 +27,8 @@
 //! consumes, and v1 converts to v2 and back without loss. `Scenario::save`
 //! writes v2.
 
+use std::collections::BTreeMap;
+
 use mtx_core::{
     Side,
     mandate::{InstrumentRef, Kind, Mandate},
@@ -37,7 +39,7 @@ use crate::{
     faults::Faults,
     making::{Competition, Making, TAKER_ACCOUNTS, TakerOrder},
     offhours::OffHours,
-    orders::{ExecutionOrder, NetScoring, Participation},
+    orders::{CloseOut, ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
         Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
@@ -88,6 +90,10 @@ pub struct Assets {
     /// A spot session's starting wallet. A perp session has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet: Option<StartingWallet>,
+    /// A perp session's starting positions, in signed base units, by market
+    /// symbol: the bot starts holding them. Absent, it starts flat.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub start_positions: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -225,16 +231,29 @@ pub struct Scoring {
     /// Score the PnL net of the starting holding's price drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetScoring>,
+    /// Perp markets, by symbol, whose residual position a broker takes at
+    /// the close, at a haircut the PnL pays. An order's market has its own
+    /// broker, the order's.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub close_out: BTreeMap<String, CloseOut>,
 }
 
 impl Assets {
-    /// A symbol, and a wallet whose balances are numbers of at least 0.
+    /// A symbol, a wallet whose balances are numbers of at least 0, and
+    /// starting positions that are numbers other than 0.
     pub fn validate(&self) -> Result<(), String> {
         if let Some(wallet) = &self.wallet {
             for (name, amount) in [("base", wallet.base), ("quote", wallet.quote)] {
                 if !(amount.is_finite() && amount >= 0.0) {
                     return Err(format!("spot: {name} must be a number of at least 0"));
                 }
+            }
+        }
+        for (symbol, position) in &self.start_positions {
+            if !(position.is_finite() && *position != 0.0) {
+                return Err(format!(
+                    "start_positions: {symbol} must be a number other than 0, not {position}"
+                ));
             }
         }
         Ok(())
@@ -471,6 +490,9 @@ impl Scoring {
         if let Some(participation) = &self.participation {
             participation.validate()?;
         }
+        for close_out in self.close_out.values() {
+            close_out.validate()?;
+        }
         if let Some(net) = &self.net {
             net.validate()?;
         }
@@ -528,6 +550,7 @@ impl ScenarioV2 {
         }
         self.scoring.validate()?;
         self.mandate_covers_the_market()?;
+        self.positions_fit_the_market()?;
         self.order_fits_the_wallet()
     }
 
@@ -551,6 +574,9 @@ impl ScenarioV2 {
         if self.assets.wallet.is_none() {
             return Err("spot: no starting wallet".into());
         }
+        if !self.assets.start_positions.is_empty() || !self.scoring.close_out.is_empty() {
+            return Err("spot: start_positions and close_out are for perp scenarios".into());
+        }
         if self.duration_slots == 0 {
             return Err("spot: the session has no slots".into());
         }
@@ -568,17 +594,85 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// A perp scenario has no wallet, order, charge or net scoring.
+    /// A perp scenario has no wallet, charge or net scoring.
     fn spot_fields_are_for_spot(&self) -> Result<(), String> {
         if self.assets.wallet.is_some()
-            || self.order.is_some()
             || self.scoring.bound_usd.is_some()
             || self.scoring.participation.is_some()
             || self.scoring.net.is_some()
         {
-            return Err("turn_data, order, participation and net are for spot scenarios".into());
+            return Err("turn_data, participation and net are for spot scenarios".into());
         }
         Ok(())
+    }
+
+    /// A perp scenario's starting positions, close-outs and order are in
+    /// its market, the one the session trades; a starting position is
+    /// inside the mandate's range for it; and an order can be done without
+    /// leaving that range. A start's leverage depends on the mark, which
+    /// setup checks on chain.
+    fn positions_fit_the_market(&self) -> Result<(), String> {
+        if self.venues.perp.is_none() {
+            return Ok(());
+        }
+        let market = self.perp_instrument();
+        let symbols = self
+            .assets
+            .start_positions
+            .keys()
+            .map(|s| ("start_positions", s))
+            .chain(self.scoring.close_out.keys().map(|s| ("close_out", s)));
+        for (field, symbol) in symbols {
+            if *symbol != market.symbol {
+                return Err(format!(
+                    "{field}: {symbol} is not the scenario's market, {}",
+                    market.symbol
+                ));
+            }
+        }
+        let Some(allowance) = self.mandate.allowance(&market) else {
+            return Ok(());
+        };
+        let min = allowance.min_position.unwrap_or(-allowance.max_position);
+        let start = self.start_position();
+        if start > allowance.max_position || start < min {
+            return Err(format!(
+                "start_positions: {start} {} is outside the mandate's range, {min} to {}",
+                market.symbol, allowance.max_position
+            ));
+        }
+        let Some(order) = &self.order else {
+            return Ok(());
+        };
+        if order.instrument.as_ref().is_some_and(|i| *i != market) {
+            return Err(format!("order: the scenario's market is {market}"));
+        }
+        if self.scoring.close_out.contains_key(&market.symbol) {
+            return Err(format!(
+                "close_out: {} has the order's broker; it can't have another",
+                market.symbol
+            ));
+        }
+        let end = match order.side {
+            Side::Buy => start + order.quantity,
+            Side::Sell => start - order.quantity,
+        };
+        if end > allowance.max_position || end < min {
+            return Err(format!(
+                "order: a {} of {} from {start} ends at {end}, outside the mandate's range, {min} to {}",
+                order.side, order.quantity, allowance.max_position
+            ));
+        }
+        Ok(())
+    }
+
+    /// The starting position in the scenario's market, in base units.
+    fn start_position(&self) -> f64 {
+        self.assets
+            .start_positions
+            .get(&self.assets.symbol)
+            .copied()
+            .unwrap_or(0.0)
     }
 
     /// The mandate covers exactly the scenario's markets: a session measures
@@ -728,17 +822,39 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// A sell order can't be bigger than the wallet; a net-scored session
-    /// has no order.
+    /// A sell order can't be bigger than the wallet, and a spot wallet,
+    /// which can't go short, has no reduce-only buy. A perp's reduce-only
+    /// order can't be bigger than the position it reduces: a sell, the
+    /// starting long; a buy, the starting short. A net-scored session has
+    /// no order.
     fn order_fits_the_wallet(&self) -> Result<(), String> {
-        if let (Some(order), Some(wallet)) = (&self.order, &self.assets.wallet)
-            && order.side == Side::Sell
-            && wallet.base < order.quantity
+        if let (Some(order), Some(wallet)) = (&self.order, &self.assets.wallet) {
+            if order.side == Side::Sell && wallet.base < order.quantity {
+                return Err(format!(
+                    "order: selling {} SOL from a wallet of {}",
+                    order.quantity, wallet.base
+                ));
+            }
+            if order.reduce_only && order.side == Side::Buy {
+                return Err("order: a buy order can't be reduce-only on a spot wallet".into());
+            }
+        }
+        if let Some(order) = &self.order
+            && self.venues.perp.is_some()
+            && order.reduce_only
         {
-            return Err(format!(
-                "order: selling {} SOL from a wallet of {}",
-                order.quantity, wallet.base
-            ));
+            let reducible = match order.side {
+                Side::Sell => self.start_position(),
+                Side::Buy => -self.start_position(),
+            };
+            if order.quantity > reducible {
+                return Err(format!(
+                    "order: a reduce-only {} of {} from a starting position of {}",
+                    order.side,
+                    order.quantity,
+                    self.start_position()
+                ));
+            }
         }
         if self.scoring.net.is_some() && self.order.is_some() {
             return Err("net: a net-scored session has no order".into());
@@ -820,6 +936,8 @@ impl ScenarioV2 {
             order,
             participation: scoring.participation,
             net: scoring.net,
+            start_positions: assets.start_positions,
+            close_out: scoring.close_out,
             reference_pnl_usd: scoring.reference_pnl_usd,
             fair_path,
             raw_sends: tx.and_then(|tx| tx.raw_sends),
@@ -866,14 +984,8 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 )
             }
             None => {
-                if v1.turn_data.is_some()
-                    || v1.order.is_some()
-                    || v1.participation.is_some()
-                    || v1.net.is_some()
-                {
-                    return Err(
-                        "turn_data, order, participation and net are for spot scenarios".into(),
-                    );
+                if v1.turn_data.is_some() || v1.participation.is_some() || v1.net.is_some() {
+                    return Err("turn_data, participation and net are for spot scenarios".into());
                 }
                 (
                     Venues {
@@ -915,6 +1027,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
             assets: Assets {
                 symbol: v1.symbol.clone(),
                 wallet,
+                start_positions: v1.start_positions.clone(),
             },
             venues,
             market_model: MarketModel {
@@ -941,6 +1054,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
+                close_out: v1.close_out.clone(),
             },
         })
     }
@@ -1044,6 +1158,7 @@ mod tests {
                 base: 10.0,
                 quote: 0.0,
             }),
+            start_positions: BTreeMap::new(),
         };
         s.market_model = MarketModel::default();
         s.mandate = Mandate::spot(&VENUES, SYMBOL, 10.0);
@@ -1273,6 +1388,97 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    #[test]
+    fn a_perp_takes_a_start_position_an_order_and_close_outs_in_its_market() {
+        let cap = |s: &ScenarioV2| s.mandate.universe[0].max_position;
+        let order = |side, quantity, reduce_only| ExecutionOrder {
+            instrument: None,
+            side,
+            quantity,
+            haircut_bps: 30.0,
+            reduce_only,
+        };
+        // Long half the cap, sold down by a reduce-only order, and the same
+        // with the order's market named.
+        let mut s = shock();
+        let half = cap(&s) / 2.0;
+        s.assets.start_positions.insert("SPCX".into(), half);
+        s.order = Some(order(Side::Sell, half, true));
+        assert_eq!(s.validate(), Ok(()));
+        s.order.as_mut().unwrap().instrument = Some("phoenix:perp:SPCX".parse().unwrap());
+        assert_eq!(s.validate(), Ok(()));
+        // It round-trips through v1.
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.start_positions["SPCX"], half);
+        assert_eq!(v2(&v1), s);
+        assert!(v1.setup_slots() > ShockFamily::spcx().sample("s", 3).setup_slots());
+        assert_eq!(v1.valuation(), "oracle");
+
+        // A reduce-only order is no bigger than what it reduces: a buy, the
+        // starting short.
+        let mut over = s.clone();
+        over.order = Some(order(Side::Sell, half + 1.0, true));
+        assert!(over.validate().unwrap_err().contains("reduce-only"));
+        let mut short = s.clone();
+        short.assets.start_positions.insert("SPCX".into(), -half);
+        short.order = Some(order(Side::Buy, half, true));
+        assert_eq!(short.validate(), Ok(()));
+        // An order ends inside the mandate's range.
+        let mut past = s.clone();
+        past.order = Some(order(Side::Buy, cap(&s), false));
+        assert!(past.validate().unwrap_err().contains("outside the mandate"));
+        // A start position is inside it, in the scenario's market, and not 0.
+        let mut big = shock();
+        big.assets
+            .start_positions
+            .insert("SPCX".into(), cap(&big) * 2.0);
+        assert!(big.validate().unwrap_err().contains("outside the mandate"));
+        let mut elsewhere = shock();
+        elsewhere.assets.start_positions.insert("NVDA".into(), 1.0);
+        assert!(
+            elsewhere
+                .validate()
+                .unwrap_err()
+                .contains("not the scenario's market")
+        );
+        let mut zero = shock();
+        zero.assets.start_positions.insert("SPCX".into(), 0.0);
+        assert!(zero.validate().unwrap_err().contains("other than 0"));
+        let mut other = s.clone();
+        other.order.as_mut().unwrap().instrument = Some("phoenix:perp:NVDA".parse().unwrap());
+        assert!(other.validate().unwrap_err().contains("scenario's market"));
+
+        // A close-out is in the session's market, and not the order's.
+        let mut closed = shock();
+        closed.assets.start_positions.insert("SPCX".into(), half);
+        closed
+            .scoring
+            .close_out
+            .insert("SPCX".into(), CloseOut { haircut_bps: 10.0 });
+        assert_eq!(closed.validate(), Ok(()));
+        assert_eq!(v2(&closed.clone().into_scenario().unwrap()), closed);
+        let mut both = closed.clone();
+        both.order = Some(order(Side::Sell, half, true));
+        assert!(both.validate().unwrap_err().contains("order's broker"));
+        let mut far = closed.clone();
+        far.scoring
+            .close_out
+            .insert("QQQ".into(), CloseOut { haircut_bps: 10.0 });
+        assert!(
+            far.validate()
+                .unwrap_err()
+                .contains("not the scenario's market")
+        );
+        let mut negative = closed;
+        negative
+            .scoring
+            .close_out
+            .get_mut("SPCX")
+            .unwrap()
+            .haircut_bps = -1.0;
+        assert!(negative.validate().unwrap_err().contains("haircut_bps"));
     }
 
     #[test]

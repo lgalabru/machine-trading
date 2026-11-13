@@ -6,7 +6,7 @@
 //! Surfpool overrides that walk Phoenix's oracle and book to each level in
 //! steps Phoenix accepts.
 
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use mtx_core::mandate::{InstrumentRef, Kind, Mandate};
 use serde::{Deserialize, Serialize};
@@ -84,11 +84,19 @@ pub struct Scenario {
     /// (see [`crate::spot::TurnData`]). Without it, none of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_data: Option<crate::spot::TurnData>,
-    /// For a spot session: a quantity the bot has to trade by the end, and
-    /// what a broker would charge to do it for the bot (see
-    /// [`crate::orders::ExecutionOrder`]).
+    /// A quantity the bot has to trade by the end, and what a broker would
+    /// charge to do it for the bot (see [`crate::orders::ExecutionOrder`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<crate::orders::ExecutionOrder>,
+    /// For a perp session: the position the bot starts holding in each
+    /// market, in signed base units, by symbol (see [`crate::perp`]).
+    /// Empty, it starts flat.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub start_positions: BTreeMap<String, f64>,
+    /// For a perp session: the markets, by symbol, whose residual position a
+    /// broker takes at the close (see [`crate::orders::CloseOut`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub close_out: BTreeMap<String, crate::orders::CloseOut>,
     /// For a spot session: a charge on the bot's share of a venue's traded
     /// volume (see [`crate::orders::Participation`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -469,12 +477,12 @@ pub fn funding_override(
 impl Scenario {
     /// The price an open position is valued at, at the end and for the
     /// drawdown: `mark` (Phoenix's), `oracle` (the scenario's level, for
-    /// market making, where a bot's quotes move the mark) or `book` (the
-    /// scenario's book level, where the book trades at a premium: what the
-    /// position would close at, which Phoenix's mark, a blend of the book
-    /// and the index, is not).
+    /// market making, where a bot's quotes move the mark, and where a broker
+    /// prices the close) or `book` (the scenario's book level, where the
+    /// book trades at a premium: what the position would close at, which
+    /// Phoenix's mark, a blend of the book and the index, is not).
     pub fn valuation(&self) -> &'static str {
-        if self.making.is_some() {
+        if self.making.is_some() || self.prices_the_close() {
             "oracle"
         } else if self.path.iter().any(|w| w.premium_pct != 0.0) || self.funding.is_some() {
             "book"
@@ -496,10 +504,23 @@ impl Scenario {
         } else {
             SETUP_SLOTS
         };
-        match &self.actors {
+        let slots = match &self.actors {
             Some(_) => slots.max(LIBRARY_SETUP_SLOTS),
             None => slots,
+        };
+        if self.start_positions.is_empty() {
+            slots
+        } else {
+            slots + SEED_SLOTS
         }
+    }
+
+    /// Whether a broker prices what the bot leaves at the close (a perp
+    /// order's remainder, or a close-out's residual): it prices it off the
+    /// scenario's own level, which no bot can push, and so does the
+    /// account's valuation.
+    pub fn prices_the_close(&self) -> bool {
+        self.spot.is_none() && (self.order.is_some() || !self.close_out.is_empty())
     }
 
     /// An off-hours path: through the closed period, each move of the perp
@@ -588,6 +609,9 @@ pub const OFFHOURS_SETUP_SLOTS: u64 = 240;
 pub const TAPE_SETUP_SLOTS: u64 = 600;
 /// A session with library actors also onboards their wallets.
 pub const LIBRARY_SETUP_SLOTS: u64 = 120;
+/// What a perp session's starting positions add: the counterparty's
+/// onboarding, and the slot after the seeding fill (see [`crate::perp`]).
+pub const SEED_SLOTS: u64 = 8;
 
 /// The largest part of an at-once move, in percent of the level it starts
 /// from: under Phoenix's 4% step (`MAX_MOVE_STEP_PCT`), so each part compiles
@@ -886,6 +910,8 @@ impl ShockFamily {
             }),
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
         };
         let shape = Shape {
             direction,
@@ -1518,6 +1544,8 @@ mod tests {
                 Scenario {
                     fair_path: None,
                     raw_sends: None,
+                    start_positions: Default::default(),
+                    close_out: Default::default(),
                     ..marked.clone()
                 },
                 plain
@@ -1598,6 +1626,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1667,6 +1697,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
         }
     }
 

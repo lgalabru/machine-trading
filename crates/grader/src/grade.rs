@@ -1055,12 +1055,55 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            close_outs: Vec::new(),
+            perp_fills: Vec::new(),
+            perp_open_orders: Vec::new(),
             crank_refusals: Vec::new(),
             oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_perp_sessions_fills_and_resting_sides_are_audited() {
+        use mtx_core::Side;
+        let mut buy_only = session(5.0);
+        let allowance = &mut buy_only.mandate.universe[0];
+        allowance.sides = Some(vec![Side::Buy]);
+        allowance.max_buy_price = Some(101.0);
+        assert_eq!(disqualification(&buy_only), None);
+        let fill = |side, price| crate::perp::PerpFillRecord {
+            at: 4,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price,
+            base: 1.0,
+        };
+        // A buy and a sell inside one step net to nothing; the sell is still
+        // a fill.
+        let mut sold = buy_only.clone();
+        sold.perp_fills = vec![fill(Side::Buy, 100.0), fill(Side::Sell, 100.5)];
+        assert_eq!(sold.observed().fills.len(), 2);
+        assert!(
+            disqualification(&sold)
+                .unwrap()
+                .contains("a side its mandate")
+        );
+        let mut over = buy_only.clone();
+        over.perp_fills = vec![fill(Side::Buy, 102.0)];
+        assert!(disqualification(&over).is_some());
+        let mut resting = buy_only.clone();
+        resting.perp_open_orders = vec![("phoenix:perp:SPCX".parse().unwrap(), Side::Sell)];
+        assert!(disqualification(&resting).is_some());
+        // They round-trip through the report, and a session without them
+        // writes neither.
+        let json = serde_json::to_string(&sold).unwrap();
+        let back: SessionReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.perp_fills, sold.perp_fills);
+        let plain = serde_json::to_string(&buy_only).unwrap();
+        assert!(!plain.contains("perp_fills") && !plain.contains("close_outs"));
     }
 
     #[test]
@@ -1119,6 +1162,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
         }
     }
 
