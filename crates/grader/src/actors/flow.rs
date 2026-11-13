@@ -4,7 +4,14 @@
 //! the bot's position on each market it trades, before and after the step.
 //! The session reads it once per step, after the blocks and before the
 //! actors act, only when some actor wants it ([`super::Actor::wants_flow`]).
+//!
+//! An actor that acts on the bot's orders as they arrive reads them from
+//! the transactions themselves, as a searcher reading the mempool would: a
+//! venue's [`SendReader`] says which orders a send carries on its market.
 
+use std::sync::Arc;
+
+use futures::future::BoxFuture;
 use mtx_kit::Side;
 use tracing::warn;
 
@@ -48,6 +55,25 @@ impl StepFlow {
         self.bot.iter().map(VenueFlow::net).sum()
     }
 }
+
+/// An order on the session's market that one of the bot's transactions
+/// carries, as anyone who reads the transaction before it lands sees it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SentOrder {
+    pub side: Side,
+    /// In base units.
+    pub size: f64,
+    /// Its limit, where it has one.
+    pub price: Option<f64>,
+    /// It takes at once or not at all (immediate-or-cancel): a trade, not
+    /// a quote.
+    pub immediate: bool,
+}
+
+/// Reads a `sendTransaction` call of the bot's: the orders it carries on
+/// the session's market, or none if the chain wouldn't run it.
+pub type SendReader =
+    Arc<dyn Fn(serde_json::Value) -> BoxFuture<'static, Vec<SentOrder>> + Send + Sync>;
 
 /// Where a session reads each step's flow: a seat on each of the bot's
 /// markets, reading the bot's own account (its position), never trading.

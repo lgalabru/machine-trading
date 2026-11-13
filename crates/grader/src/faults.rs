@@ -29,6 +29,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use solana_pubkey::Pubkey;
 
 use crate::scenario::SplitMix64;
 
@@ -525,12 +526,22 @@ impl FaultState {
 }
 
 /// What the guard reads of a `sendTransaction`: its signature, which is the
-/// answer a send gets, and its compute-unit price.
+/// answer a send gets, its compute-unit price, and its instructions.
 #[derive(Debug, PartialEq)]
 pub struct WireTransaction {
     pub signature: String,
     /// Micro-lamports per compute unit; 0 without a price instruction.
     pub unit_price: u64,
+    pub instructions: Vec<WireInstruction>,
+}
+
+/// One instruction of a [`WireTransaction`]. A key the message loads from a
+/// lookup table isn't in it, and reads as `None`.
+#[derive(Debug, PartialEq)]
+pub struct WireInstruction {
+    pub program: Option<Pubkey>,
+    pub accounts: Vec<Option<Pubkey>>,
+    pub data: Vec<u8>,
 }
 
 const COMPUTE_BUDGET: &str = "ComputeBudget111111111111111111111111111111";
@@ -565,11 +576,21 @@ impl WireTransaction {
         let keys_at = at;
         at += keys * 32 + 32;
         let compute_budget = bs58::decode(COMPUTE_BUDGET).into_vec().ok()?;
+        let key = |i: usize| -> Option<Pubkey> {
+            if i >= keys {
+                return None;
+            }
+            let from = keys_at + i * 32;
+            let key: [u8; 32] = bytes.get(from..from + 32)?.try_into().ok()?;
+            Some(Pubkey::new_from_array(key))
+        };
         let mut unit_price = 0;
+        let mut instructions = Vec::new();
         for _ in 0..shortvec(&bytes, &mut at)? {
             let program = *bytes.get(at)? as usize;
             at += 1;
             let accounts = shortvec(&bytes, &mut at)?;
+            let indexes = bytes.get(at..at + accounts)?;
             at += accounts;
             let len = shortvec(&bytes, &mut at)?;
             let data = bytes.get(at..at + len)?;
@@ -581,10 +602,16 @@ impl WireTransaction {
             {
                 unit_price = u64::from_le_bytes(data.get(1..9)?.try_into().ok()?);
             }
+            instructions.push(WireInstruction {
+                program: key(program),
+                accounts: indexes.iter().map(|&i| key(i as usize)).collect(),
+                data: data.to_vec(),
+            });
         }
         Some(Self {
             signature,
             unit_price,
+            instructions,
         })
     }
 }

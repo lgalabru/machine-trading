@@ -37,7 +37,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 pub use competitor::{CompeteReport, Competitor};
-pub use flow::{FlowWatch, StepFlow, VenueFlow};
+pub use flow::{FlowWatch, SendReader, SentOrder, StepFlow, VenueFlow};
 pub use library::{Library, LibraryReport};
 pub use takers::{FlowReport, Pricing, TakerRecord, Takers};
 
@@ -111,10 +111,10 @@ pub struct ActorsReport {
 pub struct Hooks(pub Vec<Arc<dyn SendHook>>);
 
 impl SendHook for Hooks {
-    fn before(&self) -> futures::future::BoxFuture<'_, ()> {
+    fn before<'a>(&'a self, sends: &'a [serde_json::Value]) -> futures::future::BoxFuture<'a, ()> {
         Box::pin(async move {
             for hook in &self.0 {
-                hook.before().await;
+                hook.before(sends).await;
             }
         })
     }

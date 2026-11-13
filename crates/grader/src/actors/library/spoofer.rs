@@ -8,6 +8,13 @@
 //! side (`harvest_mult`), which is what the wall is for. It trades from one
 //! wallet throughout, so a reader of the chain can learn it: many orders,
 //! nearly all cancelled, none filled.
+//!
+//! With `ahead_slots`, it puts a wall up only while it sees the level that
+//! far ahead going the other way: support painted under a price it expects
+//! to fall (a bid wall), as a seller unloading would. A wall that looks
+//! like support then says the opposite, to whoever has learnt the wallet.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use mtx_kit::Side;
@@ -53,6 +60,9 @@ pub struct Spoofer {
     /// in market trade sizes: none by default.
     #[serde(default)]
     pub harvest_mult: f64,
+    /// How far ahead it sees, if it walls only against the move it sees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ahead_slots: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<Window>,
 }
@@ -66,6 +76,7 @@ impl Default for Spoofer {
             wall_mult: eight(),
             lifetime_slots: forty(),
             harvest_mult: 0.0,
+            ahead_slots: None,
             active: None,
         }
     }
@@ -78,6 +89,9 @@ impl Spoofer {
         }
         if self.lifetime_slots == 0 {
             return Err("lifetime_slots must be at least 1".into());
+        }
+        if self.ahead_slots == Some(0) {
+            return Err("ahead_slots must be at least 1".into());
         }
         finite_positive("wall_mult", self.wall_mult)?;
         finite_at_least_zero("harvest_mult", self.harvest_mult)
@@ -95,16 +109,36 @@ pub(super) struct SpooferActor {
     spec: Spoofer,
     scale: Scale,
     wallet: Wallet,
+    path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     wall: Option<Wall>,
 }
 
 impl SpooferActor {
-    pub fn new(spec: Spoofer, scale: Scale, wallet: Wallet) -> Self {
+    pub fn new(
+        spec: Spoofer,
+        scale: Scale,
+        wallet: Wallet,
+        path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
+    ) -> Self {
         Self {
             spec,
             scale,
             wallet,
+            path,
             wall: None,
+        }
+    }
+
+    /// Whether it walls `now`: always, or, with `ahead_slots`, while the
+    /// level it sees ahead goes against its wall's side.
+    fn walls_now(&self, now: &Moment) -> bool {
+        let Some(ahead) = self.spec.ahead_slots else {
+            return true;
+        };
+        let later = (self.path)(now.at + ahead).book_usd;
+        match Side::from(self.spec.side) {
+            Side::Bid => later < now.book_usd,
+            Side::Ask => later > now.book_usd,
         }
     }
 
@@ -154,7 +188,7 @@ impl SpooferActor {
             }
             return;
         }
-        if !Window::holds(&self.spec.active, now.at) {
+        if !Window::holds(&self.spec.active, now.at) || !self.walls_now(now) {
             return;
         }
         let Some(touch) = touch else {
@@ -211,6 +245,7 @@ mod tests {
             },
             scale(),
             wallet,
+            Arc::new(|s| at(s, 100.0)),
         );
         spoofer.after_blocks(&at(2, 100.0)).await;
         // The bid falls to 2 ticks over the wall: still up.
@@ -249,6 +284,7 @@ mod tests {
             },
             scale(),
             wallet,
+            Arc::new(|s| at(s, 100.0)),
         );
         for s in [2, 4, 6] {
             spoofer.after_blocks(&at(s, 100.0)).await;
@@ -261,5 +297,25 @@ mod tests {
                 "s cancel",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_seller_walls_only_ahead_of_a_fall() {
+        let (book, log) = Book::new("s", 100.00, 100.10);
+        let (wallet, _) = wallet(book);
+        // Down 1% at slot 50.
+        let mut spoofer = SpooferActor::new(
+            Spoofer {
+                ahead_slots: Some(20),
+                ..Spoofer::default()
+            },
+            scale(),
+            wallet,
+            Arc::new(|s| at(s, if s >= 50 { 99.0 } else { 100.0 })),
+        );
+        spoofer.after_blocks(&at(10, 100.0)).await;
+        assert!(log.lock().unwrap().is_empty(), "nothing falls in sight");
+        spoofer.after_blocks(&at(40, 100.0)).await;
+        assert_eq!(*log.lock().unwrap(), ["s rest Bid 8.000 at 99.95"]);
     }
 }

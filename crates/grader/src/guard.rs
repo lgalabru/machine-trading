@@ -186,10 +186,11 @@ pub struct CallRecord {
 }
 
 /// Something that acts around each of the bot's transactions: `before`
-/// runs once the guard has accepted a send and before it is forwarded,
-/// `after` once the surfnet has answered it.
+/// runs once the guard has accepted a send and before it is forwarded, with
+/// the `sendTransaction` calls it carries, `after` once the surfnet has
+/// answered it.
 pub trait SendHook: Send + Sync {
-    fn before(&self) -> futures::future::BoxFuture<'_, ()>;
+    fn before<'a>(&'a self, sends: &'a [Value]) -> futures::future::BoxFuture<'a, ()>;
     fn after(&self) -> futures::future::BoxFuture<'_, ()>;
 }
 
@@ -426,14 +427,14 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
             if !others.is_empty() {
                 replies.extend(batch_replies(serve(state, Value::Array(others), host).await).await);
             }
-            hook.before().await;
+            hook.before(&sends).await;
             let sent = batch_replies(serve(state, Value::Array(sends), host).await).await;
             hook.after().await;
             replies.extend(sent);
             reply(Value::Array(replies))
         }
         call => {
-            hook.before().await;
+            hook.before(std::slice::from_ref(&call)).await;
             let response = serve(state, call, host).await;
             hook.after().await;
             response
@@ -1080,8 +1081,9 @@ mod tests {
     struct NotingHook(Arc<Mutex<Vec<String>>>);
 
     impl SendHook for NotingHook {
-        fn before(&self) -> futures::future::BoxFuture<'_, ()> {
+        fn before<'a>(&'a self, sends: &'a [Value]) -> futures::future::BoxFuture<'a, ()> {
             Box::pin(async move {
+                assert!(sends.iter().all(is_send));
                 self.0.lock().unwrap().push("before".into());
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             })

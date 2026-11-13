@@ -534,11 +534,12 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
             // A session whose library actors failed to act didn't see the
             // market its scenario describes either.
             if let Some(actors) = s.actors.as_ref().filter(|a| a.degraded()) {
+                let actions = actors.independent();
                 return Some(format!(
                     "{} ({} of {} actor actions failed)",
                     s.scenario,
-                    actors.actions.failed,
-                    actors.actions.total()
+                    actions.failed,
+                    actions.total()
                 ));
             }
             // A market-making session whose takers didn't trade as listed
@@ -1077,22 +1078,26 @@ mod tests {
 
     #[test]
     fn sessions_whose_actors_failed_fail_the_grade() {
-        let mut thin = session(10.0);
-        thin.actors = Some(crate::actors::LibraryReport {
-            actions: crate::actors::library::Actions {
-                placed: 89,
-                failed: 11,
+        use crate::actors::library::{Actions, ActorTally};
+        let tally = |placed, failed, reacts_to_bot| ActorTally {
+            actions: Actions {
+                placed,
+                failed,
                 ..Default::default()
             },
+            reacts_to_bot,
+            ..Default::default()
+        };
+        let mut thin = session(10.0);
+        thin.actors = Some(crate::actors::LibraryReport {
+            actors: vec![tally(89, 11, false), tally(0, 500, true)],
             ..Default::default()
         });
         let error = check_timing(&[session(1.0), thin.clone()]).unwrap_err();
         assert!(error.to_string().contains("11 of 100 actor actions failed"));
-        thin.actors.as_mut().unwrap().actions = crate::actors::library::Actions {
-            placed: 90,
-            failed: 10,
-            ..Default::default()
-        };
+        // What failed of the actors that act on the bot's trading is the
+        // bot's doing: never the session's.
+        thin.actors.as_mut().unwrap().actors = vec![tally(90, 10, false), tally(0, 500, true)];
         assert!(check_timing(&[thin]).is_ok());
     }
 

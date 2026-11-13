@@ -4,6 +4,10 @@
 //! - **Noise traders** ([`Noise`]) take at random, at the market's own pace.
 //! - **Informed traders** ([`Informed`]) trade ahead of the scenario's path:
 //!   they see the level a horizon ahead and take when it is far enough off.
+//! - **Chasers** ([`Chaser`]) take the way the book has moved, and
+//!   **decoys** ([`Decoy`]) trade as the informed do for a while, then
+//!   against the move: directional flow that knows nothing, which only a
+//!   reader of each wallet's record tells from the informed.
 //! - **Spoofers** ([`Spoofer`]) rest walls near the touch and pull them as
 //!   the price comes near, always from the same wallet.
 //! - **Stop hunters** ([`StopHunter`]) push the price through an obvious
@@ -25,9 +29,12 @@
 //! Sizes and rates are multiples of the market's own ([`Scale`]), as its
 //! calibration measures them.
 //!
-//! Every order, cancel and take counts as an action ([`Actions`]). A session
-//! where more than [`MAX_FAILED_SHARE`] of them failed didn't see the market
-//! its scenario describes, and the grade fails as infrastructure.
+//! Every order, cancel, take and swap counts as an action ([`Actions`]). A
+//! session where more than [`MAX_FAILED_SHARE`] of them failed didn't see the
+//! market its scenario describes, and the grade fails as infrastructure. The
+//! actors that act on the bot's own trading (front-runners, RFQ clients) are
+//! left out of that count: the bot can make their actions fail (a swap it
+//! can't pay for), and a bot must never void its own session.
 
 mod arbitrageur;
 mod front_runner;
@@ -49,12 +56,12 @@ pub use self::{
     arbitrageur::Arbitrageur,
     front_runner::FrontRunner,
     liquidator::{Candidate, Liquidations, Liquidator},
-    rfq::{RfqBoard, RfqClients, RfqSeat},
+    rfq::{RfqBoard, RfqClients, RfqSeat, Settlement, Swaps, Token},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
-    traders::{Informed, Noise},
+    traders::{Chaser, Decoy, Informed, Noise},
 };
-use super::{Actor, ActorsReport, Moment};
+use super::{Actor, ActorsReport, Moment, SendReader};
 use crate::venue::Seat;
 
 /// The share of the library's actions that may fail before the session
@@ -74,6 +81,10 @@ pub struct Library {
     pub noise: Vec<Noise>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub informed: Vec<Informed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chasers: Vec<Chaser>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decoys: Vec<Decoy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spoofers: Vec<Spoofer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -192,6 +203,11 @@ impl Library {
             self.informed.iter().map(Informed::validate).collect(),
         )?;
         each(
+            "chasers",
+            self.chasers.iter().map(Chaser::validate).collect(),
+        )?;
+        each("decoys", self.decoys.iter().map(Decoy::validate).collect())?;
+        each(
             "spoofers",
             self.spoofers.iter().map(Spoofer::validate).collect(),
         )?;
@@ -235,6 +251,12 @@ impl Library {
         }
         for informed in &self.informed {
             add("informed", informed.wallets);
+        }
+        for chaser in &self.chasers {
+            add("chaser", chaser.wallets);
+        }
+        for decoy in &self.decoys {
+            add("decoy", decoy.wallets);
         }
         for _ in &self.spoofers {
             add("spoofer", 1);
@@ -299,12 +321,33 @@ impl Library {
                 rng("informed"),
             )));
         }
+        for spec in &self.chasers {
+            let wallets = ledger.wallets("chaser", take(spec.wallets));
+            built.actors.push(Box::new(traders::ChaserTrader::new(
+                spec.clone(),
+                scale,
+                wallets,
+                setting.path.clone(),
+                rng("chaser"),
+            )));
+        }
+        for spec in &self.decoys {
+            let wallets = ledger.wallets("decoy", take(spec.wallets));
+            built.actors.push(Box::new(traders::DecoyTrader::new(
+                spec.clone(),
+                scale,
+                wallets,
+                setting.path.clone(),
+                rng("decoy"),
+            )));
+        }
         for spec in &self.spoofers {
             let wallet = ledger.wallets("spoofer", take(1)).remove(0);
             built.actors.push(Box::new(spoofer::SpooferActor::new(
                 spec.clone(),
                 scale,
                 wallet,
+                setting.path.clone(),
             )));
         }
         for spec in &self.stop_hunters {
@@ -316,11 +359,12 @@ impl Library {
             )));
         }
         for spec in &self.front_runners {
-            let wallet = ledger.wallets("front-runner", take(1)).remove(0);
+            let wallet = ledger.reacting("front-runner", take(1)).remove(0);
             built.actors.push(Box::new(front_runner::Runner::new(
                 spec.clone(),
                 scale,
                 wallet,
+                setting.send_reader.clone(),
             )));
         }
         if let Some(spec) = &self.arbitrageur {
@@ -330,7 +374,7 @@ impl Library {
                 .push(Box::new(arbitrageur::Arb::new(spec.clone(), scale, wallet)));
         }
         if let Some(spec) = &self.rfq_clients {
-            let clients = ledger.wallets("rfq-client", take(spec.clients));
+            let clients = ledger.reacting("rfq-client", take(spec.clients));
             let board = RfqBoard::new(format!("rfq:{}", setting.symbol));
             built.actors.push(Box::new(
                 rfq::Clients::new(
@@ -338,7 +382,7 @@ impl Library {
                     scale,
                     clients,
                     board.clone(),
-                    setting.bot_seat,
+                    setting.settlement.clone(),
                     setting.path.clone(),
                     rng("rfq-client"),
                 )
@@ -371,9 +415,10 @@ pub struct Setting {
     /// The scenario's moment at any slot into the session: what the
     /// informed see ahead.
     pub path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
-    /// A seat trading as the bot, through the grader: RFQ fills settle
-    /// through it.
-    pub bot_seat: Option<Box<dyn Seat>>,
+    /// How RFQ fills settle between a client and the bot.
+    pub settlement: Option<Arc<dyn Settlement>>,
+    /// What the bot's sends carry, for the front-runners that read them.
+    pub send_reader: Option<SendReader>,
     /// The session's lending venue, for the liquidator: none yet.
     pub liquidations: Option<Box<dyn Liquidations>>,
     /// The grader's own endpoint: with [`Library::record`], the report
@@ -416,6 +461,10 @@ pub struct ActorTally {
     /// Its role (`noise`, `spoofer`, …) and its wallets.
     pub kind: String,
     pub wallets: Vec<String>,
+    /// It acts on the bot's own trading, so its failures don't count
+    /// toward [`LibraryReport::degraded`].
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reacts_to_bot: bool,
     pub actions: Actions,
     /// Base units it bought and sold by taking.
     pub bought: f64,
@@ -438,7 +487,7 @@ pub struct ActorTally {
 pub struct TapeEntry {
     pub at: u64,
     pub wallet: String,
-    /// `take`, `rest` or `cancel`.
+    /// `take`, `rest`, `cancel` or `swap` (an RFQ fill, with the bot).
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<String>,
@@ -464,9 +513,23 @@ pub struct LibraryReport {
 }
 
 impl LibraryReport {
-    /// More of the actions failed than a session may lose.
+    /// The actions of the actors that act on their own, not on the bot's
+    /// trading: those that say whether the session saw its market.
+    pub fn independent(&self) -> Actions {
+        let mut actions = Actions::default();
+        for tally in self.actors.iter().filter(|t| !t.reacts_to_bot) {
+            actions.placed += tally.actions.placed;
+            actions.cancelled += tally.actions.cancelled;
+            actions.took += tally.actions.took;
+            actions.failed += tally.actions.failed;
+        }
+        actions
+    }
+
+    /// More of the independent actions failed than a session may lose.
     pub fn degraded(&self) -> bool {
-        self.actions.failed as f64 > MAX_FAILED_SHARE * self.actions.total() as f64
+        let actions = self.independent();
+        actions.failed as f64 > MAX_FAILED_SHARE * actions.total() as f64
     }
 }
 
@@ -495,10 +558,20 @@ impl Ledger {
 
     /// A new actor of `kind` trading from `seats`: its wallets.
     fn wallets(&self, kind: &str, seats: Vec<WalletSeat>) -> Vec<Wallet> {
+        self.add(kind, seats, false)
+    }
+
+    /// As [`Ledger::wallets`], for an actor that acts on the bot's trading.
+    fn reacting(&self, kind: &str, seats: Vec<WalletSeat>) -> Vec<Wallet> {
+        self.add(kind, seats, true)
+    }
+
+    fn add(&self, kind: &str, seats: Vec<WalletSeat>, reacts_to_bot: bool) -> Vec<Wallet> {
         let mut state = self.state();
         state.actors.push(ActorTally {
             kind: kind.to_string(),
             wallets: seats.iter().map(|s| s.pubkey.to_string()).collect(),
+            reacts_to_bot,
             ..ActorTally::default()
         });
         let actor = state.actors.len() - 1;
@@ -651,6 +724,27 @@ impl Wallet {
             Done::Cancelled,
         );
         sent.is_ok()
+    }
+
+    /// Note an RFQ fill it settled with the bot (or failed to), `at` slots
+    /// in: it bought (`Bid`) or sold `size` at `price`. Whether it settled.
+    pub fn swap(
+        &self,
+        at: u64,
+        side: Side,
+        price: f64,
+        size: f64,
+        settled: Result<String, String>,
+    ) -> bool {
+        let entry = TapeEntry {
+            side: Some(side_name(side)),
+            price_usd: Some(price),
+            size: Some(size),
+            signature: settled.as_ref().ok().cloned(),
+            ..self.entry(at, "swap", settled.is_ok())
+        };
+        self.ledger.note(self.actor, entry, Done::Took(side));
+        settled.is_ok()
     }
 
     /// Add `n` to its actor's count of `what`.
@@ -966,14 +1060,18 @@ pub(crate) mod tests {
         assert_eq!(report.tape.len(), 3);
         assert!(!report.degraded());
         let mut lost = report.clone();
-        lost.actions.failed = 1;
+        lost.actors[0].actions.failed = 1;
         assert!(lost.degraded(), "1 of 4 failed");
-        lost.actions = Actions {
+        lost.actors[0].actions = Actions {
             placed: 90,
             cancelled: 10,
             took: 0,
             failed: 10,
         };
+        assert!(!lost.degraded());
+        // An actor that acts on the bot's trading may fail all it likes.
+        lost.actors[0].actions.failed = 1_000;
+        lost.actors[0].reacts_to_bot = true;
         assert!(!lost.degraded());
     }
 }

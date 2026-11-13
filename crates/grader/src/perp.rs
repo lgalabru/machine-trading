@@ -20,7 +20,7 @@ use mtx_core::{
 use mtx_kit::{
     BotEnv,
     chain::RpcChainClient,
-    phoenix_rise::types::exchange::ExchangeMarketConfig,
+    phoenix_rise::{ix::PhoenixInstruction, types::exchange::ExchangeMarketConfig},
     protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
 };
 use solana_keypair::Keypair;
@@ -31,8 +31,8 @@ use surfpool_sdk::{CheatcodeFilter, SimnetCommand};
 use crate::{
     Error, Result,
     actors::{
-        Cast, Competitor, FlowWatch, Moment, Pricing, Takers,
-        library::{RfqBoard, RfqSeat, Setting, WalletSeat},
+        Cast, Competitor, FlowWatch, Moment, Pricing, SendReader, SentOrder, Takers,
+        library::{RfqBoard, RfqClients, RfqSeat, Scale, Setting, Swaps, Token, WalletSeat},
     },
     chain,
     guard::Guard,
@@ -183,6 +183,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         _ => None,
     };
+    // RFQ fills settle as swaps of the asset's spot token for USDC, between
+    // the clients' wallets and the bot's: they hold both, funded here.
+    let swaps = match library.as_ref().and_then(|(l, _)| l.rfq_clients.as_ref()) {
+        Some(rfq) => {
+            let scale = library.as_ref().map(|(l, _)| l.scale).unwrap_or_default();
+            let setup = RfqSetup {
+                symbol: &scenario.symbol,
+                rfq,
+                scale,
+                price_usd: start_mark_usd,
+            };
+            Some(fund_rfq(opts, surfnet, &rpc, internal.url(), &bot, setup)?)
+        }
+        None => None,
+    };
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
@@ -265,12 +280,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             level_usd: start * (1.0 + level_at(&path, at) / 100.0),
             book_usd: start * (1.0 + book_at(&path, at) / 100.0),
         });
-        // RFQ fills settle through a seat trading as the bot; front-runners
-        // read the bot's trading through another.
-        let bot_seat = match &library.rfq_clients {
-            Some(_) => Some(perp.unique_seat(bot.insecure_clone(), internal.url())?),
-            None => None,
-        };
+        // Front-runners read the bot's trading through a seat on its
+        // account, and its sends as they arrive.
+        let send_reader = (!library.front_runners.is_empty())
+            .then(|| send_reader(market.clone(), internal.url().to_string()));
         if !library.front_runners.is_empty() {
             cast.watch(FlowWatch::new(vec![
                 perp.seat(bot.insecure_clone(), internal.url()).await?,
@@ -282,7 +295,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 symbol: scenario.symbol.clone(),
                 base_slot,
                 path,
-                bot_seat,
+                settlement: swaps
+                    .as_ref()
+                    .map(|(swaps, _)| swaps.clone() as Arc<dyn crate::actors::library::Settlement>),
+                send_reader,
                 liquidations: None,
                 rpc_url: Some(internal.url().to_string()),
             },
@@ -314,7 +330,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .expect("a perp scenario's mandate has a drawdown limit"),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
-    let account = PerpAccount {
+    let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
         perp,
@@ -331,7 +347,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
         rfqs,
+        desk: swaps.map(|(_, desk)| desk),
     };
+    // The desk's wallet counts toward the account from the start.
+    account.start_value_usd += account.desk_usd().await?;
+    account.peak_value_usd = account.start_value_usd;
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
         internal,
@@ -430,11 +450,146 @@ struct PerpAccount {
     positions_outside_universe: u32,
     /// The requests for quotes open to the bot, if RFQ clients send any.
     rfqs: Option<RfqBoard>,
+    /// What its RFQ fills settle in, if they do.
+    desk: Option<RfqDesk>,
+}
+
+/// The tokens a bot's RFQ fills move in its wallet, read at `rpc_url`.
+struct RfqDesk {
+    base: Token,
+    quote: Token,
+    rpc_url: String,
+}
+
+/// What a session's RFQ clients trade, and at about what price.
+struct RfqSetup<'a> {
+    symbol: &'a str,
+    rfq: &'a RfqClients,
+    scale: Scale,
+    price_usd: f64,
+}
+
+/// The spot token an RFQ on a perp's asset settles in: the asset's own
+/// mint. SPCX is Backpack's (a Token-2022 mint with 6 decimals).
+fn spot_token(symbol: &str) -> Option<Token> {
+    match symbol {
+        "SPCX" => Some(Token {
+            mint: solana_pubkey::pubkey!("SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb"),
+            program: mtx_kit::token::TOKEN_2022_PROGRAM_ID,
+            decimals: 6,
+        }),
+        _ => None,
+    }
+}
+
+/// Fund an RFQ session's wallets, while cheatcodes work: each client with
+/// the asset and USDC for a hundred requests of the median size, and the
+/// bot with the desk the scenario gives it (`desk_base` of the asset, and
+/// `desk_usdc` on top of the USDC its wallet holds). The snapshot doesn't
+/// carry the asset's mint, so setup writes a plain one at its address,
+/// without the real mint's extensions (a transfer hook, accounts frozen by
+/// default, pausing, a permanent delegate): a swap between two wallets
+/// needs none of them. The swaps the clients settle with, and the bot's
+/// desk.
+fn fund_rfq(
+    opts: &SessionOptions<'_>,
+    surfnet: &surfpool_sdk::Surfnet,
+    rpc: &solana_rpc_client::rpc_client::RpcClient,
+    rpc_url: &str,
+    bot: &Keypair,
+    setup: RfqSetup<'_>,
+) -> Result<(Arc<Swaps>, RfqDesk)> {
+    let base = spot_token(setup.symbol).ok_or_else(|| Error::Transaction {
+        label: "RFQ clients".into(),
+        reason: format!("no spot token for {} to settle in", setup.symbol),
+    })?;
+    let quote = Token {
+        mint: phoenix::USDC_MINT,
+        program: mtx_kit::token::TOKEN_PROGRAM_ID,
+        decimals: 6,
+    };
+    let cheats = surfnet.cheatcodes();
+    if rpc.get_account(&base.mint).is_err() {
+        cheats.set_account(
+            &base.mint,
+            crate::simulated::MINT_LAMPORTS,
+            &crate::simulated::mint_data(base.decimals),
+            &base.program,
+        )?;
+    }
+    let atoms =
+        |units: f64, token: &Token| (units * 10f64.powi(token.decimals as i32)).round() as u64;
+    let request = setup.scale.trade_size * setup.rfq.size_mult;
+    let clients: Vec<Keypair> = (0..setup.rfq.clients)
+        .map(|i| opts.keys.keypair("rfq-client", i))
+        .collect();
+    for client in &clients {
+        let owner = client.pubkey();
+        cheats.fund_token(
+            &owner,
+            &base.mint,
+            atoms(100.0 * request, &base),
+            Some(&base.program),
+        )?;
+        let usdc = atoms(100.0 * request * setup.price_usd, &quote);
+        cheats.fund_token(&owner, &quote.mint, usdc, Some(&quote.program))?;
+    }
+    let owner = bot.pubkey();
+    let held: u64 = rpc
+        .get_token_account_balance(&quote.account(&owner))?
+        .amount
+        .parse()
+        .unwrap_or(0);
+    cheats.fund_token(
+        &owner,
+        &base.mint,
+        atoms(setup.rfq.desk_base, &base),
+        Some(&base.program),
+    )?;
+    let usdc = held + atoms(setup.rfq.desk_usdc, &quote);
+    cheats.fund_token(&owner, &quote.mint, usdc, Some(&quote.program))?;
+    let swaps = Swaps::new(
+        rpc_url.to_string(),
+        bot.insecure_clone(),
+        clients,
+        base,
+        quote,
+    );
+    let desk = RfqDesk {
+        base,
+        quote,
+        rpc_url: rpc_url.to_string(),
+    };
+    Ok((Arc::new(swaps), desk))
 }
 
 impl PerpAccount {
     async fn measure(&self) -> Result<Measurement> {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
+    }
+
+    /// What the bot's wallet holds for its RFQ desk, in USD, as the spot
+    /// profile values holdings: its USDC at 1, and the asset's spot token at
+    /// its reference price, Phoenix's index for the perp. Nothing without
+    /// a desk.
+    async fn desk_usd(&self) -> Result<f64> {
+        let Some(desk) = &self.desk else {
+            return Ok(0.0);
+        };
+        let rpc = mtx_kit::rpc_client_with_timeout(desk.rpc_url.clone(), INTERNAL_RPC_TIMEOUT);
+        let held = |token: &Token| -> Result<f64> {
+            let amount = rpc.get_token_account_balance(&token.account(&self.bot))?;
+            let atoms: f64 = amount.amount.parse().unwrap_or(0.0);
+            Ok(atoms / 10f64.powi(token.decimals as i32))
+        };
+        let (base, usdc) = (held(&desk.base)?, held(&desk.quote)?);
+        let hawkeye = self.phoenix.hawkeye(self.bot);
+        let symbol = &self.scenario.symbol;
+        let index = patiently("the book", || hawkeye.view_bbo(symbol))
+            .await?
+            .value
+            .index_price_ticks;
+        Ok(usdc + base * self.phoenix.ticks_to_usd(&self.market, index))
     }
 
     async fn mark_ticks(&self) -> Result<u64> {
@@ -464,6 +619,11 @@ impl PerpAccount {
         let price = self.start_mark_usd * (1.0 + level / 100.0);
         Ok(value_usd + units * (price - self.phoenix.ticks_to_usd(&self.market, mark)))
     }
+
+    /// [`PerpAccount::value`], and the RFQ desk's wallet.
+    async fn value_with_desk(&self, value_usd: f64, units: f64, slot: u64) -> Result<f64> {
+        Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
+    }
 }
 
 #[async_trait]
@@ -488,7 +648,7 @@ impl Account for PerpAccount {
         let position = position_in(&now, &self.market_id);
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
         let value_usd = self
-            .value(grader_f64(now.value_usd), position, slot)
+            .value_with_desk(grader_f64(now.value_usd), position, slot)
             .await?;
         self.peak_value_usd = self.peak_value_usd.max(value_usd);
         self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
@@ -560,7 +720,7 @@ impl Account for PerpAccount {
     }
 
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord {
-        decode_instruction(ix, keys, &self.phoenix, &self.market)
+        decode_instruction(ix, keys, &self.market)
     }
 
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
@@ -569,7 +729,7 @@ impl Account for PerpAccount {
         record(&mut self.observed, &end)?;
         let end_position = position_in(&end, &self.market_id);
         let end_value_usd = self
-            .value(grader_f64(end.value_usd), end_position, done.end_slot)
+            .value_with_desk(grader_f64(end.value_usd), end_position, done.end_slot)
             .await?;
         let positions_outside_universe = self.positions_outside_universe.max(end.outside_universe);
         let liquidatable = self.meter.liquidatable().await?;
@@ -647,10 +807,8 @@ const COMPUTE_BUDGET: &str = "ComputeBudget111111111111111111111111111111";
 fn decode_instruction(
     ix: &serde_json::Value,
     keys: &[serde_json::Value],
-    phoenix: &Phoenix,
     market: &ExchangeMarketConfig,
 ) -> IxRecord {
-    use mtx_kit::phoenix_rise::ix::{PhoenixInstruction, order_packet::OrderPacket};
     let program = ix["programIdIndex"]
         .as_u64()
         .and_then(|i| keys.get(i as usize))
@@ -668,39 +826,124 @@ fn decode_instruction(
             order: None,
         };
     }
-    let found = data
-        .get(..8)
-        .and_then(|tag| PhoenixInstruction::from_discriminant(tag.try_into().ok()?));
-    let Some(instruction) = found else {
+    let Some(instruction) = phoenix_instruction(&data) else {
         return IxRecord {
             program,
             name: None,
             order: None,
         };
     };
-    let order = matches!(
-        instruction,
-        PhoenixInstruction::PlaceLimitOrder | PhoenixInstruction::PlaceMarketOrder
-    )
-    .then(|| {
-        let packet = <OrderPacket as borsh::BorshDeserialize>::deserialize(&mut &data[8..]).ok()?;
-        // The packet's kind is private to phoenix-rise; its serde form isn't.
-        let value = serde_json::to_value(&packet).ok()?;
-        let (kind, fields) = value["kind"].as_object()?.iter().next()?;
-        let side = fields["side"].as_str().unwrap_or_default().to_lowercase();
-        Some(OrderRecord {
-            kind: kind.clone(),
-            side,
-            price_usd: fields["price_in_ticks"]
-                .as_u64()
-                .map(|ticks| phoenix.ticks_to_usd(market, ticks)),
-            size: phoenix.lots_to_base_units(market, fields["num_base_lots"].as_i64()?),
-        })
-    })
-    .flatten();
     IxRecord {
         program: "phoenix".into(),
         name: Some(format!("{instruction:?}")),
-        order,
+        order: placed_order(instruction, &data, market),
     }
+}
+
+fn phoenix_instruction(data: &[u8]) -> Option<PhoenixInstruction> {
+    PhoenixInstruction::from_discriminant(data.get(..8)?.try_into().ok()?)
+}
+
+/// The order a Phoenix instruction places, if it places one.
+fn placed_order(
+    instruction: PhoenixInstruction,
+    data: &[u8],
+    market: &ExchangeMarketConfig,
+) -> Option<OrderRecord> {
+    use mtx_kit::phoenix_rise::ix::order_packet::OrderPacket;
+    if !matches!(
+        instruction,
+        PhoenixInstruction::PlaceLimitOrder | PhoenixInstruction::PlaceMarketOrder
+    ) {
+        return None;
+    }
+    let packet = <OrderPacket as borsh::BorshDeserialize>::deserialize(&mut &data[8..]).ok()?;
+    // The packet's kind is private to phoenix-rise; its serde form isn't.
+    let value = serde_json::to_value(&packet).ok()?;
+    let (kind, fields) = value["kind"].as_object()?.iter().next()?;
+    let side = fields["side"].as_str().unwrap_or_default().to_lowercase();
+    Some(OrderRecord {
+        kind: kind.clone(),
+        side,
+        price_usd: fields["price_in_ticks"]
+            .as_u64()
+            .map(|ticks| mtx_kit::venue::ticks_to_usd(market, ticks)),
+        size: mtx_kit::venue::lots_to_base_units(market, fields["num_base_lots"].as_i64()?),
+    })
+}
+
+/// What the actors that act on the bot's orders as they arrive read of its
+/// sends ([`SendReader`]): the orders each places on `market`, when a
+/// simulation at the grader's endpoint `rpc_url` says the chain would run
+/// it. A cancel, an order elsewhere, or a transaction that would fail shows
+/// none.
+fn send_reader(market: ExchangeMarketConfig, rpc_url: String) -> SendReader {
+    let client = reqwest::Client::new();
+    Arc::new(move |call: serde_json::Value| {
+        let (market, rpc_url, client) = (market.clone(), rpc_url.clone(), client.clone());
+        Box::pin(async move {
+            let orders = orders_in_send(&call, &market);
+            if orders.is_empty() || !would_run(&client, &rpc_url, &call).await {
+                return Vec::new();
+            }
+            orders
+        })
+    })
+}
+
+/// The orders a `sendTransaction` call places on `market`.
+fn orders_in_send(call: &serde_json::Value, market: &ExchangeMarketConfig) -> Vec<SentOrder> {
+    let (Some(tx), Ok(address)) = (
+        crate::faults::WireTransaction::parse(call),
+        market.market_pubkey.parse::<Pubkey>(),
+    ) else {
+        return Vec::new();
+    };
+    tx.instructions
+        .iter()
+        .filter(|ix| ix.accounts.contains(&Some(address)))
+        .filter_map(|ix| {
+            let instruction = phoenix_instruction(&ix.data)?;
+            let order = placed_order(instruction, &ix.data, market)?;
+            let side = match order.side.as_str() {
+                "bid" => mtx_kit::Side::Bid,
+                "ask" => mtx_kit::Side::Ask,
+                _ => return None,
+            };
+            Some(SentOrder {
+                side,
+                size: order.size,
+                price: order.price_usd,
+                immediate: matches!(instruction, PhoenixInstruction::PlaceMarketOrder)
+                    || order.kind == "ImmediateOrCancel",
+            })
+        })
+        .collect()
+}
+
+/// Whether a simulation of `call`'s transaction runs without error.
+async fn would_run(client: &reqwest::Client, rpc_url: &str, call: &serde_json::Value) -> bool {
+    let encoding = call["params"][1]["encoding"].as_str().unwrap_or("base58");
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "simulateTransaction",
+        "params": [
+            call["params"][0],
+            { "encoding": encoding, "sigVerify": false, "commitment": "processed" }
+        ]
+    });
+    let reply = match client
+        .post(rpc_url)
+        .json(&request)
+        .timeout(INTERNAL_RPC_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(response) => response.json::<serde_json::Value>().await.ok(),
+        Err(_) => None,
+    };
+    reply.is_some_and(|reply| {
+        reply["result"]["value"].is_object() && reply["result"]["value"]["err"].is_null()
+    })
 }

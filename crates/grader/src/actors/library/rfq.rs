@@ -6,31 +6,40 @@
 //! venue (`rfq:<symbol>`) with a response line, which the board's seat
 //! ([`RfqSeat`]) takes. At the start of the next step each client looks at
 //! the answer to its request and takes it if the price suits it: no worse
-//! than its own value of the asset by `tolerance_bps`, and better than the
-//! screen (the market's own best price on its side).
+//! than its own value of the asset by its reach. The reach is
+//! `tolerance_bps` for one market trade size and grows with the square root
+//! of the request's size in them, as the cost of sweeping the size on a
+//! screen does: a large request pays more for a quote than a small one.
+//! The screen itself plays no part.
 //!
 //! A client values the asset at the scenario's level, unless it is
 //! informed: then it sees the level `lead_slots` ahead, and its value moves
 //! that way by `correlation`. An informed client asks to trade the way it
-//! sees the price going. Which clients are informed is drawn per session.
-//! A request's id names its client (`c<n>-<k>`), so a desk can keep a
-//! record per client.
+//! sees the price going. Which clients are informed is drawn per session,
+//! and stays so all session. A request's id names its client (`c<n>-<k>`),
+//! so a desk can keep a record per client.
 //!
-//! A trade settles on the session's market, between the client's wallet and
-//! the bot's, as two orders on the chain: the client rests the size at the
-//! agreed price, the bot's account takes it, and the client cancels what is
-//! left. The price goes onto the market's tick grid, and a price through the
-//! screen (an ask under the best bid, say) settles one tick inside it, where
-//! the bot's take meets the client's order first.
+//! A trade settles bilaterally, as a [`Settlement`] does it: in a perp
+//! session, a swap in one transaction that the client and the bot both sign
+//! ([`Swaps`]), of the asset's spot token from the seller's wallet for USDC
+//! from the buyer's, at exactly the quoted price. No book is involved and
+//! the bot pays no fee: the client's wallet pays the transaction's.
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use async_trait::async_trait;
-use mtx_kit::{Action, Planned, SendState, Sent, Side};
+use mtx_kit::{Action, OwnFill, Planned, Role, SendState, Sent, Side};
 use serde::{Deserialize, Serialize};
+use solana_keypair::Keypair;
+use solana_pubkey::Pubkey;
+use solana_signer::Signer;
+use solana_transaction::{AccountMeta, Instruction, Transaction};
 
 use super::{Rng, Scale, Wallet, finite_at_least_zero, finite_positive};
 use crate::{
@@ -48,10 +57,6 @@ fn one() -> f64 {
 
 fn eight() -> u64 {
     8
-}
-
-fn twenty() -> f64 {
-    20.0
 }
 
 fn half() -> f64 {
@@ -81,12 +86,21 @@ pub struct RfqClients {
     /// Slots a request stays open for an answer.
     #[serde(default = "eight")]
     pub deadline_slots: u64,
-    /// How far past its value a client pays, in basis points.
-    #[serde(default = "twenty")]
+    /// How far past its value a client pays for one market trade size, in
+    /// basis points; for a request `n` times that, `sqrt(n)` times as far.
+    /// The default is about what sweeping SPCX's spot pools costs (some
+    /// 46 bp for $10k, routed, in 2026-10).
+    #[serde(default = "one")]
     pub tolerance_bps: f64,
     /// The share of requests that ask for both sides.
     #[serde(default = "half")]
     pub two_way_share: f64,
+    /// What the bot's wallet starts with to settle fills: base units of the
+    /// asset, and USDC on top of what it holds.
+    #[serde(default)]
+    pub desk_base: f64,
+    #[serde(default)]
+    pub desk_usdc: f64,
 }
 
 impl Default for RfqClients {
@@ -99,8 +113,10 @@ impl Default for RfqClients {
             per_100_slots: one(),
             size_mult: one(),
             deadline_slots: eight(),
-            tolerance_bps: twenty(),
+            tolerance_bps: one(),
             two_way_share: half(),
+            desk_base: 0.0,
+            desk_usdc: 0.0,
         }
     }
 }
@@ -128,6 +144,8 @@ impl RfqClients {
         }
         finite_positive("per_100_slots", self.per_100_slots)?;
         finite_positive("size_mult", self.size_mult)?;
+        finite_at_least_zero("desk_base", self.desk_base)?;
+        finite_at_least_zero("desk_usdc", self.desk_usdc)?;
         finite_at_least_zero("tolerance_bps", self.tolerance_bps)
     }
 }
@@ -161,6 +179,8 @@ struct BoardState {
     slot: u64,
     open: Vec<Request>,
     responses: BTreeMap<String, Response>,
+    /// The bot's fills since it last looked.
+    fills: Vec<OwnFill>,
 }
 
 /// The requests open to the bot, and its answers: shared by the clients
@@ -175,6 +195,7 @@ impl RfqBoard {
             slot: 0,
             open: Vec::new(),
             responses: BTreeMap::new(),
+            fills: Vec::new(),
         })))
     }
 
@@ -201,6 +222,11 @@ impl RfqBoard {
                 deadline_slot: r.deadline_slot,
             })
             .collect()
+    }
+
+    /// The bot's fills since the last call: it is the maker of each.
+    pub fn take_fills(&self) -> Vec<OwnFill> {
+        std::mem::take(&mut self.state().fills)
     }
 
     /// The bot answers request `id`: its latest answer stands.
@@ -315,13 +341,182 @@ impl Seat for RfqSeat {
     }
 }
 
+/// How an RFQ trade settles between a client's wallet and the bot's.
+#[async_trait]
+pub trait Settlement: Send + Sync {
+    /// `client` buys (`wants` [`Side::Bid`]) or sells `size` base units
+    /// from or to the bot at `price` each: the transaction's signature.
+    async fn swap(
+        &self,
+        client: &Pubkey,
+        wants: Side,
+        size: f64,
+        price: f64,
+    ) -> Result<String, String>;
+}
+
+/// A token as a swap moves it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Token {
+    pub mint: Pubkey,
+    pub program: Pubkey,
+    pub decimals: u8,
+}
+
+impl Token {
+    /// `owner`'s associated account for it.
+    pub fn account(&self, owner: &Pubkey) -> Pubkey {
+        mtx_kit::token::associated_token_address(owner, &self.mint, &self.program)
+    }
+
+    /// The token program's `TransferChecked` of `amount` (its smallest
+    /// units) from `from`'s account to `to`'s.
+    fn transfer(&self, from: &Pubkey, to: &Pubkey, amount: u64) -> Instruction {
+        let mut data = vec![TRANSFER_CHECKED];
+        data.extend_from_slice(&amount.to_le_bytes());
+        data.push(self.decimals);
+        Instruction {
+            program_id: self.program,
+            accounts: vec![
+                AccountMeta::new(self.account(from), false),
+                AccountMeta::new_readonly(self.mint, false),
+                AccountMeta::new(self.account(to), false),
+                AccountMeta::new_readonly(*from, true),
+            ],
+            data,
+        }
+    }
+}
+
+const TRANSFER_CHECKED: u8 = 12;
+const COMPUTE_BUDGET: Pubkey =
+    solana_pubkey::pubkey!("ComputeBudget111111111111111111111111111111");
+
+/// RFQ trades settled as swaps on the chain: in one transaction, the
+/// seller's `base` goes to the buyer and the buyer's USDC (`quote`) to the
+/// seller, at exactly the agreed price (to USDC's last unit). The client
+/// pays the transaction's fee and the bot none. Both keys are the
+/// grader's: the bot agreed to the price in its response.
+pub struct Swaps {
+    rpc_url: String,
+    bot: Keypair,
+    clients: Vec<Keypair>,
+    base: Token,
+    quote: Token,
+    /// How many it has sent: each asks for a few compute units fewer, so
+    /// two alike swaps in a slot are different transactions.
+    sent: AtomicU32,
+}
+
+impl Swaps {
+    pub fn new(
+        rpc_url: String,
+        bot: Keypair,
+        clients: Vec<Keypair>,
+        base: Token,
+        quote: Token,
+    ) -> Self {
+        Self {
+            rpc_url,
+            bot,
+            clients,
+            base,
+            quote,
+            sent: AtomicU32::new(0),
+        }
+    }
+
+    /// The swap's instructions, with `buyer` and `seller`.
+    fn instructions(
+        &self,
+        buyer: &Pubkey,
+        seller: &Pubkey,
+        size: f64,
+        price: f64,
+    ) -> Result<Vec<Instruction>, String> {
+        let (base, usdc) = amounts(size, price, self.base.decimals, self.quote.decimals)?;
+        let n = self.sent.fetch_add(1, Ordering::Relaxed);
+        let mut limit = vec![2u8];
+        limit.extend_from_slice(&(SWAP_COMPUTE_UNITS - n % 1024).to_le_bytes());
+        Ok(vec![
+            Instruction {
+                program_id: COMPUTE_BUDGET,
+                accounts: Vec::new(),
+                data: limit,
+            },
+            self.base.transfer(seller, buyer, base),
+            self.quote.transfer(buyer, seller, usdc),
+        ])
+    }
+}
+
+/// Plenty for two transfers.
+const SWAP_COMPUTE_UNITS: u32 = 60_000;
+
+/// `size` base units at `price`, in each token's smallest units: the size
+/// rounded down to the base token's, and what it costs to USDC's nearest.
+fn amounts(
+    size: f64,
+    price: f64,
+    base_decimals: u8,
+    quote_decimals: u8,
+) -> Result<(u64, u64), String> {
+    let base = (size * 10f64.powi(base_decimals as i32) + 1e-6).floor();
+    let quote = (base * price * 10f64.powi(quote_decimals as i32 - base_decimals as i32)).round();
+    if !(base >= 1.0 && quote >= 1.0 && quote < u64::MAX as f64) {
+        return Err(format!("{size} at {price} is no amount to swap"));
+    }
+    Ok((base as u64, quote as u64))
+}
+
+#[async_trait]
+impl Settlement for Swaps {
+    async fn swap(
+        &self,
+        client: &Pubkey,
+        wants: Side,
+        size: f64,
+        price: f64,
+    ) -> Result<String, String> {
+        let client = self
+            .clients
+            .iter()
+            .find(|k| k.pubkey() == *client)
+            .ok_or_else(|| format!("no client {client}"))?
+            .insecure_clone();
+        let bot = self.bot.insecure_clone();
+        let (buyer, seller) = match wants {
+            Side::Bid => (client.pubkey(), bot.pubkey()),
+            Side::Ask => (bot.pubkey(), client.pubkey()),
+        };
+        let instructions = self.instructions(&buyer, &seller, size, price)?;
+        let rpc_url = self.rpc_url.clone();
+        tokio::task::spawn_blocking(move || {
+            let rpc =
+                mtx_kit::rpc_client_with_timeout(rpc_url, crate::session::INTERNAL_RPC_TIMEOUT);
+            let blockhash = rpc.get_latest_blockhash().map_err(|e| e.to_string())?;
+            let tx = Transaction::new_signed_with_payer(
+                &instructions,
+                Some(&client.pubkey()),
+                &[&client, &bot],
+                blockhash,
+            );
+            rpc.send_and_confirm_transaction(&tx)
+                .map(|signature| signature.to_string())
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+
 pub(super) struct Clients {
     spec: RfqClients,
     scale: Scale,
     wallets: Vec<Wallet>,
     informed: Vec<bool>,
     board: RfqBoard,
-    bot: Option<Box<dyn Seat>>,
+    settlement: Option<Arc<dyn Settlement>>,
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
     /// The slot into the session it last looked at, and the chain's slot
@@ -337,7 +532,7 @@ impl Clients {
         scale: Scale,
         wallets: Vec<Wallet>,
         board: RfqBoard,
-        bot: Option<Box<dyn Seat>>,
+        settlement: Option<Arc<dyn Settlement>>,
         path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
         mut rng: Rng,
     ) -> Self {
@@ -361,7 +556,7 @@ impl Clients {
             wallets,
             informed,
             board,
-            bot,
+            settlement,
             path,
             rng,
             last: None,
@@ -384,6 +579,11 @@ impl Clients {
         }
         let ahead = (self.path)(now.at + self.spec.lead_slots).level_usd;
         now.level_usd + self.spec.correlation * (ahead - now.level_usd)
+    }
+
+    /// How far past its value a client pays for `size`, as a fraction.
+    fn reach(&self, size: f64) -> f64 {
+        self.spec.tolerance_bps / 10_000.0 * (size / self.scale.trade_size).sqrt()
     }
 
     fn send_requests(&mut self, now: &Moment) {
@@ -471,64 +671,46 @@ impl Clients {
         if response.expiry_slot.is_some_and(|expiry| expiry < slot) {
             return 0.0;
         }
-        let Some(bot) = self.bot.as_deref() else {
+        let Some(settlement) = self.settlement.as_deref() else {
             return 0.0;
         };
         let wallet = &self.wallets[request.client];
+        let size = response.size.map_or(request.size, |s| s.min(request.size));
         let value = self.value(request.client, now);
-        let tolerance = self.spec.tolerance_bps / 10_000.0;
+        let reach = self.reach(size);
         let (price, suits) = match request.wants {
             Side::Bid => match response.ask {
-                Some(ask) => (ask, ask <= value * (1.0 + tolerance)),
+                Some(ask) => (ask, ask <= value * (1.0 + reach)),
                 None => return 0.0,
             },
             Side::Ask => match response.bid {
-                Some(bid) => (bid, bid >= value * (1.0 - tolerance)),
+                Some(bid) => (bid, bid >= value * (1.0 - reach)),
                 None => return 0.0,
             },
         };
         if !suits {
             return 0.0;
         }
-        let seat = wallet.seat();
-        let tick = seat.tick();
-        let Ok((best_bid, best_ask)) = seat.top().await else {
-            return 0.0;
-        };
-        let mut price = (price / tick).round() * tick;
-        // Through the screen: one tick inside it. Worse than the screen:
-        // the client trades there instead.
-        match request.wants {
-            Side::Bid => {
-                if let Some(bid) = best_bid {
-                    price = price.max(bid + tick);
-                }
-                if best_ask.is_some_and(|ask| price >= ask - tick / 2.0) {
-                    return 0.0;
-                }
-            }
-            Side::Ask => {
-                if let Some(ask) = best_ask {
-                    price = price.min(ask - tick);
-                }
-                if best_bid.is_some_and(|bid| price <= bid + tick / 2.0) {
-                    return 0.0;
-                }
-            }
+        let swapped = settlement
+            .swap(&wallet.pubkey(), request.wants, size, price)
+            .await;
+        if let Err(error) = &swapped {
+            tracing::warn!(%error, id = request.id, "an RFQ fill didn't settle");
+            wallet.count("unsettled", 1);
         }
-        let size = response.size.map_or(request.size, |s| s.min(request.size));
-        let before = bot.position().await.unwrap_or(0.0);
-        if !wallet.rest(now.at, request.wants, price, size).await {
+        if !wallet.swap(now.at, request.wants, price, size, swapped) {
             return 0.0;
         }
-        let taken = bot.take(request.wants.opposite(), size, price).await;
-        if let Err(error) = &taken {
-            tracing::warn!(%error, id = request.id, "the bot's side of an RFQ fill failed");
-        }
-        wallet.cancel_all(now.at).await;
-        // What filled, as the bot's account shows it.
-        let after = bot.position().await.unwrap_or(before);
-        (after - before).abs()
+        let venue = self.board.venue();
+        self.board.state().fills.push(OwnFill {
+            venue,
+            slot,
+            side: request.wants.opposite(),
+            price,
+            size,
+            role: Role::Maker,
+        });
+        size
     }
 }
 
@@ -570,19 +752,75 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn clients_ask_the_bot_and_take_quotes_that_suit_them() {
+    /// A settlement that notes each swap, and settles none if it fails.
+    #[derive(Default)]
+    struct Noted {
+        swaps: Mutex<Vec<(Pubkey, Side, f64, f64)>>,
+        fails: bool,
+    }
+
+    #[async_trait]
+    impl Settlement for Noted {
+        async fn swap(
+            &self,
+            client: &Pubkey,
+            wants: Side,
+            size: f64,
+            price: f64,
+        ) -> Result<String, String> {
+            if self.fails {
+                return Err("insufficient funds".into());
+            }
+            self.swaps
+                .lock()
+                .unwrap()
+                .push((*client, wants, size, price));
+            Ok("sig".into())
+        }
+    }
+
+    fn clients(
+        spec: RfqClients,
+        scale: Scale,
+        settlement: Arc<Noted>,
+        path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
+    ) -> (Clients, RfqBoard, Ledger) {
         let ledger = Ledger::new(true);
-        let (client_book, client_log) = Book::new("client", 99.90, 100.10);
-        let (bot_book, bot_log) = Book::new("bot", 99.90, 100.10);
-        let wallets = ledger.wallets(
-            "rfq-client",
-            vec![WalletSeat {
-                pubkey: solana_pubkey::Pubkey::new_unique(),
-                seat: Box::new(client_book),
-            }],
-        );
+        let seats = (0..spec.clients)
+            .map(|_| WalletSeat {
+                pubkey: Pubkey::new_unique(),
+                // A one-tick book: the screen plays no part.
+                seat: Box::new(Book::new("client", 99.99, 100.00).0),
+            })
+            .collect();
+        let wallets = ledger.reacting("rfq-client", seats);
         let board = RfqBoard::new("rfq:SPCX".into());
+        let clients = Clients::new(
+            spec,
+            scale,
+            wallets,
+            board.clone(),
+            Some(settlement),
+            path,
+            Rng::new([9; 32]),
+        )
+        .starting_at(1_000);
+        (clients, board, ledger)
+    }
+
+    async fn next_request(clients: &mut Clients, board: &RfqBoard, s: &mut u64) -> mtx_kit::Rfq {
+        loop {
+            *s += 2;
+            clients.after_blocks(&at(*s, 100.0)).await;
+            if let Some(r) = board.open().into_iter().next() {
+                return r;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_quote_on_a_one_tick_book_settles_as_a_swap_at_its_price() {
+        let noted = Arc::new(Noted::default());
         let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| at(s, 100.0));
         let spec = RfqClients {
             clients: 1,
@@ -591,76 +829,180 @@ mod tests {
             tolerance_bps: 5.0,
             ..RfqClients::default()
         };
-        let mut clients = Clients::new(
-            spec,
-            scale(),
-            wallets,
-            board.clone(),
-            Some(Box::new(bot_book)),
-            path,
-            Rng::new([9; 32]),
-        )
-        .starting_at(1_000);
+        let (mut clients, board, ledger) = clients(spec, scale(), noted.clone(), path);
         let seat = RfqSeat::new(board.clone());
         let mut s = 0;
-        let request = loop {
-            s += 2;
-            clients.after_blocks(&at(s, 100.0)).await;
-            if let Some(r) = board.open().into_iter().next() {
-                break r;
-            }
-        };
+        let request = next_request(&mut clients, &board, &mut s).await;
         assert_eq!(request.venue, "rfq:SPCX");
         assert_eq!(request.deadline_slot, 1_000 + s + 8);
         assert!(request.id.starts_with("c0-"));
         // A quote far from the client's value is declined; nothing trades.
-        let (bad_bid, bad_ask) = (Some(90.0), Some(110.0));
         assert!(
-            seat.send(&planned(&request.id, bad_bid, bad_ask))
+            seat.send(&planned(&request.id, Some(90.0), Some(110.0)))
                 .await
                 .state
                 .landed()
         );
         clients.before_blocks(&at(s, 100.0)).await;
-        assert!(client_log.lock().unwrap().is_empty());
+        assert!(noted.swaps.lock().unwrap().is_empty());
         // Unknown ids are refused.
         let refused = seat.send(&planned("c9-9", Some(1.0), None)).await;
         assert!(!refused.state.landed());
 
-        // The next request gets a fair quote: it settles as the client's
-        // order and the bot's take, at the quote.
-        let request = loop {
-            s += 2;
-            clients.after_blocks(&at(s, 100.0)).await;
-            if let Some(r) = board.open().into_iter().next() {
-                break r;
-            }
-        };
-        let wants_next = request.side.unwrap();
+        // The next request gets a quote three ticks through the one-tick
+        // screen, within the client's reach: it settles at that price.
+        let request = next_request(&mut clients, &board, &mut s).await;
+        let wants = request.side.unwrap();
         let sent = seat
             .send(&planned(&request.id, Some(99.97), Some(100.03)))
             .await;
         assert!(sent.state.landed() && !sent.sent);
         clients.before_blocks(&at(s, 100.0)).await;
-        let client_log = client_log.lock().unwrap().clone();
-        let bot_log = bot_log.lock().unwrap().clone();
-        let (price, client_side, bot_side) = match wants_next {
-            Side::Bid => ("100.03", "Bid", "Ask"),
-            Side::Ask => ("99.97", "Ask", "Bid"),
+        let price = match wants {
+            Side::Bid => 100.03,
+            Side::Ask => 99.97,
         };
-        assert_eq!(client_log.len(), 2, "{client_log:?}");
-        assert!(client_log[0].starts_with(&format!("client rest {client_side}")));
-        assert!(client_log[0].ends_with(price), "{client_log:?}");
-        assert_eq!(client_log[1], "client cancel");
-        assert!(
-            bot_log[0].starts_with(&format!("bot take {bot_side}")) && bot_log[0].ends_with(price)
+        let swaps = noted.swaps.lock().unwrap().clone();
+        assert_eq!(swaps.len(), 1);
+        assert_eq!(
+            (swaps[0].1, swaps[0].2, swaps[0].3),
+            (wants, request.size, price)
         );
-        let counts = &ledger.report().actors[0].counts;
+        let fills = board.take_fills();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(
+            (fills[0].side, fills[0].price, fills[0].role),
+            (wants.opposite(), price, Role::Maker)
+        );
+        assert!(board.take_fills().is_empty(), "taken once");
+        let report = ledger.report();
+        let counts = &report.actors[0].counts;
         assert_eq!((counts["declined"], counts["fills"]), (1, 1));
+        assert_eq!(report.tape.last().unwrap().action, "swap");
+        assert_eq!(report.tape.last().unwrap().price_usd, Some(price));
         assert!(
             !board.open().iter().any(|r| r.id == request.id),
             "answered: closed"
         );
+    }
+
+    #[tokio::test]
+    async fn a_swap_the_bot_cant_pay_for_doesnt_fill_or_count_against_the_session() {
+        let noted = Arc::new(Noted {
+            fails: true,
+            ..Noted::default()
+        });
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| at(s, 100.0));
+        let spec = RfqClients {
+            clients: 1,
+            per_100_slots: 50.0,
+            two_way_share: 0.0,
+            ..RfqClients::default()
+        };
+        let (mut clients, board, ledger) = clients(spec, scale(), noted, path);
+        let seat = RfqSeat::new(board.clone());
+        let mut s = 0;
+        for _ in 0..20 {
+            let request = next_request(&mut clients, &board, &mut s).await;
+            seat.send(&planned(&request.id, Some(100.0), Some(100.0)))
+                .await;
+            clients.before_blocks(&at(s, 100.0)).await;
+        }
+        let report = ledger.report();
+        assert_eq!(report.actors[0].counts["unsettled"], 20);
+        assert_eq!(report.actions.failed, 20);
+        assert!(!report.degraded(), "the bot's failures are its own");
+        assert!(board.take_fills().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sizes_of_5_to_150_fill_a_60_bp_quote_at_a_sensible_rate() {
+        // SPCX's calibration: trades of about 0.02 SPCX; requests of 5 to
+        // 150 SPCX, about 27 in the middle, at $143.
+        let noted = Arc::new(Noted::default());
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| at(s, 143.0));
+        let scale = Scale {
+            trades_per_minute: 1.5,
+            trade_size: 0.02,
+            trade_size_sigma: 1.0,
+        };
+        let spec = RfqClients {
+            clients: 6,
+            per_100_slots: 50.0,
+            size_mult: 1_350.0,
+            ..RfqClients::default()
+        };
+        let (mut clients, board, _) = clients(spec, scale, noted.clone(), path);
+        let seat = RfqSeat::new(board.clone());
+        let (mut asked, mut sizes) = (0, Vec::new());
+        for s in (2..20_000).step_by(2) {
+            clients.after_blocks(&at(s, 143.0)).await;
+            for request in board.open() {
+                asked += 1;
+                sizes.push(request.size);
+                seat.send(&planned(
+                    &request.id,
+                    Some(143.0 * 0.994),
+                    Some(143.0 * 1.006),
+                ))
+                .await;
+            }
+            clients.before_blocks(&at(s, 143.0)).await;
+        }
+        sizes.sort_by(f64::total_cmp);
+        let (p05, p95) = (sizes[sizes.len() / 20], sizes[sizes.len() * 19 / 20]);
+        assert!(
+            (3.0..8.0).contains(&p05) && (100.0..200.0).contains(&p95),
+            "{p05} {p95}"
+        );
+        let swaps = noted.swaps.lock().unwrap().clone();
+        let rate = swaps.len() as f64 / asked as f64;
+        assert!((0.08..0.35).contains(&rate), "{} of {asked}", swaps.len());
+        // The large ones fill; the small ones find 60 bp too far.
+        assert!(swaps.iter().all(|(_, _, size, _)| *size > 60.0));
+        assert!(swaps.iter().all(|(_, wants, _, price)| match wants {
+            Side::Bid => *price == 143.0 * 1.006,
+            Side::Ask => *price == 143.0 * 0.994,
+        }));
+    }
+
+    #[test]
+    fn a_swap_moves_each_token_the_agreed_amount() {
+        let (base, usdc) = amounts(27.123456789, 143.07, 6, 6).unwrap();
+        assert_eq!((base, usdc), (27_123_456, 3_880_552_850));
+        assert!(amounts(0.0000001, 143.0, 6, 6).is_err());
+        let token = |n: u8| Token {
+            mint: Pubkey::new_unique(),
+            program: Pubkey::new_unique(),
+            decimals: n,
+        };
+        let swaps = Swaps::new(
+            "http://127.0.0.1:1".into(),
+            Keypair::new(),
+            Vec::new(),
+            token(6),
+            token(6),
+        );
+        let (buyer, seller) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let ixs = swaps.instructions(&buyer, &seller, 2.0, 150.5).unwrap();
+        assert_eq!(ixs.len(), 3);
+        let again = swaps.instructions(&buyer, &seller, 2.0, 150.5).unwrap();
+        assert_ne!(ixs[0].data, again[0].data, "two alike swaps differ");
+        let (base, quote) = (&ixs[1], &ixs[2]);
+        assert_eq!(base.data[0], TRANSFER_CHECKED);
+        assert_eq!(
+            u64::from_le_bytes(base.data[1..9].try_into().unwrap()),
+            2_000_000
+        );
+        assert_eq!(
+            u64::from_le_bytes(quote.data[1..9].try_into().unwrap()),
+            301_000_000
+        );
+        // The base from the seller to the buyer, signed by the seller; the
+        // USDC the other way.
+        assert_eq!(base.accounts[3].pubkey, seller);
+        assert_eq!(quote.accounts[3].pubkey, buyer);
+        assert!(base.accounts[3].is_signer && quote.accounts[3].is_signer);
     }
 
     #[test]
@@ -668,11 +1010,11 @@ mod tests {
         let ledger = Ledger::new(false);
         let seats = (0..10)
             .map(|_| WalletSeat {
-                pubkey: solana_pubkey::Pubkey::new_unique(),
+                pubkey: Pubkey::new_unique(),
                 seat: Box::new(Book::new("c", 99.0, 101.0).0),
             })
             .collect();
-        let wallets = ledger.wallets("rfq-client", seats);
+        let wallets = ledger.reacting("rfq-client", seats);
         let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> =
             Arc::new(|s| at(s, if s >= 50 { 102.0 } else { 100.0 }));
         let clients = Clients::new(

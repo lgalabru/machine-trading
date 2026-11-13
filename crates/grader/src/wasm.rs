@@ -841,7 +841,7 @@ impl WasmBot {
             }
         };
         self.peak_pnl = self.peak_pnl.max(self.pnl);
-        let (mut venues, fills) = mtx_kit::venue_views(
+        let (mut venues, mut fills) = mtx_kit::venue_views(
             &self.session.venues,
             self.session.reports,
             best_bid,
@@ -850,6 +850,10 @@ impl WasmBot {
             &step.tape,
             &step.depth,
         );
+        // Its RFQ fills, which settle off the book.
+        if let Some(board) = &self.desk.rfqs {
+            fills.extend(board.take_fills());
+        }
         // A measured wallet's other markets: the same SOL held, and each
         // seat's own top, where the step's depth didn't give one.
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
