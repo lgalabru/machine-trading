@@ -44,18 +44,19 @@ Adding and removing liquidity count as trades for an allowance's `sides`,
 in base, as the order books count a resting order by the side it would
 trade:
 
-- a **deposit that takes base into the pool is a buy**;
-- a **deposit of the quote asset alone** (a range below the price, which
-  buys base as the price falls into it) **is a buy**, as a resting bid is;
-- a **deposit of the base alone** (a range above the price, which sells
-  it as the price rises into it) **is a sell** as well as a buy, as a
+- a **deposit that takes base into the pool is a buy**, and, since its
+  range reaches above the price (across it, or wholly above it with base
+  alone) and sells that base as the price rises, **also a sell**, as a
   resting ask is;
+- a **deposit of the quote asset alone** (a range below the price, which
+  buys base as the price falls into it) **is a buy** only, as a resting
+  bid is;
 - a **withdrawal that returns base is a sell**. Returning base includes
   collecting fees paid in it. A withdrawal that returns only the quote
   asset is neither.
 
 So a sell-only or exit-only mandate can reduce or close positions but
-can't deposit, and a buy-only one can't deposit base alone above the
+can't deposit, and a buy-only one can deposit only quote alone, below the
 price. The rule is checked on the `amm` instrument's own allowance, and the
 limit prices don't apply: a deposit or a withdrawal has no price of its
 own. The curve's trades against a position aren't fills of the account:

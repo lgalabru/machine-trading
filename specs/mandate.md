@@ -122,9 +122,9 @@ these holds:
    [Account value](#account-value).
 4. **Sides.** The account has a fill, or an open order, on a side its
    allowance does not list in `sides`. On the `amm` instrument's allowance,
-   a liquidity deposit that takes base into a pool, or quote alone (resting
-   to buy), is a buy; one of base alone (resting to sell) is a sell too; and
-   a withdrawal that returns base is a sell
+   a liquidity deposit that takes base into a pool is a buy and a sell (it
+   rests to sell that base as the price rises), one of quote alone (resting
+   to buy) is a buy, and a withdrawal that returns base is a sell
    ([amm](instruments/amm.md#sides)).
 5. **Limit prices.** The account has a sell fill below the instrument's
    `min_sell_price`, or a buy fill above its `max_buy_price`. A fill's price

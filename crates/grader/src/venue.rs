@@ -241,8 +241,8 @@ pub trait Seat: Send + Sync {
     /// The sides of the base `action` would move on this market for the
     /// mandate's sides rule: a deposit that takes base in, or rests to buy
     /// it (quote alone, below the price), is a buy; a withdrawal that
-    /// returns base, or a deposit that rests to sell it (base alone, above
-    /// the price), a sell. None for any other action.
+    /// returns base, or a deposit that rests to sell it (one that takes base
+    /// in, across or above the price), a sell. None for any other action.
     async fn base_moved(&self, action: &Action) -> SeatResult<Vec<mtx_core::Side>> {
         let _ = action;
         Ok(Vec::new())

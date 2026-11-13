@@ -323,11 +323,12 @@ impl VaultFlow {
     }
 
     /// The sides of the base a deposit or withdrawal moved, for the
-    /// mandate's sides rule. Base into the pool is a buy, base out of it
-    /// (principal or fees) a sell. A deposit of quote alone (a range below
-    /// the price) buys base as the price falls, so it is a buy too; a
-    /// deposit of base alone (a range above it) sells as the price rises, so
-    /// it is a sell as well as a buy.
+    /// mandate's sides rule, as the books count resting orders. A deposit
+    /// that takes base in is a buy, and since its range reaches above the
+    /// price (across it, or wholly above it) it sells that base as the price
+    /// rises, so it is a sell too. A deposit of quote alone (a range below
+    /// the price) buys base as the price falls: a buy. Base out of the pool
+    /// (principal or fees) is a sell.
     fn liquidity_sides(&self) -> Vec<CoreSide> {
         if self.swap().is_some() {
             return Vec::new();
@@ -337,7 +338,7 @@ impl VaultFlow {
         if self.base_in > 0 || (deposit && self.quote_in > 0) {
             sides.push(CoreSide::Buy);
         }
-        if self.base_out > 0 || (deposit && self.base_in > 0 && self.quote_in == 0) {
+        if self.base_out > 0 || (deposit && self.base_in > 0) {
             sides.push(CoreSide::Sell);
         }
         sides
@@ -896,10 +897,10 @@ impl Seat for PoolSeat {
     }
 
     /// What the chain audit will read of the order ([`VaultFlow`]): a
-    /// deposit that takes base in is a buy, and so is one of quote alone (a
-    /// range below the price, which buys as the price falls); one of base
-    /// alone (a range above it) is a sell too. A withdrawal that returns
-    /// base, or fees in base, is a sell.
+    /// deposit that takes base in (a range reaching above the price, across
+    /// it or wholly above it) is a buy and a sell; one of quote alone (a
+    /// range below the price, which buys as the price falls) is a buy. A
+    /// withdrawal that returns base, or fees in base, is a sell.
     async fn base_moved(&self, action: &Action) -> SeatResult<Vec<CoreSide>> {
         if self.kind != Kind::Amm {
             return Ok(Vec::new());
@@ -928,7 +929,7 @@ impl Seat for PoolSeat {
                 if (base && above) || (quote && below) {
                     sides.push(CoreSide::Buy);
                 }
-                if base && range.is_some_and(|r| r.lower >= price) {
+                if base && above {
                     sides.push(CoreSide::Sell);
                 }
                 Ok(sides)
@@ -1321,7 +1322,7 @@ mod tests {
         );
         // A sale of 2 and a deposit of 1 base in one transaction: the vaults
         // net to a sale of 3, but each instruction is read on its own, and
-        // the deposit is a buy.
+        // the deposit (across the price) is a buy and a sell.
         assert_eq!(
             flows(vec![
                 pool_ix(&assets, 0, 1, &[wallet_base, wallet_quote]),
@@ -1331,7 +1332,7 @@ mod tests {
                 transfer(1, 2, wallet_base, base, 1),
                 transfer(1, 2, wallet_quote, quote, 100),
             ]),
-            vec![(Some((Sell, 2, 280)), vec![]), (None, vec![Buy])]
+            vec![(Some((Sell, 2, 280)), vec![]), (None, vec![Buy, Sell])]
         );
         // The same, run by another program through the pool: the transfers
         // are the pool's, one level down.
@@ -1355,9 +1356,10 @@ mod tests {
             ]),
             vec![(Some((Sell, 2, 280)), vec![]), (None, vec![Buy, Sell])]
         );
-        // A deposit of quote alone rests to buy; one of base alone, to sell
-        // (and takes base in); a withdrawal of base, or of fees in base,
-        // sells; one of quote alone moves no base.
+        // A deposit of quote alone rests to buy; one that takes base in,
+        // across the price or above it, buys and rests to sell; a withdrawal
+        // of base, or of fees in base, sells; one of quote alone moves no
+        // base.
         let one = |transfers: &[(Pubkey, Pubkey, u64)]| {
             let mut instructions = vec![pool_ix(&assets, 0, 1, &[wallet_base, wallet_quote])];
             instructions.extend(transfers.iter().map(|(f, t, n)| transfer(0, 2, *f, *t, *n)));
@@ -1367,7 +1369,7 @@ mod tests {
         assert_eq!(one(&[(wallet_base, base, 1)]), vec![Buy, Sell]);
         assert_eq!(
             one(&[(wallet_base, base, 1), (wallet_quote, quote, 100)]),
-            vec![Buy]
+            vec![Buy, Sell]
         );
         assert_eq!(
             one(&[(base, wallet_base, 1), (quote, wallet_quote, 100)]),
@@ -1555,13 +1557,22 @@ mod tests {
             let seat = &seat;
             async move { seat.base_moved(&action).await }
         };
-        // The pool is at 140. A range over the price, or the whole curve,
-        // takes base in.
+        // The pool is at 140. A range across the price, or the whole curve,
+        // takes base in (a buy) and rests to sell it as the price rises (a
+        // sell), as a book's bid and ask would.
         assert_eq!(
             moved(add(1.0, 100.0, Some((130.0, 150.0)), None)).await,
+            Ok(vec![Buy, Sell])
+        );
+        assert_eq!(
+            moved(add(1.0, 100.0, None, None)).await,
+            Ok(vec![Buy, Sell])
+        );
+        // Quote alone across the price takes no base: it rests to buy only.
+        assert_eq!(
+            moved(add(0.0, 100.0, Some((130.0, 150.0)), None)).await,
             Ok(vec![Buy])
         );
-        assert_eq!(moved(add(1.0, 100.0, None, None)).await, Ok(vec![Buy]));
         // A range below it takes quote alone, and rests to buy base as the
         // price falls: a buy.
         assert_eq!(
@@ -1586,7 +1597,7 @@ mod tests {
         // Into a position, the position's range decides.
         assert_eq!(
             moved(add(1.0, 100.0, None, Some(id.clone()))).await,
-            Ok(vec![Buy])
+            Ok(vec![Buy, Sell])
         );
         // Taking out a position that holds base, or fees in base, sells.
         assert_eq!(moved(remove(Some(id.clone()), 0.5)).await, Ok(vec![Sell]));

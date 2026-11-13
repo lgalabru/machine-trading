@@ -2363,7 +2363,7 @@ mod tests {
             None
         );
         // A deposit that moves no base on either side is let through; one of
-        // base alone above the price is a buy and a sell, refused here.
+        // base in is a buy and a sell, refused here.
         assert_eq!(
             refused_liquidity(&sell_only, &moves(&[]), &deposit).await,
             None
@@ -2391,6 +2391,13 @@ mod tests {
             assert_eq!(refused_liquidity(&open, &unknown, &deposit).await, None);
         }
         let buy_only = pool_mandate(Some(vec![Buy]));
+        // A deposit across the price buys and rests to sell: a buy-only
+        // mandate refuses it too.
+        assert!(
+            refused_liquidity(&buy_only, &moves(&[Buy, Sell]), &deposit)
+                .await
+                .is_some_and(|why| why.contains("counts as a sell"))
+        );
         assert!(
             refused_liquidity(&buy_only, &moves(&[Sell]), &withdrawal)
                 .await

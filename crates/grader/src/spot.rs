@@ -2097,8 +2097,8 @@ mod tests {
                 })
             };
 
-            // An honest position, opened and topped up by the owner: a buy,
-            // within a mandate that allows both sides.
+            // An honest position across the price, opened by the owner: a
+            // buy and a sell, within a mandate that allows both sides.
             let start = slot();
             let opened = Keypair::new();
             let ixs = deposit(None, opened.pubkey(), 0.05, 5.0, range(0.97, 1.03)).await;
@@ -2109,21 +2109,21 @@ mod tests {
                 .unwrap()
                 .expect("the position opened");
             let moves = amm.liquidity_moves(start, &me).await.unwrap();
-            assert_eq!(moves, vec![Side::Buy], "{venue}");
+            assert_eq!(moves, vec![Side::Buy, Side::Sell], "{venue}");
             let open = Mandate::spot(&[venue], named.symbol, 100.0);
             assert_eq!(audit(moves.clone(), &open), None, "{venue}");
             assert!(audit(moves, &sell_only).is_some(), "{venue}");
 
             // A sale and a deposit in one transaction: the vaults net to a
-            // bigger sale, but the deposit is still read, as a buy, and the
-            // sale as only what was swapped.
+            // bigger sale, but the deposit is still read (it takes base in, a
+            // buy), and the sale as only what was swapped.
             let after = slot();
             let mut ixs = swap(KitSide::Ask, 0.05, mid * 0.9).await;
             ixs.extend(deposit(Some(held.id), Keypair::new().pubkey(), 0.01, 1.0, None).await);
             land(&rpc, &owner, &[], ixs);
             assert_eq!(
                 amm.liquidity_moves(after, &me).await.unwrap(),
-                vec![Side::Buy],
+                vec![Side::Buy, Side::Sell],
                 "{venue}: the deposit beside a sale"
             );
             let fills = spot.fills(after, &me).await.unwrap();
@@ -2151,7 +2151,7 @@ mod tests {
             );
             assert_eq!(
                 amm.liquidity_moves(after, &me).await.unwrap(),
-                vec![Side::Buy],
+                vec![Side::Buy, Side::Sell],
                 "{venue}: a deposit someone else paid for"
             );
 
