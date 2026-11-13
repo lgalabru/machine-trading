@@ -559,6 +559,7 @@ impl Account for StakeAccount {
             at,
             level_usd: self.start.sol_usd,
             book_usd: self.start.sol_usd,
+            fair_usd: None,
         }
     }
 
@@ -699,6 +700,7 @@ impl Account for StakeAccount {
             flow: done.actors.flow,
             competitor: done.actors.competitor,
             actors: done.actors.library,
+            oracle_starts: Default::default(),
             spot: None,
             stake: Some(StakeReport {
                 start: self.start.clone(),
