@@ -498,6 +498,16 @@ pub(crate) fn read_json(path: &FsPath) -> Option<Value> {
 }
 
 /// A trial at a glance: what the leaderboard and the trial's header show.
+/// A model run outside its provider's own harness (Claude Code, Codex) is
+/// its own row: `gpt-6.1-sol · hermes`. Every model runs in Hermes too, so
+/// a harness's bias shows next to the providers' own.
+fn harness_label(model: &str, configured: &Value, ran: &Value) -> String {
+    match configured.as_str().or(ran.as_str()) {
+        None | Some("claude-code" | "codex") => model.to_string(),
+        Some(agent) => format!("{model} · {agent}"),
+    }
+}
+
 /// A trial as the review page lists it.
 pub(crate) fn summary_of(root: &Root, n: usize, dir: &FsPath) -> Value {
     summary(root, n, dir)
@@ -567,6 +577,13 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
             config["agent"]["model_name"]
                 .as_str()
                 .map(|m| m.rsplit('/').next().unwrap_or(m).to_string())
+        })
+        .map(|model| {
+            harness_label(
+                &model,
+                &config["agent"]["name"],
+                &result["agent_info"]["name"],
+            )
         });
     let pnls: serde_json::Map<String, Value> = scenarios
         .iter()
@@ -1388,6 +1405,28 @@ async fn get_file(
 ) -> Result<Response, ApiError> {
     let text = file_text(&state, n, &path)?;
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
+}
+
+#[cfg(test)]
+mod harness_tests {
+    use super::*;
+
+    #[test]
+    fn a_model_outside_its_providers_harness_is_its_own_row() {
+        assert_eq!(
+            harness_label("gpt-6.1-sol", &json!("codex"), &Value::Null),
+            "gpt-6.1-sol"
+        );
+        assert_eq!(
+            harness_label("claude-opus-5-5", &Value::Null, &json!("claude-code")),
+            "claude-opus-5-5"
+        );
+        assert_eq!(
+            harness_label("gpt-6.1-sol", &json!("hermes"), &Value::Null),
+            "gpt-6.1-sol · hermes"
+        );
+        assert_eq!(harness_label("x", &Value::Null, &Value::Null), "x");
+    }
 }
 
 #[cfg(test)]

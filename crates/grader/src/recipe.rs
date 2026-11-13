@@ -134,6 +134,25 @@ pub enum Action {
     /// A simulated OpenBook v2 market, seeded around `price`.
     #[serde(rename = "openbook-v2-market")]
     OpenbookV2Market(OpenbookMarketSpec),
+    /// A real Pyth price account, written from a file fetched once.
+    PythFeedAccount(PythFeedSpec),
+}
+
+/// A `pyth-feed-account` action: the mainnet push-oracle account of a feed,
+/// written into a build that can't fetch (one that starts from a snapshot).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PythFeedSpec {
+    /// The name the manifest lists the account under.
+    pub name: String,
+    /// The feed id, 64 hex digits.
+    pub feed_id: String,
+    /// The push-oracle shard; 0 is the one Pyth keeps current.
+    #[serde(default)]
+    pub shard: u16,
+    /// The account as `solana account <address> --output json` prints it,
+    /// relative to the recipe.
+    pub from_file: PathBuf,
 }
 
 fn default_phoenix_api() -> String {
@@ -248,6 +267,8 @@ struct World<'a> {
     marks: BTreeMap<String, f64>,
     /// For a build from a snapshot: the fixed clock simulated steps run at.
     clock: Option<simulated::ClockPin>,
+    /// Real accounts an action wrote (the manifest lists them as sources).
+    written: Vec<Source>,
 }
 
 impl World<'_> {
@@ -364,9 +385,86 @@ impl World<'_> {
                     made.detail,
                 );
             }
+            Action::PythFeedAccount(spec) => {
+                let source = pyth_feed_account(self.surfnet, self.dir, spec)?;
+                self.written.push(source);
+            }
         }
         Ok(())
     }
+}
+
+/// The Pyth Receiver, which owns every push-oracle price account.
+const PYTH_RECEIVER_ID: Pubkey =
+    solana_pubkey::pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+
+fn parse_feed_id(text: &str) -> Result<[u8; 32]> {
+    let digits = text.as_bytes();
+    let nibble = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    if digits.len() != 64 {
+        return Err(invalid(format!("feed id {text:?} is not 64 hex digits")));
+    }
+    let mut id = [0u8; 32];
+    for (byte, pair) in id.iter_mut().zip(digits.chunks(2)) {
+        match (nibble(pair[0]), nibble(pair[1])) {
+            (Some(hi), Some(lo)) => *byte = hi << 4 | lo,
+            _ => return Err(invalid(format!("feed id {text:?} is not 64 hex digits"))),
+        }
+    }
+    Ok(id)
+}
+
+/// Writes a feed's push-oracle account from a file, after checking it is that
+/// feed's: the file's address is the shard's PDA for the feed id, the owner is
+/// the Pyth Receiver and the data decodes as a price update for the feed.
+fn pyth_feed_account(surfnet: &Surfnet, dir: &Path, spec: &PythFeedSpec) -> Result<Source> {
+    use base64::Engine;
+    let path = dir.join(&spec.from_file);
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).map_err(io_error(&path))?)?;
+    let bad = |what: &str| invalid(format!("{}: {what}", path.display()));
+    let address = parse_key(file["pubkey"].as_str().ok_or_else(|| bad("no pubkey"))?)?;
+    let account = &file["account"];
+    let lamports = account["lamports"]
+        .as_u64()
+        .ok_or_else(|| bad("no lamports"))?;
+    let owner = parse_key(account["owner"].as_str().ok_or_else(|| bad("no owner"))?)?;
+    let data = account["data"][0]
+        .as_str()
+        .filter(|_| account["data"][1] == "base64")
+        .ok_or_else(|| bad("data is not [base64, \"base64\"]"))?;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| bad(&e.to_string()))?;
+
+    let feed_id = parse_feed_id(&spec.feed_id)?;
+    let expected = mtx_kit::protocols::pyth::feed_account(spec.shard, &feed_id);
+    if address != expected {
+        return Err(invalid(format!(
+            "{}: {address} is not the shard {} account of feed {} ({expected})",
+            spec.name, spec.shard, spec.feed_id
+        )));
+    }
+    if owner != PYTH_RECEIVER_ID {
+        return Err(invalid(format!(
+            "{}: {address} is owned by {owner}, not the Pyth Receiver",
+            spec.name
+        )));
+    }
+    mtx_kit::protocols::pyth::PriceUpdate::decode_feed(&data, &feed_id)
+        .map_err(|e| invalid(format!("{}: {e}", spec.name)))?;
+    surfnet
+        .cheatcodes()
+        .set_account(&address, lamports, &data, &owner)?;
+    Ok(Source {
+        role: "oracle".into(),
+        name: spec.name.clone(),
+        address: address.to_string(),
+        programdata: None,
+        deploy_slot: None,
+        code_sha256: None,
+        pinned_from: None,
+    })
 }
 
 /// Exercise everything a Phoenix Eternal task does, with a throwaway trader, so
@@ -727,6 +825,7 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         clock: source_manifest
             .as_ref()
             .map(|m| simulated::ClockPin::new(m.fork_slot, m.created_at_unix)),
+        written: Vec::new(),
     };
     for action in &recipe.warmup {
         world.run(action).await?;
@@ -738,10 +837,15 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         price,
         marks,
         clock,
+        written,
         ..
     } = world;
-    let mark_price_usd =
-        price.ok_or_else(|| invalid("the recipe's warm-up reports no price".into()))?;
+    sources.extend(written);
+    // A recipe that only adds accounts to another snapshot trades nothing,
+    // so the marks stay the source's.
+    let mark_price_usd = price
+        .or_else(|| source_manifest.as_ref().map(|m| m.mark_price_usd))
+        .ok_or_else(|| invalid("the recipe's warm-up reports no price".into()))?;
 
     let (fork_slot, created_at_unix) = match &source_manifest {
         // Past the steps the clock was pinned to, so a session never starts
@@ -794,10 +898,10 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         simulated: !created.is_empty(),
         created,
         // One market warmed is the snapshot's `symbol`, as before.
-        marks: if marks.len() > 1 {
-            marks
-        } else {
-            BTreeMap::new()
+        marks: match marks.len() {
+            0 => source_manifest.map(|m| m.marks).unwrap_or_default(),
+            1 => BTreeMap::new(),
+            _ => marks,
         },
     };
     write_json(&out_dir.join(MANIFEST_FILE), &manifest)?;
@@ -846,6 +950,19 @@ ladder = { level_size = "10" }
             recipe_hash(SAMPLE),
             recipe_hash(&SAMPLE.replace("12.5", "13"))
         );
+    }
+
+    #[test]
+    fn a_pyth_feed_account_action_parses_and_checks_its_feed_id() {
+        let text = "name=\"t\"\nsymbol=\"x\"\n[[warmup]]\naction=\"pyth-feed-account\"\nname=\"n\"\nfeed_id=\"47a156470288850a440df3a6ce85a55917b813a19bb5b31128a33a986566a362\"\nfrom_file=\"a.json\"";
+        let recipe = Recipe::parse(text).unwrap();
+        let Action::PythFeedAccount(spec) = &recipe.warmup[0] else {
+            panic!("not a pyth-feed-account action");
+        };
+        assert_eq!(spec.shard, 0);
+        assert_eq!(parse_feed_id(&spec.feed_id).unwrap()[..2], [0x47, 0xa1]);
+        assert!(parse_feed_id("47a1").is_err());
+        assert!(parse_feed_id(&"zz".repeat(32)).is_err());
     }
 
     #[test]
