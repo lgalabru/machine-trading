@@ -28,9 +28,11 @@
 //!
 //! A step has at most [`MAX_SIMULATED_PER_STEP`] sends simulated, and the
 //! audit copies out of a simulation only the accounts that matter to it
-//! (token accounts, the main trader account, new accounts), so a strategy
-//! can't make a step cost the grader more than that. A copy of a send the
-//! step already took is refused. A refused
+//! (small token accounts, the main trader account, and accounts that may
+//! become a trader or token account: new ones, and empty ones the system
+//! program holds), so a strategy can't make a step cost the grader more
+//! than that. A send that compiles to the same message as one the step
+//! already took is refused. A refused
 //! send queues nothing. A taken one gets its number within the
 //! step and its fresh signers' addresses. After the step's sheet has gone
 //! out, each taken transaction, in the order taken, is simulated and
@@ -82,6 +84,7 @@ const ASSOCIATED_TOKEN: Pubkey =
 const TOKEN: Pubkey = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const TOKEN_2022: Pubkey = Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const LOOKUP_TABLE: Pubkey = Pubkey::from_str_const("AddressLookupTab1e1111111111111111111111111");
+const SYSTEM: Pubkey = Pubkey::from_str_const("11111111111111111111111111111111");
 
 /// A lookup table's header, before its addresses.
 const LOOKUP_TABLE_META: usize = 56;
@@ -97,6 +100,11 @@ const LOG_TAIL: usize = 6;
 /// costs the grader a simulation now and another after the sheet, so this
 /// bounds what a strategy can make a step cost.
 pub const MAX_SIMULATED_PER_STEP: u32 = 16;
+/// The most bytes a writable token-program account of a raw send may hold:
+/// a token account is 165 bytes, and a Token-2022 one with extensions a
+/// few hundred; anything bigger is no wallet the audit reads, and copying
+/// it out of every simulation would cost the grader.
+pub const MAX_TOKEN_ACCOUNT_BYTES: u64 = 4_096;
 /// The most raw sends that may be held at once (a send the bot's guard
 /// held under the scenario's faults, which lands later): each is simulated
 /// ahead of every new one, and a bundle holds five transactions, two of
@@ -165,6 +173,9 @@ struct Queued {
     instructions: Vec<Instruction>,
     tables: Vec<AddressLookupTableAccount>,
     fresh: Vec<Keypair>,
+    /// Its message, compiled on a blank blockhash: two sends with the same
+    /// one would be the same transaction.
+    message: Vec<u8>,
 }
 
 /// The account as the venue shows it: what the audit compares.
@@ -351,13 +362,8 @@ impl RawSender {
         }
         self.simulated += 1;
         let tables = self.lookup_tables(&tx.lookup_tables).await?;
-        if let Some(same) = self.queue.iter().find(|q| {
-            q.instructions == instructions
-                && q.tables
-                    .iter()
-                    .map(|t| t.key)
-                    .eq(tables.iter().map(|t| t.key))
-        }) {
+        let message = compile(self.authority, &instructions, &tables, Hash::default())?.serialize();
+        if let Some(same) = self.queue.iter().find(|q| q.message == message) {
             return Err(format!(
                 "duplicate of send {}: it would be the same transaction, with the same signature",
                 same.id
@@ -380,6 +386,7 @@ impl RawSender {
             instructions,
             tables,
             fresh,
+            message,
         });
         Ok(RawReceipt {
             id,
@@ -625,8 +632,9 @@ impl RawSender {
     }
 
     /// Of `keys`, a send's writable accounts, the ones the audit reads
-    /// before and after it: token accounts, the main trader account, and
-    /// accounts that don't exist yet (which the send may create as either).
+    /// before and after it: token accounts (small ones only), the main
+    /// trader account, and accounts that may become either: ones that don't
+    /// exist yet, and empty ones the system program holds.
     /// Any other account, however big, is never copied out of the
     /// simulation: each is read only as far as its owner and first eight
     /// bytes. Another trader account is refused here, before anything runs.
@@ -677,10 +685,22 @@ impl RawSender {
                 if is_trader && *key != main {
                     return Err(other_trader_refusal(key, &main));
                 }
-                let matters = account.is_null()
-                    || is_trader
-                    || matches!(owner, Some(p) if p == TOKEN || p == TOKEN_2022);
-                if matters {
+                // The account's full size, which the node reports beside a
+                // slice; unknown counts as too big to copy for nothing.
+                let space = account["space"].as_u64();
+                let token = matches!(owner, Some(p) if p == TOKEN || p == TOKEN_2022);
+                if token && space.is_none_or(|space| space > MAX_TOKEN_ACCOUNT_BYTES) {
+                    return Err(format!(
+                        "it writes token-program account {key} of {} bytes: at most {MAX_TOKEN_ACCOUNT_BYTES}",
+                        space.map_or("unknown".into(), |s| s.to_string())
+                    ));
+                }
+                // What an account can become: one that doesn't exist yet, or
+                // an empty one the system program holds (a prefunded
+                // address), may end the send as anything, a trader account
+                // included.
+                let blank = account.is_null() || (owner == Some(SYSTEM) && space == Some(0));
+                if blank || is_trader || token {
                     watch.push(*key);
                 }
             }
@@ -1143,7 +1163,6 @@ mod tests {
     use crate::{guard::Guard, keys::SessionKeys, phoenix};
 
     const SPCX: &str = "SPCX";
-    const SYSTEM: Pubkey = Pubkey::from_str_const("11111111111111111111111111111111");
 
     fn fresh() -> FreshKeys {
         SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars")
@@ -2008,17 +2027,190 @@ mod tests {
             ]
             .concat(),
         ];
+        let refused = format!(
+            "it writes Phoenix trader account {sub}: raw sends may only trade from the main one, {main}"
+        );
+        for instructions in &attempts {
+            let refusal = sender
+                .take(transaction(instructions.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(refusal, refused);
+        }
+        // In two steps: the subaccount's address funded first, which is a
+        // plain transfer and lands; then each attempt again, on an address
+        // that now exists, empty and the system program's.
+        let mut prefund = vec![2, 0, 0, 0];
+        prefund.extend_from_slice(&50_000_000u64.to_le_bytes());
+        assert!(
+            sender
+                .take(transaction(vec![RawInstruction {
+                    program: SYSTEM.to_string(),
+                    accounts: vec![
+                        account(AccountKey::Authority, true, true),
+                        account(AccountKey::Address(sub.to_string()), false, true),
+                    ],
+                    data: prefund,
+                }]))
+                .await
+                .is_ok()
+        );
+        sender.close();
+        let statuses = sender.flush(&world.bot).await;
+        assert!(
+            matches!(statuses[0].state, SendState::Landed(_)),
+            "{statuses:?}"
+        );
+        let funded = world.rpc.get_account(&sub).unwrap();
+        assert_eq!((funded.owner, funded.data.len()), (SYSTEM, 0));
+        sender.begin(1, None).await;
         for instructions in attempts {
             let refusal = sender.take(transaction(instructions)).await.unwrap_err();
-            assert_eq!(
-                refusal,
-                format!(
-                    "it writes Phoenix trader account {sub}: raw sends may only trade from the main one, {main}"
-                )
-            );
+            assert_eq!(refusal, refused);
         }
         // The same buy on the main account is held to the cap: it lands.
         assert!(sender.take(buy).await.is_ok());
+        sender.close();
+        assert!(matches!(
+            sender.flush(&world.bot).await[0].state,
+            SendState::Landed(_)
+        ));
+        assert_eq!(world.rpc.get_account(&sub).unwrap().owner, SYSTEM);
+    }
+
+    /// The review's other stall attempts stay cheap: a step of 16 sends
+    /// that each allocate two 10 MiB accounts they can't pay for, and one of
+    /// 16 sends that each name 34 accounts that don't exist.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn steps_of_big_or_many_new_accounts_stay_quick() {
+        let world = world().await;
+        let mut sender = world.sender(vec![SYSTEM], Mandate::perp("phoenix", SPCX, 70.0, 1_000.0));
+        let allocate = |n: u8| {
+            let mut data = vec![8, 0, 0, 0];
+            data.extend_from_slice(&(10u64 << 20).to_le_bytes());
+            RawInstruction {
+                program: SYSTEM.to_string(),
+                accounts: vec![account(AccountKey::Fresh(n), true, true)],
+                data,
+            }
+        };
+        let unfunded: Vec<RawTransaction> = (0..16)
+            .map(|_| RawTransaction {
+                instructions: vec![allocate(0), allocate(1)],
+                fresh_signers: 2,
+                ..RawTransaction::default()
+            })
+            .collect();
+        let nowhere: Vec<RawTransaction> = (0..16u32)
+            .map(|i| {
+                transaction(vec![RawInstruction {
+                    program: COMPUTE_BUDGET.to_string(),
+                    accounts: (0..34u32)
+                        .map(|j| {
+                            let mut key = [7u8; 32];
+                            key[..4].copy_from_slice(&i.to_le_bytes());
+                            key[4..8].copy_from_slice(&j.to_le_bytes());
+                            account(
+                                AccountKey::Address(Pubkey::new_from_array(key).to_string()),
+                                false,
+                                true,
+                            )
+                        })
+                        .collect(),
+                    data: [vec![2], (200_000 + i).to_le_bytes().to_vec()].concat(),
+                }])
+            })
+            .collect();
+        for (step, sends) in [unfunded, nowhere].into_iter().enumerate() {
+            sender.begin(step as u64, None).await;
+            let started = std::time::Instant::now();
+            for tx in sends {
+                let _ = sender.take(tx).await;
+            }
+            sender.close();
+            let _ = sender.flush(&world.bot).await;
+            let took = started.elapsed();
+            assert!(
+                took < std::time::Duration::from_secs(30),
+                "step {step} took {took:?}"
+            );
+            eprintln!("step {step} of 16 sends took {took:?}");
+        }
+    }
+
+    /// Two sends whose instructions differ only in a flag that compiles
+    /// away (an extra signer mark on the authority, which signs anyway) are
+    /// one transaction: the second is refused. A token-program account too
+    /// big to be a wallet can't be named writable.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_same_message_twice_and_big_token_accounts_are_refused() {
+        let world = world().await;
+        let mut sender = world.sender(vec![SYSTEM], Mandate::perp("phoenix", SPCX, 70.0, 1_000.0));
+        sender.begin(0, None).await;
+        let limit = |signer| {
+            transaction(vec![RawInstruction {
+                program: COMPUTE_BUDGET.to_string(),
+                accounts: vec![account(AccountKey::Authority, signer, true)],
+                data: [vec![2], 333_333u32.to_le_bytes().to_vec()].concat(),
+            }])
+        };
+        assert!(sender.take(limit(true)).await.is_ok());
+        assert_eq!(
+            sender.take(limit(false)).await,
+            Err(
+                "duplicate of send 0: it would be the same transaction, with the same signature"
+                    .into()
+            )
+        );
+        // A 64 KiB account the token program holds, made by a fresh signer.
+        let space: u64 = 64 * 1024;
+        let rent = world
+            .rpc
+            .get_minimum_balance_for_rent_exemption(space as usize)
+            .unwrap();
+        let mut create = vec![0, 0, 0, 0];
+        create.extend_from_slice(&rent.to_le_bytes());
+        create.extend_from_slice(&space.to_le_bytes());
+        create.extend_from_slice(TOKEN.as_ref());
+        let big: Pubkey = sender
+            .take(RawTransaction {
+                instructions: vec![RawInstruction {
+                    program: SYSTEM.to_string(),
+                    accounts: vec![
+                        account(AccountKey::Authority, true, true),
+                        account(AccountKey::Fresh(0), true, true),
+                    ],
+                    data: create,
+                }],
+                fresh_signers: 1,
+                ..RawTransaction::default()
+            })
+            .await
+            .unwrap()
+            .fresh_signers[0]
+            .parse()
+            .unwrap();
+        sender.close();
+        let statuses = sender.flush(&world.bot).await;
+        assert!(
+            statuses
+                .iter()
+                .all(|s| matches!(s.state, SendState::Landed(_))),
+            "{statuses:?}"
+        );
+        assert_eq!(statuses[0].fee, Some(5_000));
+        sender.begin(1, None).await;
+        let named = transaction(vec![RawInstruction {
+            program: COMPUTE_BUDGET.to_string(),
+            accounts: vec![account(AccountKey::Address(big.to_string()), false, true)],
+            data: [vec![2], 200_000u32.to_le_bytes().to_vec()].concat(),
+        }]);
+        assert_eq!(
+            sender.take(named).await,
+            Err(format!(
+                "it writes token-program account {big} of 65536 bytes: at most 4096"
+            ))
+        );
     }
 
     /// Under the scenario's latency, the guard holds a send to the next
