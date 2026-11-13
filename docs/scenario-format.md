@@ -27,6 +27,7 @@ docs together.
 | `assets` | `symbol`; a spot session's starting `wallet` |
 | `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the market calibration the path was drawn from |
+| `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker and the grader's `takers` |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |

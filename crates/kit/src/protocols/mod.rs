@@ -18,19 +18,38 @@
 //! trader and its meter read the account with the same function.
 //! Transactions go through [`chain`](crate::chain).
 
-#[cfg(feature = "openbook-v2")]
+#[cfg(feature = "openbook-v2-venue")]
 pub mod openbook;
-#[cfg(any(feature = "phoenix", feature = "phoenix-v1"))]
+#[cfg(any(feature = "phoenix", feature = "phoenix-v1-venue"))]
 pub mod phoenix;
 #[cfg(feature = "pyth")]
 pub mod pyth;
 #[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 pub mod spot;
 
+/// Account data that didn't have the shape its program writes: what a
+/// decoder that needs no chain reports. The chain's
+/// [`ChainError::Decode`](crate::chain::ChainError::Decode) carries the same.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("decode {what}: {detail}")]
+pub struct DecodeError {
+    pub what: &'static str,
+    pub detail: String,
+}
+
+impl DecodeError {
+    pub fn new(what: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            what,
+            detail: detail.into(),
+        }
+    }
+}
+
 /// A spot market a venue profile in the repository's `specs/venues/` names
 /// by symbol, such as `SOL-USDC`. Any other market on the venue is named by
 /// its address.
-#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
+#[cfg(feature = "spot-venue")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamedMarket {
     /// The profile's symbol, `BASE-QUOTE`.
@@ -43,7 +62,7 @@ pub struct NamedMarket {
     pub quote_mint: solana_pubkey::Pubkey,
 }
 
-#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
+#[cfg(feature = "spot-venue")]
 impl NamedMarket {
     /// The market `symbol` names among `markets`, or the one at `symbol`
     /// read as a base58 address.
@@ -90,7 +109,7 @@ pub(crate) fn holdings_from_atoms(
 
 /// Wrapped SOL's mint. A profile counts SOL held in its token account, not
 /// the wallet's native SOL, which pays the transaction fees.
-#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
+#[cfg(feature = "spot-venue")]
 pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
 
