@@ -1,5 +1,5 @@
 #!/bin/bash
-# Reference solution: the weekend strategy from bots/weekend in the mtx
+# Reference solution: the weekend strategy from the task's reference/ in the mtx
 # repository (its sources and its trained forecaster), a strategy component
 # built into the starter's place. It needs three crates the starter doesn't
 # list; all are in the SDK's lockfile.

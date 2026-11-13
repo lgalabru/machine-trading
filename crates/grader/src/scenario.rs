@@ -619,7 +619,7 @@ pub enum Aftermath {
 ///
 /// The path is built so that its shape gives nothing away beyond what a
 /// trader would see in a real market, and so that what it does give away
-/// doesn't pay for certain (the exploit checks in `bench/checks/exploits`
+/// doesn't pay for certain (the exploit checks in `bench/tasks/<task>/checks/exploits`
 /// hold it to that):
 /// - Leg sizes are log-uniform over a wide range, and most legs land at
 ///   once, so a move's first print says little about how far it goes and

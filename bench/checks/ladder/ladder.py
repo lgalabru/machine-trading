@@ -1,6 +1,6 @@
 """The skill ladder: fixed bots, graded on fresh hidden sets, in a fixed order.
 
-Each task's rungs and rules are in `<task>.json`. For each set, the ladder
+Each task's rungs and rules are in its folder, `bench/tasks/<task>/checks/ladder.json`. For each set, the ladder
 draws a fresh secret (never printed), grades every rung on the hidden set it
 seeds with `mtx grade --draw`, and scores each rung's skill: its total PnL
 over the reference's. Then it checks:
@@ -160,7 +160,7 @@ def main():
     users = queue.Queue()
     for k in range(args.parallel):
         users.put(k * args.jobs)
-    with open(os.path.join(HERE, f"{args.task}.json")) as f:
+    with open(os.path.join(ROOT, "bench/tasks", args.task, "checks/ladder.json")) as f:
         config = json.load(f)
     count = args.count or config["count"]
     out = os.path.join(args.out, args.task)
@@ -243,7 +243,9 @@ def main():
     for name in limits["bots"]:
         all_pnls = [p for reports in sets for p in pnls(reports[name])]
         reference = sum(sum(pnls(r["reference"])) for r in sets)
-        ratio = sum(all_pnls) / reference if reference > 0 else float("nan")
+        # Undefined when the reference lost money on these sets: null in the
+        # summary, never NaN (not JSON).
+        ratio = sum(all_pnls) / reference if reference > 0 else None
         profitable = sum(p > 0 for p in all_pnls) / len(all_pnls)
         reward = max(r[name]["reward"] for r in sets)
         reasons = []
@@ -277,7 +279,8 @@ def main():
             "below": below, "below_total": ceiling, "below_odds": below_odds,
             "reached_bound": reward > 0.999,
         })
-        print(f"  {'FAIL' if reasons else 'ok  '} {name}: {ratio:.2f}x the reference, "
+        multiple = f"{ratio:.2f}x the reference" if ratio is not None else "no ratio (the reference lost money)"
+        print(f"  {'FAIL' if reasons else 'ok  '} {name}: {multiple}, "
               f"profitable {profitable:.0%}, worst ${min(all_pnls):.0f}"
               + (f" ({'; '.join(reasons)})" if reasons else ""))
         if reasons:
