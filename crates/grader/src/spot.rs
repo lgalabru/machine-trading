@@ -1648,6 +1648,7 @@ mod tests {
             quote: 100.0,
             price_usd: 83.0,
             value_usd: 930.0,
+            venues: Vec::new(),
         };
         let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
         let feed = |id: &str, name: &str| Feed {

@@ -43,7 +43,7 @@ use crate::{
     scenario::{
         Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
     },
-    spot::{MAX_DEPTH_LEVELS, POOLS, SYMBOL, Spot, TurnData, VENUES},
+    spot::{MAX_DEPTH_LEVELS, POOLS, Spot, TurnData, VENUES},
     txlayer::TxLayer,
 };
 
@@ -784,7 +784,7 @@ impl ScenarioV2 {
     fn validate_oracles(&self, oracles: &crate::oracles::Oracles) -> Result<(), String> {
         use crate::oracles::{Anchor, Source};
         let session: Vec<InstrumentRef> = if self.venues.spot.is_some() {
-            self.venues.spot_instruments()
+            self.venues.spot_instruments(&self.assets.symbol)
         } else {
             vec![self.perp_instrument()]
         };
@@ -1604,6 +1604,7 @@ mod tests {
 
         let mut s = v2(&lending("liquidation"));
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),

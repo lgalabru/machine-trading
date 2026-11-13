@@ -809,6 +809,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             None => {
                 oracles.feeds.push(Feed {
                     name: format!("kamino {head}"),
+                    anchor: None,
                     source: Source::Scope(ScopeOracle {
                         account: account.clone(),
                         index: head,
@@ -1554,6 +1555,7 @@ impl Account for LendingAccount {
             at,
             level_usd: price,
             book_usd: price,
+            fair_usd: None,
         }
     }
 
@@ -1621,6 +1623,7 @@ impl Account for LendingAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         let mut seats = Vec::new();
         for instrument in &self.instruments {
@@ -1646,6 +1649,8 @@ impl Account for LendingAccount {
             authority: bot.pubkey().to_string(),
             reader: Reader::Lending { start },
             rfqs: None,
+            pool: None,
+            tx: None,
         })
     }
 
@@ -1716,6 +1721,8 @@ impl Account for LendingAccount {
                 actions,
             }),
             crank_refusals: done.crank_refusals,
+            oracle_starts: Default::default(),
+            tx_layer: None,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
