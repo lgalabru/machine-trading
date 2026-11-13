@@ -12,9 +12,11 @@
 //!
 //! The account a stake-pool market measures holds **native SOL**: the pool
 //! takes and pays lamports, not wrapped SOL. Its holdings are the token in
-//! the wallet, and SOL: the wallet's lamports, with the stake accounts it
-//! may withdraw, and Marinade's tickets ([`super::marinade`]), counted as
-//! locked until they pay out.
+//! the wallet, and SOL: the wallet's lamports, with what the market's
+//! delayed exits owe it (Marinade's tickets, [`super::marinade`]) counted
+//! as locked until they pay out. A stake account an SPL exit split off may
+//! come from any pool's validator, so the session counts those once
+//! ([`stake_accounts`]), not each pool.
 
 use std::sync::Arc;
 
@@ -612,13 +614,24 @@ pub(super) async fn account_data(chain: &Chain, address: &Pubkey, what: &str) ->
         .ok_or_else(|| Error::UnknownMarket(format!("{what} {address} is not on the chain")))
 }
 
-/// What `owner` holds in SOL: the wallet's lamports, and as locked what
-/// waits to be withdrawn, the stake accounts it may withdraw.
+/// What `owner` holds in SOL: the wallet's lamports, and as locked
+/// `waiting`, what a market's delayed exits owe it.
 pub(super) async fn sol_holding(chain: &Chain, owner: &Pubkey, waiting: u64) -> Result<Holding> {
     let wallet = chain
         .get_balance(owner)
         .await
         .map_err(chain_error("the wallet's SOL"))?;
+    Ok(Holding::Spot(Holdings {
+        wallet: lamports(wallet),
+        locked: lamports(waiting),
+        ..Holdings::empty(sol_asset())
+    }))
+}
+
+/// The lamports of every stake account `owner` may withdraw: an SPL
+/// pool's delayed exits, which may come from any pool's validators, so
+/// the account that holds them counts them once, not each pool.
+pub async fn stake_accounts(chain: &Chain, owner: &Pubkey) -> Result<u64> {
     // Meta: the state (4), rent_exempt_reserve (8), the staker (32), then
     // the withdrawer.
     let stakes = chain
@@ -631,12 +644,7 @@ pub(super) async fn sol_holding(chain: &Chain, owner: &Pubkey, waiting: u64) -> 
         )
         .await
         .map_err(chain_error("the wallet's stake accounts"))?;
-    let staked: u64 = stakes.iter().map(|(_, a)| a.lamports).sum();
-    Ok(Holding::Spot(Holdings {
-        wallet: lamports(wallet),
-        locked: lamports(staked + waiting),
-        ..Holdings::empty(sol_asset())
-    }))
+    Ok(stakes.iter().map(|(_, a)| a.lamports).sum())
 }
 
 /// Lamports, or token atoms of a 9-decimal token, in whole units.
@@ -728,23 +736,18 @@ pub(super) async fn pool_fills(
     Ok(fills)
 }
 
-/// A pool's token as a market: what a stake-pool instrument values at the
-/// pool's rate.
-pub(super) async fn value_token(
-    chain: &Chain,
-    holdings: &[Holding],
-    mint: &Pubkey,
-    rate: Decimal,
-) -> Result<Option<Decimal>> {
-    let [Holding::Spot(asset)] = holdings else {
-        return Ok(None);
-    };
-    if asset.base.id.0 != mint.to_string() {
-        return Ok(None);
+/// The pool's token among `holdings`, if they are just that: what a
+/// stake-pool market values itself.
+pub(super) fn token_held<'a>(holdings: &'a [Holding], mint: &Pubkey) -> Option<&'a Holdings> {
+    match holdings {
+        [Holding::Spot(asset)] if asset.base.id.0 == mint.to_string() => Some(asset),
+        _ => None,
     }
-    Ok(Some(
-        asset.total() * rate * price_usd(chain, &token::native_mint()).await?,
-    ))
+}
+
+/// `token` at `rate` SOL each, at the SOL reference price.
+pub(super) async fn value_token(chain: &Chain, token: &Holdings, rate: Decimal) -> Result<Decimal> {
+    Ok(token.total() * rate * price_usd(chain, &token::native_mint()).await?)
 }
 
 /// The SPL stake pools of one venue.
@@ -905,8 +908,11 @@ impl Market for StakePoolMarket {
     }
 
     async fn value_usd(&self, chain: &Chain, holdings: &[Holding]) -> Result<Option<Decimal>> {
+        let Some(token) = token_held(holdings, &self.state.pool_mint) else {
+            return Ok(None);
+        };
         let rate = read_state(chain, &self.named.address).await?.rate();
-        value_token(chain, holdings, &self.state.pool_mint, rate).await
+        Ok(Some(value_token(chain, token, rate).await?))
     }
 
     async fn fills(

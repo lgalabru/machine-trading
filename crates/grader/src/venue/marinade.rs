@@ -32,7 +32,7 @@ use super::{
     Chain, Market, Seat, SeatResult, Venue, not_offered,
     stake_pool::{
         CLOCK, RENT, SYSTEM_PROGRAM, account_data, atoms, chain_error, epoch_stats, lamports,
-        not_sent, pool_fills, send_now, sol_holding, stake_amount, value_token,
+        not_sent, pool_fills, send_now, sol_holding, stake_amount, token_held, value_token,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
@@ -468,8 +468,11 @@ impl Market for MarinadeMarket {
     }
 
     async fn value_usd(&self, chain: &Chain, holdings: &[Holding]) -> Result<Option<Decimal>> {
+        let Some(token) = token_held(holdings, &self.mint) else {
+            return Ok(None);
+        };
         let rate = read_state(chain).await?.rate();
-        value_token(chain, holdings, &self.mint, rate).await
+        Ok(Some(value_token(chain, token, rate).await?))
     }
 
     async fn fills(

@@ -390,6 +390,11 @@ async fn an_epoch_boundary_pays_the_rewards_and_frees_the_delayed_exits() {
     let waiting = marinade::tickets(&chain, &owner).await.unwrap();
     assert_eq!(waiting.len(), 1);
     let staked = rpc.get_account(&stake.pubkey()).unwrap().lamports;
+    assert_eq!(
+        stake_pool::stake_accounts(&chain, &owner).await.unwrap(),
+        staked,
+        "the wallet's one stake account, counted once"
+    );
 
     // Neither pays before the epoch ends.
     let claim = marinade::ix::claim(&ticket.pubkey(), &owner);

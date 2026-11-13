@@ -270,6 +270,14 @@ impl Pools {
             });
             all.extend(held);
         }
+        // The stake accounts an SPL pool's delayed exits split off, once:
+        // they can come from any pool.
+        let staked = crate::venue::stake_pool::stake_accounts(chain, &self.owner).await?;
+        if let Some(Holding::Spot(sol)) = all.iter_mut().rev().find(
+            |h| matches!(h, Holding::Spot(a) if a.base.id.0 == token::native_mint().to_string()),
+        ) {
+            sol.locked += Decimal::from(staked) / Decimal::from(1_000_000_000u64);
+        }
         let markets: Vec<&dyn Market> = self.markets.iter().map(AsRef::as_ref).collect();
         let value = value_usd(chain, &markets, &all).await?;
         let (sol, waiting) = all
