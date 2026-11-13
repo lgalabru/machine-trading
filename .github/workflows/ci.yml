@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      task:
+        description: "Task to run `mtx gates --fast` on (default: every task)"
+        required: false
   schedule:
     # Weekly: catch a Surfpool or Phoenix change that breaks the task image.
     - cron: "0 6 * * 1"
@@ -64,20 +68,25 @@ jobs:
               || { echo "::error file=$f::missing reference_pnl_usd or path"; exit 1; }
           done
 
+  # The image the Rust jobs run in: built first when bench/ci changes, so no
+  # job races a stale one (see ci-image.yml).
+  ci-image:
+    uses: ./.github/workflows/ci-image.yml
+    permissions:
+      contents: read
+      packages: write
+
   rust:
+    needs: ci-image
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container: ${{ needs.ci-image.outputs.image }}
     steps:
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev clang libclang-dev
       - uses: actions/checkout@v4
-      - name: Install toolchains
-        # rust-toolchain pins stable; rustfmt.toml uses nightly-only options.
-        run: |
-          rustup show active-toolchain
-          rustup component add clippy
-          rustup toolchain install nightly --profile minimal --component rustfmt
+      - name: Toolchain and libraries
+        if: needs.ci-image.outputs.prebuilt != 'true'
+        run: bash bench/ci/setup.sh
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v2
       - name: Format
         run: cargo +nightly fmt --all -- --check
       - name: Clippy
@@ -91,16 +100,89 @@ jobs:
           cargo clippy -p mtx-kit --all-features --all-targets -- -D warnings
           cargo test -p mtx-kit --all-features
       - name: Strategy components
-        # The starter and the references build for wasm32-wasip2 too, and
-        # the flash-crash reference's component loads in the grader's host.
+        # The starter and the references build for wasm32-wasip2 too, the
+        # flash-crash reference's component loads in the grader's host, and
+        # the probe's sheet and market round-trip through the interface.
         run: |
-          rustup target add wasm32-wasip2
-          for bot in starter printer first-strategy reference maker carry weekend; do
+          for bot in starter printer first-strategy reference maker carry weekend wit-probe; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
           just --justfile bots/starter/Justfile build
           just --justfile bots/reference/Justfile build
-          MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" cargo test -p mtx-grader the_reference_component -- --ignored
+          just --justfile bots/wit-probe/Justfile build
+          MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
+            cargo test -p mtx-grader wasm::tests -- --ignored
+
+  # The quality bar's cheap checks (`mtx gates --fast`: task files, a
+  # one-set ladder) for each task a pull request or a push to main changes;
+  # run by hand, for one task (or all), with the reports uploaded. The fast
+  # ladder takes about half an hour a task on 16 cores, so nothing else runs
+  # it. The image checks (a full `mtx gates`) need Docker and Harbor: run
+  # those on a dev machine.
+  gates:
+    needs: [ci-image, rust]
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # Bots run as their own users; the grader needs to switch to them.
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Which tasks
+        id: tasks
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          TASK: ${{ inputs.task }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          case "$EVENT" in
+            pull_request) changed="$(git diff --name-only "origin/$BASE_REF...HEAD" -- bench/tasks)" ;;
+            push) git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+                    && changed="$(git diff --name-only "$BEFORE" HEAD -- bench/tasks)" || changed= ;;
+            *) changed= ;;
+          esac
+          if [ "$EVENT" = workflow_dispatch ]; then
+            candidates="${TASK:-$(ls bench/tasks)}"
+          else
+            candidates="$(echo "$changed" | sed -n 's|^bench/tasks/\([^/]*\)/.*|\1|p' | sort -u)"
+          fi
+          # Deleted or renamed-away tasks have no task.toml left to gate.
+          tasks=
+          for task in $candidates; do
+            [ -f "bench/tasks/$task/task.toml" ] && tasks="$tasks $task"
+          done
+          echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+          echo "gating:${tasks:- nothing changed}"
+      - name: Toolchain and libraries
+        if: steps.tasks.outputs.tasks != '' && needs.ci-image.outputs.prebuilt != 'true'
+        run: bash bench/ci/setup.sh
+      - uses: Swatinem/rust-cache@v2
+        if: steps.tasks.outputs.tasks != ''
+      - name: Build mtx
+        if: steps.tasks.outputs.tasks != ''
+        run: cargo build --release --locked -p mtx-cli
+      - name: mtx gates
+        if: steps.tasks.outputs.tasks != ''
+        env:
+          TASKS: ${{ steps.tasks.outputs.tasks }}
+        run: |
+          status=0
+          for task in $TASKS; do
+            target/release/mtx gates "$task" --fast > /dev/null || status=1
+            cat "target/gates/$task/gates.md" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always() && github.event_name == 'workflow_dispatch'
+        with:
+          name: gates
+          path: target/gates
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.

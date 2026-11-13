@@ -63,6 +63,34 @@ pub struct Hello {
     /// How long, in wall-clock milliseconds, the world waits for `done`
     /// before moving on without it.
     pub turn_wall_ms: u64,
+    /// What the session's steps carry beyond the clock, if anything: a step
+    /// of a session that reports a tape and has none had no trades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reports: Option<Reports>,
+    /// The session's seed, for a strategy that wants randomness: the
+    /// scenario's [`scenario_seed`], what a component gets too. Absent from
+    /// older graders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+
+/// The turn data a session's steps carry.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reports {
+    #[serde(default)]
+    pub tape: bool,
+    #[serde(default)]
+    pub depth: bool,
+    #[serde(default)]
+    pub timestamps: bool,
+}
+
+/// A scenario's seed for the strategy: the same in every run of it, and the
+/// same for a component and a process (FNV-1a of its name).
+pub fn scenario_seed(scenario: &str) -> u64 {
+    scenario.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 /// One step: the world has moved to `slot`.
@@ -113,6 +141,10 @@ pub enum Role {
 pub struct Trade {
     /// Where it traded, as the mandate names venues: `phoenix` or `openbook`.
     pub venue: String,
+    /// The market it traded in, as the mandate names instruments
+    /// (`phoenix:spot:SOL-USDC`): what tells two markets of one venue apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market: Option<String>,
     /// The taker's side.
     pub side: Side,
     /// Price, quote units per base unit, before fees.
@@ -144,6 +176,9 @@ pub struct Level {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BookLevels {
     pub venue: String,
+    /// The market, as [`Trade::market`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market: Option<String>,
     pub bids: Vec<Level>,
     pub asks: Vec<Level>,
 }
@@ -202,6 +237,8 @@ impl Turns {
                 start_slot: 0,
                 end_slot: 0,
                 turn_wall_ms: 0,
+                reports: None,
+                seed: None,
             },
             open: None,
             tape: Vec::new(),
@@ -313,6 +350,8 @@ mod tests {
             start_slot: 100,
             end_slot: 104,
             turn_wall_ms: 1_000,
+            reports: None,
+            seed: Some(7),
         };
         let mut grader_reader = BufReader::new(grader.try_clone().unwrap());
         let mut grader = grader;
@@ -348,6 +387,41 @@ mod tests {
     }
 
     #[test]
+    fn a_hello_without_a_seed_is_the_line_it_always_was() {
+        let hello = Hello {
+            protocol: PROTOCOL.into(),
+            steps: 2,
+            slots_per_step: 2,
+            start_slot: 100,
+            end_slot: 104,
+            turn_wall_ms: 1_000,
+            reports: None,
+            seed: None,
+        };
+        let line = serde_json::to_string(&Message::Hello(hello.clone())).unwrap();
+        assert_eq!(
+            line,
+            r#"{"t":"hello","protocol":"mtx-turn-1","steps":2,"slots_per_step":2,"start_slot":100,"end_slot":104,"turn_wall_ms":1000}"#
+        );
+        let seeded = Hello {
+            seed: Some(scenario_seed("crash-1")),
+            ..hello
+        };
+        let line = serde_json::to_string(&Message::Hello(seeded.clone())).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Message>(&line).unwrap(),
+            Message::Hello(seeded)
+        );
+    }
+
+    #[test]
+    fn a_scenario_seed_is_fnv_1a_of_its_name() {
+        assert_eq!(scenario_seed(""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(scenario_seed("a"), 0xaf63_dc4c_8601_ec8c);
+        assert_ne!(scenario_seed("crash-1"), scenario_seed("crash-2"));
+    }
+
+    #[test]
     fn a_step_without_turn_data_is_the_line_it_always_was() {
         let line = serde_json::to_string(&Message::Step(Step::new(3, 120, false))).unwrap();
         assert_eq!(line, r#"{"t":"step","k":3,"slot":120,"last":false}"#);
@@ -369,6 +443,8 @@ mod tests {
             start_slot: 100,
             end_slot: 104,
             turn_wall_ms: 1_000,
+            reports: None,
+            seed: None,
         });
         let line = |m: &Message| {
             let mut line = serde_json::to_string(m).unwrap();
@@ -393,6 +469,7 @@ mod tests {
         grader_reader.read_line(&mut ready).unwrap();
         let trade = Trade {
             venue: "phoenix".into(),
+            market: Some("phoenix:spot:SOL-USDC".into()),
             side: Side::Sell,
             price: 150.25,
             base: 2.0,
@@ -403,6 +480,7 @@ mod tests {
         };
         let book = BookLevels {
             venue: "openbook".into(),
+            market: None,
             bids: vec![Level {
                 price: 150.0,
                 base: 4.0,
