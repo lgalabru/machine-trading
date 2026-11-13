@@ -17,8 +17,9 @@ spot.
 The reference implementation reads spot instruments, and the benchmark's
 grader audits spot sessions on [Phoenix](../venues/phoenix.md) and
 [OpenBook](../venues/openbook.md)'s books, and on
-[Raydium](../venues/raydium.md)'s and [Meteora](../venues/meteora.md)'s
-pools (swapping against a pool), as their profiles describe.
+[Raydium](../venues/raydium.md)'s, [Meteora](../venues/meteora.md)'s and
+[Orca](../venues/orca.md)'s pools (swapping against a pool), as their
+profiles describe.
 
 ## Position
 
@@ -28,7 +29,10 @@ base asset wherever the account holds it:
 
 - in the agent authority's wallet;
 - on each venue in the universe, in the accounts its venue profile names,
-  whether free to withdraw or locked behind the account's open orders.
+  whether free to withdraw or locked behind the account's open orders;
+- in the account's liquidity positions in pools, at the amounts a
+  withdrawal would return and their uncollected fees (the
+  [amm](amm.md#position) instrument measures the same base, per pool).
 
 A spot position therefore belongs to the asset, not to one venue. Two
 allowances on the same base asset, such as `openbook:spot:SOL-USDC` and

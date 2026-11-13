@@ -153,7 +153,7 @@ orders until it sees the account. Sizes round down to whole lots, and
 prices round away from a worse fill. An order no market grid can hold is
 refused. Market, limit, post-only and cancel-all orders are executed;
 a post-only order's expiry holds on Phoenix, and OpenBook refuses one, as
-its orders expire by the clock. On a pool (Raydium, Meteora;
+its orders expire by the clock. On a pool (Raydium, Meteora, Orca;
 `crates/grader/src/venue/pools.rs`) a line names the pool's spot market for
 swaps and market orders, each one swap, and its amm market for
 `add-liquidity` and `remove-liquidity`; the amm market's view carries the

@@ -39,14 +39,16 @@ than 1 would make the two differ.
 On each pool in the universe, the account is the agent authority's wallet
 token accounts for the pool's two mints, and every position in the pool
 whose NFT the authority holds. A position (`PersonalPositionState`, a PDA
-of its NFT's mint) belongs to whoever holds the NFT (a Token-2022 mint of
-supply 1), not to a key it records.
+of its NFT's mint) belongs to whoever holds the NFT (a mint of supply 1),
+in any token account of the authority's for its mint, not only the
+associated one (as the wallet is read), not to a key it records.
 
 ## Measurements
 
-- **Position (spot).** The base held in the wallet, in base units. Nothing
-  rests in a pool and nothing is locked, so the spot position is the
-  wallet's.
+- **Position (spot).** The base held in the wallet, in base units, and in
+  the account's positions in pools (in this pool and any other the universe
+  names), as the spot profile counts it. Nothing rests in a pool and
+  nothing is locked.
 - **Position (amm).** For each position, what its liquidity `L` between
   sqrt prices `a` (lower tick) and `b` (upper tick) holds at the pool's
   sqrt price `p`: `L(b − p)/(p b)` of token 0 and `L(p − a)` of token 1
@@ -55,13 +57,21 @@ supply 1), not to a key it records.
   `fee_growth_inside` since it last counted (from the pool's
   `fee_growth_global` and its two boundary ticks' `fee_growth_outside`).
   The amm position is the base in all of them, fees included.
-- **Fills.** A pool has no event heap. Every swap moves the pool's two
-  vaults in opposite directions: the vault deltas of a transaction give the
-  taker's side (base in is a sell), the base size and the quote paid or
-  received, and its fee payer is the taker; the pool is the maker. The
-  price is quote over base, **fee included**: a swap's fee is taken from
-  what goes in and stays in the vault. A transaction that moves both vaults
-  the same way adds or removes liquidity, and is not a fill.
+- **Fills.** A pool has no event heap. Each of the pool's instructions a
+  transaction runs, its own or one another program calls, is read on its
+  own, from the token transfers it makes to and from the pool's two
+  vaults (never from the transaction's net, so a swap and a deposit in one
+  transaction are both seen). A swap moves the vaults in opposite
+  directions: base in is a sale, base out a purchase; the transfers give
+  the base size and the quote paid or received, and the pool is the maker.
+  The taker is the account whose tokens or signature the swap took (the
+  owner of a token account it passes, or a signer), whoever paid the fee;
+  for anyone else's swap, the fee payer. The price is quote over base,
+  **fee included**: a swap's fee is taken from what goes in and stays in
+  the vault. An instruction that moves the vaults one way only adds or
+  removes liquidity, and is not a fill; it counts for the
+  [sides](../instruments/amm.md#sides) rule, the account's when it takes
+  its tokens, its position or its signature.
 - **Top.** The pool's price (from `sqrt_price_x64`) less its fee for a sale,
   plus it for a purchase: the price of a small swap each way.
 - **Value.** Wallet and positions (fees included), with the base at the Pyth
@@ -99,6 +109,38 @@ Where it differs from the profiles:
   initialized ones its way; a swap that would cross more fails.
 - **Shape** (`liquidity-shape`) is Meteora's; a CLMM position is uniform
   over its range, and the grader ignores it here.
+
+## What a bot may run
+
+The audit reads what an account does through a pool's swaps and positions:
+fills, liquidity moves, and the positions the cap and the value count. What
+the program can do with the account's tokens in any other way (base resting
+in a limit order, outside any position) would sit outside the position cap,
+the account's value and the sides rule. So the grader lets a bot run only
+these of the program's instructions, whether its transaction runs them or a
+program it calls does, and disqualifies a session that runs any other ("ran
+raydium OpenLimitOrder, which this benchmark doesn't support"):
+
+| Use | Instructions | Where |
+| --- | --- | --- |
+| Swap | `swap`, `swap_v2` | Through the session's pool |
+| Liquidity | `open_position`, `open_position_v2`, `open_position_with_token22_nft`, `increase_liquidity`, `increase_liquidity_v2`, `decrease_liquidity`, `decrease_liquidity_v2` | Through the session's pool, where the session takes liquidity on Raydium (`amm` in its universe) |
+| Position | `close_position` | Where the session takes liquidity on Raydium |
+
+A swap or a deposit through another of the program's pools is a breach
+(the grader reads the pool where each instruction's layout names it, not
+anywhere among its accounts), and so is a liquidity or position
+instruction where the session lists Raydium for swaps only. Everything
+else is refused, notably the limit orders (`open_limit_order`,
+`increase_limit_order`, `decrease_limit_order`, `settle_limit_order`,
+`close_limit_order`), the multi-pool `swap_router_base_in`, and the pool's
+and the program's own administration.
+
+Where the session doesn't list Raydium but its chain holds the program,
+the grader reads it all the same: anything the account runs on it is a
+breach ("used raydium, which this session doesn't trade"). A position the
+account holds in the pool counts toward its spot position and its value
+whether or not the session takes liquidity on Raydium.
 
 ## Snapshot
 
