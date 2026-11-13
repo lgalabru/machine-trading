@@ -1,0 +1,52 @@
+{
+  "schema": 2,
+  "name": "smoke-buy-order",
+  "description": "Buy 5 SOL by the end from a wallet with no SOL; the bot buys, and the broker buys the remainder at the close plus the haircut",
+  "duration_slots": 40,
+  "assets": {
+    "symbol": "SOL-USDC",
+    "wallet": {
+      "base": 0.0,
+      "quote": 2000.0
+    }
+  },
+  "venues": {
+    "spot": {
+      "markets": [
+        "phoenix",
+        "openbook"
+      ],
+      "turn_data": {
+        "tape": true,
+        "depth_levels": 3,
+        "timestamps": true,
+        "parties": true
+      }
+    }
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "buy"
+        ]
+      },
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "buy"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "order": {
+    "side": "buy",
+    "quantity": 5.0,
+    "haircut_bps": 100.0
+  }
+}

@@ -25,18 +25,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install Harbor
         run: uv tool install harbor==0.25.0
+      - uses: extractions/setup-just@v2
       - name: Each oracle is its task's reference bot
-        # Mirrors `references` and `check-solution` in the Justfile: every
-        # source file, and the model the bot reads, if any.
-        run: |
-          for pair in flash-crash-spcx=reference market-making-spcx=maker funding-carry-spcx=carry weekend-gap-spcx=weekend; do
-            bot="bots/${pair#*=}"; solution="bench/tasks/${pair%%=*}/solution"
-            diff -ru -x main.rs "$bot/src" "$solution/src"
-            if [ -d "$bot/model" ]; then diff -ru "$bot/model" "$solution/model"; fi
-            for model in "$bot"/model.*; do
-              if [ -e "$model" ]; then cmp "$model" "$solution/$(basename "$model")"; fi
-            done
-          done
+        # The Justfile's `check-solution`: every source file, and the model
+        # the bot reads, if any, for each task in bench/tasks/tasks.just.
+        run: just check-solution
       - name: Lint every task
         # Images are pinned by `just release`; between releases a task may
         # point at an unpinned local tag.
@@ -101,42 +94,36 @@ jobs:
           cargo test -p mtx-kit --all-features
       - name: Strategy components
         # The starter, the references and the spot and pool smokes build for
-        # wasm32-wasip2 too, as do the kit's spot venue decoders; the
-        # flash-crash reference's and the spot smoke's components load in the
-        # grader's host, the probe's sheet and market round-trip through the
-        # interface, and the raw-send probe is answered in a session as its
-        # scenario allows.
+        # wasm32-wasip2 too, as do the kit's spot venue decoders, the
+        # flash-crash reference's and the spot smoke's components load in
+        # the grader's host, the probe's sheet and market round-trip
+        # through the interface, and the raw-send probe is answered in a
+        # session as its scenario allows.
         run: |
-          for bot in starter printer first-strategy reference maker carry weekend spot-smoke amm-smoke wit-probe raw-probe; do
-            cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
+          rustup target add wasm32-wasip2
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-amm-smoke mtx-bot-wit-probe mtx-bot-raw-probe $(just --evaluate reference_packages); do
+            cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue,raydium-clmm,meteora-dlmm,orca-whirlpool --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
-          just --justfile bots/reference/Justfile build
-          just --justfile bots/wit-probe/Justfile build
+          just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
           just --justfile bots/spot-smoke/Justfile build
+          just --justfile bots/wit-probe/Justfile build
           just --justfile bots/raw-probe/Justfile build
-          MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
+          MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-grader wasm::tests -- --ignored
           MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
           MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
             cargo test -p mtx-grader raw::tests -- --ignored
 
-  # The quality bar's cheap checks (`mtx gates --fast`: task files, a
-  # one-set ladder) for each task a pull request or a push to main changes;
-  # run by hand, for one task (or all), with the reports uploaded. The fast
-  # ladder takes about half an hour a task on 16 cores, so nothing else runs
-  # it. The image checks (a full `mtx gates`) need Docker and Harbor: run
-  # those on a dev machine.
-  gates:
-    needs: [ci-image, rust]
+  # The tasks `gates` checks: those a pull request or a push to main
+  # changes, or the one (or every task) a manual run names. A JSON array, for
+  # the `gates` matrix.
+  changed-tasks:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    container:
-      image: ${{ needs.ci-image.outputs.image }}
-      # Bots run as their own users; the grader needs to switch to them.
-      options: --user root
+    outputs:
+      tasks: ${{ steps.tasks.outputs.tasks }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -166,31 +153,53 @@ jobs:
           for task in $candidates; do
             [ -f "bench/tasks/$task/task.toml" ] && tasks="$tasks $task"
           done
-          echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC2086 # task names hold no spaces
+          echo "tasks=$(jq -cn '$ARGS.positional' --args $tasks)" >> "$GITHUB_OUTPUT"
           echo "gating:${tasks:- nothing changed}"
+
+  # The quality bar's cheap checks (`mtx gates --fast`: task files, a
+  # one-set ladder) for each task a pull request or a push to main changes,
+  # one job a task; run by hand, for one task (or all), with the reports
+  # uploaded. The fast ladder takes about half an hour a task on 16 cores,
+  # which the matrix spreads over runners. The image checks (a full
+  # `mtx gates`) need Docker and Harbor: run those on a dev machine.
+  gates:
+    name: gates (${{ matrix.task }})
+    needs: [ci-image, rust, changed-tasks]
+    if: github.event_name != 'schedule' && needs.changed-tasks.outputs.tasks != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJSON(needs.changed-tasks.outputs.tasks) }}
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # Bots run as their own users; the grader needs to switch to them.
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
       - name: Toolchain and libraries
-        if: steps.tasks.outputs.tasks != '' && needs.ci-image.outputs.prebuilt != 'true'
+        if: needs.ci-image.outputs.prebuilt != 'true'
         run: bash bench/ci/setup.sh
       - uses: Swatinem/rust-cache@v2
-        if: steps.tasks.outputs.tasks != ''
+        with:
+          # One cache for the matrix: every job builds the same mtx.
+          shared-key: gates
       - name: Build mtx
-        if: steps.tasks.outputs.tasks != ''
         run: cargo build --release --locked -p mtx-cli
       - name: mtx gates
-        if: steps.tasks.outputs.tasks != ''
         env:
-          TASKS: ${{ steps.tasks.outputs.tasks }}
+          TASK: ${{ matrix.task }}
         run: |
           status=0
-          for task in $TASKS; do
-            target/release/mtx gates "$task" --fast > /dev/null || status=1
-            cat "target/gates/$task/gates.md" >> "$GITHUB_STEP_SUMMARY"
-          done
+          target/release/mtx gates "$TASK" --fast > /dev/null || status=1
+          cat "target/gates/$TASK/gates.md" >> "$GITHUB_STEP_SUMMARY"
           exit $status
       - uses: actions/upload-artifact@v4
         if: always() && github.event_name == 'workflow_dispatch'
         with:
-          name: gates
+          name: gates-${{ matrix.task }}
           path: target/gates
 
   # The expensive end-to-end check: build the task image from this commit and

@@ -160,5 +160,5 @@ When real bots beat a version, start a new generation and record:
   result, including the ones dropped. This is the cheapest record to keep
   and the one most often lost.
 
-machine-trading's exploit checks (`bench/checks/exploits/`) hold the same
+machine-trading's exploit checks (`bench/tasks/<task>/checks/exploits/`) hold the same
 idea as frozen bots; the generation log holds the reasoning.

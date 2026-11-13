@@ -145,127 +145,6 @@ impl Spot {
             .chain(self.liquidity.iter().map(|venue| at(venue, Kind::Amm)))
             .collect()
     }
-
-    /// A spot scenario trades a pair its venues' profiles name, under a
-    /// mandate whose universe is exactly those markets, and has no path or
-    /// market making.
-    pub fn validate(&self, scenario: &Scenario) -> std::result::Result<(), String> {
-        if self.venues.is_empty() {
-            return Err("spot: no venues".into());
-        }
-        for (i, venue) in self.venues.iter().enumerate() {
-            if !VENUES.contains(&venue.as_str()) {
-                return Err(format!(
-                    "spot: unknown venue {venue:?}; spot sessions trade on {VENUES:?}"
-                ));
-            }
-            if self.venues[..i].contains(venue) {
-                return Err(format!("spot: {venue} is listed twice"));
-            }
-            let named = crate::venue::books::named_markets(venue).map_err(|e| e.to_string())?;
-            if !named.iter().any(|m| m.symbol == scenario.symbol) {
-                return Err(format!(
-                    "spot: {venue} has no {} market; its profile names {:?}",
-                    scenario.symbol,
-                    named.iter().map(|m| m.symbol).collect::<Vec<_>>()
-                ));
-            }
-        }
-        for (i, venue) in self.liquidity.iter().enumerate() {
-            if !POOLS.contains(&venue.as_str()) || !self.venues.contains(venue) {
-                return Err(format!(
-                    "spot: liquidity on {venue:?}: only a session's pool venues ({POOLS:?}) take liquidity"
-                ));
-            }
-            if self.liquidity[..i].contains(venue) {
-                return Err(format!("spot: liquidity on {venue} is listed twice"));
-            }
-        }
-        if let Some(arbitrage) = &self.arbitrage {
-            arbitrage.validate()?;
-            if !self.venues.iter().any(|v| POOLS.contains(&v.as_str())) {
-                return Err("spot: an arbitrageur trades pools, and the session has none".into());
-            }
-        }
-        for (name, amount) in [("base", self.base), ("quote", self.quote)] {
-            if !(amount.is_finite() && amount >= 0.0) {
-                return Err(format!("spot: {name} must be a number of at least 0"));
-            }
-        }
-        if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
-            return Err("spot: bound_usd must be a number".into());
-        }
-        let mut wanted = self.instruments(&scenario.symbol);
-        let mut universe: Vec<InstrumentRef> = scenario
-            .mandate
-            .universe
-            .iter()
-            .map(|a| a.instrument.clone())
-            .collect();
-        wanted.sort();
-        universe.sort();
-        if wanted != universe {
-            return Err(format!(
-                "mandate: the universe must be exactly the spot markets, {}",
-                wanted
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if scenario.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if !scenario.path.is_empty()
-            || scenario.making.is_some()
-            || scenario.offhours.is_some()
-            || scenario.funding.is_some()
-            || scenario.fair_path.is_some()
-        {
-            return Err(
-                "spot: a spot scenario has no path, fair path, market making, off-hours or funding"
-                    .into(),
-            );
-        }
-        // A tape trades the session's first venue.
-        scenario.validate_tape()?;
-        if scenario.duration_slots == 0 {
-            return Err("spot: the session has no slots".into());
-        }
-        if let Some(data) = &scenario.turn_data {
-            if !(data.tape || data.depth_levels > 0 || data.timestamps)
-                || (data.parties && !data.tape)
-            {
-                return Err("turn_data: asks for nothing, or for parties without a tape".into());
-            }
-            if data.depth_levels > MAX_DEPTH_LEVELS {
-                return Err(format!(
-                    "turn_data: depth_levels {} is over {MAX_DEPTH_LEVELS}",
-                    data.depth_levels
-                ));
-            }
-        }
-        if let Some(order) = &scenario.order {
-            order.validate()?;
-            if order.side == Side::Sell && self.base < order.quantity {
-                return Err(format!(
-                    "order: selling {} SOL from a wallet of {}",
-                    order.quantity, self.base
-                ));
-            }
-        }
-        if let Some(participation) = &scenario.participation {
-            participation.validate()?;
-        }
-        if let Some(net) = &scenario.net {
-            net.validate()?;
-            if scenario.order.is_some() {
-                return Err("net: a net-scored session has no order".into());
-            }
-        }
-        Ok(())
-    }
 }
 
 /// A spot session's account of the bot's wallet and trading.
@@ -1226,6 +1105,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World::default(),
+        )?;
+    }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -1614,6 +1501,7 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1662,6 +1550,7 @@ fn decode_instruction(ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scenario::Scenario;
 
     fn scenario() -> Scenario {
         let mut mandate = Mandate::spot(&crate::venue::books::VENUES, SYMBOL, 10.0);
@@ -1683,6 +1572,7 @@ mod tests {
             fair_path: None,
             raw_sends: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1696,6 +1586,51 @@ mod tests {
             }),
             reference_pnl_usd: None,
         }
+    }
+
+    #[test]
+    fn a_spot_session_values_at_a_feed_that_can_move_but_not_fail() {
+        use crate::oracles::*;
+        let feed = |feed_id: &str, failing: bool| Oracles {
+            seed: 1,
+            feeds: vec![Feed {
+                name: "sol".into(),
+                source: Source::Pyth(PythOracle {
+                    feed_id: feed_id.into(),
+                    shard: 0,
+                    exponent: -8,
+                    account: None,
+                }),
+                cadence_slots: 4,
+                path: vec![Level {
+                    slot: 40,
+                    level_pct: -5.0,
+                }],
+                conf_bps: 2.0,
+                failures: if failing {
+                    vec![Failure {
+                        mode: Mode::OffPrice { bias_pct: 5.0 },
+                        window: Window {
+                            from_slot: 4,
+                            from_slot_max: None,
+                            slots: Some(8),
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                },
+            }],
+        };
+        let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+        let other = "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a";
+        let with = |oracles| Scenario {
+            oracles: Some(oracles),
+            ..scenario()
+        };
+        with(feed(sol, false)).validate().unwrap();
+        with(feed(other, true)).validate().unwrap();
+        let error = with(feed(sol, true)).validate().unwrap_err();
+        assert!(error.contains("values the account"), "{error}");
     }
 
     #[test]
