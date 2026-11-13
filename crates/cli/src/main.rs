@@ -26,6 +26,7 @@ mod bot;
 mod charts;
 mod compact;
 mod gates;
+mod market_cal;
 mod mcp;
 mod notice;
 mod play;
@@ -190,6 +191,10 @@ enum Command {
         #[command(flatten)]
         sessions: Sessions,
     },
+    /// Market calibration: per-asset files fitted to real data, the market
+    /// model they drive, and realism checks against them.
+    #[command(subcommand, name = "market-cal")]
+    MarketCal(market_cal::MarketCalCommand),
 }
 
 #[derive(Subcommand)]
@@ -1248,6 +1253,7 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&reports)?
         }
+        Command::MarketCal(command) => market_cal::run(command)?,
     };
     if !quiet_stdout {
         println!("{output}");
