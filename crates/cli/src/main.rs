@@ -3,14 +3,12 @@ use std::{io::IsTerminal, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use mtx_grader::{
-    carry::CarryFamily,
+    generators,
     grade::{self, GradeOptions},
     keys::SessionKeys,
-    making::MakingFamily,
     phoenix, recipe, replay,
-    scenario::{Scenario, ShockFamily},
+    scenario::Scenario,
     snapshot,
-    weekend::WeekendFamily,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -37,6 +35,7 @@ mod review;
 mod run;
 mod slim;
 mod studio;
+mod tasks;
 mod tools;
 mod ui;
 
@@ -56,21 +55,10 @@ struct Cli {
     command: Command,
 }
 
-/// The scenario families, one per task.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub(crate) enum Family {
-    /// flash-crash-spcx: shocks that crash or squeeze, then revert or not.
-    FlashCrash,
-    /// market-making-spcx: a walking, trending, jumping market, competing
-    /// makers, and taker flow: noise, fake-out bursts, and informed orders
-    /// ahead of most jumps.
-    MarketMaking,
-    /// funding-carry-spcx: book premiums over the index, some the crowd's
-    /// positioning opened and some the index follows, and Phoenix's funding.
-    FundingCarry,
-    /// weekend-gap-spcx: a weekend with SPCX's own market closed, flow that
-    /// may know where it reopens, and the reopen.
-    WeekendGap,
+/// The scenario generators' names, for `--family` and `--draw`: each task
+/// names its own in `task.toml` (`[metadata.mtx] generator`).
+fn generator_names() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(generators::names())
 }
 
 #[derive(Subcommand)]
@@ -146,11 +134,11 @@ enum Command {
     Grade {
         #[command(flatten)]
         sessions: Sessions,
-        /// Draw the scenarios from this family instead of reading files: a
+        /// Draw the scenarios from this generator instead of reading files: a
         /// hidden set, seeded by the secret in `MTX_EVAL_SEED` and never
         /// written anywhere. Reports carry only the secret's SHA-256.
-        #[arg(long, value_enum, conflicts_with = "scenarios")]
-        draw: Option<Family>,
+        #[arg(long, value_parser = generator_names(), conflicts_with = "scenarios")]
+        draw: Option<String>,
         /// How many scenarios to draw, stratified as the family's odds.
         #[arg(long, default_value_t = 12, requires = "draw")]
         count: usize,
@@ -390,6 +378,12 @@ enum TaskCommand {
     Guide { step: String },
     /// The repository's tasks.
     List,
+    /// Write the lists kept from the task folders' `[metadata.mtx]`: the
+    /// Justfile's and the image's task lists, the dataset's and the READMEs'
+    /// tables.
+    Sync,
+    /// Fail if `mtx task sync` would change a file.
+    Check,
 }
 
 #[derive(clap::Args)]
@@ -553,9 +547,9 @@ enum ScenarioCommand {
         /// Mixed into each scenario's seed. Keep hidden sets' seeds private.
         #[arg(long)]
         seed: u64,
-        /// Which task's family to draw from.
-        #[arg(long, value_enum, default_value_t = Family::FlashCrash)]
-        family: Family,
+        /// Which task's generator to draw from.
+        #[arg(long, value_parser = generator_names(), default_value = "flash-crash")]
+        family: String,
     },
     /// Have a coding agent author a Surfpool scenario from a request, e.g.
     /// "simulate a crash for SPCX", and save it.
@@ -809,6 +803,24 @@ async fn run() -> Result<()> {
             authoring::guide(&step).map(str::to_string).ok_or_else(|| {
                 anyhow::anyhow!("no step `{step}`; steps: {}", authoring::STEPS.join(", "))
             })?
+        }
+        Command::Task(TaskCommand::Sync) => {
+            let changed = tasks::sync(&authoring::repo_root())?;
+            serde_json::to_string_pretty(&changed)?
+        }
+        Command::Task(TaskCommand::Check) => {
+            let stale = tasks::stale(&authoring::repo_root())?;
+            if !stale.is_empty() {
+                anyhow::bail!(
+                    "stale, run `mtx task sync`: {}",
+                    stale
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            serde_json::to_string_pretty(&stale)?
         }
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
@@ -1086,12 +1098,9 @@ async fn run() -> Result<()> {
             family,
         }) => {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
-            let scenarios = match family {
-                Family::FlashCrash => ShockFamily::spcx().sample_set(&prefix, count, seed),
-                Family::MarketMaking => MakingFamily::spcx().sample_set(&prefix, count, seed),
-                Family::FundingCarry => CarryFamily::practice().sample_set(&prefix, count, seed),
-                Family::WeekendGap => WeekendFamily::spcx().sample_set(&prefix, count, seed),
-            };
+            let generator = generators::generator(&family)
+                .with_context(|| format!("no scenario generator `{family}`"))?;
+            let scenarios = (generator.practice)(&prefix, count, seed);
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
@@ -1192,64 +1201,12 @@ async fn run() -> Result<()> {
                 Some(family) => {
                     let (seed, hash, batch_keys) = eval_seed()?;
                     keys = batch_keys;
-                    let scenarios = match family {
-                        Family::FlashCrash => shaped(
-                            ShockFamily::spcx().draw_set("hidden", count, seed),
-                            tell_regime,
-                            &mut annotations,
-                            &mut regimes,
-                        )?,
-                        Family::MarketMaking => {
-                            let drawn =
-                                MakingFamily::spcx().sample_set_labeled("hidden", count, seed);
-                            annotations = Some(
-                                drawn
-                                    .iter()
-                                    .map(
-                                        |(_, informed)| serde_json::json!({ "informed": informed }),
-                                    )
-                                    .collect(),
-                            );
-                            if tell_regime {
-                                // The informed orders, by slot and side: what
-                                // a perfect reader of the tape would know.
-                                regimes = Some(
-                                    drawn
-                                        .iter()
-                                        .map(|(scenario, informed)| {
-                                            let orders: Vec<_> = scenario
-                                                .making
-                                                .iter()
-                                                .flat_map(|m| m.takers.iter())
-                                                .zip(informed)
-                                                .filter(|(_, informed)| **informed)
-                                                .map(|(o, _)| {
-                                                    serde_json::json!({"slot": o.slot, "side": o.side})
-                                                })
-                                                .collect();
-                                            serde_json::to_string(&orders)
-                                        })
-                                        .collect::<Result<_, _>>()?,
-                                );
-                            }
-                            drawn
-                                .into_iter()
-                                .map(|(scenario, _)| scenario)
-                                .collect::<Vec<_>>()
-                        }
-                        Family::FundingCarry => shaped(
-                            CarryFamily::spcx().draw_set("hidden", count, seed),
-                            tell_regime,
-                            &mut annotations,
-                            &mut regimes,
-                        )?,
-                        Family::WeekendGap => shaped(
-                            WeekendFamily::spcx().draw_set("hidden", count, seed),
-                            tell_regime,
-                            &mut annotations,
-                            &mut regimes,
-                        )?,
-                    };
+                    let generator = generators::generator(&family)
+                        .with_context(|| format!("no scenario generator `{family}`"))?;
+                    let hidden = (generator.hidden)(count, seed, tell_regime)?;
+                    annotations = Some(hidden.annotations);
+                    regimes = hidden.regimes;
+                    let scenarios = hidden.scenarios;
                     (scenarios, Some(hash))
                 }
                 None if sessions.scenarios.is_empty() => {
@@ -1444,31 +1401,6 @@ async fn run() -> Result<()> {
         println!("{output}");
     }
     Ok(())
-}
-
-/// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`
-/// and, when told, the shape as the regime.
-fn shaped<S: serde::Serialize>(
-    drawn: Vec<(Scenario, S)>,
-    tell_regime: bool,
-    annotations: &mut Option<Vec<serde_json::Value>>,
-    regimes: &mut Option<Vec<String>>,
-) -> Result<Vec<Scenario>> {
-    *annotations = Some(
-        drawn
-            .iter()
-            .map(|(_, shape)| serde_json::json!({ "shape": shape }))
-            .collect(),
-    );
-    if tell_regime {
-        *regimes = Some(
-            drawn
-                .iter()
-                .map(|(_, shape)| serde_json::to_string(shape))
-                .collect::<Result<_, _>>()?,
-        );
-    }
-    Ok(drawn.into_iter().map(|(scenario, _)| scenario).collect())
 }
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the

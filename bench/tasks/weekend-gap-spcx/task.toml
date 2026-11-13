@@ -21,6 +21,16 @@ snapshot = "phoenix-spcx-2026-10-29"
 # carry no baseline, and practice grades don't run it.
 practice_reference = false
 
+[metadata.mtx]
+# What the repository's lists are written from (`mtx task sync`).
+generator = "weekend-gap"
+emoji = "🌙"
+market = "Phoenix SPCX perp"
+summary = "reads which weekend flow on the SPCX perp knows where SPCX will open, and holds that gap into the reopen"
+skill = "reads which weekend flow knows where SPCX will open, and holds that gap into the reopen"
+# Lines only the answers hold, for `just leak-audit`.
+leak_needles = ["hold the gap into the reopen"]
+
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
 # reference on the same sessions first: four of its sessions at a time,
