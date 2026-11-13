@@ -49,7 +49,12 @@ use std::{
 };
 
 use axum::{
-    Router, body::Bytes, extract::State, http::StatusCode, response::IntoResponse, routing::post,
+    Router,
+    body::Bytes,
+    extract::{RawQuery, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -202,6 +207,11 @@ struct GuardState {
     log: Mutex<CallLog>,
     /// The scenario's execution faults, if it has any.
     faults: Mutex<Option<FaultState>>,
+    /// The session's router, if it has one: its API is served beside the
+    /// RPC methods.
+    router: Mutex<Option<Arc<crate::router::Router>>>,
+    /// The step the bot's router calls are counted in, and how many.
+    router_calls: Mutex<(u64, u32)>,
 }
 
 impl GuardState {
@@ -215,6 +225,10 @@ impl GuardState {
 
     fn faults(&self) -> std::sync::MutexGuard<'_, Option<FaultState>> {
         self.faults.lock().expect("guard lock")
+    }
+
+    fn router(&self) -> Option<Arc<crate::router::Router>> {
+        self.router.lock().expect("guard lock").clone()
     }
 }
 
@@ -246,11 +260,15 @@ impl Guard {
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
             faults: Mutex::default(),
+            router: Mutex::default(),
+            router_calls: Mutex::default(),
         });
         let host_path = format!("/host/{}", uuid::Uuid::new_v4().simple());
         let app = Router::new()
             .route("/", post(handle))
             .route(&host_path, post(handle_host))
+            .route("/quote", get(handle_quote))
+            .route("/swap-instructions", post(handle_swap_instructions))
             .with_state(state.clone());
         let server = tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, app).await {
@@ -321,6 +339,13 @@ impl Guard {
         }
     }
 
+    /// Serve `router`'s API to the bot from now on: Jupiter's `GET /quote`
+    /// and `POST /swap-instructions` at its URL, and the JSON-RPC methods
+    /// [`ROUTER_METHODS`]. Without a router, neither exists.
+    pub fn set_router(&self, router: Arc<crate::router::Router>) {
+        *self.state.router.lock().expect("guard lock") = Some(router);
+    }
+
     /// What the faults did, if the bot ran under any.
     pub fn faults_report(&self) -> Option<FaultsReport> {
         self.state.faults().as_ref().map(FaultState::report)
@@ -360,6 +385,18 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
             let method = call["method"].as_str().unwrap_or("<missing>");
             *log.methods.entry(method.to_string()).or_default() += 1;
         }
+    }
+    if let (Value::Object(_), Some(router)) = (&request, state.router())
+        && let Some(method) = request["method"]
+            .as_str()
+            .filter(|m| ROUTER_METHODS.contains(m))
+    {
+        let id = request["id"].clone();
+        let params = request["params"].get(0).cloned().unwrap_or(Value::Null);
+        return reply(match router_call(state, &router, method, &params).await {
+            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            Err((code, message)) => error_response(id, code, &message),
+        });
     }
     let refusals: Vec<Value> = calls
         .iter()
@@ -827,6 +864,13 @@ fn refusal_for(state: &GuardState, call: &Value) -> Option<Value> {
     match method {
         Some(_) if !state.allowlist => None,
         Some(method) if ALLOWED_METHODS.contains(&method) => None,
+        Some(method) if ROUTER_METHODS.contains(&method) && state.router().is_some() => {
+            Some(error_response(
+                call["id"].clone(),
+                INVALID_REQUEST,
+                &format!("{method} is answered on its own, not in a batch"),
+            ))
+        }
         Some(method) => Some(error_response(
             call["id"].clone(),
             METHOD_NOT_FOUND,
@@ -838,6 +882,129 @@ fn refusal_for(state: &GuardState, call: &Value) -> Option<Value> {
             "missing method",
         )),
     }
+}
+
+/// The router's JSON-RPC methods: Jupiter's quote and swap instructions,
+/// each taking the same object as its first parameter.
+pub use mtx_kit::ROUTER_METHODS;
+
+/// One router call, counted against [`crate::router::CALLS_PER_STEP`]:
+/// its answer, or a JSON-RPC error code and why.
+async fn router_call(
+    state: &GuardState,
+    router: &crate::router::Router,
+    method: &str,
+    params: &Value,
+) -> std::result::Result<Value, (i64, String)> {
+    {
+        let mut calls = state.router_calls.lock().expect("guard lock");
+        let step = state.step().unwrap_or(NO_STEP);
+        if calls.0 != step {
+            *calls = (step, 0);
+        }
+        calls.1 += 1;
+        if calls.1 > crate::router::CALLS_PER_STEP {
+            return Err((
+                TOO_MANY_REQUESTS,
+                format!(
+                    "more than {} router calls this step",
+                    crate::router::CALLS_PER_STEP
+                ),
+            ));
+        }
+    }
+    let answer = if method == ROUTER_METHODS[0] {
+        router.quote_api(params).await
+    } else {
+        router.swap_instructions_api(params).await
+    };
+    answer.map_err(|e| (INVALID_REQUEST, e))
+}
+
+/// A router call over HTTP, as Jupiter's API answers: the JSON, or 400 with
+/// `{"error": ...}`; 404 in a session without a router.
+async fn router_http(state: &GuardState, method: &str, params: Value) -> axum::response::Response {
+    let Some(router) = state.router() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if state.allowlist {
+        *state.log().methods.entry(method.to_string()).or_default() += 1;
+    }
+    match router_call(state, &router, method, &params).await {
+        Ok(answer) => (StatusCode::OK, axum::Json(answer)).into_response(),
+        Err((code, error)) => {
+            let status = if code == TOO_MANY_REQUESTS {
+                StatusCode::TOO_MANY_REQUESTS
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (status, axum::Json(json!({ "error": error }))).into_response()
+        }
+    }
+}
+
+async fn handle_quote(
+    State(state): State<Arc<GuardState>>,
+    RawQuery(query): RawQuery,
+) -> impl IntoResponse {
+    router_http(
+        &state,
+        ROUTER_METHODS[0],
+        query_params(query.as_deref().unwrap_or("")),
+    )
+    .await
+}
+
+/// A URL query's parameters as a JSON object of strings, `+` and `%XX`
+/// decoded; the last of a repeated name wins.
+fn query_params(query: &str) -> Value {
+    let decode = |text: &str| {
+        let bytes = text.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'+' => out.push(b' '),
+                b'%' if i + 2 < bytes.len() => {
+                    let hex = |b: u8| (b as char).to_digit(16);
+                    match (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                        (Some(high), Some(low)) => {
+                            out.push((high * 16 + low) as u8);
+                            i += 2;
+                        }
+                        _ => out.push(b'%'),
+                    }
+                }
+                byte => out.push(byte),
+            }
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    Value::Object(
+        query
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (decode(name), Value::String(decode(value)))
+            })
+            .collect(),
+    )
+}
+
+async fn handle_swap_instructions(
+    State(state): State<Arc<GuardState>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Ok(body) = serde_json::from_slice::<Value>(&body) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({ "error": "the body is not JSON" })),
+        )
+            .into_response();
+    };
+    router_http(&state, ROUTER_METHODS[1], body).await
 }
 
 fn error_response(id: Value, code: i64, message: &str) -> Value {
@@ -863,6 +1030,8 @@ mod tests {
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
             faults: Mutex::default(),
+            router: Mutex::default(),
+            router_calls: Mutex::default(),
         }
     }
 

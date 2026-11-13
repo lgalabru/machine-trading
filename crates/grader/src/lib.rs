@@ -16,6 +16,7 @@ pub mod phoenix;
 pub mod raw;
 pub mod recipe;
 pub mod replay;
+pub mod router;
 pub mod scenario;
 pub mod session;
 pub mod simulated;

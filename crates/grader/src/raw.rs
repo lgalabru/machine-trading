@@ -966,7 +966,7 @@ pub fn resolve(
 
 /// A v0 message paid by `payer`: it compiles any instructions, or says why
 /// not, where a legacy message panics on too many keys.
-fn compile(
+pub(crate) fn compile(
     payer: Pubkey,
     instructions: &[Instruction],
     tables: &[AddressLookupTableAccount],
@@ -981,7 +981,7 @@ fn compile(
 }
 
 /// A lookup table account's addresses.
-fn lookup_table(key: Pubkey, data: &[u8]) -> Result<AddressLookupTableAccount, String> {
+pub(crate) fn lookup_table(key: Pubkey, data: &[u8]) -> Result<AddressLookupTableAccount, String> {
     let addresses = data
         .get(LOOKUP_TABLE_META..)
         .filter(|rest| rest.len() % 32 == 0)
@@ -1136,7 +1136,7 @@ fn view<T: bytemuck::Pod + Copy>(result: &Value, kind: &'static str) -> Result<T
 }
 
 /// The compute budget's `SetComputeUnitLimit`.
-fn compute_limit(units: u32) -> Instruction {
+pub(crate) fn compute_limit(units: u32) -> Instruction {
     let mut data = vec![2];
     data.extend_from_slice(&units.to_le_bytes());
     Instruction {

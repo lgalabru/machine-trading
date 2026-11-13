@@ -613,7 +613,9 @@ impl Scenario {
     /// same slot every time). Onboarding takers takes longer, and longer
     /// still under load.
     pub fn setup_slots(&self) -> u64 {
-        if !self.tape.is_empty() {
+        // A router's lookup table is made and extended during setup too.
+        let routed = self.spot.as_ref().is_some_and(|s| s.router.is_some());
+        if !self.tape.is_empty() || routed {
             TAPE_SETUP_SLOTS
         } else if self.offhours.is_some() {
             OFFHOURS_SETUP_SLOTS
@@ -704,7 +706,8 @@ pub const SETUP_SLOTS: u64 = 60;
 /// verifier grades the reference four sessions at a time) that runs past
 /// 60 slots.
 pub const OFFHOURS_SETUP_SLOTS: u64 = 240;
-/// A session that also onboards a taker tape.
+/// A session that also onboards a taker tape, or makes a router's lookup
+/// table.
 pub const TAPE_SETUP_SLOTS: u64 = 600;
 
 /// The largest part of an at-once move, in percent of the level it starts
