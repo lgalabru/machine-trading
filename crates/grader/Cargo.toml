@@ -23,7 +23,10 @@ serde_json.workspace = true
 # hashes a snapshot recipe.
 sha2 = "0.10"
 solana-keypair.workspace = true
-solana-pubkey.workspace = true
+# Raw sends (src/raw.rs): program addresses, v0 messages with lookup
+# tables, and the wire encoding their simulations take.
+solana-message = "4"
+solana-pubkey = { workspace = true, features = ["curve25519"] }
 solana-rpc-client.workspace = true
 solana-rpc-client-api.workspace = true
 solana-signer.workspace = true
@@ -36,6 +39,7 @@ toml = "1"
 futures.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+wincode = "0.6"
 # Strategies built as wasm components (docs/rfd/0002-wasm-strategies.md).
 wasmtime = "50.0.1"
 wasmtime-wasi = "50.0.1"

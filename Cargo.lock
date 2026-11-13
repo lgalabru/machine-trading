@@ -4960,6 +4960,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-raw-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-reference"
 version = "0.1.0"
 dependencies = [
@@ -5079,6 +5086,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "solana-keypair",
+ "solana-message 4.6.0",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
  "solana-rpc-client-api",
@@ -5092,6 +5100,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
+ "wincode",
 ]
 
 [[package]]

@@ -101,17 +101,21 @@ jobs:
           cargo test -p mtx-kit --all-features
       - name: Strategy components
         # The starter and the references build for wasm32-wasip2 too, the
-        # flash-crash reference's component loads in the grader's host, and
-        # the probe's sheet and market round-trip through the interface.
+        # flash-crash reference's component loads in the grader's host, the
+        # probe's sheet and market round-trip through the interface, and the
+        # raw-send probe is answered in a session as its scenario allows.
         run: |
-          for bot in starter printer first-strategy reference maker carry weekend wit-probe; do
+          for bot in starter printer first-strategy reference maker carry weekend wit-probe raw-probe; do
             cargo clippy -p "mtx-bot-$bot" --lib --target wasm32-wasip2 -- -D warnings
           done
           just --justfile bots/starter/Justfile build
           just --justfile bots/reference/Justfile build
           just --justfile bots/wit-probe/Justfile build
+          just --justfile bots/raw-probe/Justfile build
           MTX_TEST_WASM="$PWD/bots/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-grader wasm::tests -- --ignored
+          MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
+            cargo test -p mtx-grader raw::tests -- --ignored
 
   # The quality bar's cheap checks (`mtx gates --fast`: task files, a
   # one-set ladder) for each task a pull request or a push to main changes;
