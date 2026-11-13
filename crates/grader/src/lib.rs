@@ -25,6 +25,7 @@ pub mod replay;
 pub mod risk;
 pub mod scenario;
 pub mod scenario_v2;
+pub mod scoring_v2;
 pub mod session;
 pub mod simulated;
 pub mod snapshot;

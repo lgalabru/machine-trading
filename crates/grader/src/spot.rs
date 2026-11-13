@@ -1653,6 +1653,7 @@ mod tests {
             }),
             stake: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
         }
     }
 

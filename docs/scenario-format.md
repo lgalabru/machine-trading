@@ -33,7 +33,13 @@ docs together.
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
+
+
+`informed_pnl_usd` is what the task's informed bot makes on the scenario
+(`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
+v2`), as `reference_pnl_usd` is its 0.5. Without it on every scenario,
+scoring v2 falls back to a share of the hindsight bound, flagged as a proxy.
 
 Optional sections are left out when empty. Unknown fields are errors in
 every section.
