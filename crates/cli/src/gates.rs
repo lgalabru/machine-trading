@@ -1177,6 +1177,7 @@ mod tests {
             informed: informed.iter().map(|s| s.to_string()).collect(),
             non_reading: non_reading.iter().map(|s| s.to_string()).collect(),
             min_ratio: None,
+            fast_seed: None,
         }
     }
 
