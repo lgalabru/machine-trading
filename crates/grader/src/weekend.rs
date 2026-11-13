@@ -430,6 +430,7 @@ impl WeekendFamily {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            raw_sends: None,
         };
         (scenario, shape)
     }
