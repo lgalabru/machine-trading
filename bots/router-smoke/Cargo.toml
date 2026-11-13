@@ -1,0 +1,17 @@
+# No workspace inheritance, as the other bots: it builds against the SDK's
+# layout in the task image too.
+[package]
+name = "mtx-bot-router-smoke"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# A strategy component: `just build` builds it for wasm32-wasip2 into
+# bot.wasm.
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }

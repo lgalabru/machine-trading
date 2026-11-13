@@ -4981,6 +4981,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-router-api-smoke"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "mtx-kit",
+ "serde_json",
+ "solana-message 4.6.0",
+ "solana-rpc-client-api",
+ "solana-transaction 4.3.0",
+]
+
+[[package]]
+name = "mtx-bot-router-smoke"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-spot-smoke"
 version = "0.1.0"
 dependencies = [
