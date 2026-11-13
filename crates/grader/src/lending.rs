@@ -195,7 +195,11 @@ impl Lending {
         self.reserves.iter().map(|s| instrument(s)).collect()
     }
 
-    pub fn validate(&self, scenario: &Scenario) -> std::result::Result<(), String> {
+    /// The section on its own: known reserves, listed once, and a wallet,
+    /// opening, borrowers and liquidators that use them sensibly. What ties
+    /// it to the rest of the scenario is checked there (see
+    /// [`crate::scenario_v2::ScenarioV2::validate`]).
+    pub fn validate(&self) -> std::result::Result<(), String> {
         if self.reserves.is_empty() {
             return Err("lending: no reserves".into());
         }
@@ -275,73 +279,31 @@ impl Lending {
         if self.bound_usd.is_some_and(|b| !(b.is_finite() && b > 0.0)) {
             return Err("lending: bound_usd must be positive".into());
         }
-        let mut wanted = self.instruments();
-        let mut universe: Vec<InstrumentRef> = scenario
-            .mandate
-            .universe
-            .iter()
-            .map(|a| a.instrument.clone())
-            .collect();
-        wanted.sort();
-        universe.sort();
-        if wanted != universe {
-            return Err("mandate: the universe must be exactly the lending reserves".into());
-        }
-        if scenario.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if !scenario.path.is_empty()
-            || scenario.making.is_some()
-            || scenario.offhours.is_some()
-            || scenario.funding.is_some()
-            || scenario.fair_path.is_some()
-            || !scenario.tape.is_empty()
-            || scenario.turn_data.is_some()
-            || scenario.order.is_some()
-            || scenario.participation.is_some()
-            || scenario.net.is_some()
-        {
-            return Err(
-                "lending: a lending scenario moves prices through its oracles only, and has no \
-                 path, market making, tape, order or spot scoring"
-                    .into(),
-            );
-        }
-        if scenario.duration_slots == 0 {
-            return Err("lending: the session has no slots".into());
-        }
-        if let Some(oracles) = &scenario.oracles
-            && let Some(feed) = oracles
-                .feeds
-                .iter()
-                .find(|f| !matches!(f.source, Source::Scope(_)))
-        {
-            return Err(format!(
-                "oracles: {} isn't Scope's; Kamino's reserves read Scope only",
-                feed.name
-            ));
-        }
-        let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
-        for (i, warp) in scenario.warps.iter().enumerate() {
-            if warp.step == 0 || warp.step >= steps {
-                return Err(format!("warps: step {} is outside 1..{steps}", warp.step));
-            }
-            if warp.slots == 0 || warp.slots > MAX_WARP_SLOTS {
-                return Err(format!("warps: a jump is 1 to {MAX_WARP_SLOTS} slots"));
-            }
-            if i > 0 && scenario.warps[i - 1].step >= warp.step {
-                return Err("warps: steps increase".into());
-            }
-        }
-        if !scenario.warps.is_empty() && scenario.faults.is_some() {
-            return Err("warps: a session with clock jumps has no execution faults".into());
-        }
         Ok(())
     }
 }
 
+/// A scenario's clock jumps: inside the session's `duration_slots`, after
+/// its first step, in order, and each a positive jump of at most
+/// [`MAX_WARP_SLOTS`].
+pub fn validate_warps(warps: &[Warp], duration_slots: u64) -> std::result::Result<(), String> {
+    let steps = duration_slots.div_ceil(SLOTS_PER_STEP);
+    for (i, warp) in warps.iter().enumerate() {
+        if warp.step == 0 || warp.step >= steps {
+            return Err(format!("warps: step {} is outside 1..{steps}", warp.step));
+        }
+        if warp.slots == 0 || warp.slots > MAX_WARP_SLOTS {
+            return Err(format!("warps: a jump is 1 to {MAX_WARP_SLOTS} slots"));
+        }
+        if i > 0 && warps[i - 1].step >= warp.step {
+            return Err("warps: steps increase".into());
+        }
+    }
+    Ok(())
+}
+
 /// What a lending session reports beyond the common fields.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LendingReport {
     /// The bot's supply and debt at each reserve, at the start and the end.
     pub start: Vec<ReserveHolding>,
@@ -354,16 +316,16 @@ pub struct LendingReport {
     /// The bot's liquidations that landed.
     pub liquidations: u32,
     /// The synthetic borrowers, as they started.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub borrowers: Vec<BorrowerRecord>,
     /// What the actors did: borrowers' reactions and the liquidators'
     /// liquidations, in the order they happened.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActorAction>,
 }
 
 /// One reserve of the account.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReserveHolding {
     pub instrument: InstrumentRef,
     pub supplied: f64,
@@ -373,22 +335,24 @@ pub struct ReserveHolding {
     pub wallet: f64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BorrowerRecord {
     pub obligation: String,
     pub collateral_usd: f64,
     pub health: f64,
-    pub policy: &'static str,
+    #[serde(deserialize_with = "session::static_name")]
+    pub policy: session::StaticName,
 }
 
 /// Something an actor did.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActorAction {
     pub step: u64,
     /// `kamino-liquidator/0`, `kamino-borrower/3`.
     pub by: String,
     /// `liquidate`, `top-up`, `repay`.
-    pub action: &'static str,
+    #[serde(deserialize_with = "session::static_name")]
+    pub action: session::StaticName,
     pub obligation: String,
     /// Units of the asset repaid or deposited.
     pub amount: f64,
@@ -917,7 +881,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         .collect();
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    let workdir = SessionDir::create(&bot, opts.slot.map(|slot| BOT_USERS[slot]))?;
     let mut slot = rpc.get_slot()?;
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
@@ -2079,6 +2043,34 @@ mod tests {
         ]);
         assert_eq!(gaps, vec![(6, 106), (110, 160)]);
         assert_eq!(added, 150);
+    }
+
+    /// A grade rescored from its report reads the lending section back.
+    #[test]
+    fn a_lending_report_reads_back() {
+        let report = LendingReport {
+            liquidations: 1,
+            actions: vec![ActorAction {
+                step: 3,
+                by: "kamino-liquidator/0".into(),
+                action: "liquidate",
+                obligation: Pubkey::new_unique().to_string(),
+                amount: 2.5,
+                error: None,
+            }],
+            ..LendingReport::default()
+        };
+        let text = serde_json::to_string(&report).unwrap();
+        assert_eq!(
+            serde_json::from_str::<LendingReport>(&text).unwrap(),
+            report
+        );
+        let empty = serde_json::to_string(&LendingReport::default()).unwrap();
+        assert!(!empty.contains("actions"));
+        assert_eq!(
+            serde_json::from_str::<LendingReport>(&empty).unwrap(),
+            LendingReport::default()
+        );
     }
 
     #[test]

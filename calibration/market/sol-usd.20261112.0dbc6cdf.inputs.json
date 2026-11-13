@@ -1,0 +1,940 @@
+[
+ {
+  "name": "binance/SOLUSDT-1m-2026-05.zip",
+  "bytes": 1798424,
+  "fetched_at": "2026-11-11T21:03:41+00:00",
+  "sha256": "e5be21fb183cf534a975db77567398f4b1a567c9ed24738bfafa409b7876c6b3",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-05.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-05.zip.CHECKSUM",
+  "bytes": 88,
+  "fetched_at": "2026-11-11T21:03:42+00:00",
+  "sha256": "938f239319a688cac3656c9e9c82518d797fae6a1abab623f774c24ae453e4d6",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-05.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-06.zip",
+  "bytes": 1782234,
+  "fetched_at": "2026-11-11T21:03:43+00:00",
+  "sha256": "e165365110140912f07d5e250d0e7511b1b37c93db46ce8b7bb1a2ddf06c4b04",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-06.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-06.zip.CHECKSUM",
+  "bytes": 88,
+  "fetched_at": "2026-11-11T21:03:44+00:00",
+  "sha256": "4090f20a8d433554bbd84155272720ecf89ad1fa6bb16f8231c7fafc993cf09b",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-06.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-07.zip",
+  "bytes": 1775533,
+  "fetched_at": "2026-11-11T21:03:45+00:00",
+  "sha256": "7980195ca8f511ca8e11d7903c0031f19cd274c034fae7f54768bf235ef64470",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-07.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-07.zip.CHECKSUM",
+  "bytes": 88,
+  "fetched_at": "2026-11-11T21:03:46+00:00",
+  "sha256": "54e05b1c0a1b8636615e5c19caea3b54b50b3a06734a4aeed80a842b911cfa38",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-07.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-08.zip",
+  "bytes": 1784491,
+  "fetched_at": "2026-11-11T21:03:47+00:00",
+  "sha256": "138412edb2c86df6109e0800b7b7399c6f7d2b4483d0e35ddf5921e70c0d08b6",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-08.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-08.zip.CHECKSUM",
+  "bytes": 88,
+  "fetched_at": "2026-11-11T21:03:47+00:00",
+  "sha256": "743424fbfeba0839aa7d616bffad936d80302fe0cf7a5532fd0d3fe5386c9f28",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-08.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-09.zip",
+  "bytes": 1789221,
+  "fetched_at": "2026-11-11T21:03:49+00:00",
+  "sha256": "c18c258e478a84c3d87e88e2e16f17e5675bf087cb11bf789c0ae717c875ee0a",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-09.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-09.zip.CHECKSUM",
+  "bytes": 88,
+  "fetched_at": "2026-11-11T21:03:49+00:00",
+  "sha256": "d670386ee74d670598b0075b448b848124fda7c6ad385a25bd61545c8aeb945d",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-09.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-10.zip",
+  "bytes": 1816925,
+  "fetched_at": "2026-11-11T21:03:51+00:00",
+  "sha256": "9e72021632390836accf41e4ae2746d7aae79327404997fcaeaf3740a75a3f96",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-10.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1m-2026-10.zip.CHECKSUM",
+  "bytes": 88,
+  "fetched_at": "2026-11-11T21:03:51+00:00",
+  "sha256": "f28b80274d1970254bf0da8f62155efde7e5f17047d55d8b518a34008082184b",
+  "url": "https://data.binance.vision/data/spot/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-10.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-03.zip",
+  "bytes": 1411953,
+  "fetched_at": "2026-11-11T21:03:29+00:00",
+  "sha256": "91148624e8aea8929ac0c79e0cc8af3fccd93d14ac230ce5f99cbfe30e7d0736",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-03.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-03.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:29+00:00",
+  "sha256": "fef09a1a0b7340fa3a2240dcf1eeb354848011d1e0cd888cd7cd45808fe89e1e",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-03.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-04.zip",
+  "bytes": 1728344,
+  "fetched_at": "2026-11-11T21:03:31+00:00",
+  "sha256": "e41f357b415b60889159a482ffb90994ebee4ea7155740f2257b1cd664c93589",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-04.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-04.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:31+00:00",
+  "sha256": "eee668f6a81a3951cbfda1d0151e15150e99ded09c829e8e77dfcf580eb38108",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-04.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-05.zip",
+  "bytes": 1729010,
+  "fetched_at": "2026-11-11T21:03:32+00:00",
+  "sha256": "167786d6ca49940a14bc4782557a009eb99b4a728357d36cfbe507979d5060ec",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-05.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-05.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:33+00:00",
+  "sha256": "e94393b95745713bdb8502d7d434633a3f14b1916f6c764ea32b48756e0dc18c",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-05.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-06.zip",
+  "bytes": 1554372,
+  "fetched_at": "2026-11-11T21:03:34+00:00",
+  "sha256": "2154e63e381b8eaaa3b8aeb932527c5131e91cf959b1243a29b32800cf5ae11c",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-06.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-06.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:35+00:00",
+  "sha256": "77009486b0665aa55edb56f97c2f9c34ded971eb5b9c35e8af877fa9f60447d3",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-06.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-07.zip",
+  "bytes": 1174636,
+  "fetched_at": "2026-11-11T21:03:36+00:00",
+  "sha256": "1643b1097fec4412922595e2514035452d0f151a8593e13612f2e42f0c8a1a5e",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-07.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-07.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:36+00:00",
+  "sha256": "5aba2daa465db0c6c9b72b42a5cfb65fc0dc0763e0ed640276d06a4395032f76",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-07.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-08.zip",
+  "bytes": 1288908,
+  "fetched_at": "2026-11-11T21:03:38+00:00",
+  "sha256": "d49844eabd202ee501ed7f012d4d2fa28f1a2f3daab8f2aa5771671761c0341a",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-08.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-08.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:38+00:00",
+  "sha256": "5b131b902634cd6ec51134cfd2dafe90fd40a116f4bc6bf9ddd00dc6ab6909d8",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-08.zip.CHECKSUM"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-09.zip",
+  "bytes": 1554155,
+  "fetched_at": "2026-11-11T21:03:39+00:00",
+  "sha256": "a86aefca290d44b6ae1fc9337794e88d1181a0f4517d25e54cb796058b0e519c",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-09.zip"
+ },
+ {
+  "name": "binance/SOLUSDT-1s-2026-11-09.zip.CHECKSUM",
+  "bytes": 91,
+  "fetched_at": "2026-11-11T21:03:40+00:00",
+  "sha256": "bb0017e526d3657bc5da0df838e7df639633bbacb63dae3ff39aacba094c4387",
+  "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1s/SOLUSDT-1s-2026-11-09.zip.CHECKSUM"
+ },
+ {
+  "name": "jito/stake_pool_stats_2026-08-01_2026-11-10.json",
+  "bytes": 27229,
+  "fetched_at": "2026-11-11T21:11:43+00:00",
+  "sha256": "670daa5f6ecc8ca2fe51b01a946086f4630dd5e9b08b9534f3dd43534430f72a",
+  "url": "https://kobe.mainnet.jito.network/api/v1/stake_pool_stats"
+ },
+ {
+  "name": "jito/tip_floor.json",
+  "bytes": 310,
+  "fetched_at": "2026-11-11T21:11:43+00:00",
+  "sha256": "0c28bd7ab94445781d0f6175dc249b9642ddb53e96ef28bfe43787592b25605b",
+  "url": "https://bundles.jito.wtf/api/v1/bundles/tip_floor"
+ },
+ {
+  "name": "jupiter/buy_1.json",
+  "bytes": 1042,
+  "fetched_at": "2026-11-11T21:05:16+00:00",
+  "sha256": "3b4f5696bd24d353e0a07afc5942b977b85635234900897cff5826d244a006ad",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&outputMint=So11111111111111111111111111111111111111112&amount=84881547&slippageBps=100"
+ },
+ {
+  "name": "jupiter/buy_10.json",
+  "bytes": 1079,
+  "fetched_at": "2026-11-11T21:05:16+00:00",
+  "sha256": "f6d86510d806275ad7def0ffe49a517a5d630d66be9d6eea98feb388fd2f2e4c",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&outputMint=So11111111111111111111111111111111111111112&amount=848815470&slippageBps=100"
+ },
+ {
+  "name": "jupiter/buy_100.json",
+  "bytes": 1395,
+  "fetched_at": "2026-11-11T21:05:17+00:00",
+  "sha256": "b0e9d7c029cf313628729638a04a82476de35531e41d723e83f56fc25a4100a2",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&outputMint=So11111111111111111111111111111111111111112&amount=8488154699&slippageBps=100"
+ },
+ {
+  "name": "jupiter/buy_1000.json",
+  "bytes": 1723,
+  "fetched_at": "2026-11-11T21:05:17+00:00",
+  "sha256": "20a03b6fc84be0276fc52dfe4c46b795dabd186a9e441d971fabf447e31dadfa",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&outputMint=So11111111111111111111111111111111111111112&amount=84881546999&slippageBps=100"
+ },
+ {
+  "name": "jupiter/buy_10000.json",
+  "bytes": 2278,
+  "fetched_at": "2026-11-11T21:05:30+00:00",
+  "sha256": "c7990246f4b0d2d185d1a818690033b146bad0b82648c5bd9226c5b226f6b7ac",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&outputMint=So11111111111111111111111111111111111111112&amount=848815470000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/buy_50000.json",
+  "bytes": 2074,
+  "fetched_at": "2026-11-11T21:05:30+00:00",
+  "sha256": "627a6368cc12d8ba5bfda9ab2ded1b261f059d84589fde864cd4d29bf71e6124",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&outputMint=So11111111111111111111111111111111111111112&amount=4244077349999&slippageBps=100"
+ },
+ {
+  "name": "jupiter/jitosol_sell_100.json",
+  "bytes": 1097,
+  "fetched_at": "2026-11-11T21:05:35+00:00",
+  "sha256": "f4847fb209ba0b7aee5fba9e07442c85d84f9649621c398dc11cb80b9c8f2782",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn&outputMint=So11111111111111111111111111111111111111112&amount=100000000000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/sell_1.json",
+  "bytes": 1031,
+  "fetched_at": "2026-11-11T21:05:01+00:00",
+  "sha256": "24d0e460be8388dd642f595b92189358efec46eb39c5b75930f18a350cf64cd1",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/sell_10.json",
+  "bytes": 1070,
+  "fetched_at": "2026-11-11T21:05:01+00:00",
+  "sha256": "14f336c3554840da74c9045bf9f90f14073dd040018216db8acb6f3ac70722f7",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=10000000000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/sell_100.json",
+  "bytes": 1359,
+  "fetched_at": "2026-11-11T21:05:02+00:00",
+  "sha256": "b2f6fc074057ae1dbf3e816d327f8c423cb61a64df853a01539fecb9915f10e6",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=100000000000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/sell_1000.json",
+  "bytes": 1395,
+  "fetched_at": "2026-11-11T21:05:02+00:00",
+  "sha256": "3b44350d2fe47d52606af3ea2f0ca363458705bf3f559528f0f5c8ade0952cc9",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/sell_10000.json",
+  "bytes": 1728,
+  "fetched_at": "2026-11-11T21:05:03+00:00",
+  "sha256": "f4e7d146192327b5498f812cff5534a06d51e72cfdb2f519e8a54b7e97862570",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=10000000000000&slippageBps=100"
+ },
+ {
+  "name": "jupiter/sell_50000.json",
+  "bytes": 1904,
+  "fetched_at": "2026-11-11T21:05:15+00:00",
+  "sha256": "978e090400de6c3f879334cdede4e21f6d10f5eb0a532f340c319816c0e920d5",
+  "url": "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=50000000000000&slippageBps=100"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1791763200_1791823200.json",
+  "bytes": 229890,
+  "fetched_at": "2026-11-11T21:04:25+00:00",
+  "sha256": "6323aeac40ae61031a82d6f67eaa18923a5341a2ffd846576fef2c29fc4e84c3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1791763200000&endTime=1791823200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1791823200_1791883200.json",
+  "bytes": 231154,
+  "fetched_at": "2026-11-11T21:04:25+00:00",
+  "sha256": "d688108b26f0cefaad3627b1208ccf42b792b2f4166899b584e8c14805335398",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1791823200000&endTime=1791883200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1791883200_1791943200.json",
+  "bytes": 228572,
+  "fetched_at": "2026-11-11T21:04:26+00:00",
+  "sha256": "1ecd7fb6ab89ce4dea3ffdc2a7b10f55e995f36043902938370669d7f6a7978f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1791883200000&endTime=1791943200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1791943200_1792003200.json",
+  "bytes": 234461,
+  "fetched_at": "2026-11-11T21:04:27+00:00",
+  "sha256": "a8568c238ead199f65f10080a7fe51c9eb72be6cbc432fca705e657c0de3c7bf",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1791943200000&endTime=1792003200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792003200_1792063200.json",
+  "bytes": 228090,
+  "fetched_at": "2026-11-11T21:04:27+00:00",
+  "sha256": "da60fe32cd00a17e9bb8a88d74967b54e3e763a2123af34be72d8fec69a6ccb1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792003200000&endTime=1792063200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792063200_1792123200.json",
+  "bytes": 228206,
+  "fetched_at": "2026-11-11T21:04:28+00:00",
+  "sha256": "9950617c62f4588fc075e61dcb76962196b3e29f298aa4af94badb3f13de4bda",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792063200000&endTime=1792123200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792123200_1792183200.json",
+  "bytes": 228295,
+  "fetched_at": "2026-11-11T21:04:29+00:00",
+  "sha256": "189c3c870cf8ce7e2b371542cd3d36f121139c9ee1f2023a4c5b47778d5109a4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792123200000&endTime=1792183200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792183200_1792243200.json",
+  "bytes": 231683,
+  "fetched_at": "2026-11-11T21:04:30+00:00",
+  "sha256": "d05d724cfc57f6dd64bff7903ddade89beeb689f8a8097e711411af32f950e3d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792183200000&endTime=1792243200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792243200_1792303200.json",
+  "bytes": 232786,
+  "fetched_at": "2026-11-11T21:04:31+00:00",
+  "sha256": "a1af99abd7a753685e1817dd44e16e3e62f6382e77b069bade640673a49d1ddd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792243200000&endTime=1792303200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792303200_1792363200.json",
+  "bytes": 227915,
+  "fetched_at": "2026-11-11T21:04:31+00:00",
+  "sha256": "77f7fa305e4bb5b0cb72ad19764afa92b84d3b8775e8787bf43ab3879c112451",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792303200000&endTime=1792363200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792363200_1792423200.json",
+  "bytes": 229366,
+  "fetched_at": "2026-11-11T21:04:32+00:00",
+  "sha256": "5d823beb6aeeb3d8769dbdd4a2f66442794e92d537c0f06971edac0d0190d111",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792363200000&endTime=1792423200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792423200_1792483200.json",
+  "bytes": 230174,
+  "fetched_at": "2026-11-11T21:04:33+00:00",
+  "sha256": "8248684979fcfe33c3537ecc6ff3d6e970249d5717abc8723c86dd51c0632178",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792423200000&endTime=1792483200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792483200_1792543200.json",
+  "bytes": 224114,
+  "fetched_at": "2026-11-11T21:04:34+00:00",
+  "sha256": "8a57881b89643e6f21ef58199a41586eb661dc50e29f5a17980c9f3e6d51b2de",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792483200000&endTime=1792543200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792543200_1792603200.json",
+  "bytes": 236653,
+  "fetched_at": "2026-11-11T21:04:34+00:00",
+  "sha256": "b93a48271d8736998713b6d2a20d32f216c7e46bfd8bed681335276cde482da8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792543200000&endTime=1792603200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792603200_1792663200.json",
+  "bytes": 232210,
+  "fetched_at": "2026-11-11T21:04:35+00:00",
+  "sha256": "0ff36d4ef5bd6cd9f6f797e08f925c7fb5e573e07a7251f78dbf496a08309b99",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792603200000&endTime=1792663200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792663200_1792723200.json",
+  "bytes": 232743,
+  "fetched_at": "2026-11-11T21:04:36+00:00",
+  "sha256": "c6b9fbdb16019b5f05240657d477b4e57dd39c0c6bfa7cb88c14eb7fb1bd2211",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792663200000&endTime=1792723200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792723200_1792783200.json",
+  "bytes": 232387,
+  "fetched_at": "2026-11-11T21:04:37+00:00",
+  "sha256": "868345c0d4d65fafd10018c1d020bc379bd59fb4400cacad2cf90c0317db5a65",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792723200000&endTime=1792783200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792783200_1792843200.json",
+  "bytes": 230310,
+  "fetched_at": "2026-11-11T21:04:38+00:00",
+  "sha256": "c72598b8d8219da8e85775a22c877d9c19436e5795af926a45a932b8a1e819a4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792783200000&endTime=1792843200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792843200_1792903200.json",
+  "bytes": 230863,
+  "fetched_at": "2026-11-11T21:04:38+00:00",
+  "sha256": "368f183fc77eb837b1cc18241174395ab4d445f21bc872ad68b0f6cf71ff38e1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792843200000&endTime=1792903200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792903200_1792963200.json",
+  "bytes": 231000,
+  "fetched_at": "2026-11-11T21:04:39+00:00",
+  "sha256": "fb76c6aaae2bc52e3e631904de56f03b1ee4b10f5e0f25cc759f0db9addea379",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792903200000&endTime=1792963200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1792963200_1793023200.json",
+  "bytes": 231987,
+  "fetched_at": "2026-11-11T21:04:40+00:00",
+  "sha256": "f2420519194ee33413fbe4fb275982a98c8d323aac8b34a6087c561121f9ec7d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1792963200000&endTime=1793023200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793023200_1793083200.json",
+  "bytes": 233150,
+  "fetched_at": "2026-11-11T21:04:41+00:00",
+  "sha256": "4b43703a0cc7de5d34785cc0563818be70a6ea22c2312073654ea78f0543b7ad",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793023200000&endTime=1793083200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793083200_1793143200.json",
+  "bytes": 242226,
+  "fetched_at": "2026-11-11T21:04:41+00:00",
+  "sha256": "ae433ade59021975f38b6a039fbb8c72ff64d19de6ea62a2780a864d117913e0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793083200000&endTime=1793143200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793143200_1793203200.json",
+  "bytes": 241825,
+  "fetched_at": "2026-11-11T21:04:42+00:00",
+  "sha256": "d3d79add6d950b45c0962408b21012e845b3351f83b97ea3807492ad5400bf58",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793143200000&endTime=1793203200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793203200_1793263200.json",
+  "bytes": 225740,
+  "fetched_at": "2026-11-11T21:04:43+00:00",
+  "sha256": "03cebf87040bbbf4c39379c6c9d2ab883e9c5d967e31495ce69e2164a94164d0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793203200000&endTime=1793263200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793263200_1793323200.json",
+  "bytes": 224413,
+  "fetched_at": "2026-11-11T21:04:44+00:00",
+  "sha256": "8829979cfb16d6ba83f0db6001f85df9a1b44dcb18bc7bbccdcc3eda39558a1a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793263200000&endTime=1793323200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793323200_1793383200.json",
+  "bytes": 222282,
+  "fetched_at": "2026-11-11T21:04:44+00:00",
+  "sha256": "7eddc1149161a2c680ec7a8dcea1c5a0711e041cdbda9b196f12c7025935f2f5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793323200000&endTime=1793383200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793383200_1793443200.json",
+  "bytes": 221416,
+  "fetched_at": "2026-11-11T21:04:45+00:00",
+  "sha256": "8e39f354daa4511dd93554aa373aed0094a4854e1e3aea4af853f1383f8dac22",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793383200000&endTime=1793443200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793443200_1793503200.json",
+  "bytes": 222324,
+  "fetched_at": "2026-11-11T21:04:46+00:00",
+  "sha256": "dfa9b47b18cd27b36da8db39f82bf24a94e0bf4143791d47943aa6fd3387a1f5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793443200000&endTime=1793503200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793503200_1793563200.json",
+  "bytes": 221232,
+  "fetched_at": "2026-11-11T21:04:46+00:00",
+  "sha256": "252b7cfec85116726fef69f7e132137d5fa926062b2932ddb19b04be7502474c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793503200000&endTime=1793563200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793563200_1793623200.json",
+  "bytes": 220279,
+  "fetched_at": "2026-11-11T21:04:47+00:00",
+  "sha256": "25a1312722d160c1e0f08d46575a045d804be9e3f0dafcb0617afbf2496d02fd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793563200000&endTime=1793623200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793623200_1793683200.json",
+  "bytes": 227407,
+  "fetched_at": "2026-11-11T21:04:50+00:00",
+  "sha256": "ed25925f945fc9c9b9aba5c025629fea407542768cef4905bac70e4343f4219b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793623200000&endTime=1793683200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793683200_1793743200.json",
+  "bytes": 226634,
+  "fetched_at": "2026-11-11T21:04:51+00:00",
+  "sha256": "244e6ff180e99aeeda61b13d5947ce7257001b1eeccf3810d8275bdcd40cc193",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793683200000&endTime=1793743200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793743200_1793803200.json",
+  "bytes": 233623,
+  "fetched_at": "2026-11-11T21:04:51+00:00",
+  "sha256": "2576667b9d383bd2653f59d34de3e05f2b2e24715585006b18f55b0df81121e3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793743200000&endTime=1793803200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793803200_1793863200.json",
+  "bytes": 221352,
+  "fetched_at": "2026-11-11T21:04:52+00:00",
+  "sha256": "c98cf168c821f3647bcdaa52561fb28ab1fdd2ce50d468586a252c3140c2dd95",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793803200000&endTime=1793863200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793863200_1793923200.json",
+  "bytes": 220658,
+  "fetched_at": "2026-11-11T21:04:53+00:00",
+  "sha256": "0a3f549f7885ffb9610f1997dcc4aab8618c63538d5e4bed716a4b66f166a3b1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793863200000&endTime=1793923200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793923200_1793983200.json",
+  "bytes": 228322,
+  "fetched_at": "2026-11-11T21:04:53+00:00",
+  "sha256": "253a6eee93766340c6bce01ab1008fb0eaa2c3da02be46908d7d7d89199270d1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793923200000&endTime=1793983200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1793983200_1794043200.json",
+  "bytes": 210233,
+  "fetched_at": "2026-11-11T21:04:54+00:00",
+  "sha256": "463cfae8f93b61a1bc68c27dbcfd8accf462d7b8e9b019f03ac3d1884fcccde9",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1793983200000&endTime=1794043200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1794043200_1794103200.json",
+  "bytes": 215330,
+  "fetched_at": "2026-11-11T21:04:57+00:00",
+  "sha256": "c8e8a6c204e82becedd5957ba3a6ec5adb9ca0b9e8abf827c2de4d73f9af672a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1794043200000&endTime=1794103200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1794103200_1794163200.json",
+  "bytes": 226381,
+  "fetched_at": "2026-11-11T21:04:57+00:00",
+  "sha256": "b8331938682e72b14cffcacd79bd100c4790015537b87bf638e4fc260bb404d5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1794103200000&endTime=1794163200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1794163200_1794223200.json",
+  "bytes": 215804,
+  "fetched_at": "2026-11-11T21:04:58+00:00",
+  "sha256": "7023420d10ddb6d68290a8e0c18d7757e190e6b6f22f546910f61fc84f03c9fa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1794163200000&endTime=1794223200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1794223200_1794283200.json",
+  "bytes": 213718,
+  "fetched_at": "2026-11-11T21:04:59+00:00",
+  "sha256": "f440bafd2625b0e26eed85e0a5a51a75735b47acdf72fd9a298d4b2d16e1779e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1794223200000&endTime=1794283200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1794283200_1794343200.json",
+  "bytes": 214196,
+  "fetched_at": "2026-11-11T21:05:00+00:00",
+  "sha256": "8e49db66fd0814debb400c204285fd273f54c54314dfdd2f9f4ed72b7b06860c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1794283200000&endTime=1794343200000"
+ },
+ {
+  "name": "phoenix/candles_SOL_1m_1794343200_1794355200.json",
+  "bytes": 42030,
+  "fetched_at": "2026-11-11T21:05:01+00:00",
+  "sha256": "d4bc7fc6be2005f6aa645e050553d3ae69f0547be35396be0b55a14ff99e804a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SOL&timeframe=1m&startTime=1794343200000&endTime=1794355200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1791763200_1791823200.json",
+  "bytes": 218788,
+  "fetched_at": "2026-11-11T21:03:52+00:00",
+  "sha256": "7bd321b080b8d19210f557d279838c9bea15b1a89f3cd9791fbd754bcdba2c5a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1791763200000&endTime=1791823200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1791823200_1791883200.json",
+  "bytes": 217225,
+  "fetched_at": "2026-11-11T21:03:53+00:00",
+  "sha256": "bd1e7569818794f2daba7f1f86c1853f97bb1689ef015ff2358a1862994b40fb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1791823200000&endTime=1791883200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1791883200_1791943200.json",
+  "bytes": 219824,
+  "fetched_at": "2026-11-11T21:03:54+00:00",
+  "sha256": "26adf142b727a4401739263b89ca3b91c73a79e9efe63f17b3ad126f1341a69a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1791883200000&endTime=1791943200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1791943200_1792003200.json",
+  "bytes": 219088,
+  "fetched_at": "2026-11-11T21:03:55+00:00",
+  "sha256": "7324d32d53c9d56132db74a07fdbcfb75ba2374d5164274bd4f6630513d773d7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1791943200000&endTime=1792003200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792003200_1792063200.json",
+  "bytes": 218268,
+  "fetched_at": "2026-11-11T21:03:55+00:00",
+  "sha256": "d2426c6176e6d5a1815ca5bb74da1d172bb60384a58cc40455f8b282cbbd1d72",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792003200000&endTime=1792063200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792063200_1792123200.json",
+  "bytes": 216402,
+  "fetched_at": "2026-11-11T21:03:56+00:00",
+  "sha256": "0d668c021bbb25ee96e4c5b5700545d3f099493ccd6543a91feeac34c09199df",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792063200000&endTime=1792123200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792123200_1792183200.json",
+  "bytes": 217782,
+  "fetched_at": "2026-11-11T21:03:57+00:00",
+  "sha256": "9e538cce6a8c1ad138e65a2f50f0fe1c99fa6e37f46eee73423a671139ac17df",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792123200000&endTime=1792183200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792183200_1792243200.json",
+  "bytes": 216769,
+  "fetched_at": "2026-11-11T21:03:57+00:00",
+  "sha256": "2126f3f251f9be64a60a9f0e58afdcb51488023906fb7dc6d8a600cde7cf650f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792183200000&endTime=1792243200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792243200_1792303200.json",
+  "bytes": 215739,
+  "fetched_at": "2026-11-11T21:03:58+00:00",
+  "sha256": "12e52cb0830c4a25d5726ae547723031b6611b5019ca23b363c7e11fcdb4b957",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792243200000&endTime=1792303200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792303200_1792363200.json",
+  "bytes": 215312,
+  "fetched_at": "2026-11-11T21:03:59+00:00",
+  "sha256": "00c69d2994552e6f2569f0615c2f4406de2081ad96f96e9ff9cadca2b5ea1161",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792303200000&endTime=1792363200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792363200_1792423200.json",
+  "bytes": 216045,
+  "fetched_at": "2026-11-11T21:04:00+00:00",
+  "sha256": "e8f5e996ac184640e43421915047493833031df17da00f0df2b89f26152da836",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792363200000&endTime=1792423200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792423200_1792483200.json",
+  "bytes": 215969,
+  "fetched_at": "2026-11-11T21:04:00+00:00",
+  "sha256": "d3282a9ac2e462be23b2e2ce2e04b6229ecdea85bea6c24c39d052e5c0a27773",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792423200000&endTime=1792483200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792483200_1792543200.json",
+  "bytes": 218592,
+  "fetched_at": "2026-11-11T21:04:01+00:00",
+  "sha256": "44e4d251efd901abe8499f7881cdd2430303e68a927b4f965b71ec39f29b0f34",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792483200000&endTime=1792543200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792543200_1792603200.json",
+  "bytes": 222298,
+  "fetched_at": "2026-11-11T21:04:01+00:00",
+  "sha256": "14b4630da605d0598af5ee7bf51505c2ef2f32dcc0035dfd9b62ff4b1170da16",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792543200000&endTime=1792603200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792603200_1792663200.json",
+  "bytes": 217983,
+  "fetched_at": "2026-11-11T21:04:02+00:00",
+  "sha256": "ddb7b2bc85846aedf50d7852b4454c96db51d7e2e8c2ea17727408cafbb70a33",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792603200000&endTime=1792663200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792663200_1792723200.json",
+  "bytes": 217856,
+  "fetched_at": "2026-11-11T21:04:03+00:00",
+  "sha256": "5b97764ea3cb897d75c42aa44530ddd1fa5c0677c044cb999c0caaba8102c01c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792663200000&endTime=1792723200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792723200_1792783200.json",
+  "bytes": 218713,
+  "fetched_at": "2026-11-11T21:04:03+00:00",
+  "sha256": "29c53b6f6369749009e56e7cadbc47b8b5cd995bddbea122b89ab892a2ffa4d5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792723200000&endTime=1792783200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792783200_1792843200.json",
+  "bytes": 218114,
+  "fetched_at": "2026-11-11T21:04:04+00:00",
+  "sha256": "7da28a94d8e4996109c9c7b7e2f7e1eb316b9e6ab43f8e8f886a08b6a683e768",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792783200000&endTime=1792843200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792843200_1792903200.json",
+  "bytes": 215700,
+  "fetched_at": "2026-11-11T21:04:05+00:00",
+  "sha256": "632d4ece406387a937d5e0b744320165147658480a8eaed34f8fe1b92886b375",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792843200000&endTime=1792903200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792903200_1792963200.json",
+  "bytes": 216199,
+  "fetched_at": "2026-11-11T21:04:06+00:00",
+  "sha256": "96a6ac06110786dbdb98f9b461979ade2a0d48c1b5b998565974149810f46430",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792903200000&endTime=1792963200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1792963200_1793023200.json",
+  "bytes": 217916,
+  "fetched_at": "2026-11-11T21:04:06+00:00",
+  "sha256": "a04e8eb7e51d846b28b853b702c39f5aa52cd2bb38f5f762c2a9f1ad306d21a5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1792963200000&endTime=1793023200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793023200_1793083200.json",
+  "bytes": 216045,
+  "fetched_at": "2026-11-11T21:04:07+00:00",
+  "sha256": "d18684b1c47ef373defbcc7f4f7c710ef4ec13a31ab6b773ab9866b1aa9d0ed0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793023200000&endTime=1793083200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793083200_1793143200.json",
+  "bytes": 219048,
+  "fetched_at": "2026-11-11T21:04:08+00:00",
+  "sha256": "0911c68b7f31c4c2a7688aa4536a4a7805839ee95bf8586216be034f5357d218",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793083200000&endTime=1793143200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793143200_1793203200.json",
+  "bytes": 216451,
+  "fetched_at": "2026-11-11T21:04:09+00:00",
+  "sha256": "3bca2b529181add55ac08f4a460894b78ec61e42c963e1aaee837c130a0e8d9b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793143200000&endTime=1793203200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793203200_1793263200.json",
+  "bytes": 215740,
+  "fetched_at": "2026-11-11T21:04:09+00:00",
+  "sha256": "51aaa8cda4e0c0c099ab4d3e87bc644eda5bed0a70000f1661ca052ad1610465",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793203200000&endTime=1793263200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793263200_1793323200.json",
+  "bytes": 216005,
+  "fetched_at": "2026-11-11T21:04:10+00:00",
+  "sha256": "780fa5d9be5662191f4f1dc61f6b9f58a4c5040efca5e51dc5cda065ad909d4b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793263200000&endTime=1793323200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793323200_1793383200.json",
+  "bytes": 216616,
+  "fetched_at": "2026-11-11T21:04:11+00:00",
+  "sha256": "a612b6ef5c15630218c8eff05b0322e25bd77a49d9a6df97a54140c2b7b9e862",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793323200000&endTime=1793383200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793383200_1793443200.json",
+  "bytes": 216099,
+  "fetched_at": "2026-11-11T21:04:12+00:00",
+  "sha256": "3201a13147a1274822051940146f878fc8671822b5c764bcbea76456be22082f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793383200000&endTime=1793443200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793443200_1793503200.json",
+  "bytes": 214998,
+  "fetched_at": "2026-11-11T21:04:13+00:00",
+  "sha256": "ee538ce7188a7cd1256095acd1bf02b88bfaae36ff9b58cdef36a068ffa09dcd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793443200000&endTime=1793503200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793503200_1793563200.json",
+  "bytes": 214985,
+  "fetched_at": "2026-11-11T21:04:13+00:00",
+  "sha256": "6c6ca4ae405c44f7936107f2cfb108bcbea7a3d9dad6125ce7a7fa54a9398274",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793503200000&endTime=1793563200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793563200_1793623200.json",
+  "bytes": 216194,
+  "fetched_at": "2026-11-11T21:04:14+00:00",
+  "sha256": "ae399d4f0c41f152c7443b97c903f73e5eb80a12839520833651e5c5ecb44c30",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793563200000&endTime=1793623200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793623200_1793683200.json",
+  "bytes": 216844,
+  "fetched_at": "2026-11-11T21:04:15+00:00",
+  "sha256": "40b60ff99e24d4bf4dbe47c80004e8d20a6fc89a8d0aa3de36fd435244e9acbc",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793623200000&endTime=1793683200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793683200_1793743200.json",
+  "bytes": 216220,
+  "fetched_at": "2026-11-11T21:04:16+00:00",
+  "sha256": "b8a1c2995486a0a9c53759441f9d9d356e76d53de2315fa05134ebfd07bc647b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793683200000&endTime=1793743200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793743200_1793803200.json",
+  "bytes": 217853,
+  "fetched_at": "2026-11-11T21:04:17+00:00",
+  "sha256": "7db7705a678508c480eb6e3dbdd6141749e6c51960f6174b1349eb2d66545831",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793743200000&endTime=1793803200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793803200_1793863200.json",
+  "bytes": 216669,
+  "fetched_at": "2026-11-11T21:04:17+00:00",
+  "sha256": "221bc23d6733769792fb06bd6de8827fbdaf1caf73243199158b0b20767590c0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793803200000&endTime=1793863200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793863200_1793923200.json",
+  "bytes": 221973,
+  "fetched_at": "2026-11-11T21:04:18+00:00",
+  "sha256": "722e6dd68f379cc9bdbffef461c40be96256c6689923619c789e21a4374ff346",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793863200000&endTime=1793923200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793923200_1793983200.json",
+  "bytes": 222519,
+  "fetched_at": "2026-11-11T21:04:19+00:00",
+  "sha256": "9568b64a2b636c3e1adb2651ab654642a463da65720cc66759cea94613ded39a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793923200000&endTime=1793983200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1793983200_1794043200.json",
+  "bytes": 216567,
+  "fetched_at": "2026-11-11T21:04:19+00:00",
+  "sha256": "befe729e97603c2ebb1d153620d6003a23e52e57dea9641917ae9d8deaf572ae",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1793983200000&endTime=1794043200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1794043200_1794103200.json",
+  "bytes": 214962,
+  "fetched_at": "2026-11-11T21:04:20+00:00",
+  "sha256": "cdedbaf5ef8b538a684ab26c1937b43a0894ffb3afa7c1db742163645de2ea00",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1794043200000&endTime=1794103200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1794103200_1794163200.json",
+  "bytes": 217141,
+  "fetched_at": "2026-11-11T21:04:21+00:00",
+  "sha256": "a200307b500fc1cc78e29274ed6dd676a544fbbca05c154776ce4fefc0a86f42",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1794103200000&endTime=1794163200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1794163200_1794223200.json",
+  "bytes": 216855,
+  "fetched_at": "2026-11-11T21:04:22+00:00",
+  "sha256": "c6d276c323a62f27df4dd0603af62036954aaf482f6177c696ee448634925568",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1794163200000&endTime=1794223200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1794223200_1794283200.json",
+  "bytes": 218229,
+  "fetched_at": "2026-11-11T21:04:23+00:00",
+  "sha256": "77c55b7acb8a570c596f6da636ff8de5e3d34ccb6d13180d84514ae3562be062",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1794223200000&endTime=1794283200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1794283200_1794343200.json",
+  "bytes": 217878,
+  "fetched_at": "2026-11-11T21:04:23+00:00",
+  "sha256": "39faf36266abe1210b0d1adb42d93e1c1b5aa50afce614a16b1fccf092d1bc10",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1794283200000&endTime=1794343200000"
+ },
+ {
+  "name": "phoenix/candles_SPCX_1m_1794343200_1794355200.json",
+  "bytes": 43398,
+  "fetched_at": "2026-11-11T21:04:24+00:00",
+  "sha256": "df23ac40b19da935a75a41b4454bcf5995cf959223fde1c71f78d3ca20abb4c2",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=SPCX&timeframe=1m&startTime=1794343200000&endTime=1794355200000"
+ },
+ {
+  "name": "phoenix/exchange.json",
+  "bytes": 233096,
+  "fetched_at": "2026-11-11T21:08:29+00:00",
+  "sha256": "2cf9c9c4d65cc855983891405dcc5ab7a5a38441351c7e1a30cab61085ce5f08",
+  "url": "https://perp-api.phoenix.trade/exchange"
+ },
+ {
+  "name": "rpc/jito_stake_pool.json",
+  "bytes": 1073,
+  "fetched_at": "2026-11-11T21:05:34+00:00",
+  "sha256": "24e8b734ee72125a72d9a0779f11e7f02a720da00640acda04976ffb53e91a1d",
+  "url": "https://api.mainnet-beta.solana.com"
+ },
+ {
+  "name": "rpc/prio_phoenix.json",
+  "bytes": 6192,
+  "fetched_at": "2026-11-11T21:05:31+00:00",
+  "sha256": "fedbabe634d4205efbac517335930e2dea9d736603b165fad0682cb1887d7ccb",
+  "url": "https://api.mainnet-beta.solana.com"
+ },
+ {
+  "name": "rpc/sigs_SOL.json",
+  "bytes": 232948,
+  "fetched_at": "2026-11-11T21:05:34+00:00",
+  "sha256": "4cf153a57473f945ad8306b700459155adad1fd20e7b38d02170a7b0f9d832b8",
+  "url": "https://api.mainnet-beta.solana.com"
+ },
+ {
+  "name": "rpc/sigs_SPCX.json",
+  "bytes": 232650,
+  "fetched_at": "2026-11-11T21:05:33+00:00",
+  "sha256": "421ee175031a741d2f63b31676851eec4185276ea81446b3c0f0616667b5fda2",
+  "url": "https://api.mainnet-beta.solana.com"
+ }
+]

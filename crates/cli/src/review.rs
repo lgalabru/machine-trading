@@ -498,6 +498,11 @@ pub(crate) fn read_json(path: &FsPath) -> Option<Value> {
 }
 
 /// A trial at a glance: what the leaderboard and the trial's header show.
+/// A trial as the review page lists it.
+pub(crate) fn summary_of(root: &Root, n: usize, dir: &FsPath) -> Value {
+    summary(root, n, dir)
+}
+
 fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
     let result = read_json(&dir.join("result.json")).unwrap_or(Value::Null);
     let config = read_json(&dir.join("config.json")).unwrap_or(Value::Null);
@@ -542,7 +547,19 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
     } else {
         &config["task"]
     };
-    let task = task_config["name"].as_str().unwrap_or_default().to_string();
+    // A task run from a local path has no name in its config: the trial's
+    // `task_name` has it, else the path's last part.
+    let task = task_config["name"]
+        .as_str()
+        .or(result["task_name"].as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            task_config["path"]
+                .as_str()
+                .and_then(|p| p.trim_end_matches('/').rsplit('/').next())
+                .map(|name| format!("solana-foundation/{name}"))
+        })
+        .unwrap_or_default();
     let model = result["agent_info"]["model_info"]["name"]
         .as_str()
         .map(str::to_string)

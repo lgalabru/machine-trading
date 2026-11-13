@@ -24,7 +24,9 @@ serde.workspace = true
 serde_json.workspace = true
 rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io", "elicitation"] }
 schemars = "1"
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 sha2 = "0.10"
+tar = "0.4"
 solana-keypair.workspace = true
 solana-pubkey.workspace = true
 solana-rpc-client.workspace = true
@@ -33,6 +35,7 @@ surfpool-core.workspace = true
 surfpool-types.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+toml = "1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true

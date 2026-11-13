@@ -3,14 +3,12 @@ use std::{io::IsTerminal, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use mtx_grader::{
-    carry::CarryFamily,
+    generators,
     grade::{self, GradeOptions},
     keys::SessionKeys,
-    making::MakingFamily,
     phoenix, recipe, replay,
-    scenario::{Scenario, ShockFamily},
+    scenario::Scenario,
     snapshot,
-    weekend::WeekendFamily,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -28,13 +26,19 @@ mod bot;
 mod charts;
 mod compact;
 mod gates;
+mod market_cal;
 mod mcp;
 mod notice;
 mod play;
 mod publish;
+mod rescore;
 mod review;
 mod run;
+mod slim;
+mod store;
 mod studio;
+mod tables;
+mod tasks;
 mod tools;
 mod ui;
 
@@ -54,21 +58,10 @@ struct Cli {
     command: Command,
 }
 
-/// The scenario families, one per task.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub(crate) enum Family {
-    /// flash-crash-spcx: shocks that crash or squeeze, then revert or not.
-    FlashCrash,
-    /// market-making-spcx: a walking, trending, jumping market, competing
-    /// makers, and taker flow: noise, fake-out bursts, and informed orders
-    /// ahead of most jumps.
-    MarketMaking,
-    /// funding-carry-spcx: book premiums over the index, some the crowd's
-    /// positioning opened and some the index follows, and Phoenix's funding.
-    FundingCarry,
-    /// weekend-gap-spcx: a weekend with SPCX's own market closed, flow that
-    /// may know where it reopens, and the reopen.
-    WeekendGap,
+/// The scenario generators' names, for `--family` and `--draw`: each task
+/// names its own in `task.toml` (`[metadata.mtx] generator`).
+fn generator_names() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(generators::names())
 }
 
 #[derive(Subcommand)]
@@ -144,11 +137,11 @@ enum Command {
     Grade {
         #[command(flatten)]
         sessions: Sessions,
-        /// Draw the scenarios from this family instead of reading files: a
+        /// Draw the scenarios from this generator instead of reading files: a
         /// hidden set, seeded by the secret in `MTX_EVAL_SEED` and never
         /// written anywhere. Reports carry only the secret's SHA-256.
-        #[arg(long, value_enum, conflicts_with = "scenarios")]
-        draw: Option<Family>,
+        #[arg(long, value_parser = generator_names(), conflicts_with = "scenarios")]
+        draw: Option<String>,
         /// How many scenarios to draw, stratified as the family's odds.
         #[arg(long, default_value_t = 12, requires = "draw")]
         count: usize,
@@ -186,6 +179,12 @@ enum Command {
         /// a loaded machine.
         #[arg(long, default_value_t = 0)]
         replay_load: usize,
+        /// Run the replays with this many sessions at once, the reference's
+        /// too (at most --anchor-jobs), instead of --jobs: `--jobs 16
+        /// --replay 2 --replay-jobs 1` checks a parallel grade against a
+        /// serial one.
+        #[arg(long, requires = "replay")]
+        replay_jobs: Option<usize>,
         /// Write Harbor's reward.json here.
         #[arg(long)]
         reward: Option<PathBuf>,
@@ -197,11 +196,37 @@ enum Command {
         #[arg(long)]
         details: Option<PathBuf>,
     },
+    /// Score a finished grade again from what it wrote, without running a
+    /// session: for when a scoring rule changes. Each session's report and
+    /// scenario come from its detail file (`mtx grade --details`). Prints
+    /// the new report, and on stderr where it differs from the old one.
+    Rescore {
+        /// The grade's report (`mtx grade --report`).
+        report: PathBuf,
+        /// The grade's detail files (`mtx grade --details`; default:
+        /// `sessions` beside the report, as the verifier writes them).
+        #[arg(long)]
+        details: Option<PathBuf>,
+        /// Write the new report here.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Write Harbor's reward.json for it here.
+        #[arg(long)]
+        reward: Option<PathBuf>,
+        /// Fail unless the new report is the old one: nothing about scoring
+        /// changed.
+        #[arg(long)]
+        check: bool,
+    },
     /// Run the reference bot through scenarios and save its PnL in each file.
     Calibrate {
         #[command(flatten)]
         sessions: Sessions,
     },
+    /// Market calibration: per-asset files fitted to real data, the market
+    /// model they drive, and realism checks against them.
+    #[command(subcommand, name = "market-cal")]
+    MarketCal(market_cal::MarketCalCommand),
 }
 
 #[derive(Subcommand)]
@@ -233,7 +258,8 @@ enum BotCommand {
         /// Grade the bot as it is, without running `just build`.
         #[arg(long)]
         no_build: bool,
-        /// Sessions to run at once, each on its own surfnet (1-4).
+        /// Sessions to run at once, each on its own surfnet: 1-4 for a
+        /// process bot, up to 32 for a strategy component.
         #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
         jobs: usize,
         /// Print the grader's full JSON report instead of a summary.
@@ -316,14 +342,17 @@ struct Sessions {
     /// Bot output goes to `<logs>/<scenario>.log`.
     #[arg(long, default_value = "logs")]
     logs: PathBuf,
-    /// Sessions to run at once, each on its own surfnet (1-4). A machine
-    /// that can't keep up grades slower, not differently.
+    /// Sessions to run at once, each on its own surfnet: 1-4 for a process
+    /// bot (one bot user each), up to 32 for a strategy component. The report
+    /// is the same whatever it is; a machine that can't keep up grades
+    /// slower, not differently.
     #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
     jobs: usize,
     /// The first bot user (0-3) sessions run their bots as, when run as
     /// root; they use `--jobs` of them from there. Graders running at once
-    /// on one machine need ranges that don't overlap: a session's end kills
-    /// every process of its bot user.
+    /// on one machine never share a bot user at the same time (a session's
+    /// end kills every process of its user): a session waits for its user,
+    /// so ranges that don't overlap keep them from waiting.
     #[arg(long, default_value_t = 0)]
     first_bot_user: usize,
     /// Scenario files, run in order.
@@ -356,6 +385,12 @@ enum TaskCommand {
     Guide { step: String },
     /// The repository's tasks.
     List,
+    /// Write the lists kept from the task folders' `[metadata.mtx]`: the
+    /// Justfile's and the image's task lists, the dataset's and the READMEs'
+    /// tables.
+    Sync,
+    /// Fail if `mtx task sync` would change a file.
+    Check,
 }
 
 #[derive(clap::Args)]
@@ -411,10 +446,12 @@ enum BenchCommand {
         #[arg(long)]
         results: Option<PathBuf>,
     },
-    /// Publish a finished batch as a release, small enough to commit:
-    /// bench/results/<version>. It keeps the reports, the session detail
-    /// files, the bot's source and the agent's trajectory (gzipped); never
-    /// the batch's seed, and nothing that holds it or an API key.
+    /// Publish a finished batch as a release. It keeps the reports, the
+    /// session detail files, the bot's source and the agent's trajectory
+    /// (gzipped); never the batch's seed, and nothing that holds it or an API
+    /// key. The release goes to the results dataset on Hugging Face (needs
+    /// `hf` and HF_TOKEN), and bench/results/<version>/release.json, to
+    /// commit, says where it is and holds its scores.
     Publish {
         /// The batch (jobs/bench/<batch>).
         batch: PathBuf,
@@ -423,6 +460,38 @@ enum BenchCommand {
         /// Replace a release already published under that name.
         #[arg(long)]
         force: bool,
+        /// Keep the full release here, as <artifacts>/<version>, outside the
+        /// repository, and publish its slim release: the reports, rewards
+        /// and bots, without the sessions step by step, logs or
+        /// trajectories. Readers find the full copy through MTX_ARTIFACTS.
+        #[arg(long)]
+        artifacts: Option<PathBuf>,
+        /// Write the whole release to bench/results/<version>, and upload
+        /// nothing.
+        #[arg(long)]
+        local: bool,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Make a published release slim: move it whole to
+    /// <artifacts>/<version>, outside the repository, and keep only its
+    /// slim release in bench/results (see `mtx bench publish --artifacts`).
+    Slim {
+        /// The release's version (bench/results/<version>).
+        version: String,
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Move a release whose files are in bench/results to the results
+    /// dataset: upload them, and leave its release.json, with where they
+    /// went and its scores. For a release in the dataset already, upload
+    /// its tables (trials.jsonl, sessions.jsonl) and the dataset's card
+    /// again.
+    Upload {
+        /// The release's version, or `all`.
+        version: String,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -446,6 +515,19 @@ enum BenchCommand {
         /// tags) point at <site>/social.jpg.
         #[arg(long)]
         site: Option<String>,
+        #[arg(long)]
+        results: Option<PathBuf>,
+    },
+    /// Score every trial of a batch or release again from its reports and
+    /// detail files, without running a session (see `mtx rescore`): each
+    /// trial's reward and skill as reported and as scored now.
+    Rescore {
+        /// A batch (jobs/bench/<batch>), a Harbor job, one trial, or a
+        /// published release's version.
+        path: String,
+        /// Fail unless every trial scores as it was reported.
+        #[arg(long)]
+        check: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -489,9 +571,9 @@ enum ScenarioCommand {
         /// Mixed into each scenario's seed. Keep hidden sets' seeds private.
         #[arg(long)]
         seed: u64,
-        /// Which task's family to draw from.
-        #[arg(long, value_enum, default_value_t = Family::FlashCrash)]
-        family: Family,
+        /// Which task's generator to draw from.
+        #[arg(long, value_parser = generator_names(), default_value = "flash-crash")]
+        family: String,
     },
     /// Have a coding agent author a Surfpool scenario from a request, e.g.
     /// "simulate a crash for SPCX", and save it.
@@ -746,8 +828,89 @@ async fn run() -> Result<()> {
                 anyhow::anyhow!("no step `{step}`; steps: {}", authoring::STEPS.join(", "))
             })?
         }
+        Command::Task(TaskCommand::Sync) => {
+            let changed = tasks::sync(&authoring::repo_root())?;
+            serde_json::to_string_pretty(&changed)?
+        }
+        Command::Task(TaskCommand::Check) => {
+            let stale = tasks::stale(&authoring::repo_root())?;
+            if !stale.is_empty() {
+                anyhow::bail!(
+                    "stale, run `mtx task sync`: {}",
+                    stale
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            serde_json::to_string_pretty(&stale)?
+        }
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
+        }
+        Command::Bench(BenchCommand::Rescore {
+            path,
+            check,
+            results,
+        }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?)?;
+            if check && (summary["changed"] != 0 || summary["failed"] != 0) {
+                eprintln!("{}", serde_json::to_string_pretty(&summary)?);
+                anyhow::bail!(
+                    "of {} trials, {} score differently than reported and {} didn't read back",
+                    summary["trials"],
+                    summary["changed"],
+                    summary["failed"]
+                );
+            }
+            serde_json::to_string_pretty(&summary)?
+        }
+        Command::Rescore {
+            report,
+            details,
+            out,
+            reward,
+            check,
+        } => {
+            let details = details.unwrap_or_else(|| {
+                report
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join("sessions")
+            });
+            let rescored = rescore::rescore(&report, &details, None)?;
+            for difference in &rescored.differences {
+                eprintln!("{}", rescore::describe(difference));
+            }
+            eprintln!(
+                "{}",
+                if rescored.differences.is_empty() {
+                    format!("the same as {}", report.display())
+                } else {
+                    format!(
+                        "{} parts differ from {}",
+                        rescored.differences.len(),
+                        report.display()
+                    )
+                }
+            );
+            if check && !rescored.differences.is_empty() {
+                anyhow::bail!(
+                    "the grade scores differently than {} says",
+                    report.display()
+                );
+            }
+            let json = serde_json::to_string_pretty(&rescored.report)?;
+            if let Some(path) = out {
+                std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
+            }
+            if let Some(path) = reward {
+                let rewards = serde_json::to_string_pretty(&rescored.report.rewards())?;
+                std::fs::write(&path, rewards).with_context(|| path.display().to_string())?;
+            }
+            json
         }
         Command::Bench(BenchCommand::Review {
             path,
@@ -768,15 +931,76 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&summary)?
         }
+        Command::Bench(BenchCommand::Slim {
+            version,
+            artifacts,
+            results,
+        }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let release = results.join(&version);
+            if !release.join("release.json").is_file() {
+                anyhow::bail!("no release {version} in {}", results.display());
+            }
+            let summary = slim::slim_in_place(&release, &artifacts)?;
+            serde_json::to_string_pretty(&summary)?
+        }
+        Command::Bench(BenchCommand::Upload { version, results }) => {
+            let results = results.unwrap_or_else(publish::results_dir);
+            let versions: Vec<String> = if version == "all" {
+                std::fs::read_dir(&results)?
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|v| {
+                        !v.starts_with('.') && results.join(v).join("release.json").is_file()
+                    })
+                    .collect()
+            } else {
+                vec![version]
+            };
+            let mut out = serde_json::Map::new();
+            for version in versions {
+                let dir = results.join(&version);
+                anyhow::ensure!(
+                    dir.join("release.json").is_file(),
+                    "{} isn't a published release",
+                    dir.display()
+                );
+                if publish::stored(&dir).is_some() {
+                    ui::start(format!("Uploading {version}'s tables"));
+                    publish::retable(&dir, &version)?;
+                    ui::done(format!("Uploaded {version}'s tables"));
+                    out.insert(version, serde_json::json!("tables"));
+                    continue;
+                }
+                ui::start(format!("Uploading {version}"));
+                let store = publish::offload(&dir, &dir, &version)?;
+                ui::done(format!(
+                    "Uploaded {version}: {} files, {}",
+                    store.files,
+                    store.url()
+                ));
+                out.insert(version, serde_json::json!(store.url()));
+            }
+            serde_json::to_string_pretty(&out)?
+        }
         Command::Bench(BenchCommand::Publish {
             batch,
             version,
             force,
+            artifacts,
+            local,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             ui::start(format!("Publishing {} as {version}", batch.display()));
-            let summary = publish::publish(&batch, &version, &results, force)?;
+            let summary = publish::publish(
+                &batch,
+                &version,
+                &results,
+                force,
+                artifacts.as_deref(),
+                local,
+            )?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
                 summary["summary"]["trials"],
@@ -812,6 +1036,10 @@ async fn run() -> Result<()> {
             };
             let mut out = serde_json::Map::new();
             for release in releases {
+                // A release in the dataset was compacted before it went.
+                if release.join(store::COMPLETE).is_file() || publish::stored(&release).is_some() {
+                    continue;
+                }
                 anyhow::ensure!(
                     release.join("release.json").is_file(),
                     "{} isn't a published release",
@@ -944,12 +1172,9 @@ async fn run() -> Result<()> {
             family,
         }) => {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
-            let scenarios = match family {
-                Family::FlashCrash => ShockFamily::spcx().sample_set(&prefix, count, seed),
-                Family::MarketMaking => MakingFamily::spcx().sample_set(&prefix, count, seed),
-                Family::FundingCarry => CarryFamily::practice().sample_set(&prefix, count, seed),
-                Family::WeekendGap => WeekendFamily::spcx().sample_set(&prefix, count, seed),
-            };
+            let generator = generators::generator(&family)
+                .with_context(|| format!("no scenario generator `{family}`"))?;
+            let scenarios = (generator.practice)(&prefix, count, seed);
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
@@ -1035,6 +1260,7 @@ async fn run() -> Result<()> {
             trusted,
             replay,
             replay_load,
+            replay_jobs,
             reward,
             report,
             details,
@@ -1049,64 +1275,12 @@ async fn run() -> Result<()> {
                 Some(family) => {
                     let (seed, hash, batch_keys) = eval_seed()?;
                     keys = batch_keys;
-                    let scenarios = match family {
-                        Family::FlashCrash => shaped(
-                            ShockFamily::spcx().draw_set("hidden", count, seed),
-                            tell_regime,
-                            &mut annotations,
-                            &mut regimes,
-                        )?,
-                        Family::MarketMaking => {
-                            let drawn =
-                                MakingFamily::spcx().sample_set_labeled("hidden", count, seed);
-                            annotations = Some(
-                                drawn
-                                    .iter()
-                                    .map(
-                                        |(_, informed)| serde_json::json!({ "informed": informed }),
-                                    )
-                                    .collect(),
-                            );
-                            if tell_regime {
-                                // The informed orders, by slot and side: what
-                                // a perfect reader of the tape would know.
-                                regimes = Some(
-                                    drawn
-                                        .iter()
-                                        .map(|(scenario, informed)| {
-                                            let orders: Vec<_> = scenario
-                                                .making
-                                                .iter()
-                                                .flat_map(|m| m.takers.iter())
-                                                .zip(informed)
-                                                .filter(|(_, informed)| **informed)
-                                                .map(|(o, _)| {
-                                                    serde_json::json!({"slot": o.slot, "side": o.side})
-                                                })
-                                                .collect();
-                                            serde_json::to_string(&orders)
-                                        })
-                                        .collect::<Result<_, _>>()?,
-                                );
-                            }
-                            drawn
-                                .into_iter()
-                                .map(|(scenario, _)| scenario)
-                                .collect::<Vec<_>>()
-                        }
-                        Family::FundingCarry => shaped(
-                            CarryFamily::spcx().draw_set("hidden", count, seed),
-                            tell_regime,
-                            &mut annotations,
-                            &mut regimes,
-                        )?,
-                        Family::WeekendGap => shaped(
-                            WeekendFamily::spcx().draw_set("hidden", count, seed),
-                            tell_regime,
-                            &mut annotations,
-                            &mut regimes,
-                        )?,
-                    };
+                    let generator = generators::generator(&family)
+                        .with_context(|| format!("no scenario generator `{family}`"))?;
+                    let hidden = (generator.hidden)(count, seed, tell_regime)?;
+                    annotations = Some(hidden.annotations);
+                    regimes = hidden.regimes;
+                    let scenarios = hidden.scenarios;
                     (scenarios, Some(hash))
                 }
                 None if sessions.scenarios.is_empty() => {
@@ -1120,12 +1294,12 @@ async fn run() -> Result<()> {
             if let Some(path) = &reward {
                 remove_if_present(path)?;
             }
-            let options = || GradeOptions {
+            let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
                 scenarios: &scenarios,
                 log_dir: &sessions.logs,
-                jobs: sessions.jobs,
+                jobs,
                 first_bot_user: sessions.first_bot_user,
                 reference_dir: reference.as_deref(),
                 anchor_jobs,
@@ -1139,13 +1313,17 @@ async fn run() -> Result<()> {
                 keys: &keys,
             };
             let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
-            let mut graded = grade::grade(options()).await?;
+            let mut graded = grade::grade(options(sessions.jobs, anchor_jobs)).await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
             if replay > 1 {
                 let first = replay::reports(&graded)?;
                 let mut differences = Vec::new();
                 for run in 2..=replay as usize {
-                    let mut again = grade::grade(options()).await?;
+                    let mut again = grade::grade(match replay_jobs {
+                        Some(jobs) => options(jobs, jobs.min(anchor_jobs)),
+                        None => options(sessions.jobs, anchor_jobs),
+                    })
+                    .await?;
                     again.eval_seed_sha256.clone_from(&graded.eval_seed_sha256);
                     differences.extend(replay::compare(&first, &replay::reports(&again)?, run));
                     eprintln!(
@@ -1160,6 +1338,7 @@ async fn run() -> Result<()> {
                 graded.replay = Some(replay::ReplayCheck {
                     runs: replay as usize,
                     load_threads: replay_load,
+                    jobs: replay_jobs,
                     reports: first.len(),
                     identical: differences.is_empty(),
                     differences,
@@ -1291,36 +1470,12 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&reports)?
         }
+        Command::MarketCal(command) => market_cal::run(command)?,
     };
     if !quiet_stdout {
         println!("{output}");
     }
     Ok(())
-}
-
-/// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`
-/// and, when told, the shape as the regime.
-fn shaped<S: serde::Serialize>(
-    drawn: Vec<(Scenario, S)>,
-    tell_regime: bool,
-    annotations: &mut Option<Vec<serde_json::Value>>,
-    regimes: &mut Option<Vec<String>>,
-) -> Result<Vec<Scenario>> {
-    *annotations = Some(
-        drawn
-            .iter()
-            .map(|(_, shape)| serde_json::json!({ "shape": shape }))
-            .collect(),
-    );
-    if tell_regime {
-        *regimes = Some(
-            drawn
-                .iter()
-                .map(|(_, shape)| serde_json::to_string(shape))
-                .collect::<Result<_, _>>()?,
-        );
-    }
-    Ok(drawn.into_iter().map(|(scenario, _)| scenario).collect())
 }
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
