@@ -41,7 +41,7 @@ pub fn feed_account(shard: u16, feed_id: &[u8; 32]) -> Pubkey {
 
 /// The Anchor discriminator of a `PriceUpdateV2` account.
 /// SPCX's feed id: `Equity.US.SPCX/USD`, SpaceX's share price, the
-/// reference price the Raydium and Meteora profiles name for SPCX. It
+/// reference price the Raydium, Meteora and Orca profiles name for SPCX. It
 /// publishes in the US regular session only.
 pub const SPCX_USD_FEED_ID: [u8; 32] = [
     0x8a, 0x59, 0x3d, 0x6e, 0xdd, 0xe7, 0xa3, 0x09, 0x52, 0x13, 0xc8, 0x81, 0x16, 0xd8, 0x84, 0x0d,
