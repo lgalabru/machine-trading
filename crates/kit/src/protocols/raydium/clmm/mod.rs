@@ -10,6 +10,7 @@
 //! | `PersonalPositionState` and its NFT | [`PersonalPosition`], [`personal_position_address`] |
 //! | `swap_v2`, `open_position_with_token22_nft`, `increase_liquidity_v2`, `decrease_liquidity_v2` | [`ix`] |
 //! | prices, ticks, a position's amounts and fees | [`math`] |
+//! | `swap_internal` and `compute_swap`: what a swap pays and gets, to the atom | [`swap`] |
 //!
 //! Token 0 and token 1 are ordered by mint address, so a pool's base may be
 //! either: [`PoolState::base_is_0`] says which.
@@ -17,23 +18,39 @@
 pub mod ix;
 pub mod math;
 mod state;
+pub mod swap;
 
 use solana_pubkey::Pubkey;
-pub use state::{AmmConfig, PersonalPosition, PoolState, Tick, TickArray};
+pub use state::{AmmConfig, DynamicFeeInfo, PersonalPosition, PoolState, Tick, TickArray};
 
-use crate::protocols::{NamedMarket, SPCX_MINT, USDC_MINT};
+use crate::protocols::{NamedMarket, SOL_MINT, SPCX_MINT, USDC_MINT};
 
 /// The Raydium CLMM program.
 pub const PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
 
-/// The pools the Raydium venue profile names.
-pub const POOLS: &[NamedMarket] = &[NamedMarket {
-    symbol: "SPCX-USDC",
-    address: solana_pubkey::pubkey!("FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza"),
-    base_mint: SPCX_MINT,
-    quote_mint: USDC_MINT,
-}];
+/// The pools the Raydium venue profile names: SPCX against USDC and SOL,
+/// and SOL against USDC (the second hop of a route through SOL).
+pub const POOLS: &[NamedMarket] = &[
+    NamedMarket {
+        symbol: "SPCX-USDC",
+        address: solana_pubkey::pubkey!("FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza"),
+        base_mint: SPCX_MINT,
+        quote_mint: USDC_MINT,
+    },
+    NamedMarket {
+        symbol: "SPCX-SOL",
+        address: solana_pubkey::pubkey!("7tJVK2uEaK1tKEykDHQ8KHdaV3aXrVuSH1J4u3xgkS7U"),
+        base_mint: SPCX_MINT,
+        quote_mint: SOL_MINT,
+    },
+    NamedMarket {
+        symbol: "SOL-USDC",
+        address: solana_pubkey::pubkey!("3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"),
+        base_mint: SOL_MINT,
+        quote_mint: USDC_MINT,
+    },
+];
 
 /// Ticks in one tick array.
 pub const TICK_ARRAY_SIZE: i32 = 60;

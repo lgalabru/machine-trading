@@ -308,12 +308,19 @@ pub const RPC_METHODS: &[&str] = &[
     "simulateTransaction",
 ];
 
+/// The router's read-only methods, in a session that has one: Jupiter's
+/// v1 quote and swap instructions, each taking the same JSON object as its
+/// first parameter (`specs/venues/router.md`). A session without a router
+/// refuses them.
+pub const ROUTER_METHODS: &[&str] = &["mtx_routerQuote", "mtx_routerSwapInstructions"];
+
 /// A read-only JSON-RPC call against the session's chain: `params` and the
-/// result are JSON text, and `method` one of [`RPC_METHODS`]. Synchronous:
-/// it returns before the world moves. In a component the grader answers it;
-/// in a process, the session's endpoint does.
+/// result are JSON text, and `method` one of [`RPC_METHODS`] (or
+/// [`ROUTER_METHODS`]). Synchronous: it returns before the world moves. In a
+/// component the grader answers it; in a process, the session's endpoint
+/// does.
 pub fn rpc(method: &str, params: &str) -> Result<String, String> {
-    if !RPC_METHODS.contains(&method) {
+    if !RPC_METHODS.contains(&method) && !ROUTER_METHODS.contains(&method) {
         return Err(format!("{method} is not a read a strategy may make"));
     }
     rpc_backend(method, params)

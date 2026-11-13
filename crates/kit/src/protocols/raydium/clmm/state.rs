@@ -34,6 +34,14 @@ pub struct PoolState {
     pub fee_growth_global_1_x64: u128,
     /// Bits that stop the pool's operations, each its own: 0 is open.
     pub status: u8,
+    /// Which token a swap's fee is charged in: 0 the token in, 1 token 0
+    /// always, 2 token 1 always.
+    pub fee_on: u8,
+    /// The time swaps open, in Unix seconds: a swap needs a block time
+    /// after it.
+    pub open_time: u64,
+    /// The dynamic fee, `None` where the pool has none (its bytes all zero).
+    pub dynamic_fee_info: Option<DynamicFeeInfo>,
     /// Which tick arrays around tick 0 hold initialized ticks: bit 512 is
     /// the array starting at 0.
     pub tick_array_bitmap: [u64; 16],
@@ -69,6 +77,9 @@ impl PoolState {
             fee_growth_global_0_x64: f.u128(277)?,
             fee_growth_global_1_x64: f.u128(293)?,
             status: f.u8(389)?,
+            fee_on: f.u8(390)?,
+            open_time: f.u64(1080)?,
+            dynamic_fee_info: DynamicFeeInfo::decode(&f, 1096)?,
             tick_array_bitmap,
             rewards: (0..3)
                 .map(|i| Ok((f.pubkey(397 + 169 * i + 57)?, f.pubkey(397 + 169 * i + 89)?)))
@@ -126,6 +137,57 @@ impl PoolState {
             start += if zero_for_one { -span } else { span };
         }
         found
+    }
+}
+
+/// A pool's dynamic fee: a surcharge on the trade fee that grows with how
+/// far the price has moved lately, counted in groups of `tick_spacing`
+/// ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynamicFeeInfo {
+    /// Seconds after the last reference update in which a swap leaves the
+    /// reference as it is.
+    pub filter_period: u16,
+    /// Seconds after which the reference resets to zero.
+    pub decay_period: u16,
+    /// What share of the accumulated volatility the reference keeps, in
+    /// ten-thousandths.
+    pub reduction_factor: u16,
+    /// How steeply the surcharge grows with volatility, in hundred-
+    /// thousandths.
+    pub dynamic_fee_control: u32,
+    pub max_volatility_accumulator: u32,
+    /// The group of ticks the price was in at the last reference update.
+    pub tick_spacing_index_reference: i32,
+    pub volatility_reference: u32,
+    pub volatility_accumulator: u32,
+    pub last_update_timestamp: u64,
+}
+
+impl DynamicFeeInfo {
+    const LEN: usize = 80;
+
+    /// The 80 bytes at `at`: `None` if all are zero, as the program reads
+    /// them.
+    fn decode(f: &Fields<'_>, at: usize) -> Result<Option<Self>, DecodeError> {
+        let mut zero = true;
+        for i in 0..Self::LEN {
+            zero &= f.u8(at + i)? == 0;
+        }
+        if zero {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            filter_period: f.u16(at)?,
+            decay_period: f.u16(at + 2)?,
+            reduction_factor: f.u16(at + 4)?,
+            dynamic_fee_control: f.u32(at + 6)?,
+            max_volatility_accumulator: f.u32(at + 10)?,
+            tick_spacing_index_reference: f.i32(at + 14)?,
+            volatility_reference: f.u32(at + 18)?,
+            volatility_accumulator: f.u32(at + 22)?,
+            last_update_timestamp: f.u64(at + 26)?,
+        }))
     }
 }
 
@@ -199,6 +261,16 @@ pub struct Tick {
     /// Fees per unit of liquidity on the other side of the tick, in Q64.64.
     pub fee_growth_outside_0_x64: u128,
     pub fee_growth_outside_1_x64: u128,
+    /// How many cohorts of limit orders on the tick have begun to fill.
+    pub order_phase: u64,
+    /// Limit orders on the tick not yet touched, in atoms of the token
+    /// they sell.
+    pub orders_amount: u64,
+    /// What is left of the cohort that has begun to fill, in the same
+    /// atoms.
+    pub part_filled_orders_remaining: u64,
+    /// The share of that cohort still unfilled, in Q64.64.
+    pub unfilled_ratio_x64: u128,
 }
 
 /// Sixty consecutive ticks, `tick_spacing` apart.
@@ -225,6 +297,10 @@ impl TickArray {
                     liquidity_gross: f.u128(at + 20)?,
                     fee_growth_outside_0_x64: f.u128(at + 36)?,
                     fee_growth_outside_1_x64: f.u128(at + 52)?,
+                    order_phase: f.u64(at + 116)?,
+                    orders_amount: f.u64(at + 124)?,
+                    part_filled_orders_remaining: f.u64(at + 132)?,
+                    unfilled_ratio_x64: f.u128(at + 140)?,
                 })
             })
             .collect::<Result<_, DecodeError>>()?;
@@ -300,6 +376,20 @@ mod tests {
         assert_eq!(pool.swap_tick_arrays(false, 3), [46800, 50400]);
 
         assert!(pool.rewards.is_empty());
+        assert_eq!(
+            (pool.fee_on, pool.open_time, pool.dynamic_fee_info),
+            (0, 0, None)
+        );
+
+        // A dynamic fee: any byte set turns it on.
+        data[1096..1098].copy_from_slice(&30u16.to_le_bytes());
+        data[1122..1130].copy_from_slice(&7u64.to_le_bytes());
+        let info = PoolState::decode(Pubkey::new_unique(), &data)
+            .unwrap()
+            .dynamic_fee_info
+            .unwrap();
+        assert_eq!((info.filter_period, info.last_update_timestamp), (30, 7));
+        data[1096..1176].fill(0);
 
         // A reward: its mint and vault, in the second of three slots.
         let (mint, vault) = (Pubkey::new_unique(), Pubkey::new_unique());
