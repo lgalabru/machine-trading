@@ -18,7 +18,10 @@ use std::{
 
 use mtx_core::AccountMeter;
 use mtx_grader::{
-    actors::{Actor, ActorsReport, Competitor, Moment, Pricing, Takers},
+    actors::{
+        Actor, ActorsReport, Competitor, Library, Moment, Pricing, Takers,
+        library::{Setting, WalletSeat},
+    },
     chain,
     grade::MAX_FAILED_TAKER_SHARE,
     guard::Guard,
@@ -1520,3 +1523,152 @@ async fn refill_run(symbol: &str) {
 }
 
 per_market!(refill, refill_run);
+
+// 8b. refill actor --------------------------------------------------------
+
+/// Half-lives the curve is measured at, in slots; the run without the actor
+/// is the control.
+const HALF_LIVES: [f64; 3] = [4.0, 12.0, 40.0];
+
+/// One world: take the book's first 25 ticks with an IOC, then watch the best
+/// ask for 60 slots, with the refill actor at `half_life` (none: not built).
+/// Returns the ticks the best ask sits above where it started at slots 0
+/// (just after the take), 1, 2, 5, 10, 20, 40 and 60, and the actor's tally.
+async fn refill_curve(symbol: &str, half_life: Option<f64>) -> (Vec<(u64, i64)>, i64, u64) {
+    let rig = Rig::new(symbol, 2).await;
+    let market = rig.phoenix.market(symbol).unwrap().clone();
+    let lot_units = rig.phoenix.lots_to_base_units(&market, 1);
+    let regions = rig.ask_regions();
+    let top = regions[0];
+    // The actor's tick is the spline's own density: `size_mult` 1 of a
+    // "trade" that size.
+    let scale = mtx_grader::actors::library::Scale {
+        trades_per_minute: 1.0,
+        trade_size: top.3 as f64 * lot_units,
+        trade_size_sigma: 0.0,
+    };
+    let seat = rig
+        .perp
+        .unique_seat(rig.keys[1].insecure_clone(), &rig.url)
+        .unwrap();
+    let mut built = half_life.map(|h| {
+        let library: Library = serde_json::from_value(json!({
+            "scale": scale,
+            "refill": { "half_life_slots": [h, h], "levels": 5, "size_mult": 1.0, "react_slots": 1 }
+        }))
+        .unwrap();
+        library.validate().unwrap();
+        assert_eq!(library.wallets(), [("refill", 0)]);
+        let start = rig.start_usd();
+        let setting = Setting {
+            symbol: symbol.to_string(),
+            base_slot: 0,
+            path: Arc::new(move |at| moment(at, start)),
+            settlement: None,
+            send_reader: None,
+            liquidations: None,
+            rpc_url: None,
+        };
+        library.build(
+            vec![WalletSeat {
+                pubkey: rig.keys[1].pubkey(),
+                seat,
+            }],
+            setting,
+            &|_, _| [5; 32],
+        )
+    });
+    let start = rig.start_usd();
+    let mut slot = 0u64;
+    // The first look notes the makers' touch, before anything is taken.
+    if let Some(built) = built.as_mut() {
+        for actor in built.actors.iter_mut() {
+            actor.after_blocks(&moment(slot, start)).await;
+        }
+    }
+    let before = rig.book().await;
+    // Enough to clear the first 25 ticks of the book.
+    let lots: u64 = regions
+        .iter()
+        .map(|r| r.2.min(r.3 * 25u64.saturating_sub(r.0)))
+        .sum();
+    let units = lots as f64 * lot_units;
+    rig.trader(0)
+        .place_market(Side::Bid, units, rig.usd(before.mark) * 1.05)
+        .await
+        .unwrap();
+    let ask0 = before.ask.unwrap() as i64;
+    let mut curve = vec![(0, rig.book().await.ask.unwrap() as i64 - ask0)];
+    for _ in 1..=60u64 {
+        rig.step(1).await;
+        slot += 1;
+        if let Some(built) = built.as_mut() {
+            for actor in built.actors.iter_mut() {
+                actor.after_blocks(&moment(slot, start)).await;
+            }
+        }
+        if [1, 2, 5, 10, 20, 40, 60].contains(&slot) {
+            curve.push((slot, rig.book().await.ask.unwrap() as i64 - ask0));
+        }
+    }
+    let mut refilled = 0;
+    if let Some(built) = built {
+        let mut report = ActorsReport::default();
+        for mut actor in built.actors {
+            actor.report(&mut report).await;
+        }
+        refilled = report.library.map_or(0, |l| {
+            l.actors
+                .iter()
+                .filter(|a| a.kind == "refill")
+                .map(|a| a.counts.get("ticks_refilled").copied().unwrap_or(0))
+                .sum()
+        });
+    }
+    (curve, ask0, refilled)
+}
+
+fn moment(at: u64, usd: f64) -> Moment {
+    Moment {
+        at,
+        level_usd: usd,
+        book_usd: usd,
+        fair_usd: None,
+    }
+}
+
+/// Without the actor the gap a take leaves stays; with it, the gap halves in
+/// the configured half-life, and the curve follows `0.5^(slot / half_life)`
+/// within two ticks.
+async fn refill_actor_run(symbol: &str) {
+    let (control, _, _) = refill_curve(symbol, None).await;
+    let gap0 = control[0].1;
+    let stays = control.iter().all(|&(_, gap)| gap == gap0);
+    let mut pass = stays && gap0 >= 20;
+    let mut rows = vec![format!("off: gap {gap0} ticks at slot 0, {control:?}")];
+    for h in HALF_LIVES {
+        let (curve, _, refilled) = refill_curve(symbol, Some(h)).await;
+        let start = curve[0].1;
+        let mut worst = 0.0f64;
+        for &(slot, gap) in &curve {
+            let expected = start as f64 * 0.5f64.powf(slot as f64 / h);
+            // The actor stops within `min_gap_ticks` of the makers' touch.
+            worst = worst.max(gap as f64 - expected.max(1.0));
+        }
+        let half_at = curve
+            .iter()
+            .find(|&&(_, gap)| gap * 2 <= start)
+            .map(|&(slot, _)| slot);
+        let at_60 = curve.last().unwrap().1;
+        let on_curve = worst <= 2.0 + start as f64 * 0.1;
+        pass &= on_curve && at_60 < start && refilled > 0;
+        rows.push(format!(
+            "half-life {h}: gap {start} -> {at_60} at slot 60, halved by slot {half_at:?}, \
+             {refilled} ticks refilled, worst miss {worst:.1} ticks; curve (slot, gap): {curve:?}"
+        ));
+    }
+    table("8b refill actor", symbol, status(pass), rows.join(" | "));
+    assert!(pass, "{rows:?}");
+}
+
+per_market!(refill_actor, refill_actor_run);
