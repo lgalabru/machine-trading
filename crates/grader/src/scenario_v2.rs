@@ -550,6 +550,7 @@ impl ScenarioV2 {
         let Some(stake) = &self.venues.stake else {
             return Ok(());
         };
+        stake.validate()?;
         if !self.market_model.is_empty()
             || !self.actors.is_empty()
             || self.oracles.is_some()
@@ -1370,6 +1371,17 @@ mod tests {
             }),
         });
         refused(&s, "only perp sessions take raw sends");
+    }
+
+    #[test]
+    fn a_stake_pool_scenario_with_no_pools_gets_a_clean_error_in_both_versions() {
+        let mut s = v2(&stake());
+        let section = s.venues.stake.as_mut().unwrap();
+        section.pools.clear();
+        section.tokens.clear();
+        let err = s.validate().unwrap_err();
+        assert_eq!(err, "stake: no pools");
+        assert_eq!(s.into_v1().validate().unwrap_err(), err);
     }
 
     /// What main said for the same input, word for word.
