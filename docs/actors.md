@@ -9,7 +9,9 @@ code is `crates/grader/src/actors/` (the `Actor` trait, the `Cast`) and
 Every library actor trades from wallets of its own through a `Seat` on the
 session's market, with ordinary transactions anyone reading the chain sees.
 Its keys come from the session's keyring and its randomness from a seed the
-keyring derives, so a session replays the same (`mtx grade --replay`).
+keyring derives, so a session replays the same (`mtx grade --replay`). Each
+of its transactions is unique among its own, so two alike orders in one slot
+both land.
 Today the library runs in perp sessions; a venue whose seats take and rest
 orders (an AMM's take is a swap) runs it unchanged.
 
@@ -47,7 +49,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
 
 `active` is a window of the session, `{ "from": 100, "until": 300 }` in slots
 into it. `record: true` keeps every action in the report's tape, and counts
-each actor's transactions as the chain lists them (`on_chain`).
+the actions whose transactions the chain has, executed (`on_chain`).
 
 ## Requests for quotes
 

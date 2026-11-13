@@ -42,9 +42,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
-use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
-use solana_rpc_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
+use solana_transaction::Signature;
 
 pub use self::{
     arbitrageur::Arbitrageur,
@@ -424,10 +423,13 @@ pub struct ActorTally {
     /// What its kind counts beyond that (walls pulled, requests sent, …).
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub counts: std::collections::BTreeMap<String, u64>,
-    /// With [`Library::record`]: the transactions the chain lists for its
-    /// wallets, their onboarding included.
+    /// With [`Library::record`]: how many of its actions' transactions the
+    /// chain has, executed without error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_chain: Option<usize>,
+    /// Its actions' transactions, for that count.
+    #[serde(skip)]
+    pub signatures: Vec<String>,
 }
 
 /// One action, as the chain shows it: who, what, at which slot into the
@@ -445,6 +447,9 @@ pub struct TapeEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<f64>,
     pub ok: bool,
+    /// Its transaction, where the seat keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 /// What the library's actors did in a session.
@@ -525,6 +530,9 @@ impl Ledger {
             }
         }
         if state.record {
+            if let Some(signature) = &entry.signature {
+                state.actors[actor].signatures.push(signature.clone());
+            }
             state.tape.push(entry);
         }
     }
@@ -595,6 +603,7 @@ impl Wallet {
             price_usd: None,
             size: None,
             ok,
+            signature: ok.then(|| self.seat.last_signature()).flatten(),
         }
     }
 
@@ -664,25 +673,27 @@ impl Actor for Reporter {
             let rpc =
                 mtx_kit::rpc_client_with_timeout(url.clone(), crate::session::INTERNAL_RPC_TIMEOUT);
             for tally in &mut library.actors {
-                let mut listed = 0;
-                for wallet in &tally.wallets {
-                    let Ok(pubkey) = wallet.parse::<Pubkey>() else {
-                        continue;
-                    };
-                    // At `processed`: the session's last slots aren't
-                    // confirmed when it ends.
-                    let config = GetConfirmedSignaturesForAddress2Config {
-                        commitment: Some(CommitmentConfig::processed()),
-                        ..Default::default()
-                    };
-                    match rpc.get_signatures_for_address_with_config(&pubkey, config) {
-                        Ok(signatures) => listed += signatures.len(),
+                let signatures: Vec<Signature> = tally
+                    .signatures
+                    .iter()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                let mut landed = 0;
+                for chunk in signatures.chunks(256) {
+                    match rpc.get_signature_statuses(chunk) {
+                        Ok(statuses) => {
+                            landed += statuses
+                                .value
+                                .iter()
+                                .filter(|s| s.as_ref().is_some_and(|s| s.err.is_none()))
+                                .count();
+                        }
                         Err(error) => {
-                            tracing::warn!(%wallet, %error, "listing an actor's transactions")
+                            tracing::warn!(kind = tally.kind, %error, "reading an actor's transactions")
                         }
                     }
                 }
-                tally.on_chain = Some(listed);
+                tally.on_chain = Some(landed);
             }
         }
         report.library = Some(library);

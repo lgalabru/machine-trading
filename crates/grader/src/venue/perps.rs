@@ -160,6 +160,7 @@ impl PerpMarket {
             seat: PerpSeat::new(self.instrument.to_string(), Arc::new(trader)),
             signer,
             sends: AtomicU32::new(0),
+            last: std::sync::Mutex::default(),
         }))
     }
 }
@@ -271,6 +272,7 @@ pub struct UniquePerpSeat {
     seat: PerpSeat,
     signer: Keypair,
     sends: AtomicU32,
+    last: std::sync::Mutex<Option<String>>,
 }
 
 impl UniquePerpSeat {
@@ -283,13 +285,15 @@ impl UniquePerpSeat {
         for step in &mut plan.steps {
             step.compute_unit_limit = step.compute_unit_limit.saturating_sub(1 + n % 1024);
         }
-        self.seat
+        let signature = self
+            .seat
             .trader
             .inner
             .execute(&plan, &self.signer)
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        *self.last.lock().expect("seat lock") = Some(signature.to_string());
+        Ok(())
     }
 
     /// `size` base units on the lot grid, and `price` on the tick grid the
@@ -382,5 +386,9 @@ impl Seat for UniquePerpSeat {
 
     async fn index(&self) -> SeatResult<Option<f64>> {
         self.seat.index().await
+    }
+
+    fn last_signature(&self) -> Option<String> {
+        self.last.lock().expect("seat lock").clone()
     }
 }

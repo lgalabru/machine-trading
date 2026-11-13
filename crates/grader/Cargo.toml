@@ -22,7 +22,6 @@ serde_json.workspace = true
 # Derives each session's keypairs from the grade's secret (see src/keys.rs), and
 # hashes a snapshot recipe.
 sha2 = "0.10"
-solana-commitment-config.workspace = true
 solana-keypair.workspace = true
 solana-pubkey.workspace = true
 solana-rpc-client.workspace = true

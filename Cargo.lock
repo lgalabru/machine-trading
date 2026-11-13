@@ -5077,7 +5077,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "solana-commitment-config",
  "solana-keypair",
  "solana-pubkey 4.3.0",
  "solana-rpc-client",
