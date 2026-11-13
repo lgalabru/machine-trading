@@ -26,7 +26,7 @@ use std::{
 use mtx_kit::{Intent, LineOptions, Planned, SendSource, SendState, SendStatus};
 use rand::SeedableRng;
 use wasmtime::{
-    Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
+    Config, Engine, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder,
     component::{Component, HasSelf, Linker, ResourceTable},
 };
 use wasmtime_wasi::{
@@ -68,8 +68,89 @@ pub const FUEL_PER_CALL: u64 = 10_000_000_000;
 /// the funding-carry reference spends, the most of the references.
 pub const FUEL_PER_STEP: u64 = 2_000_000_000;
 
-/// The most linear memory a strategy may grow to, in bytes.
+/// The most linear memory a strategy may grow to, in bytes, all of its
+/// memories together.
 pub const MEMORY_BYTES: usize = 1 << 30;
+
+/// The most linear memories, and core instances, one component may hold. A
+/// component built from Rust has one memory and about four instances (the
+/// module, the WASI adapter and the glue between them); this leaves room
+/// for a few more modules, not for a swarm.
+const MEMORIES: usize = 8;
+const INSTANCES: usize = 32;
+
+/// The most tables, and table elements in all, a component may hold.
+const TABLES: usize = 16;
+const TABLE_ELEMENTS: usize = 1 << 20;
+
+/// Limits on what a strategy's store may hold: `MEMORY_BYTES` across all of
+/// its memories (Wasmtime's own limit is per memory), and a count of each
+/// kind of thing that takes space.
+struct Limits {
+    inner: StoreLimits,
+    memory: usize,
+}
+
+impl Limits {
+    fn new() -> Self {
+        Self {
+            inner: StoreLimitsBuilder::new()
+                .memory_size(MEMORY_BYTES)
+                .memories(MEMORIES)
+                .instances(INSTANCES)
+                .tables(TABLES)
+                .table_elements(TABLE_ELEMENTS)
+                .trap_on_grow_failure(true)
+                .build(),
+            memory: 0,
+        }
+    }
+}
+
+impl ResourceLimiter for Limits {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let total = self.memory.saturating_add(desired.saturating_sub(current));
+        if total > MEMORY_BYTES || !self.inner.memory_growing(current, desired, maximum)? {
+            return Ok(false);
+        }
+        self.memory = total;
+        Ok(true)
+    }
+
+    fn memory_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.inner.memory_grow_failed(error)
+    }
+
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.inner.table_growing(current, desired, maximum)
+    }
+
+    fn table_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.inner.table_grow_failed(error)
+    }
+
+    fn instances(&self) -> usize {
+        self.inner.instances()
+    }
+
+    fn tables(&self) -> usize {
+        self.inner.tables()
+    }
+
+    fn memories(&self) -> usize {
+        self.inner.memories()
+    }
+}
 
 /// The most `rpc` calls one step may make, and the most `send` calls.
 const RPC_CALLS_PER_STEP: u32 = 256;
@@ -182,7 +263,7 @@ struct Host {
     raw_sends: Vec<mtx_kit::RawTransaction>,
     /// What takes the raw sends, in a session that enables them.
     raw: Option<crate::raw::RawSender>,
-    limits: StoreLimits,
+    limits: Limits,
 }
 
 impl WasiView for Host {
@@ -353,6 +434,7 @@ impl WasmStrategy {
         let wasm_error = |e: wasmtime::Error| Error::Wasm(format!("{}: {e:#}", path.display()));
         let mut config = Config::new();
         config.consume_fuel(true);
+        config.wasm_multi_memory(false);
         let engine = Engine::new(&config).map_err(wasm_error)?;
         let component = Component::from_file(&engine, path).map_err(wasm_error)?;
         let linker = |add: fn(&mut Linker<Host>) -> wasmtime::Result<()>| {
@@ -401,10 +483,7 @@ impl WasmStrategy {
             raw_calls: 0,
             raw_sends: Vec::new(),
             raw: None,
-            limits: StoreLimitsBuilder::new()
-                .memory_size(MEMORY_BYTES)
-                .trap_on_grow_failure(true)
-                .build(),
+            limits: Limits::new(),
         };
         let mut store = Store::new(&engine, host);
         store.limiter(|host| &mut host.limits);
@@ -1885,6 +1964,50 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    fn limited_store() -> (Engine, Store<Limits>) {
+        let mut config = Config::new();
+        config.wasm_multi_memory(false);
+        let engine = Engine::new(&config).unwrap();
+        let mut store = Store::new(&engine, Limits::new());
+        store.limiter(|limits| limits);
+        (engine, store)
+    }
+
+    fn memory_module(engine: &Engine, pages: u32) -> wasmtime::Module {
+        wasmtime::Module::new(engine, format!("(module (memory {pages}))")).unwrap()
+    }
+
+    /// Wasmtime's own limit is per memory: several memories, each under the
+    /// cap, must still stop at the cap in all.
+    #[test]
+    fn memories_together_stay_under_the_cap() {
+        let (engine, mut store) = limited_store();
+        let half = memory_module(&engine, 6 * 1024); // 384 MiB of 64 KiB pages
+        for _ in 0..2 {
+            wasmtime::Instance::new(&mut store, &half, &[]).unwrap();
+        }
+        let refused = wasmtime::Instance::new(&mut store, &half, &[]);
+        assert!(refused.is_err(), "a third 384 MiB memory fits under 1 GiB");
+
+        let (engine, mut store) = limited_store();
+        let over = memory_module(&engine, 16 * 1024 + 1);
+        assert!(wasmtime::Instance::new(&mut store, &over, &[]).is_err());
+    }
+
+    /// A swarm of small instances is refused at the memory count, and a
+    /// module with two memories at validation.
+    #[test]
+    fn instances_and_multi_memory_are_refused() {
+        let (engine, mut store) = limited_store();
+        let small = memory_module(&engine, 1);
+        let made = (0..INSTANCES + 1)
+            .map(|_| wasmtime::Instance::new(&mut store, &small, &[]))
+            .filter(Result::is_ok)
+            .count();
+        assert_eq!(made, MEMORIES);
+        assert!(wasmtime::Module::new(&engine, "(module (memory 1) (memory 1))").is_err());
     }
 
     /// The reference as a component: set `MTX_TEST_WASM` to the flash-crash reference's

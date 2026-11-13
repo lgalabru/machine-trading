@@ -45,11 +45,39 @@ that way counts as failed.
 <threads>` busy threads alongside) and fails at the first session report,
 the reference's included, that came out differently.
 
+Sessions run in parallel with `--jobs`, each isolated: its own surfnet and
+ports, RPC guard, directory and keys, and for a component its own store and
+fuel. A strategy component runs inside the grader, with no files and no
+network, so up to 32 of its sessions run at once, as many as memory holds
+with each strategy at its 1 GiB cap (two in a 6 GB container); a process bot runs as one
+of four bot users, so at most four. Grades running at once on one machine
+never run bots as the same user at the same time (a session's end kills
+everything its user runs): a session waits for its user, and
+`--first-bot-user` ranges that don't overlap keep them from waiting. A
+session starts whenever another ends. The report doesn't depend on `--jobs`:
+`--replay-jobs` runs the replays with another number, so `--jobs 16 --replay
+2 --replay-jobs 1` checks a parallel grade against a serial one.
+
 ```sh
 MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
   --reference /opt/mtx/anchors/flash-crash --bot bench/tasks/flash-crash-spcx/reference \
   --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
 ```
+
+A finished grade can be scored again without running a session, when a
+scoring rule changes: `mtx rescore <report.json>` reads each session's
+report and scenario from the grade's detail files (`--details`; by default
+`sessions` beside the report, as the verifier writes them), scores them with
+the grader's current rules, prints the new report, and says on stderr where
+it differs from the old one. With nothing changed it is the same report
+(`--check` fails otherwise). `mtx bench rescore <batch or version>` does it
+for every trial of a batch or published release. Compacting 0.11.0 parsed
+its session files with serde_json's default float parsing, which can land
+a last bit off, so some of its sessions read back a last bit away from the
+report: 38 of its 40 trials rescore to exactly the same reward and skill,
+the other two differ in the last bit. Floats now parse exactly, so a
+release compacted from now on rescores bit for bit. 0.10.0's sessions
+predate the reports' present shape and don't read back.
 
 ## Write a bot
 
@@ -86,7 +114,7 @@ solana-foundation/machine-trading@<version>` says whether it is there.
 ```sh
 just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0   # models, attempts, at a time, version
 just review jobs/bench/<batch>                          # browse it
-just publish jobs/bench/<batch> 0.11.0                  # keep it, in bench/results/0.11.0/
+just publish jobs/bench/<batch> 0.11.0                  # upload it; writes bench/results/0.11.0/release.json
 git add bench/results/0.11.0 && git commit && git push  # the push publishes the website
 ```
 
@@ -114,13 +142,20 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
 2. **Review.** Look at what stands out before you publish: read a winning
    run's bot, and check its report for refused calls. A score
    far above the others is a leak until it isn't.
-3. **Publish.** `just publish <batch> <version>` writes
-   `bench/results/<version>/` and refuses if any file holds the batch's
-   secret or an API key. `--force` replaces a release. See
-   [bench/results](../bench/results/README.md) for what a release keeps.
+3. **Publish.** `just publish <batch> <version>` compacts the batch into a
+   release and refuses if any file holds the batch's secret or an API key.
+   It uploads the release, as one archive, to the
+   [results dataset](https://huggingface.co/datasets/solana-foundation/machine-trading-results)
+   and writes `bench/results/<version>/release.json`: the dataset revision,
+   the archive's sha256 and the release's scores. It needs the `hf` CLI
+   (`uv tool install huggingface_hub`) and `HF_TOKEN`, a token that may
+   write to the `solana-foundation` org. `--force` replaces a release;
+   `--local` keeps the whole release in `bench/results/<version>/` and
+   uploads nothing. See [bench/results](../bench/results/README.md) for
+   what a release keeps.
 4. **Commit and push.** The Pages workflow (`.github/workflows/specs.yml`)
-   rebuilds the website whenever `bench/results` changes, so pushing the
-   release publishes it. A deploy that times out is rerun with
+   rebuilds the website whenever `bench/results` changes, fetching each
+   release from the dataset, so pushing the `release.json` publishes it. A deploy that times out is rerun with
    `gh run rerun <id> --failed`.
 
 `mtx bench review <version>` browses a published release, and
@@ -141,11 +176,16 @@ model between two.
 - **The website:** every published release is on GitHub Pages at
   `/bench/`, as the same page with its data written out as files
   (`mtx bench export <dir>`; the browser inflates the gzipped ones).
-- **Published releases:** about 7 MB a trial, most of it the bot's
-  sessions step by step, which the review page draws. 0.11.0, 40 trials,
-  is 293 MB in the repository and about 450 MB on the website with 0.10.0.
-  GitHub Pages serves at most 1 GB, so the session files will have to move
-  out of the repository within a release or two.
+- **Published releases:** compacted (see
+  [bench/results](../bench/results/README.md)), 0.11.0's 40 trials take
+  75 MB, most of it sessions step by step, bot logs and trajectories.
+  `mtx bench publish --artifacts <dir>` keeps the full release outside the
+  repository, as `<dir>/<version>`, and publishes a slim one: the reports,
+  rewards, task files and bots, about 6 MB for 0.11.0. `mtx bench slim
+  <version> --artifacts <dir>` does the same to a release published before.
+  Readers (review, export, compare, rescore) use the full copy when
+  `MTX_ARTIFACTS=<dir>` holds it; without it, a slim release still shows the
+  leaderboard, comparisons and bots, but no timelines or logs.
 
 ## Author and play scenarios
 

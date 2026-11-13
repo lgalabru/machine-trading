@@ -148,7 +148,7 @@ impl Spot {
 }
 
 /// A spot session's account of the bot's wallet and trading.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SpotReport {
     /// SOL and USDC held at the start and the end: wallet and venues.
     pub start: Wallet,
@@ -159,26 +159,26 @@ pub struct SpotReport {
     pub open_orders: Vec<(InstrumentRef, Side)>,
     /// Each side the bot's liquidity deposits and withdrawals moved base
     /// on, per amm market, which the mandate's sides rule counts as trades.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub liquidity_moves: Vec<(InstrumentRef, Side)>,
     /// Each instruction the bot ran on a pool's program that a bot may not,
     /// as the mandate breach it is.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unsupported: Vec<String>,
     /// For a scenario with a tape or a participation charge: each venue's
     /// traded base volume at each step, the bot's own fills included.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub volume: Vec<VenueVolume>,
     /// Every pool position the bot held, as last seen.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pools: Vec<PoolPositionReport>,
     /// What the session's arbitrageur did, if it has one.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arbitrage: Option<crate::actors::ArbitrageReport>,
 }
 
 /// One of the bot's pool positions, as the session last read it.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PoolPositionReport {
     pub instrument: InstrumentRef,
     /// The venue's name for it.
@@ -198,7 +198,7 @@ pub struct PoolPositionReport {
 }
 
 /// One venue's traded base volume, step by step.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VenueVolume {
     pub venue: String,
     pub per_step: Vec<f64>,
@@ -219,7 +219,7 @@ impl SpotReport {
 }
 
 /// What the account holds, and what it's worth.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Wallet {
     /// SOL and USDC, in the wallet and on every venue, free or locked.
     pub base: f64,
@@ -230,7 +230,7 @@ pub struct Wallet {
 }
 
 /// One of the bot's fills.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpotFill {
     /// Slots into the session it landed at (or, waiting in OpenBook's event
     /// heap, was read at).
@@ -238,7 +238,8 @@ pub struct SpotFill {
     pub instrument: InstrumentRef,
     /// The bot's side, and whether it took or made.
     pub side: Side,
-    pub role: &'static str,
+    #[serde(deserialize_with = "session::static_name")]
+    pub role: session::StaticName,
     /// Price in USDC per SOL, before fees, and size in SOL.
     pub price: f64,
     pub base: f64,
@@ -1114,7 +1115,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
-    let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
+    let user = opts.slot.map(|slot| BOT_USERS[slot]);
+    let workdir = SessionDir::create(&bot, user)?;
     let mut slot = rpc.get_slot()?;
     let first_slot = setup_from + scenario.setup_slots();
     if slot > first_slot {
@@ -1595,6 +1597,7 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
             turn_data: None,
             oracles: None,
@@ -1842,6 +1845,41 @@ mod tests {
             ..Observed::default()
         };
         assert!(mandate.audit(&observed).is_some());
+    }
+
+    /// A report with pool positions and an arbitrageur reads back as it was
+    /// written, and one written without them reads back with none.
+    #[test]
+    fn pool_reports_read_back() {
+        let report = SpotReport {
+            pools: vec![PoolPositionReport {
+                instrument: "raydium:amm:SPCX-USDC".parse().unwrap(),
+                id: "position".into(),
+                first_step: Some(1),
+                last_step: Some(3),
+                base: 1.5,
+                quote: 300.0,
+                fees_base: 0.0,
+                fees_quote: 0.25,
+                value_usd: 600.25,
+                at_end: true,
+            }],
+            arbitrage: Some(crate::actors::ArbitrageReport {
+                sent: 4,
+                failed: 0,
+                bought: 2.0,
+                sold: 1.0,
+            }),
+            ..SpotReport::default()
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert_eq!(serde_json::from_str::<SpotReport>(&json).unwrap(), report);
+        let plain = serde_json::to_string(&SpotReport::default()).unwrap();
+        assert!(!plain.contains("pools") && !plain.contains("arbitrage"));
+        assert_eq!(
+            serde_json::from_str::<SpotReport>(&plain).unwrap(),
+            SpotReport::default()
+        );
     }
 
     /// The pool snapshot offline: every pool's markets read, each priced near

@@ -420,7 +420,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
 review path:
     cargo run --release -q -- bench review {{path}}
 
-# Publish a finished batch to bench/results/<version>, to commit.
+# Publish a finished batch: upload it to the results dataset (needs hf and
+# HF_TOKEN) and write bench/results/<version>/release.json, to commit.
 publish batch version:
     cargo run --release -q -- bench publish {{batch}} {{version}}
 
@@ -553,6 +554,6 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     for bot in {{tasks}}/{{task}}/checks/exploits/*/; do
       [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
-    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx target/release/mtx \
+    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
       --out "{{out}}" ${count_args[@]+"${count_args[@]}"}

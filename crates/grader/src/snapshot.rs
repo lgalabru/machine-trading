@@ -137,11 +137,18 @@ pub enum Access {
     Open,
 }
 
+/// Held while a surfnet starts. The SDK picks a surfnet's ports by binding
+/// and releasing them, and binds them again once the surfnet runs: two
+/// sessions starting at once in this process could be handed the same port
+/// in between. One start at a time keeps them apart.
+static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Starts the surfnet `build` describes, trying again when a start fails or
 /// hangs (see [`SURFNET_START_TIMEOUT`]). A hung start is left on its thread.
 pub(crate) async fn start_surfnet(build: impl Fn() -> SurfnetBuilder) -> Result<Surfnet> {
     let mut failure = None;
     for attempt in 1..=SURFNET_START_ATTEMPTS {
+        let _starting = STARTING.lock().await;
         let builder = build();
         let (tx, rx) = tokio::sync::oneshot::channel();
         // `start` blocks its thread while it waits, so it gets one of its own.
@@ -512,5 +519,22 @@ mod tests {
             "the PerpAssetMap differs after the same setup"
         );
         assert_eq!((late, late_idle), (0, 0));
+    }
+
+    /// Sessions graded at once start their surfnets at once: each gets its
+    /// own ports, and answers on them.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn surfnets_started_at_once_get_their_own_ports() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../snapshots/phoenix-spcx-2026-10-29");
+        let worlds = futures::future::join_all((0..8).map(|_| start_offline_stepped(&dir))).await;
+        let mut ports = std::collections::BTreeSet::new();
+        for world in &worlds {
+            let world = world.as_ref().unwrap();
+            let url = reqwest::Url::parse(world.surfnet.rpc_url()).unwrap();
+            assert!(ports.insert(url.port().unwrap()), "{url} is shared");
+            let rpc = mtx_kit::rpc_client(world.surfnet.rpc_url());
+            assert!(rpc.get_slot().is_ok());
+        }
     }
 }
