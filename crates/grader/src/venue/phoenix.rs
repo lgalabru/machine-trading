@@ -115,6 +115,7 @@ impl Venue for Phoenix {
         Ok(match instrument.kind {
             Kind::Perp => Box::new(self.perp(&instrument.symbol)?),
             Kind::Spot => Box::new(self.book(&instrument.symbol).await?),
+            Kind::StakePool => return Err(not_offered(&self.id, instrument)),
         })
     }
 }

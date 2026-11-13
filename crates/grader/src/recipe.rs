@@ -63,7 +63,8 @@ pub const DEFAULT_FORK_RPC: &str = "https://api.mainnet-beta.solana.com";
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
     pub name: String,
-    /// `spot` for a spot snapshot; absent for a Phoenix Eternal one.
+    /// `spot` for a spot snapshot, `stake-pool` for a stake-pool one; absent
+    /// for a Phoenix Eternal one.
     pub kind: Option<String>,
     pub symbol: String,
     #[serde(default)]
@@ -123,6 +124,9 @@ pub enum Action {
     PhoenixEternal(EternalSpec),
     /// Trade SOL/USDC on Phoenix v1 and OpenBook v2 as a spot session does.
     SpotExercise,
+    /// Stake into and out of Jito's pool and Marinade as a stake-pool
+    /// session does, and start each pool's delayed exit.
+    StakePoolExercise,
     /// A simulated mint.
     CreateMint(MintSpec),
     /// A simulated Phoenix v1 market, seeded around `price`.
@@ -323,6 +327,9 @@ impl World<'_> {
             }
             Action::SpotExercise => {
                 self.price = Some(spot_exercise(self.surfnet, &self.rpc).await?);
+            }
+            Action::StakePoolExercise => {
+                self.price = Some(crate::stake::exercise(self.surfnet, &self.rpc).await?);
             }
             Action::CreateMint(spec) => {
                 let address = simulated::create_mint(self.surfnet, &self.namespace, spec)?;

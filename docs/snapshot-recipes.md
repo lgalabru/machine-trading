@@ -20,7 +20,7 @@ promise an account its warm-up never loads.
 
 ```toml
 name = "sol-usdc-spot-2026-11-11"   # the snapshot's name
-kind = "spot"                       # "spot", or absent for Phoenix Eternal
+kind = "spot"                       # "spot", "stake-pool", or absent for Phoenix Eternal
 symbol = "SOL-USDC"
 
 [fork]                              # optional
@@ -49,6 +49,7 @@ Real venues:
 |---|---|
 | `phoenix-eternal` (`symbol`, `phoenix_api`) | Onboards a throwaway trader, reads the market, rests and cancels an order, and replays the market-move scenario templates so the oracle and maker accounts load. Writes `exchange.json`. |
 | `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
+| `stake-pool-exercise` | Funds a throwaway wallet and takes the paths a stake-pool session takes on Jito's pool and Marinade: a stake and an instant redemption on each (Jito's reserve may refuse it: only logged), and the first step of each delayed exit, a stake account split off Jito's largest validator and deactivated, and a Marinade ticket. |
 
 Real accounts a build that starts from a snapshot can't fetch:
 

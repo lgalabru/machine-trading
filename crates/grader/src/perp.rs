@@ -881,6 +881,7 @@ impl Account for PerpAccount {
                 library
             }),
             spot: None,
+            stake: None,
             faults: done.faults,
             order: None,
             participation: None,

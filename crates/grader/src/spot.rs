@@ -1118,6 +1118,7 @@ impl Account for SpotAccount {
                 open_orders: std::mem::take(&mut self.open_orders),
                 volume,
             }),
+            stake: None,
             order,
             participation,
             net,
@@ -1200,6 +1201,7 @@ mod tests {
                 quote: 0.0,
                 bound_usd: None,
             }),
+            stake: None,
             reference_pnl_usd: None,
         }
     }
