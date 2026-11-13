@@ -13,7 +13,7 @@
 
 use async_trait::async_trait;
 use mtx_kit::Side;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::{Actor, ActorsReport, Moment};
@@ -23,7 +23,7 @@ use crate::{
 };
 
 /// What the grader's takers did in a session.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FlowReport {
     /// Orders the scenario lists, and how many of them were sent and failed.
     pub orders: usize,
@@ -36,7 +36,7 @@ pub struct FlowReport {
 }
 
 /// One taker order as the grader sent it.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TakerRecord {
     /// Slots into the session it was sent at, and the slot the scenario
     /// lists it for.

@@ -512,6 +512,6 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     for bot in {{tasks}}/{{task}}/checks/exploits/*/; do
       [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
-    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx target/release/mtx \
+    python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
       --out "{{out}}" ${count_args[@]+"${count_args[@]}"}
