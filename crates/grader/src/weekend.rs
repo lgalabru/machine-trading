@@ -425,6 +425,7 @@ impl WeekendFamily {
             spot: None,
             faults: None,
             actors: None,
+            takers_pricing: None,
             turn_data: None,
             oracles: None,
             order: None,
