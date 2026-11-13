@@ -32,22 +32,26 @@ use crate::{
 
 const USDC_DECIMALS: u32 = 6;
 
-/// One owner's trader accounts, measured on one perp market: the
+/// One owner's trader accounts, measured on one or more perp markets: the
 /// cross-margin account and every other the owner registered (another PDA
 /// index, an isolated subaccount), summed, so no position hides in one.
+/// Phoenix margins every market of an account together; the meter reads
+/// the account once and each market's position in it.
 pub struct PhoenixEternalMeter {
     exchange: Arc<PhoenixExchange>,
     rpc_url: String,
     chain: Arc<dyn ChainClient>,
     owner: Pubkey,
     trader: Pubkey,
-    market: PhoenixMarket,
+    /// The markets measured, in the order given: never empty.
+    markets: Vec<PhoenixMarket>,
     unsettled_funding: bool,
 }
 
 impl PhoenixEternalMeter {
     /// Measures `owner`'s trader account on `symbol`: Hawkeye's views at
-    /// `rpc_url`, the wallet through `chain`.
+    /// `rpc_url`, the wallet through `chain`. The same as
+    /// [`PhoenixEternalMeter::for_markets`] on that one market.
     pub fn new(
         exchange: Arc<PhoenixExchange>,
         rpc_url: impl Into<String>,
@@ -55,8 +59,29 @@ impl PhoenixEternalMeter {
         owner: Pubkey,
         symbol: &str,
     ) -> Result<Self, PhoenixError> {
+        Self::for_markets(exchange, rpc_url, chain, owner, &[symbol])
+    }
+
+    /// Measures `owner`'s trader account on each of `symbols`, one holding
+    /// each, in that order; a position or order in any other market counts
+    /// as outside the universe. Fails on an unknown symbol, and on none.
+    pub fn for_markets(
+        exchange: Arc<PhoenixExchange>,
+        rpc_url: impl Into<String>,
+        chain: Arc<dyn ChainClient>,
+        owner: Pubkey,
+        symbols: &[&str],
+    ) -> Result<Self, PhoenixError> {
+        if symbols.is_empty() {
+            return Err(PhoenixError::UnknownMarket(
+                "no market to measure".to_string(),
+            ));
+        }
         Ok(Self {
-            market: exchange.market(symbol)?,
+            markets: symbols
+                .iter()
+                .map(|symbol| exchange.market(symbol))
+                .collect::<Result<_, _>>()?,
             trader: exchange.trader_account(&owner),
             exchange,
             rpc_url: rpc_url.into(),
@@ -81,18 +106,40 @@ impl PhoenixEternalMeter {
         self.trader
     }
 
-    /// The instrument this meter measures, as the mandate names it.
+    /// The first market this meter measures, as the mandate names it.
     pub fn instrument(&self) -> &InstrumentId {
-        &self.market.instrument.id
+        &self.markets[0].instrument.id
     }
 
-    /// Every fill and resting order the market recorded in slots after
-    /// `after_slot`, between any trader accounts, oldest first: the events
-    /// of every landed transaction that named the market's order book.
+    /// Every market this meter measures, in its order.
+    pub fn instruments(&self) -> impl Iterator<Item = &InstrumentId> {
+        self.markets.iter().map(|market| &market.instrument.id)
+    }
+
+    /// Every fill and resting order the measured markets recorded in slots
+    /// after `after_slot`, between any trader accounts: the events of every
+    /// landed transaction that named a market's order book. Market by
+    /// market, in the meter's order, each oldest first.
     pub async fn market_records(&self, after_slot: u64) -> Result<PerpMarketRecords, MeterError> {
+        let mut all = PerpMarketRecords::default();
+        for market in &self.markets {
+            let records = self.records_on(market, after_slot).await?;
+            all.fills.extend(records.fills);
+            all.placed.extend(records.placed);
+        }
+        Ok(all)
+    }
+
+    /// One market's records (see [`PhoenixEternalMeter::market_records`]),
+    /// oldest first.
+    async fn records_on(
+        &self,
+        market: &PhoenixMarket,
+        after_slot: u64,
+    ) -> Result<PerpMarketRecords, MeterError> {
         let book = self
             .exchange
-            .market_config(self.market.symbol())
+            .market_config(market.symbol())
             .map_err(read)?
             .market_pubkey
             .parse::<Pubkey>()
@@ -114,15 +161,15 @@ impl PhoenixEternalMeter {
                 .ok_or_else(|| {
                     MeterError::Read(format!("transaction {signature} is listed but not found"))
                 })?;
-            records.add_transaction(&summary, &self.market);
+            records.add_transaction(&summary, market);
         }
         records.sort();
         Ok(records)
     }
 
-    /// What the owner's trader accounts did on the market in slots after
-    /// `after_slot`: their fills, as a taker or a maker, and the orders
-    /// they left resting.
+    /// What the owner's trader accounts did on the measured markets in
+    /// slots after `after_slot`: their fills, as a taker or a maker, and
+    /// the orders they left resting.
     pub async fn records(&self, after_slot: u64) -> Result<TraderRecords, MeterError> {
         let traders = traders(self.chain.as_ref(), &self.owner, self.trader).await?;
         let records = self.market_records(after_slot).await?;
@@ -136,23 +183,28 @@ impl PhoenixEternalMeter {
         self.exchange.hawkeye(&self.rpc_url, self.owner)
     }
 
-    /// Each trader account's position in the market, read first, then its
-    /// margin.
+    /// Each trader account's position in each measured market, read first,
+    /// then its margin, which is the account's across every market.
     async fn readings(&self, traders: &[Pubkey]) -> Result<Vec<Reading>, MeterError> {
         let hawkeye = self.hawkeye();
         let mut readings = Vec::with_capacity(traders.len());
         for &trader in traders {
-            let asset = hawkeye
-                .view_margin_for_asset_for_trader(trader, self.market.asset_id)
-                .await
-                .map_err(read)?
-                .value;
+            let mut assets = Vec::with_capacity(self.markets.len());
+            for market in &self.markets {
+                assets.push(
+                    hawkeye
+                        .view_margin_for_asset_for_trader(trader, market.asset_id)
+                        .await
+                        .map_err(read)?
+                        .value,
+                );
+            }
             let margin = hawkeye
                 .view_margin_for_trader(trader)
                 .await
                 .map_err(read)?
                 .value;
-            readings.push(Reading { asset, margin });
+            readings.push(Reading { assets, margin });
         }
         Ok(readings)
     }
@@ -169,8 +221,9 @@ impl PhoenixEternalMeter {
         let wallet = token::owned_amount(self.chain.as_ref(), &self.owner, &USDC_MINT)
             .await
             .map_err(read)?;
+        // Every Phoenix market quotes in the exchange's one quote lot.
         Ok(
-            Decimal::new(quote_lots, u32::from(self.market.quote_lot_decimals))
+            Decimal::new(quote_lots, u32::from(self.markets[0].quote_lot_decimals))
                 + Decimal::from_i128_with_scale(i128::from(wallet), USDC_DECIMALS),
         )
     }
@@ -188,19 +241,26 @@ impl AccountMeter for PhoenixEternalMeter {
         let traders = traders(self.chain.as_ref(), &self.owner, self.trader).await?;
         let readings = self.readings(&traders).await?;
         let value_usd = self.value_usd(&readings).await?;
-        let outside_universe = match outside(&self.market, &readings, universe) {
+        let outside_universe = match outside(&self.markets, &readings, universe) {
             0 => 0,
             seen => seen.min(outside(
-                &self.market,
+                &self.markets,
                 &self.readings(&traders).await?,
                 universe,
             )),
         };
         Ok(Measurement {
-            holdings: vec![(
-                self.instrument().clone(),
-                Holding::Perp(position(&self.market, &readings)),
-            )],
+            holdings: self
+                .markets
+                .iter()
+                .enumerate()
+                .map(|(i, market)| {
+                    (
+                        market.instrument.id.clone(),
+                        Holding::Perp(position(market, i, &readings)),
+                    )
+                })
+                .collect(),
             value_usd,
             outside_universe,
         })
@@ -275,13 +335,12 @@ fn quote_lots(readings: &[Reading], unsettled_funding: bool) -> i64 {
         .sum()
 }
 
-/// The position in `market`, netted across the trader accounts.
-fn position(market: &PhoenixMarket, readings: &[Reading]) -> Position {
+/// The position in `market`, the meter's `index`th, netted across the
+/// trader accounts.
+fn position(market: &PhoenixMarket, index: usize, readings: &[Reading]) -> Position {
     let mut legs = readings.iter().map(|r| {
-        market.position(
-            r.asset.base_lots,
-            r.asset.entry_price_quote_lots_per_base_lot,
-        )
+        let asset = &r.assets[index];
+        market.position(asset.base_lots, asset.entry_price_quote_lots_per_base_lot)
     });
     let first = legs
         .next()
@@ -290,23 +349,30 @@ fn position(market: &PhoenixMarket, readings: &[Reading]) -> Position {
 }
 
 /// Markets held other than the universe's, across the trader accounts:
-/// each account's count, less `market` where it is in the universe.
-fn outside(market: &PhoenixMarket, readings: &[Reading], universe: &[InstrumentId]) -> u32 {
-    let counted = universe.contains(&market.instrument.id);
+/// each account's count, less each measured market (`markets`, read in
+/// that order) it holds that is in the universe.
+fn outside(markets: &[PhoenixMarket], readings: &[Reading], universe: &[InstrumentId]) -> u32 {
     readings
         .iter()
         .map(|r| {
-            let held = r.asset.has_position_or_orders != 0 && counted;
-            u32::from(r.margin.position_count.saturating_sub(u16::from(held)))
+            let held = markets
+                .iter()
+                .zip(&r.assets)
+                .filter(|(market, asset)| {
+                    asset.has_position_or_orders != 0 && universe.contains(&market.instrument.id)
+                })
+                .count();
+            let held = u16::try_from(held).unwrap_or(u16::MAX);
+            u32::from(r.margin.position_count.saturating_sub(held))
         })
         .sum()
 }
 
 /// One trader account's reads.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Reading {
-    /// Its position or orders in the meter's market.
-    asset: ViewAssetReturn,
+    /// Its position or orders in each of the meter's markets, in order.
+    assets: Vec<ViewAssetReturn>,
     /// Its collateral, PnL and the markets it holds a position or orders in.
     margin: ViewMarginReturn,
 }
@@ -375,14 +441,18 @@ mod tests {
         }
     }
 
+    fn asset(base_lots: i64, entry: u64) -> ViewAssetReturn {
+        ViewAssetReturn {
+            base_lots,
+            entry_price_quote_lots_per_base_lot: entry,
+            has_position_or_orders: u8::from(base_lots != 0),
+            ..ViewAssetReturn::default()
+        }
+    }
+
     fn reading(base_lots: i64, entry: u64, collateral: i64, pnl: i64, count: u16) -> Reading {
         Reading {
-            asset: ViewAssetReturn {
-                base_lots,
-                entry_price_quote_lots_per_base_lot: entry,
-                has_position_or_orders: u8::from(base_lots != 0),
-                ..ViewAssetReturn::default()
-            },
+            assets: vec![asset(base_lots, entry)],
             margin: ViewMarginReturn {
                 collateral_quote_lots: collateral,
                 unrealized_pnl_quote_lots: pnl,
@@ -438,32 +508,110 @@ mod tests {
         // and one more); an isolated subaccount: 4.00 SOL long at 160.
         let main = reading(150, 1_500_000, 900_000_000, 3_000_000, 2);
         let isolated = reading(400, 1_600_000, 100_000_000, -1_000_000, 1);
-        let both = [main, isolated];
+        let markets = std::slice::from_ref(&sol);
+        let both = [main.clone(), isolated];
 
-        let p = position(&sol, &both);
+        let p = position(&sol, 0, &both);
         assert_eq!(p.quantity, dec!(5.5));
         assert_eq!(p.entry_notional, dec!(865));
         assert_eq!(quote_lots(&both, false), 1_002_000_000);
         assert_eq!(quote_lots(&both, true), 1_001_999_990);
-        assert_eq!(outside(&sol, &both, &universe), 1);
+        assert_eq!(outside(markets, &both, &universe), 1);
         // Outside the universe, every account's SOL counts too.
-        assert_eq!(outside(&sol, &both, &[]), 3);
+        assert_eq!(outside(markets, &both, &[]), 3);
 
         // A short leg nets against the long one.
         let short = reading(-400, 1_600_000, 100_000_000, 0, 1);
-        let p = position(&sol, &[main, short]);
+        let p = position(&sol, 0, &[main.clone(), short]);
         assert_eq!(p.quantity, dec!(-2.5));
         assert_eq!(p.entry_notional, dec!(415));
 
         // One account alone is that account, as Phoenix reports it.
-        let p = position(&sol, &[main]);
+        let p = position(&sol, 0, std::slice::from_ref(&main));
         assert_eq!(p, sol.position(150, 1_500_000));
-        assert_eq!(outside(&sol, &[main], &universe), 1);
+        assert_eq!(outside(markets, std::slice::from_ref(&main), &universe), 1);
         // An isolated subaccount in a market outside the universe.
         let elsewhere = reading(0, 0, 100_000_000, 0, 1);
         assert_eq!(
-            outside(&sol, &[reading(0, 0, 1, 0, 0), elsewhere], &universe),
+            outside(markets, &[reading(0, 0, 1, 0, 0), elsewhere], &universe),
             1
+        );
+    }
+
+    #[test]
+    fn measures_each_market_of_one_account() {
+        let sol = sol();
+        let mut eth = sol.clone();
+        eth.asset_id += 1;
+        eth.instrument.id = InstrumentId::new("phoenix:perp:ETH");
+        let markets = [sol.clone(), eth.clone()];
+        let both = [sol.instrument.id.clone(), eth.instrument.id.clone()];
+        // One account: long 1.50 SOL, short 0.20 ETH, and a third market:
+        // three markets held, the margin read once for them all.
+        let account = Reading {
+            assets: vec![asset(150, 1_500_000), asset(-20, 3_000_000)],
+            margin: ViewMarginReturn {
+                position_count: 3,
+                ..ViewMarginReturn::default()
+            },
+        };
+        let readings = std::slice::from_ref(&account);
+        assert_eq!(position(&sol, 0, readings), sol.position(150, 1_500_000));
+        assert_eq!(position(&eth, 1, readings), eth.position(-20, 3_000_000));
+        // The third market is the only one outside the universe.
+        assert_eq!(outside(&markets, readings, &both), 1);
+        // A measured market outside the universe counts as outside.
+        assert_eq!(outside(&markets, readings, &both[..1]), 2);
+        // Measuring one of them is the one-market meter: the other two count.
+        let one = Reading {
+            assets: vec![asset(150, 1_500_000)],
+            ..account.clone()
+        };
+        assert_eq!(outside(&markets[..1], std::slice::from_ref(&one), &both), 2);
+    }
+
+    #[test]
+    fn a_meter_on_one_market_is_the_one_market_meter() {
+        let exchange = Arc::new(
+            PhoenixExchange::load(std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../snapshots/phoenix-perps-2026-11-13/exchange.json"
+            )))
+            .unwrap(),
+        );
+        let chain: Arc<dyn ChainClient> = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let url = "http://127.0.0.1:1";
+        let one =
+            PhoenixEternalMeter::new(exchange.clone(), url, chain.clone(), owner, "NVDA").unwrap();
+        let same = PhoenixEternalMeter::for_markets(
+            exchange.clone(),
+            url,
+            chain.clone(),
+            owner,
+            &["NVDA"],
+        )
+        .unwrap();
+        assert_eq!(one.markets, same.markets);
+        assert_eq!(one.trader(), same.trader());
+        let two = PhoenixEternalMeter::for_markets(
+            exchange.clone(),
+            url,
+            chain.clone(),
+            owner,
+            &["SPCX", "NVDA"],
+        )
+        .unwrap();
+        let ids: Vec<String> = two.instruments().map(ToString::to_string).collect();
+        assert_eq!(ids, ["phoenix:perp:SPCX", "phoenix:perp:NVDA"]);
+        assert_eq!(two.instrument().to_string(), "phoenix:perp:SPCX");
+        assert!(
+            PhoenixEternalMeter::for_markets(exchange.clone(), url, chain.clone(), owner, &[])
+                .is_err()
+        );
+        assert!(
+            PhoenixEternalMeter::for_markets(exchange, url, chain, owner, &["NVDA", "NOPE"])
+                .is_err()
         );
     }
 
@@ -585,7 +733,7 @@ mod tests {
         let meter =
             PhoenixEternalMeter::new(exchange, "http://127.0.0.1:1", chain.clone(), owner, "SPCX")
                 .unwrap();
-        let spcx = meter.market.clone();
+        let spcx = meter.markets[0].clone();
         let mut elsewhere = spcx.clone();
         elsewhere.asset_id += 1;
 
