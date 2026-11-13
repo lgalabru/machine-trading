@@ -26,14 +26,17 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units,
+        Deposit, Loaded, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, Quote, SwapOrder, named,
+        pool_assets, range, read_accounts, swap_atoms, units, within_compute,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
 
 /// Bin arrays a swap may cross: the active one and two beyond.
 const SWAP_BIN_ARRAYS: usize = 3;
+/// Bin arrays with liquidity a quote reads each way from the active one:
+/// more than one swap can name, so the quote knows where it would stop.
+const LOADED_BIN_ARRAYS: usize = 4;
 /// How far the active bin may move between a deposit's planning and its
 /// landing.
 const MAX_ACTIVE_BIN_SLIPPAGE: i32 = BINS_PER_ARRAY;
@@ -475,5 +478,154 @@ impl Pool for DlmmPool {
         }
         instructions.push(ix::claim_fee(&pair, owner, &held));
         Ok(instructions)
+    }
+
+    async fn load(&self, chain: &dyn ChainClient) -> Result<Arc<dyn Loaded>> {
+        let pair = self.pair(chain).await?;
+        let mut indexes = pair.swap_bin_arrays(true, LOADED_BIN_ARRAYS);
+        for index in pair.swap_bin_arrays(false, LOADED_BIN_ARRAYS) {
+            if !indexes.contains(&index) {
+                indexes.push(index);
+            }
+        }
+        let addresses: Vec<Pubkey> = indexes
+            .iter()
+            .map(|index| dlmm::bin_array_address(&self.assets.address, *index))
+            .collect();
+        let bin_arrays = read_accounts(chain, &addresses)
+            .await?
+            .iter()
+            .map(|(_, data)| BinArray::decode(data).map_err(read_error("meteora bin array")))
+            .collect::<Result<Vec<_>>>()?;
+        let timestamp = super::books::unix_timestamp(chain).await?;
+        let slot = chain.get_slot().await.map_err(read_error("the slot"))?;
+        let extension = dlmm::bitmap_extension_address(&self.assets.address);
+        let extension =
+            matches!(chain.get_account(&extension).await, Ok(Some(_))).then_some(extension);
+        Ok(Arc::new(LoadedDlmm {
+            assets: self.assets.clone(),
+            pair,
+            bin_arrays,
+            extension,
+            timestamp,
+            slot,
+        }))
+    }
+}
+
+/// A Meteora pool as one read left it.
+struct LoadedDlmm {
+    assets: PoolAssets,
+    pair: LbPair,
+    /// The bin arrays with liquidity nearest the active bin, each way.
+    bin_arrays: Vec<BinArray>,
+    extension: Option<Pubkey>,
+    /// The clock, for the variable fee and the pool's activation.
+    timestamp: i64,
+    slot: u64,
+}
+
+impl LoadedDlmm {
+    fn swap_state(
+        &self,
+        base_in: bool,
+        amount: u64,
+        exact_in: bool,
+    ) -> SeatResult<dlmm::swap::Swap> {
+        if self.pair.status != 0 {
+            return Err("the pool is disabled".into());
+        }
+        dlmm::swap::swap(
+            &self.pair,
+            &self.bin_arrays,
+            base_in,
+            amount,
+            exact_in,
+            self.timestamp,
+            self.slot,
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+impl Loaded for LoadedDlmm {
+    fn assets(&self) -> &PoolAssets {
+        &self.assets
+    }
+
+    fn label(&self) -> &'static str {
+        "Meteora DLMM"
+    }
+
+    fn quote(&self, base_in: bool, amount: u64, exact_in: bool) -> SeatResult<Quote> {
+        let swap = self.swap_state(base_in, amount, exact_in)?;
+        let quote = Quote {
+            base_in,
+            exact_in,
+            amount_in: swap.amount_in,
+            amount_out: swap.amount_out,
+            fee: swap.fee,
+            fee_mint: match swap.fee_token {
+                dlmm::swap::Token::X => self.pair.mint_x,
+                dlmm::swap::Token::Y => self.pair.mint_y,
+            },
+            crossed: swap.bins_crossed,
+        };
+        within_compute(self, quote)
+    }
+
+    fn swap(&self, owner: &Pubkey, quote: &Quote, threshold: u64) -> SeatResult<Instruction> {
+        let amount = if quote.exact_in {
+            quote.amount_in
+        } else {
+            quote.amount_out
+        };
+        let walked = self
+            .swap_state(quote.base_in, amount, quote.exact_in)?
+            .bin_arrays
+            .len();
+        // The arrays it walked and the next one its way, in case the price
+        // moves before it lands.
+        let indexes = self.pair.swap_bin_arrays(quote.base_in, walked.max(1) + 1);
+        let swap = if quote.exact_in {
+            Swap::ExactIn {
+                amount_in: amount,
+                min_out: threshold,
+            }
+        } else {
+            Swap::ExactOut {
+                amount_out: amount,
+                max_in: threshold,
+            }
+        };
+        Ok(ix::swap(&self.pair, owner, quote.base_in, swap, &indexes))
+    }
+
+    fn accounts(&self) -> Vec<Pubkey> {
+        let pair = &self.pair;
+        let mut accounts = vec![
+            dlmm::PROGRAM_ID,
+            pair.address,
+            pair.reserve_x,
+            pair.reserve_y,
+            pair.mint_x,
+            pair.mint_y,
+            pair.oracle,
+            pair.program_x,
+            pair.program_y,
+            dlmm::event_authority(),
+            ix::MEMO_PROGRAM_ID,
+        ];
+        accounts.extend(self.extension);
+        accounts.extend(
+            self.bin_arrays
+                .iter()
+                .map(|a| dlmm::bin_array_address(&pair.address, a.index)),
+        );
+        accounts
+    }
+
+    fn compute_units(&self, crossed: u32) -> u32 {
+        100_000 + 15_000 * crossed
     }
 }

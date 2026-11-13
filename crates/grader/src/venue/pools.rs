@@ -175,6 +175,92 @@ pub trait Pool: Send + Sync {
         min_base: Option<f64>,
         min_quote: Option<f64>,
     ) -> SeatResult<Vec<Instruction>>;
+
+    /// The pool as one read leaves it, with the session's clock: what its
+    /// swaps would do now, quoted exactly ([`Loaded`]).
+    async fn load(&self, chain: &dyn ChainClient) -> Result<Arc<dyn Loaded>>;
+}
+
+/// What one swap through a pool does, in atoms, exactly as its program
+/// would execute it on the state it was quoted on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quote {
+    /// The base goes in (a sale of the base).
+    pub base_in: bool,
+    pub exact_in: bool,
+    /// What leaves the payer, the fee included, and what it receives.
+    pub amount_in: u64,
+    pub amount_out: u64,
+    /// The pool's fee, in atoms of `fee_mint`.
+    pub fee: u64,
+    pub fee_mint: Pubkey,
+    /// Initialized ticks or bins it crossed.
+    pub crossed: u32,
+}
+
+/// A pool read once, at a slot: its swaps quoted exactly, as its program
+/// computes them, and built, with no further reads. A router's search is a
+/// function of these alone.
+pub trait Loaded: Send + Sync {
+    fn assets(&self) -> &PoolAssets;
+
+    /// The pool's kind, as Jupiter labels it (`Raydium CLMM`).
+    fn label(&self) -> &'static str;
+
+    /// A swap of `amount` atoms: in of the token in (`base_in`: the base),
+    /// or, not `exact_in`, out of the other.
+    fn quote(&self, base_in: bool, amount: u64, exact_in: bool) -> SeatResult<Quote>;
+
+    /// `owner`'s swap as `quote` quoted it, `threshold` its least out (or
+    /// most in): one instruction, naming every tick or bin array the quote
+    /// crossed and the next one its way.
+    fn swap(&self, owner: &Pubkey, quote: &Quote, threshold: u64) -> SeatResult<Instruction>;
+
+    /// The accounts its swaps name, for an address lookup table.
+    fn accounts(&self) -> Vec<Pubkey>;
+
+    /// Compute units a swap that crossed `crossed` ticks or bins needs, with
+    /// room to spare. [`Loaded::quote`] refuses a swap past
+    /// [`MAX_SWAP_COMPUTE_UNITS`].
+    fn compute_units(&self, crossed: u32) -> u32;
+}
+
+/// The most compute units one quoted swap may need: a swap that crosses more
+/// ticks or bins than this pays for doesn't fit a transaction beside
+/// another leg, and is refused as too big.
+pub const MAX_SWAP_COMPUTE_UNITS: u32 = 1_000_000;
+
+/// `quote`, unless its swap needs more than [`MAX_SWAP_COMPUTE_UNITS`].
+pub(crate) fn within_compute(pool: &dyn Loaded, quote: Quote) -> SeatResult<Quote> {
+    if pool.compute_units(quote.crossed) > MAX_SWAP_COMPUTE_UNITS {
+        return Err(format!(
+            "it crosses {} ticks or bins: more than one swap's compute allows",
+            quote.crossed
+        ));
+    }
+    Ok(quote)
+}
+
+/// The accounts at `addresses` that exist, by address, read in one call
+/// per hundred.
+pub(crate) async fn read_accounts(
+    chain: &dyn ChainClient,
+    addresses: &[Pubkey],
+) -> Result<Vec<(Pubkey, Vec<u8>)>> {
+    let mut found = Vec::new();
+    for chunk in addresses.chunks(100) {
+        let accounts = chain
+            .get_multiple_accounts(chunk)
+            .await
+            .map_err(chain_error("a pool's arrays"))?;
+        found.extend(
+            chunk
+                .iter()
+                .zip(accounts)
+                .filter_map(|(address, account)| account.map(|a| (*address, a.data))),
+        );
+    }
+    Ok(found)
 }
 
 /// One instrument of a pool's: the spot one, or the amm one.
@@ -1004,5 +1090,144 @@ mod tests {
         ]);
         assert_eq!(vault_swap(&added, &assets), None);
         assert_eq!(vault_swap(&summary(Vec::new()), &assets), None);
+    }
+
+    /// Every routed pool's quotes are what its program pays: on the route
+    /// snapshot, a grader-owned trader holding every pool's tokens, 50
+    /// seeded sizes each way on each pool (exactly in, and every fifth also
+    /// exactly out), each quote checked against a simulation of its swap on
+    /// the same state, to the atom.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn quotes_are_what_the_programs_pay() {
+        use mtx_kit::token::associated_token_address;
+        use solana_transaction::Transaction;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../snapshots/spcx-route-2026-11-13")
+            .canonicalize()
+            .unwrap();
+        let (surfnet, _) = crate::snapshot::start_snapshot_stepped(&dir).await.unwrap();
+        let internal = crate::guard::Guard::internal(surfnet.rpc_url())
+            .await
+            .unwrap();
+        let url = internal.url().to_string();
+        let chain: Arc<dyn ChainClient> = Arc::new(RpcChainClient::new(&url));
+        let trader = Keypair::new();
+        let owner = trader.pubkey();
+        tokio::task::block_in_place(|| {
+            let rpc = mtx_kit::rpc_client(&url);
+            crate::spot::fund(&surfnet, &rpc, &trader, 100_000.0, 10_000_000.0, true).unwrap();
+            crate::spot::fund_mint(&surfnet, &owner, &SPCX_MINT, 100_000_000_000).unwrap();
+        });
+        // A little linear congruential generator: the same sizes every run.
+        let mut seed = 0x18u64;
+        let mut unit = move || {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut checked = 0;
+        for venue in crate::spot::POOLS {
+            for named in crate::venue::books::named_markets(venue).unwrap() {
+                let pool = connect(venue, chain.as_ref(), named).await.unwrap();
+                let loaded = pool.load(chain.as_ref()).await.unwrap();
+                let assets = loaded.assets().clone();
+                let accounts = [
+                    associated_token_address(&owner, &assets.base_mint, &assets.base_program),
+                    associated_token_address(&owner, &assets.quote_mint, &assets.quote_program),
+                ];
+                let balance = |data: Option<&[u8]>| {
+                    data.map_or(0, |d| u64::from_le_bytes(d[64..72].try_into().unwrap()))
+                };
+                let before = chain.get_multiple_accounts(&accounts).await.unwrap();
+                for base_in in [true, false] {
+                    let decimals = if base_in {
+                        assets.base.decimals
+                    } else {
+                        assets.quote.decimals
+                    };
+                    let (mut exact, mut tried) = (0, 0);
+                    let mut most_used = (0, 0);
+                    for k in 0..50 {
+                        // From a thousandth of a unit to ten thousand units.
+                        let units = 10f64.powf(-3.0 + 7.0 * unit());
+                        let mut amount = (units * 10f64.powi(i32::from(decimals))) as u64;
+                        let exact_in = k % 5 != 4;
+                        // Halved until the pool's loaded liquidity takes it.
+                        let mut quoted = loaded.quote(base_in, amount, exact_in);
+                        while quoted.is_err() && amount > 1 {
+                            amount /= 2;
+                            quoted = loaded.quote(base_in, amount, exact_in);
+                        }
+                        let Ok(quote) = quoted else {
+                            continue;
+                        };
+                        tried += 1;
+                        let threshold = if exact_in { 0 } else { u64::MAX };
+                        let ix = loaded.swap(&owner, &quote, threshold).unwrap();
+                        let tx = Transaction::new_with_payer(
+                            &[crate::raw::compute_limit(1_400_000), ix],
+                            Some(&owner),
+                        );
+                        let outcome = chain
+                            .simulate(&VersionedTransaction::from(tx), &accounts)
+                            .await
+                            .unwrap();
+                        assert!(
+                            outcome.error.is_none(),
+                            "{venue}:{} {base_in} {amount} {exact_in}: {:?} {:?}",
+                            named.symbol,
+                            outcome.error,
+                            outcome.logs
+                        );
+                        let after: Vec<u64> = outcome
+                            .accounts
+                            .iter()
+                            .map(|(_, a)| balance(a.as_ref().map(|a| a.data.as_slice())))
+                            .collect();
+                        let (base_before, quote_before) = (
+                            balance(before[0].as_ref().map(|a| a.data.as_slice())),
+                            balance(before[1].as_ref().map(|a| a.data.as_slice())),
+                        );
+                        let (spent, got) = if base_in {
+                            (base_before - after[0], after[1] - quote_before)
+                        } else {
+                            (quote_before - after[1], after[0] - base_before)
+                        };
+                        assert!(
+                            spent.abs_diff(quote.amount_in) <= 1
+                                && got.abs_diff(quote.amount_out) <= 1,
+                            "{venue}:{} base in {base_in}, {amount} exact in {exact_in}: quoted {} for {}, the program took {spent} for {got}",
+                            named.symbol,
+                            quote.amount_in,
+                            quote.amount_out
+                        );
+                        exact += usize::from(spent == quote.amount_in && got == quote.amount_out);
+                        // The compute a route asks for this leg covers it.
+                        let used = outcome.units_consumed.unwrap_or(u64::MAX);
+                        assert!(
+                            used <= u64::from(loaded.compute_units(quote.crossed)),
+                            "{venue}:{} {amount}: {used} units for {} crossed, {} asked",
+                            named.symbol,
+                            quote.crossed,
+                            loaded.compute_units(quote.crossed)
+                        );
+                        most_used = most_used.max((used, quote.crossed));
+                    }
+                    assert!(
+                        tried >= 40,
+                        "{venue}:{} {base_in}: only {tried} sizes quoted",
+                        named.symbol
+                    );
+                    println!(
+                        "{venue}:{} base in {base_in}: {exact}/{tried} to the atom, at most {} units ({} crossed)",
+                        named.symbol, most_used.0, most_used.1
+                    );
+                    checked += tried;
+                }
+            }
+        }
+        assert!(checked >= 480);
     }
 }

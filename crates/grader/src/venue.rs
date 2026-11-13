@@ -233,6 +233,12 @@ pub trait Seat: Send + Sync {
         let _ = view;
         Ok(())
     }
+
+    /// What the seat's sends since it was last asked did beyond their
+    /// state, for the next step's notes: a route's paths.
+    fn notes(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// An asset's reference price in USD, as the spot profile values it: USDC
