@@ -34,6 +34,7 @@ surfpool-types.workspace = true
 thiserror.workspace = true
 toml = "1"
 tokio.workspace = true
+toml = "1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true

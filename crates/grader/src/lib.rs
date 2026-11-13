@@ -7,6 +7,7 @@ pub mod crank;
 mod error;
 pub mod faults;
 pub mod flow;
+pub mod generators;
 pub mod grade;
 pub mod guard;
 pub mod keys;

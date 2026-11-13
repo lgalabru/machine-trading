@@ -1,0 +1,4 @@
+# Built bots: the ladder bots (checks/bots) and exploit bots (checks/exploits).
+*/checks/bots/*/bin/
+*/checks/bots/*/bot.wasm
+*/checks/exploits/*/bin/
