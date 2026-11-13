@@ -1,0 +1,159 @@
+{
+  "source": "https://lite-api.jup.ag/swap/v1/quote, dexes=Raydium CLMM,Meteora DLMM, slippageBps=50, recorded while the snapshot was built",
+  "pools_usd": 3980000,
+  "rule": "tolerance 5 bps under 1% of the SPCX pools' value, 20 bps above",
+  "quotes": [
+    {
+      "inputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "inAmount": "1000000",
+      "outAmount": "140794691",
+      "contextSlot": 468847136,
+      "usd": 141,
+      "tolerance_bps": 5,
+      "route": [
+        {
+          "ammKey": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza",
+          "label": "Raydium CLMM",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "inputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "inAmount": "10000000",
+      "outAmount": "1407885983",
+      "contextSlot": 468847146,
+      "usd": 1408,
+      "tolerance_bps": 5,
+      "route": [
+        {
+          "ammKey": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza",
+          "label": "Raydium CLMM",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "inputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "inAmount": "100000000",
+      "outAmount": "14072979803",
+      "contextSlot": 468847155,
+      "usd": 14080,
+      "tolerance_bps": 5,
+      "route": [
+        {
+          "ammKey": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza",
+          "label": "Raydium CLMM",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "inputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "inAmount": "500000000",
+      "outAmount": "70242000471",
+      "contextSlot": 468847166,
+      "usd": 70400,
+      "tolerance_bps": 20,
+      "route": [
+        {
+          "ammKey": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza",
+          "label": "Raydium CLMM",
+          "percent": 95
+        },
+        {
+          "ammKey": "3h9GhSUzozu2eRQ9MCLCeHWYshywm4mqbzPtz2h1zGMF",
+          "label": "Meteora DLMM",
+          "percent": 5
+        },
+        {
+          "ammKey": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
+          "label": "Meteora DLMM",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "inputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "inAmount": "2000000000",
+      "outAmount": "279452196713",
+      "contextSlot": 468847176,
+      "usd": 281600,
+      "tolerance_bps": 20,
+      "route": [
+        {
+          "ammKey": "DUzBLHZ5RZdftPuWVijsvjupndogRM1adGJpsR7YTJro",
+          "label": "Raydium CLMM",
+          "percent": 33
+        },
+        {
+          "ammKey": "AHNN6JmvaGG6XUoSg7sEr38gRYDB2jTbUvqXVuqaRHpq",
+          "label": "Raydium CLMM",
+          "percent": 100
+        },
+        {
+          "ammKey": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza",
+          "label": "Raydium CLMM",
+          "percent": 67
+        }
+      ]
+    },
+    {
+      "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "outputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "inAmount": "1000000000",
+      "outAmount": "7086422",
+      "contextSlot": 468847186,
+      "usd": 1000,
+      "tolerance_bps": 5,
+      "route": [
+        {
+          "ammKey": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
+          "label": "Meteora DLMM",
+          "percent": 100
+        },
+        {
+          "ammKey": "3h9GhSUzozu2eRQ9MCLCeHWYshywm4mqbzPtz2h1zGMF",
+          "label": "Meteora DLMM",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "outputMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb",
+      "inAmount": "20000000000",
+      "outAmount": "141326774",
+      "contextSlot": 468847196,
+      "usd": 20000,
+      "tolerance_bps": 5,
+      "route": [
+        {
+          "ammKey": "CYbD9RaToYMtWKA7QZyoLahnHdWq553Vm62Lh6qWtuxq",
+          "label": "Raydium CLMM",
+          "percent": 3
+        },
+        {
+          "ammKey": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza",
+          "label": "Raydium CLMM",
+          "percent": 72
+        },
+        {
+          "ammKey": "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv",
+          "label": "Raydium CLMM",
+          "percent": 25
+        },
+        {
+          "ammKey": "3h9GhSUzozu2eRQ9MCLCeHWYshywm4mqbzPtz2h1zGMF",
+          "label": "Meteora DLMM",
+          "percent": 100
+        }
+      ]
+    }
+  ]
+}
