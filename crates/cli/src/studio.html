@@ -1093,6 +1093,10 @@ function setView(v) {
 // the session's own RPC (local: it opens on this machine, while the studio
 // keeps the session's chain, until the next Play).
 const explorer = (sig) => `https://explorer.solana.com/tx/${encodeURIComponent(sig)}?cluster=custom&customUrl=${encodeURIComponent(S.started?.rpc ?? "")}`;
+const rpcHost = () => String(S.started?.rpc ?? "").replace(/^(https?:\/\/[^/]+).*$/, "$1");
+// The page is open from another device (the studio on the network): the
+// session's RPC, on the studio's loopback, isn't reachable from here.
+const elsewhere = () => !["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
 function txList() {
   const out = [];
   for (const st of S.steps) if (st) for (const x of st.sent || []) out.push({ k: st.k, ...x });
@@ -1106,7 +1110,9 @@ function renderTxs() {
   const status = (x) => (x.ok ? `<span class="pos">landed</span>` : x.pending ? `<span class="muted">pending</span>` : `<span class="neg" title="${esc(x.error ?? "")}">failed</span>`);
   $("txs").innerHTML = `<table class="txs"><thead><tr><th>step</th><th>order</th><th>status</th><th>signature</th></tr></thead><tbody>${list.map((x) =>
     `<tr><td>${x.k + 1}</td><td>${orderText(x.action)}</td><td>${status(x)}</td><td>${x.signature && S.started?.rpc ? `<a href="${explorer(x.signature)}" target="_blank" rel="noopener" title="${esc(x.signature)}">${esc(x.signature.slice(0, 8))}…${esc(x.signature.slice(-6))} ↗</a>` : `<span class="muted">${x.signature ? esc(x.signature.slice(0, 8)) + "…" : "–"}</span>`}</td></tr>`).join("")}</tbody></table>
-    ${S.report ? `<div class="note muted">The links read the session's chain at ${esc(String(S.started?.rpc ?? "").replace(/\/[^/]*$/, "/…"))}. It stays up until the next Play, on this machine only.</div>` : ""}`;
+    <div class="note muted">${elsewhere()
+      ? `<b>These links open on the machine running the studio only:</b> the session's chain is at ${esc(rpcHost())} there, which this device can't reach.`
+      : `The links read the session's chain at ${esc(rpcHost())}, up until the next Play. If the explorer says <b>Not connected</b>, it isn't allowed to reach this machine: Chrome asks once ("Local network access"); if that was dismissed, open the site settings from the icon left of explorer.solana.com's address, set <b>Local network access</b> to Allow, and reload.`}</div>`;
 }
 $("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setView(b.dataset.view); });
 
