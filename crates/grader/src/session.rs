@@ -45,7 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
-use surfpool_sdk::SimnetCommand;
+use surfpool_sdk::{SimnetCommand, Surfnet};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
@@ -184,6 +184,10 @@ pub struct SessionReport {
     /// A spot session: the wallet at the start and the end, and every fill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<crate::spot::SpotReport>,
+    /// A stake-pool session: the wallet at the start and the end, the
+    /// bot's stakes and unstakes, and the epochs it crossed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stake: Option<crate::stake::StakeReport>,
     /// Execution faults: the plan, and what fired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub faults: Option<crate::faults::FaultsReport>,
@@ -340,11 +344,11 @@ impl SessionReport {
             positions: self.positions.clone(),
             positions_outside_universe: self.positions_outside_universe,
             max_drawdown_usd: self.max_drawdown_usd,
-            fills: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.observed_fills())
-                .unwrap_or_default(),
+            fills: match (&self.spot, &self.stake) {
+                (Some(spot), _) => spot.observed_fills(),
+                (None, Some(stake)) => stake.observed_fills(),
+                (None, None) => Vec::new(),
+            },
             open_orders: self
                 .spot
                 .as_ref()
@@ -430,6 +434,14 @@ pub(crate) trait Account: Send + Sync {
     /// Once the bot has started, before the first step.
     async fn begin(&mut self) -> Result<()> {
         Ok(())
+    }
+
+    /// After step `k`'s blocks landed at `slot`, before anything reads the
+    /// step: move the world's clock where the scenario jumps it (an epoch
+    /// boundary), and return the slot the world is at.
+    async fn warp(&mut self, surfnet: &Surfnet, rpc: &RpcClient, k: u64, slot: u64) -> Result<u64> {
+        let _ = (surfnet, rpc, k);
+        Ok(slot)
     }
 
     /// After step `k`'s blocks landed, at `slot` (`at` slots in): measure
@@ -525,6 +537,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         mut account,
     } = if scenario.lending.is_some() {
         crate::lending::prepare(&opts).await?
+    } else if scenario.stake.is_some() {
+        crate::stake::prepare(&opts).await?
     } else if scenario.spot.is_some() {
         crate::spot::prepare(&opts).await?
     } else {
@@ -688,9 +702,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
         }
-        let at = slot - base_slot;
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
+        slot = account.warp(surfnet, &rpc, k, slot).await?;
+        let at = slot - base_slot;
         cranks
             .step(
                 &rpc,

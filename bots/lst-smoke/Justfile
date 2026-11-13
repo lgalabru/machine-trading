@@ -1,0 +1,11 @@
+# `just build` builds the strategy into a component, bot.wasm. The grader
+# builds nothing: build before grading.
+
+# Build the component.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm
+    echo "built bot.wasm"

@@ -117,6 +117,7 @@ impl Venue for Phoenix {
             Kind::Spot => Box::new(self.book(&instrument.symbol).await?),
             Kind::Amm => return Err(not_offered(&self.id, instrument)),
             Kind::MoneyMarket => return Err(not_offered(&self.id, instrument)),
+            Kind::StakePool => return Err(not_offered(&self.id, instrument)),
         })
     }
 }

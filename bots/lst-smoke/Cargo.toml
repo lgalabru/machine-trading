@@ -1,0 +1,19 @@
+# No workspace inheritance, as the other bots: it builds against the SDK's
+# layout in the task image too.
+[package]
+name = "mtx-bot-lst-smoke"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# The strategy: a component on wasm32-wasip2 (`bot.wasm`).
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-kit = { path = "../../crates/kit" }

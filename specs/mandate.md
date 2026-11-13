@@ -72,8 +72,8 @@ An instrument is referenced as `<venue>:<kind>:<symbol>`, for example
 - `venue` names a [venue profile](venues/), such as `phoenix` or `openbook`.
 - `kind` names an [instrument profile](instruments/). This specification
   defines `perp`, `spot` and `money-market`, and proposes `amm` (a pool's
-  liquidity, a draft for review). `future` and `option` are reserved for
-  later, and a reader MUST reject them.
+  liquidity, a draft for review) and `stake-pool`. `future` and `option` are
+  reserved for later, and a reader MUST reject them.
 - `symbol` is the market's identifier on the venue, as the venue profile
   defines it.
 
@@ -189,12 +189,12 @@ specification can state.
 
 The reference implementation, `mtx_core::mandate`, reads and enforces the
 part of this specification the benchmark's tasks use today: `perp`,
-`spot` and `money-market` instruments, on one venue or several,
-`max_position`, `min_position`, `sides`, `min_sell_price`,
-`max_buy_price`, and `max_drawdown_usd`. It rejects documents that use
-anything else, so the example of a money-market mandate below, which
-limits `min_health`, lives here rather than in [`examples/`](examples/),
-which `cargo test` checks against it.
+`spot`, `money-market` and (proposed) `amm` and `stake-pool` instruments, on
+one venue or several, `max_position`, `min_position`, `sides`,
+`min_sell_price`, `max_buy_price`, and `max_drawdown_usd`. It rejects
+documents that use anything else, so the example of a money-market mandate
+below, which limits `min_health`, lives here rather than in
+[`examples/`](examples/), which `cargo test` checks against it.
 
 ## Changes in later versions
 

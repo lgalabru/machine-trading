@@ -1540,6 +1540,7 @@ impl Account for SpotAccount {
                 pools: std::mem::take(&mut self.pools),
                 arbitrage: done.actors.arbitrage,
             }),
+            stake: None,
             order,
             participation,
             net,
@@ -1631,6 +1632,7 @@ mod tests {
                 quote: 0.0,
                 bound_usd: None,
             }),
+            stake: None,
             reference_pnl_usd: None,
         }
     }

@@ -154,6 +154,7 @@ impl From<mtx_core::mandate::Kind> for MarketKind {
             mtx_core::mandate::Kind::Spot => MarketKind::Spot,
             mtx_core::mandate::Kind::Amm => MarketKind::Amm,
             mtx_core::mandate::Kind::MoneyMarket => MarketKind::Lending,
+            mtx_core::mandate::Kind::StakePool => MarketKind::StakePool,
         }
     }
 }

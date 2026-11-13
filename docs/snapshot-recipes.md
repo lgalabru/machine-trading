@@ -20,7 +20,7 @@ promise an account its warm-up never loads.
 
 ```toml
 name = "sol-usdc-spot-2026-11-11"   # the snapshot's name
-kind = "spot"                       # "spot", or absent for Phoenix Eternal
+kind = "spot"                       # "spot", "stake-pool", or absent for Phoenix Eternal
 symbol = "SOL-USDC"
 
 [fork]                              # optional
@@ -51,6 +51,7 @@ Real venues:
 | `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
 | `pools-exercise` | Reads every tick array (Raydium CLMM) and bin array (Meteora DLMM) that holds liquidity in each pool the two profiles name, then funds a throwaway trader and takes the paths a pool session takes on each: a sale, a purchase, a taker's swap to a price, and a position opened, half taken out and closed, each transaction confirmed. |
 | `kamino-markets` (`pairs`: `[collateral reserve, debt reserve]` addresses) | Fetches every reserve in one call, moves the fork's clock past their last refresh (a reserve refreshed after the clock can't be refreshed again), loads each reserve's market, lookup table, vaults, mints, farms and Scope prices, freshens Scope's entries, freezes any Token-2022 UI multiplier at today's, and has a throwaway account deposit, borrow, repay and withdraw on each pair. |
+| `stake-pool-exercise` | Funds a throwaway wallet and takes the paths a stake-pool session takes on Jito's pool and Marinade: a stake and an instant redemption on each (Jito's reserve may refuse it: only logged), and the first step of each delayed exit, a stake account split off Jito's largest validator and deactivated, and a Marinade ticket. |
 
 Real accounts a build that starts from a snapshot can't fetch:
 

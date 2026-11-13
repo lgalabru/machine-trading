@@ -64,6 +64,10 @@ pub struct Scenario {
     /// those markets and `symbol` their pair, such as `SOL-USDC`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot: Option<Spot>,
+    /// A stake-pool session's pools, wallet and epoch boundaries, instead
+    /// of a perp or spot market (see [`crate::stake`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stake: Option<crate::stake::Stake>,
     /// Execution faults on the bot's sends and reads, planned from the
     /// faults' own seed (see [`crate::faults`]). Without them the guard
     /// forwards at once.
@@ -317,7 +321,7 @@ impl Scenario {
     /// session, the largest of the spot markets' caps: they all bound the
     /// same base asset. In a lending session, the largest reserve's.
     pub fn max_position(&self) -> f64 {
-        if self.spot.is_some() || self.lending.is_some() {
+        if self.spot.is_some() || self.lending.is_some() || self.stake.is_some() {
             return self
                 .mandate
                 .universe
@@ -879,6 +883,7 @@ impl ShockFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            stake: None,
             faults: None,
             actors: None,
             takers_pricing: None,
@@ -1599,6 +1604,7 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            stake: None,
             faults: None,
             actors: None,
             takers_pricing: None,
@@ -1670,6 +1676,7 @@ mod tests {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            stake: None,
             faults: None,
             actors: None,
             takers_pricing: None,

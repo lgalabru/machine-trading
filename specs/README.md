@@ -37,11 +37,14 @@ the reference implementation by `cargo test`.
 | [Spot](instruments/spot.md) | v0 | Draft |
 | [Money market](instruments/money-market.md) | v0 | Draft |
 | [Pool liquidity](instruments/amm.md) | v0 | Draft, proposed for review |
+| [Stake pool](instruments/stake-pool.md) | v0 | Proposed |
 | [Phoenix](venues/phoenix.md) | v0 | Draft |
 | [OpenBook](venues/openbook.md) | v0 | Draft |
 | [Kamino](venues/kamino.md) | v0 | Draft |
 | [Raydium](venues/raydium.md) | v0 | Draft |
 | [Meteora](venues/meteora.md) | v0 | Draft |
+| [Jito stake pool](venues/jito-stake-pool.md) | v0 | Draft |
+| [Marinade](venues/marinade.md) | v0 | Draft |
 
 v0 is a draft. It specifies perpetuals, spot and money markets, on one venue
 or several. The reference implementation is `mtx_core::mandate`, which

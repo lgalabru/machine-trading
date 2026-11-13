@@ -157,6 +157,10 @@ pub enum Kind {
     /// A money market's reserve. The position is what the account supplied
     /// there minus what it borrowed.
     MoneyMarket,
+    /// A stake pool: SOL staked for its liquid staking token, and the token
+    /// redeemed for SOL. The position is the account's holdings of the
+    /// token, as a spot market's base asset.
+    StakePool,
 }
 
 impl Mandate {
@@ -567,7 +571,8 @@ impl InstrumentRef {
             Holding::Amm(_) => "amm",
         };
         match id.0.split(':').nth(1) {
-            Some(kind) if kind == held => id.0.parse(),
+            // A stake pool's token is held as a spot asset.
+            Some(kind) if kind == held || (kind == "stake-pool" && held == "spot") => id.0.parse(),
             Some(kind) => Err(format!(
                 "{id} names a {kind}, but the meter reports a {held} holding"
             )),
@@ -624,6 +629,7 @@ impl fmt::Display for Kind {
             Self::Spot => "spot",
             Self::Amm => "amm",
             Self::MoneyMarket => "money-market",
+            Self::StakePool => "stake-pool",
         })
     }
 }
@@ -635,10 +641,11 @@ impl FromStr for Kind {
         match s {
             "perp" => Ok(Self::Perp),
             "spot" => Ok(Self::Spot),
+            "stake-pool" => Ok(Self::StakePool),
             "amm" => Ok(Self::Amm),
             "money-market" => Ok(Self::MoneyMarket),
             "future" | "option" => Err(format!(
-                "instrument kind {s:?} is reserved; this reader enforces perp, spot, amm and money-market only"
+                "instrument kind {s:?} is reserved; this reader enforces perp, spot, amm, money-market and stake-pool only"
             )),
             _ => Err(format!("unknown instrument kind {s:?}")),
         }

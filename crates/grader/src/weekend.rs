@@ -423,6 +423,7 @@ impl WeekendFamily {
             funding: None,
             tape: Vec::new(),
             spot: None,
+            stake: None,
             faults: None,
             actors: None,
             takers_pricing: None,

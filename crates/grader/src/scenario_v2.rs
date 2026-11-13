@@ -8,7 +8,7 @@
 //! | section        | holds                                                        |
 //! |----------------|--------------------------------------------------------------|
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
-//! | `venues`       | the perp venue's funding, the spot markets, liquidity and data, the lending markets |
+//! | `venues`       | the perp venue's funding, the spot markets, liquidity and data, the lending markets, the stake pools |
 //! | `market_model` | the price path, the fair value, a closed period, the calibration record, the clock's jumps |
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker, the taker flow, a pools' arbitrageur, the actor library |
@@ -44,6 +44,7 @@ use crate::{
         Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, POOLS, Spot, TurnData, VENUES},
+    stake::Stake,
 };
 
 /// The schema version this module reads and writes.
@@ -52,6 +53,8 @@ pub const SCHEMA: u32 = 2;
 /// What a lending scenario refuses beside its markets, in both versions.
 const LENDING_ALONE: &str = "lending: a lending scenario moves prices through its oracles only, \
      and has no path, market making, tape, order or spot scoring";
+/// What a stake-pool scenario refuses beside its pools, in both versions.
+const STAKE_ALONE: &str = "stake: a stake-pool scenario has only its pools, wallet and epochs";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -105,7 +108,7 @@ pub struct StartingWallet {
     pub quote: f64,
 }
 
-/// Where the bot trades. Exactly one of `perp`, `spot` and `lending`.
+/// Where the bot trades. Exactly one of `perp`, `spot`, `lending` and `stake`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Venues {
@@ -118,6 +121,10 @@ pub struct Venues {
     /// [`crate::lending`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lending: Option<Lending>,
+    /// Stake pools: the pools, the wallet's SOL and pool tokens, and the
+    /// epoch boundaries the session crosses (see [`crate::stake`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stake: Option<Stake>,
 }
 
 /// The perp venue (Phoenix) and what is set on it when the session starts.
@@ -268,10 +275,13 @@ impl Assets {
 impl Venues {
     /// A spot venue list that is known, unique and not empty, its step
     /// data asking for something sensible, a perp venue's funding that
-    /// settles, and lending markets that check themselves.
+    /// settles, and lending markets and stake pools that check themselves.
     pub fn validate(&self) -> Result<(), String> {
         if let Some(lending) = &self.lending {
             lending.validate()?;
+        }
+        if let Some(stake) = &self.stake {
+            stake.validate()?;
         }
         if let Some(funding) = self.perp.as_ref().and_then(|p| p.funding.as_ref())
             && (funding.interval_seconds == 0
@@ -553,6 +563,8 @@ impl ScenarioV2 {
             self.spot_is_alone()?;
         } else if self.venues.lending.is_some() {
             self.lending_is_alone()?;
+        } else if self.venues.stake.is_some() {
+            self.stake_is_alone()?;
         } else {
             self.spot_fields_are_for_spot()?;
         }
@@ -581,22 +593,63 @@ impl ScenarioV2 {
         self.order_fits_the_wallet()
     }
 
-    /// Exactly one venue kind: a session is a perp's, a spot's or a
-    /// lending one's.
+    /// Exactly one venue kind: a session is a perp's, a spot's, a lending
+    /// one's or a stake pool's.
     fn venues_are_one_kind(&self) -> Result<(), String> {
         let Venues {
             perp,
             spot,
             lending,
+            stake,
         } = &self.venues;
-        match [perp.is_some(), spot.is_some(), lending.is_some()]
+        match [
+            perp.is_some(),
+            spot.is_some(),
+            lending.is_some(),
+            stake.is_some(),
+        ]
             .iter()
             .filter(|kind| **kind)
             .count()
         {
             1 => Ok(()),
-            _ => Err("venues: exactly one of perp, spot and lending".into()),
+            _ => Err("venues: exactly one of perp, spot, lending and stake".into()),
         }
+    }
+
+    /// A stake-pool scenario has only its pools, wallet and epochs: no
+    /// path, flow, oracles, faults, order or spot scoring. Its symbol is the
+    /// first pool's, and each epoch boundary has a step after it.
+    fn stake_is_alone(&self) -> Result<(), String> {
+        let Some(stake) = &self.venues.stake else {
+            return Ok(());
+        };
+        stake.validate()?;
+        if !self.market_model.is_empty()
+            || !self.actors.is_empty()
+            || self.oracles.is_some()
+            || self.faults.is_some()
+            || self.assets.wallet.is_some()
+            || self.order.is_some()
+            || self.scoring.bound_usd.is_some()
+            || self.scoring.participation.is_some()
+            || self.scoring.net.is_some()
+        {
+            return Err(STAKE_ALONE.into());
+        }
+        if self.assets.symbol != stake.pools[0].symbol {
+            return Err(format!(
+                "stake: the symbol is the first pool's, {}",
+                stake.pools[0].symbol
+            ));
+        }
+        if self.duration_slots == 0 {
+            return Err("stake: the session has no slots".into());
+        }
+        crate::epochs::validate(
+            &stake.epochs,
+            self.duration_slots.div_ceil(crate::session::SLOTS_PER_STEP),
+        )
     }
 
     /// A lending scenario trades Kamino's reserves from the wallet its
@@ -712,6 +765,19 @@ impl ScenarioV2 {
             universe.sort();
             if wanted != universe {
                 return Err("mandate: the universe must be exactly the lending reserves".into());
+            }
+        } else if let Some(stake) = &self.venues.stake {
+            let mut wanted = stake.pools.clone();
+            let mut universe: Vec<InstrumentRef> = self
+                .mandate
+                .universe
+                .iter()
+                .map(|a| a.instrument.clone())
+                .collect();
+            wanted.sort();
+            universe.sort();
+            if wanted != universe {
+                return Err("mandate: the universe must be exactly the stake pools".into());
             }
         } else if self.venues.spot.is_some() {
             let mut wanted = self.venues.spot_instruments(&self.assets.symbol);
@@ -839,9 +905,11 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// The actor library trades a perp's book: a spot or lending session has none.
+    /// The actor library trades a perp's book: a spot, lending or stake session has none.
     fn library_is_for_perps(&self) -> Result<(), String> {
-        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+        if (self.venues.spot.is_some()
+            || self.venues.lending.is_some()
+            || self.venues.stake.is_some())
             && self.actors.library.is_some()
         {
             return Err("actors: the library runs in perp sessions".into());
@@ -972,6 +1040,7 @@ impl ScenarioV2 {
             oracles,
             lending: venues.lending,
             warps,
+            stake: venues.stake,
             actors: library,
             takers_pricing,
         }
@@ -1008,6 +1077,21 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                     None,
                 )
             }
+            // The stake section is its own; v2 has no place for the other
+            // kinds' fields beside it, so they are refused here as v2
+            // refuses them.
+            None if v1.stake.is_some() => {
+                if v1.funding.is_some() || v1.turn_data.is_some() {
+                    return Err(STAKE_ALONE.into());
+                }
+                (
+                    Venues {
+                        stake: v1.stake.clone(),
+                        ..Venues::default()
+                    },
+                    None,
+                )
+            }
             Some(spot) => {
                 if v1.making.is_some() || v1.offhours.is_some() || v1.funding.is_some() {
                     return Err("spot: a spot scenario has no path, fair path, market making, off-hours or funding".into());
@@ -1021,6 +1105,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                             turn_data: v1.turn_data.clone(),
                         }),
                         lending: v1.lending.clone(),
+                        stake: v1.stake.clone(),
                     },
                     Some(StartingWallet {
                         base: spot.base,
@@ -1045,6 +1130,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                         }),
                         spot: None,
                         lending: None,
+                        stake: None,
                     },
                     None,
                 )
@@ -1207,6 +1293,7 @@ mod tests {
                 turn_data: None,
             }),
             lending: None,
+            stake: None,
         };
         s.assets = Assets {
             symbol: SYMBOL.into(),
@@ -1461,7 +1548,7 @@ mod tests {
         assert!(
             s.validate()
                 .unwrap_err()
-                .contains("exactly one of perp, spot and lending")
+                .contains("exactly one of perp, spot, lending and stake")
         );
         s.venues = Venues::default();
         assert!(s.validate().unwrap_err().contains("exactly one"));
@@ -1532,6 +1619,14 @@ mod tests {
         parse(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
+    fn stake() -> Scenario {
+        let path = format!(
+            "{}/../../bench/checks/stake-pool/smoke.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        parse(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
     #[test]
     fn lending_scenarios_round_trip_through_v2_and_json() {
         for check in ["liquidation", "stale-oracle", "interest", "drain"] {
@@ -1585,6 +1680,73 @@ mod tests {
     }
 
     #[test]
+    fn a_stake_pool_scenario_round_trips_through_v2_and_json() {
+        let v1 = stake();
+        let as_v2 = v2(&v1);
+        assert_eq!(as_v2.validate(), Ok(()));
+        assert!(as_v2.venues.stake.is_some());
+        let text = serde_json::to_string_pretty(&as_v2).unwrap();
+        assert_eq!(parse(&text).unwrap(), v1);
+        assert_eq!(as_v2.into_scenario().unwrap(), v1);
+    }
+
+    #[test]
+    fn a_stake_pool_scenario_stands_alone_in_both_versions() {
+        let refused = |s: &ScenarioV2, needle: &str| {
+            let err = s.validate().unwrap_err();
+            assert!(err.contains(needle), "{err}");
+            assert_eq!(s.clone().into_v1().validate().unwrap_err(), err);
+        };
+
+        let mut s = v2(&stake());
+        s.venues.spot = spot().venues.spot;
+        s.assets.wallet = spot().assets.wallet;
+        refused(&s, "exactly one of perp, spot, lending and stake");
+
+        let mut s = v2(&stake());
+        s.market_model.path.push(Waypoint::at(4, -1.0));
+        refused(&s, "only its pools, wallet and epochs");
+
+        let mut s = v2(&stake());
+        s.oracles = Some(crate::oracles::Oracles {
+            seed: 1,
+            feeds: Vec::new(),
+        });
+        refused(&s, "only its pools, wallet and epochs");
+
+        let mut s = v2(&stake());
+        s.mandate.universe.pop();
+        refused(&s, "exactly the stake pools");
+
+        let mut s = v2(&stake());
+        s.assets.symbol = "MSOL".into();
+        refused(&s, "the first pool's");
+
+        let mut s = v2(&stake());
+        s.venues.stake.as_mut().unwrap().epochs[0].step = 10_000;
+        refused(&s, "epochs: step");
+
+        let mut s = v2(&stake());
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec!["11111111111111111111111111111111".into()],
+            }),
+        });
+        refused(&s, "only perp sessions take raw sends");
+    }
+
+    #[test]
+    fn a_stake_pool_scenario_with_no_pools_gets_a_clean_error_in_both_versions() {
+        let mut s = v2(&stake());
+        let section = s.venues.stake.as_mut().unwrap();
+        section.pools.clear();
+        section.tokens.clear();
+        let err = s.validate().unwrap_err();
+        assert_eq!(err, "stake: no pools");
+        assert_eq!(s.into_v1().validate().unwrap_err(), err);
+    }
+
+    #[test]
     fn the_library_lives_in_the_actors_section_and_round_trips_through_v1() {
         let everyone = include_str!("../../../bench/checks/actors/everyone.json");
         let v1 = parse(everyone).unwrap();
@@ -1614,6 +1776,18 @@ mod tests {
         let everyone = include_str!("../../../bench/checks/actors/everyone.json");
         let library = parse(everyone).unwrap().actors.unwrap();
         let mut s = v2(&lending("liquidation"));
+        s.validate().unwrap();
+        s.actors.library = Some(library);
+        let err = s.validate().unwrap_err();
+        assert_eq!(err, "actors: the library runs in perp sessions");
+        assert_eq!(s.into_v1().validate().unwrap_err(), err);
+    }
+
+    #[test]
+    fn the_library_is_refused_in_a_stake_session_in_both_versions() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let library = parse(everyone).unwrap().actors.unwrap();
+        let mut s = v2(&stake());
         s.validate().unwrap();
         s.actors.library = Some(library);
         let err = s.validate().unwrap_err();

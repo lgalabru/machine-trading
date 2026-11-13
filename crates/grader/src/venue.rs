@@ -22,7 +22,7 @@
 //! | `spot` | `spot` | [`Holding::Spot`] |
 //! | `lending` | `money-market` | [`Holding::MoneyMarket`] |
 //! | `amm` | `amm` (draft profile) | [`Holding::Amm`] |
-//! | `stake-pool` | `stake-pool` (draft profile) | none yet |
+//! | `stake-pool` | `stake-pool` (proposed profile) | [`Holding::Spot`]: the token, valued at the pool's rate ([`Market::value_usd`]) |
 //!
 //! A market answers what it can and leaves the rest at the defaults. Its
 //! seat says which of the sheet's actions it executes ([`Seat::executes`]);
@@ -39,18 +39,20 @@
 //!   pools, each a spot and an amm instrument ([`pools`]): a pool's top is
 //!   the price of a small trade each way, its fills come from its vaults,
 //!   and its seats execute swaps and liquidity.
-
-pub mod books;
-pub mod meteora;
 //! - [`kamino`]: Kamino Lending and its reserves, money markets.
+//! - [`stake_pool`]: SPL stake pools (Jito's), and [`marinade`]: Marinade,
+//!   each pool's token a `stake-pool` instrument.
 
 pub mod books;
 pub mod kamino;
+pub mod marinade;
+pub mod meteora;
 pub mod openbook;
 pub mod perps;
 pub mod phoenix;
 pub mod pools;
 pub mod raydium;
+pub mod stake_pool;
 
 use std::collections::BTreeMap;
 
@@ -69,7 +71,7 @@ use mtx_kit::{
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 
-use crate::{Error, Result};
+use crate::{Error, Result, epochs::EpochPlan};
 
 /// What a seat's own orders come to: the venue's error, as text.
 pub type SeatResult<T = ()> = std::result::Result<T, String>;
@@ -100,6 +102,22 @@ pub fn spot_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
             reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
         }),
     }
+}
+
+/// The venue `name` names, for stake-pool sessions: its pools read
+/// through `rpc_url`.
+pub fn stake_venue(name: &str, rpc_url: &str, plan: &EpochPlan) -> Result<Box<dyn Venue>> {
+    if name == marinade::VENUE {
+        return Ok(Box::new(marinade::Marinade::new(rpc_url, plan)));
+    }
+    if stake_pool::POOLS.iter().any(|p| p.venue == name) {
+        return Ok(Box::new(stake_pool::SplStakePools::new(
+            name, rpc_url, plan,
+        )));
+    }
+    Err(Error::UnknownMarket(format!(
+        "{name} is not a stake-pool venue"
+    )))
 }
 
 /// An instrument a venue doesn't offer.

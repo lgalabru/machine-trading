@@ -25,7 +25,7 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet` |
-| `venues` | Exactly one of `perp` (with its `funding`), `spot` (`markets`, the pool markets in `liquidity`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `venues` | Exactly one of `perp` (with its `funding`), `spot` (`markets`, the pool markets in `liquidity`, `turn_data`), `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) and `stake` (the stake pools, the wallet's SOL and pool `tokens`, the `epochs` crossed; [stake pools](../specs/instruments/stake-pool.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`), and a pools' `arbitrage` |
@@ -45,7 +45,9 @@ each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
 having no path or competitor (their takers are a tape) and trading a pair each
 venue's profile names (an arbitrageur needs a pool), lending scenarios
 moving prices through their Scope feeds only (no path, actors, order or spot
-scoring; clock jumps inside the session and without faults), the mandate
+scoring; clock jumps inside the session and without faults), stake-pool
+scenarios having only their pools, wallet and epochs (no market model,
+actors, oracles, faults, raw sends, order or spot scoring), the mandate
 covering exactly the scenario's markets, a sell order fitting the wallet.
 
 ## Example

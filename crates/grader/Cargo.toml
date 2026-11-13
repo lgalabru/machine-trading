@@ -22,7 +22,7 @@ serde_json.workspace = true
 # Derives each session's keypairs from the grade's secret (see src/keys.rs),
 # hashes a snapshot recipe, and pins market-calibration files (src/market).
 sha2 = "0.10"
-# The clock a scenario's warp sets (surfpool's own version).
+# The clock a scenario's warp sets and an epoch boundary moves to (surfpool's own version).
 solana-clock = { version = "3.2", default-features = false }
 solana-keypair.workspace = true
 # Raw sends (src/raw.rs): program addresses, v0 messages with lookup
