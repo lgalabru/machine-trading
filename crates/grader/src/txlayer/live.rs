@@ -781,7 +781,27 @@ async fn the_tx_probe_pays_for_what_it_lands_and_replays() {
         "{log}"
     );
     assert!(has("step 24 line 0: landed"), "{log}");
+    // A line and a raw send in one bundle went in the step they were sent,
+    // and landed in one slot.
+    let landed_at = |source: &str| {
+        let landed = format!("step 8 {source}: landed, slot ");
+        log.lines().find_map(|l| {
+            l.split_once(&landed)
+                .map(|(_, rest)| rest.split(',').next().unwrap_or_default().to_string())
+        })
+    };
+    assert!(
+        landed_at("line 0").is_some() && landed_at("line 0") == landed_at("raw 0"),
+        "{log}"
+    );
     let tx = report.tx_layer.as_ref().unwrap();
+    // The last step's bundled raw send went into the pool too.
+    let last = scenario.duration_slots.div_ceil(2) - 1;
+    assert!(
+        tx.sends.iter().any(|s| s.step == last && s.bundle),
+        "{:?}",
+        tx.sends
+    );
     assert_eq!(tx.fees.unexplained, Some(0), "{:?}", tx.fees);
     assert!(
         tx.fees.tips >= 20_000 && tx.fees.failed_tx_fees >= 5_000,

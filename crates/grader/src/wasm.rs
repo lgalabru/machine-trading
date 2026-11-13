@@ -1147,24 +1147,7 @@ impl WasmBot {
             });
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
-        // The sheet's bundles go once it is all planned.
         let from = self.sends.len() - planned_count;
-        if let Some(pool) = &self.desk.pool {
-            pool.set_options(None);
-            for (signatures, failed) in pool.flush_bundles().await {
-                let Some(reason) = failed else {
-                    continue;
-                };
-                for status in &mut self.sends[from..] {
-                    if matches!(&status.state, SendState::Landed(s) if signatures.contains(s)) {
-                        status.state = SendState::Failed {
-                            reason: reason.clone(),
-                            signature: None,
-                        };
-                    }
-                }
-            }
-        }
         // Raw sends go after the sheet, whatever became of it.
         let mut raw_pooled = Vec::new();
         if let (Some(raw), Reader::Perp(trader)) = (
@@ -1173,6 +1156,32 @@ impl WasmBot {
         ) {
             self.sends.extend(raw.flush(&trader.keypair).await);
             raw_pooled = raw.take_pooled();
+        }
+        // The step's bundles go once the sheet and the raw sends are all in
+        // them.
+        if let Some(pool) = &self.desk.pool {
+            pool.set_options(None);
+            for (signatures, failed) in pool.flush_bundles().await {
+                let Some(reason) = failed else {
+                    continue;
+                };
+                for status in &mut self.sends[from..] {
+                    let signature = match (&status.state, status.source) {
+                        (SendState::Landed(signature), _) => Some(signature.clone()),
+                        (SendState::Delayed, SendSource::Raw(id)) => raw_pooled
+                            .iter()
+                            .find(|(raw, _)| *raw == id)
+                            .map(|(_, signature)| signature.to_string()),
+                        _ => None,
+                    };
+                    if signature.is_some_and(|s| signatures.contains(&s)) {
+                        status.state = SendState::Failed {
+                            reason: reason.clone(),
+                            signature: None,
+                        };
+                    }
+                }
+            }
         }
         // Under the transaction layer, what the step sent is in the pool:
         // delayed, until a later step says what became of it.

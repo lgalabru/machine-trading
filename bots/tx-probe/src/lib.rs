@@ -5,10 +5,21 @@
 //!
 //! Its scenario (`scenario.json`) turns the layer on with a fee spike, a
 //! congestion floor of 200,000 micro-lamports per compute unit over steps
-//! 20 to 120, and fees counted in PnL. `just tx-probe` grades it in a
+//! 20 to 120, and fees counted in PnL, and lets raw sends run the system,
+//! token and associated token programs. `just tx-probe` grades it in a
 //! session; the grader's tests read its log.
 
-use mtx_kit::{Route, SendSource, log, prelude::*};
+use mtx_kit::{
+    Route, SendSource, log,
+    prelude::*,
+    raw::{AccountKey, Derivation, RawAccount, RawInstruction, RawTransaction},
+    send_raw,
+};
+
+const SYSTEM: &str = "11111111111111111111111111111111";
+const TOKEN: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const ASSOCIATED_TOKEN: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 #[derive(Default)]
 struct Probe;
@@ -18,6 +29,38 @@ const OVER_THE_FLOOR: u64 = 400_000;
 
 fn options() -> TxOptions {
     TxOptions::default()
+}
+
+/// A raw send that changes nothing it is judged on: the associated token
+/// program's `CreateIdempotent` for the bot's own USDC account.
+fn own_usdc_account(tx: TxOptions) -> RawTransaction {
+    let account = |key, signer, writable| RawAccount {
+        key,
+        signer,
+        writable,
+    };
+    let address = |a: &str| AccountKey::Address(a.into());
+    RawTransaction {
+        instructions: vec![RawInstruction {
+            program: ASSOCIATED_TOKEN.into(),
+            accounts: vec![
+                account(AccountKey::Authority, true, true),
+                account(AccountKey::Derived(0), false, true),
+                account(AccountKey::Authority, false, false),
+                account(address(USDC), false, false),
+                account(address(SYSTEM), false, false),
+                account(address(TOKEN), false, false),
+            ],
+            data: vec![1],
+        }],
+        derived: vec![Derivation::Ata {
+            owner: AccountKey::Authority,
+            mint: address(USDC),
+            token_program: address(TOKEN),
+        }],
+        tx: Some(tx),
+        ..RawTransaction::default()
+    }
 }
 
 impl Strategy for Probe {
@@ -105,6 +148,22 @@ impl Strategy for Probe {
                     ..options()
                 });
             }
+            // A line and a raw send as one bundle: it goes in the step they
+            // were sent, and they land together.
+            8 => {
+                let bundle = TxOptions {
+                    bundle: Some(3),
+                    ..options()
+                };
+                orders.buy(1.0, buy).tx(TxOptions {
+                    tip: Some(40_000),
+                    ..bundle
+                });
+                log(&format!(
+                    "raw at step 8: {:?}",
+                    send_raw(&own_usdc_account(bundle))
+                ));
+            }
             // In the spike: the cheap one waits and expires, the one over
             // the floor lands.
             22 => {
@@ -123,8 +182,17 @@ impl Strategy for Probe {
                     ..options()
                 });
             }
+            // The last step's bundled raw send still goes.
             _ if market.last => {
                 orders.target_position(0.0);
+                log(&format!(
+                    "raw at the last step: {:?}",
+                    send_raw(&own_usdc_account(TxOptions {
+                        bundle: Some(5),
+                        tip: Some(10_000),
+                        ..options()
+                    }))
+                ));
             }
             _ => {}
         }

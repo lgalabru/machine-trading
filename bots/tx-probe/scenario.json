@@ -1,6 +1,6 @@
 {
   "name": "tx-probe",
-  "description": "The transaction-layer probe: a fee spike over steps 20 to 120, fees and tips counted in PnL.",
+  "description": "The transaction-layer probe: a fee spike over steps 20 to 120, fees and tips counted in PnL, raw sends allowed.",
   "symbol": "SPCX",
   "duration_slots": 360,
   "mandate": {
@@ -175,6 +175,13 @@
         200000
       ]
     }
+  },
+  "raw_sends": {
+    "programs": [
+      "11111111111111111111111111111111",
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+    ]
   },
   "tx_layer": {
     "seed": 17,
