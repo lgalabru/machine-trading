@@ -3,7 +3,19 @@
 /// The grader calls `start` once, `step` once per step of the session, and
 /// `end` after the last. The world is paused while a call runs: what the
 /// strategy reads through `rpc` is the chain as it is at that step.
-package mtx:strategy@0.1.0;
+///
+/// 0.2.0 keeps 0.1.0's fields and meanings, and adds: the session's venues
+/// (order books, perps, pools, lending reserves, stake pools), and a view of
+/// each at every step; intents that name a venue, carry a client order id,
+/// say how their orders are placed (post-only, immediate-or-cancel,
+/// reduce-only, a participation cap) and how their transactions are sent;
+/// swaps, liquidity and lending actions; requests for quotes and responses;
+/// what became of every order the previous step planned, and the strategy's
+/// own fills; and, reserved, raw transactions the grader signs (`send`).
+/// The records and variants are closed: what a session doesn't support yet
+/// comes back `not-sent`, or empty. The grader still loads a 0.1.0
+/// component, and hands it 0.1.0's market.
+package mtx:strategy@0.2.0;
 
 interface types {
   /// The session, as `start` sees it.
@@ -37,12 +49,194 @@ interface types {
     /// A seed, for a strategy that wants randomness: the same in every run
     /// of the session.
     seed: u64,
+    /// The markets of the mandate's universe, the session's own first: an
+    /// intent that names no venue is for it.
+    venues: list<venue-info>,
+    /// What the session reports each step beyond prices: whether the
+    /// venues' views carry their tapes and their depth, and the market the
+    /// world's clock and the fee market. Where the tape is reported, an
+    /// empty one is a step without trades.
+    reports: reports,
+    /// Whether the session applies intents' transaction options. None does
+    /// yet: they are accepted and counted, and every order is sent as it
+    /// would be without them.
+    applies-tx-options: bool,
+  }
+
+  record reports {
+    tape: bool,
+    depth: bool,
+    timestamps: bool,
+    /// The fee market (`market.fees`).
+    fees: bool,
+  }
+
+  /// A market the session knows.
+  record venue-info {
+    /// The market's id, unique in the session: `<venue>:<kind>:<symbol>`,
+    /// as the mandate's universe writes it (`phoenix:perp:SPCX`), and
+    /// `@<address>` after it where two of the session's markets would
+    /// otherwise share it (two pools of one pair).
+    id: string,
+    kind: market-kind,
+    /// The market's account: the perp's or the book's market, the pool, the
+    /// lending reserve, the stake pool. Base58.
+    address: option<string>,
+    /// Whether the grader can send orders there in this session. An intent
+    /// for a venue it can't comes back as `not-sent`.
+    tradable: bool,
+  }
+
+  enum market-kind {
+    /// A perpetual future on an order book (Phoenix Eternal).
+    perp,
+    /// A spot order book (Phoenix v1, OpenBook v2).
+    spot,
+    /// A pool: constant product, concentrated liquidity or bins.
+    amm,
+    /// A lending reserve.
+    lending,
+    /// A stake pool, and its liquid staking token.
+    stake-pool,
   }
 
   /// The position: signed, in base units, and its average entry.
   record position {
     size: f64,
     entry-usd: f64,
+  }
+
+  /// One price level of a book.
+  record level {
+    price: f64,
+    /// Base units resting at the price.
+    size: f64,
+  }
+
+  /// The top of a book, best first.
+  record book {
+    bids: list<level>,
+    asks: list<level>,
+  }
+
+  /// Which side of a trade the strategy was on.
+  enum role { taker, maker }
+
+  /// One trade on a venue's tape.
+  record trade {
+    /// The slot it landed in.
+    slot: u64,
+    /// The taker's side.
+    side: side,
+    price: f64,
+    size: f64,
+    /// Who took and who made, as the venue names them, when the scenario
+    /// reports it.
+    taker: option<string>,
+    maker: option<string>,
+    /// Which side of it the strategy was on, if it was one of them.
+    role: option<role>,
+  }
+
+  /// One of the strategy's orders resting on a book.
+  record open-order {
+    /// The id the strategy gave it, if any.
+    client-id: option<u64>,
+    side: side,
+    price: f64,
+    /// Base units left.
+    size: f64,
+  }
+
+  /// A price range, in quote units per base unit.
+  record price-range {
+    lower: f64,
+    upper: f64,
+  }
+
+  /// One of the strategy's liquidity positions in a pool.
+  record liquidity-position {
+    /// What `remove-liquidity` names it by: the position's account, or the
+    /// pool's mint for a pool without positions.
+    id: string,
+    /// Where it provides liquidity; none for the whole curve.
+    range: option<price-range>,
+    /// What it holds now, and the fees it has earned and not collected.
+    base: f64,
+    quote: f64,
+    fees-base: f64,
+    fees-quote: f64,
+  }
+
+  /// The strategy's account at a lending reserve, in the reserve's asset.
+  record lending-position {
+    supplied: f64,
+    borrowed: f64,
+    /// The obligation's health: its liquidation threshold over its debt,
+    /// liquidatable below 1. None without debt.
+    health: option<f64>,
+  }
+
+  /// A venue at one step.
+  record venue-view {
+    /// As `venue-info` names it.
+    id: string,
+    /// The book's best bid and ask, or the pool's prices for a small trade
+    /// each way.
+    best-bid: option<f64>,
+    best-ask: option<f64>,
+    /// The top levels of the book, where the session reports depth.
+    depth: option<book>,
+    /// Every trade there since the previous step, oldest first, where the
+    /// session reports a tape: an empty list is a step without trades.
+    tape: option<list<trade>>,
+    /// The strategy's position there, if the session reads it.
+    position: option<position>,
+    /// Its orders resting there, as far as the session reads them.
+    orders: list<open-order>,
+    /// Its liquidity positions there (a pool).
+    liquidity: list<liquidity-position>,
+    /// Its supply and debt there (a lending reserve).
+    lending: option<lending-position>,
+    /// The venue's own numbers, by name: a pool's price and liquidity, a
+    /// reserve's utilization and rates, a stake pool's exchange rate.
+    stats: list<tuple<string, f64>>,
+  }
+
+  /// One of the strategy's fills since the previous step.
+  record fill {
+    venue: string,
+    slot: u64,
+    /// The strategy's side: `bid` bought.
+    side: side,
+    price: f64,
+    size: f64,
+    role: role,
+  }
+
+  /// A request for a quote, open at this step.
+  record rfq {
+    /// The request's id, which a response names.
+    id: string,
+    venue: string,
+    /// The requester's side: `bid` wants to buy, so a quote answering it
+    /// sells. None asks for both sides.
+    side: option<side>,
+    /// Base units wanted.
+    size: f64,
+    /// The last slot a response is taken at.
+    deadline-slot: u64,
+  }
+
+  /// The fee market, where the session models one (TX_LAYER §5).
+  record fee-view {
+    /// Recent priority fees paid, micro-lamports per compute unit, as
+    /// `(percentile, price)`.
+    cu-prices: list<tuple<u8, u64>>,
+    /// The tip floor for a bundle, in lamports.
+    tip-floor: option<u64>,
+    /// The next slots' leaders, in order.
+    leaders: list<string>,
   }
 
   /// The market at one step, as `mtx_kit::Market` has it.
@@ -70,6 +264,22 @@ interface types {
     pnl: f64,
     peak-pnl: f64,
     drawdown: f64,
+    /// The world's clock, in Unix seconds, where the session reports it.
+    unix-timestamp: option<s64>,
+    /// Each of the session's venues, in `session.venues`' order.
+    venues: list<venue-view>,
+    /// What became of every order the previous step planned.
+    sends: list<send-status>,
+    /// The strategy's own trades since the previous step, from the venues'
+    /// tapes: empty where the session reports no tape.
+    fills: list<fill>,
+    /// Requests for quotes open at this step.
+    rfqs: list<rfq>,
+    /// What the grader cut or dropped from the previous step's sheet, and
+    /// why: an order cut to stay within the cap, say.
+    notes: list<string>,
+    /// The fee market, where the session reports it.
+    fees: option<fee-view>,
   }
 
   enum side { bid, ask }
@@ -80,31 +290,375 @@ interface types {
     slice: f64,
     slippage-bps: f64,
     min-trade: f64,
+    /// The most of the venue's traded volume since the previous step to
+    /// trade this step, as a share in (0, 1]. The volume is the venue's
+    /// tape's: where the session reports none, there is none to take a
+    /// share of, and the target doesn't trade.
+    participation: option<f64>,
   }
 
-  /// One line of the order sheet, as `mtx_kit::Intent`.
-  variant intent {
+  /// How long a limit order lives.
+  enum time-in-force {
+    /// Rests until it fills or is cancelled, filling first against anything
+    /// it crosses.
+    gtc,
+    /// Rests without taking: an order that would cross the book isn't
+    /// placed, and comes back `failed`.
+    post-only,
+    /// Fills what it can now, at no worse than its price, and rests nothing.
+    ioc,
+  }
+
+  record target {
+    /// Signed, in base units.
+    position: f64,
+    execution: execution,
+  }
+
+  /// Cancel what rests, then rest a bid and an ask of `size`.
+  record quote {
+    bid: f64,
+    ask: f64,
+    size: f64,
+    /// Both are post-only.
+    post-only: bool,
+    /// The last slot both rest in; none until cancelled.
+    expires-slot: option<u64>,
+  }
+
+  /// A market order: `size`, filling at no worse than `limit`.
+  record market-order {
+    side: side,
+    size: f64,
+    limit: f64,
+  }
+
+  /// A limit order of `size` at `price`.
+  record limit-order {
+    side: side,
+    price: f64,
+    size: f64,
+    time-in-force: time-in-force,
+    /// The last slot it rests in (Phoenix's `last_valid_slot`); none until
+    /// cancelled.
+    expires-slot: option<u64>,
+  }
+
+  /// A quote answering a request: a price for each side it answers, for
+  /// `size` or the whole request.
+  record rfq-response {
+    id: string,
+    bid: option<f64>,
+    ask: option<f64>,
+    size: option<f64>,
+    /// The last slot the quote can be taken at; none until the request's
+    /// deadline.
+    expiry-slot: option<u64>,
+  }
+
+  /// What a swap's amount counts.
+  enum amount-unit { base, quote }
+
+  /// A swap against a pool: buy (`bid`) or sell (`ask`) the base asset,
+  /// `amount` of it or of the quote asset, at no worse than `limit`.
+  record swap {
+    side: side,
+    amount: f64,
+    unit: amount-unit,
+    limit: f64,
+  }
+
+  /// How liquidity spreads over a range of bins (Meteora DLMM's
+  /// strategies): evenly, peaked at the price, or heavier away from it.
+  enum liquidity-shape { spot, curve, bid-ask }
+
+  /// Liquidity for a pool: up to `base` and `quote`, over `range`, or the
+  /// whole curve.
+  record add-liquidity {
+    base: f64,
+    quote: f64,
+    range: option<price-range>,
+    /// A `liquidity-position`'s id to add to; none opens a new position (or,
+    /// in a pool without positions, adds to the pool share).
+    position: option<string>,
+    /// For a pool of bins; none is the venue's default.
+    shape: option<liquidity-shape>,
+  }
+
+  /// Take out `share` of a liquidity position, and collect its fees: a
+  /// share in [0, 1], where 0 collects the fees only.
+  record remove-liquidity {
+    /// A `liquidity-position`'s id; none for the only one.
+    position: option<string>,
+    share: f64,
+    /// The least of each asset to receive, fees included; none takes what
+    /// the venue gives.
+    min-base: option<f64>,
+    min-quote: option<f64>,
+  }
+
+  /// An amount of a lending reserve's or a stake pool's asset: none is all
+  /// of it (a withdrawal, a repayment).
+  record amount {
+    amount: option<f64>,
+  }
+
+  /// Repay `repay` of an obligation's debt at this reserve, and take its
+  /// collateral at another.
+  record liquidate {
+    /// The obligation's account, base58.
+    obligation: string,
+    /// The venue id of the reserve whose collateral is taken.
+    collateral: string,
+    repay: f64,
+    /// The least collateral to receive, in its asset; none takes what the
+    /// venue gives.
+    min-received: option<f64>,
+  }
+
+  /// What a line of the sheet asks for.
+  variant action {
     /// Market orders toward a position.
-    target(tuple<f64, execution>),
-    /// Cancel what rests, then rest a bid and an ask: `(bid, ask, size)`.
-    quote(tuple<f64, f64, f64>),
-    /// A market order: `(side, size, worst price)`.
-    market(tuple<side, f64, f64>),
-    /// A resting order: `(side, price, size)`.
-    limit(tuple<side, f64, f64>),
+    target(target),
+    quote(quote),
+    market(market-order),
+    limit(limit-order),
     /// Cancel every resting order.
     cancel-all,
+    /// Cancel the resting order with this client id.
+    cancel(u64),
+    respond(rfq-response),
+    swap(swap),
+    add-liquidity(add-liquidity),
+    remove-liquidity(remove-liquidity),
+    /// Supply to a lending reserve, or stake into a stake pool.
+    deposit(amount),
+    /// Take supply out of a reserve, or unstake from a stake pool.
+    withdraw(amount),
+    %borrow(amount),
+    repay(amount),
+    liquidate(liquidate),
+  }
+
+  /// Where a transaction is sent.
+  variant route {
+    /// The RPC node, as today.
+    rpc,
+    /// A staked connection.
+    staked,
+    /// A block engine, as a bundle.
+    jito(jito-route),
+  }
+
+  record jito-route {
+    /// Never land outside a bundle.
+    bundle-only: bool,
+    /// Don't let the bundle be placed in front of the strategy's other
+    /// transactions.
+    dont-front: bool,
+  }
+
+  /// How the line's transactions are sent. None of this is applied unless
+  /// the session says so (`session.applies-tx-options`): it is accepted and
+  /// counted, and changes nothing.
+  record tx-options {
+    /// Compute units the transaction asks for; none is the simulation's
+    /// units plus a margin.
+    cu-limit: option<u32>,
+    /// The priority fee: micro-lamports per compute unit.
+    cu-price: option<u64>,
+    /// A tip to the block builder, in lamports.
+    tip: option<u64>,
+    /// Lines with the same bundle id are sent as one bundle.
+    bundle: option<u32>,
+    route: option<route>,
+    /// Send the same transaction again each slot until this one, if it
+    /// hasn't landed; once its blockhash expires, sign it again with a new
+    /// one, after checking it didn't land.
+    retry-until-slot: option<u64>,
+  }
+
+  /// One line of the order sheet, as `mtx_kit::Orders` records it.
+  record intent {
+    action: action,
+    /// One of `session.venues`' ids; none is the first.
+    venue: option<string>,
+    /// The strategy's own id for the line's orders: echoed in their status,
+    /// and what `cancel` names.
+    client-id: option<u64>,
+    /// Orders it plans may only shrink the position, never grow or flip it,
+    /// even if the sheet's earlier orders don't fill.
+    reduce-only: bool,
+    tx: option<tx-options>,
+  }
+
+  /// One order the grader planned from a line, or the planned form of an
+  /// action that isn't an order.
+  variant order {
+    market(market-order),
+    limit(limit-order),
+    cancel-all,
+    cancel(u64),
+    respond(rfq-response),
+    swap(swap),
+    add-liquidity(add-liquidity),
+    remove-liquidity(remove-liquidity),
+    deposit(amount),
+    withdraw(amount),
+    %borrow(amount),
+    repay(amount),
+    liquidate(liquidate),
+  }
+
+  /// What became of an order.
+  variant send-state {
+    /// It executed: its signature.
+    landed(string),
+    /// It was sent, or checked, and failed.
+    failed(failure),
+    /// It wasn't sent: why (an earlier order of the step failed, the
+    /// session can't trade the venue, or doesn't support the action).
+    not-sent(string),
+    /// It is held, and may land in a later step.
+    delayed,
+    /// Its blockhash expired before it landed.
+    expired,
+  }
+
+  /// Why an order failed, and, if it was sent and ran on chain, its
+  /// signature (its fee is the send status's).
+  record failure {
+    reason: string,
+    signature: option<string>,
+  }
+
+  /// Where an order came from: a line of the sheet, or a raw transaction
+  /// (`send`), each numbered from 0 within its step.
+  variant send-source {
+    line(u32),
+    raw(u32),
+  }
+
+  /// An order of the previous step, and what became of it.
+  record send-status {
+    /// The step that planned it, where it came from, and the venue it went
+    /// to (empty for a raw transaction).
+    step: u64,
+    source: send-source,
+    venue: string,
+    client-id: option<u64>,
+    order: option<order>,
+    state: send-state,
+    /// The slot it landed in, its fee in lamports, and its tip, where the
+    /// session knows them.
+    slot: option<u64>,
+    fee: option<u64>,
+    tip: option<u64>,
+  }
+
+  /// One account of an instruction.
+  record account-meta {
+    key: account-key,
+    signer: bool,
+    writable: bool,
+  }
+
+  /// An account of a raw transaction.
+  variant account-key {
+    /// An account by its address, base58.
+    address(string),
+    /// The bot's authority, which signs every raw transaction.
+    authority,
+    /// One of the transaction's fresh signers, from 0: a key the grader
+    /// makes for this transaction alone, for an account that must sign its
+    /// own creation (a position's mint, a position account).
+    fresh(u8),
+    /// One of the transaction's derived addresses (`raw-transaction.derived`),
+    /// from 0: an account whose address comes from others, such as a fresh
+    /// mint's position or token account. It never signs.
+    derived(u16),
+  }
+
+  /// One seed of a program-derived address.
+  variant seed {
+    bytes(list<u8>),
+    /// A key's 32 bytes.
+    key(account-key),
+  }
+
+  /// A program-derived address: the program's, from `seeds`, with the bump
+  /// `try_find_program_address` finds; one with none is refused.
+  record pda {
+    program: account-key,
+    seeds: list<seed>,
+  }
+
+  /// An associated token account: `owner`'s for `mint`, under
+  /// `token-program` (SPL Token or Token-2022).
+  record ata {
+    owner: account-key,
+    mint: account-key,
+    token-program: account-key,
+  }
+
+  /// How a derived address is made.
+  variant derivation {
+    pda(pda),
+    ata(ata),
+  }
+
+  /// One instruction of a raw transaction.
+  record instruction {
+    /// The program, base58.
+    program: string,
+    accounts: list<account-meta>,
+    data: list<u8>,
+  }
+
+  /// A transaction of raw instructions, for `send`.
+  record raw-transaction {
+    instructions: list<instruction>,
+    /// Address lookup tables to compile it with, base58.
+    lookup-tables: list<string>,
+    /// How many fresh signers its instructions name (`account-key::fresh`).
+    fresh-signers: u8,
+    /// Its derived addresses (`account-key::derived`), resolved in order
+    /// after the fresh signers are made: each may name the authority, an
+    /// address, a fresh signer, or a derived address before it in the list,
+    /// never one at or after it. A list that breaks that, or the limits
+    /// (8 fresh signers, 32 derived addresses, 15 seeds of at most 32 bytes
+    /// each), is refused.
+    derived: list<derivation>,
+    tx: option<tx-options>,
+  }
+
+  /// A raw transaction `send` took.
+  record raw-receipt {
+    /// Its number within the step (`send-source::raw`).
+    id: u32,
+    /// The fresh signers' addresses, base58, in order: what the accounts
+    /// they created are called.
+    fresh-signers: list<string>,
   }
 }
 
 world strategy {
-  use types.{session, market, intent};
+  use types.{session, market, intent, raw-transaction, raw-receipt};
 
   /// A line in the strategy's log.
   import log: func(line: string);
   /// A read-only JSON-RPC call against the session's chain, answered by the
   /// grader before it returns: `params` and the result are JSON.
   import rpc: func(method: string, params: string) -> result<string, string>;
+  /// Reserved: a transaction the grader makes its fresh signers for,
+  /// simulates against the paused chain, signs with the bot's key and the
+  /// fresh signers, and sends after the step's sheet, in the order sent.
+  /// Returns its number within the step and the fresh signers' addresses,
+  /// or why it was refused: a program outside the session's allowlist, a
+  /// signer that is neither the authority nor a fresh one, a failed
+  /// simulation, a breach of the mandate. Sessions that don't enable raw
+  /// sends refuse every one.
+  import send: func(tx: raw-transaction) -> result<raw-receipt, string>;
 
   export start: func(session: session) -> result<_, string>;
   export step: func(market: market) -> result<list<intent>, string>;
