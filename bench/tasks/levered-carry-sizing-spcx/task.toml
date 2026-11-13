@@ -29,7 +29,7 @@ market = "Phoenix SPCX perp"
 summary = "sizes a levered SPCX funding carry to the index's volatility state and the risk desk's stop-out"
 skill = "reads the index's volatility state live, turns the carry's yield over its variance and the stop-out distance into leverage, and cuts before the crowd flushes"
 # Lines only the answers hold, for `just leak-audit`.
-leak_needles = ["by the carry's yield over the index's variance"]
+leak_needles = ["by the carry's yield over the book's variance"]
 
 [verifier]
 # A hundred hidden sessions drawn from the batch's secret, plus the

@@ -1,5 +1,5 @@
-//! Reference: a carry desk that sizes a long against SPCX's discount by the
-//! carry's yield over the index's variance, inside the loss limit.
+//! Reference: a carry desk that sizes a long against SPCX's discount
+//! by the carry's yield over the book's variance, inside the loss limit.
 //!
 //! Each turn it reads the PerpAssetMap (the index, from the spot oracles'
 //! median, and the session's funding parameters), the makers' spline

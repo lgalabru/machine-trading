@@ -11,7 +11,7 @@ volatility state and to the risk desk's stop-out.
 | Sessions | 100 hidden per grade; 6 practice |
 | Mandate | Long only, 700 SPCX cap (about 10× collateral); $1,000 loss limit, enforced by a priced stop-out |
 | Bound | Hindsight on the book, plus the funding a position against every premium would collect |
-| Reference | Sizes the long by the carry's yield over an online estimate of the index's variance, inside a stop distance. Hidden from the agent: it isn't described in the instruction and practice doesn't run it |
+| Reference | Sizes the long by the carry's yield over an online estimate of the book's variance, inside a stop distance, and goes flat when the discount's churn reads as stress. Hidden from the agent: it isn't described in the instruction and practice doesn't run it |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged). This task departs from
