@@ -4993,6 +4993,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-tx-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-weekend"
 version = "0.1.0"
 dependencies = [
