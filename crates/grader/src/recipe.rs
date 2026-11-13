@@ -131,6 +131,9 @@ pub enum Action {
     /// A simulated OpenBook v2 market, seeded around `price`.
     #[serde(rename = "openbook-v2-market")]
     OpenbookV2Market(OpenbookMarketSpec),
+    /// Kamino lending markets: every account a lending session uses,
+    /// exercised (see [`crate::lending::exercise`]).
+    KaminoMarkets(crate::lending::MarketsSpec),
 }
 
 fn default_phoenix_api() -> String {
@@ -285,6 +288,9 @@ impl World<'_> {
             }
             Action::SpotExercise => {
                 self.price = Some(spot_exercise(self.surfnet, &self.rpc).await?);
+            }
+            Action::KaminoMarkets(spec) => {
+                self.price = Some(crate::lending::exercise(self.surfnet, &self.rpc, spec).await?);
             }
             Action::CreateMint(spec) => {
                 let address = simulated::create_mint(self.surfnet, &self.namespace, spec)?;

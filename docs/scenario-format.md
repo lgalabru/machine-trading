@@ -25,8 +25,8 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet` |
-| `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
-| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the market calibration the path was drawn from |
+| `venues` | Exactly one of `perp` (with its `funding`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker and the grader's `takers` |
 | `faults` | Execution faults on the bot's sends and reads |
@@ -42,8 +42,10 @@ Each section checks only itself (`Assets::validate`, `Venues::validate`,
 `MarketModel::validate`, `Actors::validate`, `Scoring::validate`, and the
 leaf types' own). A few rules join sections and are listed, one function
 each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
-having no path or competitor (their takers are a tape), the mandate covering exactly the scenario's markets,
-a sell order fitting the wallet.
+having no path or competitor (their takers are a tape), lending scenarios
+moving prices through their Scope feeds only (no path, actors, order or spot
+scoring; clock jumps inside the session and without faults), the mandate
+covering exactly the scenario's markets, a sell order fitting the wallet.
 
 ## Example
 

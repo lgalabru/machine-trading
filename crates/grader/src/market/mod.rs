@@ -68,6 +68,8 @@ pub(crate) mod tests {
             market_model: None,
             raw_sends: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
         }
     }
 
