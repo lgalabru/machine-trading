@@ -24,9 +24,10 @@
 //!    borrowers react and the liquidators act, in an order drawn from the
 //!    scenario's seed ([`KaminoActors`]); then the bot's turn.
 //! 4. **The account** is the bot's obligations, refreshed in the slot
-//!    measured, and its wallet. Holdings are the program's; prices are the
-//!    scenario's path for each reserve, so a feed's failure changes what
-//!    the bot can do, not what its account is worth.
+//!    measured by simulations the keeper pays for, and its wallet.
+//!    Holdings are the program's; prices are the scenario's path for each
+//!    reserve, so a feed's failure changes what the bot can do, not what
+//!    its account is worth.
 //!
 //! Liquidation races are settled by the actors' seeded order and delays.
 
@@ -878,6 +879,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         .validate(scenario.duration_slots + warped)
         .map_err(|reason| venue_error("oracles", reason))?;
 
+    let keeper = opts.keys.keypair("kamino-keeper", 0);
+    surfnet
+        .cheatcodes()
+        .fund_sol(&keeper.pubkey(), (FEE_SOL * 1e9) as u64)?;
+
     // The account as the session starts, priced where each feed starts.
     let start_prices: BTreeMap<Pubkey, f64> = {
         let mut prices = BTreeMap::new();
@@ -887,7 +893,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 &books,
                 &bot.pubkey(),
                 &market,
-                &bot.pubkey(),
+                &keeper.pubkey(),
             )
             .await?;
             for (address, reserve) in reading.reserves {
@@ -910,10 +916,6 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         })
         .collect();
 
-    let keeper = opts.keys.keypair("kamino-keeper", 0);
-    surfnet
-        .cheatcodes()
-        .fund_sol(&keeper.pubkey(), (FEE_SOL * 1e9) as u64)?;
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
     let mut slot = rpc.get_slot()?;
@@ -951,6 +953,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         books: books.clone(),
         venue,
         bot: bot.pubkey(),
+        keeper: keeper.pubkey(),
         instruments: instruments.clone(),
         start_prices,
         feeds,
@@ -994,6 +997,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         cast.add(Box::new(KaminoActors {
             chain: chain.clone(),
             books: books.clone(),
+            keeper: keeper.pubkey(),
             borrowers,
             liquidators,
             step: 0,
@@ -1068,6 +1072,8 @@ struct Liquidator {
 struct KaminoActors {
     chain: Arc<dyn ChainClient>,
     books: Arc<Books>,
+    /// Pays for the refreshes the actors simulate to read obligations.
+    keeper: Pubkey,
     borrowers: Vec<Borrower>,
     liquidators: Vec<Liquidator>,
     step: u64,
@@ -1128,8 +1134,14 @@ impl KaminoActors {
             }
             let key = b.keypair.pubkey();
             let market = b.collateral.keys.market;
-            let Ok(reading) =
-                kamino::read(self.chain.as_ref(), &self.books, &key, &market, &key).await
+            let Ok(reading) = kamino::read(
+                self.chain.as_ref(),
+                &self.books,
+                &key,
+                &market,
+                &self.keeper,
+            )
+            .await
             else {
                 continue;
             };
@@ -1197,7 +1209,7 @@ impl KaminoActors {
                         &self.books,
                         address,
                         market,
-                        &payer,
+                        &self.keeper,
                     )
                     .await
                     {
@@ -1376,6 +1388,9 @@ struct LendingAccount {
     books: Arc<Books>,
     venue: Kamino,
     bot: Pubkey,
+    /// Pays for every refresh the grader simulates, so a bot with no SOL
+    /// left is still measured.
+    keeper: Pubkey,
     instruments: Vec<InstrumentRef>,
     /// Each reserve's price when the session starts, and the feed that
     /// moves it.
@@ -1413,7 +1428,7 @@ impl LendingAccount {
         let mut views = Vec::new();
         let mut counted: BTreeSet<Pubkey> = BTreeSet::new();
         for market in self.books.markets() {
-            let reading = self.venue.read(&self.bot, &market, &self.bot).await?;
+            let reading = self.venue.read(&self.bot, &market, &self.keeper).await?;
             if let Some(h) = reading
                 .obligation
                 .as_ref()

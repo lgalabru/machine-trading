@@ -108,11 +108,13 @@ spot-smoke:
 # Kamino lending sessions (bench/checks/kamino), graded with the probe: the
 # bot and a competing liquidator both liquidate borrowers a crash pushes
 # under; a stale oracle blocks borrows but not repays; a day's clock jump
-# accrues a day's interest.
+# accrues a day's interest; a process bot that sends all its SOL away is
+# still measured.
 kamino-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
     just --justfile bots/kamino-probe/Justfile build
+    just --justfile bots/kamino-drain/Justfile build
     cargo build --release
     grade() {
       "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/kamino-2026-11-13 \
@@ -129,6 +131,11 @@ kamino-smoke:
     grep -q 'Borrow { amount: Some(1.0) }.*Failed.*price status' <<< "$log"
     grade interest
     jq -e '.scenarios[0].lending.end[1].borrowed > 600.03' target/logs/kamino-interest.json > /dev/null
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --snapshot snapshots/kamino-2026-11-13 \
+      --bot bots/kamino-drain --logs target/logs/kamino-drain --report target/logs/kamino-drain.json \
+      bench/checks/kamino/drain.json > /dev/null
+    grep -rq 'drain: sent all SOL away' target/logs/kamino-drain
+    jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
     echo "kamino-smoke: ok"
 
 # One actor on two venues: the grader's takers send a funding-carry practice

@@ -144,7 +144,8 @@ the bot's universe.
 
 - **Measured** every step, after the step's blocks: each of the bot's
   obligations refreshed in that slot by a simulation of `refresh_reserve`
-  and `refresh_obligation`, and the wallet's assets and collateral tokens.
+  and `refresh_obligation`, paid for by the engine's keeper so a bot with no
+  SOL left is still measured, and the wallet's assets and collateral tokens.
 - **Valued** at the scenario's price path for each reserve's asset: the
   price its oracle feed is planned to walk, before the feed's failures. A
   feed that goes stale or prints off the path changes what the bot can do

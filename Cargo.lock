@@ -4946,6 +4946,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-kamino-drain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "solana-system-interface 3.3.0",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mtx-bot-kamino-probe"
 version = "0.1.0"
 dependencies = [
