@@ -41,21 +41,44 @@ rises (it sells).
 ## Sides
 
 Adding and removing liquidity count as trades for an allowance's `sides`,
-in base: a **deposit that takes base into the pool is a buy**, and a
-**withdrawal that returns base is a sell**. Returning base includes
-collecting fees paid in it. A deposit that takes only the quote asset, or
-a withdrawal that returns none, is neither. So a sell-only or exit-only
-mandate can reduce or close positions but can't add base through a
-deposit. The rule is checked on the `amm` instrument's own allowance, and
-the limit prices don't apply: a deposit or a withdrawal has no price of
-its own. The curve's trades against a position aren't fills of the
-account: `sides` and the price limits audit the account's swaps (its spot
-fills) as before.
+in base, as the order books count a resting order by the side it would
+trade:
 
-An enforcer measures it from the pool's own records, the base vault's
-movement in each of the account's transactions through the pool, so a
-bot's hand-built transaction counts as much as an order a seat sent. A
-gate refuses such an order up front, with the reason.
+- a **deposit that takes base into the pool is a buy**;
+- a **deposit of the quote asset alone** (a range below the price, which
+  buys base as the price falls into it) **is a buy**, as a resting bid is;
+- a **deposit of the base alone** (a range above the price, which sells
+  it as the price rises into it) **is a sell** as well as a buy, as a
+  resting ask is;
+- a **withdrawal that returns base is a sell**. Returning base includes
+  collecting fees paid in it. A withdrawal that returns only the quote
+  asset is neither.
+
+So a sell-only or exit-only mandate can reduce or close positions but
+can't deposit, and a buy-only one can't deposit base alone above the
+price. The rule is checked on the `amm` instrument's own allowance, and the
+limit prices don't apply: a deposit or a withdrawal has no price of its
+own. The curve's trades against a position aren't fills of the account:
+`sides` and the price limits audit the account's swaps (its spot fills)
+as before.
+
+An enforcer measures it from the chain, **instruction by instruction**:
+each of the pool's instructions in a transaction, whether the transaction
+runs it or another program calls it, is read from the token transfers it
+makes to and from the pool's vaults, never from the transaction's net (a
+swap and a deposit in one transaction are each seen). A move is the
+account's when it takes the account's tokens (the owner of a token account
+it passes), its position (the holder of the position's NFT, or the owner a
+position records) or its signature, whoever pays the fee. So a bot's
+hand-built transaction counts as much as an order a seat sent. A gate
+refuses such an order up front, with the reason, and refuses an order
+whose move it can't tell where the allowance restricts the sides.
+
+## Position held
+
+A position is the account's wherever it holds the position's NFT: in any
+of its token accounts for the NFT's mint, not only the associated one, as
+the wallet's assets are read.
 
 ## Prices
 
@@ -80,5 +103,3 @@ its range.
 - Whether the curve's trades against a position should be audited as its
   fills, at the price they happened at, so the price limits bound liquidity
   provision too.
-- Whether a range order (a concentrated position entirely on one side of the
-  price) is audited as a resting order.

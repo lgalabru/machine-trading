@@ -39,8 +39,9 @@ than 1 would make the two differ.
 On each pool in the universe, the account is the agent authority's wallet
 token accounts for the pool's two mints, and every position in the pool
 whose NFT the authority holds. A position (`PersonalPositionState`, a PDA
-of its NFT's mint) belongs to whoever holds the NFT (a Token-2022 mint of
-supply 1), not to a key it records.
+of its NFT's mint) belongs to whoever holds the NFT (a mint of supply 1),
+in any token account of the authority's for its mint, not only the
+associated one (as the wallet is read), not to a key it records.
 
 ## Measurements
 
@@ -56,15 +57,21 @@ supply 1), not to a key it records.
   `fee_growth_inside` since it last counted (from the pool's
   `fee_growth_global` and its two boundary ticks' `fee_growth_outside`).
   The amm position is the base in all of them, fees included.
-- **Fills.** A pool has no event heap. Every swap moves the pool's two
-  vaults in opposite directions: the vault deltas of a transaction give the
-  taker's side (base in is a sell), the base size and the quote paid or
-  received, and its fee payer is the taker; the pool is the maker. The
-  price is quote over base, **fee included**: a swap's fee is taken from
-  what goes in and stays in the vault. A transaction that moves both vaults
-  the same way adds or removes liquidity, and is not a fill; it counts for
-  the [sides](../instruments/amm.md#sides) rule (base in a buy, base out a
-  sell).
+- **Fills.** A pool has no event heap. Each of the pool's instructions a
+  transaction runs, its own or one another program calls, is read on its
+  own, from the token transfers it makes to and from the pool's two
+  vaults (never from the transaction's net, so a swap and a deposit in one
+  transaction are both seen). A swap moves the vaults in opposite
+  directions: base in is a sale, base out a purchase; the transfers give
+  the base size and the quote paid or received, and the pool is the maker.
+  The taker is the account whose tokens or signature the swap took (the
+  owner of a token account it passes, or a signer), whoever paid the fee;
+  for anyone else's swap, the fee payer. The price is quote over base,
+  **fee included**: a swap's fee is taken from what goes in and stays in
+  the vault. An instruction that moves the vaults one way only adds or
+  removes liquidity, and is not a fill; it counts for the
+  [sides](../instruments/amm.md#sides) rule, the account's when it takes
+  its tokens, its position or its signature.
 - **Top.** The pool's price (from `sqrt_price_x64`) less its fee for a sale,
   plus it for a purchase: the price of a small swap each way.
 - **Value.** Wallet and positions (fees included), with the base at the Pyth

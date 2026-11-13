@@ -121,9 +121,11 @@ these holds:
    current value exceeds it. Account value is measured as in
    [Account value](#account-value).
 4. **Sides.** The account has a fill, or an open order, on a side its
-   allowance does not list in `sides`. A liquidity deposit that takes base
-   into a pool is a buy, and a withdrawal that returns base a sell, on the
-   `amm` instrument's allowance.
+   allowance does not list in `sides`. On the `amm` instrument's allowance,
+   a liquidity deposit that takes base into a pool, or quote alone (resting
+   to buy), is a buy; one of base alone (resting to sell) is a sell too; and
+   a withdrawal that returns base is a sell
+   ([amm](instruments/amm.md#sides)).
 5. **Limit prices.** The account has a sell fill below the instrument's
    `min_sell_price`, or a buy fill above its `max_buy_price`. A fill's price
    is the price the venue records for it, before fees. Resting orders at any
@@ -165,7 +167,8 @@ measured.
 The rules on fills (sides and limit prices) are checked against every fill
 the venue records during the term, not a sample. An enforcer MUST read every
 fill, from the venue's own records. It reads liquidity deposits and
-withdrawals the same way, for the sides rule.
+withdrawals the same way, for the sides rule: each instruction on its own,
+and the account's whoever pays the transaction's fee.
 
 The enforcer MUST hold its own copy of the mandate, and MUST NOT read it
 back from anywhere the agent can write. The copy handed to the agent is for

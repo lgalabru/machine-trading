@@ -53,13 +53,16 @@ bins and holds a share of each.
   (`fee_y_pending`), and its shares' liquidity times the growth of the
   bin's `fee_amount_x_per_token_stored` since it last counted. The amm
   position is the base in all of them, fees included.
-- **Fills.** As for [Raydium](raydium.md#measurements): the pool's two
-  reserves (`reserve_x`, `reserve_y`) move in opposite directions in a swap,
-  and their deltas give the side, the base size and the quote paid or
-  received, fee included; the fee payer is the taker and the pool the
-  maker. Reserves moving the same way are liquidity, not a fill; it counts for
-  the [sides](../instruments/amm.md#sides) rule (base in a buy, base out a
-  sell).
+- **Fills.** As for [Raydium](raydium.md#measurements): each of the
+  pool's instructions is read on its own from its transfers to and from
+  the reserves (`reserve_x`, `reserve_y`); a swap moves them in opposite
+  directions, giving the side, the base size and the quote paid or
+  received, fee included, with the account whose tokens or signature it
+  took as the taker and the pool the maker. Reserves moving one way are
+  liquidity, not a fill; it counts for the
+  [sides](../instruments/amm.md#sides) rule. A position names its owner in
+  its account, so a deposit or withdrawal is also the owner's of the
+  position it passes.
 - **Top.** The active bin's price less the pool's fee now for a sale, plus
   it for a purchase.
 - **Value.** As for Raydium: at the Pyth feed this profile names for the
