@@ -303,10 +303,6 @@ pub struct SignalGate {
     #[serde(default)]
     pub non_reading: Vec<String>,
     pub min_ratio: Option<f64>,
-    /// The public label fast mode draws its set from, for a task whose
-    /// reference edge is too thin for the default sample (a 12-session set
-    /// can lose money by chance).
-    pub fast_seed: Option<String>,
 }
 
 fn total(summary: &LadderSummary, rung: &str) -> Option<f64> {
@@ -371,6 +367,10 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
     )
 }
 
+/// Why a fast set whose reference lost money can't settle the reference and
+/// order checks.
+const THIN_SAMPLE: &str = "The reference lost money on this small sample; the task's edge is too thin to judge in fast mode, and the full ladder decides";
+
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
 pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> Vec<Check> {
@@ -381,20 +381,34 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .iter()
         .filter_map(|s| s.get("reference").copied())
         .collect();
-    checks.push(Check::from(
-        SOLVABLE,
-        "reference-scores-1",
-        "Reference is the 1.0 line (makes money on every set)",
-        reference.len() == sets && reference.iter().all(|r| *r > 0.0),
-        format!(
-            "reference total PnL per set: {}",
-            reference
-                .iter()
-                .map(|r| format!("${r:.0}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ));
+    // A short set can lose money by chance for a task whose reference has a
+    // thin edge: that says nothing for or against the task.
+    let thin = fast && reference.iter().any(|r| *r <= 0.0);
+    let reference_pnl = format!(
+        "reference total PnL per set: {}",
+        reference
+            .iter()
+            .map(|r| format!("${r:.0}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    checks.push(if thin {
+        Check::new(
+            SOLVABLE,
+            "reference-scores-1",
+            "Reference is the 1.0 line (makes money on every set)",
+            Status::Inconclusive,
+            format!("{reference_pnl}. {THIN_SAMPLE}"),
+        )
+    } else {
+        Check::from(
+            SOLVABLE,
+            "reference-scores-1",
+            "Reference is the 1.0 line (makes money on every set)",
+            reference.len() == sets && reference.iter().all(|r| *r > 0.0),
+            reference_pnl,
+        )
+    });
     let nop: Vec<f64> = summary
         .totals
         .iter()
@@ -419,12 +433,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .filter(|r| !r.ok)
         .map(|r| r.rule.as_str())
         .collect();
-    checks.push(Check::from(
-        SOLVABLE,
-        "ladder-order",
-        "Skill ladder keeps its order",
-        broken.is_empty() && !summary.rules.is_empty(),
-        if broken.is_empty() {
+    let order_detail = if broken.is_empty() {
             format!(
                 "{} rule{} hold on {sets} set{} of {} sessions",
                 summary.rules.len(),
@@ -445,8 +454,24 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
                 })
                 .collect::<Vec<_>>()
                 .join("; ")
-        },
-    ));
+        };
+    checks.push(if thin && !broken.is_empty() {
+        Check::new(
+            SOLVABLE,
+            "ladder-order",
+            "Skill ladder keeps its order",
+            Status::Inconclusive,
+            format!("{order_detail}. {THIN_SAMPLE}"),
+        )
+    } else {
+        Check::from(
+            SOLVABLE,
+            "ladder-order",
+            "Skill ladder keeps its order",
+            broken.is_empty() && !summary.rules.is_empty(),
+            order_detail,
+        )
+    });
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
     checks.push(Check::from(
@@ -1019,11 +1044,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             // The ladder reuses any rung report it finds: an earlier run's,
             // from another set, mustn't stand in for this one.
             clear_dir(&ladder_out.join(task))?;
-            let seed = if opts.fast {
-                signal.fast_seed.as_deref().unwrap_or(FAST_PUBLIC_SEED)
-            } else {
-                ""
-            };
+            let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
             // The ladder exits nonzero when a rule fails: the summary says which.
             run_in(
                 root,
@@ -1177,7 +1198,6 @@ mod tests {
             informed: informed.iter().map(|s| s.to_string()).collect(),
             non_reading: non_reading.iter().map(|s| s.to_string()).collect(),
             min_ratio: None,
-            fast_seed: None,
         }
     }
 
@@ -1333,6 +1353,26 @@ mod tests {
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("nop-scores-0"), Status::Fail);
         assert_eq!(status("ladder-clean"), Status::Fail);
+    }
+
+    #[test]
+    fn a_reference_that_lost_money_on_a_fast_sample_is_inconclusive_not_failed() {
+        let mut s = summary(&[&[("nop", 0.0), ("reference", -38.0), ("fade", 18.0), ("told", 850.0)]]);
+        s.rules.push(RuleResult {
+            rule: "fade < reference".into(),
+            ok: false,
+            sets_holding: 0,
+            sets: 1,
+            odds: 0.16,
+        });
+        let g = gate(&["told"], &["fade"]);
+        let status = |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        let fast = ladder_checks(&s, &g, true);
+        assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
+        assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
+        let full = ladder_checks(&s, &g, false);
+        assert_eq!(status(&full, "reference-scores-1"), Status::Fail);
+        assert_eq!(status(&full, "ladder-order"), Status::Fail);
     }
 
     #[test]
