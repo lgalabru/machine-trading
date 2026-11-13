@@ -78,7 +78,13 @@ Discovery, at start and on demand (`agents/list`):
 
 Play builds the strategy (`just build`, output streamed), then plays the
 open scenario in the grader, as `mtx bot run` does: a surfnet from the
-task's snapshot, the component loaded and called each step. The world
+task's snapshot, the component loaded and called each step. A scenario
+names its market (`symbol`): one the task's snapshot can't move plays on
+the snapshot beside it that warmed it up, `phoenix-perps-<date>`, which
+holds every Phoenix market a cross-margin account trades, at its real
+price. So a screenshot of NVDA becomes an NVDA scenario, not SPCX
+dressed up. The market panel shows the market with Phoenix's logo for it
+(`studio/logos/`). The world
 waits for a component, so the session can stop at any step and resume:
 the debugger is the grader's [`StepObserver`] blocking until the page
 says go. Stops: each step (step in), a step number, a step where the
