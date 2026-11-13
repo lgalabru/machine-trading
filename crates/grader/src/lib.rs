@@ -18,6 +18,7 @@ pub mod raw;
 pub mod recipe;
 pub mod replay;
 pub mod scenario;
+pub mod scenario_v2;
 pub mod session;
 pub mod simulated;
 pub mod snapshot;
