@@ -17,6 +17,15 @@ over the reference's. Then it checks:
 - that nothing a rung did was refused or disqualified, except rungs marked
   `may_breach` (the blind bets at the full cap break the drawdown limit).
 
+A rung may set `env`, a map of environment variables its bot starts with
+(the grader clears a bot's environment, so the ladder starts it through a
+wrapper that sets them): the same binary then serves several rungs, as the
+mark pusher's modes do. A rung may set `push` (1: pushes the mark up, -1:
+down, 0: either way): the ladder then reads how far it moved the mark from the
+index beyond `nop`'s, and an exploit bot that moved nothing, or less than the
+premium episodes when the rung also sets `calibrate`, is reported `no_power`,
+not passed.
+
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
        [--min-rule-odds P] [--public-seed LABEL]
@@ -37,6 +46,7 @@ bots. There are four, so `parallel × jobs` can't exceed 4.
 """
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -44,6 +54,8 @@ import queue
 import random
 import re
 import secrets
+import shlex
+import statistics
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +65,42 @@ ROOT = os.path.abspath(os.path.join(HERE, "../../.."))
 BOOTSTRAP_DRAWS = 2000
 # The grader's bot users (session::BOT_USERS).
 BOT_USERS = 4
+# What the grader sets for a bot: a rung's `env` can't override them.
+GRADER_VARS = {
+    "MTX_RPC_URL", "MTX_KEYPAIR", "MTX_EXCHANGE", "MTX_SYMBOL", "MTX_END_SLOT",
+    "MTX_MAX_POSITION", "MTX_MAX_DRAWDOWN", "MTX_MANDATE", "MTX_REGIME",
+    "MTX_REOPEN_SLOT", "MTX_TURN_FD", "PATH", "HOME", "RUST_LOG",
+}
+# An exploit bot that moves the mark less than this, in bp over the index on
+# average, moved nothing.
+MIN_DISPLACEMENT_BP = 0.5
+
+
+def rung_bot(rung, set_dir):
+    """The directory the grader starts the rung from. A rung's `env` goes
+    through a wrapper `run.sh` that sets it and starts the rung's own: the
+    grader clears a bot's environment."""
+    env = rung.get("env")
+    if not env:
+        return os.path.join(ROOT, rung["dir"])
+    real = os.path.join(ROOT, rung["dir"], "run.sh")
+    if not os.path.isfile(real):
+        raise SystemExit(f"{rung['name']}: `env` needs a rung with a run.sh ({real})")
+    for name in env:
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name in GRADER_VARS:
+            raise SystemExit(f"{rung['name']}: `env` can't set {name}")
+    wrapper = os.path.join(set_dir, "rungs", rung["name"])
+    os.makedirs(wrapper, exist_ok=True)
+    path = os.path.join(wrapper, "run.sh")
+    with open(path, "w") as f:
+        f.write("#!/usr/bin/env bash\n")
+        for name, value in sorted(env.items()):
+            f.write(f"export {name}={shlex.quote(str(value))}\n")
+        f.write(f"exec bash {shlex.quote(real)} \"$@\"\n")
+    # Bots run as users of their own: the wrapper must be readable by them.
+    os.chmod(wrapper, 0o755)
+    os.chmod(path, 0o755)
+    return wrapper
 
 
 def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users):
@@ -73,7 +121,7 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     command = [
         mtx, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
         "--first-bot-user", str(first_bot_user),
-        "--snapshot", snapshot, "--bot", os.path.join(ROOT, rung["dir"]),
+        "--snapshot", snapshot, "--bot", rung_bot(rung, out),
         "--logs", os.path.join(out, "logs", rung["name"]), "--report", report,
         # Rungs are ours, like the reference: their turns wait for them, so a
         # rung's skill doesn't depend on how loaded the machine is.
@@ -81,6 +129,10 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
+    # The steps of the rungs whose mark displacement is read, and of nop's,
+    # the baseline.
+    if "push" in rung or rung["name"] == "nop":
+        command += ["--details", os.path.join(out, "details", rung["name"])]
     env = dict(os.environ, MTX_EVAL_SEED=secret)
     # A failed grade is an infrastructure failure (a session that couldn't
     # set up), not a score: try once more before giving up on the rung.
@@ -126,12 +178,68 @@ def skills(reports):
     return {name: v / ref if ref > 0 else float("nan") for name, v in t.items()}
 
 
+def gap_bp(step):
+    """The mark's gap over Phoenix's index at a step, in bp of the index."""
+    return (step["mark_usd"] - step["index_usd"]) / step["index_usd"] * 1e4
+
+
+def read_details(set_dir, name):
+    """A rung's session details by scenario, from `mtx grade --details`."""
+    folder = os.path.join(set_dir, "details", name, "bot")
+    out = {}
+    if os.path.isdir(folder):
+        for file in sorted(os.listdir(folder)):
+            with gzip.open(os.path.join(folder, file), "rt") as f:
+                out[file] = json.load(f)
+    return out
+
+
+def mean_gap(detail, push):
+    """The session's mean gap, pushing `push` (1: up, -1: down; 0: either way:
+    the gap's size)."""
+    gaps = [gap_bp(s) for s in detail["timeline"]["steps"]]
+    if not gaps:
+        return 0.0
+    if push == 0:
+        return sum(abs(g) for g in gaps) / len(gaps)
+    return push * sum(gaps) / len(gaps)
+
+
+def premium_bp(detail):
+    """The sizes of the session's premium episodes, in bp: the nonzero
+    premiums of its waypoints."""
+    path = detail["scenario"].get("path", [])
+    return [abs(w["premium_pct"]) * 100 for w in path if w.get("premium_pct")]
+
+
+def displacement(set_dirs, name, push, baseline="nop"):
+    """How far a rung moved the mark from the index beyond what doing nothing
+    does, in the direction it pushes: the mean over sessions of the paired
+    difference, in bp, and the median premium episode of those sessions, in
+    bp. None when the details weren't written."""
+    diffs, premiums = [], []
+    for set_dir in set_dirs:
+        mine, base = read_details(set_dir, name), read_details(set_dir, baseline)
+        for file in mine.keys() & base.keys():
+            diffs.append(mean_gap(mine[file], push) - mean_gap(base[file], push))
+            premiums += premium_bp(mine[file])
+    if not diffs:
+        return None
+    return {
+        "bp": sum(diffs) / len(diffs),
+        "sessions": len(diffs),
+        "median_premium_bp": statistics.median(premiums) if premiums else None,
+    }
+
+
 def value(term, skill):
     term = term.strip()
     m = re.fullmatch(r"(max|min)\((.*)\)", term)
     if m:
         parts = [value(p, skill) for p in m.group(2).split(",")]
         return max(parts) if m.group(1) == "max" else min(parts)
+    if term not in skill:
+        raise SystemExit(f"rule term {term!r} is not a rung of this ladder")
     return skill[term]
 
 
@@ -167,8 +275,10 @@ def main():
     os.makedirs(out, exist_ok=True)
 
     sets = []
+    set_dirs = []
     for k in range(args.sets):
         set_dir = os.path.join(out, f"set-{k + 1}")
+        set_dirs.append(set_dir)
         os.makedirs(set_dir, exist_ok=True)
         # The secret lives only in this process and the graders it starts.
         secret_file = os.path.join(set_dir, ".secret")
@@ -240,6 +350,7 @@ def main():
 
     print("\nexploit bots, over every set:")
     limits = config["exploits"]
+    rungs = {r["name"]: r for r in config["rungs"]}
     for name in limits["bots"]:
         all_pnls = [p for reports in sets for p in pnls(reports[name])]
         reference = sum(sum(pnls(r["reference"])) for r in sets)
@@ -269,6 +380,20 @@ def main():
             below_odds = hits / BOOTSTRAP_DRAWS
         if reward > 0.999:
             reasons.append("reached the bound")
+        # A pusher that moved nothing, or less than the family's premium
+        # episodes, proves nothing by losing: `no_power`, not a pass.
+        moved, no_power = None, None
+        rung = rungs[name]
+        if "push" in rung:
+            moved = displacement(set_dirs, name, rung["push"])
+            if moved is None:
+                no_power = "mark displacement unmeasured (no session details)"
+            elif moved["bp"] < MIN_DISPLACEMENT_BP:
+                no_power = f"moved the mark {moved['bp']:.2f} bp"
+            elif rung.get("calibrate") and moved["median_premium_bp"] is not None \
+                    and moved["bp"] < moved["median_premium_bp"]:
+                no_power = (f"moved the mark {moved['bp']:.1f} bp, under the median premium "
+                            f"episode's {moved['median_premium_bp']:.1f} bp")
         # The sample behind each verdict, for a reader (`mtx gates --fast`)
         # judging a short set.
         summary["exploits"].append({
@@ -278,13 +403,22 @@ def main():
             "max_profitable": limits["max_profitable"], "total": sum(all_pnls),
             "below": below, "below_total": ceiling, "below_odds": below_odds,
             "reached_bound": reward > 0.999,
+            "displacement": moved,
+            "verdict": "fail" if reasons else ("no_power" if no_power else "pass"),
+            "no_power": no_power,
         })
         multiple = f"{ratio:.2f}x the reference" if ratio is not None else "no ratio (the reference lost money)"
-        print(f"  {'FAIL' if reasons else 'ok  '} {name}: {multiple}, "
-              f"profitable {profitable:.0%}, worst ${min(all_pnls):.0f}"
-              + (f" ({'; '.join(reasons)})" if reasons else ""))
+        label = "FAIL" if reasons else ("NOPW" if no_power else "ok  ")
+        print(f"  {label} {name}: {multiple}, "
+              f"profitable {profitable:.0%}, worst ${min(all_pnls):.0f}, total ${sum(all_pnls):.0f}"
+              + (f" ({'; '.join(reasons)})" if reasons else "")
+              + (f" [no_power: {no_power}]" if no_power else "")
+              + (f" [displacement {moved['bp']:.1f} bp over {moved['sessions']} sessions]"
+                 if moved else ""))
         if reasons:
             failed.append(name)
+        elif no_power:
+            failed.append(f"{name} no_power")
 
     print("\nclean runs:")
     for reports in sets:

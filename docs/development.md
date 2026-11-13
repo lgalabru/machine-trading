@@ -112,7 +112,7 @@ Harbor's registry, not from this checkout. Release the version first
 solana-foundation/machine-trading@<version>` says whether it is there.
 
 ```sh
-just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0   # models, attempts, at a time, version
+just bench "claude-opus-5-5 openai/<model>" 5 3 0.12.0   # models (in Hermes), attempts, at a time, version
 just review jobs/bench/<batch>                          # browse it
 just publish jobs/bench/<batch> 0.11.0                  # upload it; writes bench/results/0.11.0/release.json
 git add bench/results/0.11.0 && git commit && git push  # the push publishes the website
@@ -129,6 +129,12 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      load makes a grade slower, not different (see `--replay` above for the
      limit). A trial takes about 8 CPUs
      while it grades; market-making's verifier alone runs about an hour.
+   - **Harness:** every model runs in Hermes (NousResearch/hermes-agent,
+     pinned in the Justfile, `bench/harness/mtx_hermes.py`), so no model is
+     helped or hurt by its harness. Its trials are labelled
+     `gpt-6.1-sol · hermes`, apart from 0.11.0 and earlier, which ran in
+     each provider's own harness; `native:<model>` still runs one that way.
+     Hermes reports no token use, so its trials have no cost.
    - **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for the providers
      it runs, from `.env` or `~/.machine-trading.env`.
    - **Several machines:** give each the same secret, so every trial sees

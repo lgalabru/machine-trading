@@ -904,6 +904,7 @@ impl Account for SpotAccount {
             at,
             level_usd: self.start_price_usd,
             book_usd: self.start_price_usd,
+            fair_usd: None,
         }
     }
 
@@ -1194,6 +1195,7 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             actors: None,
+            takers_pricing: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
