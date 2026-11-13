@@ -18,15 +18,16 @@ use std::path::PathBuf;
 
 use mtx_kit::{BotEnv, Side, Trader};
 use serde::Serialize;
-use solana_keypair::Keypair;
 use tracing::{info, warn};
 
 use crate::{
     Result,
     error::io_error,
+    keys::SessionKeyring,
     making::{Competition, Making, level_at},
     phoenix::{self, Phoenix},
     scenario::Scenario,
+    session::{INTERNAL_RPC_TIMEOUT, patiently},
     snapshot::OfflineWorld,
 };
 
@@ -65,13 +66,14 @@ impl Drop for Competitor {
 }
 
 impl Competitor {
-    /// Onboard the maker. Setup: cheatcodes must still be unlocked. It
-    /// trades through `rpc_url`.
+    /// Onboard the maker. Setup, on a stepped surfnet: cheatcodes must still
+    /// be unlocked. It trades through `rpc_url`, the grader's own.
     pub async fn prepare(
         world: &OfflineWorld,
         phoenix: &Phoenix,
         scenario: &Scenario,
         rpc_url: &str,
+        keys: &SessionKeyring<'_>,
     ) -> Result<Self> {
         let dir = std::env::temp_dir().join(format!("mtx-competitor-{}", uuid::Uuid::new_v4()));
         // Root's alone: bots run in the same container, and these keypairs
@@ -79,21 +81,31 @@ impl Competitor {
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
             .create(&dir)
             .map_err(io_error(&dir))?;
-        let keypair = Keypair::new();
-        phoenix::onboard_trader(&world.surfnet, phoenix, &keypair, DEPOSIT_USDC).await?;
+        let keypair = keys.keypair("competitor", 0);
+        phoenix::onboard_traders_stepped(
+            &world.surfnet,
+            phoenix,
+            &mtx_kit::rpc_client_with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT),
+            &[&keypair],
+            DEPOSIT_USDC,
+        )
+        .await?;
         let path = dir.join("competitor.json");
         let bytes = serde_json::to_string(&keypair.to_bytes().to_vec())?;
         std::fs::write(&path, bytes).map_err(io_error(&path))?;
-        let trader = Trader::connect(&BotEnv {
-            rpc_url: rpc_url.to_string(),
-            keypair_path: path,
-            exchange_path: world.exchange_path.clone(),
-            symbol: scenario.symbol.clone(),
-            end_slot: u64::MAX,
-            max_position: f64::MAX,
-            max_drawdown_usd: f64::MAX,
-            mandate_path: None,
-        })?;
+        let trader = Trader::connect_with_timeout(
+            &BotEnv {
+                rpc_url: rpc_url.to_string(),
+                keypair_path: path,
+                exchange_path: world.exchange_path.clone(),
+                symbol: scenario.symbol.clone(),
+                end_slot: u64::MAX,
+                max_position: f64::MAX,
+                max_drawdown_usd: f64::MAX,
+                mandate_path: None,
+            },
+            INTERNAL_RPC_TIMEOUT,
+        )?;
         Ok(Self { trader, dir })
     }
 
@@ -144,7 +156,10 @@ impl Quoting {
         let level = start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0);
         let tick_bps = TICK_USD / level * 10_000.0;
 
-        if let (Some((bid, ask)), Ok(bbo)) = (self.quoted, trader.inner.bbo().await) {
+        if let (Some((bid, ask)), Ok(bbo)) = (
+            self.quoted,
+            patiently("the competitor's book", async || trader.inner.bbo().await).await,
+        ) {
             let market = trader.inner.market();
             let usd = |ticks: Option<u64>| {
                 ticks.map(|t| {
@@ -179,7 +194,11 @@ impl Quoting {
         }
         self.report.tightest_bps = self.report.tightest_bps.min(self.bid_bps).min(self.ask_bps);
 
-        let held = match trader.position().await {
+        let held = match patiently("the competitor's position", async || {
+            trader.position().await
+        })
+        .await
+        {
             Ok(position) => position.size,
             Err(error) => {
                 warn!("competitor reading its position: {error}");
@@ -211,7 +230,11 @@ impl Quoting {
     }
 
     pub async fn report(mut self, competitor: &Competitor) -> CompeteReport {
-        self.report.end_position = competitor.trader.position().await.map_or(0.0, |p| p.size);
+        self.report.end_position = patiently("the competitor's position", async || {
+            competitor.trader.position().await
+        })
+        .await
+        .map_or(0.0, |p| p.size);
         info!(report = ?self.report, "competitor done");
         self.report
     }

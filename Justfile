@@ -1,4 +1,4 @@
-# Loads MTX_FORK_RPC_URL for snapshot-prepare.
+# Loads MTX_FORK_RPC_URL for snapshot-build.
 set dotenv-load := true
 
 snapshot := "phoenix-spcx-2026-10-29"
@@ -48,9 +48,10 @@ install bin="mtx":
       *) echo "unknown binary {{bin}} (have: mtx)"; exit 1 ;;
     esac
 
-# Fork mainnet and write a pinned Phoenix snapshot.
-snapshot-prepare out:
-    cargo run --release -- snapshot prepare --out {{out}}
+# Build a snapshot from its recipe: fork mainnet, warm up, export.
+# Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+snapshot-build name *flags:
+    cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
 # Replay a snapshot offline and trade through a scripted crash.
 snapshot-verify dir=("snapshots/" + snapshot):
@@ -64,10 +65,6 @@ bots:
       just --justfile "bots/$bot/Justfile" build
     done
 
-# Fork mainnet and write a spot snapshot (Phoenix v1, OpenBook v2, Pyth SOL/USD).
-snapshot-prepare-spot out:
-    cargo run --release -- snapshot prepare-spot --out {{out}}
-
 # A spot session end to end: a bot sells on both SOL/USDC books and passes
 # its sell-only mandate; the same bot buying too is disqualified.
 spot-smoke:
@@ -78,6 +75,13 @@ spot-smoke:
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/accumulate --logs target/logs/spot-smoke-buy-order bench/checks/spot/smoke-buy-order.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke/buyer --logs target/logs/spot-smoke-reduce-only bench/checks/spot/smoke-reduce-only.json
     cargo run --release -- grade --snapshot snapshots/{{spot_snapshot}} --bot bots/spot-smoke --logs target/logs/spot-smoke-net bench/checks/spot/smoke-net.json
+
+# The strategy interface end to end: the probe puts one line of each kind
+# on its first sheet in a flash-crash session, and its log
+# (target/logs/wit-probe) shows what it was handed and what became of each.
+wit-probe:
+    just --justfile bots/wit-probe/Justfile build
+    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-spcx/environment/practice/practice-1.json
 
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
@@ -349,7 +353,7 @@ check-solution:
 # The checks every task change should pass: oracle ~1, and nop and every
 # cheater 0, each grade completing. The component cheater's log must show
 # every attempt refused; the process cheaters aren't graded (not_graded 1).
-harbor-checks task="flash-crash-spcx" surfpool="": (image surfpool) check-solution
+harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) check-solution
     #!/usr/bin/env bash
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to
@@ -359,11 +363,11 @@ harbor-checks task="flash-crash-spcx" surfpool="": (image surfpool) check-soluti
       || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
     # The verifier draws its hidden set from the batch's secret.
     export MTX_EVAL_SEED="${MTX_EVAL_SEED:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
-    harbor run -y -p {{tasks}}/{{task}} -a oracle -o jobs
-    harbor run -y -p {{tasks}}/{{task}} -a nop -o jobs
-    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:ComponentCheaterAgent -o jobs
-    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o jobs
-    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o jobs
+    harbor run -y -p {{tasks}}/{{task}} -a oracle -o {{jobs}}/oracle
+    harbor run -y -p {{tasks}}/{{task}} -a nop -o {{jobs}}/nop
+    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:ComponentCheaterAgent -o {{jobs}}/component-cheater
+    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o {{jobs}}/cheater
+    PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o {{jobs}}/sneaky
 
 # Fail if the agent's image holds anything that answers its task: the
 # anchors (reference bots), their source or the tasks' solutions, the
@@ -418,13 +422,21 @@ clock-probe task:
 # rule holds on every set and the exploit bots stay within their limits.
 # Run it before benchmarking any scenario change. `parallel` rungs are
 # graded at once, `jobs` sessions each: four in all at most, one bot user each.
-ladder task="flash-crash" sets="4" jobs="4" parallel="1":
+# `count` overrides the sessions per set, `min_odds` the bootstrap floor (for
+# short sets), `out` the report directory (it keeps
+# `<out>/<task>/summary.json`, which `mtx gates` reads) and `public_seed`
+# draws fixed, public sets from a label instead of fresh hidden ones.
+ladder task="flash-crash" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="" public_seed="":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -q
     just bots > /dev/null
     (cd bench/checks/ladder/rungs && CARGO_TARGET_DIR="$PWD/../../../../target/ladder-rungs" \
       cargo build --release -q)
+    count_args=()
+    [ -n "{{count}}" ] && count_args+=(--count "{{count}}")
+    [ -n "{{min_odds}}" ] && count_args+=(--min-rule-odds "{{min_odds}}")
+    [ -n "{{public_seed}}" ] && count_args+=(--public-seed "{{public_seed}}")
     mkdir -p bench/checks/ladder/bin
     for bin in blind momentum regime-oracle flow-oracle quoter; do
       cp "target/ladder-rungs/release/$bin" bench/checks/ladder/bin/
@@ -433,4 +445,5 @@ ladder task="flash-crash" sets="4" jobs="4" parallel="1":
       CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
     python3 -I bench/checks/ladder/ladder.py {{task}} --mtx target/release/mtx \
-      --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}}
+      --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
+      --out "{{out}}" ${count_args[@]+"${count_args[@]}"}
