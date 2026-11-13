@@ -43,8 +43,10 @@ bins and holds a share of each.
 
 ## Measurements
 
-- **Position (spot).** The base held in the wallet, in base units. Nothing
-  rests and nothing is locked.
+- **Position (spot).** The base held in the wallet, in base units, and in
+  the account's positions in pools (in this pool and any other the universe
+  names), as the spot profile counts it. Nothing rests and nothing is
+  locked.
 - **Position (amm).** For each position and each of its bins, its shares
   over the bin's `liquidity_supply`, times the bin's `amount_x` and
   `amount_y`; plus its unclaimed fees: each bin's `fee_x_pending`
@@ -55,7 +57,9 @@ bins and holds a share of each.
   reserves (`reserve_x`, `reserve_y`) move in opposite directions in a swap,
   and their deltas give the side, the base size and the quote paid or
   received, fee included; the fee payer is the taker and the pool the
-  maker. Reserves moving the same way are liquidity, not a fill.
+  maker. Reserves moving the same way are liquidity, not a fill; it counts for
+  the [sides](../instruments/amm.md#sides) rule (base in a buy, base out a
+  sell).
 - **Top.** The active bin's price less the pool's fee now for a sale, plus
   it for a purchase.
 - **Value.** As for Raydium: at the Pyth feed this profile names for the

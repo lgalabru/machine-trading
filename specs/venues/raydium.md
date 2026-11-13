@@ -44,9 +44,10 @@ supply 1), not to a key it records.
 
 ## Measurements
 
-- **Position (spot).** The base held in the wallet, in base units. Nothing
-  rests in a pool and nothing is locked, so the spot position is the
-  wallet's.
+- **Position (spot).** The base held in the wallet, in base units, and in
+  the account's positions in pools (in this pool and any other the universe
+  names), as the spot profile counts it. Nothing rests in a pool and
+  nothing is locked.
 - **Position (amm).** For each position, what its liquidity `L` between
   sqrt prices `a` (lower tick) and `b` (upper tick) holds at the pool's
   sqrt price `p`: `L(b − p)/(p b)` of token 0 and `L(p − a)` of token 1
@@ -61,7 +62,9 @@ supply 1), not to a key it records.
   received, and its fee payer is the taker; the pool is the maker. The
   price is quote over base, **fee included**: a swap's fee is taken from
   what goes in and stays in the vault. A transaction that moves both vaults
-  the same way adds or removes liquidity, and is not a fill.
+  the same way adds or removes liquidity, and is not a fill; it counts for
+  the [sides](../instruments/amm.md#sides) rule (base in a buy, base out a
+  sell).
 - **Top.** The pool's price (from `sqrt_price_x64`) less its fee for a sale,
   plus it for a purchase: the price of a small swap each way.
 - **Value.** Wallet and positions (fees included), with the base at the Pyth
