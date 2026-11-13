@@ -1,0 +1,7 @@
+asset = "spcx"
+# The 0.1 intermediate that `export_v1` reads and names in `derived_from`.
+lineage_id = "spcx.20261111.ebab5e7c"
+# Pins used with --from-archive so a rerun writes the shipped file's bytes.
+fit_date = "20261112"
+fitted_at = "2026-11-12T17:16:26+00:00"
+expected_id = "spcx.20261112.d1f48be2"
