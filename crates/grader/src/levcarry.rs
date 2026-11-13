@@ -342,6 +342,7 @@ impl LeveredCarryFamily {
             tape,
             spot: None,
             faults: None,
+            actors: None,
             turn_data: None,
             oracles: None,
             order: None,
