@@ -49,6 +49,7 @@ Real venues:
 |---|---|
 | `phoenix-eternal` (`symbol`, `phoenix_api`) | Onboards a throwaway trader, reads the market, rests and cancels an order, and replays the market-move scenario templates so the oracle and maker accounts load. Writes `exchange.json`. |
 | `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
+| `kamino-markets` (`pairs`: `[collateral reserve, debt reserve]` addresses) | Fetches every reserve in one call, moves the fork's clock past their last refresh (a reserve refreshed after the clock can't be refreshed again), loads each reserve's market, lookup table, vaults, mints, farms and Scope prices, freshens Scope's entries, freezes any Token-2022 UI multiplier at today's, and has a throwaway account deposit, borrow, repay and withdraw on each pair. |
 
 Simulated assets (see below): `create-mint`, `phoenix-v1-market`,
 `openbook-v2-market`. Pool creation for AMMs is left for the AMM venue
@@ -164,7 +165,11 @@ ProgramData account, deploy slot and a hash of its code (`programdata`,
   the code the task was built on. The source's name is recorded as
   `pinned_from`.
 
-The two committed recipes pin to their own snapshots.
+The two committed recipes pin to their own snapshots. The Kamino recipe
+(`snapshots/kamino-2026-11-13`) pins its programs by `expect_code_sha256`
+only: klend's, Farms' and Scope's ProgramData accounts are 10 MiB each,
+over the surfnet's 15 MiB request limit once encoded, so `pin_from` can't
+restore them, and a rebuild after an upgrade fails instead.
 
 **Clock.** A build from `fork.from_snapshot` starts from the source's fork slot
 and time, makes a block for each transaction and none otherwise, and pins
