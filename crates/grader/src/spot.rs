@@ -1206,6 +1206,7 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
             turn_data: None,
             oracles: None,
