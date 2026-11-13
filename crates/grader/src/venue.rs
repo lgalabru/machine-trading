@@ -100,7 +100,9 @@ pub fn stake_venue(name: &str, rpc_url: &str, plan: &EpochPlan) -> Result<Box<dy
         return Ok(Box::new(marinade::Marinade::new(rpc_url, plan)));
     }
     if stake_pool::POOLS.iter().any(|p| p.venue == name) {
-        return Ok(Box::new(stake_pool::SplStakePools::new(name, rpc_url, plan)));
+        return Ok(Box::new(stake_pool::SplStakePools::new(
+            name, rpc_url, plan,
+        )));
     }
     Err(Error::UnknownMarket(format!(
         "{name} is not a stake-pool venue"

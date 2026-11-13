@@ -353,7 +353,10 @@ async fn each_pool_s_view_reports_its_own_token_and_the_session_s_boundary() {
         assert_eq!(position.entry_usd, 150.0);
         let stat = |name: &str| view.stats.iter().find(|(n, _)| n == name).map(|(_, v)| *v);
         assert!(stat("rate").unwrap() > 1.0);
-        assert_eq!(stat("slots_to_epoch_end"), plan.next(rpc.get_slot().unwrap()).map(|(d, _)| d as f64));
+        assert_eq!(
+            stat("slots_to_epoch_end"),
+            plan.next(rpc.get_slot().unwrap()).map(|(d, _)| d as f64)
+        );
         assert_eq!(
             stat("next_epoch"),
             Some((rpc.get_epoch_info().unwrap().epoch + 1) as f64)

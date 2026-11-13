@@ -1179,8 +1179,11 @@ impl Seat for StakePoolSeat {
             ("last_update_epoch".into(), state.last_update_epoch as f64),
             ("epoch_fee_bps".into(), bps(state.epoch_fee)),
         ];
-        view.stats
-            .extend(epoch_stats(chain, &self.plan).await.map_err(|e| e.to_string())?);
+        view.stats.extend(
+            epoch_stats(chain, &self.plan)
+                .await
+                .map_err(|e| e.to_string())?,
+        );
         Ok(())
     }
 }

@@ -234,7 +234,11 @@ impl Pools {
     ) -> Result<Self> {
         let mut markets = Vec::new();
         for pool in pools {
-            markets.push(stake_venue(&pool.venue, rpc_url, plan)?.market(pool).await?);
+            markets.push(
+                stake_venue(&pool.venue, rpc_url, plan)?
+                    .market(pool)
+                    .await?,
+            );
         }
         Ok(Self {
             chain,

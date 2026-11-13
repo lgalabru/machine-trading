@@ -624,8 +624,11 @@ impl Seat for MarinadeSeat {
             ),
             ("instant_capacity_sol".into(), capacity as f64 / 1e9),
         ];
-        view.stats
-            .extend(epoch_stats(chain, &self.plan).await.map_err(|e| e.to_string())?);
+        view.stats.extend(
+            epoch_stats(chain, &self.plan)
+                .await
+                .map_err(|e| e.to_string())?,
+        );
         Ok(())
     }
 }
