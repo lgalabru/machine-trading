@@ -1,0 +1,79 @@
+name = "lst-2026-11-12"
+kind = "stake-pool"
+symbol = "JITOSOL"
+
+[[program]]
+name = "spl-stake-pool"
+expect_code_sha256 = "ec2dfefaa70d560754a0000f39bd2cabc192b895d36205b3c428f601b6e1d7e1"
+pin_from = "."
+address = "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy"
+
+[[program]]
+name = "marinade"
+expect_code_sha256 = "296fd550ce78a556ba05dbaff8f8fd6c04fa538bc99f9a0a836e5e430645a3ac"
+pin_from = "."
+address = "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD"
+
+[[program]]
+name = "stake"
+expect_code_sha256 = "c9cba7f3d9fe0fac1f32e7a5e012284104a25d27ec97d6eb6d99a3afcd2352a8"
+pin_from = "."
+address = "Stake11111111111111111111111111111111111111"
+
+[[account]]
+name = "jito stake pool"
+kind = "pool"
+address = "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"
+
+[[account]]
+name = "jito validator list"
+kind = "pool"
+address = "3R3nGZpQs2aZo5FDQvd2MUQ6R7KhAPainds6uT6uE2mn"
+
+[[account]]
+name = "jito reserve stake"
+kind = "vault"
+address = "BgKUXdS29YcHCFrPm5M8oLHiTzZaMDjsebggjoaQ6KFL"
+
+[[account]]
+name = "jitoSOL"
+kind = "mint"
+address = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"
+
+[[account]]
+name = "jito manager fee account"
+kind = "vault"
+address = "8yoigZfzZ1nNaadumY9uPVD118225UYHTDpmjpr2nrSa"
+
+[[account]]
+name = "marinade state"
+kind = "pool"
+address = "8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC"
+
+[[account]]
+name = "mSOL"
+kind = "mint"
+address = "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"
+
+[[account]]
+name = "marinade mSOL leg"
+kind = "vault"
+address = "7GgPYjS5Dza89wV6FpZ23kUJRG5vbQ1GM25ezspYFSoE"
+
+[[account]]
+name = "marinade treasury mSOL"
+kind = "vault"
+address = "B1aLzaNMeFVAyQ6f3XbbUyKcH2YPHu2fqiEagmiF23VR"
+
+[[account]]
+name = "wSOL"
+kind = "mint"
+address = "So11111111111111111111111111111111111111112"
+
+[[account]]
+name = "pyth SOL/USD"
+kind = "oracle"
+address = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE"
+
+[[warmup]]
+action = "stake-pool-exercise"

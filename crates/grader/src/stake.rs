@@ -659,3 +659,152 @@ impl Account for StakeAccount {
         })
     }
 }
+
+/// Stake into and out of Jito's pool and Marinade with a throwaway wallet,
+/// as a stake-pool session does, and start each delayed exit: a stake
+/// account split off Jito's largest validator, deactivated, and a Marinade
+/// ticket. Returns the Pyth SOL/USD price. For a snapshot recipe's
+/// `stake-pool-exercise` action ([`crate::recipe`]): every account these
+/// touch is then in the surfnet, and so in the export. A redemption the
+/// reserve can't pay is expected, and only logged.
+pub async fn exercise(surfnet: &Surfnet, rpc: &RpcClient) -> Result<f64> {
+    use crate::venue::{
+        marinade::{self, MarinadeState},
+        stake_pool::{self, POOLS, PoolState, STAKE_ACCOUNT_LEN, stake_ix},
+    };
+
+    let warmup = Keypair::new();
+    let owner = warmup.pubkey();
+    surfnet.cheatcodes().fund_sol(&owner, 100_000_000_000)?;
+    let sol = 1_000_000_000u64;
+
+    let jito = POOLS[0];
+    let state = PoolState::decode(&rpc.get_account(&jito.address)?.data)?;
+    let tokens = token::ata_for(&owner, &state.pool_mint, &state.token_program);
+    mtx_kit::send(
+        rpc,
+        &warmup,
+        vec![
+            token::create_ata_idempotent_for(
+                &owner,
+                &owner,
+                &state.pool_mint,
+                &state.token_program,
+            ),
+            stake_pool::ix::deposit_sol(
+                &jito.program,
+                &jito.address,
+                &state,
+                &owner,
+                &tokens,
+                10 * sol,
+            ),
+        ],
+        "jito deposit",
+    )?;
+    let redeem = stake_pool::ix::withdraw_sol(
+        &jito.program,
+        &jito.address,
+        &state,
+        &owner,
+        &tokens,
+        &owner,
+        sol,
+    );
+    if let Err(error) = mtx_kit::send(rpc, &warmup, vec![redeem], "jito instant withdrawal") {
+        tracing::warn!(%error, "the reserve didn't pay the warm-up's redemption");
+    }
+    let list = stake_pool::decode_validator_list(&rpc.get_account(&state.validator_list)?.data)?;
+    let largest = list
+        .iter()
+        .filter(|v| v.status == 0)
+        .max_by_key(|v| v.active_stake_lamports)
+        .ok_or_else(|| Error::UnknownMarket("Jito's pool lists no active validator".into()))?;
+    let split_from = stake_pool::validator_stake_address(
+        &jito.program,
+        &jito.address,
+        &largest.vote_account,
+        largest.validator_seed_suffix,
+    );
+    let receive = Keypair::new();
+    let rent = rpc.get_minimum_balance_for_rent_exemption(STAKE_ACCOUNT_LEN as usize)?;
+    let withdraw = vec![
+        stake_ix::allocate(&owner, &receive.pubkey(), rent),
+        stake_pool::ix::withdraw_stake(
+            &jito.program,
+            &jito.address,
+            &state,
+            &split_from,
+            &receive.pubkey(),
+            &owner,
+            &owner,
+            &tokens,
+            3 * sol,
+        ),
+        stake_ix::deactivate(&receive.pubkey(), &owner),
+    ];
+    send_signed(
+        rpc,
+        &[&warmup, &receive],
+        withdraw,
+        "jito delayed withdrawal",
+    )?;
+
+    let state = MarinadeState::decode(&rpc.get_account(&marinade::STATE)?.data)?;
+    let msol = token::ata(&owner, &state.msol_mint);
+    mtx_kit::send(
+        rpc,
+        &warmup,
+        vec![
+            token::create_ata_idempotent(&owner, &owner, &state.msol_mint),
+            marinade::ix::deposit(&state, &owner, &msol, 10 * sol),
+            marinade::ix::liquid_unstake(&state, &owner, &msol, &owner, sol),
+        ],
+        "marinade deposit and liquid unstake",
+    )?;
+    let ticket = Keypair::new();
+    let rent = rpc.get_minimum_balance_for_rent_exemption(marinade::TICKET_LEN as usize)?;
+    send_signed(
+        rpc,
+        &[&warmup, &ticket],
+        vec![
+            marinade::ix::allocate_ticket(&owner, &ticket.pubkey(), rent),
+            marinade::ix::order_unstake(&state, &owner, &msol, &ticket.pubkey(), 2 * sol),
+        ],
+        "marinade delayed unstake",
+    )?;
+
+    let chain = RpcChainClient::new(surfnet.rpc_url());
+    let price = price_usd(&chain, &token::native_mint()).await?;
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    Ok(grader_f64(price))
+}
+
+/// Send `instructions` signed by `signers`, the first paying, and wait for
+/// them to land. Setup only.
+pub(crate) fn send_signed(
+    rpc: &RpcClient,
+    signers: &[&Keypair],
+    instructions: Vec<solana_transaction::Instruction>,
+    label: &str,
+) -> Result<solana_transaction::Signature> {
+    let blockhash = rpc.get_latest_blockhash()?;
+    let tx = solana_transaction::Transaction::new_signed_with_payer(
+        &instructions,
+        Some(&signers[0].pubkey()),
+        signers,
+        blockhash,
+    );
+    let simulation = rpc.simulate_transaction(&tx)?.value;
+    if let Some(error) = simulation.err {
+        let logs = simulation.logs.unwrap_or_default();
+        return Err(Error::Transaction {
+            label: label.into(),
+            reason: format!(
+                "{error}\n{}",
+                logs[logs.len().saturating_sub(12)..].join("\n")
+            ),
+        });
+    }
+    Ok(rpc.send_and_confirm_transaction(&tx)?)
+}

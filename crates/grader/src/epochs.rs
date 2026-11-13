@@ -360,7 +360,8 @@ impl Epochs {
                 unix_timestamp: epoch_start + seconds(LANDING_SLOTS),
             },
         ))?;
-        session::wait_for_slot(rpc, boundary.landing).await?;
+        // The clock moves before the next command: the block it makes is
+        // the new epoch's.
         self.forward(surfnet, rpc, boundary.landing + 1).await?;
         self.check_writes(rpc, i)?;
         let mut sent = Vec::new();
