@@ -63,23 +63,15 @@ pub struct Hello {
     /// How long, in wall-clock milliseconds, the world waits for `done`
     /// before moving on without it.
     pub turn_wall_ms: u64,
+    /// What the session's steps carry beyond the clock, if anything: a step
+    /// of a session that reports a tape and has none had no trades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reports: Option<Reports>,
     /// The session's seed, for a strategy that wants randomness: the
     /// scenario's [`scenario_seed`], what a component gets too. Absent from
     /// older graders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// What the session's steps carry beyond the clock, if anything: a step
-    /// of a session that reports a tape and has none had no trades.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reports: Option<Reports>,
-}
-
-/// A scenario's seed for the strategy: the same in every run of it, and the
-/// same for a component and a process (FNV-1a of its name).
-pub fn scenario_seed(scenario: &str) -> u64 {
-    scenario.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 /// The turn data a session's steps carry.
@@ -91,6 +83,14 @@ pub struct Reports {
     pub depth: bool,
     #[serde(default)]
     pub timestamps: bool,
+}
+
+/// A scenario's seed for the strategy: the same in every run of it, and the
+/// same for a component and a process (FNV-1a of its name).
+pub fn scenario_seed(scenario: &str) -> u64 {
+    scenario.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 /// One step: the world has moved to `slot`.
@@ -237,8 +237,8 @@ impl Turns {
                 start_slot: 0,
                 end_slot: 0,
                 turn_wall_ms: 0,
-                seed: None,
                 reports: None,
+                seed: None,
             },
             open: None,
             tape: Vec::new(),
@@ -350,8 +350,8 @@ mod tests {
             start_slot: 100,
             end_slot: 104,
             turn_wall_ms: 1_000,
-            seed: Some(7),
             reports: None,
+            seed: Some(7),
         };
         let mut grader_reader = BufReader::new(grader.try_clone().unwrap());
         let mut grader = grader;
@@ -395,8 +395,8 @@ mod tests {
             start_slot: 100,
             end_slot: 104,
             turn_wall_ms: 1_000,
-            seed: None,
             reports: None,
+            seed: None,
         };
         let line = serde_json::to_string(&Message::Hello(hello.clone())).unwrap();
         assert_eq!(
@@ -443,8 +443,8 @@ mod tests {
             start_slot: 100,
             end_slot: 104,
             turn_wall_ms: 1_000,
-            seed: None,
             reports: None,
+            seed: None,
         });
         let line = |m: &Message| {
             let mut line = serde_json::to_string(m).unwrap();
