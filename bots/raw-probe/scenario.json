@@ -1,0 +1,299 @@
+{
+  "name": "raw-probe-1",
+  "description": "Flash-crash practice 1, with raw sends: the system, token and associated token programs, under a $50 drawdown limit.",
+  "symbol": "SPCX",
+  "duration_slots": 560,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 50.0
+    }
+  },
+  "path": [
+    {
+      "slot": 6,
+      "level_pct": -0.04
+    },
+    {
+      "slot": 11,
+      "level_pct": -0.085
+    },
+    {
+      "slot": 22,
+      "level_pct": 0.061
+    },
+    {
+      "slot": 31,
+      "level_pct": 0.464
+    },
+    {
+      "slot": 41,
+      "level_pct": 0.387
+    },
+    {
+      "slot": 49,
+      "level_pct": 0.427
+    },
+    {
+      "slot": 53,
+      "level_pct": 0.107
+    },
+    {
+      "slot": 67,
+      "level_pct": 0.123
+    },
+    {
+      "slot": 71,
+      "level_pct": 0.098
+    },
+    {
+      "slot": 76,
+      "level_pct": 0.178
+    },
+    {
+      "slot": 85,
+      "level_pct": 0.164
+    },
+    {
+      "slot": 96,
+      "level_pct": 0.237
+    },
+    {
+      "slot": 100,
+      "level_pct": 0.226
+    },
+    {
+      "slot": 109,
+      "level_pct": 0.198
+    },
+    {
+      "slot": 118,
+      "level_pct": 0.161
+    },
+    {
+      "slot": 127,
+      "level_pct": 0.068
+    },
+    {
+      "slot": 139,
+      "level_pct": 0.205
+    },
+    {
+      "slot": 150,
+      "level_pct": 0.079
+    },
+    {
+      "slot": 161,
+      "level_pct": 0.165
+    },
+    {
+      "slot": 168,
+      "level_pct": 0.18
+    },
+    {
+      "slot": 178,
+      "level_pct": 0.033
+    },
+    {
+      "slot": 187,
+      "level_pct": 0.03
+    },
+    {
+      "slot": 190,
+      "level_pct": 1.352
+    },
+    {
+      "slot": 193,
+      "level_pct": 2.065
+    },
+    {
+      "slot": 196,
+      "level_pct": 2.868
+    },
+    {
+      "slot": 202,
+      "level_pct": 3.572
+    },
+    {
+      "slot": 212,
+      "level_pct": 5.194
+    },
+    {
+      "slot": 223,
+      "level_pct": 5.268
+    },
+    {
+      "slot": 227,
+      "level_pct": 5.156
+    },
+    {
+      "slot": 231,
+      "level_pct": 5.288
+    },
+    {
+      "slot": 235,
+      "level_pct": 3.639
+    },
+    {
+      "slot": 246,
+      "level_pct": 3.581
+    },
+    {
+      "slot": 254,
+      "level_pct": 1.221
+    },
+    {
+      "slot": 267,
+      "level_pct": 1.331
+    },
+    {
+      "slot": 277,
+      "level_pct": 1.304
+    },
+    {
+      "slot": 284,
+      "level_pct": 1.357
+    },
+    {
+      "slot": 295,
+      "level_pct": 1.183
+    },
+    {
+      "slot": 306,
+      "level_pct": 1.298
+    },
+    {
+      "slot": 310,
+      "level_pct": 1.335
+    },
+    {
+      "slot": 320,
+      "level_pct": 1.188
+    },
+    {
+      "slot": 332,
+      "level_pct": 1.141
+    },
+    {
+      "slot": 337,
+      "level_pct": 1.173
+    },
+    {
+      "slot": 341,
+      "level_pct": 1.241
+    },
+    {
+      "slot": 351,
+      "level_pct": 1.297
+    },
+    {
+      "slot": 361,
+      "level_pct": 1.177
+    },
+    {
+      "slot": 370,
+      "level_pct": 1.233
+    },
+    {
+      "slot": 374,
+      "level_pct": 1.298
+    },
+    {
+      "slot": 386,
+      "level_pct": 1.293
+    },
+    {
+      "slot": 393,
+      "level_pct": 1.277
+    },
+    {
+      "slot": 402,
+      "level_pct": 1.162
+    },
+    {
+      "slot": 412,
+      "level_pct": 1.267
+    },
+    {
+      "slot": 419,
+      "level_pct": 1.26
+    },
+    {
+      "slot": 430,
+      "level_pct": 1.198
+    },
+    {
+      "slot": 435,
+      "level_pct": 1.297
+    },
+    {
+      "slot": 443,
+      "level_pct": 1.361
+    },
+    {
+      "slot": 451,
+      "level_pct": 0.812
+    },
+    {
+      "slot": 457,
+      "level_pct": 0.659
+    },
+    {
+      "slot": 470,
+      "level_pct": 0.688
+    },
+    {
+      "slot": 480,
+      "level_pct": 0.602
+    },
+    {
+      "slot": 485,
+      "level_pct": 0.709
+    },
+    {
+      "slot": 494,
+      "level_pct": 1.213
+    },
+    {
+      "slot": 502,
+      "level_pct": 1.331
+    },
+    {
+      "slot": 508,
+      "level_pct": 1.294
+    },
+    {
+      "slot": 516,
+      "level_pct": 1.171
+    },
+    {
+      "slot": 527,
+      "level_pct": 1.234
+    },
+    {
+      "slot": 533,
+      "level_pct": 1.138
+    },
+    {
+      "slot": 543,
+      "level_pct": 1.238
+    },
+    {
+      "slot": 555,
+      "level_pct": 1.181
+    }
+  ],
+  "raw_sends": {
+    "programs": [
+      "11111111111111111111111111111111",
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+    ]
+  }
+}
