@@ -107,21 +107,14 @@ jobs:
           MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-grader wasm::tests -- --ignored
 
-  # The quality bar's cheap checks (`mtx gates --fast`: task files, a
-  # one-set ladder) for each task a pull request or a push to main changes;
-  # run by hand, for one task (or all), with the reports uploaded. The fast
-  # ladder takes about half an hour a task on 16 cores, so nothing else runs
-  # it. The image checks (a full `mtx gates`) need Docker and Harbor: run
-  # those on a dev machine.
-  gates:
-    needs: [ci-image, rust]
+  # The tasks `gates` checks: those a pull request or a push to main
+  # changes, or the one (or every task) a manual run names. A JSON array, for
+  # the `gates` matrix.
+  changed-tasks:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    container:
-      image: ${{ needs.ci-image.outputs.image }}
-      # Bots run as their own users; the grader needs to switch to them.
-      options: --user root
+    outputs:
+      tasks: ${{ steps.tasks.outputs.tasks }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,31 +144,53 @@ jobs:
           for task in $candidates; do
             [ -f "bench/tasks/$task/task.toml" ] && tasks="$tasks $task"
           done
-          echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC2086 # task names hold no spaces
+          echo "tasks=$(jq -cn '$ARGS.positional' --args $tasks)" >> "$GITHUB_OUTPUT"
           echo "gating:${tasks:- nothing changed}"
+
+  # The quality bar's cheap checks (`mtx gates --fast`: task files, a
+  # one-set ladder) for each task a pull request or a push to main changes,
+  # one job a task; run by hand, for one task (or all), with the reports
+  # uploaded. The fast ladder takes about half an hour a task on 16 cores,
+  # which the matrix spreads over runners. The image checks (a full
+  # `mtx gates`) need Docker and Harbor: run those on a dev machine.
+  gates:
+    name: gates (${{ matrix.task }})
+    needs: [ci-image, rust, changed-tasks]
+    if: github.event_name != 'schedule' && needs.changed-tasks.outputs.tasks != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJSON(needs.changed-tasks.outputs.tasks) }}
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # Bots run as their own users; the grader needs to switch to them.
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
       - name: Toolchain and libraries
-        if: steps.tasks.outputs.tasks != '' && needs.ci-image.outputs.prebuilt != 'true'
+        if: needs.ci-image.outputs.prebuilt != 'true'
         run: bash bench/ci/setup.sh
       - uses: Swatinem/rust-cache@v2
-        if: steps.tasks.outputs.tasks != ''
+        with:
+          # One cache for the matrix: every job builds the same mtx.
+          shared-key: gates
       - name: Build mtx
-        if: steps.tasks.outputs.tasks != ''
         run: cargo build --release --locked -p mtx-cli
       - name: mtx gates
-        if: steps.tasks.outputs.tasks != ''
         env:
-          TASKS: ${{ steps.tasks.outputs.tasks }}
+          TASK: ${{ matrix.task }}
         run: |
           status=0
-          for task in $TASKS; do
-            target/release/mtx gates "$task" --fast > /dev/null || status=1
-            cat "target/gates/$task/gates.md" >> "$GITHUB_STEP_SUMMARY"
-          done
+          target/release/mtx gates "$TASK" --fast > /dev/null || status=1
+          cat "target/gates/$TASK/gates.md" >> "$GITHUB_STEP_SUMMARY"
           exit $status
       - uses: actions/upload-artifact@v4
         if: always() && github.event_name == 'workflow_dispatch'
         with:
-          name: gates
+          name: gates-${{ matrix.task }}
           path: target/gates
 
   # The expensive end-to-end check: build the task image from this commit and
