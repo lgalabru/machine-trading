@@ -157,7 +157,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "release/$VERSION"
           git add -A bench/tasks
-          git commit -m "bench: pin $VERSION's images and Harbor digests"
+          git commit -m "chore(bench): pin $VERSION's images and Harbor digests"
           git push origin "release/$VERSION"
           {
             echo "## Released $VERSION"

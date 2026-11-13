@@ -192,6 +192,12 @@ pub struct Actors {
     /// [`crate::actors::library`]). A perp session's only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<crate::actors::Library>,
+    /// What the takers' limits are priced off: `level`, `book` or `fair`.
+    /// Without it, the scenario's kind picks (the level for a market-making
+    /// or closed-period flow, the book for a tape). `fair` needs the market
+    /// model's `fair_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takers_pricing: Option<crate::actors::Pricing>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -517,6 +523,7 @@ impl ScenarioV2 {
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
         self.library_is_for_perps()?;
+        self.takers_pricing_is_valid()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
         } else if self.venues.lending.is_some() {
@@ -694,11 +701,24 @@ impl ScenarioV2 {
 
     /// What a scenario's oracle feeds may do beside the rest of it.
     fn validate_oracles(&self, oracles: &crate::oracles::Oracles) -> Result<(), String> {
-        use crate::oracles::Source;
+        use crate::oracles::{Anchor, Source};
+        let session: Vec<InstrumentRef> = if self.venues.spot.is_some() {
+            self.venues.spot_instruments()
+        } else {
+            vec![self.perp_instrument()]
+        };
         for feed in &oracles.feeds {
             if self.venues.lending.is_some() && !matches!(feed.source, Source::Scope(_)) {
                 return Err(format!(
                     "oracles: {} isn't Scope's; Kamino's reserves read Scope only",
+                    feed.name
+                ));
+            }
+            if let Some(Anchor::Market { instrument, .. }) = &feed.anchor
+                && !session.contains(instrument)
+            {
+                return Err(format!(
+                    "oracles: {} is anchored to {instrument}, which isn't in the session",
                     feed.name
                 ));
             }
@@ -768,10 +788,27 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// The actor library trades a perp's book: a spot session has none.
+    /// The actor library trades a perp's book: a spot or lending session has none.
     fn library_is_for_perps(&self) -> Result<(), String> {
-        if self.venues.spot.is_some() && self.actors.library.is_some() {
+        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+            && self.actors.library.is_some()
+        {
             return Err("actors: the library runs in perp sessions".into());
+        }
+        Ok(())
+    }
+
+    /// The takers' pricing is a perp session's, and `fair` needs a fair
+    /// value to price off.
+    fn takers_pricing_is_valid(&self) -> Result<(), String> {
+        let Some(pricing) = self.actors.takers_pricing else {
+            return Ok(());
+        };
+        if self.venues.spot.is_some() {
+            return Err("actors: takers_pricing is for perp sessions".into());
+        }
+        if pricing == crate::actors::Pricing::Fair && self.market_model.fair_path.is_none() {
+            return Err("actors: takers_pricing fair needs market_model.fair_path".into());
         }
         Ok(())
     }
@@ -830,6 +867,7 @@ impl ScenarioV2 {
             competitor,
             takers,
             library,
+            takers_pricing,
         } = actors;
         let (making, offhours, tape) = match (competitor, closed_period) {
             (Some(c), _) => (
@@ -881,6 +919,7 @@ impl ScenarioV2 {
             lending: venues.lending,
             warps,
             actors: library,
+            takers_pricing,
         }
     }
 }
@@ -999,6 +1038,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 competitor,
                 takers,
                 library: v1.actors.clone(),
+                takers_pricing: v1.takers_pricing,
             },
             faults: v1.faults.clone(),
             tx: v1.raw_sends.clone().map(|raw_sends| Tx {
@@ -1177,6 +1217,35 @@ mod tests {
         let mut value = serde_json::to_value(shock()).unwrap();
         value["nonsense"] = 1.into();
         assert!(parse(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn takers_pricing_round_trips_and_fair_needs_a_fair_value() {
+        use crate::actors::Pricing;
+        // Absent, a scenario says nothing of it.
+        assert!(
+            !serde_json::to_string(&making())
+                .unwrap()
+                .contains("takers_pricing")
+        );
+        let mut s = making();
+        s.actors.takers_pricing = Some(Pricing::Fair);
+        assert!(s.validate().unwrap_err().contains("fair_path"));
+        s.market_model.fair_path = Some(vec![Waypoint::at(10, 1.0)]);
+        s.validate().unwrap();
+        let again = parse(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(again.takers_pricing, Some(Pricing::Fair));
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.takers_pricing, Some(Pricing::Fair));
+        assert_eq!(
+            ScenarioV2::try_from(&v1).unwrap().actors.takers_pricing,
+            Some(Pricing::Fair)
+        );
+        s.actors.takers_pricing = Some(Pricing::Book);
+        s.validate().unwrap();
+        let mut s = spot();
+        s.actors.takers_pricing = Some(Pricing::Level);
+        assert!(s.validate().unwrap_err().contains("perp sessions"));
     }
 
     #[test]
@@ -1435,6 +1504,18 @@ mod tests {
             on_spot.validate().unwrap_err(),
             "actors: the library runs in perp sessions"
         );
+    }
+
+    #[test]
+    fn the_library_is_refused_in_a_lending_session_in_both_versions() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let library = parse(everyone).unwrap().actors.unwrap();
+        let mut s = v2(&lending("liquidation"));
+        s.validate().unwrap();
+        s.actors.library = Some(library);
+        let err = s.validate().unwrap_err();
+        assert_eq!(err, "actors: the library runs in perp sessions");
+        assert_eq!(s.into_v1().validate().unwrap_err(), err);
     }
 
     /// What main said for the same input, word for word.

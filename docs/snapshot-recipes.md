@@ -51,6 +51,18 @@ Real venues:
 | `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
 | `kamino-markets` (`pairs`: `[collateral reserve, debt reserve]` addresses) | Fetches every reserve in one call, moves the fork's clock past their last refresh (a reserve refreshed after the clock can't be refreshed again), loads each reserve's market, lookup table, vaults, mints, farms and Scope prices, freshens Scope's entries, freezes any Token-2022 UI multiplier at today's, and has a throwaway account deposit, borrow, repay and withdraw on each pair. |
 
+Real accounts a build that starts from a snapshot can't fetch:
+
+| Action | What it does |
+|---|---|
+| `pyth-feed-account` (`name`, `feed_id`, `shard`, `from_file`) | Writes a feed's Pyth push-oracle account from a file: the account as `solana account <address> --output json` printed it, fetched once and committed beside the recipe. The build checks the address is the shard's account for the feed id, the owner is the Pyth Receiver and the data decodes as that feed's price update. Listed in the manifest's `sources` with role `oracle`. |
+
+`snapshots/phoenix-perps-oracles-2026-11-13` is this: the perps snapshot
+(`fork.from_snapshot`) plus the Pyth accounts of TSLA, NVDA, SPY, QQQ (the US
+equity feed and the xStock's) and SPCX. Its markets, marks and accounts are the
+source's, byte for byte. A recipe that only adds accounts reports the source's
+`mark_price_usd` and `marks`.
+
 Simulated assets (see below): `create-mint`, `phoenix-v1-market`,
 `openbook-v2-market`. Pool creation for AMMs is left for the AMM venue
 modules; they add actions here.
