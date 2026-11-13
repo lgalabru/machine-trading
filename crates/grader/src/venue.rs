@@ -190,6 +190,12 @@ pub trait Seat: Send + Sync {
 
     /// The market's tick, in quote units.
     fn tick(&self) -> f64;
+
+    /// The price the market itself refers to, where it has one: a perp's
+    /// index.
+    async fn index(&self) -> SeatResult<Option<f64>> {
+        Ok(None)
+    }
 }
 
 /// An asset's reference price in USD, as the spot profile values it: USDC

@@ -213,6 +213,15 @@ impl Seat for PerpSeat {
         Ok((usd(bbo.best_bid_ticks()), usd(bbo.best_ask_ticks())))
     }
 
+    /// Phoenix's index price.
+    async fn index(&self) -> SeatResult<Option<f64>> {
+        let trader = &self.trader;
+        patiently("the seat's index", || trader.top())
+            .await
+            .map(|top| Some(top.index))
+            .map_err(|e| e.to_string())
+    }
+
     async fn position(&self) -> SeatResult<f64> {
         let trader = &self.trader;
         patiently("the seat's position", || trader.position())
