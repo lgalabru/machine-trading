@@ -66,6 +66,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let bot = opts.keys.keypair("bot", 0);
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
+    if let Some(layer) = &scenario.tx_layer {
+        crate::txlayer::setup(surfnet, layer, &bot.pubkey())?;
+    }
     let hawkeye = phoenix.hawkeye(bot.pubkey());
     let start_mark_ticks = patiently("the book", async || {
         hawkeye.view_bbo(&scenario.symbol).await
@@ -443,10 +446,26 @@ impl Account for PerpAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's own trader, through the guard's host side: its sends
-        // are the bot's, its reads aren't.
-        let trader = Arc::new(self.perp.trader(bot.insecure_clone(), host_url)?);
+        // are the bot's, its reads aren't. Under the transaction layer they
+        // go to its pool, with each line's options.
+        let trader = self.perp.trader(bot.insecure_clone(), host_url)?;
+        let pool = tx.is_some().then(|| {
+            Arc::new(crate::txlayer::client::PoolClient::new(
+                host_url,
+                bot.insecure_clone(),
+            ))
+        });
+        let trader = match &pool {
+            Some(pool) => mtx_kit::Trader {
+                inner: trader.inner.with_chain(pool.clone()),
+                ..trader
+            },
+            None => trader,
+        };
+        let trader = Arc::new(trader);
         let venue = std::fs::read_to_string(&env.exchange_path)
             .map_err(crate::error::io_error(&env.exchange_path))?;
         Ok(Desk {
@@ -455,14 +474,19 @@ impl Account for PerpAccount {
                 &env.symbol,
                 mtx_kit::phoenix_market_address(&venue, &env.symbol),
             ),
-            seats: vec![Box::new(crate::venue::perps::PerpSeat::new(
-                self.perp.instrument().to_string(),
-                trader.clone(),
-            ))],
+            seats: vec![Box::new(
+                crate::venue::perps::PerpSeat::new(
+                    self.perp.instrument().to_string(),
+                    trader.clone(),
+                )
+                .pooled(pool.is_some()),
+            )],
             symbol: env.symbol.clone(),
             venue,
             authority: bot.pubkey().to_string(),
             reader: Reader::Perp(trader),
+            pool,
+            tx,
         })
     }
 
@@ -513,6 +537,7 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            tx_layer: None,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {

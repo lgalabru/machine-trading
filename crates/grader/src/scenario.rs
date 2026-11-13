@@ -109,6 +109,12 @@ pub struct Scenario {
     /// [`crate::raw`]). Absent, the session refuses every one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_sends: Option<RawSends>,
+    /// Opt-in: the transaction layer (see [`crate::txlayer`]). The bot's
+    /// sends go into a pool and land as a seeded block builder orders them,
+    /// against background demand for block space, with fees and Jito tips
+    /// paid from the bot's wallet. Absent, sends land on receipt, as ever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::TxLayer>,
 }
 
 /// What a scenario's raw sends may do.
@@ -294,6 +300,14 @@ impl Scenario {
                 .map_err(|reason| format!("raw_sends: {reason}"))?;
             if self.spot.is_some() {
                 return Err("raw_sends: only perp sessions take raw sends yet".into());
+            }
+        }
+        if let Some(layer) = &self.tx_layer {
+            layer
+                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                .map_err(|reason| format!("tx_layer: {reason}"))?;
+            if self.spot.is_some() {
+                return Err("tx_layer: only perp sessions take the transaction layer yet".into());
             }
         }
         if let Some(spot) = &self.spot {
@@ -1000,6 +1014,7 @@ impl ShockFamily {
                 }]
             }),
             raw_sends: None,
+            tx_layer: None,
         };
         let shape = Shape {
             direction,
@@ -1632,6 +1647,7 @@ mod tests {
                 Scenario {
                     fair_path: None,
                     raw_sends: None,
+                    tx_layer: None,
                     ..marked.clone()
                 },
                 plain
@@ -1708,6 +1724,7 @@ mod tests {
             reference_pnl_usd: None,
             fair_path: None,
             raw_sends: None,
+            tx_layer: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1773,6 +1790,7 @@ mod tests {
             reference_pnl_usd: None,
             fair_path: None,
             raw_sends: None,
+            tx_layer: None,
         }
     }
 

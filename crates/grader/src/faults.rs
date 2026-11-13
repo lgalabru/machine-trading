@@ -252,6 +252,13 @@ impl FaultPlan {
         self.congestion.is_some()
     }
 
+    /// The congestion window, `from_step..to_step`, and the floor drawn
+    /// for it: what the transaction layer compiles into its background
+    /// demand.
+    pub fn congestion(&self) -> Option<(u64, u64, u64)> {
+        self.congestion
+    }
+
     /// Steps the `n`-th landed transaction's status stays hidden; 0 if it
     /// doesn't.
     pub fn hide_steps(&self, landing: u64) -> u64 {
@@ -359,6 +366,19 @@ pub enum SendAction {
     Held(String),
 }
 
+/// What the plan does to a send the transaction layer pools: the pool
+/// holds it, so latency is a delay on its arrival and congestion is the
+/// background demand's floor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PooledSend {
+    /// Refuse it as an expired blockhash.
+    Expired,
+    /// Pool it with its delivery lost: only sending it again lands it.
+    Dropped,
+    /// Pool it, arriving this many slots late.
+    Delayed(u64),
+}
+
 /// A plan and what the bot has done under it so far.
 #[derive(Debug)]
 pub struct FaultState {
@@ -443,6 +463,40 @@ impl FaultState {
             fired: self.fired.len() - 1,
         });
         SendAction::Held(tx.signature)
+    }
+
+    /// The bot sent the transaction with `signature` in `step`, for the
+    /// transaction layer's pool.
+    pub fn on_pooled_send(&mut self, signature: &str, step: u64) -> PooledSend {
+        self.sends += 1;
+        let n = self.sends;
+        let fired = |fault| Fired {
+            fault,
+            step,
+            n,
+            signature: Some(signature.to_string()),
+            until_step: None,
+        };
+        match self.plan.send(n) {
+            SendFault::Expire => {
+                self.fired.push(Fired {
+                    signature: None,
+                    ..fired("blockhash_expiry")
+                });
+                PooledSend::Expired
+            }
+            SendFault::Drop => {
+                self.fired.push(fired("drop"));
+                PooledSend::Dropped
+            }
+            SendFault::None => {
+                let delay = self.plan.delay_slots(n);
+                if delay > 0 {
+                    self.fired.push(fired("latency"));
+                }
+                PooledSend::Delayed(delay)
+            }
+        }
     }
 
     /// The held sends that land in the block of `step`, in the order they were

@@ -461,6 +461,7 @@ impl MakingFamily {
             reference_pnl_usd: None,
             fair_path: None,
             raw_sends: None,
+            tx_layer: None,
         };
         (scenario, informed)
     }

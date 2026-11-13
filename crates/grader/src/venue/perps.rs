@@ -149,11 +149,61 @@ impl Market for PerpMarket {
 pub struct PerpSeat {
     market: String,
     trader: Arc<Trader>,
+    /// Its trader sends through the transaction layer's pool: every send
+    /// must go through its chain client, which returns without waiting.
+    pooled: bool,
 }
 
 impl PerpSeat {
     pub fn new(market: String, trader: Arc<Trader>) -> Self {
-        Self { market, trader }
+        Self {
+            market,
+            trader,
+            pooled: false,
+        }
+    }
+
+    /// This seat, its sends through the transaction layer's pool if
+    /// `pooled`.
+    pub fn pooled(self, pooled: bool) -> Self {
+        Self { pooled, ..self }
+    }
+
+    /// Cancel every resting order through the trader's chain client, not
+    /// its blocking RPC client, which would wait for a block the pool has
+    /// yet to build.
+    async fn cancel_all_pooled(&self) -> Sent {
+        let trader = &self.trader;
+        let instructions = match trader.phoenix.tx().build_cancel_all_orders(
+            trader.authority(),
+            trader.account,
+            &trader.env.symbol,
+        ) {
+            Ok(instructions) => instructions,
+            Err(e) => {
+                return Sent {
+                    state: mtx_kit::SendState::failed(e.to_string()),
+                    sent: false,
+                };
+            }
+        };
+        let plan = mtx_kit::chain::ExecutionPlan {
+            payer: trader.authority(),
+            steps: vec![mtx_kit::chain::TransactionPlan::from_group(
+                &mtx_kit::chain::InstructionGroup::new("cancel all", instructions),
+                mtx_kit::protocols::phoenix::eternal::COMPUTE_UNIT_LIMIT,
+            )],
+        };
+        match trader.inner.execute(&plan, &trader.keypair).await {
+            Ok(signature) => Sent {
+                state: mtx_kit::SendState::Landed(signature.to_string()),
+                sent: true,
+            },
+            Err(e) => Sent {
+                state: mtx_kit::SendState::failed(e.to_string()),
+                sent: true,
+            },
+        }
     }
 }
 
@@ -168,6 +218,9 @@ impl Seat for PerpSeat {
     }
 
     async fn send(&self, planned: &Planned) -> Sent {
+        if self.pooled && matches!(planned.action, Action::CancelAll) {
+            return self.cancel_all_pooled().await;
+        }
         self.trader.send_planned(planned).await
     }
 

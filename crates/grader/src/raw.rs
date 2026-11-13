@@ -105,6 +105,12 @@ pub const MAX_SIMULATED_PER_STEP: u32 = 16;
 /// few hundred; anything bigger is no wallet the audit reads, and copying
 /// it out of every simulation would cost the grader.
 pub const MAX_TOKEN_ACCOUNT_BYTES: u64 = 4_096;
+/// The most simulations a session's raw sends may cost the grader, taken
+/// and sent together: a raw send's simulation can take the grader a good
+/// fraction of a second, so this bounds what a strategy can add to a
+/// session's time. A count, not a clock, so the same session refuses the
+/// same sends however busy the machine is.
+pub const MAX_SIMULATED_PER_SESSION: u32 = 128;
 /// The most raw sends that may be held at once (a send the bot's guard
 /// held under the scenario's faults, which lands later): each is simulated
 /// ahead of every new one, and a bundle holds five transactions, two of
@@ -135,8 +141,12 @@ pub struct RawSender {
     rpc_url: String,
     http: reqwest::Client,
     chain: RpcChainClient,
-    /// The bot's guard: what the sends go through, like the sheet's.
-    guarded: RpcChainClient,
+    /// The bot's guard: what the sends go through, like the sheet's; under
+    /// the transaction layer, its pool, with each send's options.
+    guarded: std::sync::Arc<dyn ChainClient>,
+    pool: Option<std::sync::Arc<crate::txlayer::client::PoolClient>>,
+    /// Sends the transaction layer took for its pool, by number.
+    pooled: Vec<(u32, Signature)>,
     mandate: Mandate,
     instrument: InstrumentRef,
     unsettled_funding: bool,
@@ -150,9 +160,10 @@ pub struct RawSender {
     start: Option<Measured>,
     queue: Vec<Queued>,
     /// Sends taken this step, for the next one's number, and sends
-    /// simulated this step.
+    /// simulated this step and in the whole session.
     taken: u32,
     simulated: u32,
+    session_simulated: u32,
     /// Sends the bot's guard held, which may still land.
     held: Vec<Held>,
 }
@@ -176,6 +187,9 @@ struct Queued {
     /// Its message, compiled on a blank blockhash: two sends with the same
     /// one would be the same transaction.
     message: Vec<u8>,
+    /// Its transaction options: under the transaction layer, how it is
+    /// sent.
+    options: Option<mtx_kit::TxOptions>,
 }
 
 /// The account as the venue shows it: what the audit compares.
@@ -252,7 +266,12 @@ impl RawSender {
                 internal_url.clone(),
                 crate::session::INTERNAL_RPC_TIMEOUT,
             ),
-            guarded: RpcChainClient::with_timeout(guard_url, crate::session::INTERNAL_RPC_TIMEOUT),
+            guarded: std::sync::Arc::new(RpcChainClient::with_timeout(
+                guard_url,
+                crate::session::INTERNAL_RPC_TIMEOUT,
+            )),
+            pool: None,
+            pooled: Vec::new(),
             phoenix: mtx_kit::Phoenix::new(exchange, internal_url.clone()),
             rpc_url: internal_url,
             http: reqwest::Client::new(),
@@ -267,8 +286,24 @@ impl RawSender {
             queue: Vec::new(),
             taken: 0,
             simulated: 0,
+            session_simulated: 0,
             held: Vec::new(),
         }
+    }
+
+    /// Send through the transaction layer's pool, with each send's
+    /// options.
+    pub fn with_pool(self, pool: std::sync::Arc<crate::txlayer::client::PoolClient>) -> Self {
+        Self {
+            guarded: pool.clone(),
+            pool: Some(pool),
+            ..self
+        }
+    }
+
+    /// The sends the transaction layer took since the last call, by number.
+    pub fn take_pooled(&mut self) -> Vec<(u32, Signature)> {
+        std::mem::take(&mut self.pooled)
     }
 
     /// Step `k` begins: sends are taken until [`RawSender::close`].
@@ -345,6 +380,11 @@ impl RawSender {
                 "more than {MAX_SIMULATED_PER_STEP} raw sends this step: the rest aren't simulated"
             ));
         }
+        if self.session_simulated >= MAX_SIMULATED_PER_SESSION {
+            return Err(format!(
+                "raw sends have had their {MAX_SIMULATED_PER_SESSION} simulations this session: the rest aren't simulated"
+            ));
+        }
         if self.held.len() >= MAX_HELD {
             return Err(format!(
                 "{} raw sends from earlier steps are still held: wait until they land or expire",
@@ -356,11 +396,39 @@ impl RawSender {
             .map(|n| self.fresh.keypair(step, id, n))
             .collect();
         let fresh_keys: Vec<Pubkey> = fresh.iter().map(Signer::pubkey).collect();
-        let instructions = resolve(&tx, self.authority, &fresh_keys)?;
+        let mut instructions = resolve(&tx, self.authority, &fresh_keys)?;
         for instruction in &instructions {
             self.allowed(&instruction.program_id)?;
         }
+        // Under the transaction layer the options apply: its limit and
+        // price as compute budget instructions, unless it sets its own.
+        if self.pool.is_some()
+            && let Some(options) = &tx.tx
+        {
+            let own = instructions
+                .iter()
+                .any(|ix| ix.program_id == COMPUTE_BUDGET);
+            if own && (options.cu_limit.is_some() || options.cu_price.is_some()) {
+                return Err("it sets its own compute budget: its options can't set cu-limit or cu-price too".into());
+            }
+            if let Some(price) = options.cu_price {
+                let mut data = vec![3];
+                data.extend_from_slice(&price.to_le_bytes());
+                instructions.insert(
+                    0,
+                    Instruction {
+                        program_id: COMPUTE_BUDGET,
+                        accounts: Vec::new(),
+                        data,
+                    },
+                );
+            }
+            if let Some(limit) = options.cu_limit {
+                instructions.insert(0, compute_limit(limit));
+            }
+        }
         self.simulated += 1;
+        self.session_simulated += 1;
         let tables = self.lookup_tables(&tx.lookup_tables).await?;
         let message = compile(self.authority, &instructions, &tables, Hash::default())?.serialize();
         if let Some(same) = self.queue.iter().find(|q| q.message == message) {
@@ -387,6 +455,7 @@ impl RawSender {
             tables,
             fresh,
             message,
+            options: tx.tx,
         });
         Ok(RawReceipt {
             id,
@@ -423,6 +492,19 @@ impl RawSender {
                 ),
             );
         }
+        if self.session_simulated >= MAX_SIMULATED_PER_SESSION {
+            return status(
+                q.step,
+                q.id,
+                failed(
+                    format!(
+                        "not sent: raw sends have had their {MAX_SIMULATED_PER_SESSION} simulations this session"
+                    ),
+                    None,
+                ),
+            );
+        }
+        self.session_simulated += 1;
         let checked = async {
             let start = self.start.ok_or("no account measured for the step")?;
             let wallet = self.wallet().await?;
@@ -441,10 +523,16 @@ impl RawSender {
                 return status(q.step, q.id, failed(format!("not sent: {reason}"), None));
             }
         };
+        if let Some(pool) = &self.pool {
+            pool.set_raw_options(q.options);
+        }
         let signature = match self.guarded.send(&tx).await {
             Ok(signature) => signature,
             Err(e) => return status(q.step, q.id, failed(e.to_string(), None)),
         };
+        if self.pool.is_some() {
+            self.pooled.push((q.id, signature));
+        }
         match self.chain.get_transaction(&signature).await {
             Ok(Some(summary)) => {
                 let state = match summary.error {

@@ -1022,6 +1022,7 @@ impl Account for SpotAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's seats, the scenario's first venue's first, trading
         // through the guard's host side: their sends are the bot's, their
@@ -1057,6 +1058,8 @@ impl Account for SpotAccount {
             reader: Reader::Wallet {
                 start: self.start.wallet.clone(),
             },
+            pool: None,
+            tx: None,
         })
     }
 
@@ -1157,6 +1160,7 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            tx_layer: None,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1219,6 +1223,7 @@ mod tests {
             faults: None,
             fair_path: None,
             raw_sends: None,
+            tx_layer: None,
             turn_data: None,
             order: None,
             participation: None,

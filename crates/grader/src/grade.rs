@@ -817,6 +817,7 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            tx_layer: None,
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -875,6 +876,7 @@ mod tests {
             reference_pnl_usd,
             fair_path: None,
             raw_sends: None,
+            tx_layer: None,
         }
     }
 
