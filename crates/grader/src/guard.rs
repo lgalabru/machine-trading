@@ -1026,6 +1026,82 @@ mod tests {
         assert_eq!(guard.call_log().sends.len(), 1);
     }
 
+    /// A signed v0 transaction whose accounts come from a lookup table, with
+    /// a compute-unit price, as a bot sends it.
+    async fn v0_transaction(price: u64) -> (Value, String) {
+        use base64::Engine;
+        use mtx_kit::chain::{AddressLookupTableAccount, InstructionGroup, TransactionSigner};
+        use solana_signer::Signer;
+        let payer = solana_keypair::Keypair::new();
+        let to: Vec<solana_pubkey::Pubkey> = (0..3)
+            .map(|_| solana_pubkey::Pubkey::new_unique())
+            .collect();
+        let mut instructions = vec![mtx_kit::Instruction::new_with_bytes(
+            "ComputeBudget111111111111111111111111111111"
+                .parse()
+                .unwrap(),
+            &[[3u8].as_slice(), &price.to_le_bytes()].concat(),
+            vec![],
+        )];
+        for key in &to {
+            instructions.push(mtx_kit::Instruction::new_with_bytes(
+                solana_pubkey::pubkey!("11111111111111111111111111111111"),
+                &[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+                vec![
+                    solana_transaction::AccountMeta::new(payer.pubkey(), true),
+                    solana_transaction::AccountMeta::new(*key, false),
+                ],
+            ));
+        }
+        let table = AddressLookupTableAccount {
+            key: solana_pubkey::Pubkey::new_unique(),
+            addresses: to,
+        };
+        let plan = mtx_kit::chain::pack_with_lookup_tables(
+            &payer.pubkey(),
+            &[InstructionGroup::new("v0", instructions)],
+            200_000,
+            &[table],
+        )
+        .unwrap();
+        let mut tx = plan.steps[0]
+            .versioned(&payer.pubkey(), mtx_kit::Hash::new_unique())
+            .unwrap();
+        assert!(
+            tx.message
+                .address_table_lookups()
+                .is_some_and(|l| l.len() == 1)
+        );
+        payer.sign_transaction(&mut tx).await.unwrap();
+        let wire =
+            base64::engine::general_purpose::STANDARD.encode(wincode::serialize(&tx).unwrap());
+        (
+            json!({ "jsonrpc": "2.0", "id": 9, "method": "sendTransaction",
+                    "params": [wire, { "encoding": "base64" }] }),
+            tx.signatures[0].to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn v0_transactions_are_read_forwarded_and_logged() {
+        let (send, signature) = v0_transaction(4_321).await;
+        let parsed = crate::faults::WireTransaction::parse(&send).unwrap();
+        assert_eq!(parsed.signature, signature);
+        assert_eq!(parsed.unit_price, 4_321);
+
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_step(0);
+        guard.set_turn(true);
+        let (status, reply) = call(&guard, send).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(reply["result"], signature);
+        assert_eq!(seen.lock().unwrap().as_slice(), ["sendTransaction"]);
+        let log = guard.call_log();
+        assert_eq!(log.sends[0].signature.as_deref(), Some(signature.as_str()));
+        assert!(log.refused.is_empty());
+    }
+
     #[tokio::test]
     async fn drops_expiries_and_holds_follow_the_plan() {
         use crate::faults::{Latency, SendNumbers};

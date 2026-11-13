@@ -1155,7 +1155,17 @@ pub(crate) fn transactions(
                 .filter_map(|line| line.as_str().map(str::to_string))
                 .collect();
             let message = &transaction["transaction"]["message"];
-            let keys = message["accountKeys"].as_array().cloned().unwrap_or_default();
+            // A v0 transaction's keys go on with those its lookup tables
+            // loaded, writable then read-only, as its indices count them.
+            let mut keys = message["accountKeys"].as_array().cloned().unwrap_or_default();
+            for loaded in ["writable", "readonly"] {
+                keys.extend(
+                    meta["loadedAddresses"][loaded]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+            }
             record.instructions = message["instructions"]
                 .as_array()
                 .into_iter()
