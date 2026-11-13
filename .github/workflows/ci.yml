@@ -17,6 +17,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # No commit names an AI as its co-author: a pull request's commits are
+  # checked, since a squash merge carries their trailers into main.
+  commits:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: No AI co-authors
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          found="$(git log --format='%h %B' "$BASE..$HEAD" \
+            | grep -iE '^co-authored-by:.*(anthropic|claude|openai|chatgpt|codex|copilot|cursor|gemini)' || true)"
+          if [ -n "$found" ]; then
+            echo "::error::a commit names an AI as its co-author; reword it without the trailer"
+            echo "$found"
+            exit 1
+          fi
+
   # Fast checks that need no Rust build.
   tasks:
     runs-on: ubuntu-latest
@@ -102,7 +126,7 @@ jobs:
         # sends land as its fee spike lets them.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings

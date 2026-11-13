@@ -41,7 +41,7 @@ use solana_pubkey::Pubkey;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use surfpool_sdk::{BlockProductionMode, Surfnet};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     Error, Result,
@@ -238,8 +238,11 @@ struct World<'a> {
     mints: BTreeMap<String, Pubkey>,
     created: Vec<Created>,
     exchange: Option<phoenix_rise::types::exchange::ExchangeResponse>,
-    /// The last price an action reported.
+    /// The recipe's price: its `symbol`'s, or else the last an action
+    /// reported.
     price: Option<f64>,
+    /// Each Phoenix market the warm-up traded, and its mark.
+    marks: BTreeMap<String, f64>,
     /// For a build from a snapshot: the fixed clock simulated steps run at.
     clock: Option<simulated::ClockPin>,
 }
@@ -277,10 +280,24 @@ impl World<'_> {
     async fn run(&mut self, action: &Action) -> Result<()> {
         match action {
             Action::PhoenixEternal(spec) => {
-                let (mark, exchange) =
-                    phoenix_eternal(self.surfnet, &self.rpc, &spec.symbol, &spec.phoenix_api)
-                        .await?;
-                self.price = Some(mark);
+                let warmed =
+                    phoenix_eternal(self.surfnet, &self.rpc, &spec.symbol, &spec.phoenix_api).await;
+                // Another market than the recipe's own that won't warm up
+                // (Phoenix refuses its trade) stays out of `marks`: sessions
+                // can't move it, and say so.
+                let (mark, exchange) = match warmed {
+                    Err(error) if spec.symbol != self.recipe.symbol => {
+                        warn!(symbol = %spec.symbol, %error, "market skipped: its warm-up failed");
+                        return Ok(());
+                    }
+                    warmed => warmed?,
+                };
+                if spec.symbol == self.recipe.symbol
+                    || !self.marks.contains_key(&self.recipe.symbol)
+                {
+                    self.price = Some(mark);
+                }
+                self.marks.insert(spec.symbol.clone(), mark);
                 self.exchange = Some(exchange);
             }
             Action::SpotExercise => {
@@ -373,7 +390,13 @@ async fn phoenix_eternal(
         .symbol(symbol)
         .side(Side::Bid)
         .price(mark_price_usd * 0.5)
-        .num_base_lots(phoenix.base_units_to_lots(market, 1.0))
+        // One unit, or about $100 of a market dearer than that (one BTC
+        // would be past the trader's margin): at least one lot.
+        .num_base_lots(
+            phoenix
+                .base_units_to_lots(market, (100.0 / mark_price_usd).min(1.0))
+                .max(1),
+        )
         .build()?;
     mtx_kit::send(
         rpc,
@@ -668,6 +691,7 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         created: Vec::new(),
         exchange: None,
         price: None,
+        marks: BTreeMap::new(),
         clock: source_manifest
             .as_ref()
             .map(|m| simulated::ClockPin::new(m.fork_slot, m.created_at_unix)),
@@ -680,6 +704,7 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         created,
         exchange,
         price,
+        marks,
         clock,
         ..
     } = world;
@@ -736,6 +761,12 @@ pub async fn build(recipe_path: &Path, opts: BuildOptions) -> Result<Manifest> {
         sources,
         simulated: !created.is_empty(),
         created,
+        // One market warmed is the snapshot's `symbol`, as before.
+        marks: if marks.len() > 1 {
+            marks
+        } else {
+            BTreeMap::new()
+        },
     };
     write_json(&out_dir.join(MANIFEST_FILE), &manifest)?;
     info!(accounts = manifest.accounts, dir = %out_dir.display(), "snapshot written");

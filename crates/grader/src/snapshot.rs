@@ -16,6 +16,7 @@
 //! checks that trading and scenarios still work.
 
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -72,6 +73,74 @@ pub struct Manifest {
     /// What the recipe made (see [`crate::simulated`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub created: Vec<Created>,
+    /// Each Phoenix market the warm-up traded, and its mark then: the
+    /// markets a session can move. A market the warm-up didn't trade is in
+    /// `exchange.json` but its makers and oracles aren't in the snapshot, so
+    /// a scenario's moves don't reach it. Empty for a snapshot that warmed
+    /// `symbol` alone.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub marks: BTreeMap<String, f64>,
+}
+
+impl Manifest {
+    pub fn load(dir: &Path) -> Result<Self> {
+        read_json(&dir.join(MANIFEST_FILE))
+    }
+
+    /// Whether a session can trade and move `symbol` on this snapshot.
+    pub fn holds(&self, symbol: &str) -> bool {
+        self.marks.contains_key(symbol) || (self.marks.is_empty() && self.symbol == symbol)
+    }
+
+    /// The markets a session can move.
+    pub fn symbols(&self) -> Vec<String> {
+        if self.marks.is_empty() {
+            vec![self.symbol.clone()]
+        } else {
+            self.marks.keys().cloned().collect()
+        }
+    }
+
+    /// `symbol`'s mark when the snapshot was taken.
+    pub fn mark_of(&self, symbol: &str) -> Option<f64> {
+        match self.marks.get(symbol) {
+            Some(mark) => Some(*mark),
+            None => (self.symbol == symbol).then_some(self.mark_price_usd),
+        }
+    }
+}
+
+/// The snapshot to play a `symbol` session on: `preferred` when it holds the
+/// market, or else the first of its siblings (by name) that does.
+pub fn holding(preferred: &Path, symbol: &str) -> Option<PathBuf> {
+    let held = |dir: &Path| Manifest::load(dir).is_ok_and(|m| m.kind.is_none() && m.holds(symbol));
+    if held(preferred) {
+        return Some(preferred.to_path_buf());
+    }
+    let mut siblings: Vec<PathBuf> = std::fs::read_dir(preferred.parent()?)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.is_dir())
+        .collect();
+    siblings.sort();
+    siblings.into_iter().find(|dir| held(dir))
+}
+
+/// Every Phoenix market a snapshot beside `preferred` (or it) can move.
+pub fn held_symbols(preferred: &Path) -> Vec<String> {
+    let mut dirs = vec![preferred.to_path_buf()];
+    if let Some(Ok(entries)) = preferred.parent().map(std::fs::read_dir) {
+        dirs.extend(entries.filter_map(|e| e.ok().map(|e| e.path())));
+    }
+    let mut symbols: Vec<String> = dirs
+        .iter()
+        .filter_map(|dir| Manifest::load(dir).ok())
+        .filter(|m| m.kind.is_none())
+        .flat_map(|m| m.symbols())
+        .collect();
+    symbols.sort();
+    symbols.dedup();
+    symbols
 }
 
 /// A program or account a recipe declares.
@@ -219,7 +288,7 @@ async fn start_snapshot_in(
     access: Access,
     mode: BlockProductionMode,
 ) -> Result<(Surfnet, Manifest)> {
-    let manifest: Manifest = read_json(&dir.join(MANIFEST_FILE))?;
+    let manifest = Manifest::load(dir)?;
     let accounts_file = surfnet_file(dir, &manifest)?;
     let surfnet = start_surfnet(|| {
         let builder = Surfnet::builder().offline(true);
@@ -430,6 +499,50 @@ mod tests {
 
     use super::*;
 
+    fn manifest(symbol: &str, marks: &[(&str, f64)]) -> Manifest {
+        Manifest {
+            created_at_unix: 0,
+            fork_host: String::new(),
+            fork_slot: 0,
+            accounts: 0,
+            symbol: symbol.into(),
+            mark_price_usd: 1.0,
+            kind: None,
+            recipe_sha256: None,
+            sources: Vec::new(),
+            simulated: false,
+            created: Vec::new(),
+            marks: marks.iter().map(|(s, m)| (s.to_string(), *m)).collect(),
+        }
+    }
+
+    #[test]
+    fn a_session_plays_on_the_snapshot_that_warmed_its_market() {
+        let root =
+            std::env::temp_dir().join(format!("mtx-snaps-{}", uuid::Uuid::new_v4().simple()));
+        let task = root.join("a-spcx");
+        let perps = root.join("b-perps");
+        for (dir, m) in [
+            (&task, manifest("SPCX", &[])),
+            (
+                &perps,
+                manifest("SPCX", &[("SPCX", 143.0), ("NVDA", 159.0)]),
+            ),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+            write_json(&dir.join(MANIFEST_FILE), &m).unwrap();
+        }
+        // The task's own snapshot first, then the one beside it.
+        assert_eq!(holding(&task, "SPCX"), Some(task.clone()));
+        assert_eq!(holding(&task, "NVDA"), Some(perps.clone()));
+        assert_eq!(holding(&task, "TSLA"), None);
+        assert_eq!(held_symbols(&task), ["NVDA", "SPCX"]);
+        let warmed = Manifest::load(&perps).unwrap();
+        assert_eq!(warmed.mark_of("NVDA"), Some(159.0));
+        assert!(!manifest("SPCX", &[]).holds("NVDA"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn a_gzipped_snapshot_is_decompressed_once_and_a_plain_one_wins() {
         let dir = std::env::temp_dir().join(format!("mtx-snap-{}", uuid::Uuid::new_v4().simple()));
@@ -446,6 +559,7 @@ mod tests {
             sources: Vec::new(),
             simulated: false,
             created: Vec::new(),
+            marks: BTreeMap::new(),
         };
         write_gz(&dir.join(SURFNET_GZ), &json!({ "a": { "lamports": 1 } })).unwrap();
         let first = surfnet_file(&dir, &manifest).unwrap();

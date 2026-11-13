@@ -3,7 +3,10 @@
 //! views, and seats trading it as the kit's [`Trader`] does. Phoenix offers
 //! them ([`super::phoenix`]).
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 
 use async_trait::async_trait;
 use mtx_core::{
@@ -11,9 +14,11 @@ use mtx_core::{
     mandate::{InstrumentRef, Kind},
 };
 use mtx_kit::{
-    Action, BotEnv, Planned, Sent, Side, Trader, chain::RpcChainClient,
+    Action, BotEnv, Decimal, Planned, Sent, Side, Trader,
+    chain::{ExecutionPlan, RpcChainClient},
+    core::{Rounding, Side as CoreSide},
     phoenix_rise::types::exchange::ExchangeResponse,
-    protocols::phoenix::eternal::PhoenixEternalMeter,
+    protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixOrder},
 };
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -144,6 +149,22 @@ impl Market for PerpMarket {
     }
 }
 
+impl PerpMarket {
+    /// A seat for `signer` whose every transaction is unique among its own
+    /// ([`UniquePerpSeat`]).
+    pub fn unique_seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {
+        let trader = self
+            .trader(signer.insecure_clone(), rpc_url)?
+            .with_timeout(INTERNAL_RPC_TIMEOUT);
+        Ok(Box::new(UniquePerpSeat {
+            seat: PerpSeat::new(self.instrument.to_string(), Arc::new(trader)),
+            signer,
+            sends: AtomicU32::new(0),
+            last: std::sync::Mutex::default(),
+        }))
+    }
+}
+
 /// An account on a Phoenix perpetual: the kit's [`Trader`], its orders
 /// placed as a bot's run loop places them.
 pub struct PerpSeat {
@@ -266,6 +287,15 @@ impl Seat for PerpSeat {
         Ok((usd(bbo.best_bid_ticks()), usd(bbo.best_ask_ticks())))
     }
 
+    /// Phoenix's index price.
+    async fn index(&self) -> SeatResult<Option<f64>> {
+        let trader = &self.trader;
+        patiently("the seat's index", || trader.top())
+            .await
+            .map(|top| Some(top.index))
+            .map_err(|e| e.to_string())
+    }
+
     async fn position(&self) -> SeatResult<f64> {
         let trader = &self.trader;
         patiently("the seat's position", || trader.position())
@@ -283,5 +313,135 @@ impl Seat for PerpSeat {
             .to_string()
             .parse()
             .unwrap_or(f64::NAN)
+    }
+}
+
+/// A [`PerpSeat`] whose transactions are each unique among its own: a
+/// library actor's (see [`crate::actors::library`]), which may send the
+/// same order twice in a slot. Two such would otherwise be the same
+/// transaction, signed alike, and the second would never land. Its `n`th
+/// send asks for `n % 1024 + 1` fewer compute units than Phoenix's plan.
+pub struct UniquePerpSeat {
+    seat: PerpSeat,
+    signer: Keypair,
+    sends: AtomicU32,
+    last: std::sync::Mutex<Option<String>>,
+}
+
+impl UniquePerpSeat {
+    async fn execute<E: std::fmt::Display>(
+        &self,
+        plan: std::result::Result<ExecutionPlan, E>,
+    ) -> SeatResult {
+        let mut plan = plan.map_err(|e| e.to_string())?;
+        let n = self.sends.fetch_add(1, Ordering::Relaxed);
+        for step in &mut plan.steps {
+            step.compute_unit_limit = step.compute_unit_limit.saturating_sub(1 + n % 1024);
+        }
+        let signature = self
+            .seat
+            .trader
+            .inner
+            .execute(&plan, &self.signer)
+            .await
+            .map_err(|e| e.to_string())?;
+        *self.last.lock().expect("seat lock") = Some(signature.to_string());
+        Ok(())
+    }
+
+    /// `size` base units on the lot grid, and `price` on the tick grid the
+    /// way Phoenix's tickets round it: bids down, asks up.
+    fn order_terms(
+        &self,
+        side: Side,
+        size: f64,
+        price: f64,
+    ) -> Result<(CoreSide, Decimal, Decimal)> {
+        let trader = &self.seat.trader;
+        let instrument = &trader.inner.market().instrument;
+        let invalid = |what: String| Error::Transaction {
+            label: "an actor's order".into(),
+            reason: what,
+        };
+        let quantity = instrument.lots_to_quantity(trader.lots(size)?);
+        let (core, rounding) = match side {
+            Side::Bid => (CoreSide::Buy, Rounding::Down),
+            Side::Ask => (CoreSide::Sell, Rounding::Up),
+        };
+        let price: Decimal = price
+            .to_string()
+            .parse()
+            .map_err(|_| invalid(format!("price {price} isn't a number")))?;
+        let price = instrument
+            .checked_round_price(price, rounding)
+            .ok_or_else(|| invalid(format!("price {price} is past the tick grid")))?;
+        Ok((core, quantity, price))
+    }
+}
+
+#[async_trait]
+impl Seat for UniquePerpSeat {
+    fn market(&self) -> &str {
+        self.seat.market()
+    }
+
+    fn executes(&self, action: &Action) -> bool {
+        self.seat.executes(action)
+    }
+
+    async fn send(&self, planned: &Planned) -> Sent {
+        self.seat.send(planned).await
+    }
+
+    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
+        let (side, quantity, worst) = self
+            .order_terms(side, size, limit)
+            .map_err(|e| e.to_string())?;
+        let order = PhoenixOrder::Market {
+            side,
+            quantity,
+            worst_price: Some(worst),
+            all_or_none: false,
+        };
+        let plan = self.seat.trader.inner.plan(&order).await;
+        self.execute(plan).await
+    }
+
+    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {
+        let (side, quantity, price) = self
+            .order_terms(side, size, price)
+            .map_err(|e| e.to_string())?;
+        let order = PhoenixOrder::Limit {
+            side,
+            price,
+            quantity,
+        };
+        let plan = self.seat.trader.inner.plan(&order).await;
+        self.execute(plan).await
+    }
+
+    async fn cancel_all(&self) -> SeatResult {
+        let plan = self.seat.trader.inner.plan_cancel_all();
+        self.execute(plan).await
+    }
+
+    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
+        self.seat.top().await
+    }
+
+    async fn position(&self) -> SeatResult<f64> {
+        self.seat.position().await
+    }
+
+    fn tick(&self) -> f64 {
+        self.seat.tick()
+    }
+
+    async fn index(&self) -> SeatResult<Option<f64>> {
+        self.seat.index().await
+    }
+
+    fn last_signature(&self) -> Option<String> {
+        self.last.lock().expect("seat lock").clone()
     }
 }

@@ -50,6 +50,9 @@ wasmtime-wasi = "50.0.1"
 rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
 
 [dev-dependencies]
+# A chain held in memory, for reading wallets without a surfnet.
+mtx-kit = { workspace = true, features = ["test-util"] }
+solana-account = "4"
 # A Token-2022 mint with a transfer fee, and v0 transactions, on a surfnet
 # behind the guard (tests/tokens_and_v0.rs).
 solana-system-interface = { version = "3", features = ["wincode"] }

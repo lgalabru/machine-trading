@@ -35,6 +35,16 @@ pub enum Error {
     InvalidExchangeKey(String),
     #[error("unknown market {0}")]
     UnknownMarket(String),
+    /// The snapshot has the market's address but not its makers and oracles:
+    /// a scenario's moves wouldn't reach it.
+    #[error(
+        "snapshot {snapshot} can't move {symbol}: its warm-up traded {held} only. Play the scenario on a snapshot whose recipe warms {symbol} up"
+    )]
+    NotWarmed {
+        snapshot: String,
+        symbol: String,
+        held: String,
+    },
     #[error("transaction {label} failed: {reason}")]
     Transaction { label: String, reason: String },
     #[error("spline collection {account}: {reason}")]

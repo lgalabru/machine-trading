@@ -177,6 +177,10 @@ pub struct SessionReport {
     /// Market making: what the grader's own maker did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub competitor: Option<CompeteReport>,
+    /// What the scenario's library actors did (see
+    /// [`crate::actors::library`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actors: Option<crate::actors::LibraryReport>,
     /// A spot session: the wallet at the start and the end, and every fill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<crate::spot::SpotReport>,
@@ -519,6 +523,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         crate::perp::prepare(&opts).await?
     };
     let surfnet = world.surfnet();
+    if let Some(observer) = &opts.observer {
+        observer.rpc(surfnet.rpc_url());
+    }
     let start_slot = base_slot;
     guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
     // The transaction layer, if the scenario has one: the bot's sends go to
@@ -545,6 +552,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         None => None,
     };
+    let hooks = cast.send_hooks();
+    if !hooks.is_empty() {
+        guard.set_send_hook(std::sync::Arc::new(crate::actors::Hooks(hooks)));
+    }
 
     let late_before = surfnet.coalesced_slots();
     *bot_started = true;
@@ -865,6 +876,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         overran = report.turns.overran,
         "session finished"
     );
+    if let Some(observer) = &opts.observer {
+        observer.keep(Box::new(world));
+    }
     Ok(report)
 }
 

@@ -699,6 +699,12 @@ pub trait StepObserver: Send + Sync {
     fn started(&self, session: &mtx_kit::Session, printed: &[String], failed: Option<&str>);
     /// After each step's orders are sent.
     fn step(&self, trace: &StepTrace);
+    /// Before the bot starts: the session's own RPC (its secret path
+    /// included), for a tool that shows its transactions in an explorer.
+    fn rpc(&self, _url: &str) {}
+    /// When the session is over: its chain. Keep it to keep the RPC up (an
+    /// explorer still reading the session's transactions); drop it to stop it.
+    fn keep(&self, _world: Box<dyn std::any::Any + Send>) {}
 }
 
 /// A session's clock, as a component's `start` sees it, and its scenario.
@@ -743,6 +749,9 @@ pub struct Desk {
     /// takes each line's transaction options, and the layer itself.
     pub pool: Option<std::sync::Arc<crate::txlayer::client::PoolClient>>,
     pub tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
+    /// The requests for quotes open to the bot, where clients send any
+    /// (see [`crate::actors::library::rfq`]).
+    pub rfqs: Option<crate::actors::library::RfqBoard>,
 }
 
 /// How a component's market is read at each turn.
@@ -973,7 +982,7 @@ impl WasmBot {
             }
         };
         self.peak_pnl = self.peak_pnl.max(self.pnl);
-        let (mut venues, fills) = mtx_kit::venue_views(
+        let (mut venues, mut fills) = mtx_kit::venue_views(
             &self.session.venues,
             self.session.reports,
             best_bid,
@@ -982,6 +991,10 @@ impl WasmBot {
             &step.tape,
             &step.depth,
         );
+        // Its RFQ fills, which settle off the book.
+        if let Some(board) = &self.desk.rfqs {
+            fills.extend(board.take_fills());
+        }
         // A measured wallet's other markets: the same SOL held, and each
         // seat's own top, where the step's depth didn't give one.
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
@@ -1022,7 +1035,12 @@ impl WasmBot {
             venues,
             sends: std::mem::take(&mut self.sends),
             fills,
-            rfqs: Vec::new(),
+            rfqs: self
+                .desk
+                .rfqs
+                .as_ref()
+                .map(crate::actors::library::RfqBoard::open)
+                .unwrap_or_default(),
             notes: std::mem::take(&mut self.notes),
             fees: self.desk.tx.as_ref().map(|tx| tx.fee_view()),
         })

@@ -11,7 +11,7 @@
 //! | `venues`       | the perp venue's funding, the spot markets and their data    |
 //! | `market_model` | the price path, the fair value, a closed period, the calibration record |
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
-//! | `actors`       | the competing maker and the grader's taker flow              |
+//! | `actors`       | the competing maker, the grader's taker flow, the actor library |
 //! | `faults`       | execution faults on the bot's sends and reads                |
 //! | `tx`           | the transaction layer: fees and blocks, raw sends            |
 //! | `mandate`      | what the bot may trade and its limits                        |
@@ -175,6 +175,10 @@ pub struct Actors {
     /// scenario's flow; otherwise a tape that keeps the book price fresh.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub takers: Vec<TakerOrder>,
+    /// The market's other participants, from the actor library (see
+    /// [`crate::actors::library`]). A perp session's only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<crate::actors::Library>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -419,8 +423,11 @@ impl Actors {
     /// orders as [`Making::validate`] checks them); otherwise, unless the
     /// takers belong to a closed period, which checks them with its path
     /// (see [`MarketModel::validate`]), a tape in slot order, inside the
-    /// session and well formed.
+    /// session and well formed. The library checks itself.
     pub fn validate(&self, duration_slots: u64, closed_period: bool) -> Result<(), String> {
+        if let Some(library) = &self.library {
+            library.validate()?;
+        }
         if let Some(competitor) = &self.competitor {
             return Making {
                 competitor_bps: competitor.competitor_bps,
@@ -505,6 +512,7 @@ impl ScenarioV2 {
         }
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
+        self.library_is_for_perps()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
         } else {
@@ -692,6 +700,14 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// The actor library trades a perp's book: a spot session has none.
+    fn library_is_for_perps(&self) -> Result<(), String> {
+        if self.venues.spot.is_some() && self.actors.library.is_some() {
+            return Err("actors: the library runs in perp sessions".into());
+        }
+        Ok(())
+    }
+
     /// A sell order can't be bigger than the wallet; a net-scored session
     /// has no order.
     fn order_fits_the_wallet(&self) -> Result<(), String> {
@@ -736,7 +752,11 @@ impl ScenarioV2 {
             closed_period,
             record,
         } = market_model;
-        let Actors { competitor, takers } = actors;
+        let Actors {
+            competitor,
+            takers,
+            library,
+        } = actors;
         let (making, offhours, tape) = match (competitor, closed_period) {
             (Some(c), _) => (
                 Some(Making {
@@ -785,6 +805,7 @@ impl ScenarioV2 {
             raw_sends: tx.and_then(|tx| tx.raw_sends),
             market_model: record,
             oracles,
+            actors: library,
         })
     }
 }
@@ -882,7 +903,11 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 record: v1.market_model.clone(),
             },
             oracles: v1.oracles.clone(),
-            actors: Actors { competitor, takers },
+            actors: Actors {
+                competitor,
+                takers,
+                library: v1.actors.clone(),
+            },
             faults: v1.faults.clone(),
             tx: (v1.raw_sends.is_some() || v1.tx_layer.is_some()).then(|| Tx {
                 layer: v1.tx_layer.clone(),
@@ -1252,6 +1277,31 @@ mod tests {
         assert!(on_spot.validate().unwrap_err().starts_with("tx_layer:"));
         s.tx.as_mut().unwrap().layer.as_mut().unwrap().validators = 0;
         assert!(s.validate().unwrap_err().starts_with("tx_layer:"));
+    }
+
+    #[test]
+    fn the_library_lives_in_the_actors_section_and_round_trips_through_v1() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let v1 = parse(everyone).unwrap();
+        let library = v1.actors.clone().unwrap();
+        let as_v2 = v2(&v1);
+        assert_eq!(as_v2.actors.library.as_ref(), Some(&library));
+        let text = serde_json::to_string_pretty(&as_v2).unwrap();
+        assert_eq!(parse(&text).unwrap(), v1);
+        assert_eq!(as_v2.clone().into_scenario().unwrap(), v1);
+
+        let mut s = shock();
+        s.actors.library = Some(library);
+        s.validate().unwrap();
+        let mut bad = s.clone();
+        bad.actors.library.as_mut().unwrap().scale.trade_size = 0.0;
+        assert!(bad.validate().is_err());
+        let mut on_spot = spot();
+        on_spot.actors.library = s.actors.library.clone();
+        assert_eq!(
+            on_spot.validate().unwrap_err(),
+            "actors: the library runs in perp sessions"
+        );
     }
 
     /// What main said for the same input, word for word.

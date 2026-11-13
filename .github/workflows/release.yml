@@ -1,0 +1,168 @@
+name: Release
+
+# Pushing a tag vX.Y.Z on main releases the dataset at X.Y.Z, as `just
+# release` does from a laptop:
+#
+# 1. check: the tag is on main, and names the version the Justfile's `tag`
+#    and bench/tasks/dataset.toml already declare (bump them in a PR first);
+# 2. image: each image built natively for amd64 and arm64 and staged under
+#    this repository's own package (ghcr.io/<owner>/machine-trading-release),
+#    with the workflow's token: no secret;
+# 3. publish, once a reviewer approves the `release` environment: the staged
+#    images copied to ghcr.io/solana-foundation/machine-trading, the tasks
+#    pinned to them (`just release-publish`), the dataset published to
+#    Harbor, and the pins pushed to a branch `release/X.Y.Z` to merge.
+#
+# The `release` environment holds the only secrets: GHCR_TOKEN (a classic
+# token with write:packages, to push to the solana-foundation package) and
+# HARBOR_API_KEY. It only deploys tags v*, and asks a reviewer first. See
+# docs/development.md, "Automation".
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/solana-foundation
+  IMAGE: machine-trading
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      stage: ${{ steps.version.outputs.stage }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - name: The tag is on main and names the declared version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG isn't vX.Y.Z"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$TAG isn't on main"; exit 1; }
+          justfile="$(sed -n 's/^tag := "\(.*\)"$/\1/p' Justfile)"
+          dataset="$(awk -F'"' '/^version *=/ { print $2; exit }' bench/tasks/dataset.toml)"
+          [ "$justfile" = "$version" ] && [ "$dataset" = "$version" ] \
+            || { echo "::error::$TAG, but the Justfile's tag is $justfile and dataset.toml's version $dataset"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "stage=ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/machine-trading-release" >> "$GITHUB_OUTPUT"
+      - name: Each oracle is its task's reference bot
+        run: just check-solution
+
+  image:
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and stage both images
+        env:
+          STAGE: ${{ needs.check.outputs.stage }}
+          VERSION: ${{ needs.check.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for target in runtime dev; do
+            docker buildx build -f bench/image/Dockerfile --target "$target" \
+              --platform "linux/$ARCH" \
+              --cache-from "type=gha,scope=$target-$ARCH" --cache-to "type=gha,scope=$target-$ARCH,mode=max" \
+              -t "$STAGE:$VERSION-$target-$ARCH" --push .
+          done
+
+  publish:
+    needs: [check, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: release
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      # The verifiers' images RUN a chown: arm64's under emulation.
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN }}
+      - name: Copy the staged images to the release package
+        env:
+          STAGE: ${{ needs.check.outputs.stage }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          for pair in "runtime:$VERSION-runtime" "dev:$VERSION"; do
+            target="${pair%%:*}" tag="${pair#*:}"
+            # A release is never overwritten: a version once out stays what it was.
+            if docker buildx imagetools inspect "$REGISTRY/$IMAGE:$tag" > /dev/null 2>&1; then
+              echo "::error::$REGISTRY/$IMAGE:$tag exists already; bump the version"; exit 1
+            fi
+            docker buildx imagetools create -t "$REGISTRY/$IMAGE:$tag" \
+              "$STAGE:$VERSION-$target-amd64" "$STAGE:$VERSION-$target-arm64"
+          done
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Install Harbor
+        run: uv tool install harbor==0.25.0
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Pin the tasks, check, and publish to Harbor
+        env:
+          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
+        run: just release-publish
+      - name: Push the pins to release/<version>
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "release/$VERSION"
+          git add -A bench/tasks
+          git commit -m "bench: pin $VERSION's images and Harbor digests"
+          git push origin "release/$VERSION"
+          {
+            echo "## Released $VERSION"
+            echo
+            echo "- Images: \`$REGISTRY/$IMAGE:$VERSION\` and \`:$VERSION-runtime\`"
+            echo "- Dataset: \`solana-foundation/machine-trading@$VERSION\` on Harbor"
+            echo "- Pins: [open a pull request](https://github.com/$GITHUB_REPOSITORY/compare/main...release/$VERSION?expand=1) from \`release/$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"

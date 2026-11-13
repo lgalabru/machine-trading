@@ -42,7 +42,7 @@ use crate::{Error, Result};
 pub const TOKEN_2022: Pubkey =
     solana_pubkey::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 /// The rent-exempt balance of an 82-byte mint.
-const MINT_LAMPORTS: u64 = 1_461_600;
+pub(crate) const MINT_LAMPORTS: u64 = 1_461_600;
 /// The SOL a market's creator starts with.
 const CREATOR_SOL: u64 = 100_000_000_000;
 /// OpenBook v2's book side and event heap sizes, which the caller allocates

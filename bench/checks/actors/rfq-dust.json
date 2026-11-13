@@ -1,0 +1,244 @@
+{
+  "name": "actors-rfq-dust",
+  "description": "SPCX spikes 3.6% around slot 190; RFQ clients alone ask the bot for quotes, ready to pay up to 100 bp past their value",
+  "symbol": "SPCX",
+  "duration_slots": 400,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 50.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 6,
+      "level_pct": -0.04
+    },
+    {
+      "slot": 11,
+      "level_pct": -0.085
+    },
+    {
+      "slot": 22,
+      "level_pct": 0.061
+    },
+    {
+      "slot": 31,
+      "level_pct": 0.464
+    },
+    {
+      "slot": 41,
+      "level_pct": 0.387
+    },
+    {
+      "slot": 49,
+      "level_pct": 0.427
+    },
+    {
+      "slot": 53,
+      "level_pct": 0.107
+    },
+    {
+      "slot": 67,
+      "level_pct": 0.123
+    },
+    {
+      "slot": 71,
+      "level_pct": 0.098
+    },
+    {
+      "slot": 76,
+      "level_pct": 0.178
+    },
+    {
+      "slot": 85,
+      "level_pct": 0.164
+    },
+    {
+      "slot": 96,
+      "level_pct": 0.237
+    },
+    {
+      "slot": 100,
+      "level_pct": 0.226
+    },
+    {
+      "slot": 109,
+      "level_pct": 0.198
+    },
+    {
+      "slot": 118,
+      "level_pct": 0.161
+    },
+    {
+      "slot": 127,
+      "level_pct": 0.068
+    },
+    {
+      "slot": 139,
+      "level_pct": 0.205
+    },
+    {
+      "slot": 150,
+      "level_pct": 0.079
+    },
+    {
+      "slot": 161,
+      "level_pct": 0.165
+    },
+    {
+      "slot": 168,
+      "level_pct": 0.18
+    },
+    {
+      "slot": 178,
+      "level_pct": 0.033
+    },
+    {
+      "slot": 187,
+      "level_pct": 0.03
+    },
+    {
+      "slot": 190,
+      "level_pct": 1.352
+    },
+    {
+      "slot": 193,
+      "level_pct": 2.065
+    },
+    {
+      "slot": 196,
+      "level_pct": 2.868
+    },
+    {
+      "slot": 202,
+      "level_pct": 3.572
+    },
+    {
+      "slot": 212,
+      "level_pct": 5.194
+    },
+    {
+      "slot": 223,
+      "level_pct": 5.268
+    },
+    {
+      "slot": 227,
+      "level_pct": 5.156
+    },
+    {
+      "slot": 231,
+      "level_pct": 5.288
+    },
+    {
+      "slot": 235,
+      "level_pct": 3.639
+    },
+    {
+      "slot": 246,
+      "level_pct": 3.581
+    },
+    {
+      "slot": 254,
+      "level_pct": 1.221,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 267,
+      "level_pct": 1.331,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 277,
+      "level_pct": 1.304,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 284,
+      "level_pct": 1.357,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 295,
+      "level_pct": 1.183,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 306,
+      "level_pct": 1.298,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 310,
+      "level_pct": 1.335,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 320,
+      "level_pct": 1.188,
+      "premium_pct": 0.3
+    },
+    {
+      "slot": 332,
+      "level_pct": 1.141
+    },
+    {
+      "slot": 337,
+      "level_pct": 1.173
+    },
+    {
+      "slot": 341,
+      "level_pct": 1.241
+    },
+    {
+      "slot": 351,
+      "level_pct": 1.297
+    },
+    {
+      "slot": 361,
+      "level_pct": 1.177
+    },
+    {
+      "slot": 370,
+      "level_pct": 1.233
+    },
+    {
+      "slot": 374,
+      "level_pct": 1.298
+    },
+    {
+      "slot": 386,
+      "level_pct": 1.293
+    },
+    {
+      "slot": 393,
+      "level_pct": 1.277
+    }
+  ],
+  "actors": {
+    "scale": {
+      "trades_per_minute": 1.5,
+      "trade_size": 0.02,
+      "trade_size_sigma": 1.0
+    },
+    "rfq_clients": {
+      "clients": 6,
+      "informed_share": 0.34,
+      "lead_slots": 40,
+      "correlation": 0.8,
+      "per_100_slots": 20.0,
+      "size_mult": 10.0,
+      "deadline_slots": 8,
+      "desk_base": 20.0,
+      "desk_usdc": 2000.0,
+      "tolerance_bps": 100.0
+    },
+    "record": true
+  }
+}
