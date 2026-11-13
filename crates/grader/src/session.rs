@@ -443,6 +443,13 @@ pub(crate) trait Account: Send + Sync {
     /// The account's value when the session starts.
     fn start_value_usd(&self) -> f64;
 
+    /// Whether the account's report reads the bot's fills from the venues'
+    /// transaction lists, which list a slot's transactions once the world
+    /// has moved past it.
+    fn reads_fills(&self) -> bool {
+        false
+    }
+
     /// Once the bot has started, before the first step.
     async fn begin(&mut self) -> Result<()> {
         Ok(())
@@ -802,6 +809,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         turns.fuel_max_call = Some(max_call);
         turns.stopped = bot.stopped.clone();
         turns.tx_options = (bot.tx_options > 0).then_some(bot.tx_options);
+    }
+    // The bot's last turn landed in the session's last slot, which no step
+    // moved past: a session that reads fills steps one slot more, so they
+    // are listed and audited like every other turn's.
+    if account.reads_fills() {
+        crate::chain::next_slot(surfnet, &rpc).await?;
     }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;

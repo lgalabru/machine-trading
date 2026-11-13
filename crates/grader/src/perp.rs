@@ -446,6 +446,13 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         desk: swaps.map(|(_, desk)| desk),
         desk_start: None,
     };
+    // A starting position is worth what the session values it at, from
+    // the start: Phoenix's mark at the seeding is not the scenario's level.
+    if start_position != 0.0 {
+        let raw = grader_f64(account.measure().await?.value_usd);
+        account.start_value_usd = account.value(raw, start_position, base_slot).await?;
+        account.peak_value_usd = account.start_value_usd;
+    }
     // The desk's asset counts toward the account from the start.
     if let Some(start) = account.desk_holdings().await? {
         account.start_value_usd += start.base_usd();
@@ -558,10 +565,7 @@ impl Seed<'_> {
         mark_usd: f64,
         position: f64,
     ) -> Result<()> {
-        let failed = |reason: String| Error::Transaction {
-            label: "the starting position".into(),
-            reason,
-        };
+        let failed = Error::StartPosition;
         let counterparty = opts.keys.keypair("seed", 0);
         phoenix::onboard_traders_stepped(
             &self.world.surfnet,
@@ -971,6 +975,10 @@ impl PerpAccount {
 impl Account for PerpAccount {
     fn start_value_usd(&self) -> f64 {
         self.start_value_usd
+    }
+
+    fn reads_fills(&self) -> bool {
+        self.fills.is_some()
     }
 
     fn moment(&self, at: u64) -> Moment {
