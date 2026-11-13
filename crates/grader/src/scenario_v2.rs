@@ -577,12 +577,12 @@ impl ScenarioV2 {
     /// Each spot market's venue profile names the scenario's symbol: the
     /// books SOL-USDC, the pools SPCX-USDC.
     fn spot_markets_trade_the_symbol(&self) -> Result<(), String> {
+        let symbol = &self.assets.symbol;
         for venue in self.venues.spot.iter().flat_map(|s| &s.markets) {
             let named = crate::venue::books::named_markets(venue).map_err(|e| e.to_string())?;
-            if !named.iter().any(|m| m.symbol == self.assets.symbol) {
+            if !named.iter().any(|m| m.symbol == symbol) {
                 return Err(format!(
-                    "spot: the symbol {} has no market on {venue}; its profile names {:?}",
-                    self.assets.symbol,
+                    "spot: the scenario's symbol is {symbol}, and {venue} has no {symbol} market; its profile names {:?}",
                     named.iter().map(|m| m.symbol).collect::<Vec<_>>()
                 ));
             }
@@ -1099,7 +1099,7 @@ mod tests {
             books
                 .validate()
                 .unwrap_err()
-                .contains("the symbol SPCX-USDC has no market on phoenix")
+                .contains("phoenix has no SPCX-USDC market")
         );
     }
 
