@@ -1,0 +1,9 @@
+asset = "sol-usd"
+# The 0.1 intermediate that `export_v1` reads and names in `derived_from`.
+lineage_id = "sol-usd.20261111.19f35b87"
+# Pins used with --from-archive so a rerun writes the shipped file's bytes.
+fit_date = "20261112"
+fitted_at = "2026-11-12T17:13:31+00:00"
+# The archive also holds the longer SPCX history pulled later (2026-11-12).
+inputs_fetched_before = "2026-11-12T00:00:00+00:00"
+expected_id = "sol-usd.20261112.0dbc6cdf"

@@ -109,12 +109,28 @@
 
   /* Market. */
   #market-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 12px 16px 2px; flex: none; min-width: 0; white-space: nowrap; }
-  #market-stats .big { font: 600 24px/1 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; }
-  #market-stats .d { align-self: center; margin-left: -8px; font-size: 12px; padding: 1px 6px; }
+  #market-stats .big { width: 6.6em; flex: none; overflow: hidden; font: 600 24px/1 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; }
+  #market-stats .dwrap { align-self: center; margin-left: -8px; width: 7.5em; flex: none; }
+  #market-stats .d { font-size: 12px; padding: 1px 6px; font-variant-numeric: tabular-nums; }
+  #market-stats .d.off { visibility: hidden; }
+  /* Each stat keeps its width as its numbers change: the row never jumps. */
+  /* Each stat has a fixed width, in its value's font: what it shows never moves the others. */
+  #market-stats .stat { flex: none; font: 600 12.5px var(--mono); overflow: hidden; }
+  #s-step-box { width: 10ch; } #s-mark-box { width: 12ch; } #s-position-box { width: 15ch; } #s-drawdown-box { width: 19ch; } #s-reference-box { width: 11ch; }
   .stat .v { padding: 0 3px; margin: 0 -3px; border-radius: 4px; }
   .stat { display: flex; flex-direction: column; gap: 1px; }
   .stat .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
   .stat .v { font: 600 12.5px var(--mono); }
+  .ticker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: .02em; flex: none; }
+  .ticker img { width: 18px; height: 18px; border-radius: 50%; object-fit: contain; background: #fff1; }
+  .ticker img[hidden] { display: none; }
+  .report .risk { flex-basis: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .report .risk > div { min-width: 0; }
+  .report .risk .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+  .report .risk .v { font: 600 12.5px var(--mono); margin-top: 1px; }
+  .report .risk .n, .report .risk .all { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .report .risk .all { grid-column: 1 / -1; color: var(--text-2); }
+  .report .risk .all b { color: var(--text); }
   #market-desc { padding: 4px 16px 0; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
   #chart { position: absolute; inset: 0; }
   #chart svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
@@ -182,9 +198,16 @@
   .st.cur { border-left-color: var(--accent); background: var(--accent-soft); }
   .note { padding: 2px 12px; color: var(--text-3); white-space: pre-wrap; }
   .note.printed { color: var(--text-2); } .note.warn { color: var(--warn); } .note.bad { color: var(--down); }
-  .report { margin: 10px 12px 2px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--pane-2); font-family: var(--sans); display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  /* The outcome stays in view at the bottom of the panel, over the steps. */
+  .report { position: sticky; bottom: 8px; z-index: 2; box-shadow: 0 -8px 16px -6px rgba(0, 0, 0, .6); margin: 10px 12px 2px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--pane-2); font-family: var(--sans); display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
   .report .big { font: 600 20px/1 var(--sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
   .report.bad { border-color: rgba(255, 95, 87, .45); }
+  table.txs { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+  table.txs :is(th, td) { padding: 5px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.txs th { font: 700 9.5px var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); position: sticky; top: 0; background: var(--pane); }
+  table.txs td:nth-child(2) { white-space: normal; color: var(--text-2); }
+  table.txs a { color: #7aa2f7; text-decoration: none; } table.txs a:hover { text-decoration: underline; }
+  #txs .note { padding: 8px 12px; font-size: 11px; }
   #buildlog .l { padding: 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
   #buildlog .l.err { color: var(--down); } #buildlog .l.warn { color: var(--warn); } #buildlog .l.ok { color: var(--accent); }
   .diag { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; margin: 6px 10px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--pane-2); cursor: pointer; font-family: var(--sans); font-size: 12.5px; }
@@ -201,6 +224,17 @@
   .msg code { font: 12px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--raise-2); }
   .msg pre { margin: 0 0 8px; padding: 9px 11px; border-radius: 8px; background: #060607; border: 1px solid var(--line); overflow: auto; font: 12px/1.55 var(--mono); }
   .msg pre code { padding: 0; background: none; }
+  .msg.agent :is(ul, ol, blockquote, .table, h3, h4, h5, h6, hr) { margin: 0 0 8px; } .msg.agent > :last-child { margin-bottom: 0; }
+  .msg.agent :is(ul, ol) { padding-left: 20px; } .msg.agent li { margin: 2px 0; } .msg.agent li > :is(ul, ol) { margin: 2px 0 0; }
+  .msg.agent :is(h3, h4, h5, h6) { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 12px; } .msg.agent h3 { font-size: 14px; }
+  .msg.agent blockquote { padding: 2px 0 2px 10px; border-left: 2px solid var(--line); color: var(--text-2); }
+  .msg.agent hr { border: 0; border-top: 1px solid var(--line); }
+  .msg.agent a { color: #7aa2f7; text-decoration: none; } .msg.agent a:hover { text-decoration: underline; }
+  .msg .table { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .msg table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .msg :is(th, td) { padding: 5px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .msg th { font-weight: 600; color: var(--text-2); background: var(--raise); }
+  .msg tr:last-child td { border-bottom: 0; }
   /* The agent's tool calls: one line per run, in words. It opens to its
      calls, and a call to its details. */
   .run { align-self: stretch; font-size: 12.5px; color: var(--text-2); min-width: 0; }
@@ -335,7 +369,7 @@
   body[data-layout="phone"] #switch button.on { color: var(--accent); }
   body[data-layout="phone"] #nav .badge { position: absolute; top: 5px; left: calc(50% + 8px); }
   body[data-layout="phone"] .bar { height: 34px; padding: 0 14px; }
-  body[data-layout="phone"] #task-tag, body[data-layout="phone"] .conn span { display: none; }
+  body[data-layout="phone"] .conn span { display: none; }
   body[data-layout="phone"] .pane { border-radius: 14px; }
   body[data-layout="phone"] #market-desc { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
@@ -360,7 +394,6 @@
 <div class="bar">
   <span class="brand"><span class="dot"></span>mtx studio</span>
   <span class="sep">›</span><span class="ws" id="ws-name">…</span>
-  <span class="tag" id="task-tag" hidden></span>
   <span class="tag mock" id="mock-tag" hidden>mock</span>
   <span class="grow"></span>
   <span class="conn" id="conn"><i></i><span>connecting</span></span>
@@ -415,6 +448,7 @@
     <section class="pane" id="p-market" data-pane="market">
       <div class="head">
         <span class="title">Market</span>
+        <span class="ticker" id="ticker" hidden><img alt=""><b></b></span>
         <select class="pick" id="scenario" title="The scenario to play"></select>
         <button class="btn" id="open-scenario" title="Open the scenario's file in the editor">Edit</button>
         <div class="legend grow" id="legend"></div>
@@ -430,7 +464,7 @@
     <section class="pane" id="p-exec" data-pane="exec">
       <div class="head">
         <span class="title">Execution</span>
-        <div class="view-tabs" id="views"><button data-view="session" class="on">Session</button><button data-view="build">Build<span class="cnt" id="build-cnt"></span></button></div>
+        <div class="view-tabs" id="views"><button data-view="session" class="on">Session</button><button data-view="build">Build<span class="cnt" id="build-cnt"></span></button><button data-view="txs" title="The strategy's transactions, each opening in Solana's explorer on the session's own RPC">Transactions<span class="cnt" id="txs-cnt"></span></button></div>
         <span class="grow"></span>
         <span class="state" id="state"><i></i><span>idle</span></span>
         <button class="ib max-b" title="Maximize"></button>
@@ -449,6 +483,7 @@
         </div>
         <div class="scroll" id="session-view"><div id="steps"></div></div>
         <div class="scroll" id="build-view" hidden><div id="buildlog"></div></div>
+        <div class="scroll" id="txs-view" hidden><div id="txs"></div></div>
       </div>
     </section>
   </div>
@@ -780,8 +815,14 @@ function renderNotice() {
 }
 $("notice-theirs").addEventListener("click", () => { const b = buf(); replaceText(S.open, b.theirs.text, b.theirs.version); });
 $("notice-mine").addEventListener("click", () => { const b = buf(); const v = b.theirs.version; b.theirs = null; renderNotice(); save(S.open, v); });
-link.on("file/changed", (m) => {
-  if (!S.files.includes(m.path)) refreshLists();
+link.on("file/changed", async (m) => {
+  if (!S.files.includes(m.path)) {
+    await refreshLists();
+    // A scenario the agent just wrote is the one it's talking about: show it.
+    const made = m.path.match(/^scenarios\/(.+)\.json$/)?.[1];
+    const playing = ["running", "stopped", "building", "starting"].includes(S.session);
+    if (m.by === "agent" && made && S.scenarios.includes(made) && !playing) { clearSession(); store.set("scenario2", made); await loadScenario(made); return; }
+  }
   const b = buf(m.path);
   if (b) {
     if (m.text === textOf(m.path)) { b.version = m.version; b.saved = m.text; renderTabs(); }
@@ -809,8 +850,50 @@ $("open-scenario").addEventListener("click", () => { if (scenarioPath()) openFil
 $("legend").innerHTML = `<span><i style="background:#fafafa"></i>mark</span><span><i style="background:repeating-linear-gradient(90deg,#71717a 0 3px,transparent 3px 6px)"></i>planned</span><span><i style="background:#7aa2f7"></i>position</span><span><i style="background:#5ed16a"></i>PnL</span>`;
 
 const cur = () => (S.sel !== null && S.steps[S.sel] ? S.sel : S.steps.length - 1);
-$("market-stats").innerHTML = `<span class="big" id="s-pnl">$0.00</span><span class="d" id="s-dpnl" hidden></span>` +
+$("market-stats").innerHTML = `<span class="big" id="s-pnl">$0.00</span><span class="dwrap"><span class="d off" id="s-dpnl"></span></span>` +
   ["Step", "Mark", "Position", "Drawdown", "Reference"].map((key) => `<div class="stat" id="s-${key.toLowerCase()}-box"><span class="k">${key}</span><span class="v" id="s-${key.toLowerCase()}"></span></div>`).join("");
+// A session's outcome: the money it put to work, the risk it ran and the most
+// it could have lost, in plain words.
+function riskHtml(r) {
+  const steps = S.steps.filter((s) => s.account && s.market);
+  if (!steps.length) return "";
+  const sym = S.started?.symbol ?? S.plan?.scenario?.symbol ?? "";
+  const first = steps[0].account;
+  const capital = first.value_usd - first.pnl_usd;
+  let peak = { usd: 0, k: 0, size: 0, mark: 0 }, worst = { usd: 0, k: 0 };
+  for (const s of steps) {
+    const size = s.account.position, at = Math.abs(size) * s.market.mark;
+    if (at > peak.usd) peak = { usd: at, k: s.k, size, mark: s.market.mark };
+    if (s.account.drawdown_usd > worst.usd) worst = { usd: s.account.drawdown_usd, k: s.k };
+  }
+  const pnl = r.pnl_usd, limit = S.started?.max_drawdown, cap = S.started?.cap;
+  const capUsd = isNum(cap) ? cap * (S.started?.start_mark ?? peak.mark) : null;
+  const pct = (x, of) => (isNum(x) && of > 0 ? `${(100 * x / of).toFixed(1)}%` : "–");
+  const cell = (k, v, n, cls = "", more = n) => `<div title="${esc(more)}"><div class="k">${k}</div><div class="v ${cls}">${v}</div>${n ? `<div class="n">${n}</div>` : ""}</div>`;
+  const side = peak.size > 0 ? "long" : "short";
+  const lose = isNum(limit) ? `The loss limit is ${usd(limit, 0)}: a session that falls more than that below its best keeps trading, but its result is disqualified. The account itself can lose up to its ${usd(capital, 0)} of capital.${isNum(capUsd) ? ` A full position (${units(cap)} ${sym}, about ${usd(capUsd, 0)}) reaches the limit on a ${pct(limit, capUsd)} move against it.` : ""}` : "";
+  return `<div class="risk">` +
+    cell("Capital", usd(capital, 0), "collateral", "", "The account's collateral: the money the session trades with.") +
+    cell("Largest position", peak.usd ? usd(peak.usd, 0) : "none", peak.usd ? `${(peak.usd / capital).toFixed(2)}× capital` : "never traded", "",
+      peak.usd ? `${units(Math.abs(peak.size))} ${sym} ${side} at ${usd(peak.mark)}, step ${peak.k + 1}: ${(peak.usd / capital).toFixed(2)}× the capital.` : "It never traded.") +
+    cell("Worst moment", worst.usd ? `−${usd(worst.usd)}` : "$0", isNum(limit) ? `${pct(worst.usd, limit)} of the ${usd(limit, 0)} limit` : "", worst.usd ? "neg" : "",
+      worst.usd ? `${usd(worst.usd)} below its best, at step ${worst.k + 1}.` : "Never below its best.") +
+    cell("Return", isNum(pnl) && capital > 0 ? `${pnl > 0 ? "+" : pnl < 0 ? "−" : ""}${pct(Math.abs(pnl), capital)}` : "–", "on the capital", tone(pnl), `${susd(pnl)}: ${pct(pnl, capital)} on the capital${peak.usd ? `, ${pct(pnl, peak.usd)} on the largest position` : ""}.`) +
+    (lose ? `<div class="all" title="${esc(lose)}"><b>Could have lost: ${usd(limit, 0)}</b> and still count (the loss limit); the account risks its ${usd(capital, 0)}.</div>` : "") +
+    `</div>`;
+}
+// The scenario's market, with Phoenix's logo for it (`studio/logos/`).
+function renderTicker(symbol) {
+  const el = $("ticker"), img = el.querySelector("img");
+  el.hidden = !symbol;
+  if (!symbol || el.dataset.symbol === symbol) return;
+  el.dataset.symbol = symbol;
+  el.title = `phoenix:perp:${symbol}`;
+  el.querySelector("b").textContent = symbol;
+  img.hidden = false;
+  img.onerror = () => { img.hidden = true; };
+  img.src = `./studio/logos/${encodeURIComponent(symbol)}.svg`;
+}
 function renderMarket() {
   const sc = S.plan?.scenario, n = S.plan?.steps ?? S.started?.steps ?? 0;
   const k = cur(), step = S.steps[k], a = step?.account, prev = S.steps[k - 1];
@@ -820,8 +903,10 @@ function renderMarket() {
   const limit = S.started?.max_drawdown ?? sc?.mandate?.limits?.max_drawdown_usd;
   $("s-pnl").textContent = step ? susd(pnl) : "$0.00"; $("s-pnl").className = "big " + tone(pnl);
   const d = step ? a.pnl_usd - (prev ? prev.account.pnl_usd : 0) : 0, dp = $("s-dpnl");
-  dp.hidden = Math.abs(d) <= 0.004;
-  if (!dp.hidden) { dp.textContent = `${d > 0 ? "▲" : "▼"} ${usd(d)}`; dp.classList.toggle("up", d > 0); dp.classList.toggle("down", d < 0); dp.title = "PnL's change at this step"; }
+  const quiet = Math.abs(d) <= 0.004;
+  dp.classList.toggle("off", quiet);
+  if (quiet) dp.textContent = "▲ $0.00";
+  else { dp.textContent = `${d > 0 ? "▲" : "▼"} ${usd(d)}`; dp.classList.toggle("up", d > 0); dp.classList.toggle("down", d < 0); dp.title = "PnL's change at this step"; }
   $("s-step").innerHTML = step ? `${k + 1} <span class="muted">of ${n}</span>` : `<span class="muted">– of ${n || "–"}</span>`;
   $("s-mark").textContent = step ? usd(step.market.mark) : usd(S.plan?.start_mark_usd);
   $("s-position").innerHTML = step ? `${a.position === 0 ? "flat" : sunits(a.position)} <span class="muted">/ ${units(cap)}</span>` : `<span class="muted">flat / ${units(cap)}</span>`;
@@ -829,6 +914,7 @@ function renderMarket() {
   $("s-reference-box").hidden = !isNum(ref);
   $("s-reference").textContent = susd(ref); $("s-reference").className = "v " + tone(ref);
   renderCtx();
+  renderTicker(sc?.symbol);
   $("market-desc").textContent = sc?.description ?? (S.scenarios.length ? "" : "No scenarios in scenarios/ yet: ask the agent for one.");
   drawSoon();
 }
@@ -999,14 +1085,40 @@ function setSession(state) { S.session = state; renderControls(); renderCtx(); }
 function setView(v) {
   S.view = v;
   for (const b of $("views").children) b.classList.toggle("on", b.dataset.view === v);
-  $("session-view").hidden = v !== "session"; $("build-view").hidden = v !== "build";
+  $("session-view").hidden = v !== "session"; $("build-view").hidden = v !== "build"; $("txs-view").hidden = v !== "txs";
+  if (v === "txs") renderTxs();
+}
+// The strategy's transactions so far, each a link to Solana's explorer on
+// the session's own RPC (local: it opens on this machine, while the studio
+// keeps the session's chain, until the next Play).
+const explorer = (sig) => `https://explorer.solana.com/tx/${encodeURIComponent(sig)}?cluster=custom&customUrl=${encodeURIComponent(S.started?.rpc ?? "")}`;
+const rpcHost = () => String(S.started?.rpc ?? "").replace(/^(https?:\/\/[^/]+).*$/, "$1");
+// The page is open from another device (the studio on the network): the
+// session's RPC, on the studio's loopback, isn't reachable from here.
+const elsewhere = () => !["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+function txList() {
+  const out = [];
+  for (const st of S.steps) if (st) for (const x of st.sent || []) out.push({ k: st.k, ...x });
+  return out;
+}
+function renderTxs() {
+  const list = txList(), signed = list.filter((x) => x.signature);
+  $("txs-cnt").textContent = signed.length || "";
+  if ($("txs-view").hidden) return;
+  if (!list.length) { $("txs").innerHTML = `<div class="empty"><div>${S.started ? "No transactions yet: the strategy hasn't sent an order." : "Press <b>Play</b>: every transaction the strategy sends is listed here, with a link to it in Solana's explorer."}</div></div>`; return; }
+  const status = (x) => (x.ok ? `<span class="pos">landed</span>` : x.pending ? `<span class="muted">pending</span>` : `<span class="neg" title="${esc(x.error ?? "")}">failed</span>`);
+  $("txs").innerHTML = `<table class="txs"><thead><tr><th>step</th><th>order</th><th>status</th><th>signature</th></tr></thead><tbody>${list.map((x) =>
+    `<tr><td>${x.k + 1}</td><td>${orderText(x.action)}</td><td>${status(x)}</td><td>${x.signature && S.started?.rpc ? `<a href="${explorer(x.signature)}" target="_blank" rel="noopener" title="${esc(x.signature)}">${esc(x.signature.slice(0, 8))}…${esc(x.signature.slice(-6))} ↗</a>` : `<span class="muted">${x.signature ? esc(x.signature.slice(0, 8)) + "…" : "–"}</span>`}</td></tr>`).join("")}</tbody></table>
+    <div class="note muted">${elsewhere()
+      ? `<b>These links open on the machine running the studio only:</b> the session's chain is at ${esc(rpcHost())} there, which this device can't reach.`
+      : `The links read the session's chain at ${esc(rpcHost())}, up until the next Play. If the explorer says <b>Not connected</b>, it isn't allowed to reach this machine: Chrome asks once ("Local network access"); if that was dismissed, open the site settings from the icon left of explorer.solana.com's address, set <b>Local network access</b> to Allow, and reload.`}</div>`;
 }
 $("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setView(b.dataset.view); });
 
 const EMPTY = `<div class="empty"><div>Press <b>Play</b> to build the strategy and run it on this scenario, or <b>Step</b> to go one step at a time.<br><span class="muted">Each step shows what the strategy printed and did, and what moved. Tap the chart's axis, or hold a step, to stop there.</span></div></div>`;
 function clearSession() {
   S.steps = []; S.started = null; S.report = null; S.sel = null; pending.length = 0;
-  $("steps").innerHTML = EMPTY; follow = true;
+  $("steps").innerHTML = EMPTY; follow = true; renderTxs();
   if (!live() && S.session !== "building" && S.session !== "starting") setSession("idle");
   renderMarket();
 }
@@ -1071,6 +1183,7 @@ function flush() {
   if (!replaying) flashStats(S.steps[S.steps.length - 1 - pending.length], S.steps.at(-1));
   pending.length = 0;
   $("steps").insertAdjacentHTML("beforeend", html);
+  renderTxs();
   markCurrent();
   if (follow && S.sel === null) scroller.scrollTop = scroller.scrollHeight;
   renderMarket();
@@ -1112,13 +1225,13 @@ function reportHtml(r) {
     ${isNum(r.bound_pnl_usd) ? `<span class="muted">hindsight bound ${usd(r.bound_pnl_usd)}</span>` : ""}
     ${r.disqualified ? `<span class="neg">disqualified: ${esc(typeof r.disqualified === "string" ? r.disqualified : JSON.stringify(r.disqualified))}</span>` : ""}
     ${r.not_graded ? `<span class="neg">not graded: ${esc(r.not_graded)}</span>` : ""}
-    ${r.stopped && !r.not_graded ? `<span class="muted">stopped: ${esc(r.stopped)}</span>` : ""}</div>`;
+    ${r.stopped && !r.not_graded ? `<span class="muted">stopped: ${esc(r.stopped)}</span>` : ""}${riskHtml(r)}</div>`;
 }
 
 const onSession = {
   started(b) {
     S.steps = []; pending.length = 0; S.report = null; S.sel = null; follow = true;
-    S.started = { ...b.session, printed: b.printed, failed: b.failed };
+    S.started = { ...b.session, printed: b.printed, failed: b.failed, rpc: b.rpc };
     $("steps").innerHTML = startedHtml();
     setSession("running"); setView("session"); renderMarket();
   },
@@ -1130,7 +1243,7 @@ const onSession = {
   },
   continued() { setSession("running"); },
   terminated(b) {
-    flush(); S.report = b;
+    flush(); S.report = b; renderTxs();
     if ($("steps").querySelector(".empty")) $("steps").innerHTML = "";
     $("steps").insertAdjacentHTML("beforeend", reportHtml(b));
     setSession(b.error ? "failed" : "terminated"); renderMarket();
@@ -1208,17 +1321,75 @@ $("build").addEventListener("click", buildNow);
 
 // ---------------------------------------------------------------- composer
 const thread = $("thread"), threadScroll = $("thread-scroll");
+// Markdown as agents write it: headings, paragraphs, lists (nested by
+// indent), tables, quotes, rules, fenced code; inline code, bold, italics,
+// strikethrough and links. Everything is escaped first: an agent's text
+// never becomes markup of its own.
 const md = (text) => {
-  const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
-  return String(text).split(/```/).map((part, i) => {
-    if (i % 2) return `<pre><code>${esc(part.replace(/^[\w-]*\n/, ""))}</code></pre>`;
-    return part.split(/\n{2,}/).filter((p) => p.trim()).map((p) => {
-      const lines = p.split("\n");
-      if (lines.every((l) => /^\s*([-*]|\d+\.)\s+/.test(l))) return `<p>${lines.map((l) => "• " + inline(l.replace(/^\s*([-*]|\d+\.)\s+/, ""))).join("<br>")}</p>`;
-      if (/^#{1,4}\s/.test(p)) return `<p><b>${inline(p.replace(/^#{1,4}\s+/, ""))}</b></p>`;
-      return `<p>${inline(p).replace(/\n/g, "<br>")}</p>`;
-    }).join("");
-  }).join("");
+  const inline = (s) => {
+    const codes = [];
+    let out = esc(s).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
+    out = out
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<b>${a ?? b}</b>`)
+      .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=$|[\s).,;:!?])/g, "$1<i>$2</i>")
+      .replace(/(^|[\s(])_([^_\s][^_]*?)_(?=$|[\s).,;:!?])/g, "$1<i>$2</i>")
+      .replace(/~~([^~]+)~~/g, "<s>$1</s>");
+    return out.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
+  };
+  const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+  const isRule = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l) && l.includes("-");
+  const item = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const lines = String(text).replace(/\r/g, "").split("\n");
+  const out = [];
+  let i = 0;
+  const list = (from) => {
+    // Items at this indent; deeper ones nest; other lines continue an item.
+    const first = lines[from].match(item), indent = first[1].length, ordered = /\d/.test(first[2]);
+    const start = ordered ? parseInt(first[2], 10) : 1;
+    let html = ordered ? `<ol${start !== 1 ? ` start="${start}"` : ""}>` : "<ul>", j = from;
+    while (j < lines.length) {
+      const m = lines[j].match(item);
+      if (!m || m[1].length < indent || (m[1].length === indent && /\d/.test(m[2]) !== ordered)) break;
+      if (m[1].length > indent) { const [inner, next] = list(j); html = html.replace(/<\/li>$/, inner + "</li>"); j = next; continue; }
+      let body = m[3]; j++;
+      while (j < lines.length && lines[j].trim() && !item.test(lines[j]) && /^\s+/.test(lines[j])) body += " " + lines[j++].trim();
+      html += `<li>${inline(body)}</li>`;
+    }
+    return [html + (ordered ? "</ol>" : "</ul>"), j];
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    const fence = line.match(/^\s*(```|~~~)\s*([\w+-]*)/);
+    if (fence) {
+      const body = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
+      i++;
+      out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`); continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h) { const n = Math.min(h[1].length + 2, 6); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
+    if (line.includes("|") && i + 1 < lines.length && isRule(lines[i + 1])) {
+      const head = cells(line), align = cells(lines[i + 1]).map((c) => (c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : ""));
+      const td = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ""}>${inline(c)}</${tag}>`;
+      let html = `<div class="table"><table><thead><tr>${head.map((c, k) => td("th", c, k)).join("")}</tr></thead><tbody>`;
+      i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) html += `<tr>${cells(lines[i++]).map((c, k) => td("td", c, k)).join("")}</tr>`;
+      out.push(html + "</tbody></table></div>"); continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const body = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push(`<blockquote>${md(body.join("\n"))}</blockquote>`); continue;
+    }
+    if (item.test(line)) { const [html, next] = list(i); out.push(html); i = next; continue; }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>)/.test(lines[i]) && !item.test(lines[i]) && !(lines[i].includes("|") && isRule(lines[i + 1] ?? ""))) para.push(lines[i++]);
+    out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+  }
+  return out.join("");
 };
 const texts = new Map();
 let replayingThread = false;
@@ -1463,7 +1634,9 @@ async function refreshLists() {
   S.files = init.files; S.scenarios = init.scenarios; S.task = init.task;
   $("ws-name").textContent = String(init.workspace).split("/").filter(Boolean).pop() || "workspace";
   $("ws-name").title = init.workspace;
-  $("task-tag").textContent = init.task; $("task-tag").hidden = !init.task;
+  // The bench task only picks the default snapshot and practice set: not
+  // worth a chip, now that a scenario names its own market.
+  if (init.task) $("ws-name").title = `${init.workspace}\nbench task: ${init.task}`;
   $("scenario").innerHTML = S.scenarios.map((n) => `<option>${esc(n)}</option>`).join("");
   if (S.scenario) $("scenario").value = S.scenario;
   renderTabs();

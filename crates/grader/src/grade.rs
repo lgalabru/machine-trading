@@ -615,6 +615,17 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
     let late: Vec<String> = sessions
         .iter()
         .filter_map(|s| {
+            // A session whose library actors failed to act didn't see the
+            // market its scenario describes either.
+            if let Some(actors) = s.actors.as_ref().filter(|a| a.degraded()) {
+                let actions = actors.independent();
+                return Some(format!(
+                    "{} ({} of {} actor actions failed)",
+                    s.scenario,
+                    actions.failed,
+                    actions.total()
+                ));
+            }
             // A market-making session whose takers didn't trade as listed
             // didn't see the flow its scenario describes.
             let flow = s.flow.as_ref()?;
@@ -1038,6 +1049,7 @@ mod tests {
             valuation: "mark",
             flow: None,
             competitor: None,
+            actors: None,
             spot: None,
             faults: None,
             order: None,
@@ -1096,6 +1108,7 @@ mod tests {
             tape: Vec::new(),
             spot: None,
             faults: None,
+            actors: None,
             turn_data: None,
             oracles: None,
             order: None,
@@ -1415,6 +1428,31 @@ mod tests {
         });
         assert!(check_timing(&[session(1.0), thin.clone()]).is_err());
         thin.flow.as_mut().unwrap().failed = 10;
+        assert!(check_timing(&[thin]).is_ok());
+    }
+
+    #[test]
+    fn sessions_whose_actors_failed_fail_the_grade() {
+        use crate::actors::library::{Actions, ActorTally};
+        let tally = |placed, failed, reacts_to_bot| ActorTally {
+            actions: Actions {
+                placed,
+                failed,
+                ..Default::default()
+            },
+            reacts_to_bot,
+            ..Default::default()
+        };
+        let mut thin = session(10.0);
+        thin.actors = Some(crate::actors::LibraryReport {
+            actors: vec![tally(89, 11, false), tally(0, 500, true)],
+            ..Default::default()
+        });
+        let error = check_timing(&[session(1.0), thin.clone()]).unwrap_err();
+        assert!(error.to_string().contains("11 of 100 actor actions failed"));
+        // What failed of the actors that act on the bot's trading is the
+        // bot's doing: never the session's.
+        thin.actors.as_mut().unwrap().actors = vec![tally(90, 10, false), tally(0, 500, true)];
         assert!(check_timing(&[thin]).is_ok());
     }
 
