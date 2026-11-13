@@ -686,13 +686,31 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         .iter()
         .filter(|p| read(p).contains("\"reference_pnl_usd\""))
         .count();
-    steps.push(Step::new(
-        "practice",
-        "Practice scenarios, calibrated",
-        !practice.is_empty() && calibrated == practice.len(),
-        format!("{} practice scenario{}, {calibrated} calibrated", practice.len(), if practice.len() == 1 { "" } else { "s" }),
-        format!("Draw a practice set from the family (`mtx scenario generate --family {family} --out bench/tasks/{task}/environment/practice --prefix practice --count 6 --seed <any number>`), then `just calibrate bench/tasks/{task}/reference <files>`."),
-    ));
+    // A task that keeps its reference out of practice (`practice_reference =
+    // false`) carries no baseline in its practice files: agents shown the
+    // reference's PnL tune toward it.
+    let hidden = read(&dir.join("task.toml")).lines().any(|l| {
+        l.split_once('=')
+            .is_some_and(|(k, v)| k.trim() == "practice_reference" && v.trim() == "false")
+    });
+    let plural = if practice.len() == 1 { "" } else { "s" };
+    steps.push(if hidden {
+        Step::new(
+            "practice",
+            "Practice scenarios, no reference baseline",
+            !practice.is_empty() && calibrated == 0,
+            format!("{} practice scenario{plural}, {calibrated} with a baseline (the task hides its reference from practice)", practice.len()),
+            format!("Draw a practice set from the family (`mtx scenario generate --family {family} --out bench/tasks/{task}/environment/practice --prefix practice --count 6 --seed <any number>`); the task's `practice_reference = false` keeps `reference_pnl_usd` out of the files."),
+        )
+    } else {
+        Step::new(
+            "practice",
+            "Practice scenarios, calibrated",
+            !practice.is_empty() && calibrated == practice.len(),
+            format!("{} practice scenario{plural}, {calibrated} calibrated", practice.len()),
+            format!("Draw a practice set from the family (`mtx scenario generate --family {family} --out bench/tasks/{task}/environment/practice --prefix practice --count 6 --seed <any number>`), then `just calibrate bench/tasks/{task}/reference <files>`."),
+        )
+    });
 
     let instr = read(&dir.join("instruction.md"));
     let n = todos(&instr);
