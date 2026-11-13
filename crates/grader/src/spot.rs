@@ -1209,6 +1209,7 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             fair_path: None,
+            raw_sends: None,
             turn_data: None,
             oracles: None,
             order: None,

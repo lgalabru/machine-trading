@@ -15,6 +15,7 @@ pub mod offhours;
 pub mod oracles;
 pub mod orders;
 pub mod phoenix;
+pub mod raw;
 pub mod recipe;
 pub mod replay;
 pub mod scenario;
