@@ -1059,6 +1059,7 @@ mod tests {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             crank_refusals: Vec::new(),
+            oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
