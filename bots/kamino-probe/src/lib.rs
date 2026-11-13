@@ -3,6 +3,11 @@
 //! steps (and repays it), and each step liquidates the first obligation in
 //! the market it finds below health 1, from the accounts as the keeper
 //! last refreshed them. Its log says what became of every line.
+//!
+//! Under a transaction layer, its regime (`MTX_REGIME`) sets how its
+//! liquidations bid to land: `bid`, a priority fee of 2,000,000
+//! micro-lamports per compute unit; `bundle`, a bundle with a 2,000,000
+//! lamport tip; anything else, nothing.
 
 use base64::Engine;
 use mtx_kit::{log, prelude::*, rpc};
@@ -19,7 +24,13 @@ struct Reserve {
 struct Probe {
     reserves: Vec<Reserve>,
     authority: String,
+    /// How its liquidations bid to land, under a transaction layer.
+    bid: Option<TxOptions>,
 }
+
+/// What a bidding liquidation pays: per compute unit, or as a tip.
+const BID_PRICE: u64 = 2_000_000;
+const BID_TIP: u64 = 2_000_000;
 
 const SF: f64 = (1u64 << 60) as f64;
 
@@ -155,6 +166,17 @@ impl Strategy for Probe {
             });
         }
         self.authority = session.authority.clone();
+        self.bid = match session.var("MTX_REGIME") {
+            Some("bid") => Some(TxOptions {
+                cu_price: Some(BID_PRICE),
+                ..TxOptions::default()
+            }),
+            Some("bundle") => Some(TxOptions {
+                tip: Some(BID_TIP),
+                ..TxOptions::default()
+            }),
+            _ => None,
+        };
         log(&format!(
             "reserves: {}",
             self.reserves
@@ -212,6 +234,9 @@ impl Strategy for Probe {
                 market.k
             ));
             orders.liquidate(&obligation, &take, owed * 0.2).at(&repay);
+            if let Some(bid) = self.bid {
+                orders.tx(bid);
+            }
         }
         Ok(())
     }
