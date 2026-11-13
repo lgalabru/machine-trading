@@ -2,18 +2,25 @@
 //! scenario's market, on a fresh offline world from the snapshot (see
 //! [`crate::session`] for the session they share with spot sessions).
 //!
-//! Setup onboards a fresh trader with [`DEPOSIT_USDC`] of collateral, has
-//! the scenario's actors ready (a market-making session's takers and the
-//! grader's own maker, an off-hours session's or a tape's takers), and
-//! registers the scenario's moves. Every step the session reads the account
-//! from Phoenix, never from the bot: the position, and the value as the
-//! scenario values it ([`Scenario::valuation`]).
+//! Setup onboards a fresh trader with [`DEPOSIT_USDC`] of collateral, gives
+//! it the scenario's starting position, if any, has the scenario's actors
+//! ready (a market-making session's takers and the grader's own maker, an
+//! off-hours session's or a tape's takers), and registers the scenario's
+//! moves. Every step the session reads the account from Phoenix, never from
+//! the bot: the position, the value as the scenario values it
+//! ([`Scenario::valuation`]), and, where the mandate has a sides or price
+//! rule or the scenario an order, every fill Phoenix recorded for it.
+//!
+//! A scenario's [`ExecutionOrder`](crate::orders::ExecutionOrder) has a
+//! broker take what the bot leaves of it at the close, and a
+//! [`CloseOut`](crate::orders::CloseOut) any position left in its market;
+//! both price the close at the scenario's own level, which no bot can push.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use async_trait::async_trait;
 use mtx_core::{
-    AccountMeter, InstrumentId, Measurement, MeterError,
+    AccountMeter, FillId, InstrumentId, Measurement, MeterError, Side as CoreSide,
     mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
     turns::Step,
 };
@@ -23,6 +30,7 @@ use mtx_kit::{
     phoenix_rise::{ix::PhoenixInstruction, types::exchange::ExchangeMarketConfig},
     protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
 };
+use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -39,6 +47,7 @@ use crate::{
     chain,
     guard::Guard,
     making::{TAKER_ACCOUNTS, book_at, level_at},
+    orders::{CloseOutReport, OrderReport},
     phoenix::{self, Phoenix},
     scenario::Scenario,
     session::{
@@ -54,6 +63,11 @@ use crate::{
 /// Each taker's collateral, and the grader's maker's: far more than their
 /// orders need, so none fails for margin.
 const ACTOR_DEPOSIT_USDC: f64 = 100_000.0;
+
+/// How far past the start mark the bot's seeding order may fill, as a
+/// share of the mark: it fills at the counterparty's price, at the mark, or
+/// better.
+const SEED_LIMIT: f64 = 0.02;
 
 /// Set a perp session up, up to the bot's start.
 pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
@@ -125,6 +139,30 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         bot.pubkey(),
     )
     .perp(&scenario.symbol)?;
+    let market_ref = scenario.instrument();
+    let start_position = scenario
+        .start_positions
+        .get(&scenario.symbol)
+        .copied()
+        .unwrap_or(0.0);
+    if start_position != 0.0 {
+        let seed = Seed {
+            world: &world,
+            phoenix: &phoenix,
+            perp: &perp,
+            rpc: &rpc,
+            rpc_url: internal.url(),
+        };
+        seed.position(
+            opts,
+            &bot,
+            &meter,
+            &universe,
+            start_mark_usd,
+            start_position,
+        )
+        .await?;
+    }
     // The actors, set up while cheatcodes still work: market making's
     // takers, with the makers widened, and a competing maker; off hours'
     // takers, with the makers widened and no competitor; a tape's takers,
@@ -352,6 +390,17 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .expect("a perp scenario's mandate has a drawdown limit"),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
+    let reads_fills = scenario.order.is_some()
+        || scenario.mandate.universe.iter().any(|allowance| {
+            allowance.sides.is_some()
+                || allowance.min_sell_price.is_some()
+                || allowance.max_buy_price.is_some()
+        });
+    let mut observed = Observed::default();
+    if start_position != 0.0 {
+        observed.begin(&market_ref, start_position);
+    }
+    let vars = session_vars(scenario)?;
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
@@ -364,7 +413,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         start_mark_usd,
         start_value_usd,
         base_slot,
-        observed: Observed::default(),
+        observed,
+        start_position,
+        fills: reads_fills.then(|| PerpFills {
+            last_scan: base_slot,
+            ..PerpFills::default()
+        }),
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
@@ -396,6 +450,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .offhours
             .as_ref()
             .map(|off| base_slot + off.reopen_slot),
+        vars,
         cast,
         account: Box::new(account),
     })
@@ -452,6 +507,166 @@ async fn onboard_unique(
         .collect()
 }
 
+/// What setup gives a starting position with.
+struct Seed<'a> {
+    world: &'a snapshot::OfflineWorld,
+    phoenix: &'a Phoenix,
+    perp: &'a PerpMarket,
+    rpc: &'a solana_rpc_client::rpc_client::RpcClient,
+    rpc_url: &'a str,
+}
+
+impl Seed<'_> {
+    /// Give the bot `position` base units of the scenario's market, before
+    /// it starts: a real fill on Phoenix, so Phoenix's margin, funding and
+    /// liquidation see the position. A counterparty of the grader's (role
+    /// `seed`) rests the other side post-only at the start mark,
+    /// `mark_usd`; the grader sends the bot's immediate-or-cancel order for
+    /// the position with the bot's own key, which it holds; the counterparty
+    /// cancels what is left and never trades again. The fill's fee is paid
+    /// before the session measures its start value. Phoenix refuses a
+    /// position the collateral can't margin, and setup fails then, as it
+    /// does if the bot doesn't end up holding the position to the lot or
+    /// could be liquidated. The fill lands a slot before the session reads
+    /// any fills. Setup: cheatcodes must still work.
+    async fn position(
+        &self,
+        opts: &SessionOptions<'_>,
+        bot: &Keypair,
+        meter: &PhoenixEternalMeter,
+        universe: &[InstrumentId],
+        mark_usd: f64,
+        position: f64,
+    ) -> Result<()> {
+        let failed = |reason: String| Error::Transaction {
+            label: "the starting position".into(),
+            reason,
+        };
+        let counterparty = opts.keys.keypair("seed", 0);
+        phoenix::onboard_traders_stepped(
+            &self.world.surfnet,
+            self.phoenix,
+            self.rpc,
+            &[&counterparty],
+            ACTOR_DEPOSIT_USDC,
+        )
+        .await?;
+        let counterparty = self
+            .perp
+            .trader(counterparty, self.rpc_url)?
+            .with_timeout(INTERNAL_RPC_TIMEOUT);
+        let own = self
+            .perp
+            .trader(bot.insecure_clone(), self.rpc_url)?
+            .with_timeout(INTERNAL_RPC_TIMEOUT);
+        let size = position.abs();
+        let (side, limit) = if position > 0.0 {
+            (mtx_kit::Side::Bid, mark_usd * (1.0 + SEED_LIMIT))
+        } else {
+            (mtx_kit::Side::Ask, mark_usd * (1.0 - SEED_LIMIT))
+        };
+        let other = match side {
+            mtx_kit::Side::Bid => mtx_kit::Side::Ask,
+            mtx_kit::Side::Ask => mtx_kit::Side::Bid,
+        };
+        counterparty
+            .place_post_only(other, mark_usd, size)
+            .await
+            .map_err(|e| failed(format!("the counterparty's order: {e}")))?;
+        own.place_market(side, size, limit)
+            .await
+            .map_err(|e| failed(format!("the bot's order for {position}: {e}")))?;
+        counterparty
+            .cancel_all()
+            .map_err(|e| failed(format!("the counterparty's cancel: {e}")))?;
+        let held = position_in(
+            &patiently("the meter", || meter.measure(universe)).await?,
+            meter.instrument(),
+        );
+        let market = self.phoenix.market(&self.perp.instrument().symbol)?;
+        let lot = mtx_kit::venue::lots_to_base_units(market, 1);
+        if (held - position).abs() > lot / 2.0 {
+            return Err(failed(format!(
+                "the bot holds {held}, not {position}: the book or the collateral didn't take it"
+            )));
+        }
+        if patiently("the meter", || meter.liquidatable()).await? {
+            return Err(failed(format!(
+                "{position} is more than the collateral margins"
+            )));
+        }
+        chain::next_slot(&self.world.surfnet, self.rpc).await?;
+        Ok(())
+    }
+}
+
+/// What the scenario tells a perp session's bot beyond the runtime
+/// contract, as session variables: `MTX_START_POSITIONS`, its starting
+/// positions (`{symbol: base units}`); `MTX_ORDER`, its order without the
+/// haircut, with `MTX_BROKER_HAIRCUT_BPS`; and `MTX_CLOSE_OUT`, each
+/// close-out's haircut (`{symbol: bps}`). Each only when the scenario has
+/// it.
+fn session_vars(scenario: &Scenario) -> Result<Vec<(String, String)>> {
+    let mut vars = Vec::new();
+    if !scenario.start_positions.is_empty() {
+        vars.push((
+            "MTX_START_POSITIONS".to_string(),
+            serde_json::to_string(&scenario.start_positions)?,
+        ));
+    }
+    if let Some(order) = &scenario.order {
+        let mut order = order.clone();
+        order
+            .instrument
+            .get_or_insert_with(|| scenario.instrument());
+        let mut told = serde_json::to_value(&order)?;
+        if let Some(fields) = told.as_object_mut() {
+            fields.remove("haircut_bps");
+        }
+        vars.push(("MTX_ORDER".to_string(), told.to_string()));
+        vars.push((
+            "MTX_BROKER_HAIRCUT_BPS".to_string(),
+            order.haircut_bps.to_string(),
+        ));
+    }
+    if !scenario.close_out.is_empty() {
+        let haircuts: std::collections::BTreeMap<&String, f64> = scenario
+            .close_out
+            .iter()
+            .map(|(symbol, close_out)| (symbol, close_out.haircut_bps))
+            .collect();
+        vars.push((
+            "MTX_CLOSE_OUT".to_string(),
+            serde_json::to_string(&haircuts)?,
+        ));
+    }
+    Ok(vars)
+}
+
+/// One of the bot's fills on a perp market, as Phoenix recorded it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PerpFillRecord {
+    /// Slots into the session it landed at.
+    pub at: u64,
+    pub instrument: InstrumentRef,
+    /// The bot's side, as the taker or the maker.
+    pub side: CoreSide,
+    /// Price in USDC per base unit, before fees, and size in base units.
+    pub price: f64,
+    pub base: f64,
+}
+
+/// The bot's fills and resting sides, read as the session goes.
+#[derive(Default)]
+struct PerpFills {
+    /// The slot fills were last read at. Each read starts a slot earlier,
+    /// for what landed in that slot after it, and skips fills it has.
+    last_scan: u64,
+    seen: HashSet<FillId>,
+    fills: Vec<PerpFillRecord>,
+    open_orders: Vec<(InstrumentRef, CoreSide)>,
+}
+
 /// A perp session's account: the bot's Phoenix trader account, metered.
 struct PerpAccount {
     scenario: Scenario,
@@ -466,8 +681,13 @@ struct PerpAccount {
     start_value_usd: f64,
     base_slot: u64,
     /// Sampled every step: a fill persists until the bot trades out of it,
-    /// so a position over the cap is caught.
+    /// so a position over the cap is caught. With a starting position, the
+    /// range starts there.
     observed: Observed,
+    /// The starting position in the scenario's market, in base units.
+    start_position: f64,
+    /// The bot's fills, where the session reads them.
+    fills: Option<PerpFills>,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
@@ -627,6 +847,37 @@ impl PerpAccount {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
     }
 
+    /// Read the fills Phoenix recorded for the bot, and the orders it left
+    /// resting, since the last read, at `slot`. Nothing where the session
+    /// doesn't read them.
+    async fn scan(&mut self, slot: u64) -> Result<()> {
+        let Some(read) = self.fills.as_mut() else {
+            return Ok(());
+        };
+        let after = read.last_scan.saturating_sub(1);
+        let records = patiently("the fills", || self.meter.records(after)).await?;
+        let instrument = self.scenario.instrument();
+        for recorded in records.fills {
+            if read.seen.insert(recorded.fill.id.clone()) {
+                read.fills.push(PerpFillRecord {
+                    at: recorded.slot.saturating_sub(self.base_slot),
+                    instrument: instrument.clone(),
+                    side: recorded.fill.side,
+                    price: grader_f64(recorded.fill.price),
+                    base: grader_f64(recorded.fill.quantity),
+                });
+            }
+        }
+        for placed in records.placed {
+            let seen = (instrument.clone(), placed.side);
+            if !read.open_orders.contains(&seen) {
+                read.open_orders.push(seen);
+            }
+        }
+        read.last_scan = slot;
+        Ok(())
+    }
+
     /// What the bot's wallet holds for its RFQ desk, and the asset's
     /// reference price, Phoenix's index for the perp. Nothing without a
     /// desk. The wallet holds what its token accounts of each mint hold, as
@@ -711,6 +962,7 @@ impl Account for PerpAccount {
     }
 
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
+        self.scan(slot).await?;
         let scenario = &self.scenario;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
@@ -793,6 +1045,7 @@ impl Account for PerpAccount {
     }
 
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
+        self.scan(done.end_slot).await?;
         let scenario = &self.scenario;
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
@@ -809,13 +1062,25 @@ impl Account for PerpAccount {
             .phoenix
             .ticks_to_usd(&self.market, self.mark_ticks().await?);
         let observed = std::mem::take(&mut self.observed);
+        let fills = self.fills.take().unwrap_or_default();
+        let close_usd = self
+            .moment(done.end_slot.saturating_sub(self.base_slot))
+            .level_usd;
+        let settled = settle(
+            scenario,
+            self.start_position,
+            end_position,
+            (self.start_mark_usd, close_usd),
+            end_value_usd - self.start_value_usd,
+            &fills.fills,
+        );
         Ok(SessionReport {
             scenario: scenario.name.clone(),
             start_mark_usd: self.start_mark_usd,
             end_mark_usd,
             start_value_usd: self.start_value_usd,
             end_value_usd,
-            pnl_usd: end_value_usd - self.start_value_usd,
+            pnl_usd: settled.pnl_usd,
             end_position,
             liquidatable,
             refused_calls: done.refused_calls,
@@ -848,9 +1113,12 @@ impl Account for PerpAccount {
             }),
             spot: None,
             faults: done.faults,
-            order: None,
+            order: settled.order,
             participation: None,
             net: None,
+            close_outs: settled.close_outs,
+            perp_fills: fills.fills,
+            perp_open_orders: fills.open_orders,
             crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -865,6 +1133,51 @@ impl Account for PerpAccount {
                 taker_orders: done.actors.taker_orders,
             },
         })
+    }
+}
+
+/// What a perp session's PnL comes to, with its order and close-outs.
+struct Settled {
+    pnl_usd: f64,
+    order: Option<OrderReport>,
+    close_outs: Vec<CloseOutReport>,
+}
+
+/// Settle a session in the scenario's market: from `start` to `end` base
+/// units, valued at the start mark and at `close_usd`, the scenario's level
+/// at the end, with the account's value changing by `value_change_usd`.
+/// An order is scored against its broker, as on spot (`fills`, the bot's,
+/// say whether it traded the other way); a close-out charges the haircut on
+/// what is left. Without either, the PnL is the value change.
+fn settle(
+    scenario: &Scenario,
+    start: f64,
+    end: f64,
+    (start_usd, close_usd): (f64, f64),
+    value_change_usd: f64,
+    fills: &[PerpFillRecord],
+) -> Settled {
+    let order = scenario.order.as_ref().map(|order| {
+        let mut order = order.clone();
+        order
+            .instrument
+            .get_or_insert_with(|| scenario.instrument());
+        let own: Vec<(CoreSide, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
+        order.report(start, end, start_usd, close_usd, value_change_usd, &own)
+    });
+    let close_outs: Vec<CloseOutReport> = scenario
+        .close_out
+        .iter()
+        .map(|(symbol, close_out)| close_out.report(symbol, end, close_usd))
+        .collect();
+    let pnl_usd = order
+        .as_ref()
+        .map_or(value_change_usd, OrderReport::pnl_usd)
+        - close_outs.iter().map(|c| c.charge_usd).sum::<f64>();
+    Settled {
+        pnl_usd,
+        order,
+        close_outs,
     }
 }
 
@@ -1039,6 +1352,126 @@ mod tests {
     use solana_account::Account;
 
     use super::*;
+
+    fn fill(side: CoreSide, base: f64) -> PerpFillRecord {
+        PerpFillRecord {
+            at: 2,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base,
+        }
+    }
+
+    #[test]
+    fn a_perp_order_settles_as_the_spot_formula_does() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        let order = crate::orders::ExecutionOrder {
+            instrument: None,
+            side: CoreSide::Buy,
+            quantity: 10.0,
+            haircut_bps: 50.0,
+            reduce_only: false,
+        };
+        scenario.order = Some(order.clone());
+        // Doing nothing scores 0 whatever the close.
+        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), 0.0, &[]);
+        assert_eq!(nop.pnl_usd, 0.0);
+        // Bought 6 at 101 against a close of 110, 1 of fees: the same PnL
+        // as the spot formula, and the order names its market.
+        let fills = [fill(CoreSide::Buy, 6.0)];
+        let value_change = 6.0 * (110.0 - 101.0) - 1.0;
+        let bought = settle(&scenario, 0.0, 6.0, (100.0, 110.0), value_change, &fills);
+        let spot = order.report(
+            0.0,
+            6.0,
+            100.0,
+            110.0,
+            value_change,
+            &[(CoreSide::Buy, 6.0)],
+        );
+        assert_eq!(bought.pnl_usd, spot.pnl_usd());
+        assert!((bought.pnl_usd - (value_change + 6.0 * 110.0 * 0.005)).abs() < 1e-9);
+        let report = bought.order.unwrap();
+        assert_eq!(report.instrument, Some(scenario.instrument()));
+        assert_eq!(report.breach(), None);
+        // A sell inside the session is caught from the fills, though the
+        // position never went below where it started.
+        let both = [fill(CoreSide::Buy, 6.0), fill(CoreSide::Sell, 1.0)];
+        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &both);
+        assert!(
+            sold.order
+                .unwrap()
+                .breach()
+                .unwrap()
+                .contains("sold 1 SPCX")
+        );
+        // A start long sold down: the drift on what it started with is
+        // taken off.
+        scenario.order = Some(crate::orders::ExecutionOrder {
+            side: CoreSide::Sell,
+            reduce_only: true,
+            ..order
+        });
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), -100.0, &[]);
+        assert_eq!(held.pnl_usd, 0.0);
+    }
+
+    #[test]
+    fn a_close_out_charges_the_residual_either_way() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.close_out.insert(
+            "SPCX".into(),
+            crate::orders::CloseOut { haircut_bps: 100.0 },
+        );
+        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        assert!((long.pnl_usd - (50.0 - 4.0 * 2.0)).abs() < 1e-9);
+        assert!((long.close_outs[0].broker_usd - 198.0).abs() < 1e-9);
+        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), 50.0, &[]);
+        assert!((short.close_outs[0].broker_usd - 202.0).abs() < 1e-9);
+        assert!((short.pnl_usd - (50.0 - 8.0)).abs() < 1e-9);
+        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), 50.0, &[]);
+        assert_eq!(flat.pnl_usd, 50.0);
+        // Without an order or a close-out, the PnL is the value change.
+        let plain = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        assert_eq!(settled.pnl_usd, 50.0);
+        assert!(settled.order.is_none() && settled.close_outs.is_empty());
+    }
+
+    #[test]
+    fn the_bot_is_told_its_start_order_and_close_outs() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        assert!(session_vars(&scenario).unwrap().is_empty());
+        scenario.start_positions.insert("SPCX".into(), -2.5);
+        scenario.order = Some(crate::orders::ExecutionOrder {
+            instrument: None,
+            side: CoreSide::Buy,
+            quantity: 2.5,
+            haircut_bps: 30.0,
+            reduce_only: true,
+        });
+        let vars: std::collections::BTreeMap<String, String> =
+            session_vars(&scenario).unwrap().into_iter().collect();
+        assert_eq!(vars["MTX_START_POSITIONS"], r#"{"SPCX":-2.5}"#);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&vars["MTX_ORDER"]).unwrap(),
+            serde_json::json!({
+                "instrument": "phoenix:perp:SPCX",
+                "side": "buy",
+                "quantity": 2.5,
+                "reduce_only": true
+            })
+        );
+        assert_eq!(vars["MTX_BROKER_HAIRCUT_BPS"], "30");
+        scenario.order = None;
+        scenario
+            .close_out
+            .insert("SPCX".into(), crate::orders::CloseOut { haircut_bps: 12.5 });
+        let vars: std::collections::BTreeMap<String, String> =
+            session_vars(&scenario).unwrap().into_iter().collect();
+        assert_eq!(vars["MTX_CLOSE_OUT"], r#"{"SPCX":12.5}"#);
+    }
 
     #[tokio::test]
     async fn a_desk_whose_account_the_bot_closed_holds_nothing() {

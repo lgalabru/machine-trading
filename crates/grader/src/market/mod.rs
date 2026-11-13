@@ -68,6 +68,8 @@ pub(crate) mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
             oracles: None,
         }
     }

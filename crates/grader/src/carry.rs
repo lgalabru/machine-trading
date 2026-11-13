@@ -516,6 +516,8 @@ impl CarryFamily {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
         };
         let shape = Shape {
             informed_share,

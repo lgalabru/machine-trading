@@ -785,6 +785,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         env,
         reports,
         reopen_slot: None,
+        vars: Vec::new(),
         cast,
         account: Box::new(account),
     })
@@ -1066,6 +1067,9 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            close_outs: Vec::new(),
+            perp_fills: Vec::new(),
+            perp_open_orders: Vec::new(),
             crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -1132,6 +1136,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
             turn_data: None,
             oracles: None,
             order: None,
@@ -1260,6 +1266,7 @@ mod tests {
             parties: true,
         });
         full.order = Some(ExecutionOrder {
+            instrument: None,
             side: Side::Sell,
             quantity: 10.0,
             haircut_bps: 50.0,
@@ -1299,10 +1306,23 @@ mod tests {
         share.participation.as_mut().unwrap().max_share = 0.0;
         assert!(share.validate().is_err());
 
-        // They are for spot scenarios.
+        // Turn data and participation are for spot scenarios; an order is
+        // for either.
         let mut perp = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        perp.order = full.order.clone();
+        perp.participation = full.participation.clone();
         assert!(perp.validate().unwrap_err().contains("spot scenarios"));
+        // A spot wallet can't go short: no reduce-only buy.
+        let mut buy = full.clone();
+        buy.order = Some(ExecutionOrder {
+            side: Side::Buy,
+            reduce_only: true,
+            ..full.order.clone().unwrap()
+        });
+        assert!(buy.validate().unwrap_err().contains("reduce-only"));
+        // Starting positions and close-outs are a perp's.
+        let mut started = full.clone();
+        started.start_positions.insert("SOL-USDC".into(), 1.0);
+        assert!(started.validate().unwrap_err().contains("perp scenarios"));
     }
 
     #[test]
