@@ -22,19 +22,48 @@ pub struct LbPair {
     /// billionths, plus the variable fee from the volatility accumulator.
     pub base_factor: u16,
     pub base_fee_power_factor: u8,
+    /// Seconds after the last swap within which a swap keeps the volatility
+    /// reference; past it the reference decays.
+    pub filter_period: u16,
+    /// Seconds after the last swap past which the volatility reference is
+    /// gone.
+    pub decay_period: u16,
+    /// What share of the accumulator, in basis points, a decayed reference
+    /// keeps.
+    pub reduction_factor: u16,
     pub variable_fee_control: u32,
-    pub volatility_accumulator: u32,
+    pub max_volatility_accumulator: u32,
+    /// The protocol's share of the fee, in basis points.
+    pub protocol_share: u16,
+    /// What the pool is for: 0 undetermined, 1 liquidity mining, 2 limit
+    /// orders.
+    pub function_type: u8,
     /// Whether swaps pay their fee in the token in (0) or always in Y (1).
     pub collect_fee_mode: u8,
+    /// The volatility as of the last swap, its reference, and the bin the
+    /// reference was taken at.
+    pub volatility_accumulator: u32,
+    pub volatility_reference: u32,
+    pub index_reference: i32,
+    /// When the last swap moved the volatility (Unix seconds).
+    pub last_update_timestamp: i64,
+    /// 0 permissionless, 1 permissioned, 2 customizable permissionless, 3
+    /// permissionless v2.
+    pub pair_type: u8,
     pub active_id: i32,
     /// Basis points between neighbouring bins' prices.
     pub bin_step: u16,
     /// 0 is enabled.
     pub status: u8,
+    /// Whether `activation_point` is a slot (0) or a Unix time (1).
+    pub activation_type: u8,
+    pub activation_point: u64,
     pub mint_x: Pubkey,
     pub mint_y: Pubkey,
     pub reserve_x: Pubkey,
     pub reserve_y: Pubkey,
+    /// The mints of its two reward programs; the default key where none.
+    pub reward_mints: [Pubkey; 2],
     pub oracle: Pubkey,
     /// Which bin arrays around index 0 hold liquidity: bit 512 is array 0.
     pub bin_array_bitmap: [u64; 16],
@@ -64,39 +93,43 @@ impl LbPair {
         Ok(Self {
             address,
             base_factor: f.u16(8)?,
+            filter_period: f.u16(10)?,
+            decay_period: f.u16(12)?,
+            reduction_factor: f.u16(14)?,
             variable_fee_control: f.u32(16)?,
+            max_volatility_accumulator: f.u32(20)?,
+            protocol_share: f.u16(32)?,
             base_fee_power_factor: f.u8(34)?,
+            function_type: f.u8(35)?,
             collect_fee_mode: f.u8(36)?,
             volatility_accumulator: f.u32(40)?,
+            volatility_reference: f.u32(44)?,
+            index_reference: f.i32(48)?,
+            last_update_timestamp: f.i64(56)?,
+            pair_type: f.u8(75)?,
             active_id: f.i32(76)?,
             bin_step: f.u16(80)?,
             status: f.u8(82)?,
+            activation_type: f.u8(86)?,
             mint_x: f.pubkey(88)?,
             mint_y: f.pubkey(120)?,
             reserve_x: f.pubkey(152)?,
             reserve_y: f.pubkey(184)?,
+            reward_mints: [f.pubkey(264)?, f.pubkey(408)?],
             oracle: f.pubkey(552)?,
             bin_array_bitmap,
+            activation_point: f.u64(816)?,
             program_x: program(f.u8(880)?)?,
             program_y: program(f.u8(881)?)?,
         })
     }
 
     /// The swap fee now, in billionths of the amount: the base fee and the
-    /// variable fee, capped at 10%.
+    /// variable fee at the last swap's volatility, capped at 10%. A swap
+    /// charges its own, as [`super::swap`] works it out.
     pub fn fee_rate(&self) -> u128 {
-        let base = u128::from(self.base_factor)
-            * u128::from(self.bin_step)
-            * 10
-            * 10u128.pow(u32::from(self.base_fee_power_factor));
-        let variable = if self.variable_fee_control > 0 {
-            let square =
-                (u128::from(self.volatility_accumulator) * u128::from(self.bin_step)).pow(2);
-            (u128::from(self.variable_fee_control) * square).div_ceil(100_000_000_000)
-        } else {
-            0
-        };
-        (base + variable).min(100_000_000)
+        super::swap::fee_rate(self, self.volatility_accumulator)
+            .unwrap_or(super::swap::MAX_FEE_RATE)
     }
 
     /// The swap fee now, as a share of the amount.
@@ -133,17 +166,26 @@ impl LbPair {
     }
 }
 
-/// One bin: its reserves, and its liquidity's shares.
+/// One bin: its reserves, its liquidity's shares, and the limit orders
+/// resting in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bin {
     /// The bin's market-making reserves, in atoms.
     pub amount_x: u64,
     pub amount_y: u64,
+    /// Its price, Y atoms per X atom in Q64.64, once stored; 0 before.
+    pub price: u128,
     /// The shares its liquidity is split into.
     pub liquidity_supply: u128,
     /// Fees per share since the bin began, in Q64.64.
     pub fee_amount_x_per_token_stored: u128,
     pub fee_amount_y_per_token_stored: u128,
+    /// Limit orders not yet reached by a swap, and what is left of those a
+    /// swap has begun to fill, in atoms of the side they sell.
+    pub open_order_amount: u64,
+    pub processed_order_remaining_amount: u64,
+    /// Whether the orders sell X (asks) rather than Y (bids).
+    pub limit_order_ask_side: bool,
 }
 
 /// Seventy consecutive bins.
@@ -167,9 +209,13 @@ impl BinArray {
                 Ok(Bin {
                     amount_x: f.u64(at)?,
                     amount_y: f.u64(at + 8)?,
+                    price: f.u128(at + 16)?,
                     liquidity_supply: f.u128(at + 32)?,
                     fee_amount_x_per_token_stored: f.u128(at + 80)?,
                     fee_amount_y_per_token_stored: f.u128(at + 96)?,
+                    open_order_amount: f.u64(at + 112)?,
+                    processed_order_remaining_amount: f.u64(at + 128)?,
+                    limit_order_ask_side: f.u8(at + 140)? != 0,
                 })
             })
             .collect::<Result<_, DecodeError>>()?;
@@ -292,11 +338,16 @@ pub(crate) mod testing {
             let at = 56 + i * BinArray::BIN_LEN;
             data[at..at + 8].copy_from_slice(&bin.amount_x.to_le_bytes());
             data[at + 8..at + 16].copy_from_slice(&bin.amount_y.to_le_bytes());
+            data[at + 16..at + 32].copy_from_slice(&bin.price.to_le_bytes());
             data[at + 32..at + 48].copy_from_slice(&bin.liquidity_supply.to_le_bytes());
             data[at + 80..at + 96]
                 .copy_from_slice(&bin.fee_amount_x_per_token_stored.to_le_bytes());
             data[at + 96..at + 112]
                 .copy_from_slice(&bin.fee_amount_y_per_token_stored.to_le_bytes());
+            data[at + 112..at + 120].copy_from_slice(&bin.open_order_amount.to_le_bytes());
+            data[at + 128..at + 136]
+                .copy_from_slice(&bin.processed_order_remaining_amount.to_le_bytes());
+            data[at + 140] = u8::from(bin.limit_order_ask_side);
         }
         data
     }
@@ -345,6 +396,22 @@ mod tests {
         assert_eq!(pair.swap_bin_arrays(true, 3), [9, 8]);
         assert_eq!(pair.swap_bin_arrays(false, 3), [9, 10]);
         assert_eq!(pair.bin_array_has_liquidity(600), None);
+    }
+
+    #[test]
+    fn a_bin_array_decodes_its_prices_and_limit_orders() {
+        let bin = Bin {
+            amount_x: 3,
+            price: 1 << 64,
+            open_order_amount: 11_565_959,
+            processed_order_remaining_amount: 7,
+            limit_order_ask_side: true,
+            ..Bin::default()
+        };
+        let array =
+            BinArray::decode(&bin_array_bytes(Pubkey::new_unique(), 9, &[(39, bin)])).unwrap();
+        assert_eq!(array.bin(669), Some(&bin));
+        assert_eq!(array.bin(668), Some(&Bin::default()));
     }
 
     #[test]

@@ -186,6 +186,11 @@ pub(crate) fn holdings_from_atoms(
 pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
 
+/// Wrapped SOL's mint: the quote of the SPCX-SOL pools and the base of the
+/// SOL-USDC ones the Raydium and Meteora profiles name.
+pub const SOL_MINT: solana_pubkey::Pubkey =
+    solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
+
 /// SPCX's mint (Backpack Securities' tokenized SpaceX share, Token-2022):
 /// the base of the pools the Raydium and Meteora profiles name.
 pub const SPCX_MINT: solana_pubkey::Pubkey =
