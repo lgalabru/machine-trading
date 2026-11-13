@@ -4,13 +4,16 @@
 //! blockhash still valid), the builder:
 //!
 //! 1. lands nothing if `s`'s leader skipped it;
-//! 2. on a Jito leader, runs the auction: bundles ranked by tip per
-//!    requested compute unit, then by tip, each landing whole if it doesn't
-//!    conflict with one taken before, fits what's left of the bundle share
-//!    of the block, and outbids the ghosts' tip on the hot accounts it
-//!    writes (Jito's tip accounts aside, which every bundle pays). A bundle
-//!    with a `jitodontfront` transaction anywhere but first is invalid.
-//!    Bundles go at the top of the block;
+//! 2. on a Jito leader, runs the auction: bundles ranked by what they bid
+//!    per requested compute unit (tip and priority fees), then by tip, each
+//!    landing whole if it doesn't conflict with one taken before and fits
+//!    what's left of the bundle share of the block. A bundle buys the same
+//!    block space a transaction does, so its bid has to clear the same
+//!    price: the block's and every hot account's it writes. Its tip also
+//!    has to outbid the ghosts' bundles on those hot accounts (Jito's tip
+//!    accounts aside, which every bundle pays). A bundle with a
+//!    `jitodontfront` transaction anywhere but first is invalid. Bundles go
+//!    at the top of the block;
 //! 3. sorts the transactions by what they pay per requested compute unit
 //!    (their priority fee plus their base fee), then by arrival (step, then
 //!    sequence in the step), then by a seeded hash of the sender and its
@@ -21,10 +24,13 @@
 //! 4. with the calibrated small chance, swaps two adjacent conflicting
 //!    transactions: the scheduler isn't a strict sort.
 //!
+//! A signature lands once: an entry holding a transaction another one took
+//! for the block waits, and the session lets it go once that one landed.
+//!
 //! It is a pure function of its inputs: the session commits its picks in
 //! order.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use solana_pubkey::Pubkey;
 
@@ -82,6 +88,7 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
 
     let (bundles, txs): (Vec<&Entry>, Vec<&Entry>) =
         eligible.iter().copied().partition(|e| e.is_bundle());
+    let mut taken: BTreeSet<&str> = BTreeSet::new();
 
     // The auction.
     if slot.jito_leader {
@@ -99,9 +106,8 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
             ranked.push(bundle);
         }
         ranked.sort_by(|a, b| {
-            let per_cu = |e: &Entry| e.tip() as u128 * 1_000_000 / e.cu().max(1) as u128;
-            per_cu(b)
-                .cmp(&per_cu(a))
+            b.bid()
+                .cmp(&a.bid())
                 .then(b.tip().cmp(&a.tip()))
                 .then(a.arrival.cmp(&b.arrival))
                 .then(tie(a).cmp(&tie(b)))
@@ -117,6 +123,7 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
                 .copied()
                 .collect();
             let outbid = tip >= jito::MIN_TIP
+                && bundle.bid() >= slot.ghost.price_to_land(slot.slot, &writes)
                 && writes
                     .iter()
                     .filter(|a| slot.ghost.is_hot(a))
@@ -126,9 +133,14 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
                 || cu > bundle_left
                 || writes.iter().any(|w| locked.contains(w))
                 || writes.iter().any(|w| account_left(&account_used, w) < cu)
+                || bundle
+                    .txs
+                    .iter()
+                    .any(|t| taken.contains(t.signature.as_str()))
             {
                 continue;
             }
+            taken.extend(bundle.txs.iter().map(|t| t.signature.as_str()));
             bundle_left -= cu;
             block_left -= cu;
             for w in &writes {
@@ -151,7 +163,9 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
     let mut landed: Vec<&Entry> = Vec::new();
     for entry in sorted {
         let tx = &entry.txs[0];
-        if tx.cu_price < slot.ghost.price_to_land(slot.slot, &tx.writable) {
+        if entry.bid() < slot.ghost.price_to_land(slot.slot, &tx.writable)
+            || taken.contains(tx.signature.as_str())
+        {
             continue;
         }
         if tx.cu_limit > block_left
@@ -401,6 +415,111 @@ mod tests {
             })
             .collect();
         assert_eq!(firsts.len(), 2);
+    }
+
+    #[test]
+    fn a_bundle_pays_what_a_transaction_pays_to_land() {
+        // A congestion floor of 200,000 micro-lamports per unit over the
+        // first 30 steps.
+        let layer = layer();
+        let calibration = Calibration::builtin(&layer.calibration).unwrap();
+        let g = GhostPath::new(
+            &layer,
+            &calibration,
+            1_000,
+            1_080,
+            2,
+            Some((0, 30, 200_000)),
+        );
+        let tip = |_: &Pubkey| 0;
+        let s = 1_010;
+        let h = Hash::new_unique();
+        let to = Pubkey::new_unique();
+        let clearing = g.price_to_land(s, &[to]);
+        assert!(clearing >= 200_000);
+        // 200,000 units at the clearing price, in lamports.
+        let at_clearing = (clearing * 200_000).div_ceil(1_000_000);
+        let bundle = |id: u64, price: Option<u64>, tip: u64| Entry {
+            bundle: Some(format!("b{id}")),
+            route: RouteKind::Jito,
+            ..entry(
+                id,
+                "bot",
+                id,
+                signed(
+                    &Keypair::new(),
+                    &[to],
+                    Some(200_000),
+                    price,
+                    Some(tip),
+                    &[id as u8],
+                    h,
+                ),
+                0,
+            )
+        };
+        let lands = |e: &Entry| build(&slot(&g, s, &tip), &[e]).picks == [e.id];
+        // The least tip, and no priority fee: it waits out the floor.
+        assert!(!lands(&bundle(0, None, jito::MIN_TIP)));
+        // A tip worth the clearing price lands it, as does the least tip
+        // with a priority fee at the clearing price.
+        assert!(lands(&bundle(1, None, at_clearing)));
+        assert!(lands(&bundle(2, Some(clearing), jito::MIN_TIP)));
+        assert!(!lands(&bundle(3, Some(clearing / 2), jito::MIN_TIP)));
+        // A transaction at half the price doesn't land either.
+        let plain = entry(
+            4,
+            "bot",
+            4,
+            signed(
+                &Keypair::new(),
+                &[to],
+                Some(200_000),
+                Some(clearing / 2),
+                None,
+                b"p",
+                h,
+            ),
+            0,
+        );
+        assert!(!lands(&plain));
+    }
+
+    #[test]
+    fn a_transaction_in_a_bundle_and_alone_is_taken_once() {
+        let g = ghost(false);
+        let tip = |_: &Pubkey| 0;
+        let quiet = (950..1_000).find(|s| g.block(*s).price == 0).unwrap();
+        let h = Hash::new_unique();
+        let x = signed(
+            &Keypair::new(),
+            &[Pubkey::new_unique()],
+            Some(10_000),
+            Some(10),
+            None,
+            b"x",
+            h,
+        );
+        let t = signed(
+            &Keypair::new(),
+            &[Pubkey::new_unique()],
+            Some(10_000),
+            None,
+            Some(5_000),
+            b"t",
+            h,
+        );
+        let alone = entry(0, "bot", 0, x.clone(), 0);
+        let mut bundled = Entry {
+            bundle: Some("b".into()),
+            route: RouteKind::Jito,
+            ..entry(1, "bot", 1, t, 0)
+        };
+        bundled.txs.push(PooledTx::parse(x, &|_| None).unwrap());
+        assert_eq!(
+            build(&slot(&g, quiet, &tip), &[&alone, &bundled]).picks,
+            [1]
+        );
     }
 
     #[test]

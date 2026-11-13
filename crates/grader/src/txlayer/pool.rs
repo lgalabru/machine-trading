@@ -10,6 +10,8 @@
 //! sequence number in that step, never a wall time; its first slot adds
 //! the route's latency, a seeded draw.
 
+use std::collections::BTreeSet;
+
 use solana_pubkey::Pubkey;
 use solana_transaction::{Hash, versioned::VersionedTransaction};
 
@@ -245,6 +247,29 @@ impl Entry {
         self.txs.iter().flat_map(|t| t.writable.iter())
     }
 
+    /// What it bids for block space per requested compute unit, in
+    /// micro-lamports: a transaction's priority fee; a bundle's tip and its
+    /// transactions' priority fees, over all their requested units. The
+    /// leader sells the same block space either way, so either has to clear
+    /// what landing costs in the slot.
+    pub fn bid(&self) -> u64 {
+        if !self.is_bundle() {
+            return self.txs[0].cu_price;
+        }
+        let priority: u128 = self
+            .txs
+            .iter()
+            .map(|t| t.cu_price as u128 * t.cu_limit as u128 / 1_000_000)
+            .sum();
+        let bid = (self.tip() as u128 + priority) * 1_000_000 / self.cu().max(1) as u128;
+        bid.min(u64::MAX as u128) as u64
+    }
+
+    /// Whether it holds a transaction with one of `signatures`.
+    pub fn holds_any(&self, signatures: &BTreeSet<String>) -> bool {
+        self.txs.iter().any(|t| signatures.contains(&t.signature))
+    }
+
     pub fn is_pending(&self) -> bool {
         matches!(self.state, EntryState::Pending | EntryState::Lost)
     }
@@ -265,12 +290,27 @@ impl Pool {
             .count()
     }
 
-    /// The entry holding a transaction with `signature`, if any.
+    /// The entry holding a transaction with `signature`, if any: the one
+    /// it landed in, if it did.
     pub fn find(&self, signature: &str) -> Option<&Entry> {
-        self.entries.iter().find(|e| {
+        let holds = |e: &&Entry| {
             e.txs.iter().any(|t| t.signature == signature)
                 || e.resigned_from.iter().any(|s| s == signature)
-        })
+        };
+        self.entries
+            .iter()
+            .filter(holds)
+            .find(|e| matches!(e.state, EntryState::Landed { .. }))
+            .or_else(|| self.entries.iter().find(holds))
+    }
+
+    /// The signatures of every transaction that has landed.
+    pub fn landed(&self) -> BTreeSet<String> {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.state, EntryState::Landed { .. }))
+            .flat_map(|e| e.txs.iter().map(|t| t.signature.clone()))
+            .collect()
     }
 
     pub fn find_mut(&mut self, signature: &str) -> Option<&mut Entry> {

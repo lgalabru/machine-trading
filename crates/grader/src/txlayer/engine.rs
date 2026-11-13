@@ -66,7 +66,9 @@ pub struct Refusal {
 /// A rate-limited node's code.
 pub const TOO_MANY_REQUESTS: i64 = -32429;
 const INVALID_PARAMS: i64 = -32602;
-const BLOCKHASH_NOT_FOUND: i64 = -32002;
+/// A preflight failure: a blockhash not found, or a transaction already
+/// processed.
+const PREFLIGHT_FAILED: i64 = -32002;
 
 /// What became of a send, as a status reads it.
 #[derive(Debug, Clone, PartialEq)]
@@ -308,7 +310,7 @@ impl TxEngine {
                 .unwrap_or(false);
             if !valid {
                 return Err(refuse(
-                    BLOCKHASH_NOT_FOUND,
+                    PREFLIGHT_FAILED,
                     "Transaction simulation failed: Blockhash not found".into(),
                 ));
             }
@@ -325,6 +327,20 @@ impl TxEngine {
     pub fn plan(&self, slot: u64) -> Vec<(u64, bool, Vec<Vec<u8>>)> {
         let mut state = self.state();
         state.advance(slot);
+        // A send holding a transaction that landed in another lets it go: a
+        // signature runs, and is charged, once.
+        let landed = state.pool.landed();
+        let mut superseded = Vec::new();
+        for entry in &mut state.pool.entries {
+            if entry.is_pending() && entry.holds_any(&landed) {
+                let reason = "a transaction in it already landed".to_string();
+                superseded.push(Refused {
+                    sender: entry.sender.clone(),
+                    reason: reason.clone(),
+                });
+                entry.state = EntryState::Failed { slot, reason };
+            }
+        }
         let tips = state.ghost_tips(slot);
         let tip_of = |account: &Pubkey| tips.get(account).copied().unwrap_or(jito::MIN_TIP);
         let block = {
@@ -365,7 +381,7 @@ impl TxEngine {
             skipped,
             jito: jito_leader,
             landed: Vec::new(),
-            refused: Vec::new(),
+            refused: superseded,
         };
         for (id, reason) in &block.invalid {
             if let Some(entry) = state.pool.entries.iter_mut().find(|e| e.id == *id) {
@@ -827,8 +843,16 @@ impl State {
             }
             return Ok(answer(&key));
         }
-        if self.pool.find(&signatures[0]).is_some() {
-            return Ok(answer(&key));
+        // A transaction that already landed, alone or in a bundle, is
+        // refused as a node refuses one it has processed. One still pending
+        // in another send may go again: whichever lands first takes it.
+        if self.pool.landed().iter().any(|s| signatures.contains(s)) {
+            return Err(Refusal {
+                code: PREFLIGHT_FAILED,
+                message:
+                    "Transaction simulation failed: This transaction has already been processed"
+                        .into(),
+            });
         }
         if self.pool.pending(BOT) >= self.layer.max_pending {
             return Err(Refusal {
@@ -948,8 +972,8 @@ impl State {
             }
             // The delivery reaches the leader, or is lost on the way: more
             // often in a full block when it is priced below what clears it.
-            let tx = &entry.txs[0];
-            let below = tx.cu_price < self.ghost.price_to_land(slot, &tx.writable);
+            let writes: Vec<Pubkey> = entry.writable().copied().collect();
+            let below = entry.bid() < self.ghost.price_to_land(slot, &writes);
             let loss = if below {
                 route.loss + route.loss_congested * block_util
             } else {
