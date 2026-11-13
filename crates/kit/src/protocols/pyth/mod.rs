@@ -39,7 +39,6 @@ pub fn feed_account(shard: u16, feed_id: &[u8; 32]) -> Pubkey {
     Pubkey::find_program_address(&[&shard.to_le_bytes(), feed_id], &PUSH_ORACLE_ID).0
 }
 
-/// The Anchor discriminator of a `PriceUpdateV2` account.
 /// SPCX's feed id: `Equity.US.SPCX/USD`, SpaceX's share price, the
 /// reference price the Raydium and Meteora profiles name for SPCX. It
 /// publishes in the US regular session only.
@@ -76,6 +75,7 @@ pub async fn read_price(
         .ok_or_else(|| decode_error("the price doesn't fit a decimal"))
 }
 
+/// The Anchor discriminator of a `PriceUpdateV2` account.
 pub const PRICE_UPDATE_V2_DISCRIMINATOR: [u8; 8] = [34, 241, 35, 99, 157, 126, 244, 205];
 
 /// How much of the Wormhole guardian set signed the update.
