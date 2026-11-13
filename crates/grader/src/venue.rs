@@ -21,25 +21,32 @@
 //! | `perp` | `perp` | [`Holding::Perp`] |
 //! | `spot` | `spot` | [`Holding::Spot`] |
 //! | `lending` | `money-market` | [`Holding::MoneyMarket`] |
-//! | `amm` | `amm` (draft profile) | none yet |
+//! | `amm` | `amm` (draft profile) | [`Holding::Amm`] |
 //! | `stake-pool` | `stake-pool` (draft profile) | none yet |
 //!
 //! A market answers what it can and leaves the rest at the defaults. Its
 //! seat says which of the sheet's actions it executes ([`Seat::executes`]);
 //! a line it doesn't comes back [`SendState::NotSent`](mtx_kit::SendState).
-//! A new venue (Raydium, Meteora, Kamino) is one more [`Venue`] offering its
-//! markets: a pool's top is the price of a small trade each way, its fills
-//! come from its vaults, and its seat executes swaps, liquidity or
-//! deposits.
+//! A market whose holdings the spot path can't value values them itself
+//! ([`Market::value_usd`]), and a seat fills in what its venue adds to a
+//! step's view ([`Seat::view`]). A new venue (Kamino) is one more [`Venue`]
+//! offering its markets.
 //!
 //! - [`phoenix`]: Phoenix, its Eternal perpetuals ([`perps`]) and its v1
 //!   spot books ([`books`]).
 //! - [`openbook`]: OpenBook v2 and its spot books ([`books`]).
+//! - [`raydium`]: Raydium's CLMM pools, and [`meteora`]: Meteora's DLMM
+//!   pools, each a spot and an amm instrument ([`pools`]): a pool's top is
+//!   the price of a small trade each way, its fills come from its vaults,
+//!   and its seats execute swaps and liquidity.
 
 pub mod books;
+pub mod meteora;
 pub mod openbook;
 pub mod perps;
 pub mod phoenix;
+pub mod pools;
+pub mod raydium;
 
 use std::collections::BTreeMap;
 
@@ -51,7 +58,7 @@ use mtx_core::{
 };
 pub use mtx_kit::MarketKind;
 use mtx_kit::{
-    Action, Planned, Sent, Side, VenueInfo,
+    Action, Planned, Sent, Side, VenueInfo, VenueView,
     chain::ChainClient,
     protocols::{USDC_MINT, pyth, spot::MarketFill},
 };
@@ -76,12 +83,14 @@ pub trait Venue: Send + Sync {
     async fn market(&self, instrument: &InstrumentRef) -> Result<Box<dyn Market>>;
 }
 
-/// The venue `name` names, for spot sessions: its books read through
-/// `rpc_url`.
+/// The venue `name` names, for spot sessions: its books or pools read
+/// through `rpc_url`.
 pub fn spot_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
     match name {
         "phoenix" => Ok(Box::new(phoenix::Phoenix::new(rpc_url))),
         "openbook" => Ok(Box::new(openbook::OpenBook::new(rpc_url))),
+        "raydium" => Ok(Box::new(raydium::Raydium::new(rpc_url))),
+        "meteora" => Ok(Box::new(meteora::Meteora::new(rpc_url))),
         other => Err(Error::Transaction {
             label: "a spot venue".into(),
             reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
@@ -153,9 +162,26 @@ pub trait Market: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// What `holdings` are worth in USD, if they are this market's to
+    /// value: a pool position, which the spot path can't. `None` hands them
+    /// to the next market, and in the end to the spot path ([`value_usd`]).
+    async fn value_usd(
+        &self,
+        chain: &dyn ChainClient,
+        holdings: &[Holding],
+    ) -> Result<Option<Decimal>> {
+        let _ = (chain, holdings);
+        Ok(None)
+    }
+
     /// An account on this market, signed with `signer`, trading through
     /// `rpc_url`. It must already hold what it trades (setup funds it).
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>>;
+}
+
+/// What a seat answers for an order-book method its market doesn't have.
+fn unsupported(what: &str) -> String {
+    format!("{what}: not on this market")
 }
 
 /// One account trading on one market.
@@ -173,23 +199,43 @@ pub trait Seat: Send + Sync {
     async fn send(&self, planned: &Planned) -> Sent;
 
     /// Take up to `size` base units on `side`, at no worse than `limit`.
-    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult;
+    async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
+        let _ = (side, size, limit);
+        Err(unsupported("take"))
+    }
 
     /// Rest `size` base units on `side` at `price`.
-    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult;
+    async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {
+        let _ = (side, price, size);
+        Err(unsupported("rest"))
+    }
 
     /// Cancel every order the seat has resting.
-    async fn cancel_all(&self) -> SeatResult;
+    async fn cancel_all(&self) -> SeatResult {
+        Err(unsupported("cancel all"))
+    }
 
     /// The best bid and ask, as the seat reads them.
-    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)>;
+    async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
+        Err(unsupported("top"))
+    }
 
     /// The account's position here, in base units: a perp's, or the base
     /// asset a spot account holds.
     async fn position(&self) -> SeatResult<f64>;
 
-    /// The market's tick, in quote units.
-    fn tick(&self) -> f64;
+    /// The market's tick, in quote units: not a number for a market without
+    /// one.
+    fn tick(&self) -> f64 {
+        f64::NAN
+    }
+
+    /// Fill in what this market adds to a step's view of it, as the seat
+    /// reads it: a pool's numbers and the account's positions there.
+    async fn view(&self, view: &mut VenueView) -> SeatResult {
+        let _ = view;
+        Ok(())
+    }
 }
 
 /// An asset's reference price in USD, as the spot profile values it: USDC
@@ -208,15 +254,30 @@ pub async fn price_usd(chain: &dyn ChainClient, mint: &Pubkey) -> Result<Decimal
         })
 }
 
-/// What `holdings`, read across a session's markets, are worth in USD at
-/// the reference prices ([`price_usd`]). A spot asset counts its wallet
-/// once, however many markets report it, and what it has on each venue.
-/// Holdings that need their own valuation (a perp's, which the session
-/// meters; a money market's) are refused.
-pub async fn value_usd(chain: &dyn ChainClient, holdings: &[Holding]) -> Result<Decimal> {
+/// What `holdings`, read across a session's `markets`, are worth in USD at
+/// the reference prices ([`price_usd`]). Each holding that isn't a spot
+/// asset goes to the markets first ([`Market::value_usd`]), the first that
+/// values it counting; one none values (a perp's, which the session meters)
+/// is refused. A spot asset counts its wallet once, however many markets
+/// report it, and what it has on each venue.
+pub async fn value_usd(
+    chain: &dyn ChainClient,
+    markets: &[Box<dyn Market>],
+    holdings: &[Holding],
+) -> Result<Decimal> {
     let mut held: BTreeMap<String, (Decimal, Decimal)> = BTreeMap::new();
-    for holding in holdings {
+    let mut value = Decimal::ZERO;
+    'holding: for holding in holdings {
         let Holding::Spot(asset) = holding else {
+            for market in markets {
+                if let Some(worth) = market
+                    .value_usd(chain, std::slice::from_ref(holding))
+                    .await?
+                {
+                    value += worth;
+                    continue 'holding;
+                }
+            }
             return Err(MeterError::Unsupported(format!(
                 "valuing {holding:?} in a wallet's account"
             ))
@@ -226,7 +287,6 @@ pub async fn value_usd(chain: &dyn ChainClient, holdings: &[Holding]) -> Result<
         *wallet = asset.wallet;
         *on_venue += asset.free + asset.locked;
     }
-    let mut value = Decimal::ZERO;
     for (id, (wallet, on_venue)) in held {
         let mint: Pubkey = id.parse().map_err(|_| {
             MeterError::Unsupported(format!(
@@ -276,7 +336,22 @@ mod tests {
             openbook.market(&spot("SOL-USDC")).await.is_err(),
             "Phoenix's"
         );
-        assert!(spot_venue("raydium", "http://127.0.0.1:1").is_err());
+        assert!(spot_venue("orca", "http://127.0.0.1:1").is_err());
+        // A pool offers a spot and an amm instrument.
+        let raydium = spot_venue("raydium", "http://127.0.0.1:1").unwrap();
+        let mut offered = raydium.instruments();
+        offered.sort();
+        assert_eq!(
+            offered,
+            ["raydium:spot:SPCX-USDC", "raydium:amm:SPCX-USDC"]
+                .map(|i| i.parse::<InstrumentRef>().unwrap())
+        );
+        let meteora = spot_venue("meteora", "http://127.0.0.1:1").unwrap();
+        assert_eq!(meteora.instruments().len(), 2);
+        assert!(
+            meteora.market(&spot("SPCX-USDC")).await.is_err(),
+            "Phoenix's"
+        );
     }
 
     #[tokio::test]
@@ -294,6 +369,7 @@ mod tests {
         let chain = RpcChainClient::new("http://127.0.0.1:1");
         let value = value_usd(
             &chain,
+            &[],
             &[
                 held(Decimal::from(100), Decimal::from(5), Decimal::from(1)),
                 held(Decimal::from(100), Decimal::from(2), Decimal::from(0)),
@@ -310,6 +386,6 @@ mod tests {
             mtx_core::InstrumentId::new("phoenix:perp:SPCX"),
             VenueId::new("phoenix"),
         ));
-        assert!(value_usd(&chain, &[perp]).await.is_err());
+        assert!(value_usd(&chain, &[], &[perp]).await.is_err());
     }
 }
