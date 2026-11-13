@@ -211,8 +211,10 @@ async fn staking_mints_at_the_pool_s_rate_and_redeeming_stops_at_the_reserve() {
 
     // Redeeming more than the reserve holds fails on chain, with the
     // program's reason (SolWithdrawalTooLarge, 35), and moves nothing.
-    let stats = seat.stats().await.unwrap();
-    let capacity = stats
+    let mut view = VenueView::default();
+    seat.view(&mut view).await.unwrap();
+    let capacity = view
+        .stats
         .iter()
         .find(|(name, _)| name == "instant_capacity_sol")
         .unwrap()

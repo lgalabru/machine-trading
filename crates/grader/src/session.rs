@@ -466,7 +466,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let scenario = opts.scenario;
     let Prepared {
         world,
-        internal: _internal,
+        internal,
         rpc,
         guard,
         workdir,
@@ -553,7 +553,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     fresh: opts.keys.fresh(),
                     internal_url: internal.url().to_string(),
                     mandate: mandate.clone(),
-                    instrument: instrument.clone(),
+                    instrument: scenario.instrument(),
                     unsettled_funding: scenario.funding.is_some(),
                 }),
             )

@@ -766,13 +766,16 @@ impl WasmBot {
             reports,
             applies_tx_options: false,
         };
-        if let (Some(strategy), Some(raw)) = (strategy.as_mut(), raw) {
+        // Raw sends are a perp session's, as its scenario validates.
+        if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
+            (strategy.as_mut(), raw, &desk.reader)
+        {
             strategy.enable_raw_sends(crate::raw::RawSender::new(
                 raw,
                 trader.authority(),
-                env.exchange()?,
-                &env.symbol,
-                &env.rpc_url,
+                trader.env.exchange()?,
+                &trader.env.symbol,
+                &trader.env.rpc_url,
             ));
         }
         if let Some(strategy) = strategy.as_mut() {
@@ -1085,8 +1088,10 @@ impl WasmBot {
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
         // Raw sends go after the sheet, whatever became of it.
-        if let Some(raw) = self.strategy.as_mut().and_then(WasmStrategy::raw_sender) {
-            self.sends.extend(raw.flush(&self.trader.keypair).await);
+        if let Reader::Perp(trader) = &self.desk.reader
+            && let Some(raw) = self.strategy.as_mut().and_then(WasmStrategy::raw_sender)
+        {
+            self.sends.extend(raw.flush(&trader.keypair).await);
         }
         self.observe(trace);
         true
