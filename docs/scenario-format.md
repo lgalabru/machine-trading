@@ -29,7 +29,7 @@ docs together.
 | `market_model` | `path`, `fair_path`, and a `closed_period` with Phoenix's index through it |
 | `actors` | The `competitor` maker and the grader's `takers` |
 | `faults` | Execution faults on the bot's sends and reads |
-| `tx` | The transaction layer (a placeholder) |
+| `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end |
 | `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net` |
