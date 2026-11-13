@@ -1677,6 +1677,7 @@ mod tests {
             feeds: vec![Feed {
                 name: "f".into(),
                 source,
+                anchor: None,
                 cadence_slots: 4,
                 path: Vec::new(),
                 conf_bps: 2.0,
