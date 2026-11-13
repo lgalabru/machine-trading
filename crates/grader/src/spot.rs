@@ -705,14 +705,31 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
-    if let Some(oracles) = &scenario.oracles {
-        crate::oracles::register(
-            &rpc,
-            oracles,
-            scenario.duration_slots,
-            &crate::oracles::World::default(),
-        )?;
-    }
+    let oracle_starts = match &scenario.oracles {
+        Some(oracles) => {
+            let mut prices = std::collections::BTreeMap::new();
+            for instrument in &instruments {
+                let (bid, ask) = venues.market(&instrument.venue).top().await?;
+                prices.insert(
+                    instrument.clone(),
+                    crate::oracles::MarketQuote {
+                        mid: crate::oracles::MarketQuote::mid_of(bid, ask),
+                        ..Default::default()
+                    },
+                );
+            }
+            crate::oracles::register(
+                &rpc,
+                oracles,
+                scenario.duration_slots,
+                &crate::oracles::World {
+                    prices,
+                    ..Default::default()
+                },
+            )?
+        }
+        None => Default::default(),
+    };
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -760,6 +777,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         open_orders: Vec::new(),
         start_value_usd: start.wallet.value_usd,
         start_price_usd: start.wallet.price_usd,
+        oracle_starts,
         peak_value_usd: start.wallet.value_usd,
         max_drawdown_usd: 0.0,
         // Scan the venues at every step only when the scenario reports a
@@ -805,6 +823,7 @@ struct SpotAccount {
     start: Reading,
     start_value_usd: f64,
     start_price_usd: f64,
+    oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     peak_value_usd: f64,
     max_drawdown_usd: f64,
     tracking: bool,
@@ -1065,6 +1084,7 @@ impl Account for SpotAccount {
             participation,
             net,
             crank_refusals: done.crank_refusals,
+            oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1157,6 +1177,7 @@ mod tests {
                     exponent: -8,
                     account: None,
                 }),
+                anchor: None,
                 cadence_slots: 4,
                 path: vec![Level {
                     slot: 40,
