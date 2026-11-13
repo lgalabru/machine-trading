@@ -130,15 +130,23 @@ benchmark doesn't support"):
 | Liquidity | `initialize_position`, `initialize_position2`, `initialize_position_pda`, `initialize_bin_array`; `add_liquidity`, `add_liquidity2`, `add_liquidity_by_strategy`, `add_liquidity_by_strategy2`, `add_liquidity_by_strategy_one_side`, `add_liquidity_by_weight`, `add_liquidity_by_weight2`, `add_liquidity_one_side`, `add_liquidity_one_side_precise`, `add_liquidity_one_side_precise2`; `remove_liquidity`, `remove_liquidity2`, `remove_liquidity_by_range`, `remove_liquidity_by_range2`, `remove_all_liquidity`; `claim_fee`, `claim_fee2`, `claim_reward`, `claim_reward2`, `update_fees_and_rewards`, `update_fees_and_reward2` | Through the session's pool, where the session takes liquidity on Meteora (`amm` in its universe) |
 | Position | `close_position`, `close_position2`, `close_position_if_empty`, `increase_position_length`, `increase_position_length2`, `decrease_position_length` | Where the session takes liquidity on Meteora |
 
-A swap or a deposit through another of the program's pools is a breach,
-and so is a liquidity or position instruction where the session lists
-Meteora for swaps only. Growing or shrinking a position is allowed: the
-account counts every bin of a grown position, so it hides nothing, and an
-LP widens a position this way. Everything else is refused, notably
-`place_limit_order` and `cancel_limit_order` (limit orders in the bins,
-`function_type` 2), `rebalance_liquidity`, `go_to_a_bin`,
-`initialize_position_by_operator`, `update_position_operator`, and the
-pool's and the program's own administration.
+A swap or a deposit through another of the program's pools is a breach
+(the grader reads the pool where each instruction's layout names it, not
+anywhere among its accounts), and so is a liquidity or position
+instruction where the session lists Meteora for swaps only. Growing or
+shrinking a position is allowed: the account counts every bin of a grown
+position, so it hides nothing, and an LP widens a position this way.
+Everything else is refused, notably `place_limit_order` and
+`cancel_limit_order` (limit orders in the bins, `function_type` 2),
+`rebalance_liquidity`, `go_to_a_bin`, `initialize_position_by_operator`,
+`update_position_operator`, and the pool's and the program's own
+administration.
+
+Where the session doesn't list Meteora but its chain holds the program,
+the grader reads it all the same: anything the account runs on it is a
+breach ("used meteora, which this session doesn't trade"). A position the
+account holds in the pool counts toward its spot position and its value
+whether or not the session takes liquidity on Meteora.
 
 ## Snapshot
 

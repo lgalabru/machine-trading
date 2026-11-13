@@ -127,12 +127,20 @@ raydium OpenLimitOrder, which this benchmark doesn't support"):
 | Liquidity | `open_position`, `open_position_v2`, `open_position_with_token22_nft`, `increase_liquidity`, `increase_liquidity_v2`, `decrease_liquidity`, `decrease_liquidity_v2` | Through the session's pool, where the session takes liquidity on Raydium (`amm` in its universe) |
 | Position | `close_position` | Where the session takes liquidity on Raydium |
 
-A swap or a deposit through another of the program's pools is a breach,
-and so is a liquidity or position instruction where the session lists
-Raydium for swaps only. Everything else is refused, notably the limit
-orders (`open_limit_order`, `increase_limit_order`, `decrease_limit_order`,
-`settle_limit_order`, `close_limit_order`), the multi-pool
-`swap_router_base_in`, and the pool's and the program's own administration.
+A swap or a deposit through another of the program's pools is a breach
+(the grader reads the pool where each instruction's layout names it, not
+anywhere among its accounts), and so is a liquidity or position
+instruction where the session lists Raydium for swaps only. Everything
+else is refused, notably the limit orders (`open_limit_order`,
+`increase_limit_order`, `decrease_limit_order`, `settle_limit_order`,
+`close_limit_order`), the multi-pool `swap_router_base_in`, and the pool's
+and the program's own administration.
+
+Where the session doesn't list Raydium but its chain holds the program,
+the grader reads it all the same: anything the account runs on it is a
+breach ("used raydium, which this session doesn't trade"). A position the
+account holds in the pool counts toward its spot position and its value
+whether or not the session takes liquidity on Raydium.
 
 ## Snapshot
 

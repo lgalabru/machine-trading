@@ -165,13 +165,21 @@ which this benchmark doesn't support"):
 | Liquidity | `initialize_tick_array`, `initialize_dynamic_tick_array`, `open_position`, `open_position_with_metadata`, `open_position_with_token_extensions`, `increase_liquidity`, `increase_liquidity_v2`, `increase_liquidity_by_token_amounts_v2`, `decrease_liquidity`, `decrease_liquidity_v2`, `update_fees_and_rewards`, `collect_fees`, `collect_fees_v2`, `collect_reward`, `collect_reward_v2` | Through the session's pool, where the session takes liquidity on Orca (`amm` in its universe) |
 | Position | `close_position`, `close_position_with_token_extensions` | Where the session takes liquidity on Orca |
 
-A swap or a deposit through another of the program's pools is a breach,
-and so is a liquidity or position instruction where the session lists Orca
-for swaps only. Everything else is refused, notably position bundles
-(`initialize_position_bundle`, `open_bundled_position` and the rest),
-`lock_position`, `transfer_locked_position`, `reset_position_range`,
+A swap or a deposit through another of the program's pools is a breach
+(the grader reads the pool where each instruction's layout names it, not
+anywhere among its accounts), and so is a liquidity or position
+instruction where the session lists Orca for swaps only. Everything else
+is refused, notably position bundles (`initialize_position_bundle`,
+`open_bundled_position` and the rest), `lock_position`,
+`transfer_locked_position`, `reset_position_range`,
 `reposition_liquidity_v2`, the two-pool `two_hop_swap` and
 `two_hop_swap_v2`, and the pool's and the program's own administration.
+
+Where the session doesn't list Orca but its chain holds the program, the
+grader reads it all the same: anything the account runs on it is a breach
+("used orca, which this session doesn't trade"). A position the account
+holds in the pool counts toward its spot position and its value whether or
+not the session takes liquidity on Orca.
 
 ## Snapshot
 
