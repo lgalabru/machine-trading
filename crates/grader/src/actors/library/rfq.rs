@@ -24,6 +24,14 @@
 //! ([`Swaps`]), of the asset's spot token from the seller's wallet for USDC
 //! from the buyer's, at exactly the quoted price. No book is involved and
 //! the bot pays no fee: the client's wallet pays the transaction's.
+//!
+//! Before a swap, and after one fails, the settlement reads both wallets'
+//! token accounts. A wallet that can't settle (its account is missing, not
+//! its own, frozen, asks for a memo, or short of what it pays) makes the
+//! trade unfunded ([`SwapError::Unfunded`]): the bot's own doing, or a
+//! client's that has traded its funds away with the bot, and no fault of
+//! the session's. Any other failure is the infrastructure's, and counts
+//! against the session like any other actor's.
 
 use std::{
     collections::BTreeMap,
@@ -352,7 +360,39 @@ pub trait Settlement: Send + Sync {
         wants: Side,
         size: f64,
         price: f64,
-    ) -> Result<String, String>;
+    ) -> Result<String, SwapError>;
+}
+
+/// Why an RFQ trade didn't settle.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SwapError {
+    /// A wallet can't settle it: the bot's (`bot`), or the client's.
+    Unfunded { bot: bool, reason: String },
+    /// Anything else: the RPC, the chain, the trade itself.
+    Failed(String),
+}
+
+impl std::fmt::Display for SwapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unfunded { bot: true, reason } => write!(f, "the bot's wallet {reason}"),
+            Self::Unfunded { bot: false, reason } => write!(f, "the client's wallet {reason}"),
+            Self::Failed(error) => f.write_str(error),
+        }
+    }
+}
+
+/// The bot's RFQ desk at the start and the end of a session: its wallet's
+/// asset and USDC, and the asset's reference price. The session values the
+/// asset at that price; the USDC is in the account's metered value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub struct DeskReport {
+    pub start_base: f64,
+    pub start_usdc: f64,
+    pub start_index_usd: f64,
+    pub end_base: f64,
+    pub end_usdc: f64,
+    pub end_index_usd: f64,
 }
 
 /// A token as a swap moves it.
@@ -388,6 +428,77 @@ impl Token {
     }
 }
 
+/// One wallet's side of a swap: its account of `token`, which pays `pays`
+/// (in the token's smallest units) or receives.
+struct Leg {
+    owner: Pubkey,
+    token: Token,
+    pays: u64,
+    bot: bool,
+}
+
+/// Why `leg`'s account can't settle, if it can't: `account` is its
+/// program and data, as the chain has them.
+fn unfit(leg: &Leg, account: Option<(&Pubkey, &[u8])>) -> Option<String> {
+    let Some((program, data)) = account else {
+        return Some("has no account of the token".into());
+    };
+    if *program != leg.token.program || data.len() < TOKEN_ACCOUNT_LEN {
+        return Some("holds no token account where it should".into());
+    }
+    if data[..32] != leg.token.mint.to_bytes() || data[32..64] != leg.owner.to_bytes() {
+        return Some("doesn't own its account of the token".into());
+    }
+    if data[108] != INITIALIZED {
+        return Some("has its account of the token frozen".into());
+    }
+    if requires_memo(&data[TOKEN_ACCOUNT_LEN..]) {
+        return Some("asks for a memo on transfers in".into());
+    }
+    let held = u64::from_le_bytes(data[64..72].try_into().expect("8 bytes"));
+    (held < leg.pays).then(|| format!("holds {held} of the {} it pays", leg.pays))
+}
+
+/// Whether a Token-2022 account's extensions (after the account type)
+/// require a memo on incoming transfers: the one its owner can turn on
+/// that a plain transfer to it fails.
+fn requires_memo(extensions: &[u8]) -> bool {
+    let mut at = 1;
+    while at + 4 <= extensions.len() {
+        let kind = u16::from_le_bytes([extensions[at], extensions[at + 1]]);
+        let len = u16::from_le_bytes([extensions[at + 2], extensions[at + 3]]) as usize;
+        let value = extensions.get(at + 4..at + 4 + len).unwrap_or_default();
+        match kind {
+            0 => return false,
+            MEMO_TRANSFER => return value.first().is_some_and(|on| *on != 0),
+            _ => at += 4 + len,
+        }
+    }
+    false
+}
+
+/// What the chain says of `legs`: the first wallet that can't settle, the
+/// bot's first.
+fn standing(
+    rpc: &solana_rpc_client::rpc_client::RpcClient,
+    legs: &[Leg],
+) -> Result<Option<SwapError>, SwapError> {
+    let keys: Vec<Pubkey> = legs.iter().map(|l| l.token.account(&l.owner)).collect();
+    let accounts = rpc
+        .get_multiple_accounts(&keys)
+        .map_err(|e| SwapError::Failed(e.to_string()))?;
+    Ok(legs.iter().zip(&accounts).find_map(|(leg, account)| {
+        let account = account.as_ref().map(|a| (&a.owner, a.data.as_slice()));
+        unfit(leg, account).map(|reason| SwapError::Unfunded {
+            bot: leg.bot,
+            reason,
+        })
+    }))
+}
+
+const TOKEN_ACCOUNT_LEN: usize = 165;
+const INITIALIZED: u8 = 1;
+const MEMO_TRANSFER: u16 = 8;
 const TRANSFER_CHECKED: u8 = 12;
 const COMPUTE_BUDGET: Pubkey =
     solana_pubkey::pubkey!("ComputeBudget111111111111111111111111111111");
@@ -477,24 +588,46 @@ impl Settlement for Swaps {
         wants: Side,
         size: f64,
         price: f64,
-    ) -> Result<String, String> {
+    ) -> Result<String, SwapError> {
         let client = self
             .clients
             .iter()
             .find(|k| k.pubkey() == *client)
-            .ok_or_else(|| format!("no client {client}"))?
+            .ok_or_else(|| SwapError::Failed(format!("no client {client}")))?
             .insecure_clone();
         let bot = self.bot.insecure_clone();
         let (buyer, seller) = match wants {
             Side::Bid => (client.pubkey(), bot.pubkey()),
             Side::Ask => (bot.pubkey(), client.pubkey()),
         };
-        let instructions = self.instructions(&buyer, &seller, size, price)?;
+        let (base, usdc) = amounts(size, price, self.base.decimals, self.quote.decimals)
+            .map_err(SwapError::Failed)?;
+        let instructions = self
+            .instructions(&buyer, &seller, size, price)
+            .map_err(SwapError::Failed)?;
+        let bot_key = bot.pubkey();
+        let legs: Vec<Leg> = [bot_key, client.pubkey()]
+            .into_iter()
+            .flat_map(|owner| {
+                let pays = |token: Token, payer: Pubkey, amount: u64| Leg {
+                    owner,
+                    token,
+                    pays: if owner == payer { amount } else { 0 },
+                    bot: owner == bot_key,
+                };
+                [pays(self.base, seller, base), pays(self.quote, buyer, usdc)]
+            })
+            .collect();
         let rpc_url = self.rpc_url.clone();
         tokio::task::spawn_blocking(move || {
             let rpc =
                 mtx_kit::rpc_client_with_timeout(rpc_url, crate::session::INTERNAL_RPC_TIMEOUT);
-            let blockhash = rpc.get_latest_blockhash().map_err(|e| e.to_string())?;
+            if let Some(unfunded) = standing(&rpc, &legs)? {
+                return Err(unfunded);
+            }
+            let blockhash = rpc
+                .get_latest_blockhash()
+                .map_err(|e| SwapError::Failed(e.to_string()))?;
             let tx = Transaction::new_signed_with_payer(
                 &instructions,
                 Some(&client.pubkey()),
@@ -503,10 +636,16 @@ impl Settlement for Swaps {
             );
             rpc.send_and_confirm_transaction(&tx)
                 .map(|signature| signature.to_string())
-                .map_err(|e| e.to_string())
+                // A wallet that can't settle now, though it could a moment
+                // ago, changed in between: that, not the infrastructure,
+                // failed the swap.
+                .map_err(|e| match standing(&rpc, &legs) {
+                    Ok(Some(unfunded)) => unfunded,
+                    _ => SwapError::Failed(e.to_string()),
+                })
         })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| SwapError::Failed(e.to_string()))?
     }
 }
 
@@ -691,13 +830,23 @@ impl Clients {
         if !suits {
             return 0.0;
         }
-        let swapped = settlement
+        let swapped = match settlement
             .swap(&wallet.pubkey(), request.wants, size, price)
-            .await;
-        if let Err(error) = &swapped {
-            tracing::warn!(%error, id = request.id, "an RFQ fill didn't settle");
-            wallet.count("unsettled", 1);
-        }
+            .await
+        {
+            Ok(signature) => Ok(signature),
+            // No action: the bot's wallet, or a client's that traded its
+            // funds away with the bot, can't settle.
+            Err(error @ SwapError::Unfunded { bot, .. }) => {
+                tracing::info!(%error, id = request.id, "an RFQ fill didn't settle");
+                wallet.count(if bot { "unsettled" } else { "client_unfunded" }, 1);
+                return 0.0;
+            }
+            Err(SwapError::Failed(error)) => {
+                tracing::warn!(%error, id = request.id, "an RFQ fill didn't settle");
+                Err(error)
+            }
+        };
         if !wallet.swap(now.at, request.wants, price, size, swapped) {
             return 0.0;
         }
@@ -731,7 +880,7 @@ impl Actor for Clients {
 mod tests {
     use super::*;
     use crate::actors::library::{
-        Ledger, WalletSeat,
+        Actions, Ledger, LibraryReport, WalletSeat,
         tests::{Book, at, scale},
     };
 
@@ -756,7 +905,7 @@ mod tests {
     #[derive(Default)]
     struct Noted {
         swaps: Mutex<Vec<(Pubkey, Side, f64, f64)>>,
-        fails: bool,
+        fails: Option<SwapError>,
     }
 
     #[async_trait]
@@ -767,9 +916,9 @@ mod tests {
             wants: Side,
             size: f64,
             price: f64,
-        ) -> Result<String, String> {
-            if self.fails {
-                return Err("insufficient funds".into());
+        ) -> Result<String, SwapError> {
+            if let Some(error) = &self.fails {
+                return Err(error.clone());
             }
             self.swaps
                 .lock()
@@ -793,7 +942,7 @@ mod tests {
                 seat: Box::new(Book::new("client", 99.99, 100.00).0),
             })
             .collect();
-        let wallets = ledger.reacting("rfq-client", seats);
+        let wallets = ledger.wallets("rfq-client", seats);
         let board = RfqBoard::new("rfq:SPCX".into());
         let clients = Clients::new(
             spec,
@@ -886,10 +1035,11 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_swap_the_bot_cant_pay_for_doesnt_fill_or_count_against_the_session() {
+    /// Twenty answered requests that settle as `fails` says: the session's
+    /// report.
+    async fn twenty_answered(fails: SwapError) -> (LibraryReport, RfqBoard) {
         let noted = Arc::new(Noted {
-            fails: true,
+            fails: Some(fails),
             ..Noted::default()
         });
         let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| at(s, 100.0));
@@ -908,11 +1058,96 @@ mod tests {
                 .await;
             clients.before_blocks(&at(s, 100.0)).await;
         }
-        let report = ledger.report();
+        (ledger.report(), board)
+    }
+
+    #[tokio::test]
+    async fn a_swap_the_bot_cant_pay_for_doesnt_fill_or_count_against_the_session() {
+        let unfunded = |bot| SwapError::Unfunded {
+            bot,
+            reason: "holds 0 of the 100 it pays".into(),
+        };
+        let (report, board) = twenty_answered(unfunded(true)).await;
         assert_eq!(report.actors[0].counts["unsettled"], 20);
-        assert_eq!(report.actions.failed, 20);
+        assert_eq!(report.actions, Actions::default(), "no action tried");
         assert!(!report.degraded(), "the bot's failures are its own");
         assert!(board.take_fills().is_empty());
+        let (report, _) = twenty_answered(unfunded(false)).await;
+        assert_eq!(report.actors[0].counts["client_unfunded"], 20);
+        assert!(!report.degraded());
+    }
+
+    #[tokio::test]
+    async fn a_swap_the_infrastructure_failed_counts_against_the_session() {
+        let (report, board) = twenty_answered(SwapError::Failed("timed out".into())).await;
+        assert_eq!(report.actions.failed, 20);
+        assert!(!report.actors[0].counts.contains_key("unsettled"));
+        assert!(report.degraded(), "an RFQ client's own failures void it");
+        assert!(board.take_fills().is_empty());
+    }
+
+    /// A token account's data: `mint`, `owner`, `amount`, its state, and
+    /// Token-2022 extensions after the account type, if any.
+    fn token_account(
+        mint: &Pubkey,
+        owner: &Pubkey,
+        amount: u64,
+        state: u8,
+        extensions: &[(u16, &[u8])],
+    ) -> Vec<u8> {
+        let mut data = vec![0; TOKEN_ACCOUNT_LEN];
+        data[..32].copy_from_slice(&mint.to_bytes());
+        data[32..64].copy_from_slice(&owner.to_bytes());
+        data[64..72].copy_from_slice(&amount.to_le_bytes());
+        data[108] = state;
+        if !extensions.is_empty() {
+            data.push(2);
+            for (kind, value) in extensions {
+                data.extend_from_slice(&kind.to_le_bytes());
+                data.extend_from_slice(&(value.len() as u16).to_le_bytes());
+                data.extend_from_slice(value);
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn a_wallet_that_cant_settle_is_told_from_one_that_can() {
+        let token = Token {
+            mint: Pubkey::new_unique(),
+            program: mtx_kit::token::TOKEN_2022_PROGRAM_ID,
+            decimals: 6,
+        };
+        let owner = Pubkey::new_unique();
+        let leg = Leg {
+            owner,
+            token,
+            pays: 100,
+            bot: true,
+        };
+        let program = token.program;
+        let check = |data: &[u8]| unfit(&leg, Some((&program, data)));
+        let plain = token_account(&token.mint, &owner, 100, INITIALIZED, &[]);
+        assert_eq!(check(&plain), None);
+        // An associated account's own extension, and a memo it doesn't
+        // require, are fine.
+        let immutable = token_account(&token.mint, &owner, 100, 1, &[(7, &[]), (8, &[0])]);
+        assert_eq!(check(&immutable), None);
+        let receiving = Leg { pays: 0, ..leg };
+        let empty = token_account(&token.mint, &owner, 0, INITIALIZED, &[]);
+        assert_eq!(unfit(&receiving, Some((&program, &empty))), None);
+
+        let short = token_account(&token.mint, &owner, 99, INITIALIZED, &[]);
+        assert_eq!(check(&short).unwrap(), "holds 99 of the 100 it pays");
+        assert!(unfit(&leg, None).is_some(), "closed");
+        let other = token_account(&token.mint, &Pubkey::new_unique(), 100, 1, &[]);
+        assert!(check(&other).is_some(), "handed to another owner");
+        let frozen = token_account(&token.mint, &owner, 100, 2, &[]);
+        assert!(check(&frozen).is_some());
+        let memo = token_account(&token.mint, &owner, 100, 1, &[(7, &[]), (8, &[1])]);
+        assert!(check(&memo).is_some(), "requires a memo on transfers in");
+        let classic = mtx_kit::token::TOKEN_PROGRAM_ID;
+        assert!(unfit(&leg, Some((&classic, &plain))).is_some());
     }
 
     #[tokio::test]
@@ -1014,7 +1249,7 @@ mod tests {
                 seat: Box::new(Book::new("c", 99.0, 101.0).0),
             })
             .collect();
-        let wallets = ledger.reacting("rfq-client", seats);
+        let wallets = ledger.wallets("rfq-client", seats);
         let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> =
             Arc::new(|s| at(s, if s >= 50 { 102.0 } else { 100.0 }));
         let clients = Clients::new(

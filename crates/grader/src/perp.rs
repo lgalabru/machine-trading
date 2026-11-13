@@ -32,7 +32,9 @@ use crate::{
     Error, Result,
     actors::{
         Cast, Competitor, FlowWatch, Moment, Pricing, SendReader, SentOrder, Takers,
-        library::{RfqBoard, RfqClients, RfqSeat, Scale, Setting, Swaps, Token, WalletSeat},
+        library::{
+            DeskReport, RfqBoard, RfqClients, RfqSeat, Scale, Setting, Swaps, Token, WalletSeat,
+        },
     },
     chain,
     guard::Guard,
@@ -105,11 +107,6 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         .iter()
         .map(|allowance| allowance.instrument.id())
         .collect();
-    let start_value_usd = grader_f64(
-        patiently("the meter", async || meter.measure(&universe).await)
-            .await?
-            .value_usd,
-    );
     if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
         phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
     }
@@ -198,6 +195,13 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         None => None,
     };
+    // The account's value at the start, once setup has funded everything
+    // the bot holds.
+    let start_value_usd = grader_f64(
+        patiently("the meter", async || meter.measure(&universe).await)
+            .await?
+            .value_usd,
+    );
 
     let guard = Guard::start(surfnet.rpc_url()).await?;
     let workdir = SessionDir::create(&bot, BOT_USERS[opts.slot])?;
@@ -348,10 +352,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         positions_outside_universe: 0,
         rfqs,
         desk: swaps.map(|(_, desk)| desk),
+        desk_start: None,
     };
-    // The desk's wallet counts toward the account from the start.
-    account.start_value_usd += account.desk_usd().await?;
-    account.peak_value_usd = account.start_value_usd;
+    // The desk's asset counts toward the account from the start.
+    if let Some(start) = account.desk_holdings().await? {
+        account.start_value_usd += start.base_usd();
+        account.peak_value_usd = account.start_value_usd;
+        account.desk_start = Some(start);
+    }
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
         internal,
@@ -450,8 +458,10 @@ struct PerpAccount {
     positions_outside_universe: u32,
     /// The requests for quotes open to the bot, if RFQ clients send any.
     rfqs: Option<RfqBoard>,
-    /// What its RFQ fills settle in, if they do.
+    /// What its RFQ fills settle in, if they do, and what the desk held at
+    /// the start.
     desk: Option<RfqDesk>,
+    desk_start: Option<DeskHoldings>,
 }
 
 /// The tokens a bot's RFQ fills move in its wallet, read at `rpc_url`.
@@ -459,6 +469,21 @@ struct RfqDesk {
     base: Token,
     quote: Token,
     rpc_url: String,
+}
+
+/// What the bot's wallet holds for its RFQ desk at one moment: the asset
+/// and USDC, and the asset's reference price.
+#[derive(Debug, Clone, Copy)]
+struct DeskHoldings {
+    base: f64,
+    usdc: f64,
+    index_usd: f64,
+}
+
+impl DeskHoldings {
+    fn base_usd(&self) -> f64 {
+        self.base * self.index_usd
+    }
 }
 
 /// What a session's RFQ clients trade, and at about what price.
@@ -568,13 +593,12 @@ impl PerpAccount {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
     }
 
-    /// What the bot's wallet holds for its RFQ desk, in USD, as the spot
-    /// profile values holdings: its USDC at 1, and the asset's spot token at
-    /// its reference price, Phoenix's index for the perp. Nothing without
-    /// a desk.
-    async fn desk_usd(&self) -> Result<f64> {
+    /// What the bot's wallet holds for its RFQ desk, and the asset's
+    /// reference price, Phoenix's index for the perp. Nothing without a
+    /// desk.
+    async fn desk_holdings(&self) -> Result<Option<DeskHoldings>> {
         let Some(desk) = &self.desk else {
-            return Ok(0.0);
+            return Ok(None);
         };
         let rpc = mtx_kit::rpc_client_with_timeout(desk.rpc_url.clone(), INTERNAL_RPC_TIMEOUT);
         let held = |token: &Token| -> Result<f64> {
@@ -589,7 +613,21 @@ impl PerpAccount {
             .await?
             .value
             .index_price_ticks;
-        Ok(usdc + base * self.phoenix.ticks_to_usd(&self.market, index))
+        Ok(Some(DeskHoldings {
+            base,
+            usdc,
+            index_usd: self.phoenix.ticks_to_usd(&self.market, index),
+        }))
+    }
+
+    /// What the desk adds to the account's value: its asset, as the spot
+    /// profile values holdings, at the reference price. Its USDC is already
+    /// in the meter's value, with the rest of the wallet's.
+    async fn desk_usd(&self) -> Result<f64> {
+        Ok(self
+            .desk_holdings()
+            .await?
+            .map_or(0.0, |held| held.base_usd()))
     }
 
     async fn mark_ticks(&self) -> Result<u64> {
@@ -728,9 +766,11 @@ impl Account for PerpAccount {
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
         let end_position = position_in(&end, &self.market_id);
+        let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
-            .value_with_desk(grader_f64(end.value_usd), end_position, done.end_slot)
-            .await?;
+            .value(grader_f64(end.value_usd), end_position, done.end_slot)
+            .await?
+            + end_desk.map_or(0.0, |held| held.base_usd());
         let positions_outside_universe = self.positions_outside_universe.max(end.outside_universe);
         let liquidatable = self.meter.liquidatable().await?;
         let instrument = scenario.instrument();
@@ -761,7 +801,20 @@ impl Account for PerpAccount {
             valuation: scenario.valuation(),
             flow: done.actors.flow,
             competitor: done.actors.competitor,
-            actors: done.actors.library,
+            actors: done.actors.library.map(|mut library| {
+                library.desk = self
+                    .desk_start
+                    .zip(end_desk)
+                    .map(|(start, end)| DeskReport {
+                        start_base: start.base,
+                        start_usdc: start.usdc,
+                        start_index_usd: start.index_usd,
+                        end_base: end.base,
+                        end_usdc: end.usdc,
+                        end_index_usd: end.index_usd,
+                    });
+                library
+            }),
             spot: None,
             faults: done.faults,
             order: None,

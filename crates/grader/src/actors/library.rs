@@ -5,9 +5,9 @@
 //! - **Informed traders** ([`Informed`]) trade ahead of the scenario's path:
 //!   they see the level a horizon ahead and take when it is far enough off.
 //! - **Chasers** ([`Chaser`]) take the way the book has moved, and
-//!   **decoys** ([`Decoy`]) trade as the informed do for a while, then
-//!   against the move: directional flow that knows nothing, which only a
-//!   reader of each wallet's record tells from the informed.
+//!   **decoys** ([`Decoy`]) trade as the informed do for a while, then on
+//!   a view they draw at random: directional flow that knows nothing, which
+//!   only a reader of each wallet's record tells from the informed.
 //! - **Spoofers** ([`Spoofer`]) rest walls near the touch and pull them as
 //!   the price comes near, always from the same wallet.
 //! - **Stop hunters** ([`StopHunter`]) push the price through an obvious
@@ -31,10 +31,11 @@
 //!
 //! Every order, cancel, take and swap counts as an action ([`Actions`]). A
 //! session where more than [`MAX_FAILED_SHARE`] of them failed didn't see the
-//! market its scenario describes, and the grade fails as infrastructure. The
-//! actors that act on the bot's own trading (front-runners, RFQ clients) are
-//! left out of that count: the bot can make their actions fail (a swap it
-//! can't pay for), and a bot must never void its own session.
+//! market its scenario describes, and the grade fails as infrastructure.
+//! Front-runners, which trade on the bot's own sends, are left out of that
+//! count: the bot can make their actions fail, and a bot must never void its
+//! own session. An RFQ fill the bot's wallet can't settle is no action at
+//! all (see [`rfq`]).
 
 mod arbitrageur;
 mod front_runner;
@@ -56,7 +57,7 @@ pub use self::{
     arbitrageur::Arbitrageur,
     front_runner::FrontRunner,
     liquidator::{Candidate, Liquidations, Liquidator},
-    rfq::{RfqBoard, RfqClients, RfqSeat, Settlement, Swaps, Token},
+    rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
     traders::{Chaser, Decoy, Informed, Noise},
@@ -374,7 +375,7 @@ impl Library {
                 .push(Box::new(arbitrageur::Arb::new(spec.clone(), scale, wallet)));
         }
         if let Some(spec) = &self.rfq_clients {
-            let clients = ledger.reacting("rfq-client", take(spec.clients));
+            let clients = ledger.wallets("rfq-client", take(spec.clients));
             let board = RfqBoard::new(format!("rfq:{}", setting.symbol));
             built.actors.push(Box::new(
                 rfq::Clients::new(
@@ -510,6 +511,9 @@ pub struct LibraryReport {
     /// Every action in order, with [`Library::record`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tape: Vec<TapeEntry>,
+    /// With RFQ clients: the bot's desk at the start and the end.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desk: Option<DeskReport>,
 }
 
 impl LibraryReport {
@@ -631,6 +635,7 @@ impl Ledger {
             actions,
             actors: state.actors.clone(),
             tape: state.tape.clone(),
+            desk: None,
         }
     }
 }

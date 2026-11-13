@@ -1,6 +1,6 @@
 //! Takers at the market's pace: noise traders at random, informed traders
 //! ahead of the scenario's path, chasers behind it, and decoys that trade
-//! ahead of it for a while and then lean against it.
+//! ahead of it for a while and then on random views of their own.
 //!
 //! All take at the start of a step, against what the bot left after its
 //! last turn, as the scenario's takers do. Each trade goes from one of the

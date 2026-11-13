@@ -82,17 +82,29 @@ accounts, pausing, permanent delegate), and funds each client with the
 token and USDC. The bot's wallet holds what it trades, outside its perp
 account: the session values it as the spot profile does
 (specs/instruments/spot.md), USDC at 1 and the token at its reference price,
-Phoenix's index for the perp. A swap the bot's wallet can't pay for fails,
-and the request counts as unsettled.
+Phoenix's index for the perp. The USDC is in the perp account's metered
+value already, which counts the wallet's USDC; the token is added to it. The
+start value is read once setup has funded the desk, so an idle desk's PnL is
+its token's move at the index, and a fill changes the value by what it
+earns against the index, no more. The report's `actors.desk` gives the
+desk's token, USDC and index at the start and the end.
+
+Before each swap, and again after one fails, the grader reads both wallets'
+token accounts. A swap the bot's wallet can't settle (an account missing or
+not its own, frozen, asking for a memo, or short of what it pays) isn't
+sent, or failed for that: the request counts as `unsettled`, the bot's own
+doing. A client that has traded its funds away with the bot declines
+(`client_unfunded`).
 
 ## When actors fail
 
 Each order, cancel, take and swap counts as an action. A session where more
 than 10% of the library's actions failed didn't see the market its scenario
 describes: the grade fails as infrastructure, as it does for the takers.
-The actors that act on the bot's own trading, front-runners and RFQ clients,
-are left out of that count (their tallies say `reacts_to_bot`): the bot can
-make their actions fail, and no bot can void its own session.
+Front-runners, which trade on the bot's own sends, are left out of that
+count (their tallies say `reacts_to_bot`): the bot can make their actions
+fail, and no bot can void its own session. An RFQ swap the bot's wallet
+can't settle is no action at all; any other failed swap counts.
 
 ## Reading them
 
@@ -107,8 +119,13 @@ wallets whose takes have been rewarded lately, learnt online. Chasers and
 decoys keep the net flow from carrying the informed signal, so only each
 wallet's record does. Walls are priced the same way: a blind follower buys
 as a big bid goes up, while the reader fades the walls of wallets it has
-seen pull most of their orders. `just actors-smoke` runs it on a session
-with every actor and requires told to make at least twice the careful
-blind. A path whose own move predicts the next as well as any reader could
-(a long trend) leaves nothing for reading to add: the check is for paths
-where the price's history isn't the answer.
+seen pull most of their orders. `just actors-smoke` runs it on six
+sessions with every actor, each with fresh wallets, and requires told to
+make at least twice the careful blind summed over the six: one session's
+careful blind swings by thousands of bps with its draws (from about −2,500
+to +3,300 bps over 52 sessions, against told's +3,100 to +6,500), and the
+sum is what the edge is judged on. A path whose own move predicts the next
+as well as any reader could (a long trend) leaves nothing for reading to
+add: the check is for paths where the price's history isn't the answer.
+The smoke then checks the RFQ desk's accounting with an idle bot and one
+that only answers requests (`bench/checks/actors/desk.py`).
