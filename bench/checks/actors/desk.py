@@ -24,18 +24,24 @@ import math
 import sys
 
 DECIMALS = 6
+SCALE = 10**DECIMALS
 # The report's values are floats summed from token units: a cent covers it.
 TOLERANCE_USD = 0.01
 
 
 def swapped(entry):
-    """The bot's change in asset and USDC units from one settled swap."""
-    scale = 10**DECIMALS
-    base = math.floor(entry["size"] * scale + 1e-6)
-    usdc = round(base * entry["price_usd"])
+    """The bot's change in asset and USDC, in their smallest units, from
+    one settled swap."""
+    base = math.floor(entry["size"] * SCALE + 1e-6)
+    # Rounded half away from zero, as the grader does.
+    usdc = math.floor(base * entry["price_usd"] + 0.5)
     # The client's side: it buys (`bid`) the asset from the bot.
     sign = -1 if entry["side"] == "bid" else 1
-    return sign * base / scale, -sign * usdc / scale
+    return sign * base, -sign * usdc
+
+
+def units(amount):
+    return round(amount * SCALE)
 
 
 def main():
@@ -48,8 +54,9 @@ def main():
     desk = library["desk"]
     clients = {w for a in library["actors"] if a["kind"] == "rfq-client" for w in a["wallets"]}
     fills = [e for e in library["tape"] if e["action"] == "swap" and e["ok"] and e["wallet"] in clients]
-    base = sum(swapped(e)[0] for e in fills)
-    usdc = sum(swapped(e)[1] for e in fills)
+    base_units = sum(swapped(e)[0] for e in fills)
+    usdc_units = sum(swapped(e)[1] for e in fills)
+    base, usdc = base_units / SCALE, usdc_units / SCALE
     index_move = desk["start_base"] * (desk["end_index_usd"] - desk["start_index_usd"])
     fills_usd = usdc + base * desk["end_index_usd"]
     expected = index_move + fills_usd
@@ -65,10 +72,12 @@ def main():
     problems = []
     if session["end_position"] != 0 or session.get("peak_position", 0) != 0:
         problems.append("the bot traded the perp")
-    if abs(desk["end_base"] - desk["start_base"] - base) > 0.5 / 10**DECIMALS:
-        problems.append(f"the asset moved {desk['end_base'] - desk['start_base']}, the swaps {base}")
-    if abs(desk["end_usdc"] - desk["start_usdc"] - usdc) > 0.5 / 10**DECIMALS:
-        problems.append(f"USDC moved {desk['end_usdc'] - desk['start_usdc']}, the swaps {usdc}")
+    moved = units(desk["end_base"]) - units(desk["start_base"])
+    if moved != base_units:
+        problems.append(f"the asset moved {moved} units, the swaps {base_units}")
+    moved = units(desk["end_usdc"]) - units(desk["start_usdc"])
+    if moved != usdc_units:
+        problems.append(f"USDC moved {moved} units, the swaps {usdc_units}")
     if abs(session["pnl_usd"] - expected) > TOLERANCE_USD:
         problems.append(f"PnL {session['pnl_usd']} isn't the desk's {expected}")
     if args.idle and fills:
