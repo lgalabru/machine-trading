@@ -1711,7 +1711,7 @@ mod tests {
         .unwrap()
     }
 
-    /// The reference as a component: set `MTX_TEST_WASM` to `bots/reference`'s
+    /// The reference as a component: set `MTX_TEST_WASM` to the flash-crash reference's
     /// component build (`just build`), and `MTX_TEST_WASM_V1` to one built
     /// on `mtx:strategy@0.1.0` to check that it plays the same.
     #[tokio::test(flavor = "multi_thread")]

@@ -21,6 +21,16 @@ snapshot = "phoenix-spcx-2026-10-29"
 # carry no baseline, and practice grades don't run it.
 practice_reference = false
 
+[metadata.mtx]
+# What the repository's lists are written from (`mtx task sync`).
+generator = "funding-carry"
+emoji = "💸"
+market = "Phoenix SPCX perp"
+summary = "earns the SPCX premium and its funding when positioning opened it, and follows when the index follows"
+skill = "earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise"
+# Lines only the answers hold, for `just leak-audit`.
+leak_needles = ["fading the premiums the crowd's positioning opened"]
+
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
 # reference on the same sessions first: four of its sessions at a time,

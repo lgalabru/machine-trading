@@ -2433,6 +2433,7 @@ mod tests {
                 bot_log: &log,
                 slot: None,
                 regime: None,
+                cranks: None,
                 trusted: false,
                 keys: keys.role("bot").session(0, &scenario.name),
                 observer: None,
