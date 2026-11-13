@@ -60,9 +60,10 @@ pub async fn run(options: Run<'_>) -> Result<String> {
     }
     let root = crate::bot::repo(options.repo)?;
     let task = crate::bot::resolve_task(&root, options.task)?;
-    let snapshot = crate::bot::task_snapshot(&root, &task)?;
     let path = scenario_path(&dir, &root, &task, options.scenario)?;
     let scenario = Scenario::load(&path).with_context(|| path.display().to_string())?;
+    let snapshot =
+        crate::bot::snapshot_for(&crate::bot::task_snapshot(&root, &task)?, &scenario.symbol)?;
     let logs = dir.join("target/mtx-run-logs");
     std::fs::create_dir_all(&logs)?;
     let observer = options.debug.then(|| {

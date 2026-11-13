@@ -115,6 +115,9 @@
   .stat { display: flex; flex-direction: column; gap: 1px; }
   .stat .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
   .stat .v { font: 600 12.5px var(--mono); }
+  .ticker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: .02em; flex: none; }
+  .ticker img { width: 18px; height: 18px; border-radius: 50%; object-fit: contain; background: #fff1; }
+  .ticker img[hidden] { display: none; }
   #market-desc { padding: 4px 16px 0; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
   #chart { position: absolute; inset: 0; }
   #chart svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
@@ -415,6 +418,7 @@
     <section class="pane" id="p-market" data-pane="market">
       <div class="head">
         <span class="title">Market</span>
+        <span class="ticker" id="ticker" hidden><img alt=""><b></b></span>
         <select class="pick" id="scenario" title="The scenario to play"></select>
         <button class="btn" id="open-scenario" title="Open the scenario's file in the editor">Edit</button>
         <div class="legend grow" id="legend"></div>
@@ -780,8 +784,14 @@ function renderNotice() {
 }
 $("notice-theirs").addEventListener("click", () => { const b = buf(); replaceText(S.open, b.theirs.text, b.theirs.version); });
 $("notice-mine").addEventListener("click", () => { const b = buf(); const v = b.theirs.version; b.theirs = null; renderNotice(); save(S.open, v); });
-link.on("file/changed", (m) => {
-  if (!S.files.includes(m.path)) refreshLists();
+link.on("file/changed", async (m) => {
+  if (!S.files.includes(m.path)) {
+    await refreshLists();
+    // A scenario the agent just wrote is the one it's talking about: show it.
+    const made = m.path.match(/^scenarios\/(.+)\.json$/)?.[1];
+    const playing = ["running", "stopped", "building", "starting"].includes(S.session);
+    if (m.by === "agent" && made && S.scenarios.includes(made) && !playing) { clearSession(); store.set("scenario2", made); await loadScenario(made); return; }
+  }
   const b = buf(m.path);
   if (b) {
     if (m.text === textOf(m.path)) { b.version = m.version; b.saved = m.text; renderTabs(); }
@@ -811,6 +821,18 @@ $("legend").innerHTML = `<span><i style="background:#fafafa"></i>mark</span><spa
 const cur = () => (S.sel !== null && S.steps[S.sel] ? S.sel : S.steps.length - 1);
 $("market-stats").innerHTML = `<span class="big" id="s-pnl">$0.00</span><span class="d" id="s-dpnl" hidden></span>` +
   ["Step", "Mark", "Position", "Drawdown", "Reference"].map((key) => `<div class="stat" id="s-${key.toLowerCase()}-box"><span class="k">${key}</span><span class="v" id="s-${key.toLowerCase()}"></span></div>`).join("");
+// The scenario's market, with Phoenix's logo for it (`studio/logos/`).
+function renderTicker(symbol) {
+  const el = $("ticker"), img = el.querySelector("img");
+  el.hidden = !symbol;
+  if (!symbol || el.dataset.symbol === symbol) return;
+  el.dataset.symbol = symbol;
+  el.title = `phoenix:perp:${symbol}`;
+  el.querySelector("b").textContent = symbol;
+  img.hidden = false;
+  img.onerror = () => { img.hidden = true; };
+  img.src = `./studio/logos/${encodeURIComponent(symbol)}.svg`;
+}
 function renderMarket() {
   const sc = S.plan?.scenario, n = S.plan?.steps ?? S.started?.steps ?? 0;
   const k = cur(), step = S.steps[k], a = step?.account, prev = S.steps[k - 1];
@@ -829,6 +851,7 @@ function renderMarket() {
   $("s-reference-box").hidden = !isNum(ref);
   $("s-reference").textContent = susd(ref); $("s-reference").className = "v " + tone(ref);
   renderCtx();
+  renderTicker(sc?.symbol);
   $("market-desc").textContent = sc?.description ?? (S.scenarios.length ? "" : "No scenarios in scenarios/ yet: ask the agent for one.");
   drawSoon();
 }

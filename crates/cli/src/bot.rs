@@ -106,6 +106,19 @@ pub(crate) fn task_snapshot(root: &Path, task: &str) -> Result<PathBuf> {
     Ok(root.join("snapshots").join(name.trim()))
 }
 
+/// The snapshot a session on `symbol` plays on: the task's when it can move
+/// that market, or else the snapshot beside it that can (one whose recipe
+/// warms `symbol` up).
+pub(crate) fn snapshot_for(task_snapshot: &Path, symbol: &str) -> Result<PathBuf> {
+    mtx_grader::snapshot::holding(task_snapshot, symbol).with_context(|| {
+        format!(
+            "no snapshot can move {symbol}: the ones beside {} move {}",
+            task_snapshot.display(),
+            mtx_grader::snapshot::held_symbols(task_snapshot).join(", ")
+        )
+    })
+}
+
 /// A task's practice scenarios, in order.
 pub(crate) fn practice_scenarios(root: &Path, task: &str) -> Result<Vec<PathBuf>> {
     let dir = root
