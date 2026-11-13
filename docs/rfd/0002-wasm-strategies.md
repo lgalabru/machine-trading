@@ -140,27 +140,36 @@ run in parallel.
 
 ### Spot sessions
 
-A spot session (`crates/grader/src/spot.rs`) runs a component the same way
-(`crates/grader/src/wasm/spot.rs`), so a spot grade passes
-`--components-only`. The grader's Phoenix v1 or OpenBook v2 trader holds
-the bot's key and sends through the bot's guard. The first resting order
-also sends the setup it needs: a Phoenix seat, or an OpenBook open orders
-account. The grader sends that setup again on later orders until it sees
-the account. Sizes round down to whole lots, and prices round away from a
-worse fill. An order no market grid can hold is refused. The same
-`mtx:strategy@0.1.0` world reads as follows:
+A spot session runs a component the same way, in the same session loop
+and through the same host as a perp session (`crates/grader/src/session.rs`,
+`crates/grader/src/wasm.rs`), so a spot grade passes `--components-only`.
+The grader trades each line of the sheet on the market the line names
+(`venue`; the scenario's first venue if it names none) with a seat on that
+venue (`crates/grader/src/venue/books.rs`): its Phoenix v1 or OpenBook v2
+trader holds the bot's key and sends through the bot's guard. The first
+resting order also sends the setup it needs: a Phoenix seat, or an
+OpenBook open orders account. The grader sends that setup again on later
+orders until it sees the account. Sizes round down to whole lots, and
+prices round away from a worse fill. An order no market grid can hold is
+refused. Market, limit, post-only and cancel-all orders are executed;
+a post-only order's expiry holds on Phoenix, and OpenBook refuses one, as
+its orders expire by the clock. Every line's send status comes back in the
+next step's `sends`. The market reads as follows:
 
 | Field | In a spot session |
 |-------|-------------------|
 | `mark`, `oracle`, `index` | the Pyth SOL/USD price the session values the account at |
-| `best-bid`, `best-ask` | the book of the venue orders go to |
+| `best-bid`, `best-ask` | the book of the scenario's first venue |
+| `venues` | each market's best bid and ask, and the SOL held as `position`; its depth and tape, keyed by market, where the scenario reports them |
 | `position.size` | SOL held, in the wallet and on every venue, as the profiles count it |
 | `position.entry-usd` | the Pyth price when the session started |
 | `pnl`, `peak-pnl`, `drawdown` | the account's value in USD since the start, as the session measures it |
 | `cap`, `max-drawdown` | the mandate's position cap, and its drawdown limit (or the account's starting value) |
+| `tape`, `depth`, `unix-timestamp`, `fills` | the step's turn data, where the scenario reports it, as a process bot gets it |
 
 `start` gets the mandate in `session.mandate`, as a process bot gets
-`MTX_MANDATE`, and in `session.venue` the markets as JSON:
+`MTX_MANDATE`, the markets in `session.venues`, and in `session.venue`
+the markets' accounts as JSON:
 
 ```json
 { "orders": "phoenix",
@@ -169,13 +178,29 @@ worse fill. An order no market grid can hold is refused. The same
                { "venue": "openbook", … } ] }
 ```
 
-The 0.1.0 intents name no venue, so a component's orders go to the
-scenario's **first** venue (`orders`) until WIT 0.2 adds the venue to
-intents. Turn data (tape, depth, clock) is not in 0.1.0's `market`. A
-component reads the other books itself through `rpc`, with the kit's
+A component can still read the books itself through `rpc`, with the kit's
 `phoenix-v1-venue` and `openbook-v2-venue` features, which build the
 venues' decoding and instructions for `wasm32-wasip2` (`bots/spot-smoke`
-does this).
+does this). A 0.1.0 component's lines name no venue, so they go to the
+first venue.
+
+The host reads the market and its account through the bot's guard on the
+bot's behalf, at a path of its own: those reads count toward none of the
+scenario's numbered faults, which fire on the bot's own calls.
+
+### Market kinds and instruments
+
+The interface's market kinds name what a market is to the strategy; the
+grader keys what it does on the instrument kinds of `specs/instruments/`,
+which hold across venues (`<venue>:<kind>:<symbol>`):
+
+| `market-kind` | Instrument kind | Profile |
+|---|---|---|
+| `perp` | `perp` | `specs/instruments/perp.md` |
+| `spot` | `spot` | `specs/instruments/spot.md` |
+| `lending` | `money-market` | `specs/instruments/money-market.md` |
+| `amm` | `amm` | `specs/instruments/amm.md` (draft, proposed) |
+| `stake-pool` | `stake-pool` | `specs/instruments/stake-pool.md` (draft, proposed) |
 
 ### The tasks
 
@@ -319,7 +344,9 @@ defend, no bot users, no keypair files.
   72-session hidden set's computing near an hour on a slower core, below
   the verifier's timeout, where the process bots' 0.5 s a step allowed
   three. The spinner runs out at step 134 of 280 and plays no more. Memory
-  is capped at 1 GiB. A `bot.wasm` that doesn't load (random bytes, in the
+  is capped at 1 GiB across all of a component's memories (Wasmtime's own
+  limit is per memory), with at most 8 memories, 32 instances and 16
+  tables, and multi-memory modules refused. A `bot.wasm` that doesn't load (random bytes, in the
   check) plays the session without trading instead of failing the grade,
   and each session's report carries its fuel and why a component stopped.
 - 2026-11-11: the checks. `bench/checks/cheater-wasm` tries, from inside

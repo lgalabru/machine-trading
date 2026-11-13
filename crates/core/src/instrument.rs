@@ -194,6 +194,12 @@ impl Instrument {
         round_to(price, self.tick_size, rounding)
     }
 
+    /// [`Instrument::round_price`], or `None` for a price no grid of this
+    /// tick can hold: one whose number of ticks overflows a `Decimal`.
+    pub fn checked_round_price(&self, price: Decimal, rounding: Rounding) -> Option<Decimal> {
+        checked_round_to(price, self.tick_size, rounding)
+    }
+
     /// `quantity` moved onto the lot grid in the given direction.
     pub fn round_quantity(&self, quantity: Decimal, rounding: Rounding) -> Decimal {
         round_to(quantity, self.lot_size, rounding)
@@ -245,14 +251,21 @@ fn grid_index(value: Decimal, step: Decimal, what: &'static str) -> Result<u64, 
 
 fn round_to(value: Decimal, step: Decimal, rounding: Rounding) -> Decimal {
     let steps = value / step;
-    let whole = match rounding {
+    whole(steps, rounding) * step
+}
+
+fn checked_round_to(value: Decimal, step: Decimal, rounding: Rounding) -> Option<Decimal> {
+    whole(value.checked_div(step)?, rounding).checked_mul(step)
+}
+
+fn whole(steps: Decimal, rounding: Rounding) -> Decimal {
+    match rounding {
         Rounding::Down => steps.floor(),
         Rounding::Up => steps.ceil(),
         Rounding::Nearest => {
             steps.round_dp_with_strategy(0, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
         }
-    };
-    whole * step
+    }
 }
 
 #[cfg(test)]
@@ -349,5 +362,22 @@ mod tests {
         let i = sol_perp();
         assert_eq!(i.name(), "SOL/USDC perpetual");
         assert_eq!(i.notional(dec!(150), dec!(2.5)), dec!(375));
+    }
+
+    #[test]
+    fn a_price_past_the_grid_is_refused_not_a_panic() {
+        let sol = sol_perp();
+        let price = dec!(150.123);
+        for rounding in [Rounding::Down, Rounding::Up, Rounding::Nearest] {
+            assert_eq!(
+                sol.checked_round_price(price, rounding),
+                Some(sol.round_price(price, rounding))
+            );
+        }
+        assert_eq!(sol.checked_round_price(Decimal::MAX, Rounding::Up), None);
+        assert_eq!(
+            sol.checked_round_price(Decimal::from_scientific("1e27").unwrap(), Rounding::Down),
+            None
+        );
     }
 }

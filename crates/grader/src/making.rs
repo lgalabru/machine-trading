@@ -13,7 +13,7 @@
 //! The competition is two layers. The snapshot's own Phoenix makers, their
 //! spline liquidity widened at setup to the scenario's half-spread, re-centre
 //! on every move and otherwise stand still. In front of them the grader runs
-//! a maker of its own (see [`crate::compete`]): it quotes at the same
+//! a maker of its own (see [`crate::actors::competitor`]): it quotes at the same
 //! half-spread and, when a bot quotes inside it, steps inside the bot after
 //! a short delay, down to a floor. Undercutting it starts a price war, so a
 //! bot keeps the flow only as long as its quotes stay competitive, and what
@@ -42,7 +42,7 @@ pub struct Making {
     pub takers: Vec<TakerOrder>,
 }
 
-/// The grader's maker (see [`crate::compete`]).
+/// The grader's maker (see [`crate::actors::competitor`]).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Competition {
@@ -461,6 +461,7 @@ impl MakingFamily {
             net: None,
             reference_pnl_usd: None,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
         };
         (scenario, informed)

@@ -33,6 +33,11 @@
 //! The bot's guard also keeps a [`CallLog`]: every method it was asked for,
 //! and each send and refusal with the turn it came in, for the session's
 //! review.
+//!
+//! The grader trades a component's sheet for it through the same guard, at
+//! [`Guard::host_url`]: the same rules and the same faults on its sends, but
+//! its reads of the market on the component's behalf don't count as the
+//! bot's, so a fault numbered by the bot's reads fires on the bot's own.
 
 use std::{
     collections::BTreeMap,
@@ -175,6 +180,9 @@ pub struct CallRecord {
 
 pub struct Guard {
     url: String,
+    /// The path the grader's host side calls at: a secret, so a process bot
+    /// on the same machine can't call it.
+    host_path: String,
     state: Arc<GuardState>,
     server: JoinHandle<()>,
 }
@@ -239,8 +247,10 @@ impl Guard {
             log: Mutex::default(),
             faults: Mutex::default(),
         });
+        let host_path = format!("/host/{}", uuid::Uuid::new_v4().simple());
         let app = Router::new()
             .route("/", post(handle))
+            .route(&host_path, post(handle_host))
             .with_state(state.clone());
         let server = tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, app).await {
@@ -249,6 +259,7 @@ impl Guard {
         });
         Ok(Self {
             url: format!("http://{local}"),
+            host_path,
             state,
             server,
         })
@@ -256,6 +267,12 @@ impl Guard {
 
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Where the grader calls on the bot's behalf: the bot's guard, whose
+    /// faults count the bot's own reads, not these (see the module docs).
+    pub fn host_url(&self) -> String {
+        format!("{}{}", self.url, self.host_path)
     }
 
     pub fn refused(&self) -> Vec<String> {
@@ -317,6 +334,16 @@ impl Drop for Guard {
 }
 
 async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoResponse {
+    handle_as(&state, body, false).await
+}
+
+/// A request the grader makes for the bot: its reads don't count toward the
+/// bot's faults.
+async fn handle_host(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoResponse {
+    handle_as(&state, body, true).await
+}
+
+async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::response::Response {
     let request: Value = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(_) => return reply(error_response(Value::Null, PARSE_ERROR, "parse error")),
@@ -336,7 +363,7 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
     }
     let refusals: Vec<Value> = calls
         .iter()
-        .filter_map(|call| refusal(&state, call).or_else(|| late(&state, call)))
+        .filter_map(|call| refusal(state, call).or_else(|| late(state, call)))
         .collect();
     if !refusals.is_empty() {
         return match request {
@@ -344,8 +371,8 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
                 calls
                     .iter()
                     .map(|call| {
-                        refusal_for(&state, call)
-                            .or_else(|| closed_for(&state, call))
+                        refusal_for(state, call)
+                            .or_else(|| closed_for(state, call))
                             .unwrap_or_else(|| {
                                 error_response(call["id"].clone(), INVALID_REQUEST, "batch refused")
                             })
@@ -356,14 +383,14 @@ async fn handle(State(state): State<Arc<GuardState>>, body: Bytes) -> impl IntoR
         };
     }
 
-    serve(&state, request).await
+    serve(state, request, host).await
 }
 
 /// Serve an accepted request: under the scenario's faults if it has any,
-/// otherwise forward it at once.
-async fn serve(state: &GuardState, request: Value) -> axum::response::Response {
+/// otherwise forward it at once. `host`: the grader's, on the bot's behalf.
+async fn serve(state: &GuardState, request: Value, host: bool) -> axum::response::Response {
     if state.faults().is_some() {
-        return faulted(state, request).await;
+        return faulted(state, request, host).await;
     }
     forward(state, request, true).await
 }
@@ -433,7 +460,9 @@ const TOO_MANY_REQUESTS: i64 = -32429;
 
 /// Serve a request under the scenario's faults: each call on its own, since a
 /// fault can hold, refuse or answer one call of a batch and not the next.
-async fn faulted(state: &GuardState, request: Value) -> axum::response::Response {
+/// The grader's own reads on the bot's behalf (`host`) count toward no fault,
+/// and none fails; its sends are the bot's.
+async fn faulted(state: &GuardState, request: Value, host: bool) -> axum::response::Response {
     let step = state.step().unwrap_or(0);
     let batch = request.is_array();
     let calls: Vec<Value> = match request {
@@ -441,7 +470,9 @@ async fn faulted(state: &GuardState, request: Value) -> axum::response::Response
         call => vec![call],
     };
     // Every read counts, so none is skipped once one fails.
-    let unavailable: Vec<bool> = {
+    let unavailable: Vec<bool> = if host {
+        Vec::new()
+    } else {
         let mut faults = state.faults();
         let faults = faults.as_mut().expect("faults are on");
         calls
@@ -987,8 +1018,12 @@ mod tests {
     }
 
     async fn call(guard: &Guard, body: Value) -> (StatusCode, Value) {
+        call_at(guard.url(), body).await
+    }
+
+    async fn call_at(url: &str, body: Value) -> (StatusCode, Value) {
         let response = reqwest::Client::new()
-            .post(guard.url())
+            .post(url)
             .json(&body)
             .send()
             .await
@@ -1155,6 +1190,59 @@ mod tests {
         assert_eq!(sends.len(), 3);
         assert_eq!(sends[2].signature.as_deref(), Some(signature.as_str()));
         assert!(sends.iter().all(|s| s.step == Some(0)));
+    }
+
+    #[tokio::test]
+    async fn the_graders_reads_for_the_bot_count_toward_none_of_its_faults() {
+        use crate::faults::{LostConfirmation, RpcUnavailable};
+        let (url, _) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.lost_confirmation = Some(LostConfirmation {
+                    landings: vec![1],
+                    hide_steps: 2,
+                });
+                f.rpc_unavailable = Some(RpcUnavailable {
+                    reads: vec![1],
+                    count: 1,
+                });
+            })),
+            100,
+            2,
+        );
+        guard.set_step(5);
+        let host = guard.host_url();
+        assert_ne!(host, guard.url());
+        // The host's send is the bot's: it lands, and its confirmation is
+        // the one the plan loses.
+        let tx = crate::faults::tests::transaction(None, 1);
+        let (_, sent) = call_at(&host, tx).await;
+        let signature = sent["result"].as_str().unwrap().to_string();
+        let statuses = |id| json!({ "jsonrpc": "2.0", "id": id, "method": "getSignatureStatuses", "params": [[signature]] });
+        for id in [1, 2, 3] {
+            let (status, hidden) = call_at(&host, statuses(id)).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "the host's read {id} isn't the bot's"
+            );
+            assert!(hidden["result"]["value"][0].is_null(), "still lost");
+        }
+        let (status, _) = call(&guard, statuses(4)).await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the bot's own first read"
+        );
+        let (status, _) = call(&guard, statuses(5)).await;
+        assert_eq!(status, StatusCode::OK);
+        let report = guard.faults_report().unwrap();
+        assert_eq!(
+            (report.sends, report.reads),
+            (1, 2),
+            "the host's reads uncounted"
+        );
     }
 
     #[tokio::test]

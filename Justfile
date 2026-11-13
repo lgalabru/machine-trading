@@ -85,10 +85,16 @@ spot-smoke:
       local banned fills
       banned=$(jq '[.. | objects | select(has("disqualified")) | .disqualified | select(. != null)] | length' "$report")
       fills=$(jq '[.. | objects | select(has("fills")) | .fills | arrays | length] | add // 0' "$report")
+      # A resting order seen at some step; the takers' orders all sent.
+      local open flow
+      open=$(jq '[.. | objects | select(has("open_orders")) | .open_orders | arrays | length] | add // 0' "$report")
+      flow=$(jq -c '[.. | objects | select(has("makers_widened_ticks"))] | [(map(.orders) | add // 0), (map(.sent) | add // 0), (map(.failed) | add // 0)]' "$report")
       case "$want" in
         clean) [ "$banned" -eq 0 ] && [ "$fills" -gt 0 ] ;;
         disqualified) [ "$banned" -gt 0 ] ;;
-      esac || { echo "$name: expected $want, got $fills fills and $banned disqualifications"; exit 1; }
+        rested) [ "$banned" -eq 0 ] && [ "$open" -gt 0 ] ;;
+        takers) [ "$banned" -eq 0 ] && jq -e '.[0] > 0 and .[1] == .[0] and .[2] == 0' <<< "$flow" > /dev/null ;;
+      esac || { echo "$name: expected $want, got $fills fills, $open open orders, takers $flow and $banned disqualifications"; exit 1; }
       echo "$name: $want ($fills fills)"
     }
     grade spot-smoke spot-smoke smoke clean --components-only
@@ -98,7 +104,31 @@ spot-smoke:
     grade spot-smoke-reduce-only spot-smoke/buyer smoke-reduce-only disqualified --components-only
     grade spot-smoke-net spot-smoke smoke-net clean --components-only
     grade spot-smoke-openbook spot-smoke smoke-openbook clean --components-only
+    grade spot-smoke-rest spot-smoke/rest smoke-rest rested --components-only
+    grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
+
+# One actor on two venues: the grader's takers send a funding-carry practice
+# session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
+# SOL-USDC book, every order from its account's own seat.
+actors-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/starter/Justfile build
+    just --justfile bots/spot-smoke/Justfile build
+    cargo build --release
+    takers() {
+      local name=$1 snapshot=$2 bot=$3 scenario=$4 report="target/logs/$1.json"
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot "snapshots/$snapshot" --bot "$bot" \
+        --logs "target/logs/$name" --report "$report" "$scenario" > /dev/null
+      local flow
+      flow=$(jq -c '[.. | objects | select(has("makers_widened_ticks"))][0] | {orders, sent, failed, volume}' "$report")
+      jq -e '.orders > 0 and .sent == .orders and .failed == 0' <<< "$flow" > /dev/null \
+        || { echo "$name: the takers didn't send every order: $flow"; exit 1; }
+      echo "$name: $flow"
+    }
+    takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
+    takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
 
 # Write the lists kept from the task folders (bench/tasks/*/task.toml), or
 # fail if they are stale: the Justfile's, the image's, the dataset's, the READMEs'.
