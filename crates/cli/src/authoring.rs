@@ -332,7 +332,12 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     );
     std::fs::write(bot_to.join("Justfile"), justfile)?;
     std::fs::create_dir_all(to.join("solution/src"))?;
-    std::fs::copy(bot_to.join("src/main.rs"), to.join("solution/src/main.rs"))?;
+    for name in strategy_sources(&bot_to) {
+        std::fs::copy(
+            bot_to.join("src").join(&name),
+            to.join("solution/src").join(&name),
+        )?;
+    }
     written.push(format!(
         "bench/tasks/{name}/reference (package {new_package}; run `cargo update -w` to lock it)"
     ));
@@ -550,6 +555,21 @@ fn todos(text: &str) -> usize {
 /// or what is wrong with them.
 fn meta_of(root: &Path, task: &str) -> Result<tasks::Task, String> {
     tasks::load_one(root, task.to_string()).map_err(|e| format!("{e:#}"))
+}
+
+/// A reference bot's strategy sources, by file name: everything in its `src`
+/// but the process entry point, as `just solution` copies them.
+fn strategy_sources(bot_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(bot_dir.join("src"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "rs"))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "main.rs")
+        .collect();
+    names.sort();
+    names
 }
 
 /// Which steps are done for a task, and what to do next.

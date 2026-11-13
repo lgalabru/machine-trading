@@ -57,6 +57,10 @@
       "dir": "bench/tasks/funding-carry-spcx/checks/exploits/funding-carry-sol-2"
     }
   ],
+  "gates": {
+    "informed": ["told"],
+    "non_reading": ["nop", "blind-long", "blind-short", "fader", "follower"]
+  },
   "rules": [
     "max(blind-long, blind-short) < reference",
     "fader < reference",
