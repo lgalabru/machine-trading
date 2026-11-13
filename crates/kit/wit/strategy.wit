@@ -650,14 +650,15 @@ world strategy {
   /// A read-only JSON-RPC call against the session's chain, answered by the
   /// grader before it returns: `params` and the result are JSON.
   import rpc: func(method: string, params: string) -> result<string, string>;
-  /// Reserved: a transaction the grader makes its fresh signers for,
-  /// simulates against the paused chain, signs with the bot's key and the
-  /// fresh signers, and sends after the step's sheet, in the order sent.
+  /// A transaction the grader makes its fresh signers for, simulates
+  /// against the paused chain, signs with the bot's key and the fresh
+  /// signers, and sends after the step's sheet, in the order sent.
   /// Returns its number within the step and the fresh signers' addresses,
   /// or why it was refused: a program outside the session's allowlist, a
   /// signer that is neither the authority nor a fresh one, a failed
   /// simulation, a breach of the mandate. Sessions that don't enable raw
-  /// sends refuse every one.
+  /// sends refuse every one; those that do list the programs in the
+  /// session variable `MTX_RAW_PROGRAMS`.
   import send: func(tx: raw-transaction) -> result<raw-receipt, string>;
 
   export start: func(session: session) -> result<_, string>;
