@@ -34,7 +34,9 @@ mtx scenario play "SPCX crashes 5% in three legs, then rebounds halfway"
 
 `mtx bench review` browses a bench's results: each model's skill and costs,
 every run, and every scenario step by step. Give it a published release
-(`bench/results/<version>`) or a batch you ran:
+(`bench/results/<version>`, fetched from
+[its dataset](https://huggingface.co/datasets/solana-foundation/machine-trading-results))
+or a batch you ran:
 
 ```sh
 mtx bench review 0.10.0
