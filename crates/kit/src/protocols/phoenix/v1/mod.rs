@@ -1,5 +1,7 @@
 //! Phoenix v1 spot markets on Solana (feature `phoenix-v1`), as the Phoenix
 //! venue profile's spot markets (`specs/venues/phoenix.md`) define them.
+//! Feature `phoenix-v1-venue` alone builds what needs no chain, for a
+//! strategy component: [`state`], [`PhoenixV1Market`] and [`ix`].
 //!
 //! Phoenix v1 is a central limit order book for spot tokens: one account
 //! per market holds its parameters, both books and every trader's seat
@@ -22,21 +24,30 @@
 //! no seat. Resting orders need one, claimed through the seat manager
 //! ([`ix::claim_seat`]). [`ix`] has every instruction the trader side uses.
 
+#[cfg(feature = "phoenix-v1")]
 mod driver;
+#[cfg(feature = "phoenix-v1")]
 mod error;
+#[cfg(feature = "phoenix-v1")]
 pub mod fills;
 pub mod ix;
 mod market;
+#[cfg(feature = "phoenix-v1")]
 mod meter;
 pub mod state;
+#[cfg(feature = "phoenix-v1")]
 mod trader;
 
+#[cfg(feature = "phoenix-v1")]
 pub use driver::PhoenixV1Driver;
+#[cfg(feature = "phoenix-v1")]
 pub use error::PhoenixV1Error;
 pub use market::{OwnedOrder, PhoenixV1Market};
+#[cfg(feature = "phoenix-v1")]
 pub use meter::{PhoenixV1Meter, balances};
 use solana_pubkey::Pubkey;
 pub use state::{BookSide, MarketHeader, MarketState, RestingOrder, TraderState};
+#[cfg(feature = "phoenix-v1")]
 pub use trader::{PhoenixV1Order, PhoenixV1Trader};
 
 pub use super::VENUE;

@@ -64,7 +64,6 @@ use crate::{
     error::io_error,
     guard::Guard,
     orders::Traded,
-    scenario::Scenario,
     session::{
         self, BOT_USERS, IxRecord, SLOTS_PER_STEP, SessionDir, SessionOptions, SessionReport,
         StepRecord, TURN_BUDGET_PER_STEP, Timeline, TurnReport, grader_f64,
@@ -134,108 +133,6 @@ impl Spot {
                 symbol: SYMBOL.into(),
             })
             .collect()
-    }
-
-    /// A spot scenario trades the profiles' SOL-USDC on known venues, under
-    /// a mandate whose universe is exactly those markets, and has no path
-    /// or market making.
-    pub fn validate(&self, scenario: &Scenario) -> std::result::Result<(), String> {
-        if scenario.symbol != SYMBOL {
-            return Err(format!(
-                "spot: the symbol is {SYMBOL}, not {}",
-                scenario.symbol
-            ));
-        }
-        if self.venues.is_empty() {
-            return Err("spot: no venues".into());
-        }
-        for (i, venue) in self.venues.iter().enumerate() {
-            if !VENUES.contains(&venue.as_str()) {
-                return Err(format!(
-                    "spot: unknown venue {venue:?}; spot sessions trade on {VENUES:?}"
-                ));
-            }
-            if self.venues[..i].contains(venue) {
-                return Err(format!("spot: {venue} is listed twice"));
-            }
-        }
-        for (name, amount) in [("base", self.base), ("quote", self.quote)] {
-            if !(amount.is_finite() && amount >= 0.0) {
-                return Err(format!("spot: {name} must be a number of at least 0"));
-            }
-        }
-        if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
-            return Err("spot: bound_usd must be a number".into());
-        }
-        let mut wanted = self.instruments();
-        let mut universe: Vec<InstrumentRef> = scenario
-            .mandate
-            .universe
-            .iter()
-            .map(|a| a.instrument.clone())
-            .collect();
-        wanted.sort();
-        universe.sort();
-        if wanted != universe {
-            return Err(format!(
-                "mandate: the universe must be exactly the spot markets, {}",
-                wanted
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if scenario.mandate.term.is_some() {
-            return Err("mandate: a scenario's mandate has no term; the session sets it".into());
-        }
-        if !scenario.path.is_empty()
-            || scenario.making.is_some()
-            || scenario.offhours.is_some()
-            || scenario.funding.is_some()
-            || !scenario.tape.is_empty()
-            || scenario.fair_path.is_some()
-        {
-            return Err(
-                "spot: a spot scenario has no path, fair path, market making, off-hours, funding or tape"
-                    .into(),
-            );
-        }
-        if scenario.duration_slots == 0 {
-            return Err("spot: the session has no slots".into());
-        }
-        if let Some(data) = &scenario.turn_data {
-            if !(data.tape || data.depth_levels > 0 || data.timestamps)
-                || (data.parties && !data.tape)
-            {
-                return Err("turn_data: asks for nothing, or for parties without a tape".into());
-            }
-            if data.depth_levels > MAX_DEPTH_LEVELS {
-                return Err(format!(
-                    "turn_data: depth_levels {} is over {MAX_DEPTH_LEVELS}",
-                    data.depth_levels
-                ));
-            }
-        }
-        if let Some(order) = &scenario.order {
-            order.validate()?;
-            if order.side == Side::Sell && self.base < order.quantity {
-                return Err(format!(
-                    "order: selling {} SOL from a wallet of {}",
-                    order.quantity, self.base
-                ));
-            }
-        }
-        if let Some(participation) = &scenario.participation {
-            participation.validate()?;
-        }
-        if let Some(net) = &scenario.net {
-            net.validate()?;
-            if scenario.order.is_some() {
-                return Err("net: a net-scored session has no order".into());
-            }
-        }
-        Ok(())
     }
 }
 
@@ -673,6 +570,32 @@ pub fn fund(
     Ok(())
 }
 
+/// Give `owner` `atoms` of `mint` in its associated token account, under
+/// whichever token program owns the mint (SPL Token or Token-2022). Setup
+/// only, by cheatcode. Refuses a mint the kit can't move
+/// ([`Mint::unsupported`](mtx_kit::token::Mint::unsupported)): a token a bot
+/// is funded with must be one it can trade. Returns the mint, as read.
+pub fn fund_mint(
+    surfnet: &Surfnet,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    atoms: u64,
+) -> Result<mtx_kit::token::Mint> {
+    let account = crate::chain::rpc_client(surfnet).get_account(mint)?;
+    let decoded =
+        mtx_kit::token::Mint::decode(&account.owner, &account.data).map_err(venue_error("mint"))?;
+    if let Some(why) = decoded.unsupported() {
+        return Err(Error::Transaction {
+            label: format!("funding {mint}"),
+            reason: format!("the kit can't trade this token: {why}"),
+        });
+    }
+    surfnet
+        .cheatcodes()
+        .fund_token(owner, mint, atoms, Some(&decoded.program))?;
+    Ok(decoded)
+}
+
 /// Trade a little on each venue as `trader` would: a Phoenix seat, a resting
 /// bid and its cancel, a small sell; an OpenBook open orders account, the
 /// same. Returns the Pyth SOL/USD price. For a snapshot recipe's `spot-exercise` action ([`crate::recipe`]):
@@ -845,54 +768,97 @@ pub(crate) async fn run_session(
     };
 
     let late_before = surfnet.coalesced_slots();
-    let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
     *bot_started = true;
-    let mut child = session::spawn_bot(
-        opts.bot_dir,
-        &env,
-        &workdir,
-        opts.bot_log,
-        theirs,
-        opts.regime,
-        None,
-    )?;
-    ours.set_nonblocking(true)
-        .map_err(io_error("turn socket"))?;
-    let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
-    let (reader, mut writer) = socket.into_split();
-    let mut reader = BufReader::new(reader).lines();
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
     let walls = session::Walls::new(opts.trusted, steps);
-    info!(
-        scenario = scenario.name,
-        start_slot, end_slot, steps, "spot bot started"
-    );
-
-    let hello = Hello {
-        protocol: turns::PROTOCOL.into(),
-        steps,
-        slots_per_step: SLOTS_PER_STEP,
-        start_slot,
-        end_slot,
-        turn_wall_ms: walls.announced().as_millis() as u64,
-        reports: scenario.turn_data.as_ref().map(|data| turns::Reports {
-            tape: data.tape,
-            depth: data.depth_levels > 0,
-            timestamps: data.timestamps,
-        }),
-        seed: Some(turns::scenario_seed(&scenario.name)),
-    };
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
     };
-    let legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
-        && matches!(
-            tokio::time::timeout(walls.hello(), session::next_message(&mut reader)).await,
-            Ok(Some(Message::Ready))
-        ));
-    if legacy {
-        info!("the bot didn't answer the hello: the world moves at the slot time");
+    // A bot is a process speaking the turn protocol, or a component the
+    // grader calls (`crate::wasm::spot`).
+    let mut process = None;
+    let mut wasm_bot = None;
+    let legacy;
+    if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
+        let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
+        wasm_bot = Some(
+            crate::wasm::spot::SpotWasmBot::start(
+                &component,
+                crate::wasm::spot::SpotStart {
+                    venues: &spot.venues,
+                    rpc_url: guard.url(),
+                    signer: bot.insecure_clone(),
+                    end_slot,
+                    mandate: &mandate,
+                    max_position: env.max_position,
+                    max_drawdown_usd: env.max_drawdown_usd,
+                    wallet: &start.wallet,
+                },
+                crate::wasm::Clock {
+                    steps,
+                    slots_per_step: SLOTS_PER_STEP,
+                    start_slot,
+                    scenario: &scenario.name,
+                    vars: opts
+                        .regime
+                        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+                        .into_iter()
+                        .collect(),
+                    reports: mtx_kit::Reports::default(),
+                },
+                Box::new(log),
+            )
+            .await?,
+        );
+        legacy = false;
+        info!(
+            scenario = scenario.name,
+            start_slot, end_slot, steps, "spot strategy component loaded"
+        );
+    } else {
+        let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+        let child = session::spawn_bot(
+            opts.bot_dir,
+            &env,
+            &workdir,
+            opts.bot_log,
+            theirs,
+            opts.regime,
+            None,
+        )?;
+        ours.set_nonblocking(true)
+            .map_err(io_error("turn socket"))?;
+        let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
+        let (reader, mut writer) = socket.into_split();
+        let mut reader = BufReader::new(reader).lines();
+        info!(
+            scenario = scenario.name,
+            start_slot, end_slot, steps, "spot bot started"
+        );
+        let hello = Hello {
+            protocol: turns::PROTOCOL.into(),
+            steps,
+            slots_per_step: SLOTS_PER_STEP,
+            start_slot,
+            end_slot,
+            turn_wall_ms: walls.announced().as_millis() as u64,
+            reports: scenario.turn_data.as_ref().map(|data| turns::Reports {
+                tape: data.tape,
+                depth: data.depth_levels > 0,
+                timestamps: data.timestamps,
+            }),
+            seed: Some(turns::scenario_seed(&scenario.name)),
+        };
+        legacy = !(session::send(&mut writer, &Message::Hello(hello)).await
+            && matches!(
+                tokio::time::timeout(walls.hello(), session::next_message(&mut reader)).await,
+                Ok(Some(Message::Ready))
+            ));
+        if legacy {
+            info!("the bot didn't answer the hello: the world moves at the slot time");
+        }
+        process = Some((child, writer, reader));
     }
     turns.legacy = legacy;
     let mut spent = Duration::ZERO;
@@ -973,6 +939,7 @@ pub(crate) async fn run_session(
             fair_usd: None,
         });
         if bot_exit.is_none()
+            && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
             info!(%status, "bot exited before the session ended");
@@ -984,6 +951,26 @@ pub(crate) async fn run_session(
 
         guard.set_step(k);
         guard.set_turn(true);
+        if let Some(bot) = wasm_bot.as_mut() {
+            let started = Instant::now();
+            let unix_timestamp = venues.unix_timestamp().await?;
+            let answered = bot
+                .turn(k, slot, k + 1 == steps, &now.wallet, unix_timestamp)
+                .await;
+            let took = started.elapsed();
+            if !answered {
+                turns.overran += 1;
+            }
+            turns.wall_ms += took.as_millis() as u64;
+            if let Some(record) = steps_seen.last_mut() {
+                record.turn_ms = Some(took.as_millis() as u64);
+                record.answered = Some(answered);
+            }
+            continue;
+        }
+        let Some((_, writer, reader)) = process.as_mut() else {
+            continue;
+        };
         if legacy {
             tokio::time::sleep(TURN_BUDGET_PER_STEP).await;
             continue;
@@ -1012,7 +999,7 @@ pub(crate) async fn run_session(
             }
         }
         let wall = walls.turn(spent);
-        let answered = session::take_turn(&mut writer, &mut reader, step, wall).await;
+        let answered = session::take_turn(writer, reader, step, wall).await;
         let took = started.elapsed();
         spent += took;
         if !answered {
@@ -1025,8 +1012,17 @@ pub(crate) async fn run_session(
         }
     }
     guard.set_turn(false);
-    let _ = session::send(&mut writer, &Message::End).await;
-    session::stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    if let Some((mut child, mut writer, _)) = process {
+        let _ = session::send(&mut writer, &Message::End).await;
+        session::stop_bot(&mut child, workdir.bot_user.map(|_| BOT_USERS[opts.slot])).await;
+    }
+    if let Some(bot) = wasm_bot.as_mut() {
+        bot.end().await;
+        let (used, max_call) = bot.fuel();
+        turns.fuel_used = Some(used);
+        turns.fuel_max_call = Some(max_call);
+        turns.stopped = bot.stopped.clone();
+    }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
     let calls = guard.call_log();
@@ -1169,6 +1165,7 @@ fn decode_instruction(ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scenario::Scenario;
 
     fn scenario() -> Scenario {
         let mut mandate = Mandate::spot(&VENUES, SYMBOL, 10.0);

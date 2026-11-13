@@ -95,5 +95,14 @@ or with Phoenix's:
   breach.
 
 No benchmark task enforces this profile yet; `just spot-smoke` runs a
-session end to end. The first task is planned to be a treasury sale of SOL
+session end to end.
+
+A spot bot may be a strategy component (`bot.wasm`), and a grade that
+takes components only (`mtx grade --components-only`, the verifier's rule)
+grades it. The component sees the Pyth price as its mark, oracle and index.
+Its position is the SOL held, its entry is the price at the start, and its
+PnL is the change in the account's value. It gets the mandate in
+`session.mandate`, and the session's markets in `session.venue`. Until the
+bot interface names a venue on each order, its orders go to the first
+venue the scenario lists. RFD 0002's "Spot sessions" covers the rest. The first task is planned to be a treasury sale of SOL
 on OpenBook and Phoenix, under a sell-only mandate with a price floor.

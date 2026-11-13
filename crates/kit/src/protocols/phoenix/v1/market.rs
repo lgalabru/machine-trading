@@ -124,19 +124,21 @@ impl PhoenixV1Market {
         })
     }
 
-    /// The market from its account data.
+    /// The market from its account data: an error if the data isn't a
+    /// market's, or its parameters don't describe an instrument.
     pub fn decode(
         address: Pubkey,
         data: &[u8],
         base_symbol: &str,
         quote_symbol: &str,
-    ) -> Result<Self, super::PhoenixV1Error> {
-        Ok(Self::new(
+    ) -> Result<Self, crate::protocols::DecodeError> {
+        Self::new(
             address,
             MarketHeader::decode(data)?,
             base_symbol,
             quote_symbol,
-        )?)
+        )
+        .map_err(|e| crate::protocols::DecodeError::new("phoenix v1 market", e.to_string()))
     }
 
     /// The instrument's reference, as a mandate names it:
