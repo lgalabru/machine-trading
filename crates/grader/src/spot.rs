@@ -289,6 +289,36 @@ pub struct Wallet {
     pub value_usd: f64,
 }
 
+impl Wallet {
+    /// Value the wallet at `price` if it is one, as the valuation feed's
+    /// anchor makes the start: the held SOL is worth what the feed will say
+    /// from the first slot, so the shift isn't PnL.
+    fn reprice(&mut self, price: Option<f64>) {
+        if let Some(price) = price {
+            self.value_usd += self.base * (price - self.price_usd);
+            self.price_usd = price;
+        }
+    }
+}
+
+/// The price a feed anchors the valuation feed (the Pyth SOL/USD the account
+/// is valued at) to, if one does.
+fn valuation_anchor(
+    oracles: &crate::oracles::Oracles,
+    starts: &std::collections::BTreeMap<String, crate::oracles::OracleStart>,
+) -> Option<f64> {
+    let valuation =
+        mtx_kit::protocols::pyth::feed_account(0, &mtx_kit::protocols::pyth::SOL_USD_FEED_ID);
+    oracles
+        .feeds
+        .iter()
+        .find(|f| {
+            matches!(&f.source, crate::oracles::Source::Pyth(p) if p.address().ok() == Some(valuation))
+        })
+        .and_then(|f| starts.get(&f.name))
+        .map(|start| start.anchored_price)
+}
+
 /// One of the bot's fills.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpotFill {
@@ -1118,7 +1148,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         bot.pubkey(),
     )
     .await?;
-    let start = venues.read().await?;
+    let mut start = venues.read().await?;
     let instruments = spot.instruments(&scenario.symbol);
     // A tape's takers, each a funded wallet trading the session's first
     // venue.
@@ -1219,13 +1249,35 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
+    let oracle_starts = match &scenario.oracles {
+        Some(oracles) => {
+            let mut prices = std::collections::BTreeMap::new();
+            for instrument in &instruments {
+                let (bid, ask) = venues.market(&instrument.venue).top().await?;
+                prices.insert(
+                    instrument.clone(),
+                    crate::oracles::MarketQuote {
+                        mid: crate::oracles::MarketQuote::mid_of(bid, ask),
+                        ..Default::default()
+                    },
+                );
+            }
+            crate::oracles::register(
+                &rpc,
+                oracles,
+                scenario.duration_slots,
+                &crate::oracles::World {
+                    prices,
+                    ..Default::default()
+                },
+            )?
+        }
+        None => Default::default(),
+    };
     if let Some(oracles) = &scenario.oracles {
-        crate::oracles::register(
-            &rpc,
-            oracles,
-            scenario.duration_slots,
-            &crate::oracles::World::default(),
-        )?;
+        start
+            .wallet
+            .reprice(valuation_anchor(oracles, &oracle_starts));
     }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
@@ -1276,6 +1328,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         pools: Vec::new(),
         start_value_usd: start.wallet.value_usd,
         start_price_usd: start.wallet.price_usd,
+        oracle_starts,
         peak_value_usd: start.wallet.value_usd,
         max_drawdown_usd: 0.0,
         // Scan the venues at every step only when the scenario reports a
@@ -1324,6 +1377,7 @@ struct SpotAccount {
     start: Reading,
     start_value_usd: f64,
     start_price_usd: f64,
+    oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     peak_value_usd: f64,
     max_drawdown_usd: f64,
     tracking: bool,
@@ -1396,6 +1450,7 @@ impl Account for SpotAccount {
             at,
             level_usd: self.start_price_usd,
             book_usd: self.start_price_usd,
+            fair_usd: None,
         }
     }
 
@@ -1655,6 +1710,7 @@ impl Account for SpotAccount {
             participation,
             net,
             crank_refusals: done.crank_refusals,
+            oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1721,6 +1777,7 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             actors: None,
+            takers_pricing: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -1743,6 +1800,52 @@ mod tests {
     }
 
     #[test]
+    fn an_anchored_valuation_feed_values_the_start_at_its_price() {
+        use crate::oracles::*;
+        let mut wallet = Wallet {
+            base: 10.0,
+            quote: 100.0,
+            price_usd: 83.0,
+            value_usd: 930.0,
+        };
+        let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+        let feed = |id: &str, name: &str| Feed {
+            name: name.into(),
+            source: Source::Pyth(PythOracle {
+                feed_id: id.into(),
+                shard: 0,
+                exponent: -8,
+                account: None,
+            }),
+            anchor: Some(Anchor::Price { usd: 77.0 }),
+            cadence_slots: 4,
+            path: vec![],
+            conf_bps: 2.0,
+            failures: vec![],
+        };
+        let oracles = Oracles {
+            seed: 1,
+            feeds: vec![feed(&"11".repeat(32), "other"), feed(sol, "sol")],
+        };
+        let starts = |name: &str| {
+            [(
+                name.to_string(),
+                OracleStart {
+                    source_price: 83.0,
+                    anchored_price: 77.0,
+                },
+            )]
+            .into()
+        };
+        // An anchored non-valuation feed moves nothing.
+        wallet.reprice(valuation_anchor(&oracles, &starts("other")));
+        assert_eq!((wallet.price_usd, wallet.value_usd), (83.0, 930.0));
+        wallet.reprice(valuation_anchor(&oracles, &starts("sol")));
+        assert_eq!(wallet.price_usd, 77.0);
+        assert!((wallet.value_usd - 870.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn a_spot_session_values_at_a_feed_that_can_move_but_not_fail() {
         use crate::oracles::*;
         let feed = |feed_id: &str, failing: bool| Oracles {
@@ -1755,6 +1858,7 @@ mod tests {
                     exponent: -8,
                     account: None,
                 }),
+                anchor: None,
                 cadence_slots: 4,
                 path: vec![Level {
                     slot: 40,

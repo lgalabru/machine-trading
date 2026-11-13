@@ -79,13 +79,30 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
     let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_mark_ticks = patiently("the book", async || {
+    let start_bbo = patiently("the book", async || {
         hawkeye.view_bbo(&scenario.symbol).await
     })
     .await?
-    .value
-    .mark_price_ticks;
+    .value;
+    let start_mark_ticks = start_bbo.mark_price_ticks;
     let start_mark_usd = phoenix.ticks_to_usd(&market, start_mark_ticks);
+    crate::oracles::check_index_gap(
+        &scenario.symbol,
+        start_mark_ticks as f64,
+        start_bbo.index_price_ticks as f64,
+    )?;
+    let start_quote = crate::oracles::MarketQuote {
+        mark: Some(start_mark_usd),
+        index: Some(phoenix.ticks_to_usd(&market, start_bbo.index_price_ticks)),
+        mid: crate::oracles::MarketQuote::mid_of(
+            start_bbo
+                .best_bid_ticks()
+                .map(|t| phoenix.ticks_to_usd(&market, t)),
+            start_bbo
+                .best_ask_ticks()
+                .map(|t| phoenix.ticks_to_usd(&market, t)),
+        ),
+    };
     // The account, as an enforcer reads it: from Phoenix, never from the bot.
     // A scenario that sets funding values it with the funding it has accrued
     // and not settled yet; others as Phoenix's collateral and unrealized PnL
@@ -139,10 +156,18 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         (Some(making), _) => Some((
             widen(making.competitor_bps)?,
             &making.takers,
-            Pricing::Level,
+            scenario.takers_pricing.unwrap_or(Pricing::Level),
         )),
-        (None, Some(off)) => Some((widen(off.half_spread_bps)?, &off.takers, Pricing::Level)),
-        (None, None) if !scenario.tape.is_empty() => Some((0, &scenario.tape, Pricing::Book)),
+        (None, Some(off)) => Some((
+            widen(off.half_spread_bps)?,
+            &off.takers,
+            scenario.takers_pricing.unwrap_or(Pricing::Level),
+        )),
+        (None, None) if !scenario.tape.is_empty() => Some((
+            0,
+            &scenario.tape,
+            scenario.takers_pricing.unwrap_or(Pricing::Book),
+        )),
         (None, None) => None,
     };
     if let Some((widened_ticks, orders, pricing)) = takers {
@@ -281,26 +306,32 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         &scenario.name,
         scenario.overrides(perp_asset_map, start_mark_ticks),
     )?;
-    if let Some(oracles) = &scenario.oracles {
-        crate::oracles::register(
+    let oracle_starts = match &scenario.oracles {
+        Some(oracles) => crate::oracles::register(
             &rpc,
             oracles,
             scenario.duration_slots,
             &crate::oracles::World {
                 phoenix: Some((perp_asset_map, start_mark_ticks)),
+                prices: [(scenario.instrument(), start_quote)].into(),
             },
-        )?;
-    }
+        )?,
+        None => Default::default(),
+    };
     let base_slot = rpc.get_slot()?;
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
     if let Some((library, seats)) = library {
         let (path, start) = (scenario.path.clone(), start_mark_usd);
+        let fair_path = scenario.fair_path.clone();
         let path = Arc::new(move |at| Moment {
             at,
             level_usd: start * (1.0 + level_at(&path, at) / 100.0),
             book_usd: start * (1.0 + book_at(&path, at) / 100.0),
+            fair_usd: fair_path
+                .as_ref()
+                .map(|fair| start * (1.0 + level_at(fair, at) / 100.0)),
         });
         // Front-runners read the bot's trading through a seat on its
         // account, and its sends as they arrive.
@@ -365,6 +396,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         start_value_usd,
         base_slot,
         observed: Observed::default(),
+        oracle_starts,
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
@@ -463,6 +495,7 @@ struct PerpAccount {
     universe: Vec<InstrumentId>,
     market_id: InstrumentId,
     start_mark_usd: f64,
+    oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
     base_slot: u64,
     /// Sampled every step: a fill persists until the bot trades out of it,
@@ -707,6 +740,7 @@ impl Account for PerpAccount {
             at,
             level_usd: self.start_mark_usd * (1.0 + level_at(path, at) / 100.0),
             book_usd: self.start_mark_usd * (1.0 + book_at(path, at) / 100.0),
+            fair_usd: self.scenario.fair_value_usd(self.start_mark_usd, at),
         }
     }
 
@@ -852,6 +886,7 @@ impl Account for PerpAccount {
             participation: None,
             net: None,
             crank_refusals: done.crank_refusals,
+            oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {

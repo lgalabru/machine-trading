@@ -25,6 +25,9 @@
 //! Phoenix override), and Scope's price carries a slot and time but no
 //! interval. Those writers drop what their account can't hold.
 
+use std::collections::BTreeMap;
+
+use mtx_core::mandate::{InstrumentRef, Kind};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use solana_pubkey::Pubkey;
@@ -62,6 +65,11 @@ pub struct Oracles {
 pub struct Feed {
     pub name: String,
     pub source: Source,
+    /// Where the feed starts, when the account's own price isn't it. Every
+    /// equity Pyth account on mainnet is stale, so a path relative to it
+    /// would keep the conflict with the market for the whole session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<Anchor>,
     /// Slots between publications.
     #[serde(default = "default_cadence")]
     pub cadence_slots: u64,
@@ -83,6 +91,66 @@ fn default_cadence() -> u64 {
 
 fn default_conf_bps() -> f64 {
     DEFAULT_CONF_BPS
+}
+
+/// The price a feed starts at, stated by the scenario.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Anchor {
+    /// `ratio` times the price of an instrument in the session, read when
+    /// the session starts. The ratio converts units when the feed and the
+    /// market quote different things (a token's UI multiplier against a
+    /// per-share perp).
+    Market {
+        instrument: InstrumentRef,
+        #[serde(default)]
+        price: MarketPrice,
+        #[serde(default = "one")]
+        ratio: f64,
+    },
+    /// A stated price, in the source's dollar unit.
+    Price { usd: f64 },
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+/// Which of an instrument's prices an anchor reads.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketPrice {
+    /// A perp's mark.
+    #[default]
+    Mark,
+    /// A perp's index.
+    Index,
+    /// The middle of the best bid and ask; a pool's, of its prices for a
+    /// small trade each way.
+    Mid,
+}
+
+/// An instrument's prices in the session when it starts, in USD.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MarketQuote {
+    pub mark: Option<f64>,
+    pub index: Option<f64>,
+    pub mid: Option<f64>,
+}
+
+impl MarketQuote {
+    /// The middle of a best bid and ask, if both exist.
+    pub fn mid_of(bid: Option<f64>, ask: Option<f64>) -> Option<f64> {
+        Some((bid? + ask?) / 2.0)
+    }
+}
+
+/// What a feed's start was without its anchor, beside what it is with it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct OracleStart {
+    /// The copied account's own price.
+    pub source_price: f64,
+    pub anchored_price: f64,
 }
 
 /// A point on a feed's path: its price `level_pct` percent from the start
@@ -195,10 +263,12 @@ impl Context {
 }
 
 /// What the world already holds that a writer reads its start from.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct World {
     /// Phoenix's perp asset map, and the scenario's market mark in ticks.
     pub phoenix: Option<(Pubkey, u64)>,
+    /// The session's markets' prices, for a feed anchored to one.
+    pub prices: BTreeMap<InstrumentRef, MarketQuote>,
 }
 
 /// A place a price is written. The price unit is the source's own: ticks
@@ -232,6 +302,31 @@ impl Oracles {
                 return Err(format!(
                     "oracles: {name}: path slots must increase and levels stay above -100%"
                 ));
+            }
+            if let Some(anchor) = &feed.anchor {
+                match anchor {
+                    Anchor::Market { ratio, .. } if !(ratio.is_finite() && *ratio > 0.0) => {
+                        return Err(format!("oracles: {name}: ratio must be above 0"));
+                    }
+                    Anchor::Price { usd } if !(usd.is_finite() && *usd > 0.0) => {
+                        return Err(format!("oracles: {name}: usd must be above 0"));
+                    }
+                    Anchor::Market { instrument, .. } => {
+                        if let Source::Phoenix(p) = &feed.source
+                            && (instrument.symbol != p.symbol || instrument.kind != Kind::Perp)
+                        {
+                            return Err(format!(
+                                "oracles: {name}: a Phoenix feed starts at its own book's price;                                  moving it off the book is a path's job"
+                            ));
+                        }
+                    }
+                    Anchor::Price { .. } if matches!(feed.source, Source::Phoenix(_)) => {
+                        return Err(format!(
+                            "oracles: {name}: a Phoenix feed starts at its own book's price"
+                        ));
+                    }
+                    Anchor::Price { .. } => {}
+                }
             }
             for failure in &feed.failures {
                 let w = &failure.window;
@@ -302,6 +397,49 @@ impl Feed {
         }
     }
 
+    /// Whether the feed starts at a price of its own. A Phoenix feed's
+    /// anchor can only be its own book, which is where it starts anyway.
+    fn anchored(&self) -> bool {
+        self.anchor.is_some() && !matches!(self.source, Source::Phoenix(_))
+    }
+
+    /// The anchored start in the source's dollar unit, with the market price
+    /// it came from if it has one.
+    fn anchored_start(&self, world: &World) -> Result<Option<f64>> {
+        let Some(anchor) = self.anchor.as_ref().filter(|_| self.anchored()) else {
+            return Ok(None);
+        };
+        match anchor {
+            Anchor::Price { usd } => Ok(Some(*usd)),
+            Anchor::Market {
+                instrument,
+                price,
+                ratio,
+            } => {
+                let quote = world.prices.get(instrument).ok_or_else(|| {
+                    oracle_error(&self.name, format!("{instrument} isn't in this session"))
+                })?;
+                let market = match price {
+                    MarketPrice::Mark => quote.mark,
+                    MarketPrice::Index => quote.index,
+                    MarketPrice::Mid => quote.mid,
+                }
+                .filter(|p| p.is_finite() && *p > 0.0)
+                .ok_or_else(|| {
+                    oracle_error(
+                        &self.name,
+                        format!("{instrument} has no {price:?} price to anchor to"),
+                    )
+                })?;
+                let start = market * ratio;
+                if (start / market / ratio - 1.0).abs() > 1e-9 {
+                    return Err(oracle_error(&self.name, "the anchor's ratio didn't hold"));
+                }
+                Ok(Some(start))
+            }
+        }
+    }
+
     /// The path's price at `slot`.
     fn price_at(&self, start_price: f64, slot: u64) -> f64 {
         let level = match self.path.iter().position(|l| l.slot > slot) {
@@ -347,7 +485,10 @@ impl Feed {
                     .filter(move |(from, to, _)| (*from..*to).contains(&slot))
                     .map(|w| w.2)
             };
-            if !active().any(|m| m == Mode::Stale) {
+            // An anchored feed's first publication carries its start into
+            // the account, so even a feed stale from slot 0 holds it.
+            let first = slot == 0 && self.anchored();
+            if first || !active().any(|m| m == Mode::Stale) {
                 let lag = active()
                     .filter_map(|m| match m {
                         Mode::Delayed { lag_slots } => Some(lag_slots),
@@ -676,6 +817,24 @@ impl OracleSource for SwitchboardOracle {
     }
 }
 
+/// How far Phoenix's own oracle may sit from the book's mark when a session
+/// starts, in basis points: the path steps from the mark, so a wider gap
+/// would be closed by its first move.
+const MAX_INDEX_GAP_BPS: f64 = 50.0;
+
+/// Refuse a snapshot whose index is far from its mark.
+pub fn check_index_gap(symbol: &str, mark: f64, index: f64) -> Result<()> {
+    let gap_bps = (index - mark).abs() / mark * 10_000.0;
+    info!(symbol, gap_bps, "index against mark");
+    if gap_bps > MAX_INDEX_GAP_BPS {
+        return Err(oracle_error(
+            symbol,
+            format!("snapshot index is {gap_bps:.1} bp from the mark"),
+        ));
+    }
+    Ok(())
+}
+
 fn oracle_error(name: &str, reason: impl Into<String>) -> Error {
     Error::Oracle {
         name: name.to_string(),
@@ -683,7 +842,8 @@ fn oracle_error(name: &str, reason: impl Into<String>) -> Error {
     }
 }
 
-/// Every feed's overrides, in feed order.
+/// Every feed's overrides, in feed order, and where each anchored feed
+/// started against its account's own price.
 pub fn overrides(
     oracles: &Oracles,
     duration_slots: u64,
@@ -691,11 +851,26 @@ pub fn overrides(
     start_unix: i64,
     rpc: &RpcClient,
     world: &World,
-) -> Result<Vec<Override>> {
+) -> Result<(Vec<Override>, BTreeMap<String, OracleStart>)> {
     let mut all = Vec::new();
+    let mut starts = BTreeMap::new();
     for (index, feed) in oracles.feeds.iter().enumerate() {
         let writer = feed.source.writer();
-        let start_price = writer.start_price(rpc, world)?;
+        let start_price = match feed.anchored_start(world)? {
+            Some(anchored_price) => {
+                let source_price = writer.start_price(rpc, world)?;
+                info!(feed = feed.name, source_price, anchored_price, "anchored");
+                starts.insert(
+                    feed.name.clone(),
+                    OracleStart {
+                        source_price,
+                        anchored_price,
+                    },
+                );
+                anchored_price
+            }
+            None => writer.start_price(rpc, world)?,
+        };
         let context = Context {
             base_slot,
             start_unix,
@@ -707,7 +882,7 @@ pub fn overrides(
         let publications = feed.plan(oracles.seed, index, duration_slots, start_price);
         all.extend(writer.lower(&context, &publications)?);
     }
-    Ok(all)
+    Ok((all, starts))
 }
 
 /// Register the scenario's oracle writes. Call it where the scenario's own
@@ -718,7 +893,7 @@ pub fn register(
     oracles: &Oracles,
     duration_slots: u64,
     world: &World,
-) -> Result<()> {
+) -> Result<BTreeMap<String, OracleStart>> {
     let base_slot = rpc.get_slot()?;
     let clock = solana_pubkey::pubkey!("SysvarC1ock11111111111111111111111111111111");
     let start_unix = rpc
@@ -728,13 +903,15 @@ pub fn register(
         .and_then(|b| b.try_into().ok())
         .map(i64::from_le_bytes)
         .ok_or_else(|| oracle_error("clock", "the clock sysvar is short"))?;
-    let overrides = overrides(oracles, duration_slots, base_slot, start_unix, rpc, world)?;
+    let (overrides, starts) =
+        overrides(oracles, duration_slots, base_slot, start_unix, rpc, world)?;
     info!(
         feeds = oracles.feeds.len(),
         writes = overrides.len(),
         "oracles"
     );
-    chain::register_scenario(rpc, "oracles", overrides)
+    chain::register_scenario(rpc, "oracles", overrides)?;
+    Ok(starts)
 }
 
 #[cfg(test)]
@@ -747,6 +924,7 @@ mod tests {
         Feed {
             name: "f".into(),
             source,
+            anchor: None,
             cadence_slots: 4,
             path: vec![Level {
                 slot: 40,
@@ -1103,6 +1281,7 @@ mod tests {
                     exponent: -8,
                     account: None,
                 }),
+                anchor: None,
                 cadence_slots: 4,
                 path: vec![Level {
                     slot: 80,
@@ -1176,6 +1355,148 @@ mod tests {
             rows.windows(2)
                 .all(|w| w[1].2.publish_time >= w[0].2.publish_time)
         );
+    }
+
+    fn perp(symbol: &str) -> InstrumentRef {
+        format!("phoenix:perp:{symbol}").parse().unwrap()
+    }
+
+    fn world_with(symbol: &str, mark: f64) -> World {
+        World {
+            prices: [(
+                perp(symbol),
+                MarketQuote {
+                    mark: Some(mark),
+                    index: Some(mark * 1.001),
+                    mid: Some(mark * 0.999),
+                },
+            )]
+            .into(),
+            ..World::default()
+        }
+    }
+
+    fn market_anchor(price: MarketPrice, ratio: f64) -> Anchor {
+        Anchor::Market {
+            instrument: perp("TSLA"),
+            price,
+            ratio,
+        }
+    }
+
+    #[test]
+    fn a_market_anchor_starts_the_feed_at_the_markets_price() {
+        let mut f = feed(pyth(), vec![]);
+        f.anchor = Some(market_anchor(MarketPrice::Mark, 1.0));
+        let start = f.anchored_start(&world_with("TSLA", 138.19)).unwrap();
+        assert_eq!(start, Some(138.19));
+        let plan = f.plan(1, 0, 40, start.unwrap());
+        assert_eq!(plan[0].slot, 0);
+        assert_eq!(plan[0].price, 138.19);
+        let writes = f.source.writer().lower(&context(), &plan).unwrap();
+        assert_eq!(
+            writes[0].values["price_message.publish_time"],
+            context().start_unix
+        );
+        assert_eq!(writes[0].values["price_message.price"], 13_819_000_000i64);
+    }
+
+    #[test]
+    fn the_anchor_reads_the_price_it_names_and_applies_its_ratio() {
+        let world = world_with("TSLA", 100.0);
+        let start = |price, ratio| {
+            let mut f = feed(pyth(), vec![]);
+            f.anchor = Some(market_anchor(price, ratio));
+            f.anchored_start(&world).unwrap().unwrap()
+        };
+        assert!((start(MarketPrice::Index, 1.0) - 100.1).abs() < 1e-9);
+        assert!((start(MarketPrice::Mid, 1.0) - 99.9).abs() < 1e-9);
+        assert!((start(MarketPrice::Mark, 1.0017) - 100.17).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_stated_price_anchors_without_a_market() {
+        let mut f = feed(pyth(), vec![]);
+        f.anchor = Some(Anchor::Price { usd: 87.5 });
+        assert_eq!(f.anchored_start(&World::default()).unwrap(), Some(87.5));
+        f.anchor = None;
+        assert_eq!(f.anchored_start(&World::default()).unwrap(), None);
+    }
+
+    #[test]
+    fn an_anchor_to_a_market_not_in_the_session_is_an_error() {
+        let mut f = feed(pyth(), vec![]);
+        f.anchor = Some(market_anchor(MarketPrice::Mark, 1.0));
+        assert!(f.anchored_start(&world_with("NVDA", 100.0)).is_err());
+    }
+
+    #[test]
+    fn a_feed_stale_from_the_start_holds_its_anchored_price() {
+        let mut f = feed(pyth(), vec![failure(Mode::Stale, 0, None)]);
+        f.anchor = Some(Anchor::Price { usd: 138.19 });
+        let plan = f.plan(1, 0, 40, 138.19);
+        assert_eq!(plan.len(), 1);
+        assert_eq!((plan[0].slot, plan[0].price), (0, 138.19));
+        // Without an anchor, such a feed never writes.
+        let plain = feed(pyth(), vec![failure(Mode::Stale, 0, None)]);
+        assert!(plain.plan(1, 0, 40, 100.0).is_empty());
+    }
+
+    #[test]
+    fn anchors_are_validated() {
+        let oracles = |f: Feed| Oracles {
+            seed: 1,
+            feeds: vec![f],
+        };
+        let mut f = feed(pyth(), vec![]);
+        f.anchor = Some(market_anchor(MarketPrice::Mark, 0.0));
+        assert!(oracles(f.clone()).validate(40).is_err());
+        f.anchor = Some(Anchor::Price { usd: f64::NAN });
+        assert!(oracles(f.clone()).validate(40).is_err());
+        f.anchor = Some(Anchor::Price { usd: 10.0 });
+        assert!(oracles(f).validate(40).is_ok());
+        let phoenix = |anchor| {
+            let mut f = feed(
+                Source::Phoenix(PhoenixOracle {
+                    symbol: "SPCX".into(),
+                }),
+                vec![],
+            );
+            f.anchor = Some(anchor);
+            oracles(f).validate(40)
+        };
+        let own = Anchor::Market {
+            instrument: perp("SPCX"),
+            price: MarketPrice::Mark,
+            ratio: 1.0,
+        };
+        assert!(phoenix(own).is_ok());
+        assert!(phoenix(market_anchor(MarketPrice::Mark, 1.0)).is_err());
+        assert!(phoenix(Anchor::Price { usd: 1.0 }).is_err());
+    }
+
+    #[test]
+    fn a_phoenix_feeds_own_anchor_changes_nothing() {
+        let mut f = feed(
+            Source::Phoenix(PhoenixOracle {
+                symbol: "SPCX".into(),
+            }),
+            vec![failure(Mode::Stale, 0, None)],
+        );
+        f.anchor = Some(Anchor::Market {
+            instrument: perp("SPCX"),
+            price: MarketPrice::Mark,
+            ratio: 1.0,
+        });
+        assert_eq!(f.anchored_start(&World::default()).unwrap(), None);
+        assert!(f.plan(1, 0, 40, 100.0).is_empty());
+    }
+
+    #[test]
+    fn the_index_may_sit_near_the_mark_only() {
+        assert!(check_index_gap("SPCX", 1_000_000.0, 1_004_000.0).is_ok());
+        assert!(check_index_gap("SPCX", 1_000_000.0, 1_006_000.0).is_err());
+        assert!(check_index_gap("SPCX", 1_000_000.0, 994_000.0).is_err());
     }
 
     fn failure_at(mode: Mode, window: Window) -> Failure {
