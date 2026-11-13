@@ -1,0 +1,24 @@
+{
+  "name": "subaccounts-smoke",
+  "description": "SPCX holds still while a bot opens an isolated subaccount and buys twice its position cap there",
+  "symbol": "SPCX",
+  "duration_slots": 60,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 5.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 11,
+      "level_pct": 0.0
+    }
+  ]
+}
