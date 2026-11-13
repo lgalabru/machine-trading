@@ -617,8 +617,21 @@ impl ScenarioV2 {
 
     /// What a scenario's oracle feeds may do beside the rest of it.
     fn validate_oracles(&self, oracles: &crate::oracles::Oracles) -> Result<(), String> {
-        use crate::oracles::Source;
+        use crate::oracles::{Anchor, Source};
+        let session: Vec<InstrumentRef> = if self.venues.spot.is_some() {
+            self.venues.spot_instruments()
+        } else {
+            vec![self.perp_instrument()]
+        };
         for feed in &oracles.feeds {
+            if let Some(Anchor::Market { instrument, .. }) = &feed.anchor
+                && !session.contains(instrument)
+            {
+                return Err(format!(
+                    "oracles: {} is anchored to {instrument}, which isn't in the session",
+                    feed.name
+                ));
+            }
             match &feed.source {
                 Source::Phoenix(phoenix) => {
                     if self.venues.spot.is_some() {
