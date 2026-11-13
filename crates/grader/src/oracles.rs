@@ -405,6 +405,12 @@ impl Feed {
         }
     }
 
+    /// The path's price at `slot`, from `start_price`: the true price,
+    /// whatever the feed's failures publish.
+    pub fn true_price(&self, start_price: f64, slot: u64) -> f64 {
+        self.price_at(start_price, slot)
+    }
+
     /// Whether the feed starts at a price of its own. A Phoenix feed's
     /// anchor can only be its own book, which is where it starts anyway.
     fn anchored(&self) -> bool {
@@ -446,12 +452,6 @@ impl Feed {
                 Ok(Some(start))
             }
         }
-    }
-
-    /// The path's price at `slot`, from `start_price`: the true price,
-    /// whatever the feed's failures publish.
-    pub fn true_price(&self, start_price: f64, slot: u64) -> f64 {
-        self.price_at(start_price, slot)
     }
 
     /// The path's price at `slot`.
@@ -960,9 +960,9 @@ fn oracle_error(name: &str, reason: impl Into<String>) -> Error {
     }
 }
 
-/// Every feed's overrides, in feed order, and where each anchored feed
-/// started against its account's own price, for a session whose clock jumps
-/// over `gaps` (see [`Feed::plan_around`]).
+/// Every feed's overrides, in feed order, for a session whose clock jumps
+/// over `gaps` (see [`Feed::plan_around`]), and where each anchored feed
+/// started against its account's own price.
 pub fn overrides(
     oracles: &Oracles,
     duration_slots: u64,

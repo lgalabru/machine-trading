@@ -789,17 +789,17 @@ impl ScenarioV2 {
             vec![self.perp_instrument()]
         };
         for feed in &oracles.feeds {
+            if self.venues.lending.is_some() && !matches!(feed.source, Source::Scope(_)) {
+                return Err(format!(
+                    "oracles: {} isn't Scope's; Kamino's reserves read Scope only",
+                    feed.name
+                ));
+            }
             if let Some(Anchor::Market { instrument, .. }) = &feed.anchor
                 && !session.contains(instrument)
             {
                 return Err(format!(
                     "oracles: {} is anchored to {instrument}, which isn't in the session",
-                    feed.name
-                ));
-            }
-            if self.venues.lending.is_some() && !matches!(feed.source, Source::Scope(_)) {
-                return Err(format!(
-                    "oracles: {} isn't Scope's; Kamino's reserves read Scope only",
                     feed.name
                 ));
             }
@@ -869,9 +869,11 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// The actor library trades a perp's book: a spot session has none.
+    /// The actor library trades a perp's book: a spot or lending session has none.
     fn library_is_for_perps(&self) -> Result<(), String> {
-        if self.venues.spot.is_some() && self.actors.library.is_some() {
+        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+            && self.actors.library.is_some()
+        {
             return Err("actors: the library runs in perp sessions".into());
         }
         Ok(())
@@ -1682,6 +1684,18 @@ mod tests {
             on_spot.validate().unwrap_err(),
             "actors: the library runs in perp sessions"
         );
+    }
+
+    #[test]
+    fn the_library_is_refused_in_a_lending_session_in_both_versions() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let library = parse(everyone).unwrap().actors.unwrap();
+        let mut s = v2(&lending("liquidation"));
+        s.validate().unwrap();
+        s.actors.library = Some(library);
+        let err = s.validate().unwrap_err();
+        assert_eq!(err, "actors: the library runs in perp sessions");
+        assert_eq!(s.into_v1().validate().unwrap_err(), err);
     }
 
     /// What main said for the same input, word for word.

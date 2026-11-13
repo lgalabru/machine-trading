@@ -819,6 +819,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                         chain: Vec::new(),
                         twap: TwapMode::Hold,
                     }),
+                    anchor: None,
                     cadence_slots: crate::oracles::DEFAULT_CADENCE_SLOTS,
                     path: Vec::new(),
                     conf_bps: 0.0,
@@ -896,7 +897,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
-    crate::oracles::register_around(
+    let oracle_starts = crate::oracles::register_around(
         &rpc,
         &oracles,
         scenario.duration_slots + warped,
@@ -933,6 +934,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         last_debt: BTreeMap::new(),
         log: log.clone(),
         borrowers: records,
+        oracle_starts,
     };
     let start = account.read(0).await?;
     account.start_value_usd = start.value_usd;
@@ -1372,6 +1374,8 @@ struct LendingAccount {
     last_debt: BTreeMap<Pubkey, f64>,
     log: ActionLog,
     borrowers: Vec<BorrowerRecord>,
+    /// Where each anchored feed started against its account's own price.
+    oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
 }
 
 impl LendingAccount {
@@ -1706,6 +1710,7 @@ impl Account for LendingAccount {
             flow: done.actors.flow,
             competitor: done.actors.competitor,
             actors: done.actors.library,
+            oracle_starts: std::mem::take(&mut self.oracle_starts),
             spot: None,
             faults: done.faults,
             order: None,
