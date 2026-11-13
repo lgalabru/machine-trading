@@ -190,15 +190,68 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
 - **`native_sol`.** Replaces the session's usual SOL grant.
 - **`fees_in_pnl`.** Values the wallet's SOL at `sol_usd`. Rent moved into
   token accounts the bot can close counts as the bot's, not as a cost.
-- **Session kinds.** Only perp sessions take the layer for now. A spot
-  venue's seats join when they can send through the pool.
+- **Session kinds.** Perp sessions, spot sessions on pools (Raydium's and
+  Meteora's: their seats send through the pool; a spot session on a book
+  is refused), and lending sessions (Kamino's seats send through the pool).
+- **`routes.<route>.leaky`.** A leaky route shares what it carries: the
+  searchers see a transaction sent that way while it is pending. No route
+  leaks by default.
+- **`sandwichers`.** The share of the Jito validators that sandwich: in
+  their slots the searchers see every transaction sent, whatever its
+  route (never a bundle). 0 by default; the leader set is otherwise the
+  same.
 - **Actors hooked on the bot's sends.** A front-runner with `on_send` (see
   `docs/actors.md`) acts on each of the bot's sends as it arrives, just
   before it would land. Under the layer a send only enters the pool, and
   lands when a block takes it, so a scenario can't have both: it is
-  refused when it loads, naming the actor. Actors that see the pool and
-  act inside the builder's blocks come with PR 17b. The library's other
-  actors run as usual.
+  refused when it loads, naming the actor. With `on_pool` instead, the
+  front-runner reads the pool (see Searchers). The library's other actors
+  run as usual: their transactions run when sent, outside the blocks.
+- **`searchers`.** The grader's actors that see the pool and act inside
+  each slot's block (see Searchers).
+
+## Searchers
+
+Before each slot's block is built, the session shows the searchers the
+pool as the builder will take it: every pending send brought up to the
+slot, the leader (Jito or not, sandwiching or not), what of the bot's they
+can see, and what landed in the last block. They see a send of the bot's
+only if it is a lone transaction (never a bundle), delivered, and sent by a
+leaky route or to a sandwiching leader. What they send then reaches the
+leader in that slot. Each pays its own fees and tips from a wallet of its
+own, and the report's `tx_layer.actors` gives each one's ledger, checked
+against its wallet (`unexplained` 0), what it counted (`counts`) and what
+its inventory gained (`values`).
+
+```json
+"searchers": {
+  "fee_bidders": [{ "venue": "raydium", "per_slot": 0.5, "size": 2.0, "premium": 2.0, "min_cu_price": 50000 }],
+  "sandwichers": [{ "venue": "raydium", "min_base": 1.0, "max_base": 50.0, "tip_share": 0.5, "min_profit_usd": 0.5, "iterations": 8 }],
+  "jit": [{ "venue": "raydium", "min_base": 5.0, "range_bps": 30.0, "deposit_base": 100.0, "deposit_quote": 20000.0, "tip_lamports": 10000 }],
+  "backrunners": [{ "venue": "raydium", "other": "meteora", "min_base": 1.0, "edge_bps": 20.0, "max_base": 50.0, "tip_share": 0.5 }],
+  "liquidators": { "shade": [0.2, 0.6], "bundles": false }
+}
+```
+
+Every pool searcher also takes `base` and `quote`, its wallet's start.
+
+| Searcher | What it does |
+| --- | --- |
+| `fee_bidders` | Swap on a pool with chance `per_slot` each slot, a coin-flip side and a lognormal size, paying `premium` times what clears the pool's block (at least `min_cu_price`): the block runs them before a send that pays less. |
+| `sandwichers` | Around a swap of the bot's they can see on their pool: a bundle of their trade the swap's way, the swap, and their trade back. The front-run is the largest the swap's own limit lets through, by bisection over `iterations` bundle simulations; of it, a half and a quarter, the one that pays most goes, if it clears `min_profit_usd` after fees and a tip of `tip_share` of the profit. A tight limit leaves no room; a `jitodontfront` swap is left alone (the bundle would be refused). |
+| `jit` | A narrow position at the price (`range_bps` either side), opened nearly empty at setup. On a swap of the bot's of `min_base` or more it can see, a bundle of its deposit (and tip) and the swap; in the next block it takes everything out, the swap's fee included. |
+| `backrunners` | After a swap of the bot's landed on either of their two pools and left them more than `edge_bps` apart: buy where cheap and sell where dear, the same base, in one bundle with a tip, sized by the best of a ladder of simulations from `max_base` down by halves. |
+| `liquidators` | A lending session's liquidators (`lending.liquidators`) send through the pool instead of landing at once: each bids a share of the liquidation bonus drawn from `shade`, as a priority fee on its units or, with `bundles`, as a bundle's tip. The first to land takes it; the rest fail and pay their fees, or as bundles pay nothing. |
+
+The bundle searchers need a Jito leader. What each decides is a pure
+function of the seed, the chain and what the bot sent: searches run a fixed
+number of simulations (`simulateBundle`, against the chain before the
+block), never against a clock, so a replay builds the same blocks.
+
+A JIT provider's deposit lands with the swap and its withdrawal in the
+next block, not in one bundle: a withdrawal is built from the position as
+the chain holds it, which only exists once the deposit landed. Its
+position stays open, so its rent isn't a cost.
 
 ## What the bot sees
 
@@ -250,6 +303,8 @@ The session report gains a `tx_layer` section:
 - **`sends`:** what became of each of the bot's sends: its step and sequence
   number, route, state, slot, fee, tip, delivery attempts, and times signed
   again.
+- **`actors`:** each actor that sent through the pool: its wallet, its
+  ledger (checked against its own wallet), its counts and its values.
 - **`fees`:** the ledger. It splits what the bot paid into base, priority,
   tips, failed transactions' fees, and route fees. It is checked against the
   wallet's SOL change, and `unexplained` is 0 when they agree.

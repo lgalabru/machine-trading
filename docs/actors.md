@@ -46,7 +46,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | `decoys` | Each wallet trades as the informed do until a slot drawn in `informed_for`, then keeps its pace on a view it draws at random and holds for `horizon_slots`: a record that looks informed, then isn't. | `wallets`, `horizon_slots`, `edge_bps`, `informed_for`, `intensity_mult`, `size_mult`, `limit_bps` |
 | `spoofers` | Rests a wall `distance_ticks` behind the touch and pulls it once the touch comes within `cancel_ticks`, or after `lifetime_slots`; may sell into the other side while it stands (`harvest_mult`). With `ahead_slots`, walls only while it sees the level that far ahead going against the wall (support painted ahead of a fall). One wallet throughout. | `side`, `distance_ticks`, `cancel_ticks`, `wall_mult`, `lifetime_slots`, `harvest_mult`, `ahead_slots`, `active` |
 | `stop_hunters` | Pushes the price through a round level on a `level_step_usd` grid once it comes within `trigger_bps`, and trades back `hold_slots` later. | `level_step_usd`, `trigger_bps`, `push_mult`, `overshoot_ticks`, `hold_slots`, `cooldown_slots`, `limit_bps`, `active` |
-| `front_runners` | Reads the bot's position step by step; once the bot has traded one way `pattern_steps` steps running, each over `min_mult` trade sizes, trades that way ahead of its next turn (`share` of its last step) and back out after `hold_steps`. With `on_send`, it reads the bot's transactions instead, and front-runs one carrying a trade the pattern's way (an immediate order, or a limit through the touch, of `min_mult` or more) that the chain would run: `share` of that order, just before it lands. At most once a turn, and never more than `max_inventory_mult` trade sizes held. | `min_mult`, `pattern_steps`, `share`, `hold_steps`, `limit_bps`, `max_inventory_mult`, `on_send` |
+| `front_runners` | Reads the bot's position step by step; once the bot has traded one way `pattern_steps` steps running, each over `min_mult` trade sizes, trades that way ahead of its next turn (`share` of its last step) and back out after `hold_steps`. With `on_send`, it reads the bot's transactions instead, and front-runs one carrying a trade the pattern's way (an immediate order, or a limit through the touch, of `min_mult` or more) that the chain would run: `share` of that order, just before it lands. With `on_pool`, under a transaction layer, it reads the bot's pending sends in the layer's pool where it can see them (a leaky route, a sandwiching leader) and sends its take to the pool paying more per compute unit, so the block runs it first. At most once a turn, and never more than `max_inventory_mult` trade sizes held. | `min_mult`, `pattern_steps`, `share`, `hold_steps`, `limit_bps`, `max_inventory_mult`, `on_send`, `on_pool` |
 | `arbitrageur` | Every `latency_slots`, sells a bid over the reference by `edge_bps` and buys an ask under it. The reference is the market's own index (a perp's), else the scenario's level. | `latency_slots`, `edge_bps`, `size_mult`, `max_inventory_mult` |
 | `rfq_clients` | Ask the bot for quotes on `rfq:<symbol>`; take a quote no worse than their value by their reach: `tolerance_bps` for one trade size, `sqrt(n)` times that for `n`. Informed clients value the asset at the level `lead_slots` ahead, by `correlation`. Fills settle as swaps against the bot's wallet, which starts with `desk_base` of the asset and `desk_usdc` more USDC. | `clients`, `informed_share`, `lead_slots`, `correlation`, `per_100_slots`, `size_mult`, `deadline_slots`, `tolerance_bps`, `two_way_share`, `desk_base`, `desk_usdc` |
 | `liquidator` | Races the bot for liquidations on a lending venue, best bonus first. Idle until a session has one. | `latency_slots`, `min_bonus_bps` |
@@ -99,8 +99,11 @@ doing. A client that has traded its funds away with the bot declines
 With `on_send`, a front-runner acts on the bot's sends as they arrive, so it
 can't run in a scenario with the transaction layer (`tx_layer`, see
 `docs/tx-layer.md`), which pools the bot's sends until a block takes them:
-such a scenario is refused when it loads. Pool-aware actors come with PR
-17b.
+such a scenario is refused when it loads. A front-runner with `on_pool`
+reads that pool instead, and needs the layer: its sends go through the
+pool and the builder like the bot's, paying their own fees. The layer's
+other searchers (fee bidders, sandwichers, JIT liquidity, backrunners,
+racing liquidators) are in `docs/tx-layer.md`.
 
 ## When actors fail
 
