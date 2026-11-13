@@ -4946,6 +4946,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-kamino-probe"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
 name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
