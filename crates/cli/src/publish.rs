@@ -68,7 +68,8 @@ pub fn results_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench/results")
 }
 
-/// Published releases, newest first.
+/// Published releases, newest first. A slim release whose full copy is in
+/// [`crate::slim::ARTIFACTS_ENV`] is read from there.
 pub fn releases(results: &Path) -> Vec<Root> {
     let mut found: Vec<Root> = std::fs::read_dir(results)
         .into_iter()
@@ -79,7 +80,8 @@ pub fn releases(results: &Path) -> Vec<Root> {
             let label = e.file_name().to_string_lossy().to_string();
             (!label.starts_with('.') && e.path().join("release.json").is_file()).then(|| Root {
                 label,
-                path: e.path().canonicalize().unwrap_or_else(|_| e.path()),
+                path: crate::slim::full_copy(&e.path())
+                    .unwrap_or_else(|| e.path().canonicalize().unwrap_or_else(|_| e.path())),
                 published: true,
             })
         })
@@ -105,7 +107,9 @@ pub fn resolve(arg: &str, results: &Path) -> Result<Root> {
     if path.exists() {
         let path = path.canonicalize().with_context(|| arg.to_string())?;
         // A release reviewed by its path is still that release.
-        if let Some(release) = releases(results).into_iter().find(|r| r.path == path) {
+        if let Some(release) = releases(results).into_iter().find(|r| {
+            r.path == path || results.join(&r.label).canonicalize().ok().as_ref() == Some(&path)
+        }) {
             return Ok(release);
         }
         let label = path
@@ -145,7 +149,15 @@ pub fn roots(first: Root, results: &Path) -> Vec<Root> {
 }
 
 /// Copy `batch` into `<results>/<version>`.
-pub fn publish(batch: &Path, version: &str, results: &Path, force: bool) -> Result<Value> {
+/// With `artifacts`, the release goes there whole (as `<artifacts>/<version>`)
+/// and `<results>/<version>` is its slim release (see [`crate::slim`]).
+pub fn publish(
+    batch: &Path,
+    version: &str,
+    results: &Path,
+    force: bool,
+    artifacts: Option<&Path>,
+) -> Result<Value> {
     if version.is_empty()
         || version.starts_with('.')
         || !version
@@ -190,12 +202,33 @@ pub fn publish(batch: &Path, version: &str, results: &Path, force: bool) -> Resu
         check_secrets(&batch, &trials, &staging)?;
         Ok(summary)
     });
-    let summary = match written {
+    let mut summary = match written {
         Ok(summary) => summary,
         Err(error) => {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(error);
         }
+    };
+    let staging = match artifacts {
+        Some(artifacts) => {
+            let full = artifacts.join(version);
+            if full.exists() {
+                if !force {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    bail!("{} exists; pass --force to replace it", full.display());
+                }
+                std::fs::remove_dir_all(&full)?;
+            }
+            crate::slim::move_dir(&staging, &full)?;
+            let slim = results.join(format!(".{version}.slim"));
+            if slim.exists() {
+                std::fs::remove_dir_all(&slim)?;
+            }
+            summary["slim"] = crate::slim::slim(&full, &slim)?;
+            summary["full"] = json!(full);
+            slim
+        }
+        None => staging,
     };
     if out.exists() {
         std::fs::remove_dir_all(&out)?;
@@ -775,7 +808,7 @@ mod tests {
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
-        publish(&batch, "1.0.0", &results, false).unwrap();
+        publish(&batch, "1.0.0", &results, false, None).unwrap();
         let out = results.join("1.0.0/job/task__a");
         assert!(out.join("artifacts/app/bot/src/main.rs").is_file());
         assert!(out.join("verifier/sessions/bot/hidden-1.json.gz").is_file());
@@ -789,7 +822,10 @@ mod tests {
         assert!(!out.join("artifacts/app/bot/target").exists());
         assert!(!results.join("1.0.0/.seed").exists());
         assert_eq!(releases(&results).len(), 1);
-        assert!(publish(&batch, "1.0.0", &results, false).is_err(), "exists");
+        assert!(
+            publish(&batch, "1.0.0", &results, false, None).is_err(),
+            "exists"
+        );
 
         // The seed in a bot's source: nothing is written.
         std::fs::write(
@@ -797,10 +833,34 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
         )
         .unwrap();
-        let error = publish(&batch, "1.0.1", &results, false).unwrap_err();
+        let error = publish(&batch, "1.0.1", &results, false, None).unwrap_err();
         assert!(error.to_string().contains("seed"), "{error}");
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());
+
+        // With --artifacts: the full release outside, the slim one here.
+        std::fs::remove_file(trial.join("artifacts/app/bot/src/seed.rs")).unwrap();
+        let artifacts = tmp.join("artifacts");
+        publish(&batch, "1.0.2", &results, false, Some(&artifacts)).unwrap();
+        let full = artifacts.join("1.0.2/job/task__a");
+        let slim = results.join("1.0.2/job/task__a");
+        assert!(
+            full.join("verifier/sessions/bot/hidden-1.json.gz")
+                .is_file()
+        );
+        assert!(full.join("verifier/bot/hidden-1.log.gz").is_file());
+        assert!(!slim.join("verifier/sessions").exists());
+        assert!(!slim.join("verifier/bot").exists());
+        assert!(!slim.join("agent").exists());
+        assert!(slim.join("verifier/report.json").is_file());
+        assert!(slim.join("artifacts/app/bot/src/main.rs").is_file());
+        let release = review::read_json(&results.join("1.0.2/release.json")).unwrap();
+        assert_eq!(release["artifacts"]["files"], 3);
+        assert!(!results.join(".1.0.2.slim").exists());
+        assert!(
+            publish(&batch, "1.0.2", &results, false, Some(&artifacts)).is_err(),
+            "exists"
+        );
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
