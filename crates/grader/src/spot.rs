@@ -739,6 +739,14 @@ pub(crate) async fn run_session(
         surfnet.send_command(SimnetCommand::SlotForward(None))?;
         slot = session::wait_for_slot(&rpc, slot + 1).await?;
     }
+    if let Some(oracles) = &scenario.oracles {
+        crate::oracles::register(
+            &rpc,
+            oracles,
+            scenario.duration_slots,
+            &crate::oracles::World::default(),
+        )?;
+    }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let start_slot = base_slot;
@@ -897,6 +905,7 @@ pub(crate) async fn run_session(
         ledger.before = ledger.fills.len();
     }
     let mut bot_exit = None;
+    let mut cranks = crate::crank::Cranks::new(opts.cranks);
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     for k in 0..steps {
         guard.set_turn(legacy);
@@ -908,6 +917,17 @@ pub(crate) async fn run_session(
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
+        cranks
+            .step(
+                &rpc,
+                &crate::crank::CrankStep {
+                    k,
+                    slot,
+                    at,
+                    last: k + 1 == steps,
+                },
+            )
+            .await?;
         let now = venues.read().await?;
         note(&mut observed, &now);
         let first_new = if tracking {
@@ -1116,6 +1136,7 @@ pub(crate) async fn run_session(
         order,
         participation,
         net,
+        crank_refusals: cranks.into_refusals(),
         turns,
         wall_ms: began.elapsed().as_millis() as u64,
         timeline: Timeline {
@@ -1187,6 +1208,7 @@ mod tests {
             fair_path: None,
             raw_sends: None,
             turn_data: None,
+            oracles: None,
             order: None,
             participation: None,
             net: None,
@@ -1198,6 +1220,51 @@ mod tests {
             }),
             reference_pnl_usd: None,
         }
+    }
+
+    #[test]
+    fn a_spot_session_values_at_a_feed_that_can_move_but_not_fail() {
+        use crate::oracles::*;
+        let feed = |feed_id: &str, failing: bool| Oracles {
+            seed: 1,
+            feeds: vec![Feed {
+                name: "sol".into(),
+                source: Source::Pyth(PythOracle {
+                    feed_id: feed_id.into(),
+                    shard: 0,
+                    exponent: -8,
+                    account: None,
+                }),
+                cadence_slots: 4,
+                path: vec![Level {
+                    slot: 40,
+                    level_pct: -5.0,
+                }],
+                conf_bps: 2.0,
+                failures: if failing {
+                    vec![Failure {
+                        mode: Mode::OffPrice { bias_pct: 5.0 },
+                        window: Window {
+                            from_slot: 4,
+                            from_slot_max: None,
+                            slots: Some(8),
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                },
+            }],
+        };
+        let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+        let other = "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a";
+        let with = |oracles| Scenario {
+            oracles: Some(oracles),
+            ..scenario()
+        };
+        with(feed(sol, false)).validate().unwrap();
+        with(feed(other, true)).validate().unwrap();
+        let error = with(feed(sol, true)).validate().unwrap_err();
+        assert!(error.contains("values the account"), "{error}");
     }
 
     #[test]
