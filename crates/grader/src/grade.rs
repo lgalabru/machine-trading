@@ -449,7 +449,8 @@ pub struct GradeOptions<'a> {
     /// Run the sessions under scoring v2's rules (see [`session::Rules`]):
     /// the bot's are stopped out at a breach, and the bot's and the
     /// reference's drawdowns are sampled every slot. Off, the grade runs
-    /// as it always has.
+    /// as it always has. (The bot's seeds are salted through `keys`: see
+    /// [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
 }
 

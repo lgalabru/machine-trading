@@ -643,10 +643,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 &component,
                 &env.rpc_url,
                 crate::wasm::Clock {
+                    seed: opts.keys.strategy_seed(&scenario.name),
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    scenario: &scenario.name,
                     vars: opts
                         .regime
                         .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
@@ -715,7 +715,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
-            seed: Some(turns::scenario_seed(&scenario.name)),
+            seed: Some(opts.keys.strategy_seed(&scenario.name)),
             reports,
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await

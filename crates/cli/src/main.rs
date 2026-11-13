@@ -164,8 +164,10 @@ enum Command {
         /// Run the sessions under scoring v2's rules: a breach the grader
         /// sees at a step stops that session out (the bot plays no more of
         /// it, and its position counts as closed at the touch), every other
-        /// session still runs, and drawdowns are sampled every slot. For a
-        /// task scored by v2; off, sessions run as they always have.
+        /// session still runs, drawdowns are sampled every slot, and the
+        /// bot's seed in each session is salted with the grade's secret, so
+        /// it can't tell which session it is in. For a task scored by v2;
+        /// off, sessions run as they always have.
         #[arg(long, conflicts_with = "stop_on_disqualify")]
         v2_sessions: bool,
         /// Grade the bot only if it is a strategy component (a bot.wasm): the
@@ -1338,6 +1340,10 @@ async fn run() -> Result<()> {
             // treat one that appears while bots run as tampering.
             if let Some(path) = &reward {
                 remove_if_present(path)?;
+            }
+            // Under v2's rules a bot's seed can't name its session.
+            if v2_sessions {
+                keys = keys.salt_strategy_seeds();
             }
             let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
