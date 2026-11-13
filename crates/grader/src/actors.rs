@@ -16,13 +16,18 @@
 //! 3. **At the end** ([`Actor::end`]), after the bot's last turn.
 //!
 //! Each acts at a [`Moment`]: the slot, and the scenario's prices there.
-//! Two actors come with the engine: [`takers`], the taker orders a scenario
-//! lists, and [`competitor`], a maker that competes with the bot's quotes.
-//! Both work on any market whose seats take and rest orders.
+//! Three actors come with the engine: [`takers`], the taker orders a
+//! scenario lists, [`competitor`], a maker that competes with the bot's
+//! quotes, and [`arbitrageur`], which trades markets back to the reference
+//! price. The first two work on any market whose seats take and rest
+//! orders; the arbitrageur on any whose seats take (a pool's swap, a book's
+//! market order).
 
+pub mod arbitrageur;
 pub mod competitor;
 pub mod takers;
 
+pub use arbitrageur::{ArbitrageReport, ArbitrageSpec, Arbitrageur};
 use async_trait::async_trait;
 pub use competitor::{CompeteReport, Competitor};
 pub use takers::{FlowReport, Pricing, TakerRecord, Takers};
@@ -71,6 +76,8 @@ pub struct ActorsReport {
     pub taker_orders: Vec<TakerRecord>,
     /// The grader's own maker's.
     pub competitor: Option<CompeteReport>,
+    /// The arbitrageur's.
+    pub arbitrage: Option<ArbitrageReport>,
 }
 
 /// A session's actors, in the order they act at each point.

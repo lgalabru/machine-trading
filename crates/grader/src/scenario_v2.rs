@@ -8,10 +8,10 @@
 //! | section        | holds                                                        |
 //! |----------------|--------------------------------------------------------------|
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
-//! | `venues`       | the perp venue's funding, the spot markets and their data    |
+//! | `venues`       | the perp venue's funding, the spot markets, liquidity, data  |
 //! | `market_model` | the price path, the fair value, a closed period, the calibration record |
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
-//! | `actors`       | the competing maker and the grader's taker flow              |
+//! | `actors`       | the competing maker, the taker flow, a pools' arbitrageur    |
 //! | `faults`       | execution faults on the bot's sends and reads                |
 //! | `tx`           | the transaction layer: raw sends                             |
 //! | `mandate`      | what the bot may trade and its limits                        |
@@ -42,7 +42,7 @@ use crate::{
     scenario::{
         Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
     },
-    spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
+    spot::{MAX_DEPTH_LEVELS, POOLS, Spot, TurnData, VENUES},
 };
 
 /// The schema version this module reads and writes.
@@ -83,7 +83,8 @@ pub struct ScenarioV2 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Assets {
-    /// The market's symbol: the perp's (`SPCX`) or the spot pair (`SOL-USDC`).
+    /// The market's symbol: the perp's (`SPCX`) or the spot pair (`SOL-USDC`
+    /// on the books, `SPCX-USDC` on the pools).
     pub symbol: String,
     /// A spot session's starting wallet. A perp session has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,9 +123,14 @@ pub struct PerpVenue {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SpotVenues {
-    /// The venues whose SOL-USDC market the bot may trade: `phoenix`,
-    /// `openbook`, or both.
+    /// The venues whose market of the symbol the bot may trade: books
+    /// (`phoenix`, `openbook`) for SOL-USDC, pools (`raydium`, `meteora`)
+    /// for SPCX-USDC.
     pub markets: Vec<String>,
+    /// The pool venues among `markets` where the bot may provide liquidity:
+    /// each adds its amm instrument to the universe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub liquidity: Vec<String>,
     /// What each step message carries beyond the clock. Without it, none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_data: Option<TurnData>,
@@ -174,6 +180,10 @@ pub struct Actors {
     /// scenario's flow; otherwise a tape that keeps the book price fresh.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub takers: Vec<TakerOrder>,
+    /// For a spot scenario on pools: an arbitrageur that keeps each pool's
+    /// price near the reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arbitrage: Option<crate::actors::ArbitrageSpec>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -261,6 +271,16 @@ impl Venues {
                 return Err(format!("spot: {venue} is listed twice"));
             }
         }
+        for (i, venue) in spot.liquidity.iter().enumerate() {
+            if !POOLS.contains(&venue.as_str()) || !spot.markets.contains(venue) {
+                return Err(format!(
+                    "spot: liquidity on {venue:?}: only a session's pool venues ({POOLS:?}) take liquidity"
+                ));
+            }
+            if spot.liquidity[..i].contains(venue) {
+                return Err(format!("spot: liquidity on {venue} is listed twice"));
+            }
+        }
         if let Some(data) = &spot.turn_data {
             if !(data.tape || data.depth_levels > 0 || data.timestamps)
                 || (data.parties && !data.tape)
@@ -277,21 +297,23 @@ impl Venues {
         Ok(())
     }
 
-    /// The spot markets, as the mandate names them.
-    fn spot_instruments(&self) -> Vec<InstrumentRef> {
+    /// The spot markets of `symbol`, then the amm instruments, as the
+    /// mandate names them.
+    fn spot_instruments(&self, symbol: &str) -> Vec<InstrumentRef> {
+        let at = |venue: &String, kind| InstrumentRef {
+            venue: venue.clone(),
+            kind,
+            symbol: symbol.into(),
+        };
         self.spot
             .iter()
-            .flat_map(|s| &s.markets)
-            .map(|v| spot_market(v))
+            .flat_map(|s| {
+                s.markets
+                    .iter()
+                    .map(move |v| at(v, Kind::Spot))
+                    .chain(s.liquidity.iter().map(move |v| at(v, Kind::Amm)))
+            })
             .collect()
-    }
-}
-
-fn spot_market(venue: &str) -> InstrumentRef {
-    InstrumentRef {
-        venue: venue.to_string(),
-        kind: Kind::Spot,
-        symbol: SYMBOL.into(),
     }
 }
 
@@ -414,6 +436,9 @@ impl Actors {
     /// (see [`MarketModel::validate`]), a tape in slot order, inside the
     /// session and well formed.
     pub fn validate(&self, duration_slots: u64, closed_period: bool) -> Result<(), String> {
+        if let Some(arbitrage) = &self.arbitrage {
+            arbitrage.validate()?;
+        }
         if let Some(competitor) = &self.competitor {
             return Making {
                 competitor_bps: competitor.competitor_bps,
@@ -497,6 +522,7 @@ impl ScenarioV2 {
         }
         self.assets.validate()?;
         self.venues.validate()?;
+        self.spot_markets_trade_the_symbol()?;
         self.market_model
             .validate(self.duration_slots, &self.actors.takers)?;
         self.actors.validate(
@@ -524,14 +550,19 @@ impl ScenarioV2 {
         }
     }
 
-    /// A spot scenario trades the profiles' pair from a wallet, and has no
-    /// path or market making. A tape trades the session's first venue.
+    /// A spot scenario trades from a wallet, and has no path or market
+    /// making. A tape trades the session's first venue; an arbitrageur, its
+    /// pools.
     fn spot_is_alone(&self) -> Result<(), String> {
-        if self.assets.symbol != SYMBOL {
-            return Err(format!(
-                "spot: the symbol is {SYMBOL}, not {}",
-                self.assets.symbol
-            ));
+        if self.actors.arbitrage.is_some()
+            && !self
+                .venues
+                .spot
+                .iter()
+                .flat_map(|s| &s.markets)
+                .any(|v| POOLS.contains(&v.as_str()))
+        {
+            return Err("spot: an arbitrageur trades pools, and the session has none".into());
         }
         if self.assets.wallet.is_none() {
             return Err("spot: no starting wallet".into());
@@ -553,8 +584,28 @@ impl ScenarioV2 {
         Ok(())
     }
 
-    /// A perp scenario has no wallet, order, charge or net scoring.
+    /// Each spot market's venue profile names the scenario's symbol: the
+    /// books SOL-USDC, the pools SPCX-USDC.
+    fn spot_markets_trade_the_symbol(&self) -> Result<(), String> {
+        let symbol = &self.assets.symbol;
+        for venue in self.venues.spot.iter().flat_map(|s| &s.markets) {
+            let named = crate::venue::books::named_markets(venue).map_err(|e| e.to_string())?;
+            if !named.iter().any(|m| m.symbol == symbol) {
+                return Err(format!(
+                    "spot: the scenario's symbol is {symbol}, and {venue} has no {symbol} market; its profile names {:?}",
+                    named.iter().map(|m| m.symbol).collect::<Vec<_>>()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A perp scenario has no wallet, order, charge, net scoring or
+    /// arbitrageur.
     fn spot_fields_are_for_spot(&self) -> Result<(), String> {
+        if self.actors.arbitrage.is_some() {
+            return Err("arbitrage: an arbitrageur trades a spot scenario's pools".into());
+        }
         if self.assets.wallet.is_some()
             || self.order.is_some()
             || self.scoring.bound_usd.is_some()
@@ -571,7 +622,7 @@ impl ScenarioV2 {
     /// (the session sets it); a perp mandate has a drawdown limit.
     fn mandate_covers_the_market(&self) -> Result<(), String> {
         if self.venues.spot.is_some() {
-            let mut wanted = self.venues.spot_instruments();
+            let mut wanted = self.venues.spot_instruments(&self.assets.symbol);
             let mut universe: Vec<InstrumentRef> = self
                 .mandate
                 .universe
@@ -721,7 +772,11 @@ impl ScenarioV2 {
             closed_period,
             record,
         } = market_model;
-        let Actors { competitor, takers } = actors;
+        let Actors {
+            competitor,
+            takers,
+            arbitrage,
+        } = actors;
         let (making, offhours, tape) = match (competitor, closed_period) {
             (Some(c), _) => (
                 Some(Making {
@@ -739,6 +794,8 @@ impl ScenarioV2 {
             (Some(spot), Some(wallet)) => (
                 Some(Spot {
                     venues: spot.markets,
+                    liquidity: spot.liquidity,
+                    arbitrage,
                     base: wallet.base,
                     quote: wallet.quote,
                     bound_usd: scoring.bound_usd,
@@ -798,6 +855,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                         perp: None,
                         spot: Some(SpotVenues {
                             markets: spot.venues.clone(),
+                            liquidity: spot.liquidity.clone(),
                             turn_data: v1.turn_data.clone(),
                         }),
                     },
@@ -866,7 +924,11 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 record: v1.market_model.clone(),
             },
             oracles: v1.oracles.clone(),
-            actors: Actors { competitor, takers },
+            actors: Actors {
+                competitor,
+                takers,
+                arbitrage: v1.spot.as_ref().and_then(|s| s.arbitrage),
+            },
             faults: v1.faults.clone(),
             tx: v1.raw_sends.clone().map(|raw_sends| Tx {
                 raw_sends: Some(raw_sends),
@@ -948,7 +1010,9 @@ pub enum ParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
+    use crate::{
+        making::MakingFamily, scenario::ShockFamily, spot::SYMBOL, weekend::WeekendFamily,
+    };
 
     fn v2(scenario: &Scenario) -> ScenarioV2 {
         ScenarioV2::try_from(scenario).unwrap()
@@ -972,6 +1036,7 @@ mod tests {
             perp: None,
             spot: Some(SpotVenues {
                 markets: vec!["phoenix".into(), "openbook".into()],
+                liquidity: Vec::new(),
                 turn_data: None,
             }),
         };
@@ -1004,6 +1069,49 @@ mod tests {
             let back: ScenarioV2 = serde_json::from_str(&text).unwrap();
             assert_eq!(back, as_v2);
         }
+    }
+
+    #[test]
+    fn a_pools_scenario_keeps_its_liquidity_and_arbitrageur() {
+        let path = format!(
+            "{}/../../bench/checks/pools/smoke.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let v1 = parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let as_v2 = v2(&v1);
+        assert_eq!(as_v2.validate(), Ok(()));
+        let listed = as_v2.venues.spot.as_ref().unwrap();
+        assert_eq!(listed.liquidity.len(), 2);
+        assert!(as_v2.actors.arbitrage.is_some());
+        assert_eq!(as_v2.clone().into_scenario().unwrap(), v1);
+        let text = serde_json::to_string_pretty(&as_v2).unwrap();
+        assert_eq!(parse(&text).unwrap(), v1);
+        let mut pools = v2(&parse(
+            &std::fs::read_to_string(format!(
+                "{}/../../bench/checks/pools/smoke.json",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        )
+        .unwrap());
+        pools.venues.spot.as_mut().unwrap().liquidity = vec!["phoenix".into()];
+        assert!(
+            pools
+                .validate()
+                .unwrap_err()
+                .contains("only a session's pool venues")
+        );
+        let mut books = spot();
+        books.actors.arbitrage = pools.actors.arbitrage;
+        assert!(books.validate().unwrap_err().contains("arbitrageur"));
+        books.assets.symbol = "SPCX-USDC".into();
+        books.actors.arbitrage = None;
+        assert!(
+            books
+                .validate()
+                .unwrap_err()
+                .contains("phoenix has no SPCX-USDC market")
+        );
     }
 
     #[test]
@@ -1150,6 +1258,7 @@ mod tests {
         let mut s = shock();
         s.venues.spot = Some(SpotVenues {
             markets: vec!["phoenix".into()],
+            liquidity: Vec::new(),
             turn_data: None,
         });
         assert!(

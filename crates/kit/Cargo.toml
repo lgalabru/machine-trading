@@ -72,6 +72,14 @@ openbook-v2-venue = ["spot-venue"]
 # program addresses and associated token accounts, and Token-2022 mint and
 # account decoding.
 spot-venue = ["dep:solana-pubkey", "solana-pubkey/curve25519", "dep:solana-instruction"]
+# Raydium CLMM pools, as the Raydium venue profile's pools: pool, tick array
+# and position decoding, the pool math, and the trader's instructions.
+# Builds for wasm32-wasip2.
+raydium-clmm = ["spot-venue"]
+# Meteora DLMM pools, as the Meteora venue profile's pools: pair, bin array
+# and position decoding, the bin math, and the trader's instructions.
+# Builds for wasm32-wasip2.
+meteora-dlmm = ["spot-venue"]
 # Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses;
 # the spot venues value their base assets at them.
 pyth = ["chain"]

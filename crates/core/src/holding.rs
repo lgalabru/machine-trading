@@ -5,8 +5,9 @@
 //! perpetuals and spot markets both trade through an
 //! `ExecutionDriver` (in `mtx-kit`), but a perp is a signed
 //! position, a spot market is a balance of the base asset wherever it sits,
-//! and a money market is what was supplied and what was borrowed. A
-//! [`Holding`] is one of the three, each the shape its profile in
+//! a money market is what was supplied and what was borrowed, and a pool's
+//! liquidity is a position holding both of the pool's assets. A
+//! [`Holding`] is one of the four, each the shape its profile in
 //! `specs/instruments/` gives it, so the mandate's rules read one
 //! [`Holding::position`] whatever the instrument.
 //!
@@ -29,17 +30,22 @@ pub enum Holding {
     /// A money market (`specs/instruments/money-market.md`): supplied and
     /// borrowed.
     MoneyMarket(LendingBalance),
+    /// Liquidity in a pool (`specs/instruments/amm.md`): one position, both
+    /// its assets and its uncollected fees.
+    Amm(PoolPosition),
 }
 
 impl Holding {
     /// The position the mandate's position cap and `min_position` bound, in
-    /// base units: the perp's signed quantity, the spot base asset held, or
-    /// what is supplied minus what is borrowed.
+    /// base units: the perp's signed quantity, the spot base asset held,
+    /// what is supplied minus what is borrowed, or the base asset a pool
+    /// position holds, fees included.
     pub fn position(&self) -> Decimal {
         match self {
             Holding::Perp(position) => position.quantity,
             Holding::Spot(holdings) => holdings.total(),
             Holding::MoneyMarket(balance) => balance.net(),
+            Holding::Amm(position) => position.base_amount + position.fees_base,
         }
     }
 }
@@ -122,6 +128,25 @@ impl LendingBalance {
     }
 }
 
+/// A liquidity position in a pool, as the amm profile counts it: what it
+/// would take out of the pool now, of each asset, and the fees it has
+/// earned and not collected, in each asset's base units.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolPosition {
+    /// The venue's name for the position (its account, or its NFT's mint).
+    pub id: String,
+    /// The pool's assets.
+    pub base: Asset,
+    pub quote: Asset,
+    pub base_amount: Decimal,
+    pub quote_amount: Decimal,
+    pub fees_base: Decimal,
+    pub fees_quote: Decimal,
+    /// Where it provides liquidity, in quote per base; `None` for the whole
+    /// curve.
+    pub range: Option<(Decimal, Decimal)>,
+}
+
 #[cfg(test)]
 mod tests {
     use rust_decimal_macros::dec;
@@ -163,5 +188,17 @@ mod tests {
             borrowed: dec!(500),
         };
         assert_eq!(Holding::MoneyMarket(owed).position(), dec!(-500));
+
+        let pooled = PoolPosition {
+            id: "position".into(),
+            base: usdc(),
+            quote: usdc(),
+            base_amount: dec!(3),
+            quote_amount: dec!(400),
+            fees_base: dec!(0.5),
+            fees_quote: dec!(2),
+            range: None,
+        };
+        assert_eq!(Holding::Amm(pooled).position(), dec!(3.5));
     }
 }

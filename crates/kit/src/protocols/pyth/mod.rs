@@ -40,11 +40,25 @@ pub fn feed_account(shard: u16, feed_id: &[u8; 32]) -> Pubkey {
 }
 
 /// The Anchor discriminator of a `PriceUpdateV2` account.
+/// SPCX's feed id: `Equity.US.SPCX/USD`, SpaceX's share price, the
+/// reference price the Raydium and Meteora profiles name for SPCX. It
+/// publishes in the US regular session only.
+pub const SPCX_USD_FEED_ID: [u8; 32] = [
+    0x8a, 0x59, 0x3d, 0x6e, 0xdd, 0xe7, 0xa3, 0x09, 0x52, 0x13, 0xc8, 0x81, 0x16, 0xd8, 0x84, 0x0d,
+    0x01, 0xe9, 0x3c, 0x2d, 0xde, 0xb8, 0x00, 0xbc, 0x89, 0x17, 0x72, 0xeb, 0x8b, 0x93, 0xbb, 0x94,
+];
+
 /// The feed the spot venue profiles value `mint` at, for the mints they
-/// name: SOL/USD for wrapped SOL. USDC is valued at $1 and has none.
+/// name: SOL/USD for wrapped SOL, SPCX/USD for SPCX. USDC is valued at $1
+/// and has none.
 pub fn feed_for_mint(mint: &Pubkey) -> Option<[u8; 32]> {
-    (mint == &solana_pubkey::pubkey!("So11111111111111111111111111111111111111112"))
-        .then_some(SOL_USD_FEED_ID)
+    if mint == &solana_pubkey::pubkey!("So11111111111111111111111111111111111111112") {
+        Some(SOL_USD_FEED_ID)
+    } else if mint == &crate::protocols::SPCX_MINT {
+        Some(SPCX_USD_FEED_ID)
+    } else {
+        None
+    }
 }
 
 /// `feed_id`'s latest price, read from its shard-0 account.
@@ -270,6 +284,14 @@ mod tests {
         assert_eq!(
             feed_account(0, &SOL_USD_FEED_ID),
             solana_pubkey::pubkey!("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE")
+        );
+        assert_eq!(
+            feed_account(0, &SPCX_USD_FEED_ID),
+            solana_pubkey::pubkey!("6WRG9ZLzhqykJ6fdAYZeTHMg79JnnYjjZTs5QDUb9iwv")
+        );
+        assert_eq!(
+            feed_for_mint(&crate::protocols::SPCX_MINT),
+            Some(SPCX_USD_FEED_ID)
         );
     }
 
