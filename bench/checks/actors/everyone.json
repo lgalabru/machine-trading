@@ -1,6 +1,6 @@
 {
   "name": "actors-everyone",
-  "description": "SPCX spikes 3.6% around slot 190; every library actor trades beside the bot",
+  "description": "SPCX spikes 3.6% around slot 190 and the perp trades 0.3% over its index from slot 250 to 330; every library actor trades beside the bot",
   "symbol": "SPCX",
   "duration_slots": 400,
   "mandate": {
@@ -146,35 +146,43 @@
     },
     {
       "slot": 254,
-      "level_pct": 1.221
+      "level_pct": 1.221,
+      "premium_pct": 0.3
     },
     {
       "slot": 267,
-      "level_pct": 1.331
+      "level_pct": 1.331,
+      "premium_pct": 0.3
     },
     {
       "slot": 277,
-      "level_pct": 1.304
+      "level_pct": 1.304,
+      "premium_pct": 0.3
     },
     {
       "slot": 284,
-      "level_pct": 1.357
+      "level_pct": 1.357,
+      "premium_pct": 0.3
     },
     {
       "slot": 295,
-      "level_pct": 1.183
+      "level_pct": 1.183,
+      "premium_pct": 0.3
     },
     {
       "slot": 306,
-      "level_pct": 1.298
+      "level_pct": 1.298,
+      "premium_pct": 0.3
     },
     {
       "slot": 310,
-      "level_pct": 1.335
+      "level_pct": 1.335,
+      "premium_pct": 0.3
     },
     {
       "slot": 320,
-      "level_pct": 1.188
+      "level_pct": 1.188,
+      "premium_pct": 0.3
     },
     {
       "slot": 332,
