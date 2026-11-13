@@ -47,7 +47,7 @@ the reference's included, that came out differently.
 
 ```sh
 MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
-  --reference /opt/mtx/anchors/flash-crash --bot bots/reference \
+  --reference /opt/mtx/anchors/flash-crash --bot bench/tasks/flash-crash-spcx/reference \
   --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
 ```
 
