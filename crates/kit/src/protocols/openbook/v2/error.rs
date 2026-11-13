@@ -22,3 +22,9 @@ pub enum OpenBookV2Error {
     #[error("invalid order: {0}")]
     InvalidOrder(String),
 }
+
+impl From<crate::protocols::DecodeError> for OpenBookV2Error {
+    fn from(err: crate::protocols::DecodeError) -> Self {
+        Self::Chain(err.into())
+    }
+}
