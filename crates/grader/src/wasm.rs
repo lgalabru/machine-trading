@@ -699,6 +699,12 @@ pub trait StepObserver: Send + Sync {
     fn started(&self, session: &mtx_kit::Session, printed: &[String], failed: Option<&str>);
     /// After each step's orders are sent.
     fn step(&self, trace: &StepTrace);
+    /// Before the bot starts: the session's own RPC (its secret path
+    /// included), for a tool that shows its transactions in an explorer.
+    fn rpc(&self, _url: &str) {}
+    /// When the session is over: its chain. Keep it to keep the RPC up (an
+    /// explorer still reading the session's transactions); drop it to stop it.
+    fn keep(&self, _world: Box<dyn std::any::Any + Send>) {}
 }
 
 /// A session's clock, as a component's `start` sees it, and its scenario.

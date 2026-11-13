@@ -54,6 +54,13 @@ const ACTOR_DEPOSIT_USDC: f64 = 100_000.0;
 pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let scenario = opts.scenario;
     let world = snapshot::start_offline_stepped(opts.snapshot_dir).await?;
+    if !world.manifest.holds(&scenario.symbol) {
+        return Err(Error::NotWarmed {
+            snapshot: opts.snapshot_dir.display().to_string(),
+            symbol: scenario.symbol.clone(),
+            held: world.manifest.symbols().join(", "),
+        });
+    }
     let surfnet = &world.surfnet;
     // The grader's own clients, served the way a stepped world needs: a
     // transaction is final once it executed (see [`Guard::internal`]).
