@@ -27,11 +27,56 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units, wallet_atoms,
+        Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        anchor_instruction, named, pool_assets, range, swap_atoms, units, wallet_atoms,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+
+/// What a bot may run of Raydium CLMM's instructions (`specs/venues/raydium.md`, "What
+/// a bot may run"): swaps, and positions in the session's pool.
+const ALLOWED: Allowed = &[
+    ("swap", Use::Swap),
+    ("swap_v2", Use::Swap),
+    ("open_position", Use::Liquidity),
+    ("open_position_v2", Use::Liquidity),
+    ("open_position_with_token22_nft", Use::Liquidity),
+    ("increase_liquidity", Use::Liquidity),
+    ("increase_liquidity_v2", Use::Liquidity),
+    ("decrease_liquidity", Use::Liquidity),
+    ("decrease_liquidity_v2", Use::Liquidity),
+    ("close_position", Use::Position),
+];
+/// The program's other instructions, by name, as the program source lists them.
+const OTHERS: &[&str] = &[
+    "create_amm_config",
+    "create_support_mint_associated",
+    "update_amm_config",
+    "create_dynamic_fee_config",
+    "update_dynamic_fee_config",
+    "close_support_mint_associated",
+    "create_pool",
+    "create_customizable_pool",
+    "create_customizable_pool_v2",
+    "update_pool_status",
+    "create_operation_account",
+    "update_operation_account",
+    "transfer_reward_owner",
+    "initialize_reward",
+    "collect_remaining_rewards",
+    "update_reward_infos",
+    "set_reward_params",
+    "collect_protocol_fee",
+    "collect_fund_fee",
+    "swap_router_base_in",
+    "close_protocol_position",
+    "open_limit_order",
+    "increase_limit_order",
+    "decrease_limit_order",
+    "settle_limit_order",
+    "close_limit_order",
+    "collect_excess_lamports",
+];
 
 /// Tick arrays a swap may cross: the current one and two beyond.
 const SWAP_TICK_ARRAYS: usize = 3;
@@ -295,6 +340,10 @@ impl ClmmPool {
 impl Pool for ClmmPool {
     fn assets(&self) -> &PoolAssets {
         &self.assets
+    }
+
+    fn instruction(&self, data: &[u8]) -> (String, Option<Use>) {
+        anchor_instruction(data, ALLOWED, OTHERS)
     }
 
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice> {

@@ -26,11 +26,83 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units, wallet_atoms,
+        Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        anchor_instruction, named, pool_assets, range, swap_atoms, units, wallet_atoms,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+
+/// What a bot may run of Orca Whirlpool's instructions (`specs/venues/orca.md`, "What
+/// a bot may run"): swaps, and positions in the session's pool.
+const ALLOWED: Allowed = &[
+    ("swap", Use::Swap),
+    ("swap_v2", Use::Swap),
+    ("initialize_tick_array", Use::Liquidity),
+    ("initialize_dynamic_tick_array", Use::Liquidity),
+    ("open_position", Use::Liquidity),
+    ("open_position_with_metadata", Use::Liquidity),
+    ("open_position_with_token_extensions", Use::Liquidity),
+    ("increase_liquidity", Use::Liquidity),
+    ("increase_liquidity_v2", Use::Liquidity),
+    ("increase_liquidity_by_token_amounts_v2", Use::Liquidity),
+    ("decrease_liquidity", Use::Liquidity),
+    ("decrease_liquidity_v2", Use::Liquidity),
+    ("update_fees_and_rewards", Use::Liquidity),
+    ("collect_fees", Use::Liquidity),
+    ("collect_fees_v2", Use::Liquidity),
+    ("collect_reward", Use::Liquidity),
+    ("collect_reward_v2", Use::Liquidity),
+    ("close_position", Use::Position),
+    ("close_position_with_token_extensions", Use::Position),
+];
+/// The program's other instructions, by name, as the program source lists them.
+const OTHERS: &[&str] = &[
+    "initialize_config",
+    "initialize_pool",
+    "initialize_fee_tier",
+    "initialize_reward",
+    "set_reward_emissions",
+    "collect_protocol_fees",
+    "set_default_fee_rate",
+    "set_default_protocol_fee_rate",
+    "set_fee_rate",
+    "set_protocol_fee_rate",
+    "set_fee_authority",
+    "set_collect_protocol_fees_authority",
+    "set_reward_authority",
+    "set_reward_authority_by_super_authority",
+    "set_reward_emissions_super_authority",
+    "two_hop_swap",
+    "initialize_position_bundle",
+    "initialize_position_bundle_with_metadata",
+    "delete_position_bundle",
+    "open_bundled_position",
+    "close_bundled_position",
+    "lock_position",
+    "reset_position_range",
+    "transfer_locked_position",
+    "initialize_adaptive_fee_tier",
+    "set_default_base_fee_rate",
+    "set_delegated_fee_authority",
+    "set_initialize_pool_authority",
+    "set_preset_adaptive_fee_constants",
+    "initialize_pool_with_adaptive_fee",
+    "set_fee_rate_by_delegated_fee_authority",
+    "set_adaptive_fee_constants",
+    "set_config_feature_flag",
+    "collect_protocol_fees_v2",
+    "initialize_pool_v2",
+    "initialize_reward_v2",
+    "set_reward_emissions_v2",
+    "two_hop_swap_v2",
+    "reposition_liquidity_v2",
+    "initialize_config_extension",
+    "set_config_extension_authority",
+    "set_token_badge_authority",
+    "initialize_token_badge",
+    "delete_token_badge",
+    "set_token_badge_attribute",
+];
 
 /// Where a mint's decimals sit, in a token mint of either program.
 const MINT_DECIMALS: usize = 44;
@@ -290,6 +362,10 @@ impl WhirlpoolPool {
 impl Pool for WhirlpoolPool {
     fn assets(&self) -> &PoolAssets {
         &self.assets
+    }
+
+    fn instruction(&self, data: &[u8]) -> (String, Option<Use>) {
+        anchor_instruction(data, ALLOWED, OTHERS)
     }
 
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice> {

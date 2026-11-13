@@ -19,8 +19,10 @@
 //! out is a sale, the reverse a purchase, and one way only a deposit or a
 //! withdrawal; each is the account's whose tokens, position or signature it
 //! takes), the valuation of a position (its assets at the reference prices,
-//! not the pool's own, so a pool moved by its holder can't inflate it), and
-//! the seats, which send each order as one transaction.
+//! not the pool's own, so a pool moved by its holder can't inflate it), the
+//! instructions of a pool's program a bot may run (swaps, and positions where
+//! the session takes liquidity: [`Use`]; anything else is a mandate breach),
+//! and the seats, which send each order as one transaction.
 
 use std::sync::{
     Arc,
@@ -131,10 +133,85 @@ pub struct Lp {
     pub live: bool,
 }
 
+/// What a bot may run one of a pool program's instructions for. Any other
+/// instruction of the program (a limit order, a rebalance, a position bundle,
+/// a pool's own administration) holds or moves base where the position cap,
+/// the account's value and the sides rule don't look, so running it is a
+/// mandate breach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Use {
+    /// A swap through the session's pool.
+    Swap,
+    /// Opening a position in the session's pool, adding to it, taking from
+    /// it, collecting its fees and rewards, or making the tick or bin arrays
+    /// its range needs: only where the session takes the account's
+    /// liquidity.
+    Liquidity,
+    /// Closing an empty position, or growing or shrinking a position's
+    /// account: names no pool and moves no tokens, and only where the
+    /// session takes the account's liquidity.
+    Position,
+}
+
+/// The instructions of a pool's program a bot may run, by their Anchor
+/// names, and what for.
+pub(crate) type Allowed = &'static [(&'static str, Use)];
+
+/// What an Anchor program's event starts with: the program logs it by
+/// calling itself, which only it can (`emit_cpi!`), so it is no instruction
+/// of the bot's.
+const ANCHOR_EVENT: [u8; 8] = [0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d];
+
+/// The Anchor instruction `data` runs, by name (from `allowed`, or the rest
+/// of the program's, `others`), and what a bot may run it for: `None` for
+/// anything `allowed` doesn't list.
+pub(crate) fn anchor_instruction(
+    data: &[u8],
+    allowed: Allowed,
+    others: &[&'static str],
+) -> (String, Option<Use>) {
+    let discriminator = data.get(..8);
+    let runs = |name: &str| {
+        discriminator == Some(&Sha256::digest(format!("global:{name}").as_bytes())[..8])
+    };
+    // As the program logs it: `swap_v2` is `SwapV2`.
+    let logged = |name: &str| {
+        name.split('_')
+            .map(|word| {
+                let mut letters = word.chars();
+                letters.next().map_or_else(String::new, |first| {
+                    first.to_uppercase().chain(letters).collect()
+                })
+            })
+            .collect::<String>()
+    };
+    if let Some((name, used)) = allowed.iter().find(|(name, _)| runs(name)) {
+        return (logged(name), Some(*used));
+    }
+    match others.iter().find(|name| runs(name)) {
+        Some(name) => (logged(name), None),
+        None => (
+            format!(
+                "instruction {}",
+                data.iter()
+                    .take(8)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            ),
+            None,
+        ),
+    }
+}
+
 /// A pool's program: how its state reads and its orders build.
 #[async_trait]
 pub trait Pool: Send + Sync {
     fn assets(&self) -> &PoolAssets;
+
+    /// The program's instruction `data` runs, by name, and what a bot may
+    /// run it for: `None` where a bot may not (see [`Use`], and the venue's
+    /// profile).
+    fn instruction(&self, data: &[u8]) -> (String, Option<Use>);
 
     /// The pool's price and fee now.
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice>;
@@ -228,13 +305,28 @@ impl PoolMarket {
     /// Every transaction through the pool since `after_slot` that
     /// succeeded, oldest first.
     async fn transactions(&self, after_slot: u64) -> Result<Vec<TransactionSummary>> {
+        self.transactions_of(&self.assets().address, after_slot, &[])
+            .await
+    }
+
+    /// Every transaction naming `address` since `after_slot` that succeeded,
+    /// oldest first, but those in `skip`.
+    async fn transactions_of(
+        &self,
+        address: &Pubkey,
+        after_slot: u64,
+        skip: &[TransactionSummary],
+    ) -> Result<Vec<TransactionSummary>> {
         let chain = self.chain.as_ref();
         let mut found = Vec::new();
         for (signature, _) in chain
-            .signatures_for_address(&self.assets().address, after_slot)
+            .signatures_for_address(address, after_slot)
             .await
-            .map_err(chain_error("the pool's transactions"))?
+            .map_err(chain_error("an account's transactions"))?
         {
+            if skip.iter().any(|s| s.signature == signature) {
+                continue;
+            }
             let summary = chain
                 .get_transaction(&signature)
                 .await
@@ -367,12 +459,10 @@ fn token_transfer(ix: &ExecutedInstruction) -> Option<(Pubkey, Pubkey, u64)> {
     }
 }
 
-/// Every instruction of the pool's in a transaction (run by the
-/// transaction or by a program it called), and what each moved through the
-/// pool's vaults: a transfer counts toward the pool instruction that made
-/// it, never toward the transaction's net, so a swap and a deposit in one
-/// transaction are each seen.
-fn vault_flows(summary: &TransactionSummary, assets: &PoolAssets) -> Vec<VaultFlow> {
+/// Who an instruction of `summary` runs for: the transaction's signers, and
+/// the owners of the token accounts it passes (a wallet's, a position
+/// NFT's).
+fn parties(summary: &TransactionSummary, ix: &ExecutedInstruction) -> Vec<Pubkey> {
     let signers = &summary.account_keys[..summary.signers.min(summary.account_keys.len())];
     let owner_of = |account: &Pubkey| {
         summary
@@ -381,6 +471,21 @@ fn vault_flows(summary: &TransactionSummary, assets: &PoolAssets) -> Vec<VaultFl
             .find(|c| c.account == *account)
             .and_then(|c| c.owner)
     };
+    let mut parties = signers.to_vec();
+    for owner in ix.accounts.iter().filter_map(owner_of) {
+        if !parties.contains(&owner) {
+            parties.push(owner);
+        }
+    }
+    parties
+}
+
+/// Every instruction of the pool's in a transaction (run by the
+/// transaction or by a program it called), and what each moved through the
+/// pool's vaults: a transfer counts toward the pool instruction that made
+/// it, never toward the transaction's net, so a swap and a deposit in one
+/// transaction are each seen.
+fn vault_flows(summary: &TransactionSummary, assets: &PoolAssets) -> Vec<VaultFlow> {
     let is_pool = |ix: &ExecutedInstruction| {
         ix.program == assets.program && ix.accounts.contains(&assets.address)
     };
@@ -394,16 +499,10 @@ fn vault_flows(summary: &TransactionSummary, assets: &PoolAssets) -> Vec<VaultFl
     let mut flow_of: Vec<Option<usize>> = Vec::with_capacity(summary.instructions.len());
     for (i, ix) in summary.instructions.iter().enumerate() {
         if is_pool(ix) {
-            let mut parties = signers.to_vec();
-            for owner in ix.accounts.iter().filter_map(owner_of) {
-                if !parties.contains(&owner) {
-                    parties.push(owner);
-                }
-            }
             flow_of.push(Some(flows.len()));
             flows.push(VaultFlow {
                 index: u16::try_from(flows.len()).unwrap_or(u16::MAX),
-                parties,
+                parties: parties(summary, ix),
                 accounts: ix.accounts.clone(),
                 ..VaultFlow::default()
             });
@@ -604,6 +703,64 @@ impl Market for PoolMarket {
             }
         }
         Ok(moves)
+    }
+
+    /// Each instruction of the pool's program `owner` ran since `after_slot`
+    /// that a bot may not run here, as the breach it is: one [`Use`] leaves
+    /// out, a swap or a deposit through another of the program's pools, or a
+    /// position where the session takes no liquidity (`liquidity` false).
+    /// Read from the pool's transactions and the owner's own, every
+    /// instruction whether the transaction ran it or a program it called, for
+    /// the spot instrument only (the amm one is the same pool's).
+    async fn unsupported(
+        &self,
+        after_slot: u64,
+        owner: &Pubkey,
+        liquidity: bool,
+    ) -> Result<Vec<String>> {
+        if self.instrument.kind != Kind::Spot {
+            return Ok(Vec::new());
+        }
+        let assets = self.assets();
+        let venue = &self.instrument.venue;
+        let mut summaries = self.transactions(after_slot).await?;
+        let own = self.transactions_of(owner, after_slot, &summaries).await?;
+        summaries.extend(own);
+        summaries.sort_by_key(|s| s.slot);
+        let mut breaches: Vec<String> = Vec::new();
+        for summary in &summaries {
+            for ix in summary
+                .instructions
+                .iter()
+                .filter(|ix| ix.program == assets.program && !ix.data.starts_with(&ANCHOR_EVENT))
+            {
+                let (name, used) = self.pool.instruction(&ix.data);
+                let through_pool = ix.accounts.contains(&assets.address);
+                let breach = match used {
+                    None => format!("ran {venue} {name}, which this benchmark doesn't support"),
+                    Some(Use::Swap | Use::Liquidity) if !through_pool => {
+                        format!("ran {venue} {name} on a pool outside the session")
+                    }
+                    Some(Use::Liquidity | Use::Position) if !liquidity => {
+                        format!("ran {venue} {name}, and the session takes no liquidity on {venue}")
+                    }
+                    _ => continue,
+                };
+                if breaches.contains(&breach) {
+                    continue;
+                }
+                if parties(summary, ix).contains(owner)
+                    || self
+                        .pool
+                        .position_owners(self.chain.as_ref(), &ix.accounts)
+                        .await?
+                        .contains(owner)
+                {
+                    breaches.push(breach);
+                }
+            }
+        }
+        Ok(breaches)
     }
 
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {
@@ -1289,6 +1446,32 @@ mod tests {
     }
 
     #[test]
+    fn a_pool_instruction_is_named_and_allowed_or_not() {
+        const ALLOWED: Allowed = &[("swap_v2", Use::Swap), ("close_position", Use::Position)];
+        let data = |name: &str| Sha256::digest(format!("global:{name}").as_bytes())[..8].to_vec();
+        let others = ["open_limit_order"];
+        let mut swap = data("swap_v2");
+        swap.extend([1, 2, 3]);
+        assert_eq!(
+            anchor_instruction(&swap, ALLOWED, &others),
+            ("SwapV2".into(), Some(Use::Swap))
+        );
+        assert_eq!(
+            anchor_instruction(&data("close_position"), ALLOWED, &others),
+            ("ClosePosition".into(), Some(Use::Position))
+        );
+        assert_eq!(
+            anchor_instruction(&data("open_limit_order"), ALLOWED, &others),
+            ("OpenLimitOrder".into(), None)
+        );
+        assert_eq!(
+            anchor_instruction(&[1, 2, 3, 4, 5, 6, 7, 8, 9], ALLOWED, &others),
+            ("instruction 0102030405060708".into(), None)
+        );
+        assert_eq!(anchor_instruction(&[], ALLOWED, &others).1, None);
+    }
+
+    #[test]
     fn each_pool_instruction_is_read_from_its_own_transfers() {
         let assets = assets();
         let (base, quote) = (assets.base_vault, assets.quote_vault);
@@ -1451,6 +1634,9 @@ mod tests {
     impl Pool for Stub {
         fn assets(&self) -> &PoolAssets {
             &self.assets
+        }
+        fn instruction(&self, _: &[u8]) -> (String, Option<Use>) {
+            ("Swap".into(), Some(Use::Swap))
         }
         async fn price(&self, _: &dyn ChainClient) -> Result<PoolPrice> {
             Ok(PoolPrice {

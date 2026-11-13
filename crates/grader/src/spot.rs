@@ -161,6 +161,10 @@ pub struct SpotReport {
     /// on, per amm market, which the mandate's sides rule counts as trades.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub liquidity_moves: Vec<(InstrumentRef, Side)>,
+    /// Each instruction the bot ran on a pool's program that a bot may not,
+    /// as the mandate breach it is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unsupported: Vec<String>,
     /// For a scenario with a tape or a participation charge: each venue's
     /// traded base volume at each step, the bot's own fills included.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -415,6 +419,25 @@ impl Venues {
             }
         }
         Ok(moves)
+    }
+
+    /// Each instruction the bot ran on a pool's program in slots after
+    /// `after_slot` that a bot may not, as the mandate breach it is.
+    async fn unsupported(&self, after_slot: u64) -> Result<Vec<String>> {
+        let mut breaches = Vec::new();
+        for market in self.markets.iter().filter(|m| m.kind() == Kind::Spot) {
+            let venue = &market.instrument().venue;
+            let liquidity = self
+                .markets
+                .iter()
+                .any(|m| m.kind() == Kind::Amm && &m.instrument().venue == venue);
+            breaches.extend(
+                market
+                    .unsupported(after_slot, &self.owner, liquidity)
+                    .await?,
+            );
+        }
+        Ok(breaches)
     }
 
     /// Add to the ledger every match the venues recorded in slots after
@@ -1416,6 +1439,7 @@ impl Account for SpotAccount {
         };
         self.venues.scan(&mut self.ledger, after).await?;
         let liquidity_moves = self.venues.liquidity_moves(base_slot).await?;
+        let unsupported = self.venues.unsupported(base_slot).await?;
         let ledger = &self.ledger;
         let fills = ledger.own(base_slot)?;
         let start = &self.start;
@@ -1494,6 +1518,7 @@ impl Account for SpotAccount {
                 fills,
                 open_orders: std::mem::take(&mut self.open_orders),
                 liquidity_moves,
+                unsupported,
                 volume,
                 pools: std::mem::take(&mut self.pools),
                 arbitrage: done.actors.arbitrage,
@@ -2172,6 +2197,7 @@ mod tests {
                     "{venue}"
                 );
             }
+
         }
     }
 

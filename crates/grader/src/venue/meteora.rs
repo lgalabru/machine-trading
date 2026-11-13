@@ -26,11 +26,94 @@ use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 use super::{
     Market, SeatResult, Venue, not_offered,
     pools::{
-        Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, named, pool_assets, range,
-        swap_atoms, units,
+        Allowed, Deposit, Lp, Pool, PoolAssets, PoolMarket, PoolPrice, SwapOrder, Use,
+        anchor_instruction, named, pool_assets, range, swap_atoms, units,
     },
 };
 use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+
+/// What a bot may run of Meteora DLMM's instructions (`specs/venues/meteora.md`, "What
+/// a bot may run"): swaps, and positions in the session's pool.
+const ALLOWED: Allowed = &[
+    ("swap", Use::Swap),
+    ("swap2", Use::Swap),
+    ("swap_exact_out", Use::Swap),
+    ("swap_exact_out2", Use::Swap),
+    ("swap_with_price_impact", Use::Swap),
+    ("swap_with_price_impact2", Use::Swap),
+    ("initialize_position", Use::Liquidity),
+    ("initialize_position2", Use::Liquidity),
+    ("initialize_position_pda", Use::Liquidity),
+    ("initialize_bin_array", Use::Liquidity),
+    ("add_liquidity", Use::Liquidity),
+    ("add_liquidity2", Use::Liquidity),
+    ("add_liquidity_by_strategy", Use::Liquidity),
+    ("add_liquidity_by_strategy2", Use::Liquidity),
+    ("add_liquidity_by_strategy_one_side", Use::Liquidity),
+    ("add_liquidity_by_weight", Use::Liquidity),
+    ("add_liquidity_by_weight2", Use::Liquidity),
+    ("add_liquidity_one_side", Use::Liquidity),
+    ("add_liquidity_one_side_precise", Use::Liquidity),
+    ("add_liquidity_one_side_precise2", Use::Liquidity),
+    ("remove_liquidity", Use::Liquidity),
+    ("remove_liquidity2", Use::Liquidity),
+    ("remove_liquidity_by_range", Use::Liquidity),
+    ("remove_liquidity_by_range2", Use::Liquidity),
+    ("remove_all_liquidity", Use::Liquidity),
+    ("claim_fee", Use::Liquidity),
+    ("claim_fee2", Use::Liquidity),
+    ("claim_reward", Use::Liquidity),
+    ("claim_reward2", Use::Liquidity),
+    ("update_fees_and_rewards", Use::Liquidity),
+    ("update_fees_and_reward2", Use::Liquidity),
+    ("close_position", Use::Position),
+    ("close_position2", Use::Position),
+    ("close_position_if_empty", Use::Position),
+    ("increase_position_length", Use::Position),
+    ("increase_position_length2", Use::Position),
+    ("decrease_position_length", Use::Position),
+];
+/// The program's other instructions, by name, as the pinned program's IDL lists them.
+const OTHERS: &[&str] = &[
+    "cancel_limit_order",
+    "close_bin_array",
+    "close_claim_fee_operator_account",
+    "close_limit_order_if_empty",
+    "close_operator_account",
+    "close_preset_parameter",
+    "close_preset_parameter2",
+    "close_token_badge",
+    "create_operator_account",
+    "fund_reward",
+    "go_to_a_bin",
+    "increase_oracle_length",
+    "initialize_bin_array_bitmap_extension",
+    "initialize_customizable_permissionless_lb_pair",
+    "initialize_customizable_permissionless_lb_pair2",
+    "initialize_lb_pair",
+    "initialize_lb_pair2",
+    "initialize_permission_lb_pair",
+    "initialize_position_by_operator",
+    "initialize_preset_parameter",
+    "initialize_reward",
+    "initialize_token_badge",
+    "place_limit_order",
+    "rebalance_liquidity",
+    "set_activation_point",
+    "set_pair_status",
+    "set_pair_status_permissionless",
+    "set_permissionless_operation_bits",
+    "set_pre_activation_duration",
+    "set_pre_activation_swap_address",
+    "update_base_fee_parameters",
+    "update_dynamic_fee_parameters",
+    "update_position_operator",
+    "update_reward_duration",
+    "update_reward_funder",
+    "withdraw_ineligible_reward",
+    "withdraw_protocol_fee",
+    "zap_protocol_fee",
+];
 
 /// Bin arrays a swap may cross: the active one and two beyond.
 const SWAP_BIN_ARRAYS: usize = 3;
@@ -246,6 +329,10 @@ impl DlmmPool {
 impl Pool for DlmmPool {
     fn assets(&self) -> &PoolAssets {
         &self.assets
+    }
+
+    fn instruction(&self, data: &[u8]) -> (String, Option<Use>) {
+        anchor_instruction(data, ALLOWED, OTHERS)
     }
 
     async fn price(&self, chain: &dyn ChainClient) -> Result<PoolPrice> {

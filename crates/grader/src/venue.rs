@@ -178,6 +178,20 @@ pub trait Market: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Each instruction `owner` ran on this market's program in slots after
+    /// `after_slot` that a bot may not run, as the mandate breach it is (a
+    /// pool's, `venue/pools.rs`); `liquidity` says whether the session takes
+    /// the account's liquidity on this venue.
+    async fn unsupported(
+        &self,
+        after_slot: u64,
+        owner: &Pubkey,
+        liquidity: bool,
+    ) -> Result<Vec<String>> {
+        let _ = (after_slot, owner, liquidity);
+        Ok(Vec::new())
+    }
+
     /// What `holdings`, this market's, are worth in USD, where the market
     /// values its own (a money market's supply and debt, a pool position);
     /// `None` leaves them to the reference prices ([`value_usd`]).

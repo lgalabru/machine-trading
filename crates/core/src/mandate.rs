@@ -284,6 +284,9 @@ impl Mandate {
 
     /// The first rule the observed session broke, if any.
     pub fn audit(&self, observed: &Observed) -> Option<Breach> {
+        if let Some(what) = observed.unsupported.first() {
+            return Some(Breach::Unsupported { what: what.clone() });
+        }
         if observed.positions_outside_universe > 0 {
             return Some(Breach::OutsideUniverse {
                 positions: observed.positions_outside_universe,
@@ -373,6 +376,9 @@ pub struct Observed {
     /// on, per `amm` instrument: a deposit that takes base in is a buy, a
     /// withdrawal that returns base a sell. Only the sides rule reads them.
     pub liquidity: Vec<(InstrumentRef, Side)>,
+    /// What the account ran on a venue's program that a bot may not (a
+    /// pool's limit order, say), each as the breach it is.
+    pub unsupported: Vec<String>,
 }
 
 /// A fill as the audit reads it: where, which way for the account, and at
@@ -497,6 +503,12 @@ pub enum Breach {
         price: f64,
         limit: f64,
     },
+    /// An instruction a bot may not run on its venue, said as what the
+    /// account did: "ran meteora PlaceLimitOrder, which this benchmark
+    /// doesn't support".
+    Unsupported {
+        what: String,
+    },
 }
 
 impl fmt::Display for Breach {
@@ -554,6 +566,7 @@ impl fmt::Display for Breach {
                 f,
                 "bought {instrument} at {price:.4}, over the maximum buy price of {limit}"
             ),
+            Self::Unsupported { what } => f.write_str(what),
         }
     }
 }
@@ -976,6 +989,18 @@ mod tests {
         // Outside the universe, nothing to check.
         let other: InstrumentRef = "raydium:amm:SPCX-USDC".parse().unwrap();
         assert!(mandate.allows_side(&other, Side::Buy));
+    }
+
+    #[test]
+    fn an_unsupported_instruction_is_a_breach_whatever_else_holds() {
+        let mandate = Mandate::spot(&["meteora"], "SPCX-USDC", 10.0);
+        let mut observed = Observed::default();
+        assert_eq!(mandate.audit(&observed), None);
+        let what = "ran meteora PlaceLimitOrder, which this benchmark doesn't support";
+        observed.unsupported.push(what.into());
+        let breach = mandate.audit(&observed).unwrap();
+        assert_eq!(breach, Breach::Unsupported { what: what.into() });
+        assert_eq!(breach.to_string(), what);
     }
 
     #[test]
