@@ -177,6 +177,36 @@ pub struct Wallet {
     pub value_usd: f64,
 }
 
+impl Wallet {
+    /// Value the wallet at `price` if it is one, as the valuation feed's
+    /// anchor makes the start: the held SOL is worth what the feed will say
+    /// from the first slot, so the shift isn't PnL.
+    fn reprice(&mut self, price: Option<f64>) {
+        if let Some(price) = price {
+            self.value_usd += self.base * (price - self.price_usd);
+            self.price_usd = price;
+        }
+    }
+}
+
+/// The price a feed anchors the valuation feed (the Pyth SOL/USD the account
+/// is valued at) to, if one does.
+fn valuation_anchor(
+    oracles: &crate::oracles::Oracles,
+    starts: &std::collections::BTreeMap<String, crate::oracles::OracleStart>,
+) -> Option<f64> {
+    let valuation =
+        mtx_kit::protocols::pyth::feed_account(0, &mtx_kit::protocols::pyth::SOL_USD_FEED_ID);
+    oracles
+        .feeds
+        .iter()
+        .find(|f| {
+            matches!(&f.source, crate::oracles::Source::Pyth(p) if p.address().ok() == Some(valuation))
+        })
+        .and_then(|f| starts.get(&f.name))
+        .map(|start| start.anchored_price)
+}
+
 /// One of the bot's fills.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpotFill {
@@ -668,7 +698,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         bot.pubkey(),
     )
     .await?;
-    let start = venues.read().await?;
+    let mut start = venues.read().await?;
     let instruments = spot.instruments(&scenario.symbol);
     // A tape's takers, each a funded wallet trading the session's first
     // venue.
@@ -730,6 +760,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         None => Default::default(),
     };
+    if let Some(oracles) = &scenario.oracles {
+        start
+            .wallet
+            .reprice(valuation_anchor(oracles, &oracle_starts));
+    }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots;
@@ -1165,6 +1200,52 @@ mod tests {
             }),
             reference_pnl_usd: None,
         }
+    }
+
+    #[test]
+    fn an_anchored_valuation_feed_values_the_start_at_its_price() {
+        use crate::oracles::*;
+        let mut wallet = Wallet {
+            base: 10.0,
+            quote: 100.0,
+            price_usd: 83.0,
+            value_usd: 930.0,
+        };
+        let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+        let feed = |id: &str, name: &str| Feed {
+            name: name.into(),
+            source: Source::Pyth(PythOracle {
+                feed_id: id.into(),
+                shard: 0,
+                exponent: -8,
+                account: None,
+            }),
+            anchor: Some(Anchor::Price { usd: 77.0 }),
+            cadence_slots: 4,
+            path: vec![],
+            conf_bps: 2.0,
+            failures: vec![],
+        };
+        let oracles = Oracles {
+            seed: 1,
+            feeds: vec![feed(&"11".repeat(32), "other"), feed(sol, "sol")],
+        };
+        let starts = |name: &str| {
+            [(
+                name.to_string(),
+                OracleStart {
+                    source_price: 83.0,
+                    anchored_price: 77.0,
+                },
+            )]
+            .into()
+        };
+        // An anchored non-valuation feed moves nothing.
+        wallet.reprice(valuation_anchor(&oracles, &starts("other")));
+        assert_eq!((wallet.price_usd, wallet.value_usd), (83.0, 930.0));
+        wallet.reprice(valuation_anchor(&oracles, &starts("sol")));
+        assert_eq!(wallet.price_usd, 77.0);
+        assert!((wallet.value_usd - 870.0).abs() < 1e-9);
     }
 
     #[test]
