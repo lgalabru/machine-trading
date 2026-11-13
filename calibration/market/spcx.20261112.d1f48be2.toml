@@ -1,0 +1,219 @@
+# Market calibration spcx.20261112.d1f48be2 (schema 1.0). Written by infra-calib/calib/export_v1.py
+# from spcx.20261111.ebab5e7c; never edited by hand. A refit is a new file with a new id.
+# Every input (url, sha256, bytes, fetch time) is in spcx.20261112.d1f48be2.inputs.json.
+
+
+[meta]
+schema_version = "1.0"
+calibration_id = "spcx.20261112.d1f48be2"
+asset = "spcx"
+symbol = "SPCX"
+fitted_at = "2026-11-12T17:16:26+00:00"
+exported_at = "2026-11-12T17:16:26+00:00"
+fitter = "infra-calib (calib/fit.py, calib/export_v1.py)"
+fitter_code_sha256_12 = "6c814d662f10"
+derived_from = "spcx.20261111.ebab5e7c"
+inputs_file = "spcx.20261112.d1f48be2.inputs.json"
+inputs_digest = "38bd97b308ebbffd"
+inputs_count = 272
+sources = ["Phoenix perp API /exchange and /candles (SPCX mark, 1 m, since the IPO week)", "Solana RPC getRecentPrioritizationFees and getSignaturesForAddress", "Jito tip floor", "NYSE holiday calendar"]
+limits = ["Fair value is Phoenix's SPCX mark (the oracle plus the perp's premium), 2026-06-15 to 2026-11-11, not the underlying's tape.", "Only regular hours vs everything else is fitted: pre, post, overnight and weekend share the closed-hours volatility.", "Fitted to the realism windows themselves (in-sample checks): per_second_sd (vol_level), df (kurtosis_within), the level's log-sd (vol_of_vol), GARCH alpha and persistence (clustering_lag_1 and _5) and the mark's half-life (predictability); the gap sizes are the fitted open gaps (gap_size). The realism windows are the history the model is fitted on.", "Out of fit: tail_ratio, clustering_lag_10 and round_trips.", "Venue numbers (trades, sizes, premium) come from 30 days (2026-10-12 to 2026-11-11).", "Book depth and impact are defaults: no SPCX book or fill tape has been recorded.", "Realism bands are each statistic's sampling spread over these windows; other periods would add period-to-period spread."]
+
+[meta.windows]
+phoenix_fair_value = ["2026-06-15", "2026-11-11"]
+phoenix_venue = ["2026-10-12", "2026-11-11"]
+
+[fair_value]
+model = "regime_garch_t"
+reference = "Phoenix SPCX mark (tracks Pyth Equity.US.SPCX/USD plus the perp's premium)"
+per_second_sd = 0.000155334
+per_second_sd_source = "the median session's level: the realism windows' median 1 m sd / sqrt(60), over 0.8954, the median window sd of the model's own 30-block windows at unit median level (simulated)"
+block_seconds = 60
+
+[fair_value.tails]
+model = "student_t"
+df = 5.47
+df_source = "simulated moments: the df at which the model's 30-minute windows of 1 m mark returns match the realism windows' within-window kurtosis (0.7437); the GARCH-standardized estimate is 4.238"
+hill_alpha_1m = 3.071
+
+[fair_value.tails.excess_kurtosis_by_horizon]
+60s = 15.24
+
+[fair_value.clustering]
+model = "garch11"
+alpha = 0.1123
+beta = 0.7205
+half_life_seconds = 227.4
+source = "alpha and alpha + beta by simulated moments to the realism windows' |r| ACF at lags 1 and 5 (0.0343, -0.01366); variance-targeted Gaussian QMLE on 1 m regular-hours mark returns gave alpha 0.1074, beta 0.8862"
+
+[fair_value.mark]
+model = "ema"
+half_life_seconds = 2.701
+update_seconds = 5.0
+source = "Phoenix's mark is a smoothed price: every update_seconds it moves toward the fair path, an exponential average with this half-life, by simulated moments to the realism windows' lag-1 return ACF (-0.01049)"
+
+[fair_value.regimes]
+model = "markov"
+names = ["base"]
+vol_mult = [1.0]
+log_sd_within = [0.5425]
+share = [1.0]
+transition_per_hour = [[1.0]]
+source = "one state: the session level's log-sd by simulated moments to the realism windows' vol of vol (0.6043), drawn as check_model draws (30-minute regular-session sessions, GARCH from its target); the sd of log hourly realized vol is 0.618"
+
+[fair_value.jumps]
+model = "poisson_lognormal"
+per_hour = 0.6742
+abs_size_median_pct = 0.5194
+abs_size_p90_pct = 1.001
+rule = "1 m regular-hours return beyond 5 robust sigmas of the trailing hour"
+
+[calendar]
+model = "sessions"
+timezone = "America/New_York"
+closed_vol_mult = 0.4125
+closed_source = "1 m mark sd outside regular hours over the regular-hours sd; weekends and holidays are closed"
+holidays = ["2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25", "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"]
+draw_range = ["2027-01-04", "2027-12-31"]
+
+[[calendar.sessions]]
+kind = "pre"
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "04:00"
+end = "09:30"
+vol_mult = 0.4125
+
+[[calendar.sessions]]
+kind = "regular"
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "09:30"
+end = "16:00"
+vol_mult = 1.0
+
+[[calendar.sessions]]
+kind = "post"
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "16:00"
+end = "20:00"
+vol_mult = 0.4125
+
+[[calendar.sessions]]
+kind = "overnight"
+days = ["sun", "mon", "tue", "wed", "thu"]
+start = "20:00"
+end = "04:00"
+vol_mult = 0.4125
+
+[[calendar.gaps]]
+into = "regular"
+n = 107
+abs_median_pct = 0.4382
+abs_p90_pct = 1.121
+source = "1 m mark move at the 09:30 New York open"
+
+[calendar.closed_hours_move]
+n = 106
+abs_median_pct = 1.237
+abs_p90_pct = 3.459
+source = "16:00 close to 09:30 open, nights and weekends together"
+
+[venues]
+
+[venues.phoenix_perp]
+market = "HCPybc8PFzS3gL2AHWXtT7jT1WDYSva7A6qf9aVGiLMf"
+taker_fee = 0.00035
+maker_fee = 5e-05
+tick_size = 10
+base_lots_decimals = 3
+trades_per_minute = 1.463
+trades_dispersion_index = 1.871
+trade_share_by_hour = [0.0383, 0.0369, 0.0359, 0.0369, 0.0376, 0.0374, 0.0392, 0.0413, 0.0435, 0.075, 0.051, 0.0395, 0.0367, 0.0388, 0.0382, 0.0415, 0.0548, 0.0434, 0.0388, 0.0386, 0.0405, 0.0395, 0.0381, 0.0386]
+
+[venues.phoenix_perp.trade_size]
+model = "lognormal"
+median = 0.021
+sigma = 1.5
+unit = "base"
+source = "per-minute mean trade size from Phoenix candles"
+
+[venues.phoenix_perp.premium_bps]
+p10 = -2.19
+median = 2.01
+p90 = 9.56
+source = "last trade vs mark per minute (not mark vs index)"
+
+[venues.phoenix_perp.funding]
+interval_seconds = 3600
+period_seconds = 28800
+max_rate_per_interval = 315
+max_rate_per_interval_pct = 0.225
+source = "Phoenix /exchange"
+
+[book]
+model = "defaults"
+half_spread_bps = 5.0
+half_spread_source = "default: half the p90 trade-vs-mark gap (9.6 bp); no SPCX book recorded"
+depth_bps = [5.0, 10.0, 25.0, 50.0, 100.0]
+depth_base = [2.0, 5.0, 15.0, 35.0, 80.0]
+depth_source = "default; no SPCX book recorded"
+
+[book.impact]
+model = "power_law"
+k_bps = 1.0
+gamma = 0.5
+size_unit = "base"
+permanent_share = 0.5
+decay_half_life_seconds = 30.0
+source = "defaults (square-root law); no fill tapes yet"
+
+[realism]
+source = "Phoenix SPCX mark 1 m returns in US regular hours (09:31-16:00 New York), 2026-06-15 to 2026-11-11, non-overlapping 30-minute windows of consecutive minutes"
+windows = 1284
+bar_seconds = 60
+window_bars = 30
+vol_bars = 1
+agg_bars = 1
+cluster_bars = 1
+cluster_lags = [1, 5, 10]
+session_kind = "regular"
+round_trip_min_losing_share = 0.95
+fitted = ["vol_level", "vol_of_vol", "kurtosis_within", "predictability", "clustering_lag_1", "clustering_lag_5", "gap_size_median", "gap_size_p90"]
+out_of_fit = ["tail_ratio", "clustering_lag_10", "round_trips"]
+
+[realism.reference]
+vol_level = 0.00107732
+vol_of_vol = 0.6043
+kurtosis_within = 0.7437
+kurtosis_pooled = 15.62
+tail_index = 3.063
+clustering = [0.0343, -0.01366, -0.03206]
+predictability = -0.01049
+tail_ratio = 1.73
+
+[realism.spread]
+windows = 300
+draws = 400
+sigmas = 3.226
+sigmas_source = "Sidak: each of the 8 gated return checks at 1% family-wise false fails"
+
+[realism.spread.log_sd]
+vol_level = 0.04945
+vol_of_vol = 0.06468
+tail_ratio = 0.01967
+
+[realism.spread.sd]
+kurtosis_within = 0.09778
+clustering = [0.01164, 0.01093, 0.01224]
+predictability = 0.01118
+
+[realism.null]
+source = "Gaussian returns at each real window's sd (tails), at the windows' median sd (vol of vol), and each real window shuffled (clustering); mean of 4 draws"
+vol_of_vol = 0.1302
+tail_ratio = 1.512
+kurtosis_within = -0.191
+clustering = [-0.02715, -0.0269, -0.02432]
+
+[realism.bands]
+
+[realism.bands.gap_size]
+ratio = [0.67, 1.5]

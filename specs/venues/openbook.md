@@ -102,7 +102,14 @@ takes components only (`mtx grade --components-only`, the verifier's rule)
 grades it. The component sees the Pyth price as its mark, oracle and index.
 Its position is the SOL held, its entry is the price at the start, and its
 PnL is the change in the account's value. It gets the mandate in
-`session.mandate`, and the session's markets in `session.venue`. Until the
-bot interface names a venue on each order, its orders go to the first
-venue the scenario lists. RFD 0002's "Spot sessions" covers the rest. The first task is planned to be a treasury sale of SOL
+`session.mandate`, and the session's markets in `session.venue` and
+`session.venues`. Each line of its sheet goes to the market it names, the
+first venue the scenario lists if it names none. RFD 0002's "Spot
+sessions" covers the rest.
+
+The grader trades a component's lines on OpenBook v2 as take, limit,
+post-only and cancel-all orders. OpenBook's orders expire by the clock
+(a Unix time), not by slot, so a post-only line with an `expires_slot` is
+not sent: its status says why. Sizes round down to whole lots, prices away
+from a worse fill. The first task is planned to be a treasury sale of SOL
 on OpenBook and Phoenix, under a sell-only mandate with a price floor.

@@ -758,10 +758,7 @@ async fn run_sessions(
     keys: RoleKeys<'_>,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
-    let components = crate::wasm::component_in(bot_dir).is_some()
-        && scenarios
-            .iter()
-            .all(|scenario| session::plays_component(bot_dir, scenario));
+    let components = crate::wasm::component_in(bot_dir).is_some();
     let most = if components {
         MAX_COMPONENT_JOBS
     } else {
@@ -1105,6 +1102,7 @@ mod tests {
             net: None,
             reference_pnl_usd,
             fair_path: None,
+            market_model: None,
             raw_sends: None,
         }
     }
@@ -1369,7 +1367,7 @@ mod tests {
     #[test]
     fn sessions_whose_takers_failed_fail_the_grade() {
         let mut thin = session(10.0);
-        thin.flow = Some(crate::flow::FlowReport {
+        thin.flow = Some(crate::actors::FlowReport {
             orders: 100,
             sent: 100,
             failed: 11,

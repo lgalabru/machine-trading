@@ -57,6 +57,8 @@ pub enum Error {
     Replay(String),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
+    #[error("invalid market calibration {}: {reason}", path.display())]
+    InvalidCalibration { path: PathBuf, reason: String },
     #[error("oracle {name}: {reason}")]
     Oracle { name: String, reason: String },
     #[error("no bot at {}: a bot is a directory with a bot.wasm, or a Justfile whose `run` starts it", .0.display())]

@@ -1,15 +1,20 @@
-//! One trading session: a bot against one scenario on a fresh offline world.
+//! One trading session: a bot against one scenario on a fresh offline world,
+//! the same loop whatever the scenario trades.
 //!
-//! 1. Restore the snapshot offline and put the RPC guard in front of it.
-//! 2. Onboard a fresh trader with [`DEPOSIT_USDC`] of collateral.
-//! 3. Step to the session's first slot, register the scenario and lock the
-//!    cheatcodes, then start the bot (`just run`, from the `Justfile` in its
-//!    directory) with the [`BotEnv`] contract.
-//! 4. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
-//!    give the bot its turn (see [`mtx_core::turns`]): each step produces
-//!    its blocks, which land the scenario's move; then the grader's own
-//!    traders act; then the bot gets the step and the world waits for it.
-//! 5. After the last step, stop the bot and mark the account to market.
+//! 1. The session's kind sets it up ([`crate::perp`], [`crate::spot`]):
+//!    restore the snapshot offline and put the RPC guard in front of it,
+//!    fund the bot's account (a perp's trader with [`DEPOSIT_USDC`] of
+//!    collateral, a spot wallet), ready the actors ([`crate::actors`]), step
+//!    to the session's first slot, register the scenario and lock the
+//!    cheatcodes.
+//! 2. Start the bot (`just run`, from the `Justfile` in its directory, with
+//!    the [`BotEnv`] contract), or load its component ([`crate::wasm`]).
+//! 3. Move the world in steps of [`SLOTS_PER_STEP`] slots, and between them
+//!    give the bot its turn (see [`mtx_core::turns`]): the takers trade;
+//!    each step produces its blocks, which land the scenario's move; then
+//!    the actors that react act; the session measures the account
+//!    (its `Account`); then the bot gets the step and the world waits for it.
+//! 4. After the last step, stop the bot and mark the account to market.
 //!
 //! Each session gets its own surfnet, so nothing a bot does carries over, and
 //! nothing moves while the bot thinks, so the same bot on the same scenario
@@ -25,26 +30,21 @@ use std::{
     os::{fd::AsRawFd, unix::net::UnixStream as StdUnixStream},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
+use async_trait::async_trait;
 use mtx_core::{
-    AccountMeter, Decimal, InstrumentId, Measurement, MeterError,
-    mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
+    Decimal,
+    mandate::{InstrumentRef, Mandate, Observed, PositionRange},
     turns::{self, Hello, Message, Step},
 };
-use mtx_kit::{
-    BotEnv,
-    chain::RpcChainClient,
-    protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
-};
+use mtx_kit::BotEnv;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
-use solana_signer::Signer;
-use surfpool_sdk::{CheatcodeFilter, SimnetCommand};
+use surfpool_sdk::SimnetCommand;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
@@ -53,13 +53,12 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    Error, Result, chain,
-    compete::{CompeteReport, Competitor},
+    Error, Result,
+    actors::{ActorsReport, Cast, CompeteReport, FlowReport, Moment, TakerRecord},
+    chain,
     error::io_error,
-    flow::{FlowReport, TakerRecord, Takers},
     guard::{CallLog, Guard},
-    making::{book_at, level_at},
-    phoenix::{self, Phoenix, SLOTS_BETWEEN_STEPS},
+    phoenix::SLOTS_BETWEEN_STEPS,
     scenario::Scenario,
     snapshot,
 };
@@ -348,11 +347,7 @@ impl SessionReport {
 /// the grader may run it again from scratch.
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut bot_started = false;
-    let session = if opts.scenario.spot.is_some() {
-        crate::spot::run_session(opts, &mut bot_started).await
-    } else {
-        run_session(opts, &mut bot_started).await
-    };
+    let session = run_session(opts, &mut bot_started).await;
     match session {
         // Already wrapped: a crank's grader failure, after the bot started.
         Err(error @ Error::Setup(_)) => Err(error),
@@ -361,6 +356,115 @@ pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     }
 }
 
+/// The world a session runs on, kept for as long as it runs.
+pub(crate) enum World {
+    /// A Phoenix Eternal snapshot, with its exchange metadata.
+    Offline(Box<snapshot::OfflineWorld>),
+    /// A snapshot of other markets.
+    Snapshot(Box<surfpool_sdk::Surfnet>),
+}
+
+impl World {
+    fn surfnet(&self) -> &surfpool_sdk::Surfnet {
+        match self {
+            World::Offline(world) => &world.surfnet,
+            World::Snapshot(surfnet) => surfnet,
+        }
+    }
+}
+
+/// A session set up by its kind, up to the bot's start: the world locked
+/// at the session's first slot, the bot's endpoint, the actors, and the
+/// account the session measures.
+pub(crate) struct Prepared {
+    pub world: World,
+    /// The grader's own endpoint, and a client on it.
+    pub internal: Guard,
+    pub rpc: RpcClient,
+    /// The bot's endpoint.
+    pub guard: Guard,
+    pub workdir: SessionDir,
+    pub bot: Keypair,
+    /// The slot the session starts at (its steps count from it) and ends at.
+    pub base_slot: u64,
+    pub end_slot: u64,
+    /// The mandate with its term: what the bot is handed, and what the
+    /// session's report is audited against.
+    pub mandate: Mandate,
+    /// The bot's environment, as a process bot gets it.
+    pub env: BotEnv,
+    /// What the steps carry beyond the clock, if anything.
+    pub reports: Option<turns::Reports>,
+    /// Off hours: the slot the external market reopens at.
+    pub reopen_slot: Option<u64>,
+    pub cast: Cast,
+    pub account: Box<dyn Account>,
+}
+
+/// The bot's account as a session measures it, and what the session's
+/// kind adds to the loop: a perp's Phoenix trader account
+/// ([`crate::perp`]), or a wallet across spot venues ([`crate::spot`]).
+#[async_trait]
+pub(crate) trait Account: Send + Sync {
+    /// Where the session stands `at` slots in, for the actors.
+    fn moment(&self, at: u64) -> Moment;
+
+    /// The account's value when the session starts.
+    fn start_value_usd(&self) -> f64;
+
+    /// Once the bot has started, before the first step.
+    async fn begin(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// After step `k`'s blocks landed, at `slot` (`at` slots in): measure
+    /// the account and record the step.
+    async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord>;
+
+    /// What the step hands the bot beyond the clock (a spot scenario's turn
+    /// data).
+    async fn turn_data(&mut self, step: &mut Step) -> Result<()>;
+
+    /// The last step's reading of a measured wallet, for a component.
+    fn wallet(&self) -> Option<&crate::spot::Wallet>;
+
+    /// The markets a component trades through the grader, its seats signed
+    /// with `bot` through `host_url` (the bot's guard, on its behalf).
+    async fn desk(
+        &self,
+        host_url: &str,
+        bot: &Keypair,
+        env: &BotEnv,
+        mandate: &Mandate,
+    ) -> Result<crate::wasm::Desk>;
+
+    /// One instruction of a bot's transaction, as the report shows it.
+    fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
+
+    /// The session is over: measure the account a last time and report.
+    async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
+}
+
+/// What the session loop hands the account's report.
+pub(crate) struct Done {
+    pub began: Instant,
+    pub start_slot: u64,
+    pub end_slot: u64,
+    pub mandate: Mandate,
+    pub refused_calls: Vec<String>,
+    pub bot_exit: Option<String>,
+    pub late_slots: u64,
+    pub faults: Option<crate::faults::FaultsReport>,
+    pub turns: TurnReport,
+    pub steps: Vec<StepRecord>,
+    pub transactions: Vec<TxRecord>,
+    pub calls: CallLog,
+    pub actors: ActorsReport,
+    pub crank_refusals: Vec<crate::crank::CrankRefusal>,
+}
+
+/// The one session loop, for every kind of session: perp, spot, and
+/// whatever venue its kind trades.
 /// A name the grader writes from its own set (a valuation, a fill's role, a
 /// fault), as a report field: read back with [`static_name`]. An alias, so
 /// that serde doesn't take the field for one borrowed from its input.
@@ -385,264 +489,38 @@ pub(crate) fn static_name<'de, D: Deserializer<'de>>(
     Ok(name)
 }
 
-/// Whether a session of `scenario` plays `bot_dir`'s strategy component
-/// inside the grader, rather than starting the bot's process: it does for a
-/// bot with a `bot.wasm`, except in a spot session, which runs processes.
-pub fn plays_component(bot_dir: &Path, scenario: &Scenario) -> bool {
-    scenario.spot.is_none() && crate::wasm::component_in(bot_dir).is_some()
-}
-
 async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result<SessionReport> {
     let began = Instant::now();
     let scenario = opts.scenario;
-    let world = snapshot::start_offline_stepped(opts.snapshot_dir).await?;
-    let surfnet = &world.surfnet;
-    // The grader's own clients, served the way a stepped world needs: a
-    // transaction is final once it executed (see [`Guard::internal`]).
-    let internal = Guard::internal(surfnet.rpc_url()).await?;
-    let rpc = mtx_kit::rpc_client_with_timeout(internal.url(), INTERNAL_RPC_TIMEOUT);
-    let setup_from = rpc.get_slot()?;
-    let phoenix = Phoenix::new(world.exchange.clone(), internal.url());
-    let market = phoenix.market(&scenario.symbol)?;
-
-    let bot = opts.keys.keypair("bot", 0);
-    let trader =
-        phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
-    let hawkeye = phoenix.hawkeye(bot.pubkey());
-    let start_mark_ticks = patiently("the book", async || {
-        hawkeye.view_bbo(&scenario.symbol).await
-    })
-    .await?
-    .value
-    .mark_price_ticks;
-    let start_mark_usd = phoenix.ticks_to_usd(market, start_mark_ticks);
-    // The account, as an enforcer reads it: from Phoenix, never from the bot.
-    // A scenario that sets funding values it with the funding it has accrued
-    // and not settled yet; others as Phoenix's collateral and unrealized PnL
-    // alone.
-    let meter = PhoenixEternalMeter::new(
-        Arc::new(PhoenixExchange::new(world.exchange.clone())),
-        internal.url(),
-        Arc::new(RpcChainClient::with_timeout(
-            internal.url(),
-            INTERNAL_RPC_TIMEOUT,
-        )),
-        bot.pubkey(),
-        &scenario.symbol,
-    )
-    .map_err(mtx_kit::Error::from)?
-    .with_unsettled_funding(scenario.funding.is_some());
-    if meter.trader() != trader {
-        return Err(Error::InvalidExchangeKey(format!(
-            "the meter would read trader account {}, but the bot was onboarded at {trader}",
-            meter.trader()
-        )));
-    }
-    let universe: Vec<InstrumentId> = scenario
-        .mandate
-        .universe
-        .iter()
-        .map(|allowance| allowance.instrument.id())
-        .collect();
-    let market_id = scenario.instrument().id();
-    let start_value_usd = grader_f64(
-        patiently("the meter", async || meter.measure(&universe).await)
-            .await?
-            .value_usd,
-    );
-    if let Some(mark) = scenario.funding.as_ref().and_then(|f| f.mark.as_ref()) {
-        phoenix::set_mark(surfnet, &phoenix, &scenario.symbol, mark)?;
-    }
-    // The takers, set up while cheatcodes still work: market making's, with
-    // the makers widened and a competing maker; off hours', with the makers
-    // widened and no competitor; a tape's, with the makers as they are.
-    let (takers, competitor) = match (&scenario.making, &scenario.offhours) {
-        (Some(making), _) => (
-            Some(
-                Takers::prepare(
-                    &world,
-                    &phoenix,
-                    scenario,
-                    making.competitor_bps,
-                    start_mark_ticks,
-                    internal.url(),
-                    &opts.keys,
-                )
-                .await?,
-            ),
-            Some(
-                Competitor::prepare(&world, &phoenix, scenario, internal.url(), &opts.keys).await?,
-            ),
-        ),
-        (None, Some(off)) => (
-            Some(
-                Takers::prepare(
-                    &world,
-                    &phoenix,
-                    scenario,
-                    off.half_spread_bps,
-                    start_mark_ticks,
-                    internal.url(),
-                    &opts.keys,
-                )
-                .await?,
-            ),
-            None,
-        ),
-        (None, None) if !scenario.tape.is_empty() => (
-            Some(Takers::onboard(&world, &phoenix, scenario, internal.url(), &opts.keys).await?),
-            None,
-        ),
-        (None, None) => (None, None),
+    let Prepared {
+        world,
+        internal,
+        rpc,
+        guard,
+        workdir,
+        bot: bot_key,
+        base_slot,
+        end_slot,
+        mandate,
+        env,
+        reports,
+        reopen_slot,
+        mut cast,
+        mut account,
+    } = if scenario.spot.is_some() {
+        crate::spot::prepare(&opts).await?
+    } else {
+        crate::perp::prepare(&opts).await?
     };
-    // The orders the takers send, whichever kind of scenario lists them.
-    let orders: &[crate::making::TakerOrder] = match (&scenario.making, &scenario.offhours) {
-        (Some(making), _) => &making.takers,
-        (None, Some(off)) => &off.takers,
-        (None, None) => &scenario.tape,
-    };
-    // What a market-making account's position is worth: the scenario's own
-    // oracle level at `slot`, which quoting can't push the way it can push
-    // Phoenix's mark. Otherwise the mark, as Phoenix reports it.
-    // Where the book trades at a premium, the scenario's book level: what
-    // closing the position would fetch, which Phoenix's mark, a blend of the
-    // book and the index, is not.
-    let value = async |value_usd: f64, units: f64, slot: u64, base_slot: u64| -> Result<f64> {
-        let at = slot.saturating_sub(base_slot);
-        let level = match scenario.valuation() {
-            "oracle" => level_at(&scenario.path, at),
-            "book" => book_at(&scenario.path, at),
-            _ => return Ok(value_usd),
-        };
-        let mark = patiently("the book", async || {
-            hawkeye.view_bbo(&scenario.symbol).await
-        })
-        .await?
-        .value
-        .mark_price_ticks;
-        let price = start_mark_usd * (1.0 + level / 100.0);
-        Ok(value_usd + units * (price - phoenix.ticks_to_usd(market, mark)))
-    };
-
-    let guard = Guard::start(surfnet.rpc_url()).await?;
-    let user = opts.slot.map(|slot| BOT_USERS[slot]);
-    let workdir = SessionDir::create(&bot, user)?;
-    let mut slot = rpc.get_slot()?;
-    // Slots from the surfnet's start to the session's. Setup produces a few
-    // of its own (each onboarding, one), the same ones every run; the world
-    // then steps to this one, so every session of a scenario kind starts at
-    // the same distance from the snapshot: state that depends on the slot
-    // (Phoenix's funding, the oracle's age) replays the same.
-    let first_slot = setup_from + scenario.setup_slots();
-    if slot > first_slot {
-        return Err(Error::SetupSlots {
-            scenario: scenario.name.clone(),
-            used: slot - setup_from,
-            budget: scenario.setup_slots(),
-        });
-    }
-    // The market's funding parameters land on the session's first slot, so
-    // they're in force, and their intervals start at the same point, before
-    // the bot starts.
-    let perp_asset_map = phoenix.perp_asset_map()?;
-    if let Some(funding) = &scenario.funding {
-        chain::register_scenario(
-            &rpc,
-            "funding",
-            vec![crate::scenario::funding_override(
-                perp_asset_map,
-                &scenario.symbol,
-                funding,
-                first_slot.saturating_sub(slot).max(1),
-            )],
-        )?;
-    }
-    // Surfpool restamps Phoenix's oracle readings, and the slot its mark's
-    // EMA last stepped at, with the current slot whenever it plays a Phoenix
-    // override (an onboarding's capabilities, say), and the EMA's next step
-    // runs from there. Setup's slots no longer move, but one more override on
-    // the session's first slot restamps them all to it, so the session's
-    // mark doesn't depend on how many onboardings setup ran either. A
-    // funding scenario's own override, played there, does the same.
-    if scenario.funding.is_none() {
-        chain::register_scenario(
-            &rpc,
-            "readings",
-            vec![phoenix::enable_trader(
-                trader,
-                first_slot.saturating_sub(slot).max(1),
-            )],
-        )?;
-    }
-    while slot < first_slot {
-        surfnet.send_command(SimnetCommand::SlotForward(None))?;
-        slot = wait_for_slot(&rpc, slot + 1).await?;
-    }
-    // The scenario is the grader's last cheatcode. Lock them all before the
-    // bot starts: the bot's only way to the surfnet is the guard, and even
-    // the guard's upstream has no cheatcodes, airdrops, or way to stop it.
-    // Overrides count from the slot they were registered at; so does the
-    // takers' flow.
-    if let Some(funding) = &scenario.funding {
-        while slot < first_slot + 1 {
-            surfnet.send_command(SimnetCommand::SlotForward(None))?;
-            slot = wait_for_slot(&rpc, slot + 1).await?;
-        }
-        phoenix::check_funding(&rpc, &phoenix, &scenario.symbol, funding)?;
-    }
-    chain::register_scenario(
-        &rpc,
-        &scenario.name,
-        scenario.overrides(perp_asset_map, start_mark_ticks),
-    )?;
-    if let Some(oracles) = &scenario.oracles {
-        crate::oracles::register(
-            &rpc,
-            oracles,
-            scenario.duration_slots,
-            &crate::oracles::World {
-                phoenix: Some((perp_asset_map, start_mark_ticks)),
-            },
-        )?;
-    }
-    let base_slot = rpc.get_slot()?;
-    surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
+    let surfnet = world.surfnet();
     let start_slot = base_slot;
     guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
-    let end_slot = start_slot + scenario.duration_slots;
-    // The bot gets a copy to plan by; the audit uses this one, which the bot
-    // can't reach.
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
-    let instrument = scenario.instrument();
-    let env = BotEnv {
-        rpc_url: guard.url().to_string(),
-        keypair_path: workdir.keypair_path(),
-        exchange_path: world.exchange_path.clone(),
-        symbol: scenario.symbol.clone(),
-        end_slot,
-        max_position: scenario.max_position(),
-        max_drawdown_usd: mandate
-            .limits
-            .max_drawdown_usd
-            .expect("a perp scenario's mandate has a drawdown limit"),
-        mandate_path: Some(workdir.write_mandate(&mandate)?),
-    };
 
     let late_before = surfnet.coalesced_slots();
-    // Off hours: the slot the external market reopens at, from the venue's
-    // calendar, as `MTX_REOPEN_SLOT`.
-    let reopen_slot = scenario
-        .offhours
-        .as_ref()
-        .map(|off| start_slot + off.reopen_slot);
     *bot_started = true;
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
     let walls = Walls::new(opts.trusted, steps);
+    let user = opts.slot.map(|slot| BOT_USERS[slot]);
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
@@ -663,11 +541,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             })?),
             None => None,
         };
+        let desk = account
+            .desk(&guard.host_url(), &bot_key, &env, &mandate)
+            .await?;
         wasm_bot = Some(
             crate::wasm::WasmBot::start(
                 &component,
-                &env,
-                &mandate,
+                &env.rpc_url,
                 crate::wasm::Clock {
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
@@ -684,8 +564,15 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                             ("MTX_RAW_PROGRAMS".to_string(), programs.join(","))
                         }))
                         .collect(),
-                    reports: mtx_kit::Reports::default(),
+                    reports: reports.into(),
                 },
+                crate::wasm::Terms {
+                    end_slot,
+                    mandate: &mandate,
+                    cap: env.max_position,
+                    max_drawdown: env.max_drawdown_usd,
+                },
+                desk,
                 Box::new(log),
                 opts.observer.clone(),
                 raw_programs.map(|programs| crate::raw::RawConfig {
@@ -693,7 +580,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     fresh: opts.keys.fresh(),
                     internal_url: internal.url().to_string(),
                     mandate: mandate.clone(),
-                    instrument: instrument.clone(),
+                    instrument: scenario.instrument(),
                     unsettled_funding: scenario.funding.is_some(),
                 }),
             )
@@ -734,8 +621,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
-            reports: None,
             seed: Some(turns::scenario_seed(&scenario.name)),
+            reports,
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
             && matches!(
@@ -749,58 +636,27 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     turns.legacy = legacy;
     let mut spent = Duration::ZERO;
+    account.begin().await?;
 
-    let mut flow = takers.as_ref().map(|takers| takers.flow(orders));
-    let mut quoting = competitor
-        .as_ref()
-        .zip(scenario.making.as_ref())
-        .map(|(competitor, making)| competitor.quoting(making));
     let mut bot_exit = None;
-    // Sampled every step: a fill persists until the bot trades out of it, so
-    // a position over the cap is caught.
-    let mut observed = Observed::default();
-    // The account's value, sampled at the same cadence: its running peak, and
-    // the deepest it has fallen below it.
-    let mut peak_value_usd = start_value_usd;
-    let mut max_drawdown_usd: f64 = 0.0;
-    // Phoenix positions (or orders) in markets other than the scenario's.
-    let mut positions_outside_universe: u32 = 0;
-    // The takers' orders due by this many slots into the session: sent after
-    // the bot's turn, against the quotes it left (see the step's order
-    // below).
-    let mut flow_due: Option<u64> = None;
-    let send_flow = async |flow: &mut Option<crate::flow::Flow>, at: Option<u64>| {
-        let (Some(flow), Some(takers), Some(at)) = (flow.as_mut(), takers.as_ref(), at) else {
-            return;
-        };
-        if scenario.making.is_none() && scenario.offhours.is_none() {
-            // The tape trades at the book, where its premium puts it.
-            let book = start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0);
-            flow.send(takers, orders, book, at).await
-        } else {
-            flow.step(takers, scenario, orders, start_mark_usd, at)
-                .await
-        }
-    };
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     let mut cranks = crate::crank::Cranks::new(opts.cranks);
     let mut slot = start_slot;
     for k in 0..steps {
-        // A step: the last step's takers trade against the quotes the bot
-        // left; then the world's blocks land (and with them the scenario's
-        // move); the grader's maker looks and requotes; then the bot's turn.
-        // Takers trading right after a move, before any maker could requote,
-        // would pick off every quote: a sniper the task doesn't describe.
-        // Here the toxic flow is the informed flow, ahead of the jumps.
+        // A step: the takers trade against the quotes the bot left; then the
+        // world's blocks land (and with them the scenario's move); the
+        // actors that react look and act; then the bot's turn. Takers
+        // trading right after a move, before any maker could requote, would
+        // pick off every quote: a sniper the task doesn't describe. Here the
+        // toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
-        send_flow(&mut flow, flow_due.take()).await;
+        cast.before_blocks().await;
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
         }
         let at = slot - base_slot;
-        flow_due = Some(at);
         // The bot's held sends land in this step's blocks.
         guard.release(k).await;
         cranks
@@ -814,46 +670,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 },
             )
             .await?;
-        if let (Some(quoting), Some(competitor), Some(making)) = (
-            quoting.as_mut(),
-            competitor.as_ref(),
-            scenario.making.as_ref(),
-        ) {
-            quoting
-                .step(competitor, scenario, making, start_mark_usd, at)
-                .await;
-        }
-
-        let now = patiently("the meter", async || meter.measure(&universe).await).await?;
-        record(&mut observed, &now)?;
-        let position = position_in(&now, &market_id);
-        positions_outside_universe = positions_outside_universe.max(now.outside_universe);
-        let value_usd = value(grader_f64(now.value_usd), position, slot, base_slot).await?;
-        peak_value_usd = peak_value_usd.max(value_usd);
-        max_drawdown_usd = max_drawdown_usd.max(peak_value_usd - value_usd);
-        let bbo = patiently("the book", async || {
-            hawkeye.view_bbo(&scenario.symbol).await
-        })
-        .await?
-        .value;
-        let usd = |ticks: u64| phoenix.ticks_to_usd(market, ticks);
-        steps_seen.push(StepRecord {
-            k,
-            at,
-            mark_usd: usd(bbo.mark_price_ticks),
-            index_usd: usd(bbo.index_price_ticks),
-            level_usd: start_mark_usd * (1.0 + level_at(&scenario.path, at) / 100.0),
-            book_usd: (scenario.valuation() == "book")
-                .then(|| start_mark_usd * (1.0 + book_at(&scenario.path, at) / 100.0)),
-            fair_usd: scenario.fair_value_usd(start_mark_usd, at),
-            best_bid_usd: bbo.best_bid_ticks().map(usd),
-            best_ask_usd: bbo.best_ask_ticks().map(usd),
-            position,
-            value_usd,
-            pnl_usd: value_usd - start_value_usd,
-            turn_ms: None,
-            answered: None,
-        });
+        cast.after_blocks(account.moment(at)).await;
+        steps_seen.push(account.step(k, slot, at).await?);
         if bot_exit.is_none()
             && let Some((child, _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
@@ -872,12 +690,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // The bot's turn.
         guard.set_step(k);
         guard.set_turn(true);
+        let mut step = Step::new(k, slot, k + 1 == steps);
         if let Some(bot) = wasm_bot.as_mut() {
             if let Some(now) = steps_seen.last() {
                 let peak = steps_seen
                     .iter()
                     .map(|r| r.value_usd)
-                    .fold(start_value_usd, f64::max);
+                    .fold(account.start_value_usd(), f64::max);
                 let before = steps_seen
                     .len()
                     .checked_sub(2)
@@ -897,7 +716,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 });
             }
             let started = Instant::now();
-            let answered = bot.turn(&Step::new(k, slot, k + 1 == steps)).await;
+            account.turn_data(&mut step).await?;
+            let answered = bot.turn(&step, account.wallet()).await;
             let took = started.elapsed();
             if !answered {
                 turns.overran += 1;
@@ -917,7 +737,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             continue;
         }
         let started = Instant::now();
-        let step = Step::new(k, slot, k + 1 == steps);
+        account.turn_data(&mut step).await?;
         let answered = take_turn(writer, reader, step, walls.turn(spent)).await;
         let took = started.elapsed();
         spent += took;
@@ -931,7 +751,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
     }
     guard.set_turn(false);
-    send_flow(&mut flow, flow_due.take()).await;
+    cast.end().await;
     if let Some((mut child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
         stop_bot(&mut child, workdir.bot_user.and(user)).await;
@@ -946,76 +766,29 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
-    let (flow, taker_orders) = match flow {
-        Some(flow) => {
-            let (report, orders) = flow.finish();
-            (Some(report), orders)
-        }
-        None => (None, Vec::new()),
-    };
     let calls = guard.call_log();
     let transactions = transactions(&rpc, &calls, base_slot, &|ix, keys| {
-        decode_instruction(ix, keys, &phoenix, market)
+        account.decode(ix, keys)
     });
-    let competitor = match (quoting, competitor.as_ref()) {
-        (Some(quoting), Some(competitor)) => Some(quoting.report(competitor).await),
-        _ => None,
-    };
-
-    let end = patiently("the meter", async || meter.measure(&universe).await).await?;
-    record(&mut observed, &end)?;
-    let end_position = position_in(&end, &market_id);
-    let end_value_usd = value(grader_f64(end.value_usd), end_position, end_slot, base_slot).await?;
-    let positions_outside_universe = positions_outside_universe.max(end.outside_universe);
-    let liquidatable = meter.liquidatable().await?;
-    let report = SessionReport {
-        scenario: scenario.name.clone(),
-        start_mark_usd,
-        end_mark_usd: phoenix.ticks_to_usd(
-            market,
-            patiently("the book", async || {
-                hawkeye.view_bbo(&scenario.symbol).await
-            })
-            .await?
-            .value
-            .mark_price_ticks,
-        ),
-        start_value_usd,
-        end_value_usd,
-        pnl_usd: end_value_usd - start_value_usd,
-        end_position,
-        liquidatable,
-        refused_calls: guard.refused(),
-        bot_exit,
-        late_slots,
-        mandate,
-        peak_position: observed.range(&instrument).map_or(0.0, PositionRange::peak),
-        instrument,
-        positions: observed.positions,
-        positions_outside_universe,
-        max_drawdown_usd: max_drawdown_usd.max(peak_value_usd.max(end_value_usd) - end_value_usd),
-        valuation: scenario.valuation(),
-        flow,
-        competitor,
-        spot: None,
-        faults: guard.faults_report(),
-        order: None,
-        participation: None,
-        net: None,
-        crank_refusals: cranks.into_refusals(),
-        turns,
-        wall_ms: began.elapsed().as_millis() as u64,
-        timeline: Timeline {
+    let actors = cast.report().await;
+    let report = account
+        .finish(Done {
+            began,
             start_slot,
             end_slot,
-            slots_per_step: SLOTS_PER_STEP,
-            start_mark_usd,
+            mandate,
+            refused_calls: guard.refused(),
+            bot_exit,
+            late_slots,
+            faults: guard.faults_report(),
+            turns,
             steps: steps_seen,
             transactions,
             calls,
-            taker_orders,
-        },
-    };
+            actors,
+            crank_refusals: cranks.into_refusals(),
+        })
+        .await?;
     info!(
         scenario = report.scenario,
         pnl_usd = report.pnl_usd,
@@ -1050,70 +823,6 @@ pub struct OrderRecord {
     pub price_usd: Option<f64>,
     /// In base units.
     pub size: f64,
-}
-
-const COMPUTE_BUDGET: &str = "ComputeBudget111111111111111111111111111111";
-
-/// Decode one instruction of a `getTransaction` (`json` encoding).
-fn decode_instruction(
-    ix: &serde_json::Value,
-    keys: &[serde_json::Value],
-    phoenix: &Phoenix,
-    market: &phoenix_rise::types::exchange::ExchangeMarketConfig,
-) -> IxRecord {
-    use phoenix_rise::ix::{PhoenixInstruction, order_packet::OrderPacket};
-    let program = ix["programIdIndex"]
-        .as_u64()
-        .and_then(|i| keys.get(i as usize))
-        .and_then(|k| k.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let data = ix["data"]
-        .as_str()
-        .and_then(|d| bs58::decode(d).into_vec().ok())
-        .unwrap_or_default();
-    if program == COMPUTE_BUDGET {
-        return IxRecord {
-            program: "compute_budget".into(),
-            name: None,
-            order: None,
-        };
-    }
-    let found = data
-        .get(..8)
-        .and_then(|tag| PhoenixInstruction::from_discriminant(tag.try_into().ok()?));
-    let Some(instruction) = found else {
-        return IxRecord {
-            program,
-            name: None,
-            order: None,
-        };
-    };
-    let order = matches!(
-        instruction,
-        PhoenixInstruction::PlaceLimitOrder | PhoenixInstruction::PlaceMarketOrder
-    )
-    .then(|| {
-        let packet = <OrderPacket as borsh::BorshDeserialize>::deserialize(&mut &data[8..]).ok()?;
-        // The packet's kind is private to phoenix-rise; its serde form isn't.
-        let value = serde_json::to_value(&packet).ok()?;
-        let (kind, fields) = value["kind"].as_object()?.iter().next()?;
-        let side = fields["side"].as_str().unwrap_or_default().to_lowercase();
-        Some(OrderRecord {
-            kind: kind.clone(),
-            side,
-            price_usd: fields["price_in_ticks"]
-                .as_u64()
-                .map(|ticks| phoenix.ticks_to_usd(market, ticks)),
-            size: phoenix.lots_to_base_units(market, fields["num_base_lots"].as_i64()?),
-        })
-    })
-    .flatten();
-    IxRecord {
-        program: "phoenix".into(),
-        name: Some(format!("{instruction:?}")),
-        order,
-    }
 }
 
 /// Look up each of the bot's sends: where it executed and how it went.
@@ -1218,10 +927,13 @@ pub(crate) fn transactions(
 /// client's side, and reading again changes nothing, since nothing moves
 /// while the grader reads. Any other error is the answer, and comes back at
 /// once.
-pub(crate) async fn patiently<T, E: std::error::Error + 'static>(
+pub(crate) async fn patiently<T, E: std::error::Error + 'static, F>(
     what: &str,
-    mut read: impl AsyncFnMut() -> std::result::Result<T, E>,
-) -> std::result::Result<T, E> {
+    mut read: impl FnMut() -> F,
+) -> std::result::Result<T, E>
+where
+    F: std::future::Future<Output = std::result::Result<T, E>>,
+{
     let mut attempt = 1;
     loop {
         match read().await {
@@ -1373,24 +1085,6 @@ pub(crate) fn grader_f64(amount: Decimal) -> f64 {
         .to_string()
         .parse()
         .expect("a decimal's digits parse as f64")
-}
-
-/// Counts every holding in `measurement` toward the session's position
-/// ranges, under the mandate's names for them.
-fn record(observed: &mut Observed, measurement: &Measurement) -> Result<()> {
-    for (id, holding) in &measurement.holdings {
-        let instrument = InstrumentRef::of_holding(id, holding).map_err(MeterError::Unsupported)?;
-        observed.record(&instrument, grader_f64(holding.position()));
-    }
-    Ok(())
-}
-
-/// The account's position in `instrument`, in base units; flat if the meter
-/// doesn't report it.
-fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
-    measurement
-        .holding(instrument)
-        .map_or(0.0, |holding| grader_f64(holding.position()))
 }
 
 /// A private directory for the bot: its keypair and its `HOME`.
@@ -1660,31 +1354,33 @@ mod tests {
     #[tokio::test]
     async fn only_unanswered_reads_are_made_again() {
         let mut calls = 0;
-        let timed_out = patiently("x", async || {
+        let timed_out = patiently("x", || {
             calls += 1;
-            Err::<(), _>(Failed("error sending request: operation timed out".into()))
+            std::future::ready(Err::<(), _>(Failed(
+                "error sending request: operation timed out".into(),
+            )))
         })
         .await;
         assert!(timed_out.is_err());
         assert_eq!(calls, READ_ATTEMPTS);
 
         let mut calls = 0;
-        let answered = patiently("x", async || {
+        let answered = patiently("x", || {
             calls += 1;
-            Err::<(), _>(Failed("no market SPCX".into()))
+            std::future::ready(Err::<(), _>(Failed("no market SPCX".into())))
         })
         .await;
         assert!(answered.is_err());
         assert_eq!(calls, 1);
 
         let mut calls = 0;
-        let second = patiently("x", async || {
+        let second = patiently("x", || {
             calls += 1;
-            if calls == 1 {
+            std::future::ready(if calls == 1 {
                 Err(Failed("Connection refused (os error 111)".into()))
             } else {
                 Ok(7)
-            }
+            })
         })
         .await;
         assert_eq!(second.unwrap(), 7);

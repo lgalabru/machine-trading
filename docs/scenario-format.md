@@ -26,7 +26,7 @@ docs together.
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet` |
 | `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
-| `market_model` | `path`, `fair_path`, and a `closed_period` with Phoenix's index through it |
+| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the market calibration the path was drawn from |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker and the grader's `takers` |
 | `faults` | Execution faults on the bot's sends and reads |
@@ -42,7 +42,7 @@ Each section checks only itself (`Assets::validate`, `Venues::validate`,
 `MarketModel::validate`, `Actors::validate`, `Scoring::validate`, and the
 leaf types' own). A few rules join sections and are listed, one function
 each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
-having no path or flow, the mandate covering exactly the scenario's markets,
+having no path or competitor (their takers are a tape), the mandate covering exactly the scenario's markets,
 a sell order fitting the wallet.
 
 ## Example
