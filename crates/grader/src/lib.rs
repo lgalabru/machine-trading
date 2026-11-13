@@ -3,6 +3,7 @@
 pub mod actors;
 pub mod carry;
 pub mod chain;
+pub mod crank;
 mod error;
 pub mod faults;
 pub mod grade;
@@ -10,6 +11,7 @@ pub mod guard;
 pub mod keys;
 pub mod making;
 pub mod offhours;
+pub mod oracles;
 pub mod orders;
 pub mod perp;
 pub mod phoenix;
