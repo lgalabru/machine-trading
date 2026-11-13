@@ -57,6 +57,10 @@
       "dir": "bench/checks/exploits/weekend-gap-sol-3"
     }
   ],
+  "gates": {
+    "informed": ["told"],
+    "non_reading": ["nop", "follow", "fade"]
+  },
   "rules": [
     "max(follow, fade) < reference",
     "basis < reference",
