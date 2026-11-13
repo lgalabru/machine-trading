@@ -124,5 +124,14 @@ with OpenBook's:
 No benchmark task enforces the spot markets yet; `just spot-smoke` runs a
 session end to end.
 
+A spot bot may be a strategy component (`bot.wasm`), and a grade that
+takes components only (`mtx grade --components-only`, the verifier's rule)
+grades it. The component sees the Pyth price as its mark, oracle and index.
+Its position is the SOL held, its entry is the price at the start, and its
+PnL is the change in the account's value. It gets the mandate in
+`session.mandate`, and the session's markets in `session.venue`. Until the
+bot interface names a venue on each order, its orders go to the first
+venue the scenario lists. RFD 0002's "Spot sessions" covers the rest.
+
 Separately, the benchmark gates the RPC methods a bot may call. That is a
 rule of the benchmark's sandbox, not part of the mandate.

@@ -1,0 +1,27 @@
+{
+  "name": "spot-smoke-openbook",
+  "description": "A sell-only SOL-USDC session on OpenBook v2 alone: a component trades its first venue",
+  "symbol": "SOL-USDC",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "openbook:spot:SOL-USDC",
+        "max_position": 10.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "spot": {
+    "venues": [
+      "openbook"
+    ],
+    "base": 10.0,
+    "quote": 1000.0
+  }
+}
