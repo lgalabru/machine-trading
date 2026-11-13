@@ -24,21 +24,27 @@ Named spot markets:
 
 ### Account
 
-The account is the agent authority's Phoenix cross-margin trader account at
-PDA index 0, subaccount 0, together with the authority's wallet USDC.
+The account is every Phoenix trader account the agent authority holds,
+together with the authority's wallet USDC: its cross-margin trader account at
+PDA index 0, subaccount 0, and any other it registers (another PDA index, an
+isolated subaccount), found on chain as the Phoenix program's `Trader`
+accounts whose header names the authority. Each measurement below sums over
+them, so a position held in another trader account counts as one held in the
+cross-margin account.
 
 ### Measurements
 
-- **Position.** The trader's `base_lots` in the market, from Hawkeye's
-  `view_margin_for_asset`, converted to base units with the market's lot
+- **Position.** The traders' `base_lots` in the market, summed, from
+  Hawkeye's `view_margin_for_asset`, converted to base units with the market's lot
   size from the `/exchange` metadata.
 - **Universe.** Hawkeye's `view_margin` reports `position_count`, the number
-  of markets in which the trader holds a position or open orders. An account
-  is outside its universe when `position_count` exceeds the number of
-  universe markets that `view_margin_for_asset` reports as holding a position
-  or orders (`has_position_or_orders`).
+  of markets in which a trader holds a position or open orders. A trader
+  holds markets outside the universe when its `position_count` exceeds the
+  number of universe markets that `view_margin_for_asset` reports it holding
+  a position or orders in (`has_position_or_orders`); the account is outside
+  its universe when any trader is.
 - **Value.** Collateral plus unrealized PnL at the mark, from `view_margin`,
-  plus the authority's wallet USDC. Unsettled funding is not counted. USDC
+  summed over the traders, plus the authority's wallet USDC. Unsettled funding is not counted. USDC
   withdrawn from Phoenix to the wallet keeps its value, so withdrawing can't
   hide a drawdown.
 

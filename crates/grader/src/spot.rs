@@ -1219,6 +1219,7 @@ mod tests {
             tape: Vec::new(),
             faults: None,
             fair_path: None,
+            raw_sends: None,
             turn_data: None,
             order: None,
             participation: None,
