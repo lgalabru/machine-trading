@@ -16,7 +16,9 @@ spot.
 
 The reference implementation reads spot instruments, and the benchmark's
 grader audits spot sessions on [Phoenix](../venues/phoenix.md) and
-[OpenBook](../venues/openbook.md), as their profiles describe.
+[OpenBook](../venues/openbook.md)'s books, and on
+[Raydium](../venues/raydium.md)'s and [Meteora](../venues/meteora.md)'s
+pools (swapping against a pool), as their profiles describe.
 
 ## Position
 
