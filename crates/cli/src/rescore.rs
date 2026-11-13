@@ -29,8 +29,8 @@ pub enum Scoring {
     #[default]
     V1,
     /// Those, and scoring v2 beside them (`v2` in the report, `score_v2*`
-    /// in the rewards): 0 = doing nothing, 0.5 = the reference, 1 = a
-    /// realistic ceiling, losses counted twice and a breach scored per
+    /// in the rewards): 0 = doing nothing, 0.5 = the reference, 1 = the
+    /// task's informed bot, losses counted twice and a breach scored per
     /// session. Report-only: `reward` and `skill` don't change.
     V2,
 }
@@ -40,13 +40,15 @@ pub enum Scoring {
 pub struct ScoringArgs {
     #[arg(long, value_enum, default_value_t = Scoring::V1)]
     pub scoring: Scoring,
-    /// v2's ceiling, as a share of each session's hindsight bound: a
-    /// constant frozen with the task. `<task>=<eta>` gives one task's (as
-    /// named in bench/tasks), for a batch of several.
+    /// v2's proxy ceiling, for a task whose scenarios carry no informed
+    /// bot's PnL: this share of each session's hindsight bound, a constant
+    /// frozen with the task (the score says `ceiling: proxy`).
+    /// `<task>=<eta>` gives one task's (as named in bench/tasks), for a
+    /// batch of several.
     #[arg(long, value_name = "[TASK=]ETA")]
     pub eta: Vec<String>,
-    /// v2's ceiling, per session instead: a JSON object from scenario name
-    /// to ceiling PnL in USD.
+    /// v2's ceiling given outright instead: a JSON object from scenario
+    /// name to ceiling PnL in USD.
     #[arg(long, conflicts_with = "eta")]
     pub ceiling: Option<PathBuf>,
     /// v2: how many times a loss counts.
@@ -68,13 +70,15 @@ impl ScoringArgs {
             return Ok(None);
         }
         let ceiling = match &self.ceiling {
-            Some(path) => Ceiling::PerSession(
+            Some(path) => Ceiling::Given(
                 serde_json::from_slice::<BTreeMap<String, f64>>(
                     &std::fs::read(path).with_context(|| path.display().to_string())?,
                 )
                 .with_context(|| format!("{}: not a map of ceilings", path.display()))?,
             ),
-            None => Ceiling::BoundShare(self.eta(task)?),
+            None => Ceiling::Informed {
+                proxy_eta: self.eta(task)?,
+            },
         };
         Ok(Some(Params {
             loss_weight: self.loss_weight,
@@ -84,7 +88,7 @@ impl ScoringArgs {
     }
 
     /// The `--eta` for `task`: its own, else the one without a task.
-    fn eta(&self, task: Option<&str>) -> Result<f64> {
+    fn eta(&self, task: Option<&str>) -> Result<Option<f64>> {
         let mut any = None;
         for given in &self.eta {
             let (name, value) = match given.split_once('=') {
@@ -98,15 +102,12 @@ impl ScoringArgs {
                 bail!("--eta {given}: a share of the bound, in (0, 1]");
             }
             match name {
-                Some(name) if Some(name) == task => return Ok(eta),
+                Some(name) if Some(name) == task => return Ok(Some(eta)),
                 Some(_) => {}
                 None => any = Some(eta),
             }
         }
-        any.with_context(|| match task {
-            Some(task) => format!("--scoring v2 needs --eta (or --eta {task}=<eta>) or --ceiling"),
-            None => "--scoring v2 needs --eta or --ceiling".to_string(),
-        })
+        Ok(any)
     }
 }
 
@@ -274,7 +275,17 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
                 "edge": v2.edge,
                 "ci": [v2.ci_lo, v2.ci_hi],
                 "within_noise": v2.within_noise,
+                "beats_informed": v2.beats_informed,
+                "ceiling": v2.ceiling,
                 "anchor_floored": v2.anchor_floored,
+                "gap": {
+                    "wrong_read": v2.gap.wrong_read,
+                    "missed": v2.gap.missed,
+                    "execution": v2.gap.execution,
+                    "risk": v2.gap.risk,
+                    "unattributed": v2.gap.unattributed,
+                    "noise": v2.gap.noise,
+                },
                 "breached_sessions": v2.breached_sessions,
                 "fatal": v2.fatal,
             });
@@ -323,16 +334,17 @@ mod tests {
     #[test]
     fn v2_takes_a_tasks_own_eta_before_the_default() {
         let given = args(Scoring::V2, &["0.3", "flash-crash-spcx=0.37"]);
-        let eta = |task| match given.params(task).unwrap().unwrap().ceiling {
-            Ceiling::BoundShare(eta) => eta,
-            Ceiling::PerSession(_) => unreachable!(),
+        let eta = |given: &ScoringArgs, task| match given.params(task).unwrap().unwrap().ceiling {
+            Ceiling::Informed { proxy_eta } => proxy_eta,
+            Ceiling::Given(_) => unreachable!(),
         };
-        assert_eq!(eta(Some("flash-crash-spcx")), 0.37);
-        assert_eq!(eta(Some("weekend-gap-spcx")), 0.3);
-        assert_eq!(eta(None), 0.3);
+        assert_eq!(eta(&given, Some("flash-crash-spcx")), Some(0.37));
+        assert_eq!(eta(&given, Some("weekend-gap-spcx")), Some(0.3));
+        assert_eq!(eta(&given, None), Some(0.3));
         let only = args(Scoring::V2, &["flash-crash-spcx=0.37"]);
-        assert!(only.params(Some("weekend-gap-spcx")).is_err());
-        assert!(args(Scoring::V2, &[]).params(None).is_err());
+        assert_eq!(eta(&only, Some("weekend-gap-spcx")), None);
+        // Without η, only an informed bot's PnL can be the ceiling.
+        assert_eq!(eta(&args(Scoring::V2, &[]), None), None);
         assert!(args(Scoring::V2, &["2"]).params(None).is_err());
         assert!(args(Scoring::V1, &[]).params(None).unwrap().is_none());
         assert!(args(Scoring::V1, &["0.3"]).params(None).is_err());

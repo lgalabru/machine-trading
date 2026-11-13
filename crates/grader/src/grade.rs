@@ -47,6 +47,14 @@ pub struct ScenarioResult {
     pub bound_pnl_usd: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// The informed bot's PnL in this session, when the scenario carries it
+    /// (see [`Scenario::informed_pnl_usd`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub informed_pnl_usd: Option<f64>,
+    /// What the session's trades made against the price at the time, for
+    /// scoring v2's gap (see [`trade_markout`]). Not reported.
+    #[serde(skip)]
+    pub trade_markout_usd: Option<f64>,
     /// The session's PnL split into markout, luck and a residual, for a
     /// scenario that reports a fair value (see [`Scenario::fair_path`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,6 +218,7 @@ impl GradeReport {
                     scenario: session.scenario.clone(),
                     pnl_usd: session.pnl_usd,
                     reference_pnl_usd,
+                    informed_pnl_usd: result.informed_pnl_usd,
                     nop_pnl_usd: 0.0,
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
@@ -223,6 +232,8 @@ impl GradeReport {
                         .disqualified
                         .clone()
                         .filter(|_| session.refused_calls.is_empty()),
+                    traded: session.peak_position > 0.0,
+                    trade_markout_usd: result.trade_markout_usd,
                 })
             })
             .collect::<std::result::Result<Vec<_>, String>>()
@@ -302,6 +313,19 @@ impl GradeReport {
                 ),
                 ("nop_pnl_usd".to_string(), v2.nop_usd),
                 ("ceiling_pnl_usd".to_string(), v2.ceiling_usd),
+                (
+                    "score_v2_beats_informed".to_string(),
+                    f64::from(u8::from(v2.beats_informed)),
+                ),
+                (
+                    "score_v2_ceiling_proxy".to_string(),
+                    f64::from(u8::from(v2.ceiling == "proxy")),
+                ),
+                ("score_v2_gap_wrong_read".to_string(), v2.gap.wrong_read),
+                ("score_v2_gap_missed".to_string(), v2.gap.missed),
+                ("score_v2_gap_execution".to_string(), v2.gap.execution),
+                ("score_v2_gap_risk".to_string(), v2.gap.risk),
+                ("score_v2_gap_noise".to_string(), v2.gap.noise),
                 ("breached_sessions".to_string(), v2.breached_sessions as f64),
             ]);
         }
@@ -598,6 +622,8 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
             disqualified: disqualification(&session),
             bound_pnl_usd: scenario.bound_usd(session.start_mark_usd),
             reference_pnl_usd: scenario.reference_pnl_usd,
+            informed_pnl_usd: scenario.informed_pnl_usd,
+            trade_markout_usd: trade_markout(&session, scenario),
             markout: markout(&session, scenario),
             session,
         })
@@ -639,8 +665,34 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
 /// it: at the mark, the scenario's oracle level (market making) or its book
 /// level.
 fn markout(session: &SessionReport, scenario: &Scenario) -> Option<Decomposition> {
+    decompose(session, scenario, true)
+}
+
+/// What a session's trades made against the price at the time (see
+/// [`scoring_v2::Session::trade_markout_usd`]): their markout against fair
+/// value when the scenario reports one, else against the price the
+/// position is valued at.
+fn trade_markout(session: &SessionReport, scenario: &Scenario) -> Option<f64> {
+    decompose(session, scenario, true)
+        .or_else(|| decompose(session, scenario, false))
+        .map(|d| d.markout_usd)
+}
+
+/// [`markout`], or with `against_fair` false, the same split with the
+/// valuation price standing in for fair value: then the markout is what the
+/// trades (fees and funding with them) cost against that price, and the
+/// residual is 0.
+fn decompose(
+    session: &SessionReport,
+    scenario: &Scenario,
+    against_fair: bool,
+) -> Option<Decomposition> {
+    let fair_or = |fair: Option<f64>, price: f64| if against_fair { fair } else { Some(price) };
     let timeline = &session.timeline;
-    let start = scenario.fair_value_usd(session.start_mark_usd, 0)?;
+    let start = fair_or(
+        scenario.fair_value_usd(session.start_mark_usd, 0),
+        session.start_mark_usd,
+    )?;
     let mut meter = MarkoutMeter::open(MarkoutSample {
         fair: start,
         price: session.start_mark_usd,
@@ -649,26 +701,29 @@ fn markout(session: &SessionReport, scenario: &Scenario) -> Option<Decomposition
     });
     let valuation = scenario.valuation();
     for step in &timeline.steps {
+        let fair = step.fair_usd;
+        let price = match valuation {
+            "oracle" => step.level_usd,
+            "book" => step.book_usd?,
+            _ => step.mark_usd,
+        };
         meter.record(MarkoutSample {
-            fair: step.fair_usd?,
-            price: match valuation {
-                "oracle" => step.level_usd,
-                "book" => step.book_usd?,
-                _ => step.mark_usd,
-            },
+            fair: fair_or(fair, price)?,
+            price,
             position: step.position,
             value: step.value_usd,
         });
     }
     let at = timeline.end_slot.saturating_sub(timeline.start_slot);
     let start_mark = session.start_mark_usd;
+    let price = match valuation {
+        "oracle" => start_mark * (1.0 + crate::making::level_at(&scenario.path, at) / 100.0),
+        "book" => start_mark * (1.0 + crate::making::book_at(&scenario.path, at) / 100.0),
+        _ => session.end_mark_usd,
+    };
     meter.record(MarkoutSample {
-        fair: scenario.fair_value_usd(start_mark, at)?,
-        price: match valuation {
-            "oracle" => start_mark * (1.0 + crate::making::level_at(&scenario.path, at) / 100.0),
-            "book" => start_mark * (1.0 + crate::making::book_at(&scenario.path, at) / 100.0),
-            _ => session.end_mark_usd,
-        },
+        fair: fair_or(scenario.fair_value_usd(start_mark, at), price)?,
+        price,
         position: session.end_position,
         value: session.end_value_usd,
     });
@@ -795,6 +850,10 @@ fn disqualification(session: &SessionReport) -> Option<String> {
 /// reference, losses included: the reward normalizes by the set's total.
 /// Sessions the reference itself would be disqualified from are reported, not
 /// saved.
+///
+/// With `informed`, the bot is the task's informed bot and its PnL is saved
+/// as the scenario's [`Scenario::informed_pnl_usd`] instead: scoring v2's 1.
+#[allow(clippy::too_many_arguments)]
 pub async fn calibrate(
     snapshot_dir: &Path,
     bot_dir: &Path,
@@ -802,6 +861,7 @@ pub async fn calibrate(
     log_dir: &Path,
     first_bot_user: usize,
     jobs: usize,
+    informed: bool,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(
@@ -822,7 +882,12 @@ pub async fn calibrate(
         // The same rules as grading: a reference the grader would
         // disqualify can't be a baseline.
         if disqualification(session).is_none() {
-            scenario.reference_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            let pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            if informed {
+                scenario.informed_pnl_usd = pnl_usd;
+            } else {
+                scenario.reference_pnl_usd = pnl_usd;
+            }
             scenario.save(path)?;
         } else {
             tracing::warn!(
@@ -1211,6 +1276,7 @@ mod tests {
             participation: None,
             net: None,
             reference_pnl_usd,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -1424,7 +1490,30 @@ mod tests {
     }
 
     fn v2() -> scoring_v2::Params {
-        scoring_v2::Params::new(scoring_v2::Ceiling::BoundShare(0.5))
+        scoring_v2::Params::new(scoring_v2::Ceiling::Informed {
+            proxy_eta: Some(0.5),
+        })
+    }
+
+    #[test]
+    fn v2s_ceiling_is_the_informed_bot_when_every_scenario_has_one() {
+        let mut s = scenario(Some(100.0));
+        let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        proxied.score_v2(&v2()).unwrap();
+        assert_eq!(proxied.v2.as_ref().unwrap().ceiling, "proxy");
+        assert_eq!(proxied.rewards()["score_v2_ceiling_proxy"], 1.0);
+
+        s.informed_pnl_usd = Some(400.0);
+        let mut informed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        assert_eq!(informed.scenarios[0].informed_pnl_usd, Some(400.0));
+        informed.score_v2(&v2()).unwrap();
+        let v2 = informed.v2.as_ref().unwrap();
+        assert_eq!(v2.ceiling, "informed");
+        assert_eq!(v2.ceiling_usd, 800.0);
+        // (350 − 200) / (800 − 200) of the way from the reference.
+        assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
+        assert_eq!(v2.bound_usd, informed.bound_pnl_usd);
+        assert_eq!(informed.rewards()["score_v2_ceiling_proxy"], 0.0);
     }
 
     #[test]

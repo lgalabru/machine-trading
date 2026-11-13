@@ -226,6 +226,10 @@ enum Command {
     Calibrate {
         #[command(flatten)]
         sessions: Sessions,
+        /// The bot is the task's informed bot: save its PnL as the
+        /// scenario's `informed_pnl_usd`, scoring v2's 1, instead.
+        #[arg(long)]
+        informed: bool,
     },
     /// Market calibration: per-asset files fitted to real data, the market
     /// model they drive, and realism checks against them.
@@ -1492,7 +1496,7 @@ async fn run() -> Result<()> {
                 out,
             } => bot::pack(&dir, task.as_deref(), repo.as_deref(), &out)?,
         },
-        Command::Calibrate { sessions } => {
+        Command::Calibrate { sessions, informed } => {
             let mut scenarios = sessions.load()?;
             let reports = grade::calibrate(
                 &sessions.snapshot,
@@ -1501,6 +1505,7 @@ async fn run() -> Result<()> {
                 &sessions.logs,
                 sessions.first_bot_user,
                 sessions.jobs,
+                informed,
             )
             .await?;
             serde_json::to_string_pretty(&reports)?

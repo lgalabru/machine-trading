@@ -101,6 +101,13 @@ pub struct Scenario {
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// PnL the task's informed bot makes on this scenario: scoring v2's 1
+    /// (see [`crate::scoring_v2`]). It knows everything the task's data could
+    /// tell (the informed takers, the regime, the fair-value model, the
+    /// funding process, the costs) but not the session's randomness. Written
+    /// by `mtx calibrate --informed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_pnl_usd: Option<f64>,
     /// Opt-in: the scenario's fair value, as waypoints in the same terms as
     /// [`Scenario::path`]. The session records it at every step, and the
     /// grade reports each session's PnL split by
@@ -870,6 +877,7 @@ impl ShockFamily {
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
                     slot: shock_slot,
@@ -1587,6 +1595,7 @@ mod tests {
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -1655,6 +1664,7 @@ mod tests {
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
