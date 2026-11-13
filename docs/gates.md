@@ -35,11 +35,13 @@ finished ladder) adjust a run.
 A fast ladder is one set of 12 sessions. It is drawn from a fixed public label
 (`gates-fast-v1`, the ladder's `--public-seed`) rather than a fresh secret, so
 every run grades the same sessions and a verdict doesn't flip with the draw.
-A ladder file's `gates.fast_seed` names another label for a task whose
-reference edge is thin: market-making's reference makes about $3 a session
-against a $15 spread, so on the default label's 12 sessions it lost $38.
 It is never a hidden set: hidden sets come from fresh 256-bit secrets, and
 `MTX_EVAL_SEED` is never used here.
+
+A task whose reference edge is thin (market-making's is about $3 a session
+against $15 of noise) can lose money on twelve sessions by chance. Then the
+reference and order checks are `inconclusive`, not failed: the edge is too
+thin to judge in fast mode, and the full ladder decides.
 
 Twelve sessions can't carry the full ladder's thresholds, so fast mode
 loosens two of them. The bootstrap floor drops to 0.5: the order must still
