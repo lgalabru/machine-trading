@@ -10,7 +10,7 @@ python3 model.py <seed> '<family overrides as JSON>' <sessions>
 The recorded runs (`gate0-seed-*.txt`) use the family as built:
 
 ```sh
-python3 model.py 21 '{"haircut":[10,30],"size_med":0.3,"rate":[0.06,0.15],"lead":[20,100],"Q":[20,45],"makers_bps":[15,30]}' 1000
+python3 model.py 21 '{"haircut":[10,30],"size_med":0.15,"rate":[0.06,0.15],"lead":[20,100],"Q":[20,45],"makers_bps":[15,30]}' 1000
 ```
 
 The book is the engine's as measured on the #60 snapshot: the snapshot's NVDA makers hold about 12 NVDA a tick

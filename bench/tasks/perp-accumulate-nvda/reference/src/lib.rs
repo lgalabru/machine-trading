@@ -24,6 +24,8 @@
 //!   oracle has moved 15 bp the burst's way over 200 slots with the lean
 //!   still that way, the move is confirmed: it buys out (up), paying up to
 //!   30 bp over the haircut, or keeps waiting until the lean fades (down).
+//!   A move that gets there with the lean behind it and no burst seen puts
+//!   it on watch all the same.
 //! - **Resilience.** It never sweeps: one or two units a step, and only
 //!   while the ask is near the maker's quote. When it lifts the maker, the
 //!   ask jumps to the makers' backstop, the price check fails, and it waits
@@ -233,6 +235,11 @@ impl Strategy for Accumulator {
             .oracles
             .front()
             .map_or(0.0, |(_, then)| (oracle / then - 1.0) * 10_000.0);
+        // A move under way with the flow leaning its way confirms itself,
+        // burst or none.
+        if self.watch == 0 && moved_bps.abs() > CONFIRM_BPS && moved_bps * lean > 0.0 {
+            (self.watch, self.watch_from) = (moved_bps.signum() as i8, slot);
+        }
         let w = f64::from(self.watch);
         let confirmed = self.watch != 0 && w * moved_bps > CONFIRM_BPS && w * lean > LEAN_Z;
 

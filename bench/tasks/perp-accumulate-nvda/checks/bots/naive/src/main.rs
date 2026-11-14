@@ -4,7 +4,7 @@
 //!   the price cap.
 //! - `twap-cross`: equal market orders every step, each no bigger than the
 //!   grader's maker's usual quote (two units), finishing at the close.
-//! - `twap-passive`: rests a bid a tick inside the best bid while behind a
+//! - `twap-passive`: rests a bid a tick inside the maker's bid while behind a
 //!   straight-line schedule, and crosses the shortfall in equal market
 //!   orders over the last fifth.
 //! - `rest-flood` (exploit): rests the whole order as a bid over the price
@@ -28,6 +28,8 @@ struct Naive {
     kind: Kind,
     order: Order,
     done: bool,
+    /// The maker's half-spread at the first step, in basis points.
+    half: Option<f64>,
 }
 
 impl Strategy for Naive {
@@ -57,9 +59,13 @@ impl Strategy for Naive {
                 if t > 0.8 {
                     let size = round_lots(left / steps).max(0.001);
                     orders.buy(size.min(left), round_down_cents(cap));
-                } else if held < q * t / 0.8
-                    && let Some(bid) = market.best_bid
-                {
+                } else if held < q * t / 0.8 {
+                    // A tick inside the maker's bid as it first stood: its
+                    // own resting bid may be the best one now.
+                    let half = *self.half.get_or_insert_with(|| {
+                        market.best_ask.map_or(5.0, |ask| (ask / market.oracle - 1.0) * 10_000.0)
+                    });
+                    let bid = market.oracle * (1.0 - half / 10_000.0);
                     let price = round_down_cents((bid + 0.01).min(cap));
                     if market.best_ask.is_none_or(|ask| price < ask) {
                         orders.bid(price, round_lots(1.0f64.min(left))).post_only();
@@ -97,5 +103,6 @@ fn main() -> BotResult {
         kind,
         order: Order::default(),
         done: false,
+        half: None,
     })
 }

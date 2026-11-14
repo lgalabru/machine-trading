@@ -159,7 +159,7 @@ impl AccumulateFamily {
             ramp_slots: (40, 240),
             waypoint_slots: 4,
             noise_rate: (0.06, 0.15),
-            size_median: 0.3,
+            size_median: 0.15,
             size_sigma: 0.7,
             size_clamp: (0.03, 2.0),
             limit_sigma: 0.5,

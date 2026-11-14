@@ -1,13 +1,13 @@
-seed 21 sessions 1000 overrides {"haircut": [10, 30], "size_med": 0.3, "rate": [0.06, 0.15], "lead": [20, 100], "Q": [20, 45], "makers_bps": [15, 30]}
+seed 21 sessions 1000 overrides {"haircut": [10, 30], "size_med": 0.15, "rate": [0.06, 0.15], "lead": [20, 100], "Q": [20, 45], "makers_bps": [15, 30]}
 rung                total     mean       sd     calm       up     down
 nop                     0     0.00     0.00     0.00     0.00     0.00
 dump                -2507    -2.51    27.95    -2.36    26.82   -31.46
-twap_cross           4397     4.40    13.88     4.53    17.30    -8.41
-twap_passive         5827     5.83     8.52     6.64    12.01    -0.97
-reference            7666     7.67    15.10     4.97    21.91    -3.93
-told                13981    13.98    14.34     8.04    28.15     5.35
-told / best careful-unaware: 2.40  (need >= 2)
-  dump < min(twap): 1.000, max(twap) < reference: 0.941, reference < told: 1.000, nop < reference: 1.000
-order holds on 0.940 of 2000 bootstrapped 72-session sets (need >= 0.85)
-v2 weighted E, as a share of told's: nop 0.00, dump -0.65, twap_cross 0.19, twap_passive 0.38, reference 0.48, told 1.00
-reference per-session Sharpe 0.51
+twap_cross           2146     2.15    14.09     2.05    15.28   -10.67
+twap_passive         2966     2.97     5.70     3.36     5.90    -0.27
+reference            6547     6.55    14.56     3.28    20.32    -4.08
+told                12577    12.58    14.80     5.23    28.14     3.82
+told / best careful-unaware: 4.24  (need >= 2)
+  dump < min(twap): 0.974, max(twap) < reference: 0.997, reference < told: 1.000, nop < reference: 1.000
+order holds on 0.971 of 2000 bootstrapped 72-session sets (need >= 0.85)
+v2 weighted E, as a share of told's: nop 0.00, dump -0.72, twap_cross -0.01, twap_passive 0.20, reference 0.44, told 1.00
+reference per-session Sharpe 0.45
