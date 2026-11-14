@@ -29,6 +29,7 @@ fn scenario_files() -> Vec<PathBuf> {
     dirs.extend([
         root().join("bench/checks/spot"),
         root().join("bench/checks/faults"),
+        root().join("bench/checks/mandate"),
     ]);
     for dir in dirs.into_iter().filter(|d| d.is_dir()) {
         for entry in std::fs::read_dir(dir).unwrap() {

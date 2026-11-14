@@ -709,6 +709,36 @@ impl ScenarioV2 {
         if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
         }
+        // No session tells the bot's taker fills from its maker fills yet.
+        if self.mandate.universe.iter().any(|a| a.taking.is_some()) {
+            return Err(
+                "mandate: no session records taker fills yet, so none can enforce taking".into(),
+            );
+        }
+        // Every session starts flat, so an exposure bounded by a fraction of
+        // its start would be bounded at zero. Lifted once sessions can start
+        // with positions.
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.max_abs_fraction_of_start.is_some())
+        {
+            return Err(
+                "mandate: max_abs_fraction_of_start needs a session that starts with positions; \
+                 every session starts flat"
+                    .into(),
+            );
+        }
+        // Only a perp session prices the account at each measurement.
+        if self.venues.spot.is_some() && self.mandate.checks_samples() {
+            return Err(
+                "mandate: notional limits and hedges are for perp scenarios; \
+                 a spot session doesn't check them"
+                    .into(),
+            );
+        }
         Ok(())
     }
 
@@ -1375,6 +1405,36 @@ mod tests {
         let mut s = shock();
         s.mandate.limits.max_drawdown_usd = None;
         assert!(s.validate().unwrap_err().contains("drawdown"));
+
+        // A perp session checks notional limits; a spot session doesn't yet.
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert!(s.validate().unwrap_err().contains("notional"));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate
+            .limits
+            .exposures
+            .push(mtx_core::mandate::Exposure {
+                name: "net".into(),
+                weights: [(s.perp_instrument(), 1.0)].into(),
+                max_abs_usd: None,
+                max_abs_fraction_of_start: Some(0.5),
+                from_slots_after_start: 0,
+            });
+        assert!(s.validate().unwrap_err().contains("starts flat"));
+        s.mandate.limits.exposures[0].max_abs_fraction_of_start = None;
+        s.mandate.limits.exposures[0].max_abs_usd = Some(1_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        assert!(s.validate().unwrap_err().contains("taking"));
 
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);
