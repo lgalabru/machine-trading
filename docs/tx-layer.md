@@ -197,8 +197,9 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
 - **`native_sol`.** Replaces the session's usual SOL grant.
 - **`fees_in_pnl`.** Values the wallet's SOL at `sol_usd`. Rent moved into
   token accounts the bot can close counts as the bot's, not as a cost.
-- **Session kinds.** Only perp sessions take the layer for now. A spot
-  venue's seats join when they can send through the pool.
+- **Session kinds.** Only perp sessions take the layer for now: a spot or
+  lending session with one is refused. Their seats join when they can send
+  through the pool.
 - **Actors hooked on the bot's sends.** A front-runner with `on_send` (see
   `docs/actors.md`) acts on each of the bot's sends as it arrives, just
   before it would land. Under the layer a send only enters the pool, and

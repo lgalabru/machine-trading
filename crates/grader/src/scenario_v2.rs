@@ -535,7 +535,7 @@ impl ScenarioV2 {
             layer
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
                 .map_err(|reason| format!("tx_layer: {reason}"))?;
-            if self.venues.spot.is_some() {
+            if self.venues.spot.is_some() || self.venues.lending.is_some() {
                 return Err("tx_layer: only perp sessions take the transaction layer yet".into());
             }
             // An actor hooked on the bot's sends acts as each arrives, as if
@@ -1535,6 +1535,12 @@ mod tests {
         let mut on_spot = spot();
         on_spot.tx = s.tx.clone();
         assert!(on_spot.validate().unwrap_err().starts_with("tx_layer:"));
+        let mut on_lending = v2(&lending("interest"));
+        on_lending.tx = s.tx.clone();
+        assert_eq!(
+            on_lending.validate().unwrap_err(),
+            "tx_layer: only perp sessions take the transaction layer yet"
+        );
         s.tx.as_mut().unwrap().layer.as_mut().unwrap().validators = 0;
         assert!(s.validate().unwrap_err().starts_with("tx_layer:"));
     }
