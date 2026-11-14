@@ -1699,7 +1699,10 @@ mod tests {
         // The reference's drawdown, the charge's anchor, is in the hash too.
         let mut deeper = report.anchors[0].clone();
         deeper.max_drawdown_usd += 1.0;
-        assert_ne!(reference_sha256(&deeper), reference_sha256(&report.anchors[0]));
+        assert_ne!(
+            reference_sha256(&deeper),
+            reference_sha256(&report.anchors[0])
+        );
 
         // A bot that jitters the mark (±2 or ±5 bp a step) can't lower its
         // own ceiling: the score doesn't move.
