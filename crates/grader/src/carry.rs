@@ -526,6 +526,7 @@ impl CarryFamily {
             close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         let shape = Shape {
             informed_share,

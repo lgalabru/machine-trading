@@ -240,9 +240,15 @@ pub struct SessionReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     /// Closes the grader made on the bot's behalf: a stop-out, where the
-    /// scenario prices a breach (see [`crate::risk`]).
+    /// scenario prices a breach, or the keeper's liquidations, where it has
+    /// one (see [`crate::risk`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forced_closes: Vec<crate::risk::ForcedClose>,
+    /// A scenario with a competing keeper: what it drew and did (see
+    /// [`crate::keeper`]). Also what lets an account end the session
+    /// liquidatable without disqualifying it: the keeper was there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::LiquidatorReport>,
     /// Each anchored oracle feed's start, against its account's own price.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
@@ -593,6 +599,7 @@ pub(crate) struct Done {
     pub actors: ActorsReport,
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     pub forced_closes: Vec<crate::risk::ForcedClose>,
+    pub liquidator: Option<crate::keeper::LiquidatorReport>,
 }
 
 /// The one session loop, for every kind of session: perp, spot, and
@@ -1073,9 +1080,22 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     {
         turns.stopped = Some(format!("stopped out at step {}", close.step));
     }
-    // The bot's last turn landed in the session's last slot, which no step
-    // moved past: a session that reads fills steps one slot more, so they
-    // are listed and audited like every other turn's.
+    // The keeper's last turn, with the bot stopped and before the account
+    // is measured a last time.
+    cranks
+        .settle(
+            &rpc,
+            &crate::crank::CrankStep {
+                k: steps.saturating_sub(1),
+                slot,
+                at: slot - base_slot,
+                last: true,
+            },
+        )
+        .await?;
+    // The bot's last turn, and the keeper's, landed in the session's last
+    // slot, which no step moved past: a session that reads fills steps one
+    // slot more, so they are listed and audited like every other turn's.
     if account.reads_fills() {
         crate::chain::next_slot(surfnet, &rpc).await?;
     }
@@ -1086,6 +1106,19 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         account.decode(ix, keys)
     });
     let actors = cast.report().await;
+    let cranked = cranks.into_report();
+    let mut forced_closes: Vec<crate::risk::ForcedClose> = cranked.closes;
+    // A liquidation's running peak is the account's at the step it fired.
+    let start_value_usd = account.start_value_usd();
+    for close in &mut forced_closes {
+        close.peak_usd = steps_seen
+            .iter()
+            .take(close.step as usize)
+            .map(|s| s.value_usd)
+            .fold(start_value_usd, f64::max)
+            .max(close.value_before_usd);
+    }
+    forced_closes.extend(closing);
     let mut report = account
         .finish(Done {
             began,
@@ -1101,8 +1134,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             transactions,
             calls,
             actors,
-            crank_refusals: cranks.into_refusals(),
-            forced_closes: closing.into_iter().collect(),
+            crank_refusals: cranked.refusals,
+            forced_closes,
+            liquidator: cranked.liquidator,
         })
         .await?;
     if let Some((engine, layer, start)) = &tx {
@@ -1116,9 +1150,13 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
     }
     let (end_value_usd, end_position) = (report.end_value_usd, report.end_position);
+    // A stop-out's close settles at the session's end; a liquidation's
+    // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {
-        close.value_after_usd = end_value_usd;
-        close.flat = crate::risk::is_flat(end_position);
+        if matches!(close.reason, crate::risk::ForcedCloseReason::StopOut { .. }) {
+            close.value_after_usd = end_value_usd;
+            close.flat = crate::risk::is_flat(end_position);
+        }
     }
     info!(
         scenario = report.scenario,
