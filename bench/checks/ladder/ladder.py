@@ -35,9 +35,21 @@ instead of a fresh one: a fixed, public set that gives the same sessions on
 every run (`mtx gates --fast` uses it in CI). It is never a hidden set: those
 come from fresh 256-bit secrets.
 
+A task with an informed bot names it in `v2.informed`: scoring v2's 1, as
+the reference is its 0.5. Each set then grades the reference and the informed
+bot first, writes their PnL and drawdowns per session as the set's anchors
+(`mtx grade --anchors`), and grades every rung, those two again among them,
+under `--scoring v2` against them. It checks, on every set, that the informed
+bot beats the reference (v2 refuses to score otherwise), that the reference
+sits in its strength band (`v2.band`: its weighted PnL as a share of the
+informed bot's, so 0.5 has room above and below and is never floored), that
+doing nothing scores 0, the reference 0.5 and the informed bot 1 (within
+`V2_ANCHOR_TOLERANCE`), and that the order rules hold on v2's `raw` too
+(`hindsight` left out: v2 has no such rung).
+
 It also writes `<out>/<task>/summary.json`, which `mtx gates` reads: each
 set's totals per rung (as graded), and every rule, exploit and clean-run
-verdict.
+verdict, and v2's per rung and set when the task has an informed bot.
 
 `--parallel N` grades N rungs at once. Each grade's bots run as its own
 range of the grader's bot users (`--first-bot-user`): a session's end kills
@@ -74,6 +86,16 @@ GRADER_VARS = {
 # An exploit bot that moves the mark less than this, in bp over the index on
 # average, moved nothing.
 MIN_DISPLACEMENT_BP = 0.5
+# Scoring v2's loss weight (scoring_v2::LOSS_WEIGHT): the anchors' sums are
+# weighted the same way, so the refusal and the band are the grader's.
+V2_LOSS_WEIGHT = 1.5
+# How far nop, the reference and the informed bot may land from 0, 0.5 and 1:
+# the near-breach charge can take a little from an anchor that drew down
+# more than the informed bot.
+V2_ANCHOR_TOLERANCE = 0.02
+# The reference's weighted PnL as a share of the informed bot's, by default:
+# 0.5 with room above and below (specs MM_REDESIGN §4.1).
+V2_BAND = (0.2, 0.7)
 
 
 def rung_bot(rung, set_dir):
@@ -103,8 +125,13 @@ def rung_bot(rung, set_dir):
     return wrapper
 
 
-def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users):
-    report = os.path.join(out, f"{rung['name']}.json")
+def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None):
+    """Grade a rung on the set, or read the report an earlier run left.
+    With `v2`, the set's anchors file: the rung is scored by v2 against it,
+    into `v2/<rung>.json`."""
+    folder = os.path.join(out, "v2") if v2 else out
+    os.makedirs(folder, exist_ok=True)
+    report = os.path.join(folder, f"{rung['name']}.json")
     if os.path.exists(report):
         with open(report) as f:
             return json.load(f)
@@ -112,12 +139,13 @@ def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users):
     first_bot_user = users.get()
     try:
         return run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report,
-                         first_bot_user)
+                         first_bot_user, v2)
     finally:
         users.put(first_bot_user)
 
 
-def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, first_bot_user):
+def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, first_bot_user,
+              v2=None):
     command = [
         mtx, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
         "--first-bot-user", str(first_bot_user),
@@ -129,20 +157,23 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
+    if v2:
+        command += ["--scoring", "v2", "--anchors", v2]
     # The steps of the rungs whose mark displacement is read, and of nop's,
     # the baseline.
     if "push" in rung or rung["name"] == "nop":
         command += ["--details", os.path.join(out, "details", rung["name"])]
     env = dict(os.environ, MTX_EVAL_SEED=secret)
+    log_name = f"{rung['name']}{'.v2' if v2 else ''}.log"
     # A failed grade is an infrastructure failure (a session that couldn't
     # set up), not a score: try once more before giving up on the rung.
     for attempt in (1, 2):
-        with open(os.path.join(out, f"{rung['name']}.log"), "w") as log:
+        with open(os.path.join(out, log_name), "w") as log:
             done = subprocess.run(command, env=env, stdout=subprocess.DEVNULL, stderr=log)
         if done.returncode == 0:
             break
     else:
-        raise SystemExit(f"{rung['name']}: mtx grade failed twice; see {out}/{rung['name']}.log")
+        raise SystemExit(f"{rung['name']}: mtx grade failed twice; see {out}/{log_name}")
     with open(report) as f:
         return json.load(f)
 
@@ -232,6 +263,38 @@ def displacement(set_dirs, name, push, baseline="nop"):
     }
 
 
+def weigh(x):
+    """Scoring v2's loss weighting of one session's PnL."""
+    return x if x >= 0 else V2_LOSS_WEIGHT * x
+
+
+def v2_anchors(reports, informed):
+    """The set's anchors for `mtx grade --anchors`, from the reference's and
+    the informed bot's reports, and their weighted sums (the grader's E_ref and
+    E_inf, doing nothing being 0)."""
+    anchors = {}
+    for result in reports["reference"]["scenarios"]:
+        anchors[result["scenario"]] = {
+            "reference_pnl_usd": round(result["pnl_usd"], 2),
+            "reference_max_drawdown_usd": round(result["max_drawdown_usd"], 2),
+        }
+    for result in reports[informed]["scenarios"]:
+        anchors[result["scenario"]].update({
+            "informed_pnl_usd": round(result["pnl_usd"], 2),
+            "informed_max_drawdown_usd": round(result["max_drawdown_usd"], 2),
+        })
+    e_ref = sum(weigh(a["reference_pnl_usd"]) for a in anchors.values())
+    e_inf = sum(weigh(a["informed_pnl_usd"]) for a in anchors.values())
+    return anchors, e_ref, e_inf
+
+
+def v2_rule(rule):
+    """An order rule as it reads on v2's scores: without the hindsight bound,
+    which v2 has no rung for. None when nothing is left to order."""
+    terms = [t.strip() for t in rule.split("<") if t.strip() != "hindsight"]
+    return " < ".join(terms) if len(terms) > 1 else None
+
+
 def value(term, skill):
     term = term.strip()
     m = re.fullmatch(r"(max|min)\((.*)\)", term)
@@ -273,6 +336,9 @@ def main():
     count = args.count or config["count"]
     out = os.path.join(args.out, args.task)
     os.makedirs(out, exist_ok=True)
+    informed = config.get("v2", {}).get("informed")
+    band = tuple(config.get("v2", {}).get("band", V2_BAND))
+    v2_sets = []
 
     sets = []
     set_dirs = []
@@ -292,16 +358,29 @@ def main():
             secret = secrets.token_hex(32)
             with open(os.open(secret_file, os.O_WRONLY | os.O_CREAT, 0o600), "w") as f:
                 f.write(secret)
-        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-            futures = {
-                rung["name"]: pool.submit(
-                    grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
-                    rung, secret, set_dir, users,
-                )
-                for rung in config["rungs"]
-            }
-            reports = {name: future.result() for name, future in futures.items()}
+        def grade_all(rungs, v2=None):
+            with ThreadPoolExecutor(max_workers=args.parallel) as pool:
+                futures = {
+                    rung["name"]: pool.submit(
+                        grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
+                        rung, secret, set_dir, users, v2,
+                    )
+                    for rung in rungs
+                }
+                return {name: future.result() for name, future in futures.items()}
+
+        reports = grade_all(config["rungs"])
         sets.append(reports)
+        if informed:
+            # The set's anchors, then every rung scored by v2 against them,
+            # unless v2 would refuse: an informed bot that doesn't beat the
+            # reference is broken, as a losing reference is.
+            anchors, e_ref, e_inf = v2_anchors(reports, informed)
+            anchors_file = os.path.join(set_dir, "anchors.json")
+            with open(anchors_file, "w") as f:
+                json.dump(anchors, f, indent=2)
+            scored = grade_all(config["rungs"], anchors_file) if e_inf > e_ref else {}
+            v2_sets.append({"e_ref": e_ref, "e_inf": e_inf, "reports": scored})
         print(f"set {k + 1} (reference ${totals(reports)['reference']:.0f}): " + ", ".join(
             f"{name} {s:.2f}" for name, s in skills(reports).items()
         ), flush=True)
@@ -435,11 +514,64 @@ def main():
     if not any("disqualified" in f for f in failed):
         print("  ok   no rung was refused or disqualified")
 
+    if informed:
+        summary["v2"] = check_v2(config, v2_sets, informed, band, failed)
+
     summary["failed"] = failed
     with open(os.path.join(out, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print("\nladder " + ("FAILED: " + "; ".join(failed) if failed else "holds"))
     sys.exit(1 if failed else 0)
+
+
+def check_v2(config, v2_sets, informed, band, failed):
+    """Scoring v2's checks over every set (see the module's docstring): its
+    summary, failures appended to `failed`."""
+    print(f"\nscoring v2 (raw: nop 0, reference 0.5, {informed} 1):")
+    names = [r["name"] for r in config["rungs"]]
+    sets = []
+    problems = []
+    for k, v2 in enumerate(v2_sets, 1):
+        share = v2["e_ref"] / v2["e_inf"] if v2["e_inf"] > 0 else None
+        raw = {name: report["v2"]["raw"] for name, report in v2["reports"].items()}
+        floored = any(r["v2"]["anchor_floored"] for r in v2["reports"].values())
+        sets.append({"e_ref": v2["e_ref"], "e_inf": v2["e_inf"], "reference_share": share,
+                     "anchor_floored": floored, "raw": raw})
+        if not v2["e_inf"] > v2["e_ref"]:
+            problems.append(f"set {k}: {informed} (${v2['e_inf']:.0f} weighted) doesn't beat "
+                            f"the reference (${v2['e_ref']:.0f}); v2 refuses to score")
+            continue
+        if share is None or not band[0] <= share <= band[1] or floored:
+            problems.append(f"set {k}: the reference is {share:.2f} of {informed}, outside its "
+                            f"band {band[0]}-{band[1]}" + (" (floored)" if floored else ""))
+        for name, want in (("nop", 0.0), ("reference", 0.5), (informed, 1.0)):
+            if name in raw and abs(raw[name] - want) > V2_ANCHOR_TOLERANCE:
+                problems.append(f"set {k}: {name} scores {raw[name]:.3f}, not {want}")
+    rules = []
+    for rule in config["rules"]:
+        v2_form = v2_rule(rule)
+        if v2_form is None:
+            continue
+        holding = [holds(v2_form, s["raw"]) for s in sets if s["raw"]]
+        ok = len(holding) == len(sets) and all(holding)
+        rules.append({"rule": v2_form, "ok": ok, "sets_holding": sum(holding),
+                      "sets": len(sets)})
+        if not ok:
+            problems.append(f"v2 order: {v2_form} holds on {sum(holding)}/{len(sets)} sets")
+    for name in names:
+        row = [s["raw"].get(name) for s in sets]
+        print(f"  {name:22} " + "  ".join("    n/a" if v is None else f"{v:7.3f}" for v in row))
+    for s in sets:
+        if s["reference_share"] is not None:
+            print(f"  reference / {informed} (weighted): {s['reference_share']:.3f}"
+                  f" (band {band[0]}-{band[1]})")
+    for problem in problems:
+        print(f"  FAIL {problem}")
+    if not problems:
+        print("  ok   the anchors, the band and the order hold")
+    failed.extend(f"v2: {p}" for p in problems)
+    return {"informed": informed, "band": list(band), "sets": sets, "rules": rules,
+            "problems": problems}
 
 
 if __name__ == "__main__":

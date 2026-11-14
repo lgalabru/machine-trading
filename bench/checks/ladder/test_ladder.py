@@ -138,5 +138,62 @@ class MarkDisplacement(unittest.TestCase):
         self.assertAlmostEqual(ladder.displacement([self.set_dir], "up", 1)["bp"], 0.0)
 
 
+class ScoringV2(unittest.TestCase):
+    @staticmethod
+    def report(pnls, drawdowns=None):
+        drawdowns = drawdowns or [0.0] * len(pnls)
+        return {"scenarios": [
+            {"scenario": f"hidden-{i + 1}", "pnl_usd": p, "max_drawdown_usd": d}
+            for i, (p, d) in enumerate(zip(pnls, drawdowns))
+        ]}
+
+    def test_the_anchors_are_the_reference_and_informed_sessions_weighted_as_v2_weighs(self):
+        reports = {"reference": self.report([40.0, -20.0], [5.0, 30.0]),
+                   "informed": self.report([100.0, -10.0], [8.0, 12.004])}
+        anchors, e_ref, e_inf = ladder.v2_anchors(reports, "informed")
+        self.assertEqual(anchors["hidden-2"], {
+            "reference_pnl_usd": -20.0, "reference_max_drawdown_usd": 30.0,
+            "informed_pnl_usd": -10.0, "informed_max_drawdown_usd": 12.0,
+        })
+        # Losses count 1.5 times.
+        self.assertEqual(e_ref, 40.0 - 30.0)
+        self.assertEqual(e_inf, 100.0 - 15.0)
+
+    def test_order_rules_drop_the_hindsight_bound(self):
+        self.assertEqual(ladder.v2_rule("reference < informed < hindsight"), "reference < informed")
+        self.assertEqual(ladder.v2_rule("dip-buyer < reference"), "dip-buyer < reference")
+        self.assertIsNone(ladder.v2_rule("informed < hindsight"))
+
+    def check(self, raw, e_ref=100.0, e_inf=250.0, floored=False):
+        config = {"rungs": [{"name": n} for n in raw],
+                  "rules": ["dip < reference < informed < hindsight"]}
+        reports = {n: {"v2": {"raw": r, "anchor_floored": floored}} for n, r in raw.items()}
+        failed = []
+        summary = ladder.check_v2(config, [{"e_ref": e_ref, "e_inf": e_inf, "reports": reports}],
+                                  "informed", ladder.V2_BAND, failed)
+        return summary, failed
+
+    def test_anchors_band_and_order_that_hold_pass(self):
+        summary, failed = self.check({"nop": 0.0, "dip": 0.2, "reference": 0.5, "informed": 1.0})
+        self.assertEqual(failed, [])
+        self.assertEqual(summary["sets"][0]["reference_share"], 0.4)
+        self.assertEqual(summary["rules"], [{"rule": "dip < reference < informed", "ok": True,
+                                             "sets_holding": 1, "sets": 1}])
+
+    def test_a_reference_outside_its_band_fails(self):
+        _, failed = self.check({"nop": 0.0, "dip": 0.2, "reference": 0.5, "informed": 1.0},
+                               e_ref=200.0)
+        self.assertTrue(any("band" in f for f in failed), failed)
+
+    def test_an_informed_bot_that_doesnt_beat_the_reference_fails(self):
+        _, failed = self.check({}, e_ref=300.0)
+        self.assertTrue(any("refuses" in f for f in failed), failed)
+
+    def test_an_anchor_off_its_point_or_a_broken_order_fails(self):
+        _, failed = self.check({"nop": 0.0, "dip": 0.6, "reference": 0.5, "informed": 0.9})
+        self.assertTrue(any("informed scores 0.900" in f for f in failed), failed)
+        self.assertTrue(any("v2 order" in f for f in failed), failed)
+
+
 if __name__ == "__main__":
     unittest.main()

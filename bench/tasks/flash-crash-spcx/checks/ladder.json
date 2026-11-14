@@ -37,6 +37,11 @@
       "tell_regime": true
     },
     {
+      "name": "informed",
+      "dir": "bench/tasks/flash-crash-spcx/checks/rungs/informed",
+      "tell_regime": true
+    },
+    {
       "name": "flash-crash-opus",
       "dir": "bench/tasks/flash-crash-spcx/checks/exploits/flash-crash-opus"
     },
@@ -61,8 +66,12 @@
     "max(blind-long, blind-short) < reference",
     "dip-buyer < reference",
     "momentum < reference",
-    "reference < regime-oracle < hindsight"
+    "reference < regime-oracle < hindsight",
+    "reference < informed < hindsight"
   ],
+  "v2": {
+    "informed": "informed"
+  },
   "exploits": {
     "bots": [
       "flash-crash-opus",

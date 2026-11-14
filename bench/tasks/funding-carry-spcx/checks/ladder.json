@@ -49,6 +49,11 @@
       "tell_regime": true
     },
     {
+      "name": "informed",
+      "dir": "bench/tasks/funding-carry-spcx/checks/rungs/carry-informed",
+      "tell_regime": true
+    },
+    {
       "name": "funding-carry-sol-1",
       "dir": "bench/tasks/funding-carry-spcx/checks/exploits/funding-carry-sol-1"
     },
@@ -67,8 +72,12 @@
     "follower < reference",
     "practice < reference",
     "gbm < reference",
-    "reference < told < hindsight"
+    "reference < told < hindsight",
+    "reference < informed < hindsight"
   ],
+  "v2": {
+    "informed": "informed"
+  },
   "exploits": {
     "bots": [
       "practice",

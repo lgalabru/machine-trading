@@ -248,6 +248,26 @@ pub struct LadderSummary {
     pub rules: Vec<RuleResult>,
     pub exploits: Vec<ExploitResult>,
     pub disqualified: Vec<Disqualified>,
+    /// Scoring v2's checks, for a task with an informed bot.
+    #[serde(default)]
+    pub v2: Option<V2Result>,
+}
+
+/// What `ladder.py` checked of scoring v2 (see its docstring).
+#[derive(Debug, Deserialize)]
+pub struct V2Result {
+    /// The informed bot's rung.
+    pub informed: String,
+    pub sets: Vec<V2Set>,
+    /// What failed, one line each: a refused set, a reference outside its
+    /// band, an anchor off its point, an order rule broken on `raw`.
+    pub problems: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V2Set {
+    /// The reference's weighted PnL as a share of the informed bot's.
+    pub reference_share: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -473,6 +493,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         )
     });
     checks.push(signal_gate(summary, gate));
+    checks.push(v2_check(summary, fast));
     checks.push(exploit_check(summary, fast));
     checks.push(Check::from(
         GRADED,
@@ -491,6 +512,62 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         },
     ));
     checks
+}
+
+/// Scoring v2's anchors: doing nothing 0, the reference 0.5, the informed bot
+/// 1, the reference in its strength band and the order on v2's scores. Not
+/// run for a task without an informed bot. On a fast set, whether the
+/// informed bot beats the reference and where the reference sits in its band
+/// are a dozen sessions' luck: a failure there is inconclusive, and the full
+/// ladder decides.
+fn v2_check(summary: &LadderSummary, fast: bool) -> Check {
+    let (id, title) = (
+        "v2-anchors",
+        "Scoring v2: nop 0, reference 0.5, informed bot 1, reference in its band",
+    );
+    let Some(v2) = &summary.v2 else {
+        return Check::not_run(
+            SOLVABLE,
+            id,
+            title,
+            "the task's ladder file names no informed bot (`v2.informed`)",
+        );
+    };
+    let shares = v2
+        .sets
+        .iter()
+        .map(|s| {
+            s.reference_share
+                .map_or("n/a".to_string(), |r| format!("{r:.2}"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if v2.problems.is_empty() {
+        return Check::pass(
+            SOLVABLE,
+            id,
+            title,
+            format!(
+                "against {}; the reference's share of it per set: {shares}",
+                v2.informed
+            ),
+        );
+    }
+    let sampled = |p: &String| p.contains("band") || p.contains("refuses");
+    let detail = v2.problems.join("; ");
+    if fast && v2.problems.iter().all(sampled) {
+        Check::new(
+            SOLVABLE,
+            id,
+            title,
+            Status::Inconclusive,
+            format!(
+                "{detail}. A fast set is too small to place the reference; the full ladder decides"
+            ),
+        )
+    } else {
+        Check::fail(SOLVABLE, id, title, detail)
+    }
 }
 
 /// P(X >= k) for X ~ Binomial(n, p).
@@ -1190,6 +1267,7 @@ mod tests {
             rules: vec![],
             exploits: vec![],
             disqualified: vec![],
+            v2: None,
         }
     }
 
@@ -1353,6 +1431,32 @@ mod tests {
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("nop-scores-0"), Status::Fail);
         assert_eq!(status("ladder-clean"), Status::Fail);
+    }
+
+    #[test]
+    fn v2s_anchors_are_checked_when_the_task_has_an_informed_bot() {
+        let mut s = summary(&[&[("nop", 0.0), ("reference", 50.0)]]);
+        let status = |s: &LadderSummary, fast: bool| v2_check(s, fast).status;
+        assert_eq!(status(&s, false), Status::NotRun);
+        s.v2 = Some(V2Result {
+            informed: "informed".into(),
+            sets: vec![V2Set {
+                reference_share: Some(0.45),
+            }],
+            problems: vec![],
+        });
+        assert_eq!(status(&s, false), Status::Pass);
+        let band = "set 1: the reference is 0.80 of informed, outside its band 0.2-0.7";
+        s.v2.as_mut().unwrap().problems = vec![band.into()];
+        // A dozen sessions can't place the reference: the full ladder does.
+        assert_eq!(status(&s, true), Status::Inconclusive);
+        assert_eq!(status(&s, false), Status::Fail);
+        // An anchor off its point is a fault whatever the sample.
+        s.v2.as_mut()
+            .unwrap()
+            .problems
+            .push("set 1: informed scores 0.900, not 1".into());
+        assert_eq!(status(&s, true), Status::Fail);
     }
 
     #[test]
@@ -1548,6 +1652,18 @@ mod tests {
                 .collect();
             for name in gate.informed.iter().chain(&gate.non_reading) {
                 assert!(rungs.contains(&name.as_str()), "{task}: no rung {name}");
+            }
+            // An informed bot named for scoring v2 is a rung that is told
+            // the regime, run beside the reference.
+            if let Some(informed) = config["v2"]["informed"].as_str() {
+                let rung = config["rungs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["name"] == informed)
+                    .unwrap_or_else(|| panic!("{task}: no rung {informed}"));
+                assert_eq!(rung["tell_regime"], true, "{task}");
+                assert!(rungs.contains(&"reference"), "{task}");
             }
         }
     }

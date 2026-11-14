@@ -40,6 +40,11 @@
       "tell_regime": true
     },
     {
+      "name": "informed",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-informed",
+      "tell_regime": true
+    },
+    {
       "name": "path-oracle",
       "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-path-oracle",
       "tell_regime": true
@@ -66,8 +71,12 @@
     "basis < reference",
     "fitted < reference",
     "g0-reference < reference",
-    "reference < told < path-oracle < hindsight"
+    "reference < told < path-oracle < hindsight",
+    "reference < informed < hindsight"
   ],
+  "v2": {
+    "informed": "informed"
+  },
   "exploits": {
     "bots": [
       "fitted",
