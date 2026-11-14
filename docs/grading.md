@@ -4,7 +4,7 @@ This page explains scoring v2: what a bot's score means, how it is worked out, a
 
 The exact behaviour is in `crates/grader/src/scoring_v2.rs`. The scenario fields it reads are in [scenario-format.md](scenario-format.md).
 
-Today only new tasks have a real informed bot. The older tasks use an interim ceiling, described under Anchors.
+No task has a real informed bot yet. Until one does, every task uses an interim ceiling, described under Anchors.
 
 ## The idea in one minute
 
@@ -111,7 +111,7 @@ Example: suppose Bot X's drawdowns average ρ = 0.6 of the limit, while the info
 
 If neither the informed bot's nor the reference's drawdowns are known, nothing is charged and the grade says so.
 
-On the numbers: this charge took the lucky full-cap gambler's average score from 0.112 to 0.017 in an earlier offline test at k = 2, with a resolution cost of about 1%. It charged 0.000 to a skilful bot that bet the reference's bets at 2 and 3 times the size.
+On the numbers: in offline tests this charge cut a lucky full-cap gambler's average score from 0.112 to 0.017 for about a 1% loss of resolution, and charged 0.000 to a skilful bot that bet the reference's bets at 2 and 3 times the size.
 
 ## Breaches
 
@@ -214,14 +214,13 @@ A known residual: a coin-flip entry with a trailing stop has a weak but real edg
 - **The plain hindsight bound.** Never in the score. It is reported as the luck headroom above the ceiling.
 - **Sortino and annualised numbers.** Sessions are minutes long, and annualising would mean nothing.
 
-**Why a ceiling that is not tied to the models.** An earlier version put the 1 at about 1.25 times the best model run. That ties the scale to the models being graded. The informed bot, or failing that the hindsight bound, has no model run in it.
+**Why a ceiling that is not tied to the models.** A ceiling taken from the best model run would tie the scale to the models being graded. The informed bot, or failing that the hindsight bound, has no model run in it.
 
 **How this compares with common practice.**
 
 - Many RL benchmarks report scores normalised between a random policy and a reference. Our 0 and 0.5 are the same idea, with a fixed, never-graded bot at each end. The anchors come from fixed bots, not from the models being graded.
 - `rliable` (Agarwal et al.) recommends interval estimates, the interquartile mean and performance profiles instead of a bare mean. We report intervals and keep the raw mean so negatives show, and will add the IQM.
 - Prop-trading firms already work this way. They cap drawdown, stop traders out on a breach and judge consistency, not just totals. The stop-out and the run cap copy that.
-- The paired bootstrap follows METR and Miller on why naive intervals mislead.
 
 Two honest limits. First, k is a choice, and it makes some profitable but noisy strategies score under nop. We publish the break-even Sharpe so nobody has to guess. Second, a 72-session run cannot always tell a lucky bot at the anchor's own level of risk from a skilled one. The interval is what flags that.
 
@@ -238,7 +237,7 @@ Two honest limits. First, k is a choice, and it makes some profitable but noisy 
 
 **Planned:**
 
-- **Informed bots for the four existing tasks** (flash-crash, funding-carry, weekend-gap, market-making), planned for 0.13. Until then they use the hindsight ceiling and v2 is reported beside the old reward. Our new tasks ship with an informed bot from day one.
+- **Informed bots for the four existing tasks** (flash-crash, funding-carry, weekend-gap, market-making), planned for 0.13. Until then they use the hindsight ceiling and v2 is reported beside the old reward. New tasks are planned to ship with one from the start.
 - **The probe gate** as a blocking release check. The table above is a draft until it lands.
 - **Market making.** Its 0.5 does not hold yet, because the reference is too weak, so its scores are flagged `anchor_floored` and it is kept out of the v2 headline until it is redesigned. The redesign has the grader close out the position at the end of each session, limits market orders to reducing the position, adds quoting obligations, and replaces the reference with a real market maker.
 - **Reporting.** The interquartile mean across tasks is not yet in the code. The headline over a frozen common task set, with floored tasks left out, is also planned.
