@@ -41,5 +41,5 @@ fails=0
 if grep -rlF "$MOCK_API_KEY" "$jobs"; then
   echo "hermes probe: FAIL, the provider's key is in the files above"; fails=1
 fi
-python3 -I "$here/read.py" "$jobs" || fails=1
+python3 -I "$here/read.py" "$jobs" "$route" || fails=1
 exit "$fails"

@@ -1,7 +1,7 @@
 """Read a Hermes harness check (probe.sh): the stand-in provider's request
 log and the two trials Harbor kept. Exits non-zero on any failure.
 
-    python3 -I read.py <jobs dir>
+    python3 -I read.py <jobs dir> [route]
 """
 
 import json
@@ -39,7 +39,10 @@ def main():
     if not all(r["key_ok"] for r in requests):
         fails.append("a request came without the provider's key")
     efforts = {json.dumps(r["reasoning_effort"] or r["reasoning"]) for r in agent_turns}
-    if not any("high" in e for e in efforts):
+    # Hermes sends OpenRouter an effort only at openrouter.ai, for models
+    # its catalog lists as reasoning: a stand-in host gets none.
+    route = sys.argv[2] if len(sys.argv) > 2 else "custom"
+    if route != "openrouter" and not any("high" in e for e in efforts):
         fails.append(f"no request asked for high effort: {sorted(efforts)}")
     if any(r["system_mentions_leak_probe"] for r in requests):
         fails.append("a system prompt mentions what a trial planted")
