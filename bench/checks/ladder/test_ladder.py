@@ -297,6 +297,12 @@ class ProbeGate(unittest.TestCase):
         got = self.checks(**{"coin-flip-full": [-3.0] * self.N})
         self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "pass")
 
+    def test_c2_is_inconclusive_on_a_short_set(self):
+        sets = self.ladder(**{"coin-flip-full": [12.0, -1.0] * (self.N // 2)})
+        got = {c["id"]: c for c in ladder.probe_checks({}, sets, 12)}
+        self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "inconclusive")
+        self.assertTrue(got["luck5:coin-flip-full"]["point_violated"])
+
     def test_the_sharpe_uses_n_minus_one_like_the_grader(self):
         self.assertAlmostEqual(ladder.session_sharpe([1.0, 3.0]), 2.0 / (2 ** 0.5))
 

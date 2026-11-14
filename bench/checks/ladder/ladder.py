@@ -296,6 +296,7 @@ LEVERED = [("lever-1.5", 1.5), ("lever-2", 2.0), ("lever-3", 3.0)]
 # TUNE2's C2: the headline of a 5-run model (clamp of the mean raw), averaged
 # over the 5-run sets that made money in total, for every gambler.
 LUCK5_LIMIT = 0.05
+LUCK5_MIN_SESSIONS = 36
 BREACHER, TWIN = "breacher", "lever-3"
 HONEST = ["honest-0.1", "honest-0.2", "honest-0.3", "honest-0.5"]
 # Only the fatal crash is gated: a graceful one (closes out and stops) is a
@@ -510,8 +511,11 @@ def probe_checks(config, sets, count):
             if sum(d[2][n] for d in block) > 0:
                 heads.append(min(max(statistics.fmean(d[0][n] for d in block), 0.0), 1.0))
         luck = statistics.fmean(heads) if heads else 0.0
-        v = {"verdict": "pass" if luck <= LUCK5_LIMIT else "fail", "violation_odds": None,
-             "point_violated": luck > LUCK5_LIMIT}
+        # On a short set the headline is the sample's own mean: it can't tell
+        # luck from edge, so a break is inconclusive there.
+        v = {"verdict": "pass" if luck <= LUCK5_LIMIT else
+             ("inconclusive" if count < LUCK5_MIN_SESSIONS else "fail"),
+             "violation_odds": None, "point_violated": luck > LUCK5_LIMIT}
         add(f"luck5:{n}", "luck5", [n], v,
             f"lucky 5-run headline {luck:.3f} over {len(heads)} winning sets of {groups}, "
             f"limit {LUCK5_LIMIT}", luck5=luck)
@@ -822,7 +826,8 @@ def main():
         print("\nprobes (scoring v2; raw: 0 = doing nothing, 0.5 = the reference):")
         summary["probes"] = probe_checks(config, sets, count)
         for check in summary["probes"]:
-            label = {"pass": "ok  ", "fail": "FAIL", "inconclusive": "?   ", "no_power": "NOPW"}[
+            label = {"pass": "ok  ", "fail": "FAIL", "inconclusive": "?   ", "no_power": "NOPW",
+                     "reported": "info"}[
                 check["verdict"]]
             print(f"  {label} {check['id']}: {check['detail']}"
                   + (f" [odds {check['violation_odds']:.2f}]"
