@@ -20,8 +20,8 @@ machine (it listens on the docker bridge the trials reach the host by).
 
 Routes come from models.toml, for the models named on the command line.
 The batch's secret is read from MTX_PROXY_SECRET; the address it listens
-on is printed once it is up. Refused requests are logged (method, status,
-reason, route) to stderr.
+on is printed once it is up. Refused requests are logged (method, path,
+status, reason, route) to stderr.
 
     MTX_PROXY_SECRET=... python3 -I key_proxy.py --host <docker bridge address> --port 0 <model>...
 
@@ -76,7 +76,8 @@ class Proxy(BaseHTTPRequestHandler):
         pass
 
     def refuse(self, refused):
-        print(f"refused {self.command} {refused.status} {refused.reason} route={refused.route}", file=sys.stderr, flush=True)
+        path = self.path[:120].encode("ascii", "backslashreplace").decode()
+        print(f"refused {self.command} {path} {refused.status} {refused.reason} route={refused.route}", file=sys.stderr, flush=True)
         data = json.dumps({"error": {"message": refused.reason, "type": "proxy_error"}}).encode()
         self.send_response(refused.status)
         self.send_header("Content-Type", "application/json")
