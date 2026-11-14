@@ -1,0 +1,135 @@
+# A fixture for the grader's tests, not a calibration: round numbers with a sharp
+# local spike on the pool class, so the tests can tell a spike from calm.
+[meta]
+schema_version = "1.0"
+calibration_id = "fixture-fees.20261113.00000000"
+network = "mainnet-beta"
+fitted_at = "2026-11-13T00:00:00+00:00"
+fitter = "hand-written test fixture"
+fitter_code_sha256_12 = "000000000000"
+inputs_file = "fixture-fees.20261113.00000000.inputs.json"
+inputs_digest = "0000000000000000"
+inputs_count = 0
+sources = []
+limits = ["Not fitted to anything: a test fixture."]
+[meta.windows]
+calm = []
+busy = []
+spike = []
+
+[block]
+cu_cap = 100000000
+account_cu_cap = 12000000
+lamports_per_signature = 5000
+slots_per_leader = 4
+skip_rate = 0.02
+skip_rate_source = "placeholder"
+jito_stake_share = 0.9
+jito_stake_share_source = "placeholder"
+inversion_p = 0.02
+inversion_p_source = "placeholder"
+
+[regimes]
+names = ["calm", "busy", "spike"]
+transitions = [[0.995, 0.004, 0.001], [0.01, 0.985, 0.005], [0.01, 0.02, 0.97]]
+share = [0.7, 0.25, 0.05]
+source = "placeholder"
+
+[ghost.block]
+source = "placeholder"
+[ghost.block.calm]
+p_contended = 0.0
+log_price_mean = 0.0
+log_price_sd = 0.0
+phi = 0.5
+utilization = 0.4
+[ghost.block.busy]
+p_contended = 0.05
+log_price_mean = 6.9
+log_price_sd = 1.0
+phi = 0.5
+utilization = 0.6
+[ghost.block.spike]
+p_contended = 0.3
+log_price_mean = 9.2
+log_price_sd = 1.0
+phi = 0.6
+utilization = 0.85
+
+[ghost.amm_pool]
+source = "placeholder"
+[ghost.amm_pool.calm]
+p_contended = 0.18
+log_price_mean = 8.5
+log_price_sd = 1.6
+phi = 0.6
+utilization = 0.5
+[ghost.amm_pool.busy]
+p_contended = 0.4
+log_price_mean = 10.0
+log_price_sd = 1.5
+phi = 0.6
+utilization = 0.7
+[ghost.amm_pool.spike]
+p_contended = 0.85
+log_price_mean = 13.0
+log_price_sd = 1.4
+phi = 0.7
+utilization = 0.95
+
+[ghost.book]
+source = "placeholder"
+[ghost.book.calm]
+p_contended = 0.1
+log_price_mean = 8.0
+log_price_sd = 1.5
+phi = 0.6
+utilization = 0.4
+[ghost.book.busy]
+p_contended = 0.3
+log_price_mean = 9.5
+log_price_sd = 1.5
+phi = 0.6
+utilization = 0.6
+[ghost.book.spike]
+p_contended = 0.7
+log_price_mean = 12.0
+log_price_sd = 1.4
+phi = 0.7
+utilization = 0.9
+
+[ghost.oracle]
+source = "placeholder"
+[ghost.oracle.calm]
+p_contended = 0.05
+log_price_mean = 7.0
+log_price_sd = 1.2
+phi = 0.5
+utilization = 0.3
+[ghost.oracle.busy]
+p_contended = 0.15
+log_price_mean = 8.5
+log_price_sd = 1.2
+phi = 0.5
+utilization = 0.5
+[ghost.oracle.spike]
+p_contended = 0.4
+log_price_mean = 10.5
+log_price_sd = 1.2
+phi = 0.6
+utilization = 0.8
+
+[tips]
+p25 = 1000
+p50 = 1583
+p75 = 8198
+p95 = 52122
+p99 = 615000
+log_mean = 8.0
+log_sd = 1.9
+source = "placeholder"
+
+[observed.amm_pool.calm]
+quantiles = [[10, 0], [25, 0], [50, 0], [75, 0], [90, 9000], [95, 60650], [99, 400000]]
+zero_share = 0.82
+n = 150
