@@ -1197,8 +1197,8 @@ impl PerpAccount {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
     }
 
-    /// Each market other than the primary at a step, in symbol order:
-    /// nothing for a session on one market.
+    /// Every market at a step, the primary included, in symbol order:
+    /// nothing for a session on one market, whose step is its one market's.
     async fn market_steps(&self, at: u64, positions: &[f64]) -> Result<Vec<MarketStep>> {
         if self.markets.len() < 2 {
             return Ok(Vec::new());
