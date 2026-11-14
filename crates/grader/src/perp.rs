@@ -21,7 +21,7 @@ use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use mtx_core::{
     AccountMeter, FillId, InstrumentId, Measurement, MeterError, Side as CoreSide,
-    mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
+    mandate::{ExposureStart, InstrumentRef, Mandate, Observed, PositionRange, Sample},
     turns::Step,
 };
 use mtx_kit::{
@@ -458,12 +458,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -502,7 +497,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         start_mark_usd,
         start_value_usd,
         base_slot,
+        mandate: mandate.clone(),
         observed,
+        exposure_start: ExposureStart::default(),
         start_position,
         fills: reads_fills.then(|| PerpFills {
             last_scan: base_slot,
@@ -535,6 +532,16 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         account.start_value_usd += start.base_usd();
         account.peak_value_usd = account.start_value_usd;
         account.desk_start = Some(start);
+    }
+    // What the mandate's exposures are fractions of: their values as the
+    // term starts.
+    if !mandate.limits.exposures.is_empty() {
+        let now = account.measure().await?;
+        let holdings = account.priced(&now, base_slot)?;
+        account.exposure_start = mandate.exposure_start(&Sample {
+            slot: base_slot,
+            holdings: &holdings,
+        });
     }
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
@@ -806,10 +813,14 @@ struct PerpAccount {
     oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
     base_slot: u64,
+    /// The grader's copy of the mandate, with its term.
+    mandate: Mandate,
     /// Sampled every step: a fill persists until the bot trades out of it,
     /// so a position over the cap is caught. With a starting position, the
     /// range starts there.
     observed: Observed,
+    /// The mandate's exposures as the term started.
+    exposure_start: ExposureStart,
     /// The starting position in the scenario's market, in base units.
     start_position: f64,
     /// The bot's fills, where the session reads them.
@@ -1139,6 +1150,57 @@ impl PerpAccount {
         Ok(value_usd + units * (price - self.phoenix.ticks_to_usd(&self.market, mark)))
     }
 
+    /// The price the mandate's notional rules value the market at, in USD:
+    /// the scenario's level, or its book level where the session values the
+    /// account at the book. Never Phoenix's mark, which a bot's own trading
+    /// moves.
+    fn notional_price_usd(&self, slot: u64) -> f64 {
+        let scenario = &self.scenario;
+        let at = slot.saturating_sub(self.base_slot);
+        let level = match scenario.valuation() {
+            "book" => book_at(&scenario.path, at),
+            _ => level_at(&scenario.path, at),
+        };
+        self.start_mark_usd * (1.0 + level / 100.0)
+    }
+
+    /// The account's holdings in `measurement` in the session's market, as
+    /// the mandate's notional rules read them. Holdings elsewhere break the
+    /// universe rule already.
+    fn priced(
+        &self,
+        measurement: &Measurement,
+        slot: u64,
+    ) -> Result<Vec<(InstrumentRef, f64, f64)>> {
+        let price = self.notional_price_usd(slot);
+        let mut holdings = Vec::new();
+        for (id, holding) in &measurement.holdings {
+            if *id == self.market_id {
+                let instrument =
+                    InstrumentRef::of_holding(id, holding).map_err(MeterError::Unsupported)?;
+                holdings.push((instrument, grader_f64(holding.position()), price));
+            }
+        }
+        Ok(holdings)
+    }
+
+    /// Checks `measurement` against the mandate's notional rules, if it has
+    /// any.
+    fn record_notional(&mut self, measurement: &Measurement, slot: u64) -> Result<()> {
+        if self.mandate.checks_samples() {
+            let holdings = self.priced(measurement, slot)?;
+            self.observed.record_sample(
+                &self.mandate,
+                &Sample {
+                    slot,
+                    holdings: &holdings,
+                },
+                &self.exposure_start,
+            );
+        }
+        Ok(())
+    }
+
     /// [`PerpAccount::value`], and the RFQ desk's wallet.
     async fn value_with_desk(&self, value_usd: f64, units: f64, slot: u64) -> Result<f64> {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
@@ -1167,9 +1229,10 @@ impl Account for PerpAccount {
 
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
         self.scan(slot).await?;
-        let scenario = &self.scenario;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
+        self.record_notional(&now, slot)?;
+        let scenario = &self.scenario;
         let position = position_in(&now, &self.market_id);
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
         let value_usd = self
@@ -1335,9 +1398,10 @@ impl Account for PerpAccount {
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         self.scan(done.end_slot).await?;
         self.mark_forced(&done.forced_closes).await?;
-        let scenario = &self.scenario;
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
+        self.record_notional(&end, done.end_slot)?;
+        let scenario = &self.scenario;
         let end_position = position_in(&end, &self.market_id);
         let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
@@ -1388,6 +1452,7 @@ impl Account for PerpAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            notional_breach: observed.notional_breach,
             valuation: scenario.valuation(),
             flow: done.actors.flow,
             competitor: done.actors.competitor,

@@ -1,0 +1,25 @@
+{
+  "name": "mandate-gross-within",
+  "description": "SPCX holds still under a $15,000 gross notional cap, above a full 70-share position",
+  "symbol": "SPCX",
+  "duration_slots": 60,
+  "mandate": {
+    "version": "v0.1",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 70.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 1000.0,
+      "max_gross_notional_usd": 15000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 11,
+      "level_pct": 0.076
+    }
+  ]
+}

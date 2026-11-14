@@ -37,7 +37,7 @@ use std::{
 use async_trait::async_trait;
 use mtx_core::{
     Decimal,
-    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange},
+    mandate::{Breach, InstrumentRef, Mandate, Observed, ObservedFill, PositionRange},
     turns::{self, Hello, Message, Step},
 };
 use mtx_kit::BotEnv;
@@ -179,6 +179,10 @@ pub struct SessionReport {
     /// The deepest the account's value fell below its running peak while the
     /// bot ran, in USD.
     pub max_drawdown_usd: f64,
+    /// The first of the mandate's notional rules (gross notional,
+    /// exposures, hedges) a measurement broke, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notional_breach: Option<Breach>,
     /// The price the account's position was valued at: the `mark`, or for
     /// market making the `oracle` the scenario sets, which a bot's own
     /// quotes can't move.
@@ -415,6 +419,8 @@ impl SessionReport {
                 .into_iter()
                 .chain(self.perp_open_orders.iter().cloned())
                 .collect(),
+            notional_breach: self.notional_breach.clone(),
+            takes: Vec::new(),
         }
     }
 }
