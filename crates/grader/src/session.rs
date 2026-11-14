@@ -731,8 +731,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             slot = wait_for_slot(&rpc, slot + 1).await?;
         }
         let at = slot - base_slot;
-        // The bot's held sends land in this step's blocks.
-        guard.release(k).await;
+        // The bot's held sends land in this step's blocks, unless the risk
+        // desk has taken the account over.
+        if closing.is_none() {
+            guard.release(k).await;
+        }
         cranks
             .step(
                 &rpc,
@@ -766,6 +769,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             if let Some((mut child, mut writer, _)) = process.take() {
                 let _ = send(&mut writer, &Message::End).await;
                 stop_bot(&mut child, workdir.bot_user.and(user)).await;
+            }
+            // Sends the faults still hold would land during the close, and
+            // could reopen the position or rest quotes: they never land.
+            let dropped = guard.drop_held();
+            if dropped > 0 {
+                info!(dropped, "the risk desk dropped the bot's held sends");
             }
             closing = Some(crate::risk::ForcedClose {
                 reason: crate::risk::ForcedCloseReason::StopOut {
