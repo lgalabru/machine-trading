@@ -132,11 +132,12 @@ jobs:
         # wasm32-wasip2 too, as do the kit's spot venue decoders, the
         # flash-crash reference's and the spot smoke's components load in
         # the grader's host, the probe's sheet and market round-trip
-        # through the interface, and the raw-send probe is answered in a
-        # session as its scenario allows.
+        # through the interface, the raw-send probe is answered in a
+        # session as its scenario allows, and the transaction-layer probe's
+        # sends land as its fee spike lets them.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust mtx-bot-keeper-race $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust mtx-bot-keeper-race $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
@@ -150,6 +151,9 @@ jobs:
           MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
           MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
             cargo test -p mtx-grader raw::tests -- --ignored
+          just --justfile bots/tx-probe/Justfile build
+          MTX_TEST_TX_PROBE_WASM="$PWD/bots/tx-probe/bot.wasm" \
+            cargo test -p mtx-grader txlayer::live -- --ignored
 
   # The tasks `gates` checks: those a pull request or a push to main
   # changes, or the one (or every task) a manual run names. A JSON array, for
