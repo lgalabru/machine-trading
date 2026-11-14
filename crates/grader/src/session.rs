@@ -125,6 +125,18 @@ pub struct SessionOptions<'a> {
     pub keys: crate::keys::SessionKeyring<'a>,
     /// Watches a component's session step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    /// Scoring v2's session rules, if the grade runs under them.
+    pub rules: Rules,
+}
+
+/// Scoring v2's session rules (`mtx grade --v2-sessions`). Off by
+/// default, and a session then runs as it always has. (A breach's stop-out
+/// is the scenario's own risk desk, `stop_out`: see [`crate::risk`].)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Rules {
+    /// The account is valued at every slot for its drawdown, not only at
+    /// every step.
+    pub every_slot: bool,
 }
 
 /// A session's outcome, as the grade reports it. It reads back from the
@@ -500,6 +512,12 @@ pub(crate) trait Account: Send + Sync {
     /// One instruction of a bot's transaction, as the report shows it.
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
 
+    /// Between a step's slots, at `slot`: value the account for its
+    /// drawdown (see [`Rules::every_slot`]). Nothing by default.
+    async fn sample(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
 }
@@ -619,10 +637,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 &component,
                 &env.rpc_url,
                 crate::wasm::Clock {
+                    seed: opts.keys.strategy_seed(&scenario.name),
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    scenario: &scenario.name,
                     vars: opts
                         .regime
                         .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
@@ -699,7 +717,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
-            seed: Some(turns::scenario_seed(&scenario.name)),
+            seed: Some(opts.keys.strategy_seed(&scenario.name)),
             reports,
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
@@ -746,6 +764,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         while slot < target {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
+            if opts.rules.every_slot && slot < target {
+                account.sample(slot).await?;
+            }
         }
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks, unless the risk
