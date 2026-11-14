@@ -16,7 +16,7 @@
 //! | `tx`           | the transaction layer: fees and blocks, raw sends            |
 //! | `mandate`      | what the bot may trade and its limits                        |
 //! | `order`        | a quantity the bot has to trade by the end                   |
-//! | `scoring`      | the reference, the bound, charges and net scoring            |
+//! | `scoring`      | the reference, the bound, charges, net scoring, stop-outs    |
 //!
 //! A new capability adds a section (or a field to the one it belongs to)
 //! with its own `validate`; the rules that tie sections together are listed
@@ -41,7 +41,8 @@ use crate::{
     orders::{ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
-        Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, VENUE, Waypoint, move_slots,
+        Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, StopOut, StopRule, VENUE,
+        Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
     txlayer::TxLayer,
@@ -250,6 +251,10 @@ pub struct Scoring {
     /// Score the PnL net of the starting holding's price drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetScoring>,
+    /// The risk desk: a breach of the limits it lists is priced, by
+    /// closing the position through the book, instead of disqualifying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_out: Option<StopOut>,
 }
 
 impl Assets {
@@ -502,6 +507,9 @@ impl Scoring {
         if let Some(net) = &self.net {
             net.validate()?;
         }
+        if let Some(stop_out) = &self.stop_out {
+            stop_out.validate()?;
+        }
         Ok(())
     }
 }
@@ -586,6 +594,7 @@ impl ScenarioV2 {
         }
         self.scoring.validate()?;
         self.mandate_covers_the_market()?;
+        self.stop_out_has_its_limits()?;
         self.order_fits_the_wallet()
     }
 
@@ -729,6 +738,22 @@ impl ScenarioV2 {
         }
         if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
+        }
+        Ok(())
+    }
+
+    /// A stop-out closes a perp position, on a limit the mandate sets.
+    fn stop_out_has_its_limits(&self) -> Result<(), String> {
+        let Some(stop_out) = &self.scoring.stop_out else {
+            return Ok(());
+        };
+        if self.venues.perp.is_none() {
+            return Err("stop_out: only perp sessions close positions yet".into());
+        }
+        if stop_out.covers(StopRule::Drawdown) && self.mandate.limits.max_drawdown_usd.is_none() {
+            return Err(
+                "stop_out: closes on a drawdown, but the mandate sets no drawdown limit".into(),
+            );
         }
         Ok(())
     }
@@ -950,6 +975,7 @@ impl ScenarioV2 {
             fair_path,
             tx_layer: tx.as_ref().and_then(|tx| tx.layer.clone()),
             raw_sends: tx.and_then(|tx| tx.raw_sends),
+            stop_out: scoring.stop_out,
             market_model: record,
             oracles,
             lending: venues.lending,
@@ -1089,6 +1115,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
+                stop_out: v1.stop_out.clone(),
             },
         })
     }
@@ -1435,6 +1462,38 @@ mod tests {
             serde_json::from_str::<ScenarioV2>(&text.replace("\"tx\":{}", "\"tx\":{\"x\":1}"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stop_out_lives_in_scoring_and_round_trips_through_v1() {
+        use crate::scenario::{CloseMode, StopOut};
+        let mut s = shock();
+        s.scoring.stop_out = Some(StopOut {
+            on: vec![StopRule::Drawdown],
+            close: CloseMode::Market,
+            slice_base: Some(100.0),
+        });
+        assert_eq!(s.validate(), Ok(()));
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(
+            text.contains(r#""stop_out":{"on":["drawdown"],"close":"market","slice_base":100.0}"#)
+        );
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.stop_out, s.scoring.stop_out);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+
+        let mut empty = s.clone();
+        empty.scoring.stop_out.as_mut().unwrap().on.clear();
+        assert!(empty.validate().unwrap_err().contains("no limit"));
+        let mut twice = s.clone();
+        twice.scoring.stop_out.as_mut().unwrap().on = vec![StopRule::Drawdown; 2];
+        assert!(twice.validate().unwrap_err().contains("repeats"));
+        let mut slice = s.clone();
+        slice.scoring.stop_out.as_mut().unwrap().slice_base = Some(0.0);
+        assert!(slice.validate().unwrap_err().contains("slice_base"));
+        let mut spot_stop = spot();
+        spot_stop.scoring.stop_out = s.scoring.stop_out.clone();
+        assert!(spot_stop.validate().is_err());
     }
 
     #[test]

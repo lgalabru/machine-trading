@@ -521,6 +521,7 @@ impl CarryFamily {
             market_model: None,
             raw_sends: None,
             tx_layer: None,
+            stop_out: None,
         };
         let shape = Shape {
             informed_share,

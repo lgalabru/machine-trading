@@ -1245,6 +1245,7 @@ mod tests {
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
+            forced_closes: Vec::new(),
             oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
@@ -1312,6 +1313,7 @@ mod tests {
             market_model: None,
             raw_sends: None,
             tx_layer: None,
+            stop_out: None,
         }
     }
 
@@ -1710,6 +1712,44 @@ mod tests {
         let mut at_limit = session(100.0);
         at_limit.max_drawdown_usd = 1_000.0;
         assert!(score(vec![(at_limit, &s)]).reward > 0.0);
+    }
+
+    /// A drawdown past the limit is priced when the risk desk closed it,
+    /// and still disqualifies without a close, or for another rule.
+    #[test]
+    fn a_stop_out_prices_the_drawdown_and_nothing_else() {
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let s = scenario(None);
+        let mut stopped = session(-1_150.0);
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let report = score(vec![(session(2_000.0), &s), (stopped.clone(), &s)]);
+        assert!(report.scenarios[1].disqualified.is_none());
+        assert_eq!(report.pnl_usd, 850.0, "the close's loss counts");
+        assert!(report.reward > 0.0);
+
+        let mut unclosed = stopped.clone();
+        unclosed.forced_closes.clear();
+        assert_eq!(score(vec![(unclosed, &s)]).reward, 0.0);
+
+        let mut elsewhere = stopped;
+        elsewhere.positions_outside_universe = 1;
+        assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
     }
 
     #[test]

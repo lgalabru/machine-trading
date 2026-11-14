@@ -21,6 +21,7 @@ pub mod phoenix;
 pub mod raw;
 pub mod recipe;
 pub mod replay;
+pub mod risk;
 pub mod scenario;
 pub mod scenario_v2;
 pub mod scoring_v2;
