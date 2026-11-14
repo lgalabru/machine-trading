@@ -10,6 +10,7 @@
 //! | `PositionV2` (up to 70 bins of shares) | [`Position`] |
 //! | `swap2`, `swap_exact_out2`, `initialize_position`, `add_liquidity_by_strategy2`, `remove_liquidity_by_range2`, `claim_fee2` | [`ix`] |
 //! | bin prices, a position's amounts and fees | [`math`] |
+//! | a swap's amounts, fee and bins, exactly as `swap2` and `swap_exact_out2` execute it | [`swap`] |
 //!
 //! Token X is the pool's base and token Y its quote: a bin's price is Y per
 //! X.
@@ -17,23 +18,39 @@
 pub mod ix;
 pub mod math;
 mod state;
+pub mod swap;
 
 use solana_pubkey::Pubkey;
 pub use state::{Bin, BinArray, LbPair, Position};
 
-use crate::protocols::{NamedMarket, SPCX_MINT, USDC_MINT};
+use crate::protocols::{NamedMarket, SOL_MINT, SPCX_MINT, USDC_MINT};
 
 /// The Meteora DLMM program.
 pub const PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
-/// The pools the Meteora venue profile names.
-pub const POOLS: &[NamedMarket] = &[NamedMarket {
-    symbol: "SPCX-USDC",
-    address: solana_pubkey::pubkey!("7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu"),
-    base_mint: SPCX_MINT,
-    quote_mint: USDC_MINT,
-}];
+/// The pools the Meteora venue profile names: SPCX against USDC and SOL,
+/// and SOL against USDC (the second hop of a route through SOL).
+pub const POOLS: &[NamedMarket] = &[
+    NamedMarket {
+        symbol: "SPCX-USDC",
+        address: solana_pubkey::pubkey!("7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu"),
+        base_mint: SPCX_MINT,
+        quote_mint: USDC_MINT,
+    },
+    NamedMarket {
+        symbol: "SPCX-SOL",
+        address: solana_pubkey::pubkey!("3h9GhSUzozu2eRQ9MCLCeHWYshywm4mqbzPtz2h1zGMF"),
+        base_mint: SPCX_MINT,
+        quote_mint: SOL_MINT,
+    },
+    NamedMarket {
+        symbol: "SOL-USDC",
+        address: solana_pubkey::pubkey!("5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"),
+        base_mint: SOL_MINT,
+        quote_mint: USDC_MINT,
+    },
+];
 
 /// Bins in one bin array, and the most one position spans.
 pub const BINS_PER_ARRAY: i32 = 70;

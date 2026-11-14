@@ -8,6 +8,7 @@ import 'bench/tasks/tasks.just'
 snapshot := "phoenix-spcx-2026-10-29"
 spot_snapshot := "sol-usdc-spot-2026-11-11"
 pool_snapshot := "spcx-pools-2026-11-13"
+route_snapshot := "spcx-route-2026-11-13"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
@@ -142,6 +143,43 @@ amm-smoke:
     jq -e "$spot | .arbitrage.failed == 0" "$report" > /dev/null \
       || { echo "amm-smoke: the arbitrageur's orders failed"; exit 1; }
     echo "amm-smoke: clean, $(jq -c "$spot | {fills: (.fills | length), positions: (.pools | length), arbitrage}" "$report")"
+
+# The router end to end on the route snapshot: the component smoke routes
+# through the pseudo-venue (a sale big enough to split, a purchase, a sale
+# no route pays) and asks the router's rpc methods; the process smoke
+# signs and sends what Jupiter's API at its RPC URL builds, and is refused
+# a pool outside the session. Each route's legs read back as fills on
+# their pools, and nothing is disqualified.
+router-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/router-smoke/Justfile build
+    just --justfile bots/router-api-smoke/Justfile build
+    cargo build --release
+    mtx="${CARGO_TARGET_DIR:-target}/release/mtx"
+    spot='.scenarios[0].spot'
+    for bot in router-smoke router-api-smoke; do
+      report="target/logs/$bot.json"
+      flags=--components-only
+      [ "$bot" = router-api-smoke ] && flags=--trusted
+      "$mtx" grade $flags --snapshot snapshots/{{route_snapshot}} --bot "bots/$bot" \
+        --logs "target/logs/$bot" --report "$report" bench/checks/router/smoke.json > /dev/null
+      jq -e '[.. | objects | select(has("disqualified")) | .disqualified | select(. != null)] | length == 0' "$report" > /dev/null \
+        || { echo "$bot: disqualified"; exit 1; }
+      jq -e "$spot | [.fills[].instrument] | unique | length >= 2" "$report" > /dev/null \
+        || { echo "$bot: a route's legs didn't read back as fills on its pools: $(jq -c "$spot | [.fills[].instrument] | unique" "$report")"; exit 1; }
+    done
+    log=target/logs/router-smoke/router-smoke.log
+    grep -q 'note: router: 300000000 in' "$log" || { echo "router-smoke: no route note for the sale"; exit 1; }
+    grep -q 'sent router Some(Swap { side: Ask, amount: 300.0.*Landed' "$log" || { echo "router-smoke: the routed sale didn't land"; exit 1; }
+    grep -q 'sent router Some(Swap { side: Bid.*Landed' "$log" || { echo "router-smoke: the routed purchase didn't land"; exit 1; }
+    grep -q 'sent router Some(Swap { side: Ask, amount: 1.0.*Failed' "$log" || { echo "router-smoke: a route no pool pays didn't fail"; exit 1; }
+    grep -q '^.*quote: {' "$log" && grep -q 'swap instructions: {' "$log" || { echo "router-smoke: the rpc methods didn't answer"; exit 1; }
+    api=target/logs/router-api-smoke/router-smoke.log
+    grep -q 'probe: landed ok' "$api" || { echo "router-api-smoke: the API's route didn't land"; exit 1; }
+    grep -Eq 'probe: (failed|greedy not sent) .*custom program error' "$api" || { echo "router-api-smoke: a route no pool pays didn't fail with the program's error"; exit 1; }
+    grep -q 'probe: foreign pool 400' "$api" || { echo "router-api-smoke: a pool outside the session wasn't refused"; exit 1; }
+    echo "router-smoke: clean, $(jq -c "$spot | {fills: (.fills | length), instruments: ([.fills[].instrument] | unique)}" target/logs/router-smoke.json)"
 
 # The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
 # SPY, QQQ, with SPCX as the control): one TABLE line per check and market.

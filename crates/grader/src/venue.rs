@@ -244,6 +244,12 @@ pub trait Seat: Send + Sync {
     fn last_signature(&self) -> Option<String> {
         None
     }
+
+    /// What the seat's sends since it was last asked did beyond their
+    /// state, for the next step's notes: a route's paths.
+    fn notes(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// An asset's reference price in USD, as the spot profile values it: USDC
@@ -353,13 +359,20 @@ mod tests {
         let raydium = spot_venue("raydium", "http://127.0.0.1:1").unwrap();
         let mut offered = raydium.instruments();
         offered.sort();
-        assert_eq!(
-            offered,
-            ["raydium:spot:SPCX-USDC", "raydium:amm:SPCX-USDC"]
-                .map(|i| i.parse::<InstrumentRef>().unwrap())
-        );
+        let mut expected: Vec<InstrumentRef> = [
+            "raydium:spot:SPCX-USDC",
+            "raydium:spot:SPCX-SOL",
+            "raydium:spot:SOL-USDC",
+            "raydium:amm:SPCX-USDC",
+            "raydium:amm:SPCX-SOL",
+            "raydium:amm:SOL-USDC",
+        ]
+        .map(|i| i.parse::<InstrumentRef>().unwrap())
+        .into();
+        expected.sort();
+        assert_eq!(offered, expected);
         let meteora = spot_venue("meteora", "http://127.0.0.1:1").unwrap();
-        assert_eq!(meteora.instruments().len(), 2);
+        assert_eq!(meteora.instruments().len(), 6);
         assert!(
             meteora.market(&spot("SPCX-USDC")).await.is_err(),
             "Phoenix's"

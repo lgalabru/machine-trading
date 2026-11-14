@@ -42,6 +42,7 @@ the reference implementation by `cargo test`.
 | [Kamino](venues/kamino.md) | v0 | Draft |
 | [Raydium](venues/raydium.md) | v0 | Draft |
 | [Meteora](venues/meteora.md) | v0 | Draft |
+| [Router](venues/router.md) | v0 | Draft |
 
 v0 is a draft. It specifies perpetuals, spot and money markets, on one venue
 or several. The reference implementation is `mtx_core::mandate`, which

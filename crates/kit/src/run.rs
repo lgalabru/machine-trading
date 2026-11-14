@@ -46,6 +46,7 @@ pub(crate) fn process_rpc(method: &str, params: &str) -> Result<String, String> 
         .ok_or("no session endpoint: rpc works inside a session")?;
     let method = crate::RPC_METHODS
         .iter()
+        .chain(crate::ROUTER_METHODS)
         .find(|m| **m == method)
         .ok_or_else(|| format!("{method} is not a read a strategy may make"))?;
     let params: serde_json::Value =

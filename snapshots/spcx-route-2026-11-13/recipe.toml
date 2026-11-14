@@ -1,0 +1,73 @@
+name = "spcx-route-2026-11-13"
+kind = "spot"
+symbol = "SPCX-USDC"
+
+[[program]]
+name = "raydium-clmm"
+expect_code_sha256 = "e9ae00f7bdfa3b104595e68b3e328d108029e16af3ba4fb1f3968210178ffc5c"
+pin_from = "../spcx-pools-2026-11-13"
+address = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
+
+[[program]]
+name = "meteora-dlmm"
+expect_code_sha256 = "d296c6771cec945601027613ca637c1be6721044c5859009d41c453477844c1f"
+pin_from = "../spcx-pools-2026-11-13"
+address = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+
+[[account]]
+name = "raydium-clmm SPCX/USDC"
+kind = "pool"
+address = "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza"
+
+[[account]]
+name = "raydium-clmm SPCX/SOL"
+kind = "pool"
+address = "7tJVK2uEaK1tKEykDHQ8KHdaV3aXrVuSH1J4u3xgkS7U"
+
+[[account]]
+name = "raydium-clmm SOL/USDC"
+kind = "pool"
+address = "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"
+
+[[account]]
+name = "meteora-dlmm SPCX/USDC"
+kind = "pool"
+address = "7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu"
+
+[[account]]
+name = "meteora-dlmm SPCX/SOL"
+kind = "pool"
+address = "3h9GhSUzozu2eRQ9MCLCeHWYshywm4mqbzPtz2h1zGMF"
+
+[[account]]
+name = "meteora-dlmm SOL/USDC"
+kind = "pool"
+address = "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"
+
+[[account]]
+name = "SPCX"
+kind = "mint"
+address = "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb"
+
+[[account]]
+name = "USDC"
+kind = "mint"
+address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[account]]
+name = "wSOL"
+kind = "mint"
+address = "So11111111111111111111111111111111111111112"
+
+[[account]]
+name = "pyth SPCX/USD"
+kind = "oracle"
+address = "6WRG9ZLzhqykJ6fdAYZeTHMg79JnnYjjZTs5QDUb9iwv"
+
+[[account]]
+name = "pyth SOL/USD"
+kind = "oracle"
+address = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE"
+
+[[warmup]]
+action = "pools-exercise"
