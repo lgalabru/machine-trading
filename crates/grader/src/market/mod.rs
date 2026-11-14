@@ -71,13 +71,15 @@ pub(crate) mod tests {
             market_model: None,
             raw_sends: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
         }
     }
 
     #[test]
     fn the_shipped_files_load() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../calibration/market");
-        let mut loaded = 0;
+        let mut assets = Vec::new();
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|e| e == "toml") {
@@ -92,10 +94,50 @@ pub(crate) mod tests {
                         .iter()
                         .all(|i| i["sha256"].as_str().is_some_and(|s| s.len() == 64))
                 );
-                loaded += 1;
+                assets.push(cal.meta.asset.clone());
             }
         }
-        assert_eq!(loaded, 2);
+        for asset in ["nvda", "qqq", "sol-usd", "spcx", "spy", "tsla"] {
+            assert!(assets.iter().any(|a| a == asset), "no file for {asset}");
+        }
+    }
+
+    #[test]
+    fn the_us_equity_files_draw_jointly() {
+        use super::model::draw_joint;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../calibration/market");
+        let models: Vec<super::MarketModel> = ["nvda", "qqq", "spcx", "spy", "tsla"]
+            .iter()
+            .map(|asset| {
+                let prefix = format!("{asset}.");
+                let path = std::fs::read_dir(&dir)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| {
+                        p.extension().is_some_and(|e| e == "toml")
+                            && p.file_name()
+                                .unwrap()
+                                .to_string_lossy()
+                                .starts_with(&prefix)
+                    })
+                    .unwrap();
+                super::MarketModel::new(Calibration::load(&path).unwrap(), Default::default())
+                    .unwrap()
+            })
+            .collect();
+        // The matrix is a design parameter here; the point is the shared block.
+        let corr: Vec<Vec<f64>> = (0..5)
+            .map(|i| (0..5).map(|j| if i == j { 1.0 } else { 0.5 }).collect())
+            .collect();
+        let refs: Vec<&super::MarketModel> = models.iter().collect();
+        let paths = draw_joint(&refs, &corr, 7, 2000).unwrap();
+        assert_eq!(paths.len(), 5);
+        assert!(
+            paths
+                .iter()
+                .all(|p| p.log_levels.len() == paths[0].log_levels.len())
+        );
     }
 
     #[test]

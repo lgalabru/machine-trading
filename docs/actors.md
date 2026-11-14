@@ -34,7 +34,8 @@ median trade size (and that size's lognormal sigma), from the calibration's
   "front_runners": [{ "pattern_steps": 2, "share": 0.5, "on_send": true }],
   "arbitrageur": { "latency_slots": 2, "edge_bps": 5.0 },
   "rfq_clients": { "clients": 6, "informed_share": 0.34, "lead_slots": 40, "desk_base": 5.0, "desk_usdc": 2000.0 },
-  "liquidator": {}
+  "liquidator": {},
+  "refill": { "half_life_slots": [4, 40], "levels": 5 }
 }
 ```
 
@@ -50,6 +51,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | `arbitrageur` | Every `latency_slots`, sells a bid over the reference by `edge_bps` and buys an ask under it. The reference is the market's own index (a perp's), else the scenario's level. | `latency_slots`, `edge_bps`, `size_mult`, `max_inventory_mult` |
 | `rfq_clients` | Ask the bot for quotes on `rfq:<symbol>`; take a quote no worse than their value by their reach: `tolerance_bps` for one trade size, `sqrt(n)` times that for `n`. Informed clients value the asset at the level `lead_slots` ahead, by `correlation`. Fills settle as swaps against the bot's wallet, which starts with `desk_base` of the asset and `desk_usdc` more USDC. | `clients`, `informed_share`, `lead_slots`, `correlation`, `per_100_slots`, `size_mult`, `deadline_slots`, `tolerance_bps`, `two_way_share`, `desk_base`, `desk_usdc` |
 | `liquidator` | Races the bot for liquidations on a lending venue, best bonus first. Idle until a session has one. | `latency_slots`, `min_bonus_bps` |
+| `refill` | Puts back the depth takers consume. The snapshot's makers are splines that only come back when a path move re-centres them (measured 0% in 60 slots on every market); this rests post-only orders from the old touch back toward the makers' own touch, so a gap halves every half-life, drawn once per session from `half_life_slots`. Never crosses the spread or goes past the makers' touch, stops adding to a side at `max_position_mult` trade sizes, and pulls its orders when the book level moves. Opt-in: without it, depth behaves as before. | `half_life_slots` (`[low, high]`), `levels`, `size_mult`, `react_slots`, `max_position_mult`, `min_gap_ticks`, `active` |
 
 `active` is a window of the session, `{ "from": 100, "until": 300 }` in slots
 into it. `record: true` keeps every action in the report's tape, and counts

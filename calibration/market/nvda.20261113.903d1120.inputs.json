@@ -1,0 +1,1598 @@
+[
+ {
+  "name": "phoenix/candles_NVDA_1m_1780963200_1781023200.json",
+  "bytes": 2,
+  "fetched_at": "2026-11-13T21:07:42+00:00",
+  "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1780963200000&endTime=1781023200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781023200_1781083200.json",
+  "bytes": 2,
+  "fetched_at": "2026-11-13T21:07:43+00:00",
+  "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781023200000&endTime=1781083200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781083200_1781143200.json",
+  "bytes": 214550,
+  "fetched_at": "2026-11-13T21:07:44+00:00",
+  "sha256": "4d9d7faaf015dc1fba2f0299dc51d49f284ef45c5fb2924b7e315f80bb34e362",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781083200000&endTime=1781143200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781143200_1781203200.json",
+  "bytes": 226964,
+  "fetched_at": "2026-11-13T21:07:46+00:00",
+  "sha256": "1dc7ef5ec4cc7cb6529c57b7b5bff757f1589332094ec2d9a57e8b9c395d7da3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781143200000&endTime=1781203200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781203200_1781263200.json",
+  "bytes": 227539,
+  "fetched_at": "2026-11-13T21:07:47+00:00",
+  "sha256": "5b8d7379823b680c3432d75a274b45805eadcf623539915ff866dbcb40943162",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781203200000&endTime=1781263200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781263200_1781323200.json",
+  "bytes": 227863,
+  "fetched_at": "2026-11-13T21:07:48+00:00",
+  "sha256": "63d8d306b2d071d6010b1289d829fd44aea883a54955e437684710be291a8475",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781263200000&endTime=1781323200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781323200_1781383200.json",
+  "bytes": 227625,
+  "fetched_at": "2026-11-13T21:07:49+00:00",
+  "sha256": "8ecb1a0ccc992be84097a9f2605c1e8b2b334202dfe0ea26f65291f752c01398",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781323200000&endTime=1781383200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781383200_1781443200.json",
+  "bytes": 227488,
+  "fetched_at": "2026-11-13T21:07:50+00:00",
+  "sha256": "5d145e3c8ac027f0c26b69e51084475a3bbadc31f953be5305e3954ae8e49cce",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781383200000&endTime=1781443200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781443200_1781503200.json",
+  "bytes": 228492,
+  "fetched_at": "2026-11-13T21:07:52+00:00",
+  "sha256": "5ce860d41bad13669a49492a6ec89b21315e553fe1517749e2b6a8a007b1757d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781443200000&endTime=1781503200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781503200_1781563200.json",
+  "bytes": 228343,
+  "fetched_at": "2026-11-13T21:07:53+00:00",
+  "sha256": "c4349b33cfc5e586366369e15d5cbbd1b3f0a02467d54c041914c430f0d033c1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781503200000&endTime=1781563200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781563200_1781623200.json",
+  "bytes": 229535,
+  "fetched_at": "2026-11-13T21:07:54+00:00",
+  "sha256": "592f6c52d8d3e7d5f296b989e37650037d2c0124643cc37b3bed70285ea4699f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781563200000&endTime=1781623200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781623200_1781683200.json",
+  "bytes": 228040,
+  "fetched_at": "2026-11-13T21:07:55+00:00",
+  "sha256": "9468997cfe821fd99e1fea73af5dfccd8e9a75636e4d3d66439e242645357c82",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781623200000&endTime=1781683200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781683200_1781743200.json",
+  "bytes": 227799,
+  "fetched_at": "2026-11-13T21:07:57+00:00",
+  "sha256": "0140faac3f0015c76458b6421072d7c983ec37d4ce26abd0cf681b357d56c463",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781683200000&endTime=1781743200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781743200_1781803200.json",
+  "bytes": 228452,
+  "fetched_at": "2026-11-13T21:07:58+00:00",
+  "sha256": "97b89f16d0aa956844a57d8be99fe970be54e901f05fd0b679861cebfcd4236f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781743200000&endTime=1781803200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781803200_1781863200.json",
+  "bytes": 226809,
+  "fetched_at": "2026-11-13T21:07:59+00:00",
+  "sha256": "0d775fab74f6781b02c76c0a96dac6799290a9c84833a311e4974f7f23df7195",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781803200000&endTime=1781863200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781863200_1781923200.json",
+  "bytes": 227569,
+  "fetched_at": "2026-11-13T21:08:01+00:00",
+  "sha256": "6748b03c8a1c9691336fb0c60fcf0880072cdad47750afbde0b31a8bb2bcd6f4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781863200000&endTime=1781923200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781923200_1781983200.json",
+  "bytes": 228217,
+  "fetched_at": "2026-11-13T21:08:02+00:00",
+  "sha256": "d3f42e53b9152036bac622038b1a08357e2b01fd7b7087254e319eeec2b29157",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781923200000&endTime=1781983200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1781983200_1782043200.json",
+  "bytes": 229421,
+  "fetched_at": "2026-11-13T21:08:03+00:00",
+  "sha256": "2cb81eb430e60567688189652d3694413a05cc0ee3fd8491d881263b04d4ca94",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1781983200000&endTime=1782043200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782043200_1782103200.json",
+  "bytes": 228888,
+  "fetched_at": "2026-11-13T21:08:04+00:00",
+  "sha256": "bd9f9c7bc3d7cf8472c22ba2f6d88efc3ae6a0bd2ec0edc307cef98f5d120340",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782043200000&endTime=1782103200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782103200_1782163200.json",
+  "bytes": 228098,
+  "fetched_at": "2026-11-13T21:08:06+00:00",
+  "sha256": "363b63dd579e162582808f777d92c14f78d5a98f8cfb63970b62203c18891f4a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782103200000&endTime=1782163200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782163200_1782223200.json",
+  "bytes": 228033,
+  "fetched_at": "2026-11-13T21:08:07+00:00",
+  "sha256": "287b6e81571ee3e6749d71c13a2f6ce449bc909b99fa2e55db84293ab323ac8f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782163200000&endTime=1782223200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782223200_1782283200.json",
+  "bytes": 227435,
+  "fetched_at": "2026-11-13T21:08:08+00:00",
+  "sha256": "964ba93dff17340f2fcc844d9bf463eeb13dfc8809920130f38f5cc00a3064c1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782223200000&endTime=1782283200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782283200_1782343200.json",
+  "bytes": 228046,
+  "fetched_at": "2026-11-13T21:08:09+00:00",
+  "sha256": "0e8e53d794238f5615d4e8ed83a2f808b15dba25e399fbb1223851fbfce0e2a6",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782283200000&endTime=1782343200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782343200_1782403200.json",
+  "bytes": 227894,
+  "fetched_at": "2026-11-13T21:08:11+00:00",
+  "sha256": "1f24136a3ed3ffbecb7f117d0838fa5423b85895f19c7891f3fea5b37a8e7816",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782343200000&endTime=1782403200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782403200_1782463200.json",
+  "bytes": 228306,
+  "fetched_at": "2026-11-13T21:08:12+00:00",
+  "sha256": "7b3f1e1b3d179106fa7f588480ae7d8db2c7e235751bc88937ac78862b90269d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782403200000&endTime=1782463200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782463200_1782523200.json",
+  "bytes": 228080,
+  "fetched_at": "2026-11-13T21:08:13+00:00",
+  "sha256": "6c7af0a81a42a9b04705af8ee85d5e9f54e8d36400316c7fc2fad1d3a777f7e9",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782463200000&endTime=1782523200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782523200_1782583200.json",
+  "bytes": 227935,
+  "fetched_at": "2026-11-13T21:08:15+00:00",
+  "sha256": "9e965d636656c9953e142a99ed88482ea1773c5f337cc9ba6ca90aad373b02a3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782523200000&endTime=1782583200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782583200_1782643200.json",
+  "bytes": 229196,
+  "fetched_at": "2026-11-13T21:08:16+00:00",
+  "sha256": "bf62c26ec3f712100311b9b1101bee484a262dadca2b784db9cb8a65179b49b3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782583200000&endTime=1782643200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782643200_1782703200.json",
+  "bytes": 228080,
+  "fetched_at": "2026-11-13T21:08:17+00:00",
+  "sha256": "447945d24a1ee36e621d858fbf73de91a814b351e2d7a2561b6c73cf6c73e416",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782643200000&endTime=1782703200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782703200_1782763200.json",
+  "bytes": 227472,
+  "fetched_at": "2026-11-13T21:08:18+00:00",
+  "sha256": "866d19be0eb6f5ec8c59be596df3edc2e9bf6000e19547e3888a215314e86ffd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782703200000&endTime=1782763200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782763200_1782823200.json",
+  "bytes": 226911,
+  "fetched_at": "2026-11-13T21:08:20+00:00",
+  "sha256": "07727a63f2a503d70f048b435549f5f5ed8e2141b337c97b4da927c1f01dfff5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782763200000&endTime=1782823200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782823200_1782883200.json",
+  "bytes": 225711,
+  "fetched_at": "2026-11-13T21:08:21+00:00",
+  "sha256": "55132c65ff781c30df3abcd9f9f30fdc25683d51c1c96bfa4965294a189e2c0c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782823200000&endTime=1782883200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782883200_1782943200.json",
+  "bytes": 227304,
+  "fetched_at": "2026-11-13T21:08:22+00:00",
+  "sha256": "e26b2dcf2c8db77c7436d84daf9d00a941c2f3dfc9f04f11b5f99134e9ab5d99",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782883200000&endTime=1782943200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1782943200_1783003200.json",
+  "bytes": 226377,
+  "fetched_at": "2026-11-13T21:08:24+00:00",
+  "sha256": "e67eda8c4d29ea1d88ce179a9f7085362deed5a4b597c5cc1b15330c70b88b49",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1782943200000&endTime=1783003200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783003200_1783063200.json",
+  "bytes": 228392,
+  "fetched_at": "2026-11-13T21:08:25+00:00",
+  "sha256": "0760653f3e000b674b4b20f203778bf02bfdec491412f13f88dc30a71bd538f3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783003200000&endTime=1783063200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783063200_1783123200.json",
+  "bytes": 226542,
+  "fetched_at": "2026-11-13T21:08:26+00:00",
+  "sha256": "ac4a0040b6376681d012eb0721224f670510570ae9764f457c36b8d612b7b68b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783063200000&endTime=1783123200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783123200_1783183200.json",
+  "bytes": 229407,
+  "fetched_at": "2026-11-13T21:08:27+00:00",
+  "sha256": "40c199b3d9027cba7ee0d257cf937620090a5aa401eec020371d8cd3c60dfcac",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783123200000&endTime=1783183200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783183200_1783243200.json",
+  "bytes": 226990,
+  "fetched_at": "2026-11-13T21:08:29+00:00",
+  "sha256": "0a7c83935ca09c13bde8f2352f4ec15a4bb4d3b543ce030248deda588a86f5e1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783183200000&endTime=1783243200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783243200_1783303200.json",
+  "bytes": 227590,
+  "fetched_at": "2026-11-13T21:08:30+00:00",
+  "sha256": "21a9c8f7f5084437be5afd57ae4fd8579ae15005ce62686e9bedb2900f1fdb6e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783243200000&endTime=1783303200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783303200_1783363200.json",
+  "bytes": 226147,
+  "fetched_at": "2026-11-13T21:08:31+00:00",
+  "sha256": "a707ee3cc50bfb9d69b0dafa8983485ab33fdf683baa144a5aaa0ba979ff3c80",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783303200000&endTime=1783363200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783363200_1783423200.json",
+  "bytes": 228144,
+  "fetched_at": "2026-11-13T21:08:32+00:00",
+  "sha256": "8386c10a6ba032d866729b9bebb9fc41a27e3847402e64c3b44be1da3805256e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783363200000&endTime=1783423200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783423200_1783483200.json",
+  "bytes": 227606,
+  "fetched_at": "2026-11-13T21:08:33+00:00",
+  "sha256": "056c4be14f2154041e27f021b5e7ec6006824828a7f31bebcd2375b82cbb923e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783423200000&endTime=1783483200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783483200_1783543200.json",
+  "bytes": 225570,
+  "fetched_at": "2026-11-13T21:08:34+00:00",
+  "sha256": "5d6b4b04cb3964cc002d55a8b574323c12cc7f1d120d41cfce9e9e93ee156ca4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783483200000&endTime=1783543200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783543200_1783603200.json",
+  "bytes": 223945,
+  "fetched_at": "2026-11-13T21:08:36+00:00",
+  "sha256": "c2b42d237b24bcb6b2a95fbe90348c025a9ba3e4e6ef3f21279f28c8f197136a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783543200000&endTime=1783603200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783603200_1783663200.json",
+  "bytes": 224125,
+  "fetched_at": "2026-11-13T21:08:37+00:00",
+  "sha256": "3f4af15949ae90f37054ae1a666798ceacc9f02654af30bd6ae350975bfabb43",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783603200000&endTime=1783663200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783663200_1783723200.json",
+  "bytes": 224337,
+  "fetched_at": "2026-11-13T21:08:38+00:00",
+  "sha256": "6b1623f3a328349e2f084b6c725e696af3d5370031c163da7952baa410297fa0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783663200000&endTime=1783723200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783723200_1783783200.json",
+  "bytes": 224911,
+  "fetched_at": "2026-11-13T21:08:40+00:00",
+  "sha256": "e84bab3c15c5a6881aaf5793335963c95b4bf84dbea0d3e18066c0024edab7fa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783723200000&endTime=1783783200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783783200_1783843200.json",
+  "bytes": 223623,
+  "fetched_at": "2026-11-13T21:08:41+00:00",
+  "sha256": "841c64b13b5dad71c7b52ab6f93567bd0620d0fc6c6c1b57c075af2a3e12f6ea",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783783200000&endTime=1783843200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783843200_1783903200.json",
+  "bytes": 223342,
+  "fetched_at": "2026-11-13T21:08:42+00:00",
+  "sha256": "ee00a1b59d60f14d706f0976b9dc52bfd12c68ddd1532f7f4ec2aef949eb925f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783843200000&endTime=1783903200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783903200_1783963200.json",
+  "bytes": 224176,
+  "fetched_at": "2026-11-13T21:08:43+00:00",
+  "sha256": "9aedb555b4f4b3e67a8a7b1e3980b6d3f65f981b7e8ef0e60d85c9cdeab42e81",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783903200000&endTime=1783963200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1783963200_1784023200.json",
+  "bytes": 223074,
+  "fetched_at": "2026-11-13T21:08:44+00:00",
+  "sha256": "c514b84726f3403ab59cd352d018225653cb1828c0dbff85727d15fc57b896e0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1783963200000&endTime=1784023200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784023200_1784083200.json",
+  "bytes": 224114,
+  "fetched_at": "2026-11-13T21:08:46+00:00",
+  "sha256": "3248fe76195b88b5da8ab25e0a1a1424f68cb8286920080ea26226c28cb14159",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784023200000&endTime=1784083200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784083200_1784143200.json",
+  "bytes": 223754,
+  "fetched_at": "2026-11-13T21:08:47+00:00",
+  "sha256": "d7e6f3b566e970a72826921b3327bd9d82773363f53b049bc0438fbcc222f3f7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784083200000&endTime=1784143200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784143200_1784203200.json",
+  "bytes": 223084,
+  "fetched_at": "2026-11-13T21:08:48+00:00",
+  "sha256": "f63678e581990e1255550441eb5303c9140452d62eee0123df3a931fe96d0dd3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784143200000&endTime=1784203200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784203200_1784263200.json",
+  "bytes": 223662,
+  "fetched_at": "2026-11-13T21:08:49+00:00",
+  "sha256": "2a0048ed1d39da88c330280fb0aec97dec805f52abe169b20a05d746d9460491",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784203200000&endTime=1784263200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784263200_1784323200.json",
+  "bytes": 223308,
+  "fetched_at": "2026-11-13T21:08:50+00:00",
+  "sha256": "138ee19c5c61f100fd476bc8746b3fe6f60073150e1ea2f404c845bfead34dae",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784263200000&endTime=1784323200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784323200_1784383200.json",
+  "bytes": 224816,
+  "fetched_at": "2026-11-13T21:08:52+00:00",
+  "sha256": "c3cfb9eeb3b58ea1011e1d60e3be39b4ca75d218cde1c5b790ee35a2debd7875",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784323200000&endTime=1784383200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784383200_1784443200.json",
+  "bytes": 220758,
+  "fetched_at": "2026-11-13T21:08:53+00:00",
+  "sha256": "a95e0d065a173f26eb86b8cf431f913b7e4391223180aff74df656083d019785",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784383200000&endTime=1784443200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784443200_1784503200.json",
+  "bytes": 221468,
+  "fetched_at": "2026-11-13T21:08:54+00:00",
+  "sha256": "4c51f1ab9cfa21226ab089031b873a557d089ca03e9f329a88dbf4fdac3a0221",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784443200000&endTime=1784503200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784503200_1784563200.json",
+  "bytes": 223111,
+  "fetched_at": "2026-11-13T21:08:55+00:00",
+  "sha256": "2134dec20841b6f3a9b31438eaed92133735b35bb47cf0f2504a7b7fbb85917a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784503200000&endTime=1784563200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784563200_1784623200.json",
+  "bytes": 223002,
+  "fetched_at": "2026-11-13T21:08:57+00:00",
+  "sha256": "1280793264975186b5871eaa52b7ac6560b53f193b8c09684f29d908a3681947",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784563200000&endTime=1784623200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784623200_1784683200.json",
+  "bytes": 221503,
+  "fetched_at": "2026-11-13T21:08:58+00:00",
+  "sha256": "953533f98d624a6d051d32df851212d0a03b86bc210146bd3a02b67d1606fba0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784623200000&endTime=1784683200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784683200_1784743200.json",
+  "bytes": 222338,
+  "fetched_at": "2026-11-13T21:08:59+00:00",
+  "sha256": "93c3ca5df0e0262abbe0beb1dc554554f4b4cf374b38fb2c169bfe39562a19f0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784683200000&endTime=1784743200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784743200_1784803200.json",
+  "bytes": 223388,
+  "fetched_at": "2026-11-13T21:09:00+00:00",
+  "sha256": "3593e0a05e6d9b728a720723fba3d0af771f75e7491e2491d7f59a3d6e1733ed",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784743200000&endTime=1784803200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784803200_1784863200.json",
+  "bytes": 222828,
+  "fetched_at": "2026-11-13T21:09:01+00:00",
+  "sha256": "c1fbcef344300a37d4a44c091117ff10edd39af07e0a272de5706239636f54d0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784803200000&endTime=1784863200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784863200_1784923200.json",
+  "bytes": 222403,
+  "fetched_at": "2026-11-13T21:09:02+00:00",
+  "sha256": "99b52ed7f1e3d4b63895ad09d96c6fcc8286b9ebdcde10ab2f1d172ac48a51ff",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784863200000&endTime=1784923200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784923200_1784983200.json",
+  "bytes": 222067,
+  "fetched_at": "2026-11-13T21:09:03+00:00",
+  "sha256": "2f83c5c2b373cca86fca51b1ff528db70d3bad8fb0fc8d69c67aeffba91c8940",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784923200000&endTime=1784983200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1784983200_1785043200.json",
+  "bytes": 222330,
+  "fetched_at": "2026-11-13T21:09:05+00:00",
+  "sha256": "9130a2aa4ce8e2b8315f669c39560f0dcf2b4677cb200fa612262cd0b8f65cca",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1784983200000&endTime=1785043200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785043200_1785103200.json",
+  "bytes": 222446,
+  "fetched_at": "2026-11-13T21:09:06+00:00",
+  "sha256": "6415a0353ff83c676b82b35aa5ce1237d534b40b1a67a19021617a9063baf4f0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785043200000&endTime=1785103200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785103200_1785163200.json",
+  "bytes": 223109,
+  "fetched_at": "2026-11-13T21:09:07+00:00",
+  "sha256": "2b652287e259ee7f61a3867a11128e3e0ee8bea77ed0be1629118fa6b4badacf",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785103200000&endTime=1785163200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785163200_1785223200.json",
+  "bytes": 222364,
+  "fetched_at": "2026-11-13T21:09:09+00:00",
+  "sha256": "f2604dfd9b63b278e64d3092aef23009b90ce805b0f92c6af93aff69097abf19",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785163200000&endTime=1785223200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785223200_1785283200.json",
+  "bytes": 222931,
+  "fetched_at": "2026-11-13T21:09:10+00:00",
+  "sha256": "e4a51b49763983a4f604ef1e7e552e73227789d3602c1dffb29d94c1a0280c7b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785223200000&endTime=1785283200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785283200_1785343200.json",
+  "bytes": 225994,
+  "fetched_at": "2026-11-13T21:09:11+00:00",
+  "sha256": "64aa9a87626c07cf6e4984e253abb7b14be5e528066c53c627b0c357fdd42313",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785283200000&endTime=1785343200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785343200_1785403200.json",
+  "bytes": 225400,
+  "fetched_at": "2026-11-13T21:09:12+00:00",
+  "sha256": "fdd1777f3e9c5b11f7cf0e8ac5718af052d916d5563694fa35e21aaf8f4a4c82",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785343200000&endTime=1785403200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785403200_1785463200.json",
+  "bytes": 223404,
+  "fetched_at": "2026-11-13T21:09:13+00:00",
+  "sha256": "34dcd8db1ab176150578f1329164f7413cc8c1283aeac9bf8845418cada374dc",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785403200000&endTime=1785463200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785463200_1785523200.json",
+  "bytes": 222678,
+  "fetched_at": "2026-11-13T21:09:15+00:00",
+  "sha256": "f4ffd6e3e33a916ee8b610eb10c085d9b8a47cbe852ef19e30e8126b17f53717",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785463200000&endTime=1785523200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785523200_1785583200.json",
+  "bytes": 223363,
+  "fetched_at": "2026-11-13T21:09:16+00:00",
+  "sha256": "6b93b44a4417fc7f3ffee688c6deffa3e420b96f602bc8e497990017cd85af12",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785523200000&endTime=1785583200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785583200_1785643200.json",
+  "bytes": 222534,
+  "fetched_at": "2026-11-13T21:09:17+00:00",
+  "sha256": "67f63e7d670da7b73e39a6484bb0be9227f5d1691144943bb8d8e6c3325bb5ba",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785583200000&endTime=1785643200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785643200_1785703200.json",
+  "bytes": 223198,
+  "fetched_at": "2026-11-13T21:09:18+00:00",
+  "sha256": "d26a1788a21ad1ab5fd5beff3e47d20ebdfca510175c8411e61dfaa5894fcd8b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785643200000&endTime=1785703200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785703200_1785763200.json",
+  "bytes": 223317,
+  "fetched_at": "2026-11-13T21:09:19+00:00",
+  "sha256": "b2d66c838921f18e51f773a405518ab7f9b81197aaaacbdfb0f4ef63cd0811ed",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785703200000&endTime=1785763200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785763200_1785823200.json",
+  "bytes": 223208,
+  "fetched_at": "2026-11-13T21:09:20+00:00",
+  "sha256": "a33ef3c65012967143e7faa8dc5f3a47da7c0e122349fcdd4185f44b1666084b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785763200000&endTime=1785823200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785823200_1785883200.json",
+  "bytes": 226190,
+  "fetched_at": "2026-11-13T21:09:21+00:00",
+  "sha256": "479e8bbc09dd77c918571df2b2ab08e3298b046753c8049e90bcdc384f197b31",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785823200000&endTime=1785883200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785883200_1785943200.json",
+  "bytes": 226444,
+  "fetched_at": "2026-11-13T21:09:23+00:00",
+  "sha256": "5be0b8c285def5918592a56a6ad8e39b96bf2648ef043eb8338f59de8fc909c8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785883200000&endTime=1785943200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1785943200_1786003200.json",
+  "bytes": 227269,
+  "fetched_at": "2026-11-13T21:09:24+00:00",
+  "sha256": "3a3cc7bfe6ead08dc2849c6edb7fc963e7e43c638466a363732f9f42d0bf0ec3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1785943200000&endTime=1786003200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786003200_1786063200.json",
+  "bytes": 227871,
+  "fetched_at": "2026-11-13T21:09:25+00:00",
+  "sha256": "14179cee021a36f1998e3405105c0bb92fd14dcb198d876c4cf14b3f76c0464a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786003200000&endTime=1786063200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786063200_1786123200.json",
+  "bytes": 226532,
+  "fetched_at": "2026-11-13T21:09:27+00:00",
+  "sha256": "1fec952325afa68e2c5e12d26ef1151be41580843ee9b4db37f1a2a302a98613",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786063200000&endTime=1786123200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786123200_1786183200.json",
+  "bytes": 224943,
+  "fetched_at": "2026-11-13T21:09:28+00:00",
+  "sha256": "13529fed3b0a5a432fb69fc611fd3caf6e2dffac77827bef867c838df272dd86",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786123200000&endTime=1786183200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786183200_1786243200.json",
+  "bytes": 225394,
+  "fetched_at": "2026-11-13T21:09:29+00:00",
+  "sha256": "4d6cd98cc045ddcd93065af2941582a200aa436fea8e94812b1b0dcc55833205",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786183200000&endTime=1786243200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786243200_1786303200.json",
+  "bytes": 224360,
+  "fetched_at": "2026-11-13T21:09:30+00:00",
+  "sha256": "4ef261ca62383b65178604dded3833715208b4b1962829389342a95e7781bb40",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786243200000&endTime=1786303200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786303200_1786363200.json",
+  "bytes": 225295,
+  "fetched_at": "2026-11-13T21:09:32+00:00",
+  "sha256": "c46226de05f53997783da99230bc4ecf0f2ba7ad5306b4b7c58c991ce9fb8f44",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786303200000&endTime=1786363200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786363200_1786423200.json",
+  "bytes": 225618,
+  "fetched_at": "2026-11-13T21:09:33+00:00",
+  "sha256": "0c66e6ee8d7595ad0a68deb1cc25a5f93ed08c08473d567e688799a4e87739dc",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786363200000&endTime=1786423200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786423200_1786483200.json",
+  "bytes": 225845,
+  "fetched_at": "2026-11-13T21:09:34+00:00",
+  "sha256": "7874073e83a369398db0ceac5887e12c4097d6ef326ec91abccc3c05c4e0ec5f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786423200000&endTime=1786483200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786483200_1786543200.json",
+  "bytes": 227547,
+  "fetched_at": "2026-11-13T21:09:35+00:00",
+  "sha256": "500b83a0449d02309ff51a2535f41d676d05ad49fbe4266da970a647cfb90f2d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786483200000&endTime=1786543200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786543200_1786603200.json",
+  "bytes": 226564,
+  "fetched_at": "2026-11-13T21:09:36+00:00",
+  "sha256": "8971438b184f472ed5cbac2fafdda61c618b5fe4c2b723f36123456dd5e9f6b7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786543200000&endTime=1786603200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786603200_1786663200.json",
+  "bytes": 224525,
+  "fetched_at": "2026-11-13T21:09:38+00:00",
+  "sha256": "3164f1f87e1b0158294598dbb5fee1fcfab3a0b95476d0eeebe76badf0c1775d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786603200000&endTime=1786663200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786663200_1786723200.json",
+  "bytes": 228151,
+  "fetched_at": "2026-11-13T21:09:39+00:00",
+  "sha256": "0862a340594be0c92f7ce5c991f98b440eb0a296113a99848bc5338b324ba4d0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786663200000&endTime=1786723200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786723200_1786783200.json",
+  "bytes": 227224,
+  "fetched_at": "2026-11-13T21:09:40+00:00",
+  "sha256": "514ebf235eb99f0030f06af233dd4bcb80dd24bf730c9a53e3162a4ae1774957",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786723200000&endTime=1786783200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786783200_1786843200.json",
+  "bytes": 227552,
+  "fetched_at": "2026-11-13T21:09:41+00:00",
+  "sha256": "2287e8681e5b114e55a73bf8fa1d8be1b1f831ddcd8cec46a09a08ca761c93a4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786783200000&endTime=1786843200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786843200_1786903200.json",
+  "bytes": 228052,
+  "fetched_at": "2026-11-13T21:09:43+00:00",
+  "sha256": "05c127e467ea26a0bdb4483ef5f2f59fd1b65d9a0f0bc11d85f255c53d69a002",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786843200000&endTime=1786903200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786903200_1786963200.json",
+  "bytes": 226198,
+  "fetched_at": "2026-11-13T21:09:44+00:00",
+  "sha256": "dbc621ecd9f716285ce4b50427a7d346a7596b21c5d0d19004efe0db7e29be45",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786903200000&endTime=1786963200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1786963200_1787023200.json",
+  "bytes": 227679,
+  "fetched_at": "2026-11-13T21:09:45+00:00",
+  "sha256": "3f6ccb7b1a9739c140fed329bd75a3c1fa10def97d3732a7cac224bfbbde3ffb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1786963200000&endTime=1787023200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787023200_1787083200.json",
+  "bytes": 225096,
+  "fetched_at": "2026-11-13T21:09:46+00:00",
+  "sha256": "a8e22cbcfba44e0a55bba73c5f6111636bd1faf4fd08db5f6d39b52cdf7e3b2a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787023200000&endTime=1787083200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787083200_1787143200.json",
+  "bytes": 224857,
+  "fetched_at": "2026-11-13T21:09:47+00:00",
+  "sha256": "4865ab9c99ea327f9e7190e71c89e4b08e4cf06fca38b7387d5f543a761847c3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787083200000&endTime=1787143200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787143200_1787203200.json",
+  "bytes": 225579,
+  "fetched_at": "2026-11-13T21:09:48+00:00",
+  "sha256": "aae44f38915d46dd53c72e3f253a7696fe5b7eda7bba26a8ba0bb803ac50f3f2",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787143200000&endTime=1787203200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787203200_1787263200.json",
+  "bytes": 223462,
+  "fetched_at": "2026-11-13T21:09:50+00:00",
+  "sha256": "e992a79a6d951ae901ec7eee90ef8427265ecea90ab6e6eb616eb9af63e21e3e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787203200000&endTime=1787263200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787263200_1787323200.json",
+  "bytes": 222602,
+  "fetched_at": "2026-11-13T21:09:51+00:00",
+  "sha256": "0e7d4126a5b022b82dcf10f2c42dab03d37188390eb74178aeae5a0e0392594c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787263200000&endTime=1787323200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787323200_1787383200.json",
+  "bytes": 224472,
+  "fetched_at": "2026-11-13T21:09:52+00:00",
+  "sha256": "563bc3b56aea78c8ed4c16c4ba11ec02ac646f72c11c4516a4f28194563c7f49",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787323200000&endTime=1787383200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787383200_1787443200.json",
+  "bytes": 221901,
+  "fetched_at": "2026-11-13T21:09:53+00:00",
+  "sha256": "d9312fb25cd81414b50087111ca32ce8e8b86863db8ee86dc4074edade06be2f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787383200000&endTime=1787443200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787443200_1787503200.json",
+  "bytes": 224252,
+  "fetched_at": "2026-11-13T21:09:54+00:00",
+  "sha256": "7b852cc4c7e2ef5925632b0873890a9b1d91222e650359b60da0a817a5c39705",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787443200000&endTime=1787503200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787503200_1787563200.json",
+  "bytes": 223227,
+  "fetched_at": "2026-11-13T21:09:55+00:00",
+  "sha256": "e473990f64d9b9bccafc07f54299f4ba3a1e67e0b1915f9676c01804fd5a4c9c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787503200000&endTime=1787563200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787563200_1787623200.json",
+  "bytes": 222888,
+  "fetched_at": "2026-11-13T21:09:56+00:00",
+  "sha256": "1f04ff6b5580b7671a8cb24a1230590e6eceb46de7332ba906a3c5c9a9eb6373",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787563200000&endTime=1787623200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787623200_1787683200.json",
+  "bytes": 222911,
+  "fetched_at": "2026-11-13T21:09:58+00:00",
+  "sha256": "26d6dfbd38b318b0ec5a9ac12f343afb8ca8c4fe370d7cd5d3d7c842acd2cf4d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787623200000&endTime=1787683200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787683200_1787743200.json",
+  "bytes": 223125,
+  "fetched_at": "2026-11-13T21:09:59+00:00",
+  "sha256": "5ddbd3fff966bf7c3c78935a0709b52b03325aeb8471ea463854cf69f6791dd2",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787683200000&endTime=1787743200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787743200_1787803200.json",
+  "bytes": 223804,
+  "fetched_at": "2026-11-13T21:10:00+00:00",
+  "sha256": "e729155634de3b2a9df9cb3f6898c3c237836513fa087d865ead6ad95209529b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787743200000&endTime=1787803200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787803200_1787863200.json",
+  "bytes": 225393,
+  "fetched_at": "2026-11-13T21:10:01+00:00",
+  "sha256": "ed62e729ae14dd5eea1835c1a08195c5758fb6060e1ad74d7b80ef547b3ad672",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787803200000&endTime=1787863200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787863200_1787923200.json",
+  "bytes": 223982,
+  "fetched_at": "2026-11-13T21:10:02+00:00",
+  "sha256": "207b50c5cc7668a5d8136e9bfa78303b91fff7fdfcb67a8773d8454cd5325b90",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787863200000&endTime=1787923200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787923200_1787983200.json",
+  "bytes": 220341,
+  "fetched_at": "2026-11-13T21:10:03+00:00",
+  "sha256": "e25651058174bd9a0ef284dad3ac8c4c5b16ff6bed2240e67091ef898875f0c8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787923200000&endTime=1787983200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1787983200_1788043200.json",
+  "bytes": 216615,
+  "fetched_at": "2026-11-13T21:10:04+00:00",
+  "sha256": "b73b6b7eadde0494d86ae2985cffa82c21fbee407c5a4811c6c3cae769e194ea",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1787983200000&endTime=1788043200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788043200_1788103200.json",
+  "bytes": 222623,
+  "fetched_at": "2026-11-13T21:10:05+00:00",
+  "sha256": "a2eef7aec0b240ee03b891a943bd99af2bc5b81be76d1ddd8c64dc37fdbf6429",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788043200000&endTime=1788103200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788103200_1788163200.json",
+  "bytes": 221018,
+  "fetched_at": "2026-11-13T21:10:07+00:00",
+  "sha256": "f8ab96318839203a5ad43557985e7b39b688cfee53f702da46169fd1a4e759c0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788103200000&endTime=1788163200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788163200_1788223200.json",
+  "bytes": 222885,
+  "fetched_at": "2026-11-13T21:10:08+00:00",
+  "sha256": "9a1a41b19da97440840eaa1fd13fb7a89cb1a90316d8bb944079efb9a6c1a16a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788163200000&endTime=1788223200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788223200_1788283200.json",
+  "bytes": 221174,
+  "fetched_at": "2026-11-13T21:10:09+00:00",
+  "sha256": "668aea80b6606c1be99189f1ba5024b0bde2350baed9098f15cd50979a293368",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788223200000&endTime=1788283200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788283200_1788343200.json",
+  "bytes": 221408,
+  "fetched_at": "2026-11-13T21:10:10+00:00",
+  "sha256": "cb53cb2ea99d2b448d549d4eeec287ab071eee8a77f6bdb9c638393269b66a62",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788283200000&endTime=1788343200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788343200_1788403200.json",
+  "bytes": 222779,
+  "fetched_at": "2026-11-13T21:10:11+00:00",
+  "sha256": "50f70f0e4869f4e94f7a08aca475536d91f9c82fc82fd18812b03c488edc5ca0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788343200000&endTime=1788403200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788403200_1788463200.json",
+  "bytes": 222247,
+  "fetched_at": "2026-11-13T21:10:12+00:00",
+  "sha256": "878495e6b3c10efd51dbe50d4000de993fc7ab426ac066acb4f9719f099b3daa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788403200000&endTime=1788463200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788463200_1788523200.json",
+  "bytes": 220667,
+  "fetched_at": "2026-11-13T21:10:14+00:00",
+  "sha256": "9c9da7460e0cbd79e8e5c294695299c44b4ef0c733f8843a42934c10f0d6dff3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788463200000&endTime=1788523200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788523200_1788583200.json",
+  "bytes": 224037,
+  "fetched_at": "2026-11-13T21:10:15+00:00",
+  "sha256": "0cbdefbee72e89c95f086eb037305655d72e9b588e8dd976f7392a49403ab6cc",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788523200000&endTime=1788583200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788583200_1788643200.json",
+  "bytes": 223886,
+  "fetched_at": "2026-11-13T21:10:16+00:00",
+  "sha256": "eac61212275469fd6ad0a513759a889c16231d3ccc714be4fce336c160a86546",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788583200000&endTime=1788643200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788643200_1788703200.json",
+  "bytes": 223583,
+  "fetched_at": "2026-11-13T21:10:17+00:00",
+  "sha256": "9eb74297fb8be6117f9f63d720ba610d4f10b79aaaf454968981a5a001d42c2a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788643200000&endTime=1788703200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788703200_1788763200.json",
+  "bytes": 224251,
+  "fetched_at": "2026-11-13T21:10:19+00:00",
+  "sha256": "af4b623f0fc69796887ea45c8645da3c3bc6bc368001b38c706f8f483000dae5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788703200000&endTime=1788763200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788763200_1788823200.json",
+  "bytes": 223013,
+  "fetched_at": "2026-11-13T21:10:20+00:00",
+  "sha256": "d0d6d656f2db9a7fd2dd8ad8e9e0df3b438b0509ef4c7be36aa340a3c950c5b5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788763200000&endTime=1788823200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788823200_1788883200.json",
+  "bytes": 224054,
+  "fetched_at": "2026-11-13T21:10:21+00:00",
+  "sha256": "7143ffa7f531c1119bdab9af696ca43ba3dff2b38b78e9d68dc9b6b6026ad17c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788823200000&endTime=1788883200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788883200_1788943200.json",
+  "bytes": 225567,
+  "fetched_at": "2026-11-13T21:10:22+00:00",
+  "sha256": "195cceb7b5eedae952f5ba305561a15d667e735683a640e9dd4c9f8fca637a74",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788883200000&endTime=1788943200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1788943200_1789003200.json",
+  "bytes": 227987,
+  "fetched_at": "2026-11-13T21:10:23+00:00",
+  "sha256": "c04630ce3444952bbc3b2904a7f0c3050daa018e32ba21deaff8950393346153",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1788943200000&endTime=1789003200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789003200_1789063200.json",
+  "bytes": 230119,
+  "fetched_at": "2026-11-13T21:10:25+00:00",
+  "sha256": "06ce75e26f1fb5e9919b18975e24d763f3ae3838ab5897f8a40076d2d59871e3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789003200000&endTime=1789063200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789063200_1789123200.json",
+  "bytes": 227724,
+  "fetched_at": "2026-11-13T21:10:26+00:00",
+  "sha256": "58d91161021d818a2c59192736eec8648c95f3f1f8c1880415808a7224445350",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789063200000&endTime=1789123200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789123200_1789183200.json",
+  "bytes": 227431,
+  "fetched_at": "2026-11-13T21:10:27+00:00",
+  "sha256": "7878fa0802631959ab00e1bdc419f4d64b2b32411f6607fa8a12b64e3aaf6835",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789123200000&endTime=1789183200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789183200_1789243200.json",
+  "bytes": 228336,
+  "fetched_at": "2026-11-13T21:10:28+00:00",
+  "sha256": "9c32de6c653da7d68444ad4d1662c9ed98d64c244c8295aa9174d86a56202f18",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789183200000&endTime=1789243200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789243200_1789303200.json",
+  "bytes": 227271,
+  "fetched_at": "2026-11-13T21:10:29+00:00",
+  "sha256": "dfcb7e13859530886df6ea5911c7b2ac64b24a7f1f2f3db45333ac8642882545",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789243200000&endTime=1789303200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789303200_1789363200.json",
+  "bytes": 227803,
+  "fetched_at": "2026-11-13T21:10:31+00:00",
+  "sha256": "a9e62248c5e64eb8fd89f4aab57e32e63da83be8178c7143d4c14a849a052fba",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789303200000&endTime=1789363200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789363200_1789423200.json",
+  "bytes": 228974,
+  "fetched_at": "2026-11-13T21:10:32+00:00",
+  "sha256": "4c85dc3dca3648208ec6211b5031efda97822efc6e71b8a81765725c776583fe",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789363200000&endTime=1789423200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789423200_1789483200.json",
+  "bytes": 226691,
+  "fetched_at": "2026-11-13T21:10:33+00:00",
+  "sha256": "65a4c512f90a4445330709f4bd4a02b4ae35d26ea3cb5dff6edff2bac71a0e1b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789423200000&endTime=1789483200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789483200_1789543200.json",
+  "bytes": 227271,
+  "fetched_at": "2026-11-13T21:10:34+00:00",
+  "sha256": "ac77f51e68fd7a24da087114b5221c7a24faba8a36abf8c49c6deac0d5d93d05",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789483200000&endTime=1789543200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789543200_1789603200.json",
+  "bytes": 229111,
+  "fetched_at": "2026-11-13T21:10:36+00:00",
+  "sha256": "d2f152577ba39c44f70a1cf9e0fdffdde65ced3abc5776ed02736f4af021b075",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789543200000&endTime=1789603200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789603200_1789663200.json",
+  "bytes": 228317,
+  "fetched_at": "2026-11-13T21:10:37+00:00",
+  "sha256": "292fd388406fefe82aac7e8b1a192625bb27fcf36e18033564a75805dbd7f269",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789603200000&endTime=1789663200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789663200_1789723200.json",
+  "bytes": 229079,
+  "fetched_at": "2026-11-13T21:10:38+00:00",
+  "sha256": "a4380abe8fbba2226848aa9a1e020f61940801caaacfaf224ba92df6d83d321c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789663200000&endTime=1789723200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789723200_1789783200.json",
+  "bytes": 227220,
+  "fetched_at": "2026-11-13T21:10:40+00:00",
+  "sha256": "9647ac42314b3ba1c66963113bfb8f3b6eb309125e9921ce9d6e018a01d29e41",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789723200000&endTime=1789783200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789783200_1789843200.json",
+  "bytes": 223724,
+  "fetched_at": "2026-11-13T21:10:41+00:00",
+  "sha256": "25257d1158c0c4fe4c021104ca9c74a017aacdf59500aa3fc67e61a38337816b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789783200000&endTime=1789843200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789843200_1789903200.json",
+  "bytes": 225376,
+  "fetched_at": "2026-11-13T21:10:42+00:00",
+  "sha256": "7dbdf53f1c7e6d2ecf116ed012bbf50e1d57436391ed2636ebc7836342367896",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789843200000&endTime=1789903200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789903200_1789963200.json",
+  "bytes": 224368,
+  "fetched_at": "2026-11-13T21:10:43+00:00",
+  "sha256": "5603e9543115fbc59ad9b6467725646d9971b9e57490c8bc63430d63bf649941",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789903200000&endTime=1789963200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1789963200_1790023200.json",
+  "bytes": 224372,
+  "fetched_at": "2026-11-13T21:10:44+00:00",
+  "sha256": "dc71fdd9d6c876172a2c7b426a1bc2ceff4496c6029bda68c26a92550bfc20b8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1789963200000&endTime=1790023200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790023200_1790083200.json",
+  "bytes": 224296,
+  "fetched_at": "2026-11-13T21:10:45+00:00",
+  "sha256": "00c05bfcc912f85bf34acc01752448530dbcabc6366bb3dcdbcb1cdf15545a3c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790023200000&endTime=1790083200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790083200_1790143200.json",
+  "bytes": 223498,
+  "fetched_at": "2026-11-13T21:10:46+00:00",
+  "sha256": "62869b130c3b7b8cf1bd6167b2b42dd338ee262bc19b79b867eca223cd193f22",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790083200000&endTime=1790143200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790143200_1790203200.json",
+  "bytes": 223903,
+  "fetched_at": "2026-11-13T21:10:48+00:00",
+  "sha256": "3e2c60782d22268611ac6d4ed53c588f4f3edd052828472f40ce35cfc4d967e0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790143200000&endTime=1790203200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790203200_1790263200.json",
+  "bytes": 224581,
+  "fetched_at": "2026-11-13T21:10:49+00:00",
+  "sha256": "184b95574a0b3cbb52d1b38846d3247af9c09c79925233d2fcb5517c0640dd20",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790203200000&endTime=1790263200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790263200_1790323200.json",
+  "bytes": 224875,
+  "fetched_at": "2026-11-13T21:10:50+00:00",
+  "sha256": "6bdc24ebf6d25cb5059d4f25e5b0bd79756f24322484170b66c35f43a69ee87e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790263200000&endTime=1790323200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790323200_1790383200.json",
+  "bytes": 224764,
+  "fetched_at": "2026-11-13T21:10:51+00:00",
+  "sha256": "fb8b43db10cb4506454b6894b1a43b66aea0cce122d8c90e3bd22f7e63a4f0b6",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790323200000&endTime=1790383200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790383200_1790443200.json",
+  "bytes": 223816,
+  "fetched_at": "2026-11-13T21:10:52+00:00",
+  "sha256": "997cbfd2afc34c8985e4c8b69198387cc7499f326cfb508c29126bc19142842a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790383200000&endTime=1790443200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790443200_1790503200.json",
+  "bytes": 225580,
+  "fetched_at": "2026-11-13T21:10:54+00:00",
+  "sha256": "f2dfe6dd7a620fa9242eb550436654a3524027ebe99b94dc235629ebe5f74e7c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790443200000&endTime=1790503200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790503200_1790563200.json",
+  "bytes": 225984,
+  "fetched_at": "2026-11-13T21:10:55+00:00",
+  "sha256": "e69d20704f6834dfcdf0cf3f3390e00edc850d2b693e6a893534b08bb1f1eb21",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790503200000&endTime=1790563200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790563200_1790623200.json",
+  "bytes": 222564,
+  "fetched_at": "2026-11-13T21:10:56+00:00",
+  "sha256": "6b6fbc37b8381a1ed41bee3dbd1cbf93eea0fa10cfb51996019558b9a380056c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790563200000&endTime=1790623200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790623200_1790683200.json",
+  "bytes": 223271,
+  "fetched_at": "2026-11-13T21:10:57+00:00",
+  "sha256": "792cbb2e31855c82060cbd718571f9fa13ab4c9effa42ce99e26f319242ff725",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790623200000&endTime=1790683200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790683200_1790743200.json",
+  "bytes": 225162,
+  "fetched_at": "2026-11-13T21:10:59+00:00",
+  "sha256": "c48c5cee86c0cbcfc8f0fbfae23e945f1d64f97b2af89c1cbdbe4085055dfc1d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790683200000&endTime=1790743200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790743200_1790803200.json",
+  "bytes": 223368,
+  "fetched_at": "2026-11-13T21:11:00+00:00",
+  "sha256": "4ef34035c4dd6a94549f9d7cdabbecf09fa0d8ca7dfee6997c60a213c5a70bf4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790743200000&endTime=1790803200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790803200_1790863200.json",
+  "bytes": 223906,
+  "fetched_at": "2026-11-13T21:11:01+00:00",
+  "sha256": "48d2db97e5d7e266693e85583ee8ec44425fa158fb0e9279f9d567eba34a1697",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790803200000&endTime=1790863200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790863200_1790923200.json",
+  "bytes": 222562,
+  "fetched_at": "2026-11-13T21:11:02+00:00",
+  "sha256": "c19b3598bf9025cba91068a73ea5f132ce2e281bc00b77b650a349c61f55f6f7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790863200000&endTime=1790923200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790923200_1790983200.json",
+  "bytes": 223229,
+  "fetched_at": "2026-11-13T21:11:04+00:00",
+  "sha256": "7d8c64957740ce944111e55f5ecf69a62f4f4ef0b86383c313bb8771ec6ea0a8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790923200000&endTime=1790983200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1790983200_1791043200.json",
+  "bytes": 222503,
+  "fetched_at": "2026-11-13T21:11:05+00:00",
+  "sha256": "8f57d198bacb3f466c610373cbc80f1fa605bbe516590631d33e3865316e96fa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1790983200000&endTime=1791043200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791043200_1791103200.json",
+  "bytes": 221109,
+  "fetched_at": "2026-11-13T21:11:06+00:00",
+  "sha256": "4e27961cdb752103cc70140e50c54c6286e18ec9f34cbba5701d7feff4c01e9b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791043200000&endTime=1791103200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791103200_1791163200.json",
+  "bytes": 222251,
+  "fetched_at": "2026-11-13T21:11:07+00:00",
+  "sha256": "39a4bf6749c0276252e314aebabe2793bbcad335444c5b6b4439db0eb1dc95a9",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791103200000&endTime=1791163200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791163200_1791223200.json",
+  "bytes": 222819,
+  "fetched_at": "2026-11-13T21:11:08+00:00",
+  "sha256": "5e4cdb55c75b845c6bbbd64d0e5b62bda5cb429991c6be674e230c1eacf17d94",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791163200000&endTime=1791223200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791223200_1791283200.json",
+  "bytes": 221662,
+  "fetched_at": "2026-11-13T21:11:10+00:00",
+  "sha256": "47786b06f3aa85317a42d28116739da905f26663e52c756b6912179f692b30e6",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791223200000&endTime=1791283200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791283200_1791343200.json",
+  "bytes": 222026,
+  "fetched_at": "2026-11-13T21:11:11+00:00",
+  "sha256": "e9db730d69fd9f8706593f97e4fd4314030f3e79a82f8ec181e84fa9416b3217",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791283200000&endTime=1791343200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791343200_1791403200.json",
+  "bytes": 221752,
+  "fetched_at": "2026-11-13T21:11:12+00:00",
+  "sha256": "0978a588c327d4d76fd4a6a8f4a50c046e9743c55c3e5d343b98f210b0d2a4bb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791343200000&endTime=1791403200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791403200_1791463200.json",
+  "bytes": 222601,
+  "fetched_at": "2026-11-13T21:11:13+00:00",
+  "sha256": "47fda1a1c1cc60ad779fe9f6bb74c3711fe36e33a4245bea8c96122575830c8d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791403200000&endTime=1791463200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791463200_1791523200.json",
+  "bytes": 223291,
+  "fetched_at": "2026-11-13T21:11:15+00:00",
+  "sha256": "8959d5c5c9478e1f33bdc025806874c21fb5031f32f2651327f04dd17c22ea9c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791463200000&endTime=1791523200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791523200_1791583200.json",
+  "bytes": 222857,
+  "fetched_at": "2026-11-13T21:11:16+00:00",
+  "sha256": "9ba46d341dde1cd6c0bf41613d4f9d65784a8f98ba332f0495c8c29fd03d3551",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791523200000&endTime=1791583200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791583200_1791643200.json",
+  "bytes": 222551,
+  "fetched_at": "2026-11-13T21:11:17+00:00",
+  "sha256": "bba4eaa99a1d193df024d2c7a0e1ed82edf3205338fa9e28668f6b401e60d757",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791583200000&endTime=1791643200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791643200_1791703200.json",
+  "bytes": 222806,
+  "fetched_at": "2026-11-13T21:11:18+00:00",
+  "sha256": "fad7a072d1ca0e4cc2843b3fc4ef270ebe1e13347c25038be2605216f834e555",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791643200000&endTime=1791703200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791703200_1791763200.json",
+  "bytes": 222724,
+  "fetched_at": "2026-11-13T21:11:19+00:00",
+  "sha256": "e7c53af20ebfb9f00c9a8ddaee9a1be680b92848e3d43d5547f2253b843d1319",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791703200000&endTime=1791763200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791763200_1791823200.json",
+  "bytes": 223405,
+  "fetched_at": "2026-11-13T21:11:20+00:00",
+  "sha256": "cb1caac417b2ba216cb47787a65c2ca8a20c2f27a012d5cb021af8dac1c1139c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791763200000&endTime=1791823200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791823200_1791883200.json",
+  "bytes": 223635,
+  "fetched_at": "2026-11-13T21:11:22+00:00",
+  "sha256": "7b17df4072070f8f3d7071fd768915233a15d4f39d99603369c62813261a660b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791823200000&endTime=1791883200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791883200_1791943200.json",
+  "bytes": 222963,
+  "fetched_at": "2026-11-13T21:11:23+00:00",
+  "sha256": "ab484d30750ffd89afd68616adc7ea19bac3588d1977f99a41efb88c83e93679",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791883200000&endTime=1791943200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1791943200_1792003200.json",
+  "bytes": 224340,
+  "fetched_at": "2026-11-13T21:11:24+00:00",
+  "sha256": "df30810cab2546c976fb8c8f0ac0b2f460828ebf8be1f6fb8f15bd00cc5c09fa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1791943200000&endTime=1792003200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792003200_1792063200.json",
+  "bytes": 223585,
+  "fetched_at": "2026-11-13T21:11:25+00:00",
+  "sha256": "cfd232742c2455a4dc0ccceb4c61523aa8a4d86fc7dd2c5b9ce6797058906507",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792003200000&endTime=1792063200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792063200_1792123200.json",
+  "bytes": 223635,
+  "fetched_at": "2026-11-13T21:11:27+00:00",
+  "sha256": "e5936d21cd78f1580de7c6eabbe4ea13b73ff354725a19b8580d29f41581ed73",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792063200000&endTime=1792123200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792123200_1792183200.json",
+  "bytes": 222212,
+  "fetched_at": "2026-11-13T21:11:28+00:00",
+  "sha256": "c1ad16da6fafc83a1d976ce10f8a4f5879ec7d3d165557c6184f9afdeb5c5d8c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792123200000&endTime=1792183200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792183200_1792243200.json",
+  "bytes": 222063,
+  "fetched_at": "2026-11-13T21:11:29+00:00",
+  "sha256": "3e3b4e96d4453f0da49dbfe9557968345855e4a5459cc95160ab3a4d432aa4e7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792183200000&endTime=1792243200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792243200_1792303200.json",
+  "bytes": 222380,
+  "fetched_at": "2026-11-13T21:11:30+00:00",
+  "sha256": "6c786b8725365d2edc911079c66e165e201a928c4a02275bff4f58664c7a583e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792243200000&endTime=1792303200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792303200_1792363200.json",
+  "bytes": 223820,
+  "fetched_at": "2026-11-13T21:11:31+00:00",
+  "sha256": "bb1b8f9a8023a4428bacb821008a212b1c8bf09e02e536c439fd17aaf8b88aa1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792303200000&endTime=1792363200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792363200_1792423200.json",
+  "bytes": 224063,
+  "fetched_at": "2026-11-13T21:11:33+00:00",
+  "sha256": "7700af4d9367a10e086576eb4075d5d3a8cd4089b2ac75978a0c53f1e7024aab",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792363200000&endTime=1792423200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792423200_1792483200.json",
+  "bytes": 223729,
+  "fetched_at": "2026-11-13T21:11:34+00:00",
+  "sha256": "de19ae8fc40e5941357e1cf7e9258edb2d261355b792991d7a2ab5b00820c29e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792423200000&endTime=1792483200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792483200_1792543200.json",
+  "bytes": 223597,
+  "fetched_at": "2026-11-13T21:11:35+00:00",
+  "sha256": "ea8caba879595c137d2211c869b1fc91e63166ca19cf22690fadadf298f957b7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792483200000&endTime=1792543200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792543200_1792603200.json",
+  "bytes": 222636,
+  "fetched_at": "2026-11-13T21:11:36+00:00",
+  "sha256": "9bf5fd25aeb3c52070e23793d78dee9b46de8260b02531dc954cc4286a07a62f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792543200000&endTime=1792603200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792603200_1792663200.json",
+  "bytes": 224069,
+  "fetched_at": "2026-11-13T21:11:37+00:00",
+  "sha256": "1b29a6e53e4b3442601552b6e01d0bff083df36b18cfa412a3bffac4ed837804",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792603200000&endTime=1792663200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792663200_1792723200.json",
+  "bytes": 223520,
+  "fetched_at": "2026-11-13T21:11:38+00:00",
+  "sha256": "38cb0d95c6be0a0d3ff10d7301aa4d6a8556854c5ebed6111472c3d328eddbc2",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792663200000&endTime=1792723200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792723200_1792783200.json",
+  "bytes": 221361,
+  "fetched_at": "2026-11-13T21:11:40+00:00",
+  "sha256": "08ffe66aa0ee358ba8c6ff2ade4ea8d07efbbd411bf7da15ad8255fed7d1fb9b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792723200000&endTime=1792783200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792783200_1792843200.json",
+  "bytes": 223462,
+  "fetched_at": "2026-11-13T21:11:41+00:00",
+  "sha256": "3077fc58a761afd88432133dc6c05ff926eb6c132c9a61a28c1600fcb8e53d4d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792783200000&endTime=1792843200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792843200_1792903200.json",
+  "bytes": 222317,
+  "fetched_at": "2026-11-13T21:11:42+00:00",
+  "sha256": "c95829076190036473f7784a1a789140637a90eaf5124e28ce1870f2b0cd7b26",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792843200000&endTime=1792903200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792903200_1792963200.json",
+  "bytes": 219571,
+  "fetched_at": "2026-11-13T21:11:44+00:00",
+  "sha256": "4bed956d180b2a2840840dffc00e928aa31e10f9ee089381754ee13b6cd24adb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792903200000&endTime=1792963200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1792963200_1793023200.json",
+  "bytes": 222603,
+  "fetched_at": "2026-11-13T21:11:45+00:00",
+  "sha256": "c74947991af9bf48edab92c1119ac0c95987b014616492a54e19e5563cbb2f8b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1792963200000&endTime=1793023200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793023200_1793083200.json",
+  "bytes": 222379,
+  "fetched_at": "2026-11-13T21:11:46+00:00",
+  "sha256": "245832f12d358098a53e898758f23a5c91605cc6d704a3f95560a3428b50f0fa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793023200000&endTime=1793083200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793083200_1793143200.json",
+  "bytes": 221992,
+  "fetched_at": "2026-11-13T21:11:47+00:00",
+  "sha256": "0f9f7fa63a8245c8b92fec2b21685ad3ecfc1862afe4f40e454a4326923e5ae8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793083200000&endTime=1793143200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793143200_1793203200.json",
+  "bytes": 222766,
+  "fetched_at": "2026-11-13T21:11:48+00:00",
+  "sha256": "a8fc2bf58bdbfab438d22991efcc31eb04670c47a96681661adbf54ebfff0caa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793143200000&endTime=1793203200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793203200_1793263200.json",
+  "bytes": 221736,
+  "fetched_at": "2026-11-13T21:11:49+00:00",
+  "sha256": "d517c033bacf97cf253d1899d2219368952e96df7bef5c833432717452e86547",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793203200000&endTime=1793263200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793263200_1793323200.json",
+  "bytes": 223185,
+  "fetched_at": "2026-11-13T21:11:51+00:00",
+  "sha256": "4aa3f51c5f2b2046b9c8f9d1cbe0a84c6be65ffa432f69d66cbdf694638b0a4b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793263200000&endTime=1793323200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793323200_1793383200.json",
+  "bytes": 221081,
+  "fetched_at": "2026-11-13T21:11:52+00:00",
+  "sha256": "9530680e257b285101a3a6baa54d1074a8d9d5336315f121d9fea4f5af44a339",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793323200000&endTime=1793383200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793383200_1793443200.json",
+  "bytes": 220764,
+  "fetched_at": "2026-11-13T21:11:53+00:00",
+  "sha256": "89d1e48131f2133f120e7c2437c6be2ce2d775d60bc98c6e527172a96a606fdf",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793383200000&endTime=1793443200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793443200_1793503200.json",
+  "bytes": 220269,
+  "fetched_at": "2026-11-13T21:11:54+00:00",
+  "sha256": "0f98ccf564693d65300679506bee0df808fb83d315323ade116ae4e74de1886f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793443200000&endTime=1793503200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793503200_1793563200.json",
+  "bytes": 220438,
+  "fetched_at": "2026-11-13T21:11:55+00:00",
+  "sha256": "f16623b1fac1b1c3860f52a6b9ae3fd3d2b369a4660f0238c9987c68d3687705",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793503200000&endTime=1793563200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793563200_1793623200.json",
+  "bytes": 221142,
+  "fetched_at": "2026-11-13T21:11:57+00:00",
+  "sha256": "5a3c5645fb73cdafffd8c7e574d935f658a786e50e8b0c5f24981adc6d5da151",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793563200000&endTime=1793623200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793623200_1793683200.json",
+  "bytes": 220591,
+  "fetched_at": "2026-11-13T21:11:58+00:00",
+  "sha256": "28ee7828237679e68ddd7299382dc447b7dcf417993c70fc3207b97339d2b4c4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793623200000&endTime=1793683200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793683200_1793743200.json",
+  "bytes": 221702,
+  "fetched_at": "2026-11-13T21:11:59+00:00",
+  "sha256": "43b01259b0dde780e1c4c108b6b895d73ce290702c76bb5c82a0b7ed62a9a246",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793683200000&endTime=1793743200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793743200_1793803200.json",
+  "bytes": 220893,
+  "fetched_at": "2026-11-13T21:12:01+00:00",
+  "sha256": "4acbc64f2e18143fdd7bba602ad3f928c2db10058705914c9ed7dcce2e450f89",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793743200000&endTime=1793803200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793803200_1793863200.json",
+  "bytes": 220707,
+  "fetched_at": "2026-11-13T21:12:02+00:00",
+  "sha256": "075589ec1597b65202735800072af1958ba9ca9d39c5e60d420be873ce5c89eb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793803200000&endTime=1793863200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793863200_1793923200.json",
+  "bytes": 220096,
+  "fetched_at": "2026-11-13T21:12:03+00:00",
+  "sha256": "15d0486675ed2134bf645c59164d938be3f7f2f492ae81479d7947c065a19e57",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793863200000&endTime=1793923200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793923200_1793983200.json",
+  "bytes": 220790,
+  "fetched_at": "2026-11-13T21:12:04+00:00",
+  "sha256": "fbe69f3b706241e201b315f96b1df3601409ab7b69b595b1999a41a958fbf287",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793923200000&endTime=1793983200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1793983200_1794043200.json",
+  "bytes": 218771,
+  "fetched_at": "2026-11-13T21:12:06+00:00",
+  "sha256": "ae75fcfadfb61adfbf97de2e4c16db3bcaabc87808eaf89c13275feb54c5a5c8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1793983200000&endTime=1794043200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794043200_1794103200.json",
+  "bytes": 220101,
+  "fetched_at": "2026-11-13T21:12:07+00:00",
+  "sha256": "1460aa0d27366bf2db1ac6da64b49cdd0ef587fc80472bf8c6971f0309056dbd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794043200000&endTime=1794103200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794103200_1794163200.json",
+  "bytes": 220108,
+  "fetched_at": "2026-11-13T21:12:08+00:00",
+  "sha256": "7ac18ad6938f4d42b01a5a5cdc3c37ef4651a415fe7c28cd3211bcf7a85f7bb5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794103200000&endTime=1794163200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794163200_1794223200.json",
+  "bytes": 219634,
+  "fetched_at": "2026-11-13T21:12:09+00:00",
+  "sha256": "35d422dbcaa5abc334611c60ce2962cfc7b142987572fb0729db2285833639f7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794163200000&endTime=1794223200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794223200_1794283200.json",
+  "bytes": 221688,
+  "fetched_at": "2026-11-13T21:12:10+00:00",
+  "sha256": "ccffbdbcd950ac6a7dd12caa9503790244632c49552ef9f88ab910a880b06f6b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794223200000&endTime=1794283200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794283200_1794343200.json",
+  "bytes": 222066,
+  "fetched_at": "2026-11-13T21:12:12+00:00",
+  "sha256": "8505bc4c41eeceedbf9a9cc2427a391d456bfb3f59eeab5a0ea1297f02ad2c56",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794283200000&endTime=1794343200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794343200_1794403200.json",
+  "bytes": 219966,
+  "fetched_at": "2026-11-13T21:12:13+00:00",
+  "sha256": "dc5b1d60a816beecb091f12df856d09c572cafb9ee7de6febd1815feee49612b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794343200000&endTime=1794403200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794403200_1794463200.json",
+  "bytes": 219811,
+  "fetched_at": "2026-11-13T21:12:14+00:00",
+  "sha256": "a510d47fcc0ce4e0f73b491c20eb5e309c9eefd3954f87537b626d2e6eb1130e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794403200000&endTime=1794463200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794463200_1794523200.json",
+  "bytes": 221836,
+  "fetched_at": "2026-11-13T21:12:15+00:00",
+  "sha256": "f1b851bf3bef282c28c7c3255dd056c0db17f1ae6463ca200dcae7062e610cbd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794463200000&endTime=1794523200000"
+ },
+ {
+  "name": "phoenix/candles_NVDA_1m_1794523200_1794528000.json",
+  "bytes": 17886,
+  "fetched_at": "2026-11-13T21:12:16+00:00",
+  "sha256": "ff9e752853a0437f7a9ac56450c7222c322181a7d6fec2bfcf3bffd7e32af566",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=NVDA&timeframe=1m&startTime=1794523200000&endTime=1794528000000"
+ },
+ {
+  "name": "phoenix/exchange.json",
+  "bytes": 233160,
+  "fetched_at": "2026-11-13T21:07:41+00:00",
+  "sha256": "7f7abbe9967ebfe9109241dd2beb7a93e8fad041ce257464ca9cc162b1cc64bc",
+  "url": "https://perp-api.phoenix.trade/exchange"
+ }
+]
