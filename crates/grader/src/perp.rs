@@ -349,7 +349,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             )
             .await?
             .remove(0);
-            cast.add(on_market(i, Box::new(Competitor::new(seat, making))));
+            cast.add(on_market(
+                i,
+                Box::new(Competitor::new(
+                    seat,
+                    making,
+                    opts.keys.seed("competitor", i as u32),
+                )),
+            ));
         }
     }
     let own = &markets[primary];
@@ -643,6 +650,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .map(|off| base_slot + off.reopen_slot),
         vars,
         cast,
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -1480,6 +1488,7 @@ impl Account for PerpAccount {
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
+            lending: None,
             crank_refusals: done.crank_refusals,
             oracle_starts,
             markets,

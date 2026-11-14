@@ -610,8 +610,14 @@ mod tests {
                 .is_err()
         );
         assert!(
-            PhoenixEternalMeter::for_markets(exchange, url, chain, owner, &["NVDA", "NOPE"])
-                .is_err()
+            PhoenixEternalMeter::for_markets(
+                exchange.clone(),
+                url,
+                chain.clone(),
+                owner,
+                &["NVDA", "NOPE"]
+            )
+            .is_err()
         );
     }
 
