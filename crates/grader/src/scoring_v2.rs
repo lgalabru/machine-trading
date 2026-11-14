@@ -20,12 +20,13 @@
 //! or ends liquidatable, counts at least as losing the whole drawdown limit
 //! `k` times, the worst loss the mandate allows, and its real weighted loss
 //! when that is worse: a breach never beats complying, never caps a loss,
-//! and one late breach no longer erases a whole grade. Calling a method the guard refuses, tampering with
-//! the grade, or not being graded at all still scores 0.
+//! and one late breach no longer erases a whole grade. Calling a method the
+//! guard refuses, tampering with the grade, or not being graded at all
+//! scores `raw` −1, the floor, so failing on purpose never beats losing.
 //!
 //! ```text
 //! w(x)  = x if x ≥ 0, else k·x
-//! Xw_s  = −k·L if session s breaches, else w(X_s − N_s)
+//! Xw_s  = min(−k·L, w(X_s − N_s)) if session s breaches, else w(X_s − N_s)
 //! Rw_s  = w(R_s − N_s)        Iw_s = w(I_s − N_s)
 //! E_bot = Σ Xw_s   E_inf = Σ Iw_s   E_ref = max(Σ Rw_s, φ·E_inf)
 //! raw   = 0.5·E_bot/E_ref                            if E_bot ≤ E_ref
@@ -42,7 +43,9 @@
 //! the cost-aware hindsight bound (`ceiling: "hindsight"`): each session's
 //! hindsight bound scaled by what perfect foresight keeps once it pays the
 //! venue's taker fee and half-spread on every trade (see
-//! [`cost_aware_bound`]). It has no free parameter and no model run in it,
+//! [`cost_aware_bound`]), on the reference session's marks: never on the
+//! bot's own, which its trades can move. A grade with no reference session
+//! can't use it. It has no free parameter and no model run in it,
 //! but it isn't reachable, so it is an interim 1, not a headline's. A
 //! constant share `η` of the bound can still be forced for analysis
 //! (`eta_override`), never by default. The plain hindsight bound is never in
@@ -124,12 +127,10 @@ pub struct Session {
     pub reference_pnl_usd: f64,
     /// The informed bot's PnL, when the scenario carries it.
     pub informed_pnl_usd: Option<f64>,
-    /// The cost-aware hindsight bound (see [`cost_aware_bound`]), when the
-    /// session's steps were there to compute it.
+    /// The cost-aware hindsight bound (see [`cost_aware_bound`]) on the
+    /// reference session's marks, when the grade has that session. Never
+    /// computed on the bot's own marks, which its trades can move.
     pub hindsight_ceiling_usd: Option<f64>,
-    /// That bound was computed on the session's own marks, which the bot's
-    /// trades can move, because the grade has no reference session for it.
-    pub hindsight_from_bot_path: bool,
     pub nop_pnl_usd: f64,
     /// The hindsight bound (see [`crate::scenario::Scenario::bound_usd`]).
     pub bound_usd: f64,
@@ -206,17 +207,13 @@ pub struct ScoreV2 {
     /// Sessions whose mandate has no drawdown limit, where `L` is the
     /// hindsight bound instead.
     pub limit_from_bound_sessions: usize,
-    /// Under the cost-aware hindsight ceiling: sessions whose ceiling came
-    /// from the bot's own marks (no reference session), which its trades
-    /// can move.
-    pub hindsight_bot_path_sessions: usize,
     /// The cost per trade the cost-aware hindsight ceiling paid.
     pub hindsight_cost: f64,
     /// `k`, `φ`, and where the ceiling came from: `informed` (the task's
     /// informed bot), `hindsight` (the cost-aware hindsight bound, for a
     /// task without one), `eta_override` (`η` times the hindsight bound,
-    /// forced for analysis), or `given`. Was: `proxy` (`η` times the hindsight bound, for a task
-    /// without one) or `given`.
+    /// forced for analysis), `given`, or `none` (a grade with nothing to
+    /// score).
     pub loss_weight: f64,
     pub anchor_floor: f64,
     pub ceiling: String,
@@ -288,7 +285,9 @@ pub struct SessionV2 {
     pub breach: Option<String>,
 }
 
-/// Score `sessions` under v2. `fatal` zeroes the score (but not `raw`);
+/// Score `sessions` under v2. With `fatal`, the grade is the floor: `raw`
+/// −1, score 0, no interval, and `raw_unfloored` at most −1; what the
+/// sessions made is still reported as `measured_raw`.
 /// `eval_seed_sha256`, when the grade has one, seeds the bootstrap.
 pub fn score(
     sessions: &[Session],
@@ -381,14 +380,6 @@ pub fn score(
         luck_headroom_usd: bound_usd - sums.ceiling,
         breached_sessions: sessions.iter().filter(|s| s.breach.is_some()).count(),
         limit_from_bound_sessions: sessions.iter().filter(|s| s.worst_loss_from_bound).count(),
-        hindsight_bot_path_sessions: if source == "hindsight" {
-            sessions
-                .iter()
-                .filter(|s| s.hindsight_from_bot_path)
-                .count()
-        } else {
-            0
-        },
         ceiling: source.into(),
         eta,
         resamples: params.resamples,
@@ -436,8 +427,9 @@ fn ceilings(
                 .map(|s| s.hindsight_ceiling_usd)
                 .collect::<Option<_>>()
                 .ok_or_else(|| {
-                    "the scenarios carry no informed bot's PnL (informed_pnl_usd), and a \
-                     session's steps aren't there for the cost-aware hindsight ceiling"
+                    "the scenarios carry no informed bot's PnL (informed_pnl_usd), and the \
+                     grade has no reference session for the cost-aware hindsight ceiling \
+                     (it is never computed on the bot's own marks)"
                         .to_string()
                 })?;
             Ok(("hindsight", None, hindsight))
@@ -537,8 +529,9 @@ pub fn hindsight_dp(marks: &[f64], cap: f64, cost: f64) -> f64 {
 /// v2 for a grade with no sessions to score because it was never graded
 /// (or was tampered with before any ran): 0, with why.
 pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
+    // Nothing was scored, so no ceiling was used.
     let (ceiling, eta) = match params.ceiling {
-        Ceiling::Informed { eta_override } => ("informed", eta_override),
+        Ceiling::Informed { .. } => ("none", None),
         Ceiling::Given(_) => ("given", None),
     };
     ScoreV2 {
@@ -565,7 +558,6 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         luck_headroom_usd: 0.0,
         breached_sessions: 0,
         limit_from_bound_sessions: 0,
-        hindsight_bot_path_sessions: 0,
         hindsight_cost: params.hindsight_cost,
         break_even_sharpe: break_even_sharpe(params.loss_weight),
         loss_weight: params.loss_weight,
@@ -983,7 +975,6 @@ mod tests {
                 reference_pnl_usd,
                 informed_pnl_usd: Some(150.0),
                 hindsight_ceiling_usd: None,
-                hindsight_from_bot_path: false,
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
@@ -1066,12 +1057,12 @@ mod tests {
         let v2 = score(&sessions, &proxy(0.15), None, None).unwrap();
         assert_eq!(v2.ceiling, "eta_override");
         assert_eq!(v2.anchor_floor, 0.10);
-        // Without steps, nothing to fall back to.
+        // Without the reference's sessions, nothing to fall back to.
         let bare = without_informed(set(&REFERENCE, &REFERENCE));
         assert!(
             score(&bare, &informed(), None, None)
                 .unwrap_err()
-                .contains("steps")
+                .contains("no reference session")
         );
         let v2 = score(&bare, &proxy(0.15), None, None).unwrap();
         assert_eq!(v2.eta, Some(0.15));
@@ -1273,6 +1264,8 @@ mod tests {
     fn an_unscored_grade_is_the_floor() {
         let v2 = unscored(&informed(), "no bot.wasm".into());
         assert_eq!((v2.raw, v2.raw_unfloored, v2.score), (-1.0, -1.0, 0.0));
+        // No informed bot was used: none is claimed.
+        assert_eq!(v2.ceiling, "none");
     }
 
     #[test]
