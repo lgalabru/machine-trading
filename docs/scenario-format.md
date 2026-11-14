@@ -35,7 +35,6 @@ docs together.
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
 | `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
 
-
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
 v2`), as `reference_pnl_usd` is its 0.5. Without it on every scenario,
