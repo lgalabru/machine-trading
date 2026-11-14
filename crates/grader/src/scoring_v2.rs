@@ -137,6 +137,11 @@ pub struct Params {
     /// of the price (see [`cost_aware_bound`]).
     pub hindsight_cost: f64,
     pub resamples: usize,
+    /// v2 is the grade's one score (GRADING_DECISIONS, "one reported
+    /// score"): `reward` becomes its clamped score, the v1 scores leave the
+    /// report, and the 1 must be the task's informed bot (or given): a
+    /// grade that would fall back to the hindsight ceiling fails instead.
+    pub headline: bool,
 }
 
 impl Params {
@@ -149,6 +154,7 @@ impl Params {
             ceiling,
             hindsight_cost: HINDSIGHT_COST,
             resamples: RESAMPLES,
+            headline: false,
         }
     }
 }

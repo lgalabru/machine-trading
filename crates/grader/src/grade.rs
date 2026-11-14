@@ -112,6 +112,11 @@ pub struct GradeReport {
     /// which it leaves as they are.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v2: Option<ScoreV2>,
+    /// `"v2"` when scoring v2 is the grade's one score
+    /// ([`scoring_v2::Params::headline`]): `reward` is then v2's clamped
+    /// score, and `skill` and `reference_ratio` are left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
     pub scenarios: Vec<ScenarioResult>,
     /// The reference's sessions, when the grade ran it: kept out of the
     /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
@@ -203,8 +208,7 @@ impl GradeReport {
                     .and_then(|s| s.disqualified.clone())
             });
         if let (true, Some(reason)) = (self.scenarios.is_empty(), &fatal) {
-            self.v2 = Some(scoring_v2::unscored(params, reason.clone()));
-            return Ok(());
+            return self.set_v2(scoring_v2::unscored(params, reason.clone()), params);
         }
         let v2 = self
             .scenarios
@@ -309,6 +313,26 @@ impl GradeReport {
             (Err(_), Some(reason)) => scoring_v2::unscored(params, reason),
             (Err(why), None) => return Err(Error::ScoringV2(why)),
         };
+        self.set_v2(v2, params)
+    }
+
+    /// Keep `v2` in the report; when it is the headline, it is the grade's
+    /// one score, on real anchors: no fallback to the hindsight ceiling, and
+    /// no v1 score beside it.
+    fn set_v2(&mut self, v2: ScoreV2, params: &scoring_v2::Params) -> Result<()> {
+        if params.headline {
+            if v2.fatal.is_none() && !matches!(v2.ceiling.as_str(), "informed" | "given") {
+                return Err(Error::ScoringV2(format!(
+                    "v2 is this grade's headline, but its 1 is `{}`: every session needs the \
+                     task's informed bot's PnL",
+                    v2.ceiling
+                )));
+            }
+            self.reward = v2.score;
+            self.skill = None;
+            self.reference_ratio = None;
+            self.headline = Some("v2".into());
+        }
         self.v2 = Some(v2);
         Ok(())
     }
@@ -806,6 +830,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         replay: None,
         markout: total_markout(&scenarios),
         v2: None,
+        headline: None,
         scenarios,
         anchors: Vec::new(),
     }
@@ -1759,6 +1784,46 @@ mod tests {
         assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
         assert_eq!(v2.bound_usd, informed.bound_pnl_usd);
         assert_eq!(informed.rewards()["score_v2_ceiling_informed"], 1.0);
+    }
+
+    #[test]
+    fn a_v2_headline_is_the_grades_one_score_on_the_informed_bot() {
+        let headline = |ceiling| scoring_v2::Params {
+            headline: true,
+            ..scoring_v2::Params::new(ceiling)
+        };
+        let mut s = scenario(Some(100.0));
+        // No informed bot: no fallback to a proxy or the hindsight ceiling.
+        let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let refused = proxied
+            .score_v2(&headline(scoring_v2::Ceiling::Informed {
+                eta_override: Some(0.5),
+            }))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("informed bot"), "{refused}");
+        assert!(proxied.v2.is_none() && proxied.skill.is_some());
+
+        s.informed_pnl_usd = Some(400.0);
+        let mut graded = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        graded
+            .score_v2(&headline(scoring_v2::Ceiling::Informed {
+                eta_override: None,
+            }))
+            .unwrap();
+        let v2 = graded.v2.clone().unwrap();
+        assert_eq!(graded.reward, v2.score);
+        assert_eq!(graded.headline.as_deref(), Some("v2"));
+        let rewards = graded.rewards();
+        assert_eq!(rewards["reward"], v2.score);
+        assert!(!rewards.contains_key("skill") && !rewards.contains_key("reference_ratio"));
+        let json = serde_json::to_value(&graded).unwrap();
+        assert!(json.get("skill").is_none() && json["headline"] == "v2");
+
+        // Tampering is the floor: reward 0 under the headline too.
+        graded.tamper("wrote the reward".into());
+        assert_eq!(graded.reward, 0.0);
+        assert_eq!(graded.v2.unwrap().raw, scoring_v2::RAW_FLOOR);
     }
 
     #[test]
