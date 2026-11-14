@@ -126,7 +126,7 @@
       "env": {
         "MTX_PROBE": "reference",
         "MTX_PROBE_LEVER": "3",
-        "MTX_PROBE_BREACHES": "3"
+        "MTX_PROBE_BREACHES": "4"
       },
       "may_breach": true
     },
@@ -153,7 +153,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.44"
+        "MTX_PROBE_BLEND": "0.40"
       },
       "may_breach": true
     },

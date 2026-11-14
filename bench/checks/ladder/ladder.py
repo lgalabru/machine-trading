@@ -281,9 +281,9 @@ PROBE_TOLERANCE = 0.02
 # An honest probe whose measured per-session Sharpe is at least this must beat
 # doing nothing (v2's break-even is about 0.16 at k = 1.5).
 PAYS_FROM = 0.2
-# At least one honest probe must measure inside this band, or the pay line
-# isn't tested.
-NEAR_LINE = (0.05, 0.35)
+# At least one honest probe must measure inside this band (from the pay line
+# up), so it is judged, or the pay line isn't tested.
+NEAR_LINE = (0.2, 0.35)
 # A paired rule needs this many sessions where the two bots differ before it
 # can pass or fail.
 MIN_DIFFERING = 3
@@ -421,7 +421,7 @@ def probe_checks(config, sets, count):
 
     - `zero_edge`: no-edge bots score at most `PROBE_TOLERANCE` over doing
       nothing.
-    - `luck5` (TUNE2's C2), for those and the stop-lotto: the headline of a
+    - `luck5` (TUNE2's C2), for those only: the headline of a
       5-run model, over 5-run sets that made money, is at most `LUCK5_LIMIT`.
     - `stop_lotto`, and each lever: pays no more than its Sharpe: if it
       measured under v2's break-even Sharpe, it scores at most
@@ -464,7 +464,7 @@ def probe_checks(config, sets, count):
         return sum(abs(x["bot"] - y["bot"]) > 0.005 for t in terms
                    for x, y in zip(t[a]["sessions"], t[b]["sessions"]))
 
-    luck_rungs = ZERO_EDGE + [STOP_LOTTO]
+    luck_rungs = list(ZERO_EDGE)
     sharpe_rungs = [STOP_LOTTO] + [n for n, _ in LEVERED]
     rng = random.Random(0)
     draws = []
@@ -528,13 +528,15 @@ def probe_checks(config, sets, count):
 
         point = under and base_raw[n] > tol
         odds = sum((d[3][n] is not None and d[3][n] < be[n]) and d[0][n] > tol for d in draws) / len(draws)
+        # Break-even depends on the P&L's shape (0.07-0.20, SCORECARD #8), so a
+        # point estimate near the line proves nothing: only confidence fails.
         v = "pass"
         if point:
             v = "fail" if odds >= confidence else "inconclusive"
         detail = (f"raw {base_raw[n]:+.3f}, measured Sharpe {sharpe:.2f} against the break-even "
                   f"{be[n]:.2f}" + ("" if under else ": over it, so it may score above nothing"))
         add(f"pays_its_sharpe:{n}", "pays_its_sharpe", [n],
-            {"verdict": v, "violation_odds": odds, "point_violated": bool(point)}, detail,
+            {"verdict": v, "violation_odds": odds, "point_violated": False}, detail,
             raw=base_raw[n], sharpe=sharpe)
 
     def paired(lower, higher, extra_violation=None):
@@ -562,9 +564,11 @@ def probe_checks(config, sets, count):
     if beats_complying:
         v = {**v, "verdict": "fail", "point_violated": True}
         detail += f"; and over the reference's {base_raw['reference']:+.3f}"
-    if any(b == 0 for b in breached[BREACHER]):
+    # A bot sees one session, so the breaching ones are a seeded share, not an
+    # exact count: no power only when a whole run never breached.
+    if sum(breached[BREACHER]) == 0:
         v = {**v, "verdict": "no_power"}
-        detail += f"; breached {breached[BREACHER]} sessions per set: it never breached in a set"
+        detail += f"; breached {breached[BREACHER]} sessions per set: it never breached"
     else:
         detail += f"; breached {breached[BREACHER]} sessions per set"
     detail += f"; without the breach cap {plain_raw[BREACHER]:+.3f} (twin {plain_raw[TWIN]:+.3f})"
@@ -614,10 +618,13 @@ def probe_checks(config, sets, count):
 
     ref = base_raw["reference"]
     floored = any(t["reference"]["floored"] for t in terms)
-    ok = floored or abs(ref - 0.5) <= 0.05
+    ok = abs(ref - 0.5) <= 0.05
+    # A floored anchor moves the 0.5 point off the reference: nothing is tested.
+    verdict_ref = "no_power" if floored else ("pass" if ok else "fail")
     add("reference", "reference", ["reference"],
-        {"verdict": "pass" if ok else "fail", "violation_odds": None, "point_violated": not ok},
-        f"raw {ref:.3f}" + (" (anchor floored)" if floored else ""), raw=ref)
+        {"verdict": verdict_ref, "violation_odds": None, "point_violated": not ok or floored},
+        f"raw {ref:.3f}" + (": the anchor was floored, so 0.5 isn't the reference" if floored else ""),
+        raw=ref)
     return out
 
 

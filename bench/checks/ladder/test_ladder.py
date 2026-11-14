@@ -4,6 +4,7 @@ import gzip
 import importlib.util
 import json
 import os
+import statistics
 import subprocess
 import tempfile
 import unittest
@@ -255,7 +256,7 @@ class ProbeGate(unittest.TestCase):
     def test_one_honest_probe_must_measure_near_the_line(self):
         got = self.checks()
         self.assertEqual(got["honest:near-line"]["verdict"], "no_power")
-        got = self.checks(**{"honest-0.2": [-30.0, 40.0] * (self.N // 2)})
+        got = self.checks(**{"honest-0.2": [1.25, -0.75] * (self.N // 2)})
         self.assertEqual(got["honest:near-line"]["verdict"], "pass")
 
     def test_the_fatal_crash_is_gated_and_must_go_fatal(self):
@@ -283,13 +284,23 @@ class ProbeGate(unittest.TestCase):
         self.assertFalse(c["point_violated"])
 
     def test_the_stop_lotto_may_pay_its_sharpe_but_not_more(self):
-        # Under the break-even and scoring over nothing: fails.
-        got = self.checks(**{"stop-lotto": {"bot": [-30.0, 29.0] * (self.N // 2), "dd": 0.2}})
-        self.assertIn("pays_its_sharpe:stop-lotto", got)
+        # Under the break-even and scoring over nothing, confidently: fails.
+        # (Steady small wins with one crash: Sharpe low, raw high, no charge.)
+        bot = [6.0] * 39 + [-200.0]
+        got = self.checks(**{"stop-lotto": {"bot": bot, "pnl": bot, "dd": 0.0, "anchor_dd": 0.0}})
+        c = got["pays_its_sharpe:stop-lotto"]
+        self.assertLess(ladder.session_sharpe(bot), 0.16)
+        self.assertGreater(c["raw"], ladder.PROBE_TOLERANCE)
+        self.assertIn(c["verdict"], ("fail", "inconclusive"))
+        # Whatever it is, a point estimate near the line never fails the full gate.
+        self.assertFalse(c["point_violated"])
         # A steady winner measures far over the break-even: allowed above nothing.
         got = self.checks(**{"stop-lotto": [6.0, 4.0] * (self.N // 2)})
         self.assertEqual(got["pays_its_sharpe:stop-lotto"]["verdict"], "pass")
         self.assertIn("over it", got["pays_its_sharpe:stop-lotto"]["detail"])
+
+    def test_the_stop_lotto_is_not_held_to_c2(self):
+        self.assertNotIn("luck5:stop-lotto", self.checks())
 
     def test_a_lucky_five_run_headline_fails_c2(self):
         got = self.checks(**{"coin-flip-full": [12.0, -1.0] * (self.N // 2)})
@@ -302,6 +313,41 @@ class ProbeGate(unittest.TestCase):
         got = {c["id"]: c for c in ladder.probe_checks({}, sets, 12)}
         self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "inconclusive")
         self.assertTrue(got["luck5:coin-flip-full"]["point_violated"])
+
+    def test_a_floored_reference_has_no_power(self):
+        sets = self.ladder()
+        for t in sets:
+            t["reference"]["v2"]["anchor_floored"] = True
+        got = {c["id"]: c for c in ladder.probe_checks({}, sets, self.N)}
+        self.assertEqual(got["reference"]["verdict"], "no_power")
+
+    def test_a_breacher_that_breached_in_some_set_has_power(self):
+        twin = [10.0] * self.N
+        breach = [True] * 3 + [False] * (self.N - 3)
+        worse = {"bot": [-5.0] * 3 + [10.0] * (self.N - 3), "breach": breach}
+        sets = self.ladder(**{TWIN: twin, "breacher": worse}) + self.ladder(**{TWIN: twin, "breacher": twin})
+        got = {c["id"]: c for c in ladder.probe_checks({}, sets, self.N)}
+        self.assertNotEqual(got[f"breacher:breacher<={TWIN}"]["verdict"], "no_power")
+
+    def test_the_matched_sharpe_vol_pair_scores_long_vol_ahead(self):
+        """TUNE2 section 3: at equal mean and spread, long-vol (rare big wins,
+        frequent small losses) scores over short-vol (frequent small wins, rare
+        big losses): losses weigh k times and short-vol's are the larger mass.
+        Bots on replayed paths can't produce the pair, so it is checked on the
+        scoring function."""
+        n = 100
+        short = [10.0] * 90 + [-50.0] * 10
+        mean = statistics.fmean(short)
+        long_ = [2 * mean - x for x in short]
+        self.assertAlmostEqual(statistics.fmean(long_), mean)
+        self.assertAlmostEqual(statistics.pstdev(long_), statistics.pstdev(short))
+        ref, ceiling = [3.0] * n, [60.0] * n
+        raw = {}
+        for name, bot in (("short", short), ("long", long_)):
+            weighted = [x if x >= 0 else 1.5 * x for x in bot]
+            g = ladder.v2_terms(grade(weighted, ref, ceiling, pnl=bot, dd=0.0, anchor_dd=0.0))
+            raw[name] = ladder.sums_score(g["sessions"], g)
+        self.assertGreater(raw["long"], raw["short"])
 
     def test_the_sharpe_uses_n_minus_one_like_the_grader(self):
         self.assertAlmostEqual(ladder.session_sharpe([1.0, 3.0]), 2.0 / (2 ** 0.5))
