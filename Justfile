@@ -241,6 +241,13 @@ raw-probe:
     just --justfile bots/raw-probe/Justfile build
     cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/raw-probe --logs target/logs/raw-probe bots/raw-probe/scenario.json
 
+# The transaction layer end to end: the probe sends with each kind of
+# transaction option through a fee spike, and its log (target/logs/tx-probe)
+# shows what became of each; the report's `tx_layer` has every block.
+tx-probe:
+    just --justfile bots/tx-probe/Justfile build
+    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/tx-probe --logs target/logs/tx-probe bots/tx-probe/scenario.json
+
 # Draw scenarios from a task's family: just scenarios DIR hidden 12 SEED market-making
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
@@ -636,7 +643,8 @@ hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
     # binding, error bodies, the scan, broken streams.
     python3 -I bench/checks/hermes/proxy_attacks.py \
       --bind "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" \
-      --other "$(hostname -I | awk '{print $1}')" || status=1
+      --other "$(hostname -I | awk '{print $1}')" \
+      --container-image {{registry}}/{{image}}:{{tag}}-runtime || status=1
     for route in {{routes}}; do
       bench/checks/hermes/probe.sh {{tasks}}/{{task}} {{hermes}} "$route" || status=1
     done

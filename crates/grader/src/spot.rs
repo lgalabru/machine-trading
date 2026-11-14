@@ -995,6 +995,7 @@ impl Account for SpotAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's seats, the scenario's first venue's first, trading
         // through the guard's host side: their sends are the bot's, their
@@ -1031,6 +1032,8 @@ impl Account for SpotAccount {
             reader: Reader::Wallet {
                 start: self.start.wallet.clone(),
             },
+            pool: None,
+            tx: None,
         })
     }
 
@@ -1133,9 +1136,11 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
+            liquidator: done.liquidator,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -1203,7 +1208,9 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
             turn_data: None,
             oracles: None,
             lending: None,
@@ -1219,6 +1226,8 @@ mod tests {
             }),
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
         }
     }
 
