@@ -1160,6 +1160,7 @@ mod tests {
             net: None,
             reference_pnl_usd,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
