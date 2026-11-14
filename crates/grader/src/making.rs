@@ -66,6 +66,14 @@ pub struct MakingFill {
     /// trade's fee as a taker, its fee rate as a maker (a rebate is
     /// negative).
     pub fee_usd: f64,
+    /// Whether it was a fill of a forced close (the risk desk's stop-out or
+    /// the keeper's), which isn't the bot's own trading.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub forced: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The trader accounts the grader's actors trade from, to name a fill's
@@ -104,6 +112,7 @@ impl MakingFill {
                 price,
                 base,
                 fee_usd: fee,
+                forced: false,
             });
         };
         if fill.taker == *bot {
@@ -695,12 +704,16 @@ impl MakingFamily {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         (scenario, informed, leaks)
     }
@@ -1168,6 +1181,7 @@ mod tests {
                 price: 123.45,
                 base: 2.5,
                 fee_usd: -0.01,
+                forced: false,
             }]
         );
         // A taker sells: the bot bought.
@@ -1216,9 +1230,19 @@ mod tests {
             price: 99.5,
             base: 1.0,
             fee_usd: 0.0,
+            forced: false,
         };
         let json = serde_json::to_string(&record).unwrap();
         assert_eq!(serde_json::from_str::<MakingFill>(&json).unwrap(), record);
+        // A forced fill says so; an ordinary one doesn't.
+        assert!(!json.contains("forced"));
+        let forced = MakingFill {
+            forced: true,
+            ..record
+        };
+        let json = serde_json::to_string(&forced).unwrap();
+        assert!(json.contains("\"forced\":true"));
+        assert_eq!(serde_json::from_str::<MakingFill>(&json).unwrap(), forced);
     }
 
     #[test]

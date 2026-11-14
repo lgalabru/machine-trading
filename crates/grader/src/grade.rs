@@ -55,6 +55,14 @@ pub struct ScenarioResult {
     /// scoring v2's gap (see [`trade_markout`]). Not reported.
     #[serde(skip)]
     pub trade_markout_usd: Option<f64>,
+    /// The reference's and the informed bot's drawdowns in this session,
+    /// for scoring v2's near-breach charge: the scenario's, or the
+    /// reference's as the grade measured it when it ran the reference. Not
+    /// reported.
+    #[serde(skip)]
+    pub reference_max_drawdown_usd: Option<f64>,
+    #[serde(skip)]
+    pub informed_max_drawdown_usd: Option<f64>,
     /// The session's PnL split into markout, luck and a residual, for a
     /// scenario that reports a fair value (see [`Scenario::fair_path`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -207,12 +215,12 @@ impl GradeReport {
                 // only: the bot's own marks move with its trades, so a bot
                 // could lower its own ceiling. Without a reference session
                 // there is none, and v2 refuses a grade that needs it.
-                let hindsight = self
+                let reference = self
                     .anchors
                     .iter()
-                    .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty())
-                    .zip(session.mandate.universe.first())
-                    .map(|(reference, allowance)| {
+                    .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty());
+                let hindsight = reference.zip(session.mandate.universe.first()).map(
+                    |(reference, allowance)| {
                         let marks: Vec<f64> = reference
                             .timeline
                             .steps
@@ -225,7 +233,8 @@ impl GradeReport {
                             allowance.max_position,
                             params.hindsight_cost,
                         )
-                    });
+                    },
+                );
                 let reference_pnl_usd = result.reference_pnl_usd.ok_or_else(|| {
                     format!("{}: no reference PnL to anchor to", session.scenario)
                 })?;
@@ -236,12 +245,42 @@ impl GradeReport {
                         session.scenario
                     ));
                 }
+                // A perp start position moves with the price too, unless an
+                // order scores the session against doing nothing; and it
+                // earns or pays the scenario's funding, which the order's
+                // drift doesn't take out.
+                if session.start_position != 0.0 && session.order.is_none() {
+                    return Err(format!(
+                        "{}: a perp session's starting position can move with the price, \
+                         and v2 doesn't run a nop anchor yet",
+                        session.scenario
+                    ));
+                }
+                if session.start_funded {
+                    return Err(format!(
+                        "{}: a perp session's starting position accrues the scenario's \
+                         funding, and v2 doesn't run a nop anchor yet",
+                        session.scenario
+                    ));
+                }
+                // The risk desk's stop-out (the scenario's `stop_out`): its
+                // close is in the session's PnL, and a breach all the same,
+                // though the mandate's audit no longer disqualifies it. A
+                // keeper's liquidation is priced, not a breach.
+                let stop_out = session
+                    .forced_closes
+                    .iter()
+                    .find_map(|close| match &close.reason {
+                        crate::risk::ForcedCloseReason::StopOut { rule } => Some(*rule),
+                        crate::risk::ForcedCloseReason::Liquidation { .. } => None,
+                    });
                 Ok(scoring_v2::Session {
                     scenario: session.scenario.clone(),
                     pnl_usd: session.pnl_usd,
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
                     hindsight_ceiling_usd: hindsight,
+                    reference_session_sha256: reference.map(reference_sha256),
                     nop_pnl_usd: 0.0,
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
@@ -255,16 +294,39 @@ impl GradeReport {
                     breach: result
                         .disqualified
                         .clone()
-                        .filter(|_| session.refused_calls.is_empty()),
-                    traded: session.peak_position > 0.0,
+                        .filter(|_| session.refused_calls.is_empty())
+                        .or_else(|| {
+                            stop_out.map(|rule| match rule {
+                                crate::scenario::StopRule::Drawdown => {
+                                    "stopped out: drew down past its limit".to_string()
+                                }
+                            })
+                        }),
+                    max_drawdown_usd: session.max_drawdown_usd,
+                    reference_max_drawdown_usd: result.reference_max_drawdown_usd,
+                    informed_max_drawdown_usd: result.informed_max_drawdown_usd,
+                    start_value_usd: session.start_value_usd,
+                    stopped_out: stop_out.is_some(),
+                    traded: traded(session),
                     trade_markout_usd: result.trade_markout_usd,
                 })
             })
             .collect::<std::result::Result<Vec<_>, String>>()
             .and_then(|sessions| {
-                scoring_v2::score(&sessions, params, fatal, self.eval_seed_sha256.as_deref())
-            })
-            .map_err(Error::ScoringV2)?;
+                scoring_v2::score(
+                    &sessions,
+                    params,
+                    fatal.clone(),
+                    self.eval_seed_sha256.as_deref(),
+                )
+            });
+        // A fatal grade is the floor even when its sessions can't be scored
+        // (a session without a reference PnL, say).
+        let v2 = match (v2, fatal) {
+            (Ok(v2), _) => v2,
+            (Err(_), Some(reason)) => scoring_v2::unscored(params, reason),
+            (Err(why), None) => return Err(Error::ScoringV2(why)),
+        };
         self.v2 = Some(v2);
         Ok(())
     }
@@ -352,7 +414,51 @@ impl GradeReport {
                 ("score_v2_gap_risk".to_string(), v2.gap.risk),
                 ("score_v2_gap_noise".to_string(), v2.gap.noise),
                 ("breached_sessions".to_string(), v2.breached_sessions as f64),
+                ("score_v2_risk_charge_usd".to_string(), v2.risk.charge_usd),
+                ("score_v2_dd_rms".to_string(), v2.risk.dd_rms),
+                ("score_v2_risk_allowance".to_string(), v2.risk.allowance),
+                ("score_v2_risk_weight".to_string(), v2.risk.weight),
             ]);
+            if let Some(cap) = v2.breach_cap {
+                rewards.insert("score_v2_breach_cap".to_string(), cap);
+            }
+            if let Some(anchor) = v2.risk.dd_rms_anchor {
+                rewards.insert("score_v2_dd_rms_anchor".to_string(), anchor);
+            }
+            let m = &v2.metrics;
+            rewards.extend([
+                ("metric_return_on_capital".to_string(), m.return_on_capital),
+                (
+                    "metric_drawdown_to_limit_mean".to_string(),
+                    m.drawdown_to_limit_mean,
+                ),
+                (
+                    "metric_drawdown_to_limit_max".to_string(),
+                    m.drawdown_to_limit_max,
+                ),
+                ("metric_profitable_share".to_string(), m.profitable_share),
+                ("metric_worst_session_usd".to_string(), m.worst_session_usd),
+                (
+                    "metric_losing_sessions".to_string(),
+                    m.losing_sessions as f64,
+                ),
+                ("metric_usd_lost".to_string(), m.usd_lost),
+                (
+                    "metric_breaches_per_100_sessions".to_string(),
+                    m.breaches_per_100_sessions,
+                ),
+                (
+                    "metric_stopped_out_sessions".to_string(),
+                    m.stopped_out_sessions as f64,
+                ),
+                (
+                    "metric_raw_negative".to_string(),
+                    f64::from(u8::from(m.raw_negative)),
+                ),
+            ]);
+            if let Some(sharpe) = m.sharpe {
+                rewards.insert("metric_sharpe".to_string(), sharpe);
+            }
         }
         for result in &self.scenarios {
             rewards.insert(
@@ -409,6 +515,11 @@ pub struct GradeOptions<'a> {
     /// Where the sessions' keypairs come from (see [`crate::keys`]): the same
     /// keys every run of the grade.
     pub keys: &'a SessionKeys,
+    /// Run the sessions under scoring v2's rules (see [`session::Rules`]):
+    /// the bot's and the reference's drawdowns are sampled every slot. Off, the grade runs
+    /// as it always has. (The bot's seeds are salted through `keys`: see
+    /// [`SessionKeys::salt_strategy_seeds`].)
+    pub v2_sessions: bool,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -473,6 +584,10 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             true,
             None,
             opts.keys.role("reference"),
+            // The anchor's drawdown at the bot's granularity.
+            session::Rules {
+                every_slot: opts.v2_sessions,
+            },
         )
         .await?;
         check_timing(&anchors)?;
@@ -497,6 +612,9 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.trusted,
         opts.observer.clone(),
         opts.keys.role("bot"),
+        session::Rules {
+            every_slot: opts.v2_sessions,
+        },
     )
     .await?;
     check_timing(&sessions)?;
@@ -513,6 +631,13 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
+    // The reference's drawdowns as this grade measured them, for scoring
+    // v2: kept off the scenarios, which the detail files hold.
+    for (result, anchor) in report.scenarios.iter_mut().zip(&anchored) {
+        if anchor.scenario == result.session.scenario {
+            result.reference_max_drawdown_usd = Some(anchor.max_drawdown_usd);
+        }
+    }
     report.anchors = anchored;
     info!(
         reward = report.reward,
@@ -639,6 +764,23 @@ fn raise_open_file_limit() {
     }
 }
 
+/// SHA-256 of what scoring v2 reads of a reference session: its marks, step
+/// by step (the hindsight ceiling's input), then its max drawdown (the
+/// near-breach charge's anchor), each `f64`'s little-endian bytes. Recorded
+/// per session, for a rescore to check it reads the same session.
+pub fn reference_sha256(reference: &SessionReport) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for step in &reference.timeline.steps {
+        hash.update(step.mark_usd.to_le_bytes());
+    }
+    hash.update(reference.max_drawdown_usd.to_le_bytes());
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Score sessions against their scenarios' hindsight bounds.
 fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     let scenarios: Vec<ScenarioResult> = sessions
@@ -649,6 +791,8 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
             reference_pnl_usd: scenario.reference_pnl_usd,
             informed_pnl_usd: scenario.informed_pnl_usd,
             trade_markout_usd: trade_markout(&session, scenario),
+            reference_max_drawdown_usd: scenario.reference_max_drawdown_usd,
+            informed_max_drawdown_usd: scenario.informed_max_drawdown_usd,
             markout: markout(&session, scenario),
             session,
         })
@@ -854,6 +998,21 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
     }
 }
 
+/// Whether the bot traded in the session: its position in the scenario's
+/// market was ever other than where it started.
+fn traded(session: &SessionReport) -> bool {
+    if session.start_position == 0.0 {
+        return session.peak_position > 0.0;
+    }
+    session
+        .positions
+        .iter()
+        .find(|range| range.instrument == session.instrument)
+        .is_some_and(|range| {
+            range.lowest != session.start_position || range.highest != session.start_position
+        })
+}
+
 fn disqualification(session: &SessionReport) -> Option<String> {
     if !session.refused_calls.is_empty() {
         Some(format!(
@@ -864,7 +1023,10 @@ fn disqualification(session: &SessionReport) -> Option<String> {
         Some(breach.to_string())
     } else if let Some(breach) = session.order.as_ref().and_then(|order| order.breach()) {
         Some(breach)
-    } else if session.liquidatable {
+    } else if session.liquidatable && session.liquidator.is_none() {
+        // With a competing keeper (the scenario's `liquidator`) an account
+        // that ends liquidatable was liquidated as far as Phoenix allowed,
+        // and what is left is priced in its value.
         Some("ended the session liquidatable".to_string())
     } else {
         None
@@ -887,6 +1049,7 @@ pub async fn calibrate(
     first_bot_user: usize,
     jobs: usize,
     informed: bool,
+    v2_sessions: bool,
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(
@@ -900,6 +1063,9 @@ pub async fn calibrate(
         true,
         None,
         SessionKeys::random().role("reference"),
+        session::Rules {
+            every_slot: v2_sessions,
+        },
     )
     .await?;
     check_timing(&sessions)?;
@@ -908,10 +1074,13 @@ pub async fn calibrate(
         // disqualify can't be a baseline.
         if disqualification(session).is_none() {
             let pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            let drawdown_usd = Some((session.max_drawdown_usd * 100.0).round() / 100.0);
             if informed {
                 scenario.informed_pnl_usd = pnl_usd;
+                scenario.informed_max_drawdown_usd = drawdown_usd;
             } else {
                 scenario.reference_pnl_usd = pnl_usd;
+                scenario.reference_max_drawdown_usd = drawdown_usd;
             }
             scenario.save(path)?;
         } else {
@@ -954,6 +1123,7 @@ async fn run_sessions(
     trusted: bool,
     observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
     keys: RoleKeys<'_>,
+    rules: session::Rules,
 ) -> Result<Vec<SessionReport>> {
     let (first_bot_user, jobs) = (bot_users.start, bot_users.len());
     let components = crate::wasm::component_in(bot_dir).is_some();
@@ -1017,6 +1187,7 @@ async fn run_sessions(
                     trusted,
                     observer: observer.clone(),
                     keys: keys.session(index, &scenario.name),
+                    rules,
                 })
             };
             // Another grade on this machine may use the same bot user, and
@@ -1204,6 +1375,7 @@ mod tests {
             trusted: false,
             observer: None,
             keys: &SessionKeys::random(),
+            v2_sessions: false,
         })
         .await
         .unwrap();
@@ -1242,13 +1414,17 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            start_position: 0.0,
+            start_funded: false,
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
+            liquidator: None,
             oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
@@ -1353,12 +1529,16 @@ mod tests {
             net: None,
             reference_pnl_usd,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         }
     }
 
@@ -1550,6 +1730,17 @@ mod tests {
         ruined.liquidatable = true;
         assert_eq!(score(vec![(ruined, &s)]).reward, 0.0);
 
+        // With a competing keeper the liquidation is priced in the value,
+        // and an account left liquidatable is scored as it stands.
+        let mut kept = session(100.0);
+        kept.liquidatable = true;
+        kept.liquidator = Some(crate::keeper::LiquidatorReport {
+            delay_slots: 4,
+            liquidations: 1,
+            cost_usd: 60.0,
+        });
+        assert!(score(vec![(kept, &s)]).reward > 0.0);
+
         let mut big = session(900.0);
         big.peak_position = 119.0;
         big.positions = vec![PositionRange {
@@ -1600,6 +1791,19 @@ mod tests {
         let want = scoring_v2::cost_aware_bound(report.bound_pnl_usd, &marks, 100.0, 8.5e-4);
         assert!((v2.ceiling_usd - want).abs() < 1e-9);
         assert!(v2.ceiling_usd < report.bound_pnl_usd);
+        // The reference session it read is recorded, for a rescore to check.
+        assert_eq!(
+            v2.sessions[0].reference_session_sha256.as_deref(),
+            Some(reference_sha256(&report.anchors[0]).as_str())
+        );
+        assert_eq!(reference_sha256(&report.anchors[0]).len(), 64);
+        // The reference's drawdown, the charge's anchor, is in the hash too.
+        let mut deeper = report.anchors[0].clone();
+        deeper.max_drawdown_usd += 1.0;
+        assert_ne!(
+            reference_sha256(&deeper),
+            reference_sha256(&report.anchors[0])
+        );
 
         // A bot that jitters the mark (±2 or ±5 bp a step) can't lower its
         // own ceiling: the score doesn't move.
@@ -1675,6 +1879,181 @@ mod tests {
     }
 
     #[test]
+    fn v2_charges_drawdowns_against_the_references_and_reports_metrics() {
+        let mut s = scenario(Some(100.0));
+        s.reference_max_drawdown_usd = Some(50.0);
+        let mut deep = session(150.0);
+        deep.max_drawdown_usd = 950.0;
+        let mut report = score(vec![(deep.clone(), &s), (deep, &s)]);
+        // Kept out of the report: it is the scenario's, or the grade's own.
+        assert!(
+            !serde_json::to_string(&report)
+                .unwrap()
+                .contains("reference_max_drawdown")
+        );
+        assert_eq!(report.scenarios[0].reference_max_drawdown_usd, Some(50.0));
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!(v2.risk.anchor, "reference");
+        // ρ = 0.95, ρ_A = 0.05, s = 300 / 200 = 1.5: 1.5 · 2,000 · 0.875²,
+        // capped at the 300 it won.
+        assert!((v2.risk.allowance - 1.5).abs() < 1e-12);
+        assert_eq!(v2.risk.charge_usd, 300.0);
+        assert_eq!(v2.raw, 0.0);
+        let rewards = report.rewards();
+        assert_eq!(rewards["score_v2_risk_charge_usd"], 300.0);
+        assert_eq!(rewards["score_v2_risk_weight"], 1.0);
+        assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
+        assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
+        assert!(!rewards.contains_key("score_v2_breach_cap"));
+    }
+
+    #[test]
+    fn a_fatal_grade_v2_cant_score_is_the_floor() {
+        let mut cheat = session(500.0);
+        cheat.refused_calls = vec!["surfnet_setTokenAccount".into()];
+        // No reference PnL, which v2 needs for an honest grade.
+        let mut report = score(vec![(cheat, &scenario(None))]);
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!((v2.raw, v2.score), (-1.0, 0.0));
+        assert!(
+            v2.fatal
+                .as_deref()
+                .unwrap()
+                .contains("surfnet_setTokenAccount")
+        );
+    }
+
+    /// A session the risk desk stopped out (infra/22's `stop_out`): it lost
+    /// `pnl_usd`, the close included, past the 1,000 limit.
+    fn stopped_out(pnl_usd: f64) -> SessionReport {
+        let mut stopped = session(pnl_usd);
+        stopped.max_drawdown_usd = -pnl_usd;
+        stopped.forced_closes = vec![crate::risk::ForcedClose {
+            reason: crate::risk::ForcedCloseReason::StopOut {
+                rule: crate::scenario::StopRule::Drawdown,
+            },
+            step: 3,
+            at: 6,
+            value_before_usd: 10_100.0 + pnl_usd + 40.0,
+            peak_usd: 10_100.0,
+            value_after_usd: 10_100.0 + pnl_usd,
+            position_before: 50.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        stopped
+    }
+
+    #[test]
+    fn v2_scores_a_stop_out_as_a_breach_at_what_it_realised() {
+        let s = scenario(Some(100.0));
+        let mut report = score(vec![(session(300.0), &s), (stopped_out(-1_100.0), &s)]);
+        // v1 prices the stop-out, as infra/22 has it: no disqualification.
+        assert!(report.scenarios[1].disqualified.is_none());
+        report.score_v2(&v2()).unwrap();
+        let graded = report.v2.as_ref().unwrap();
+        // k times the realised loss, past the limit: 1.5 × 1,100.
+        assert_eq!(graded.sessions[1].bot_usd, -1_650.0);
+        assert!(
+            graded.sessions[1]
+                .breach
+                .as_deref()
+                .unwrap()
+                .contains("stopped out")
+        );
+        assert_eq!(graded.breached_sessions, 1);
+        assert_eq!(graded.breach_cap, Some(0.5));
+        assert_eq!(graded.metrics.stopped_out_sessions, 1);
+        // A stop-out that lost less than the limit still counts k·L.
+        let mut report = score(vec![(session(300.0), &s), (stopped_out(-900.0), &s)]);
+        report.score_v2(&v2()).unwrap();
+        assert_eq!(report.v2.as_ref().unwrap().sessions[1].bot_usd, -1_500.0);
+    }
+
+    /// A perp start position moves with the price, so doing nothing isn't
+    /// 0 and v2 refuses it; with an order, which scores against doing
+    /// nothing, it is, and a bot that held still didn't trade.
+    #[test]
+    fn v2_takes_a_start_position_only_with_an_order() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let mut report = score(vec![(held.clone(), &s)]);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let order = crate::orders::ExecutionOrder {
+            instrument: None,
+            side: mtx_core::Side::Sell,
+            quantity: 20.0,
+            haircut_bps: 30.0,
+            reduce_only: true,
+        };
+        held.order = Some(order.report(20.0, 20.0, 100.0, 98.0, -40.0, &[]));
+        held.pnl_usd = 0.0;
+        assert!(!traded(&held));
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        // With funding on the market, the start earns or pays it whatever
+        // the order: refused.
+        let mut funded = held.clone();
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
+        let mut sold = held;
+        sold.positions[0].lowest = 0.0;
+        assert!(traded(&sold));
+    }
+
+    /// The reference levered past its limit: it earns more where it holds,
+    /// and the risk desk stops it out now and then. Under v2 it never beats
+    /// the same strategy sized to comply.
+    #[test]
+    fn an_occasional_breacher_stopped_out_scores_below_its_compliant_twin() {
+        let s = scenario(Some(20.0));
+        let twin_pnl = [400.0, 300.0, 200.0, 500.0, 350.0, 250.0];
+        let twin = || {
+            twin_pnl
+                .iter()
+                .map(|p| (session(*p), &s))
+                .collect::<Vec<_>>()
+        };
+        let mut compliant = score(twin());
+        compliant.score_v2(&v2()).unwrap();
+        for stops in [1, 2] {
+            let mut levered: Vec<(SessionReport, &Scenario)> =
+                twin_pnl.iter().map(|p| (session(p * 3.0), &s)).collect();
+            for (session, _) in levered.iter_mut().skip(2).take(stops) {
+                *session = stopped_out(-1_050.0);
+            }
+            let mut breacher = score(levered);
+            breacher.score_v2(&v2()).unwrap();
+            let (b, c) = (
+                breacher.v2.as_ref().unwrap(),
+                compliant.v2.as_ref().unwrap(),
+            );
+            assert!(b.raw < c.raw, "{stops} stop-outs: {} vs {}", b.raw, c.raw);
+            assert_eq!(b.breach_cap, Some(if stops == 1 { 0.5 } else { 0.0 }));
+            if stops == 1 {
+                // Levering paid in USD (5,400 − 1,575 against 2,000): the
+                // cap is what keeps it below its twin.
+                assert!(b.bot_usd > c.bot_usd);
+            }
+        }
+    }
+
+    #[test]
     fn a_refused_call_or_tampering_is_fatal_under_v2() {
         let s = scenario(Some(100.0));
         let mut cheat = session(500.0);
@@ -1710,6 +2089,8 @@ mod tests {
         skipped.score_v2(&v2()).unwrap();
         assert_eq!(skipped.v2.as_ref().unwrap().score, 0.0);
         assert_eq!(skipped.rewards()["score_v2_raw"], -1.0);
+        // reward.json says the same: a run that wasn't graded is below nop.
+        assert_eq!(skipped.rewards()["metric_raw_negative"], 1.0);
     }
 
     #[test]
@@ -1795,6 +2176,50 @@ mod tests {
         let mut elsewhere = stopped;
         elsewhere.positions_outside_universe = 1;
         assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
+    }
+
+    /// The keeper's liquidation sells a buy-only bot's long in its own
+    /// account: the sides rule leaves that sell out.
+    #[test]
+    fn a_keepers_liquidating_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::risk::{ForcedClose, ForcedCloseReason, LiquidatedBy};
+        let mut liquidated = session(-900.0);
+        liquidated.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        liquidated.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::Liquidation {
+                by: LiquidatedBy::Keeper,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 9_300.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 9_100.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(
+            !disqualification(&liquidated)
+                .unwrap_or_default()
+                .contains("a side its mandate")
+        );
+        liquidated.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&liquidated)
+                .unwrap()
+                .contains("a side its mandate")
+        );
     }
 
     /// The risk desk's forced close trades in the bot's account; a
@@ -1948,6 +2373,7 @@ mod tests {
                 false,
                 None,
                 keys.role("bot"),
+                session::Rules::default(),
             )
         };
         assert!(matches!(
@@ -1983,6 +2409,7 @@ mod tests {
                 false,
                 None,
                 keys.role("bot"),
+                session::Rules::default(),
             )
         };
         assert!(run(0, 16).await.unwrap().is_empty());

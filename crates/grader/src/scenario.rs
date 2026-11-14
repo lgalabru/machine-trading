@@ -130,6 +130,14 @@ pub struct Scenario {
     /// by `mtx calibrate --informed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub informed_pnl_usd: Option<f64>,
+    /// The deepest the reference's and the informed bot's accounts fell
+    /// below their running peaks on this scenario: the anchor of scoring
+    /// v2's near-breach charge. Written by `mtx calibrate` (`--informed`)
+    /// with the PnL; a grade that runs the reference measures its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_max_drawdown_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_max_drawdown_usd: Option<f64>,
     /// Opt-in: the scenario's fair value, as waypoints in the same terms as
     /// [`Scenario::path`]. The session records it at every step, and the
     /// grade reports each session's PnL split by
@@ -152,12 +160,25 @@ pub struct Scenario {
     /// [`crate::raw`]). Absent, the session refuses every one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_sends: Option<RawSends>,
+    /// Opt-in: the transaction layer (see [`crate::txlayer`]). The bot's
+    /// sends go into a pool and land as a seeded block builder orders them,
+    /// against background demand for block space, with fees and Jito tips
+    /// paid from the bot's wallet. Absent, sends land on receipt, as ever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::TxLayer>,
     /// Opt-in: a drawdown past the mandate's limit is priced instead of
     /// disqualifying. The grader's risk desk closes the position through the
     /// book, as market orders signed with the bot's key, and the session
     /// ends there (see [`crate::session`]). Absent, the breach disqualifies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_out: Option<StopOut>,
+    /// Opt-in: a competing keeper liquidates the bot on Phoenix when its
+    /// account crosses maintenance margin, and an account that ends the
+    /// session liquidatable is priced instead of disqualifying (see
+    /// [`crate::keeper`]). Absent, nothing liquidates during the session and
+    /// ending liquidatable disqualifies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::Liquidator>,
 }
 
 /// The grader's risk desk: which mandate limits it enforces by closing the
@@ -997,6 +1018,8 @@ impl ShockFamily {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
                     slot: shock_slot,
@@ -1008,7 +1031,9 @@ impl ShockFamily {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         let shape = Shape {
             direction,
@@ -1643,7 +1668,9 @@ mod tests {
                     raw_sends: None,
                     start_positions: Default::default(),
                     close_out: Default::default(),
+                    tx_layer: None,
                     stop_out: None,
+                    liquidator: None,
                     ..marked.clone()
                 },
                 plain
@@ -1724,12 +1751,16 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1799,12 +1830,16 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         }
     }
 

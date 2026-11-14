@@ -4974,6 +4974,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-keeper-race"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
@@ -5041,6 +5048,13 @@ dependencies = [
  "mtx-kit",
  "solana-compute-budget-interface",
  "tracing",
+]
+
+[[package]]
+name = "mtx-bot-tx-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
 ]
 
 [[package]]

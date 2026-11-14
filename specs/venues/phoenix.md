@@ -74,6 +74,49 @@ cross-margin account.
 - **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
   order it left on the book, its side the sign of its `quantity`.
 
+### Liquidation
+
+A trader account crossing its maintenance margin is liquidated by keepers,
+who are anyone: Phoenix's liquidation instructions take any signer, and
+mainnet keepers race for them. The benchmark's keeper (`venues.perp.liquidator`
+in the [scenario format](../../docs/scenario-format.md)) is one such signer. What
+Phoenix does, as `crates/grader/tests/phoenix_liquidation.rs` measures it on
+the fork (NVDA, 14.4x leverage, maintenance at 50% of initial margin, backstop
+at 20%, high risk at 10%):
+
+- **Who may call.** Any signer. A funded wallet with no trader account of its
+  own liquidates, as does an onboarded one; no authorised liquidator is set
+  in the exchange configuration. The keeper's account needs SOL for fees, and
+  a trader account with collateral only for `LiquidationTransfer`.
+- **When.** Hawkeye's `view_margin` reads `is_liquidatable` once the
+  effective collateral is under the maintenance margin (risk tier 3), and a
+  tier of 4 or more once it is under the backstop margin. Phoenix refuses
+  `LiquidateViaMarketOrder` for a healthy account, and for a trader with
+  risk-increasing orders resting: a keeper first sends
+  `ForceCancelRiskIncreasing`, which any signer may while the trader is
+  liquidatable.
+- **How much.** One call closes at most the market's maximum liquidation size
+  (`maxLiquidationSizeBaseLots` in `/exchange`; NVDA 1,490 shares): a larger
+  size is refused, so the keeper asks for the position or the maximum,
+  whichever is smaller, and calls again while the account stays liquidatable.
+  A call closes what it is asked, and the account usually reads healthy after
+  one.
+- **What it costs.** `LiquidateViaMarketOrder` is an immediate-or-cancel
+  market order on the book, filling no further than the limit the keeper
+  sets (10% through the mark): the trader pays the book's impact, the
+  taker fee and whatever liquidation charge Phoenix adds, which the account's
+  value shows together. On the fork, closing a third of the position cost
+  14 bp of the notional closed (the taker fee alone is 3.5 bp), and closing
+  all of a position past the backstop margin 25 bp. `LiquidationTransfer`,
+  the backstop path, moves the position to the keeper's own account at a
+  haircut instead: 19 bp for the same account. The grader never computes
+  these: they are inside the account's value.
+
+The keeper uses the market order, and the transfer past the backstop margin.
+Phoenix's `phoenix-rise` 0.6.15 has no builder for either, so the instruction
+layouts come from Phoenix's IDL (bundled with surfpool) and a test pins the
+encoding against a mainnet transaction.
+
 ## Spot markets
 
 ### Account
