@@ -11,6 +11,15 @@ python3 -I calibration/fitter/run.py --from-archive <raw dir | calibration-raw-2
 python3 -I calibration/fitter/run.py --fetch --out <dir>
 ```
 
+The correlation file of a set of assets (`calibration/correlation/`) is fitted from the
+archives that hold its assets' candles, offline only:
+
+```sh
+python3 -I calibration/fitter/run.py --correlation us-eq \
+  --from-archive calibration-raw-2026-11-11.tar.gz \
+  --from-archive calibration-raw-tickers-2026-11-13.tar.gz --out <dir>
+```
+
 `--asset sol-usd|spcx|nvda|tsla|spy|qqq` limits a run to one file, and
 `--asset equity` to the equity perps; the default is every `assets/*.toml`
 whose inputs the archive holds. `--cache <dir>` sets where `--fetch` downloads.
@@ -46,6 +55,8 @@ from a raw folder with `python3 -I calibration/fitter/pack.py <raw dir> <out.tar
 | `calib/toml_out.py` | A small TOML writer |
 | `tickers/equity.py` | The equity perps: the SPCX fit driven by `assets/<asset>.toml`, with fitted regimes and a gap fallback |
 | `archive-tickers.json` | The archived ticker pull |
+| `joint/corr.py` | The cross-asset correlation fit: real window correlations, the simulated-moments solve through `draw_joint`'s model, the positive-definite projection, the file |
+| `sets/<set>.toml` | A correlation set: its assets, pinned calibration ids, fit window, shrinkage and the pins for a reproducible run |
 
 ## Equity perps
 
@@ -68,3 +79,15 @@ the fitter's code: `calibration/fitter/calib/*.py` for SOL and SPCX, and for the
 equity perps `calib/*.py` and `tickers/*.py` together. Changing the fitter's code
 makes a new id on the next fit, by design, so `calib/` stays as it is: it holds the
 code the shipped SOL and SPCX ids were made with.
+
+## Correlation files
+
+`joint/corr.py` fits `calibration/correlation/<set>.<date>.<hash>.toml`: the matrix `draw_joint`
+takes for the set's assets, and the real windows' correlation the joint check judges. The fit
+reads each asset's Phoenix 1 m mark candles, over one common window, from the archives named in
+`sets/<set>.toml` (`archives`), and the pinned calibration files in `calibration/market/` (the
+draw the matrix is fitted through). Its id's hash covers the inputs' SHA-256s, the pinned files'
+SHA-256s, the parameters and `joint/*.py`; the equity and SOL/SPCX ids are unaffected by it.
+`sets/us-eq.toml` pins the fit date and time and the id the file must get, so
+`--from-archive` reproduces the shipped file byte for byte. `docs/market-calibration.md` has the
+method and its limits.

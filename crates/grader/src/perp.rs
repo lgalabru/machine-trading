@@ -38,6 +38,7 @@ use crate::{
     },
     chain,
     guard::Guard,
+    keeper::{KeeperSetup, LiquidationKeeper},
     making::{TAKER_ACCOUNTS, book_at, level_at},
     phoenix::{self, Phoenix},
     risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
@@ -79,6 +80,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let bot = opts.keys.keypair("bot", 0);
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
+    if let Some(layer) = &scenario.tx_layer {
+        crate::txlayer::setup(surfnet, layer, &bot.pubkey())?;
+    }
     let hawkeye = phoenix.hawkeye(bot.pubkey());
     let start_bbo = patiently("the book", async || {
         hawkeye.view_bbo(&scenario.symbol).await
@@ -216,6 +220,47 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             Some((library, seats))
         }
         _ => None,
+    };
+    // The competing keeper, if the scenario has one: a wallet and trader
+    // account of its own, onboarded like the other actors, that liquidates
+    // the bot through Phoenix when it crosses maintenance margin.
+    let keeper = match &scenario.liquidator {
+        Some(spec) => {
+            let wallet = opts.keys.keypair("liquidator", 0);
+            phoenix::onboard_traders_stepped(
+                surfnet,
+                &phoenix,
+                &rpc,
+                &[&wallet],
+                ACTOR_DEPOSIT_USDC,
+            )
+            .await?;
+            let meter = PhoenixEternalMeter::new(
+                phoenix.exchange().clone(),
+                internal.url(),
+                Arc::new(RpcChainClient::with_timeout(
+                    internal.url(),
+                    INTERNAL_RPC_TIMEOUT,
+                )),
+                bot.pubkey(),
+                &scenario.symbol,
+            )
+            .map_err(mtx_kit::Error::from)?
+            .with_unsettled_funding(scenario.funding.is_some());
+            Some(LiquidationKeeper::new(KeeperSetup {
+                spec: *spec,
+                seed: opts.keys.seed("liquidator", 0),
+                wallet,
+                exchange: phoenix.exchange().clone(),
+                rpc_url: internal.url().to_string(),
+                market: market.clone(),
+                owner: bot.pubkey(),
+                meter,
+                universe: universe.clone(),
+                market_id: scenario.instrument().id(),
+            })?)
+        }
+        None => None,
     };
     // RFQ fills settle as swaps of the asset's spot token for USDC, between
     // the clients' wallets and the bot's: they hold both, funded here.
@@ -441,7 +486,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .as_ref()
             .map(|off| base_slot + off.reopen_slot),
         cast,
-        cranks: Vec::new(),
+        cranks: keeper
+            .map(|keeper| Box::new(keeper) as Box<dyn crate::crank::VenueCrank>)
+            .into_iter()
+            .collect(),
         account: Box::new(account),
     })
 }
@@ -853,6 +901,19 @@ impl Account for PerpAccount {
         Ok(())
     }
 
+    async fn sample(&mut self, slot: u64) -> Result<()> {
+        let now = self.measure().await?;
+        record(&mut self.observed, &now)?;
+        let position = position_in(&now, &self.market_id);
+        self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
+        let value_usd = self
+            .value_with_desk(grader_f64(now.value_usd), position, slot)
+            .await?;
+        self.peak_value_usd = self.peak_value_usd.max(value_usd);
+        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        Ok(())
+    }
+
     fn wallet(&self) -> Option<&crate::spot::Wallet> {
         None
     }
@@ -863,16 +924,32 @@ impl Account for PerpAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's own trader, through the guard's host side: its sends
-        // are the bot's, its reads aren't.
-        let trader = Arc::new(self.perp.trader(bot.insecure_clone(), host_url)?);
+        // are the bot's, its reads aren't. Under the transaction layer they
+        // go to its pool, with each line's options.
+        let trader = self.perp.trader(bot.insecure_clone(), host_url)?;
+        let pool = tx.is_some().then(|| {
+            Arc::new(crate::txlayer::client::PoolClient::new(
+                host_url,
+                bot.insecure_clone(),
+            ))
+        });
+        let trader = match &pool {
+            Some(pool) => mtx_kit::Trader {
+                inner: trader.inner.with_chain(pool.clone()),
+                ..trader
+            },
+            None => trader,
+        };
+        let trader = Arc::new(trader);
         let venue = std::fs::read_to_string(&env.exchange_path)
             .map_err(crate::error::io_error(&env.exchange_path))?;
-        let mut seats: Vec<Box<dyn Seat>> = vec![Box::new(crate::venue::perps::PerpSeat::new(
-            self.perp.instrument().to_string(),
-            trader.clone(),
-        ))];
+        let mut seats: Vec<Box<dyn Seat>> = vec![Box::new(
+            crate::venue::perps::PerpSeat::new(self.perp.instrument().to_string(), trader.clone())
+                .pooled(pool.is_some()),
+        )];
         if let Some(board) = &self.rfqs {
             seats.push(Box::new(RfqSeat::new(board.clone())));
         }
@@ -888,6 +965,8 @@ impl Account for PerpAccount {
             venue,
             authority: bot.pubkey().to_string(),
             reader: Reader::Perp(trader),
+            pool,
+            tx,
         })
     }
 
@@ -1007,9 +1086,11 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
+            liquidator: done.liquidator,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -1039,7 +1120,7 @@ fn record(observed: &mut Observed, measurement: &Measurement) -> Result<()> {
 
 /// The account's position in `instrument`, in base units; flat if the meter
 /// doesn't report it.
-fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
+pub(crate) fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
     measurement
         .holding(instrument)
         .map_or(0.0, |holding| grader_f64(holding.position()))
