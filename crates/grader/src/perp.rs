@@ -1155,19 +1155,33 @@ impl PerpAccount {
     /// would fetch, which Phoenix's mark, a blend of the book and the index,
     /// is not. Otherwise the mark, as Phoenix reports it.
     async fn value(&self, value_usd: f64, units: &[f64], slot: u64) -> Result<f64> {
-        let at = slot.saturating_sub(self.base_slot);
         let mut value = value_usd;
         for (market, &units) in self.markets.iter().zip(units) {
-            let level = match market.valuation {
-                "oracle" => level_at(&market.scenario.path, at),
-                "book" => book_at(&market.scenario.path, at),
-                _ => continue,
-            };
+            if market.valuation == "mark" {
+                continue;
+            }
+            let price = self.price_usd(market, slot).await?;
             let mark = self.mark_ticks(market).await?;
-            let price = market.start_mark_usd * (1.0 + level / 100.0);
             value += units * (price - self.phoenix.ticks_to_usd(&market.market, mark));
         }
         Ok(value)
+    }
+
+    /// The price `market`'s position is valued at, at `slot`, in USD, by
+    /// its own rule: the scenario's level (`oracle`), its book level
+    /// (`book`), or Phoenix's mark. Every market of the session has one: it
+    /// is what a rule that prices positions across markets reads.
+    async fn price_usd(&self, market: &MarketState, slot: u64) -> Result<f64> {
+        let at = slot.saturating_sub(self.base_slot);
+        let level = match market.valuation {
+            "oracle" => level_at(&market.scenario.path, at),
+            "book" => book_at(&market.scenario.path, at),
+            _ => {
+                let mark = self.mark_ticks(market).await?;
+                return Ok(self.phoenix.ticks_to_usd(&market.market, mark));
+            }
+        };
+        Ok(market.start_mark_usd * (1.0 + level / 100.0))
     }
 
     /// [`PerpAccount::value`], and the RFQ desk's wallet.
