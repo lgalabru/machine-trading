@@ -2172,7 +2172,10 @@ mod tests {
                 s.breach = None;
             }
             let free = score(&sessions, &informed(), None, None).unwrap();
-            assert!(free.raw > compliant.raw, "b = {breaches}: the cap doesn't bind");
+            assert!(
+                free.raw > compliant.raw,
+                "b = {breaches}: the cap doesn't bind"
+            );
         }
     }
 
