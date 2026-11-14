@@ -4988,6 +4988,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-making-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-printer"
 version = "0.1.0"
 dependencies = [

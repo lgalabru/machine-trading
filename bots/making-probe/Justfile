@@ -1,0 +1,19 @@
+# The market-making mandate's probes: `just build` builds the two-sided
+# maker into bot.wasm, `just build one-sided` (or `taker`, `crosser`) the
+# others, each into its own folder's bot.wasm.
+
+# Build a probe into bot.wasm (`maker`), or into <probe>/bot.wasm.
+build probe="maker":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features=""
+    dest="bot.wasm"
+    if [ "{{probe}}" != "maker" ]; then
+      features="--features {{probe}}"
+      mkdir -p "{{probe}}"
+      dest="{{probe}}/bot.wasm"
+    fi
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 $features --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" "$dest"
+    echo "built $dest from $wasm"
