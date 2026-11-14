@@ -103,9 +103,9 @@ pub struct Session {
     pub venues: Vec<VenueInfo>,
     /// What the session's steps report beyond prices.
     pub reports: Reports,
-    /// Whether the session applies the sheet's [`TxOptions`]. None does yet:
-    /// they are accepted and counted, and every order is sent as it would be
-    /// without them.
+    /// Whether the session applies the sheet's [`TxOptions`]: a session with
+    /// a transaction layer does. Elsewhere they are accepted and counted,
+    /// and every order is sent as it would be without them.
     pub applies_tx_options: bool,
 }
 
@@ -986,7 +986,8 @@ pub enum Route {
 
 /// How a line's transactions are sent: a priority fee, a tip, a bundle, a
 /// route, retries. Every sheet may carry them; a session applies them only
-/// if it says so ([`Session::applies_tx_options`]), and none does yet.
+/// if it says so ([`Session::applies_tx_options`]): one with a transaction
+/// layer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TxOptions {
     /// Compute units the transaction asks for; `None` is the simulation's

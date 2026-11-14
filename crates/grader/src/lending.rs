@@ -1629,6 +1629,7 @@ impl Account for LendingAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         let mut seats = Vec::new();
         for instrument in &self.instruments {
@@ -1654,6 +1655,8 @@ impl Account for LendingAccount {
             authority: bot.pubkey().to_string(),
             reader: Reader::Lending { start },
             rfqs: None,
+            pool: None,
+            tx: None,
         })
     }
 
@@ -1729,6 +1732,7 @@ impl Account for LendingAccount {
                 borrowers: std::mem::take(&mut self.borrowers),
                 actions,
             }),
+            tx_layer: None,
             crank_refusals: done.crank_refusals,
             markets: Vec::new(),
             turns: done.turns,

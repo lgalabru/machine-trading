@@ -173,6 +173,12 @@ pub struct Scenario {
     /// came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joint: Option<JointDraw>,
+    /// Opt-in: the transaction layer (see [`crate::txlayer`]). The bot's
+    /// sends go into a pool and land as a seeded block builder orders them,
+    /// against background demand for block space, with fees and Jito tips
+    /// paid from the bot's wallet. Absent, sends land on receipt, as ever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::TxLayer>,
     /// Opt-in: a drawdown past the mandate's limit is priced instead of
     /// disqualifying. The grader's risk desk closes the position through the
     /// book, as market orders signed with the bot's key, and the session
@@ -1287,6 +1293,7 @@ impl ShockFamily {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
         };
         let shape = Shape {
@@ -1984,6 +1991,7 @@ mod tests {
                     raw_sends: None,
                     start_positions: Default::default(),
                     close_out: Default::default(),
+                    tx_layer: None,
                     stop_out: None,
                     ..marked.clone()
                 },
@@ -2074,6 +2082,7 @@ mod tests {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
@@ -2153,6 +2162,7 @@ mod tests {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
         }
     }

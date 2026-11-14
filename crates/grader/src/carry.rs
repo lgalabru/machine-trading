@@ -526,6 +526,7 @@ impl CarryFamily {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
         };
         let shape = Shape {

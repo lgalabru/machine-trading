@@ -1435,6 +1435,7 @@ mod tests {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
@@ -1552,6 +1553,7 @@ mod tests {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
         }
     }

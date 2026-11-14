@@ -130,6 +130,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let bot = opts.keys.keypair("bot", 0);
     let trader =
         phoenix::onboard_traders_stepped(surfnet, &phoenix, &rpc, &[&bot], DEPOSIT_USDC).await?[0];
+    if let Some(layer) = &scenario.tx_layer {
+        crate::txlayer::setup(surfnet, layer, &bot.pubkey())?;
+    }
     let hawkeye = phoenix.hawkeye(bot.pubkey());
     // Each market, in symbol order (one, for a session on one market), as
     // Phoenix offers it, and its prices at the start.
@@ -1374,24 +1377,44 @@ impl Account for PerpAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's own trader on each market, through the guard's host
-        // side: its sends are the bot's, its reads aren't. The primary
-        // market's seat is first: a line that names no market goes there.
+        // side: its sends are the bot's, its reads aren't. Under the
+        // transaction layer they go to its pool, with each line's options.
+        // The primary market's seat is first: a line that names no market
+        // goes there.
+        let pool = tx.is_some().then(|| {
+            Arc::new(crate::txlayer::client::PoolClient::new(
+                host_url,
+                bot.insecure_clone(),
+            ))
+        });
+        let pooled = |trader: mtx_kit::Trader| match &pool {
+            Some(pool) => mtx_kit::Trader {
+                inner: trader.inner.with_chain(pool.clone()),
+                ..trader
+            },
+            None => trader,
+        };
         let own = self.own();
-        let trader = Arc::new(own.perp.trader(bot.insecure_clone(), host_url)?);
+        let trader = Arc::new(pooled(own.perp.trader(bot.insecure_clone(), host_url)?));
         let venue = std::fs::read_to_string(&env.exchange_path)
             .map_err(crate::error::io_error(&env.exchange_path))?;
-        let mut seats: Vec<Box<dyn Seat>> = vec![Box::new(crate::venue::perps::PerpSeat::new(
-            own.perp.instrument().to_string(),
-            trader.clone(),
-        ))];
+        let mut seats: Vec<Box<dyn Seat>> = vec![Box::new(
+            crate::venue::perps::PerpSeat::new(own.perp.instrument().to_string(), trader.clone())
+                .pooled(pool.is_some()),
+        )];
         for (i, market) in self.markets.iter().enumerate() {
             if i != self.primary {
-                seats.push(Box::new(crate::venue::perps::PerpSeat::new(
-                    market.perp.instrument().to_string(),
-                    Arc::new(market.perp.trader(bot.insecure_clone(), host_url)?),
-                )));
+                let trader = pooled(market.perp.trader(bot.insecure_clone(), host_url)?);
+                seats.push(Box::new(
+                    crate::venue::perps::PerpSeat::new(
+                        market.perp.instrument().to_string(),
+                        Arc::new(trader),
+                    )
+                    .pooled(pool.is_some()),
+                ));
             }
         }
         if let Some(board) = &self.rfqs {
@@ -1419,6 +1442,8 @@ impl Account for PerpAccount {
             venue,
             authority: bot.pubkey().to_string(),
             reader: Reader::Perp(trader),
+            pool,
+            tx,
         })
     }
 
@@ -1640,6 +1665,7 @@ impl Account for PerpAccount {
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
+            tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
