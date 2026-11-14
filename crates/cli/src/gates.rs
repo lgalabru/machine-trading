@@ -1079,14 +1079,25 @@ fn has_command(path: &[&str], arg: Option<&str>) -> bool {
     arg.is_none_or(|arg| cmd.get_arguments().any(|a| a.get_id() == arg))
 }
 
-/// The snapshot the Justfile grades on (`snapshot := "..."`).
-fn snapshot(root: &Path) -> String {
-    let justfile = std::fs::read_to_string(root.join("Justfile")).unwrap_or_default();
-    let name = justfile
-        .lines()
-        .find_map(|l| l.strip_prefix("snapshot := "))
-        .map_or(DEFAULT_SNAPSHOT, |v| v.trim().trim_matches('"'));
-    format!("snapshots/{name}")
+/// The snapshot `task` trades on: its task.toml's `[metadata] snapshot`,
+/// else the one the Justfile grades on (`snapshot := "..."`).
+fn snapshot(root: &Path, task: &str) -> String {
+    format!("snapshots/{}", snapshot_name(root, task))
+}
+
+fn snapshot_name(root: &Path, task: &str) -> String {
+    let own = std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|toml| toml.get("metadata")?.get("snapshot")?.as_str().map(str::to_string));
+    own.unwrap_or_else(|| {
+        let justfile = std::fs::read_to_string(root.join("Justfile")).unwrap_or_default();
+        justfile
+            .lines()
+            .find_map(|l| l.strip_prefix("snapshot := "))
+            .map_or(DEFAULT_SNAPSHOT, |v| v.trim().trim_matches('"'))
+            .to_string()
+    })
 }
 
 /// A fresh eval secret for one check, never printed.
@@ -1100,6 +1111,7 @@ fn secret() -> Result<String> {
 /// hidden set (`mtx grade --replay`), the machine loaded in full mode.
 fn replay_check(
     root: &Path,
+    task: &str,
     exe: &Path,
     family: &str,
     ladder: &Value,
@@ -1136,7 +1148,7 @@ fn replay_check(
     let trusted = has_command(&["grade"], Some("trusted"));
     let output = Command::new(exe)
         .args(["grade", "--draw", family, "--jobs", "4", "--bot", bot])
-        .args(["--count", &count.to_string(), "--snapshot", &snapshot(root)])
+        .args(["--count", &count.to_string(), "--snapshot", &snapshot(root, task)])
         .args([
             "--replay",
             &runs.to_string(),
@@ -1389,10 +1401,14 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             clear_dir(&ladder_out.join(task))?;
             let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
             // The ladder exits nonzero when a rule fails: the summary says which.
+            // On the task's own snapshot: the Justfile's default is one
+            // market's.
+            let snapshot = format!("snapshot={}", snapshot_name(root, task));
             run_in(
                 root,
                 "just",
                 &[
+                    &snapshot,
                     "ladder",
                     task,
                     &sets,
@@ -1520,7 +1536,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         }
     }
 
-    checks.push(replay_check(root, &exe, &family, &config, opts.fast, &out));
+    checks.push(replay_check(root, task, &exe, &family, &config, opts.fast, &out));
     checks.push(calibration_check(root, &exe, task, &family));
 
     let report = Report::new(
@@ -2076,7 +2092,14 @@ mod tests {
     #[test]
     fn the_snapshot_and_calibration_come_from_the_repo() {
         let root = authoring::repo_root();
-        assert!(root.join(snapshot(&root)).is_dir(), "{}", snapshot(&root));
+        for task in ["flash-crash-spcx", "perp-accumulate-nvda"] {
+            let snapshot = snapshot(&root, task);
+            assert!(root.join(&snapshot).is_dir(), "{snapshot}");
+        }
+        assert_eq!(
+            snapshot(&root, "perp-accumulate-nvda"),
+            "snapshots/phoenix-perps-2026-11-13"
+        );
         let dir = std::env::temp_dir().join(format!("mtx-gates-cal-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("calibration/market")).unwrap();
         for f in [
