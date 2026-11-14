@@ -41,11 +41,11 @@ pub enum Scoring {
 pub struct ScoringArgs {
     #[arg(long, value_enum, default_value_t = Scoring::V1)]
     pub scoring: Scoring,
-    /// v2's proxy ceiling, for a task whose scenarios carry no informed
-    /// bot's PnL: this share of each session's hindsight bound, a constant
-    /// frozen with the task (the score says `ceiling: proxy`).
-    /// `<task>=<eta>` gives one task's (as named in bench/tasks), for a
-    /// batch of several.
+    /// For analysis only, never a task's setting: force v2's ceiling, for a
+    /// task whose scenarios carry no informed bot's PnL, to this share of
+    /// each session's hindsight bound instead of the cost-aware hindsight
+    /// bound (the score says `ceiling: eta_override`). `<task>=<eta>` gives
+    /// one task's (as named in bench/tasks), for a batch of several.
     #[arg(long, value_name = "[TASK=]ETA")]
     pub eta: Vec<String>,
     /// v2's ceiling given outright instead: a JSON object from scenario
@@ -56,9 +56,14 @@ pub struct ScoringArgs {
     #[arg(long, default_value_t = scoring_v2::LOSS_WEIGHT)]
     pub loss_weight: f64,
     /// v2: the least the reference anchor can be, as a share of the
-    /// ceiling; a weaker reference is floored there and flagged.
-    #[arg(long, default_value_t = scoring_v2::ANCHOR_FLOOR)]
-    pub anchor_floor: f64,
+    /// ceiling; a weaker reference is floored there and flagged (default
+    /// 0.10, or 0.05 of the cost-aware hindsight ceiling).
+    #[arg(long)]
+    pub anchor_floor: Option<f64>,
+    /// v2: what the cost-aware hindsight ceiling pays per trade, in basis
+    /// points of the price: the venue's taker fee plus half-spread.
+    #[arg(long, default_value_t = scoring_v2::HINDSIGHT_COST * 1e4)]
+    pub ceiling_cost_bps: f64,
     /// v2: the near-breach charge's weight λ (1 by default; 0 turns it
     /// off). `<task>=<λ>` gives one task's, as `--eta` does.
     #[arg(long, value_name = "[TASK=]LAMBDA")]
@@ -82,12 +87,13 @@ impl ScoringArgs {
                 .with_context(|| format!("{}: not a map of ceilings", path.display()))?,
             ),
             None => Ceiling::Informed {
-                proxy_eta: self.eta(task)?,
+                eta_override: self.eta(task)?,
             },
         };
         Ok(Some(Params {
             loss_weight: self.loss_weight,
             anchor_floor: self.anchor_floor,
+            hindsight_cost: self.ceiling_cost_bps / 1e4,
             risk_weight: per_task("--risk-weight", &self.risk_weight, task)?
                 .unwrap_or(scoring_v2::RISK_WEIGHT),
             ..Params::new(ceiling)
@@ -172,6 +178,35 @@ pub fn rescore(
         .collect::<Result<Vec<_>>>()?;
     let mut report = grade::rescore(sessions, verdict);
     if let Some(params) = v2 {
+        // The cost-aware hindsight ceiling reads the reference's sessions,
+        // whose marks the bot's trades can't move: when the grade needs it,
+        // every one must be there. It is never computed on the bot's own.
+        let needs_hindsight = matches!(params.ceiling, Ceiling::Informed { eta_override: None })
+            && report
+                .scenarios
+                .iter()
+                .any(|s| s.informed_pnl_usd.is_none());
+        if needs_hindsight {
+            report.anchors = report
+                .scenarios
+                .iter()
+                .map(|result| {
+                    read_session(
+                        &details.join("reference"),
+                        &result.session.scenario,
+                        release,
+                    )
+                    .map(|(session, _)| session)
+                    .with_context(|| {
+                        format!(
+                            "{}: scoring v2's cost-aware hindsight ceiling needs the \
+                                 reference's session",
+                            path.display()
+                        )
+                    })
+                })
+                .collect::<Result<_>>()?;
+        }
         report
             .score_v2(params)
             .with_context(|| path.display().to_string())?;
@@ -267,6 +302,11 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
     let mut rows = Vec::new();
     // Each task's v2 grades, by model, for the comparison across runs.
     let mut graded: BTreeMap<String, Vec<Graded>> = BTreeMap::new();
+    // Per task and model, the trials that weren't rescored (no report: the
+    // grade never finished; or files that don't read back): reported, never
+    // dropped silently. A grade the bot broke is scored, not here: fatal
+    // or not graded is raw −1.
+    let mut unscored: BTreeMap<String, BTreeMap<String, Unrescored>> = BTreeMap::new();
     let (mut same, mut changed, mut skipped, mut failed) = (0, 0, 0, 0);
     for trial in &trials {
         let name = trial
@@ -277,6 +317,13 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         let report = trial.join("verifier/report.json");
         if !report.is_file() {
             skipped += 1;
+            *unscored
+                .entry(task_of(trial))
+                .or_default()
+                .entry(model_of(trial))
+                .or_default()
+                .entry("skipped")
+                .or_default() += 1;
             rows.push(json!({ "trial": name, "skipped": "no verifier/report.json" }));
             continue;
         }
@@ -293,6 +340,13 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
             Ok(rescored) => rescored,
             Err(error) => {
                 failed += 1;
+                *unscored
+                    .entry(task_of(trial))
+                    .or_default()
+                    .entry(model_of(trial))
+                    .or_default()
+                    .entry("failed")
+                    .or_default() += 1;
                 rows.push(json!({ "trial": name, "failed": format!("{error:#}") }));
                 continue;
             }
@@ -316,9 +370,11 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
                 "task": task_of(trial),
                 "score": v2.score,
                 "raw": v2.raw,
+                "raw_unfloored": v2.raw_unfloored,
                 "edge": v2.edge,
                 "ci": [v2.ci_lo, v2.ci_hi],
                 "ci_scope": v2.ci_scope,
+                "ci_use": v2.ci_use,
                 "within_noise": v2.within_noise,
                 "beats_informed": v2.beats_informed,
                 "ceiling": v2.ceiling,
@@ -354,11 +410,21 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         "failed": failed,
         "rescored": rows,
     });
-    if !graded.is_empty() {
+    if scoring.scoring == Scoring::V2 {
         summary["v2_comparison"] = compare_models(&graded, scoring)?;
+        for (task, models) in &unscored {
+            let entry = &mut summary["v2_comparison"][task];
+            if entry.is_null() {
+                *entry = json!({});
+            }
+            entry["not_rescored"] = json!(models);
+        }
     }
     Ok(summary)
 }
+
+/// A model's trials of a task that weren't rescored, by why.
+type Unrescored = BTreeMap<&'static str, usize>;
 
 /// One trial's model, v2 score and `eval_seed_sha256`.
 type Graded = (String, scoring_v2::ScoreV2, Option<String>);
@@ -431,9 +497,50 @@ mod tests {
             eta: eta.iter().map(|e| e.to_string()).collect(),
             ceiling: None,
             loss_weight: scoring_v2::LOSS_WEIGHT,
-            anchor_floor: scoring_v2::ANCHOR_FLOOR,
+            anchor_floor: None,
+            ceiling_cost_bps: scoring_v2::HINDSIGHT_COST * 1e4,
             risk_weight: Vec::new(),
         }
+    }
+
+    /// A trial that can't be rescored is counted against its model and
+    /// task, never dropped silently.
+    #[test]
+    fn trials_not_rescored_are_counted_per_model() {
+        let dir = std::env::temp_dir().join(format!("mtx-rescore-v2-{}", std::process::id()));
+        for (trial, model, report) in [
+            ("flash-crash-spcx__a", "openai/gpt-6-astra", false),
+            ("flash-crash-spcx__b", "openai/gpt-6-astra", true),
+            ("flash-crash-spcx__c", "openai/gpt-6.1-sol", true),
+        ] {
+            let path = dir.join("job").join(trial);
+            std::fs::create_dir_all(path.join("verifier")).unwrap();
+            let config = json!({
+                "trial_name": trial,
+                "task": { "path": "bench/tasks/flash-crash-spcx" },
+                "agent": { "model_name": model },
+            });
+            std::fs::write(path.join("config.json"), config.to_string()).unwrap();
+            if report {
+                // A report whose detail files are gone: it doesn't read back.
+                let graded = json!({ "reward": 0.1, "scenarios": [{ "scenario": "hidden-1" }] });
+                std::fs::write(path.join("verifier/report.json"), graded.to_string()).unwrap();
+            }
+        }
+        let root = Root {
+            label: "test".into(),
+            path: dir.clone(),
+            published: false,
+        };
+        let summary = rescore_trials(&root, &args(Scoring::V2, &[])).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            (summary["skipped"].clone(), summary["failed"].clone()),
+            (json!(1), json!(2))
+        );
+        let counted = &summary["v2_comparison"]["flash-crash-spcx"]["not_rescored"];
+        assert_eq!(counted["gpt-6-astra"], json!({ "skipped": 1, "failed": 1 }));
+        assert_eq!(counted["gpt-6.1-sol"], json!({ "failed": 1 }));
     }
 
     #[test]
@@ -453,7 +560,7 @@ mod tests {
     fn v2_takes_a_tasks_own_eta_before_the_default() {
         let given = args(Scoring::V2, &["0.3", "flash-crash-spcx=0.37"]);
         let eta = |given: &ScoringArgs, task| match given.params(task).unwrap().unwrap().ceiling {
-            Ceiling::Informed { proxy_eta } => proxy_eta,
+            Ceiling::Informed { eta_override } => eta_override,
             Ceiling::Given(_) => unreachable!(),
         };
         assert_eq!(eta(&given, Some("flash-crash-spcx")), Some(0.37));

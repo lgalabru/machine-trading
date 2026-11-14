@@ -182,8 +182,7 @@ impl GradeReport {
     pub fn tamper(&mut self, reason: String) {
         self.reward = 0.0;
         if let Some(v2) = &mut self.v2 {
-            v2.score = 0.0;
-            v2.fatal = Some(reason.clone());
+            v2.make_fatal(reason.clone());
         }
         self.tampered = Some(reason);
     }
@@ -212,6 +211,29 @@ impl GradeReport {
             .iter()
             .map(|result| {
                 let session = &result.session;
+                // The cost-aware hindsight ceiling, on the reference's marks
+                // only: the bot's own marks move with its trades, so a bot
+                // could lower its own ceiling. Without a reference session
+                // there is none, and v2 refuses a grade that needs it.
+                let hindsight = self
+                    .anchors
+                    .iter()
+                    .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty())
+                    .zip(session.mandate.universe.first())
+                    .map(|(reference, allowance)| {
+                        let marks: Vec<f64> = reference
+                            .timeline
+                            .steps
+                            .iter()
+                            .map(|step| step.mark_usd)
+                            .collect();
+                        scoring_v2::cost_aware_bound(
+                            result.bound_pnl_usd,
+                            &marks,
+                            allowance.max_position,
+                            params.hindsight_cost,
+                        )
+                    });
                 let reference_pnl_usd = result.reference_pnl_usd.ok_or_else(|| {
                     format!("{}: no reference PnL to anchor to", session.scenario)
                 })?;
@@ -231,6 +253,7 @@ impl GradeReport {
                         .map_or(session.pnl_usd, |stopped| stopped.pnl_usd),
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
+                    hindsight_ceiling_usd: hindsight,
                     nop_pnl_usd: 0.0,
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
@@ -314,6 +337,7 @@ impl GradeReport {
             rewards.extend([
                 ("score_v2".to_string(), v2.score),
                 ("score_v2_raw".to_string(), v2.raw),
+                ("score_v2_raw_unfloored".to_string(), v2.raw_unfloored),
                 ("score_v2_edge".to_string(), v2.edge),
                 ("score_v2_ci_lo".to_string(), v2.ci_lo),
                 ("score_v2_ci_hi".to_string(), v2.ci_hi),
@@ -336,8 +360,8 @@ impl GradeReport {
                     f64::from(u8::from(v2.beats_informed)),
                 ),
                 (
-                    "score_v2_ceiling_proxy".to_string(),
-                    f64::from(u8::from(v2.ceiling == "proxy")),
+                    "score_v2_ceiling_informed".to_string(),
+                    f64::from(u8::from(v2.ceiling == "informed")),
                 ),
                 ("score_v2_gap_wrong_read".to_string(), v2.gap.wrong_read),
                 ("score_v2_gap_missed".to_string(), v2.gap.missed),
@@ -1594,8 +1618,52 @@ mod tests {
 
     fn v2() -> scoring_v2::Params {
         scoring_v2::Params::new(scoring_v2::Ceiling::Informed {
-            proxy_eta: Some(0.5),
+            eta_override: Some(0.5),
         })
+    }
+
+    #[test]
+    fn v2s_fallback_ceiling_is_the_cost_aware_hindsight_bound_on_the_references_marks() {
+        let s = scenario(Some(1.0));
+        let params = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        let mut report = score(vec![(traded_session(), &s)]);
+        // No reference session: no ceiling, never one from the bot's marks.
+        let refused = report.score_v2(&params).unwrap_err().to_string();
+        assert!(refused.contains("no reference session"), "{refused}");
+        assert!(report.v2.is_none());
+
+        let reference = traded_session();
+        let marks: Vec<f64> = reference
+            .timeline
+            .steps
+            .iter()
+            .map(|step| step.mark_usd)
+            .collect();
+        report.anchors = vec![reference];
+        report.score_v2(&params).unwrap();
+        let v2 = report.v2.clone().unwrap();
+        assert_eq!(v2.ceiling, "hindsight");
+        assert_eq!(v2.anchor_floor, scoring_v2::HINDSIGHT_ANCHOR_FLOOR);
+        assert_eq!(v2.hindsight_cost, scoring_v2::HINDSIGHT_COST);
+        let want = scoring_v2::cost_aware_bound(report.bound_pnl_usd, &marks, 100.0, 8.5e-4);
+        assert!((v2.ceiling_usd - want).abs() < 1e-9);
+        assert!(v2.ceiling_usd < report.bound_pnl_usd);
+
+        // A bot that jitters the mark (±2 or ±5 bp a step) can't lower its
+        // own ceiling: the score doesn't move.
+        for bps in [2.0, 5.0] {
+            let mut jittered = traded_session();
+            for (i, step) in jittered.timeline.steps.iter_mut().enumerate() {
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                step.mark_usd *= 1.0 + sign * bps / 1e4;
+            }
+            let mut graded = score(vec![(jittered, &s)]);
+            graded.anchors = report.anchors.clone();
+            graded.score_v2(&params).unwrap();
+            let jitter = graded.v2.as_ref().unwrap();
+            assert_eq!(jitter.ceiling_usd, v2.ceiling_usd, "±{bps} bp");
+            assert_eq!(jitter.raw, v2.raw, "±{bps} bp");
+        }
     }
 
     #[test]
@@ -1603,8 +1671,8 @@ mod tests {
         let mut s = scenario(Some(100.0));
         let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
         proxied.score_v2(&v2()).unwrap();
-        assert_eq!(proxied.v2.as_ref().unwrap().ceiling, "proxy");
-        assert_eq!(proxied.rewards()["score_v2_ceiling_proxy"], 1.0);
+        assert_eq!(proxied.v2.as_ref().unwrap().ceiling, "eta_override");
+        assert_eq!(proxied.rewards()["score_v2_ceiling_informed"], 0.0);
 
         s.informed_pnl_usd = Some(400.0);
         let mut informed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
@@ -1616,7 +1684,7 @@ mod tests {
         // (350 − 200) / (800 − 200) of the way from the reference.
         assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
         assert_eq!(v2.bound_usd, informed.bound_pnl_usd);
-        assert_eq!(informed.rewards()["score_v2_ceiling_proxy"], 0.0);
+        assert_eq!(informed.rewards()["score_v2_ceiling_informed"], 1.0);
     }
 
     #[test]
@@ -1737,6 +1805,7 @@ mod tests {
         assert!(honest.v2.as_ref().unwrap().score > 0.0);
         honest.tamper("a bot wrote reward.json".into());
         assert_eq!(honest.v2.as_ref().unwrap().score, 0.0);
+        assert_eq!(honest.v2.as_ref().unwrap().raw, -1.0);
 
         let mut skipped = rescore(
             Vec::new(),
@@ -1747,6 +1816,7 @@ mod tests {
         );
         skipped.score_v2(&v2()).unwrap();
         assert_eq!(skipped.v2.as_ref().unwrap().score, 0.0);
+        assert_eq!(skipped.rewards()["score_v2_raw"], -1.0);
     }
 
     #[test]

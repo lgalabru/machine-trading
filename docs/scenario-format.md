@@ -38,7 +38,11 @@ docs together.
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
 v2`), as `reference_pnl_usd` is its 0.5. Without it on every scenario,
-scoring v2 falls back to a share of the hindsight bound, flagged as a proxy.
+scoring v2 falls back to the cost-aware hindsight bound (`ceiling:
+"hindsight"`): perfect foresight on the reference session's marks, paying
+the taker fee and half-spread on every trade. It needs the reference's
+session (the grade's `--reference` run, or `details/reference/` on a
+rescore), and is never computed on the bot's own marks.
 `reference_max_drawdown_usd` and `informed_max_drawdown_usd`, written by
 `mtx calibrate` beside the PnL, are the anchor of v2's near-breach charge:
 the informed bot's drawdowns when it is the ceiling, else the reference's.

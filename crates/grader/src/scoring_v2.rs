@@ -20,12 +20,13 @@
 //! or ends liquidatable, counts at least as losing the whole drawdown limit
 //! `k` times, the worst loss the mandate allows, and its real weighted loss
 //! when that is worse: a breach never beats complying, never caps a loss,
-//! and one late breach no longer erases a whole grade. Calling a method the guard refuses, tampering with
-//! the grade, or not being graded at all still scores 0.
+//! and one late breach no longer erases a whole grade. Calling a method the
+//! guard refuses, tampering with the grade, or not being graded at all
+//! scores `raw` −1, the floor, so failing on purpose never beats losing.
 //!
 //! ```text
 //! w(x)  = x if x ≥ 0, else k·x
-//! Xw_s  = −k·L if session s breaches, else w(X_s − N_s)
+//! Xw_s  = min(−k·L, w(X_s − N_s)) if session s breaches, else w(X_s − N_s)
 //! Rw_s  = w(R_s − N_s)        Iw_s = w(I_s − N_s)
 //! E_bot = Σ Xw_s   E_inf = Σ Iw_s   E_ref = max(Σ Rw_s, φ·E_inf)
 //! raw   = 0.5·E_bot/E_ref                            if E_bot ≤ E_ref
@@ -38,11 +39,17 @@
 //! score points. A reference too weak to anchor anything (its weighted sum
 //! under `φ` of the informed bot's) is floored there, and the score says so.
 //!
-//! A task without an informed bot yet falls back to a proxy, the session's
-//! hindsight bound times a task constant `η`, flagged `ceiling: "proxy"`.
-//! Otherwise the hindsight bound is never in the score: it is reported as
-//! the luck headroom above the informed bot, what only knowing the
-//! session's randomness would add.
+//! A task without an informed bot yet falls back to a model-free ceiling,
+//! the cost-aware hindsight bound (`ceiling: "hindsight"`): each session's
+//! hindsight bound scaled by what perfect foresight keeps once it pays the
+//! venue's taker fee and half-spread on every trade (see
+//! [`cost_aware_bound`]), on the reference session's marks: never on the
+//! bot's own, which its trades can move. A grade with no reference session
+//! can't use it. It has no free parameter and no model run in it,
+//! but it isn't reachable, so it is an interim 1, not a headline's. A
+//! constant share `η` of the bound can still be forced for analysis
+//! (`eta_override`), never by default. The plain hindsight bound is never in
+//! the score: it is reported as the luck headroom above the ceiling.
 //!
 //! A bot that wins by drawing down far more than the anchor does pays a
 //! near-breach charge `Π` before the map, in USD (see [`Risk`]): drawdowns
@@ -74,13 +81,21 @@ use serde::{Deserialize, Serialize};
 
 /// The loss weight `k` by default.
 pub const LOSS_WEIGHT: f64 = 1.5;
-/// The reference anchor's floor `φ`, as a share of the informed bot's, by
-/// default.
+/// The reference anchor's floor `φ`, as a share of the ceiling, by default.
 pub const ANCHOR_FLOOR: f64 = 0.10;
 /// The near-breach charge's weight `λ` by default: at 1, a bot that drew down
 /// to its limit in every session while the anchor never moved pays `k·L` a
 /// session, what a breach costs.
 pub const RISK_WEIGHT: f64 = 1.0;
+/// `φ` against the cost-aware hindsight ceiling by default: 0.05 of it, the
+/// same dollars as 0.10 of half of it, so the 0.5 point doesn't move with
+/// how much of the hindsight bound is called reachable.
+pub const HINDSIGHT_ANCHOR_FLOOR: f64 = 0.05;
+/// What the cost-aware hindsight ceiling pays on every trade, as a share of
+/// the price: Phoenix SPCX's taker fee (3.5 bp) and the calibration's
+/// half-spread (5 bp), from `calibration/market/spcx.20261112.d1f48be2.toml`.
+/// Venue facts, not a fitted knob; per task overridable.
+pub const HINDSIGHT_COST: f64 = 8.5e-4;
 /// Bootstrap resamples for the interval.
 pub const RESAMPLES: usize = 2_000;
 /// The intervals' level: 95%, the 2.5th and 97.5th percentiles.
@@ -91,9 +106,9 @@ const CI_TAIL: f64 = (1.0 - CI_LEVEL) / 2.0;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ceiling {
     /// The informed bot's PnL in each session, as its scenario carries it;
-    /// without it on every session, the hindsight bound times `η`, when
-    /// given, as a proxy.
-    Informed { proxy_eta: Option<f64> },
+    /// without it on every session, the cost-aware hindsight bound, or with
+    /// `eta_override`, the hindsight bound times `η` (for analysis only).
+    Informed { eta_override: Option<f64> },
     /// The ceiling PnL of each session, by scenario name, given outright.
     Given(BTreeMap<String, f64>),
 }
@@ -104,10 +119,15 @@ pub struct Params {
     /// `k`: how many times a loss counts.
     pub loss_weight: f64,
     /// `φ`: the reference anchor is at least this share of the ceiling.
-    pub anchor_floor: f64,
+    /// `None`: [`ANCHOR_FLOOR`], or [`HINDSIGHT_ANCHOR_FLOOR`] against the
+    /// cost-aware hindsight ceiling.
+    pub anchor_floor: Option<f64>,
     /// `λ`: the near-breach charge's weight; 0 turns it off.
     pub risk_weight: f64,
     pub ceiling: Ceiling,
+    /// The cost the cost-aware hindsight ceiling pays per trade, as a share
+    /// of the price (see [`cost_aware_bound`]).
+    pub hindsight_cost: f64,
     pub resamples: usize,
 }
 
@@ -116,9 +136,10 @@ impl Params {
     pub fn new(ceiling: Ceiling) -> Self {
         Self {
             loss_weight: LOSS_WEIGHT,
-            anchor_floor: ANCHOR_FLOOR,
+            anchor_floor: None,
             risk_weight: RISK_WEIGHT,
             ceiling,
+            hindsight_cost: HINDSIGHT_COST,
             resamples: RESAMPLES,
         }
     }
@@ -132,6 +153,10 @@ pub struct Session {
     pub reference_pnl_usd: f64,
     /// The informed bot's PnL, when the scenario carries it.
     pub informed_pnl_usd: Option<f64>,
+    /// The cost-aware hindsight bound (see [`cost_aware_bound`]) on the
+    /// reference session's marks, when the grade has that session. Never
+    /// computed on the bot's own marks, which its trades can move.
+    pub hindsight_ceiling_usd: Option<f64>,
     pub nop_pnl_usd: f64,
     /// The hindsight bound (see [`crate::scenario::Scenario::bound_usd`]).
     pub bound_usd: f64,
@@ -170,18 +195,27 @@ pub struct ScoreV2 {
     /// `raw` clamped to [0, 1]; 0 when [`Self::fatal`].
     pub score: f64,
     /// 0 = doing nothing, 0.5 = the reference, 1 = the informed bot; at
-    /// least −1, and above 1 when the bot beats the informed bot.
+    /// least −1, and above 1 when the bot beats the informed bot. A fatal
+    /// grade is −1, the floor: failing on purpose never beats losing.
     pub raw: f64,
+    /// `raw` without the −1 floor, for training: a loss past the floor still
+    /// counts. A fatal grade is at most −1 and never above what its sessions
+    /// made.
+    pub raw_unfloored: f64,
+    /// What the sessions alone score, floored at −1, fatal or not: reported,
+    /// not scored.
+    pub measured_raw: f64,
     /// `raw − 0.5`: the edge over the reference.
     pub edge: f64,
     /// The 95% interval of `raw` over a paired bootstrap of this grade's
     /// sessions (`ci_scope: "sessions"`): one run's uncertainty from the
-    /// sessions it drew. Comparing models over several runs is
-    /// [`compare`]'s, which resamples runs too.
+    /// sessions it drew, **not for ranking** (`ci_use`). Ranking models
+    /// takes several runs and [`compare`], which resamples runs too.
     pub ci_lo: f64,
     pub ci_hi: f64,
     pub ci_scope: String,
     pub ci_level: f64,
+    pub ci_use: String,
     /// The interval of `edge` spans 0: the bot isn't told apart from the
     /// reference on this set.
     pub within_noise: bool,
@@ -217,9 +251,13 @@ pub struct ScoreV2 {
     /// Sessions whose mandate has no drawdown limit, where `L` is the
     /// hindsight bound instead.
     pub limit_from_bound_sessions: usize,
+    /// The cost per trade the cost-aware hindsight ceiling paid.
+    pub hindsight_cost: f64,
     /// `k`, `φ`, and where the ceiling came from: `informed` (the task's
-    /// informed bot), `proxy` (`η` times the hindsight bound, for a task
-    /// without one) or `given`.
+    /// informed bot), `hindsight` (the cost-aware hindsight bound, for a
+    /// task without one), `eta_override` (`η` times the hindsight bound,
+    /// forced for analysis), `given`, or `none` (a grade with nothing to
+    /// score).
     pub loss_weight: f64,
     pub anchor_floor: f64,
     pub ceiling: String,
@@ -355,7 +393,9 @@ pub struct SessionV2 {
     pub anchor_drawdown: Option<f64>,
 }
 
-/// Score `sessions` under v2. `fatal` zeroes the score (but not `raw`);
+/// Score `sessions` under v2. With `fatal`, the grade is the floor: `raw`
+/// −1, score 0, no interval, and `raw_unfloored` at most −1; what the
+/// sessions made is still reported as `measured_raw`.
 /// `eval_seed_sha256`, when the grade has one, seeds the bootstrap.
 pub fn score(
     sessions: &[Session],
@@ -370,13 +410,16 @@ pub fn score(
     if !(k >= 1.0 && k.is_finite()) {
         return Err(format!("loss weight {k}: it must be at least 1"));
     }
+    let (source, eta, ceilings) = ceilings(sessions, &params.ceiling)?;
+    let phi = params.anchor_floor.unwrap_or(if source == "hindsight" {
+        HINDSIGHT_ANCHOR_FLOOR
+    } else {
+        ANCHOR_FLOOR
+    });
     // Without a floor, a reference that loses would anchor 0.5 at or below
     // doing nothing.
-    if !(params.anchor_floor > 0.0 && params.anchor_floor < 1.0) {
-        return Err(format!(
-            "anchor floor {}: it must be in (0, 1)",
-            params.anchor_floor
-        ));
+    if !(phi > 0.0 && phi < 1.0) {
+        return Err(format!("anchor floor {phi}: it must be in (0, 1)"));
     }
     if !(params.risk_weight >= 0.0 && params.risk_weight.is_finite()) {
         return Err(format!(
@@ -384,7 +427,6 @@ pub fn score(
             params.risk_weight
         ));
     }
-    let (source, eta, ceilings) = ceilings(sessions, &params.ceiling)?;
     let risk_anchor = RiskAnchor::of_sessions(sessions, source);
     let weigh = |x: f64| if x < 0.0 { k * x } else { x };
     let share = |drawdown: f64, limit: f64| {
@@ -429,33 +471,46 @@ pub fn score(
             sums.ceiling
         ));
     }
-    let anchor = sums.anchor(params.anchor_floor);
+    let anchor = sums.anchor(phi);
     if anchor >= sums.ceiling {
         return Err(format!(
             "the reference ({anchor}) reaches the ceiling ({}): the ceiling is too low",
             sums.ceiling
         ));
     }
-    let scored = sums.score(params, risk_anchor);
-    let raw = scored.raw;
+    let scored = sums.score(phi, k, params.risk_weight, risk_anchor);
+    let measured_raw = scored.raw;
+    let measured_unfloored = scored.raw_unfloored;
     let seed = seed(eval_seed_sha256);
-    let (ci_lo, ci_hi) = interval(&terms, params, risk_anchor, seed.unwrap_or(FIXED_SEED));
+    // A fatal grade is the floor, with no interval: its sessions don't count.
+    let (raw, raw_unfloored, (ci_lo, ci_hi)) = match fatal {
+        Some(_) => (-1.0, measured_unfloored.min(-1.0), (-1.0, -1.0)),
+        None => (
+            measured_raw,
+            measured_unfloored,
+            interval(
+                &terms,
+                (phi, k, params.risk_weight, risk_anchor),
+                params.resamples,
+                seed.unwrap_or(FIXED_SEED),
+            ),
+        ),
+    };
     let bound_usd: f64 = sessions.iter().map(|s| s.bound_usd).sum();
     let gap = gap(sessions, &ceilings, &terms, &scored, (ci_hi - ci_lo) / 2.0);
     Ok(ScoreV2 {
-        score: if fatal.is_some() {
-            0.0
-        } else {
-            raw.clamp(0.0, 1.0)
-        },
+        score: raw.clamp(0.0, 1.0),
         raw,
+        raw_unfloored,
+        measured_raw,
         edge: raw - 0.5,
         ci_lo,
         ci_hi,
         within_noise: ci_lo <= 0.5 && 0.5 <= ci_hi,
         beats_informed: raw > 1.0,
         fatal,
-        anchor_floored: sums.reference < params.anchor_floor * sums.ceiling,
+        anchor_floored: sums.reference < phi * sums.ceiling,
+        anchor_floor: phi,
         bot_usd: sums.bot,
         reference_usd: anchor,
         reference_measured_usd: sums.reference,
@@ -605,17 +660,25 @@ fn ceilings(
                 .collect::<Result<_, _>>()?;
             Ok(("given", None, given))
         }
-        Ceiling::Informed { proxy_eta } => {
+        Ceiling::Informed { eta_override } => {
             if let Some(informed) = sessions.iter().map(|s| s.informed_pnl_usd).collect() {
                 return Ok(("informed", None, informed));
             }
-            let eta = proxy_eta.ok_or_else(|| {
-                "the scenarios carry no informed bot's PnL (informed_pnl_usd), and no η \
-                 was given for a proxy ceiling"
-                    .to_string()
-            })?;
-            let proxy = sessions.iter().map(|s| eta * s.bound_usd).collect();
-            Ok(("proxy", Some(eta), proxy))
+            if let Some(eta) = eta_override {
+                let share = sessions.iter().map(|s| eta * s.bound_usd).collect();
+                return Ok(("eta_override", Some(*eta), share));
+            }
+            let hindsight = sessions
+                .iter()
+                .map(|s| s.hindsight_ceiling_usd)
+                .collect::<Option<_>>()
+                .ok_or_else(|| {
+                    "the scenarios carry no informed bot's PnL (informed_pnl_usd), and the \
+                     grade has no reference session for the cost-aware hindsight ceiling \
+                     (it is never computed on the bot's own marks)"
+                        .to_string()
+                })?;
+            Ok(("hindsight", None, hindsight))
         }
     }
 }
@@ -665,20 +728,78 @@ fn gap(
     }
 }
 
+impl ScoreV2 {
+    /// Make the grade fatal after it was scored (tampering found once the
+    /// sessions ended): the floor, as [`score`] gives a fatal grade.
+    pub fn make_fatal(&mut self, reason: String) {
+        self.score = 0.0;
+        self.raw = -1.0;
+        self.raw_unfloored = self.raw_unfloored.min(-1.0);
+        self.edge = -1.5;
+        self.ci_lo = -1.0;
+        self.ci_hi = -1.0;
+        self.within_noise = false;
+        self.beats_informed = false;
+        self.fatal = Some(reason);
+    }
+}
+
+/// The cost-aware hindsight bound of a session: its hindsight bound `bound`
+/// (see [`crate::scenario::Scenario::bound_usd`]) scaled by what perfect
+/// foresight keeps once it pays `cost` (a share of the price) on every
+/// trade: `bound × DP(cost) / DP(0)`, with [`hindsight_dp`] on the session's
+/// marks, step by step. No free parameter and no model run: an interim 1
+/// for a task without an informed bot. The scale is measured on the moves
+/// of the mark and applied to the whole bound, spread and funding parts
+/// included, at step granularity.
+pub fn cost_aware_bound(bound: f64, marks: &[f64], cap: f64, cost: f64) -> f64 {
+    bound * hindsight_dp(marks, cap, cost) / hindsight_dp(marks, cap, 0.0).max(1e-9)
+}
+
+/// The most a trader who knew the marks in advance could make holding
+/// `−cap`, nothing or `+cap` from one step to the next, paying `cost` times
+/// the price on every unit it trades (entering included, not the last exit):
+/// a dynamic programme over the three positions.
+pub fn hindsight_dp(marks: &[f64], cap: f64, cost: f64) -> f64 {
+    let Some(&first) = marks.first() else {
+        return 0.0;
+    };
+    let held = [-cap, 0.0, cap];
+    let mut value = held.map(|x| -cost * first * x.abs());
+    for pair in marks.windows(2) {
+        let moved = held
+            .iter()
+            .zip(value)
+            .map(|(x, v)| v + x * (pair[1] - pair[0]))
+            .collect::<Vec<_>>();
+        value = held.map(|to| {
+            held.iter()
+                .zip(&moved)
+                .map(|(from, v)| v - cost * pair[1] * (to - from).abs())
+                .fold(f64::NEG_INFINITY, f64::max)
+        });
+    }
+    value.into_iter().fold(f64::NEG_INFINITY, f64::max)
+}
+
 /// v2 for a grade with no sessions to score because it was never graded
 /// (or was tampered with before any ran): 0, with why.
 pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
+    // Nothing was scored, so no ceiling was used.
     let (ceiling, eta) = match params.ceiling {
-        Ceiling::Informed { proxy_eta } => ("informed", proxy_eta),
+        Ceiling::Informed { .. } => ("none", None),
         Ceiling::Given(_) => ("given", None),
     };
     ScoreV2 {
         score: 0.0,
-        raw: 0.0,
-        edge: -0.5,
-        ci_lo: 0.0,
-        ci_hi: 0.0,
+        raw: -1.0,
+        raw_unfloored: -1.0,
+        measured_raw: 0.0,
+        edge: -1.5,
+        ci_lo: -1.0,
+        ci_hi: -1.0,
         ci_scope: "sessions".into(),
+        ci_use: "not for ranking".into(),
         ci_level: CI_LEVEL,
         within_noise: false,
         beats_informed: false,
@@ -700,9 +821,10 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         },
         breach_cap: None,
         limit_from_bound_sessions: 0,
+        hindsight_cost: params.hindsight_cost,
         break_even_sharpe: break_even_sharpe(params.loss_weight),
         loss_weight: params.loss_weight,
-        anchor_floor: params.anchor_floor,
+        anchor_floor: params.anchor_floor.unwrap_or(ANCHOR_FLOOR),
         ceiling: ceiling.into(),
         eta,
         nop: "zero".into(),
@@ -768,8 +890,9 @@ struct Sums {
 /// The sums scored: `raw`, the charge, and the cap.
 struct Scored {
     raw: f64,
-    /// `raw` before the breach cap.
+    /// `raw` before the breach cap, and `raw` not floored at −1.
     uncapped: f64,
+    raw_unfloored: f64,
     charge: f64,
     dd_rms: f64,
     dd_rms_anchor: f64,
@@ -795,14 +918,14 @@ impl Sums {
 
     /// The bot on the scale after the near-breach charge, held to the
     /// breach cap.
-    fn score(&self, params: &Params, anchor: RiskAnchor) -> Scored {
+    fn score(&self, phi: f64, k: f64, lambda: f64, anchor: RiskAnchor) -> Scored {
         let n = self.sessions.max(1) as f64;
         let dd_rms = (self.drawdown / n).sqrt();
         let dd_rms_anchor = (self.anchor_drawdown / n).sqrt();
         // `E_A`: what the anchor whose risk the bot is held to earned.
         let earned = match anchor {
             RiskAnchor::Informed => self.ceiling,
-            _ => self.anchor(params.anchor_floor),
+            _ => self.anchor(phi),
         };
         let allowance = if earned > 0.0 {
             (self.bot / earned).max(1.0)
@@ -813,11 +936,10 @@ impl Sums {
             RiskAnchor::None => 0.0,
             _ => {
                 let excess = (dd_rms - allowance * dd_rms_anchor).max(0.0);
-                (params.risk_weight * params.loss_weight * self.limit * excess * excess)
-                    .min(self.bot.max(0.0))
+                (lambda * k * self.limit * excess * excess).min(self.bot.max(0.0))
             }
         };
-        let uncapped = self.raw(params.anchor_floor, self.bot - charge);
+        let uncapped = self.raw(phi, self.bot - charge);
         let cap = match self.breaches {
             0 => None,
             1 => Some(0.5),
@@ -826,6 +948,10 @@ impl Sums {
         Scored {
             raw: cap.map_or(uncapped, |cap| uncapped.min(cap)),
             uncapped,
+            raw_unfloored: {
+                let unfloored = self.raw_unfloored(phi, self.bot - charge);
+                cap.map_or(unfloored, |cap| unfloored.min(cap))
+            },
             charge,
             dd_rms,
             dd_rms_anchor,
@@ -841,31 +967,39 @@ impl Sums {
 
     /// `bot`, a weighted sum, on the scale, floored at −1.
     fn raw(&self, floor: f64, bot: f64) -> f64 {
+        self.raw_unfloored(floor, bot).max(-1.0)
+    }
+
+    /// `bot`, a weighted sum, on the scale, not floored.
+    fn raw_unfloored(&self, floor: f64, bot: f64) -> f64 {
         let anchor = self.anchor(floor);
-        let raw = if bot <= anchor {
+        if bot <= anchor {
             0.5 * bot / anchor
         } else if self.ceiling > anchor {
             0.5 + 0.5 * (bot - anchor) / (self.ceiling - anchor)
         } else {
             1.0
-        };
-        raw.max(-1.0)
+        }
     }
 }
+
+/// What a resample is scored with: `φ`, `k`, `λ` and the risk anchor.
+type Rule = (f64, f64, f64, RiskAnchor);
 
 /// The 95% interval of `raw` over resamples of the sessions,
 /// each drawn with replacement and used for the bot, the reference and the
 /// ceiling alike; the charge and the cap are taken again on each.
-fn interval(terms: &[SessionV2], params: &Params, anchor: RiskAnchor, seed: u64) -> (f64, f64) {
+fn interval(terms: &[SessionV2], rule: Rule, resamples: usize, seed: u64) -> (f64, f64) {
+    let (phi, k, lambda, anchor) = rule;
     let mut rng = SplitMix64(seed);
     let n = terms.len();
-    let mut raws: Vec<f64> = (0..params.resamples)
+    let mut raws: Vec<f64> = (0..resamples)
         .map(|_| {
             let sums = Sums::of((0..n).map(|_| &terms[rng.below(n)]));
             if sums.ceiling <= 0.0 {
                 return 0.0;
             }
-            sums.score(params, anchor).raw
+            sums.score(phi, k, lambda, anchor).raw
         })
         .collect();
     if raws.is_empty() {
@@ -904,7 +1038,8 @@ pub struct ModelV2 {
     pub mean_raw: f64,
     pub ci_lo: f64,
     pub ci_hi: f64,
-    /// The mean of its runs' clamped score: the headline, no interval.
+    /// The headline: the mean `raw` clamped to [0, 1] once. Never the mean
+    /// of clamped run scores, which would turn every losing run into 0.
     pub mean_score: f64,
 }
 
@@ -916,8 +1051,15 @@ pub struct PairV2 {
     pub diff: f64,
     pub ci_lo: f64,
     pub ci_hi: f64,
-    /// The interval includes 0: the two rank as tied.
+    /// The interval includes 0.
     pub tie: bool,
+    /// The bootstrap's two-sided p-value for no difference, and the same
+    /// adjusted for every pair of the task (Benjamini–Hochberg).
+    pub p_value: f64,
+    pub p_adjusted: f64,
+    /// The adjusted p-value is at least 0.05: the two rank as tied. Ranks
+    /// are published as groups of ties by this flag.
+    pub tie_adjusted: bool,
 }
 
 /// Compare models over several graded runs of one task, all on the same
@@ -925,7 +1067,9 @@ pub struct PairV2 {
 /// resample draws the scenarios with replacement (each scenario a cluster,
 /// the same draws for every model, so model differences are paired), then
 /// each model's runs with replacement, and scores every drawn run on the
-/// drawn scenarios. A grade that is fatal counts as `raw` 0. The seed is
+/// drawn scenarios. A fatal or unscored grade counts as `raw` −1, the floor,
+/// as it does alone. (A grade the machine failed is retried by the grader
+/// and never reaches here: it is reported apart, not scored.) The seed is
 /// the first run's `eval_seed_sha256`, as for one grade.
 pub fn compare(
     runs: &[Run],
@@ -971,17 +1115,23 @@ pub fn compare(
     }
     let raw_of = |i: usize, idx: &[usize]| -> f64 {
         match &aligned[i] {
-            Some(_) if runs[i].v2.fatal.is_some() => 0.0,
+            Some(_) if runs[i].v2.fatal.is_some() => -1.0,
             Some(terms) => {
                 let sums = Sums::of(idx.iter().map(|&j| terms[j]));
                 if sums.ceiling <= 0.0 {
                     0.0
                 } else {
-                    sums.score(params, RiskAnchor::named(&runs[i].v2.risk.anchor))
-                        .raw
+                    let v2 = runs[i].v2;
+                    sums.score(
+                        v2.anchor_floor,
+                        v2.loss_weight,
+                        v2.risk.weight,
+                        RiskAnchor::named(&v2.risk.anchor),
+                    )
+                    .raw
                 }
             }
-            None => 0.0,
+            None => -1.0,
         }
     };
     let mut models: Vec<String> = runs.iter().map(|r| r.model.clone()).collect();
@@ -1025,7 +1175,8 @@ pub fn compare(
     let mut pairs = Vec::new();
     for a in 0..models.len() {
         for b in a + 1..models.len() {
-            let diffs = draws[a].iter().zip(&draws[b]).map(|(x, y)| x - y).collect();
+            let diffs: Vec<f64> = draws[a].iter().zip(&draws[b]).map(|(x, y)| x - y).collect();
+            let p_value = two_sided_p(&diffs);
             let (ci_lo, ci_hi) = interval_of(diffs);
             pairs.push(PairV2 {
                 a: models[a].clone(),
@@ -1034,8 +1185,16 @@ pub fn compare(
                 ci_lo,
                 ci_hi,
                 tie: ci_lo <= 0.0 && 0.0 <= ci_hi,
+                p_value,
+                p_adjusted: p_value,
+                tie_adjusted: true,
             });
         }
+    }
+    let adjusted = benjamini_hochberg(&pairs.iter().map(|p| p.p_value).collect::<Vec<_>>());
+    for (pair, p) in pairs.iter_mut().zip(adjusted) {
+        pair.p_adjusted = p;
+        pair.tie_adjusted = p >= 1.0 - CI_LEVEL;
     }
     let models = models
         .iter()
@@ -1050,7 +1209,7 @@ pub fn compare(
                 mean_raw,
                 ci_lo,
                 ci_hi,
-                mean_score: ix.iter().map(|&i| runs[i].v2.score).sum::<f64>() / ix.len() as f64,
+                mean_score: mean_raw.clamp(0.0, 1.0),
             }
         })
         .collect();
@@ -1063,6 +1222,44 @@ pub fn compare(
         models,
         pairs,
     })
+}
+
+/// A bootstrap's two-sided p-value for a difference of 0: twice the
+/// smaller share of resamples on either side of 0 (ties counted half),
+/// at most 1.
+fn two_sided_p(diffs: &[f64]) -> f64 {
+    if diffs.is_empty() {
+        return 1.0;
+    }
+    let n = diffs.len() as f64;
+    let below = diffs
+        .iter()
+        .map(|&d| {
+            if d < 0.0 {
+                1.0
+            } else if d == 0.0 {
+                0.5
+            } else {
+                0.0
+            }
+        })
+        .sum::<f64>();
+    (2.0 * (below / n).min(1.0 - below / n)).min(1.0)
+}
+
+/// Benjamini–Hochberg adjusted p-values, in the order given: each is the
+/// smallest `p_(j)·m/j` over the ranks `j` at or above its own, at most 1.
+fn benjamini_hochberg(p: &[f64]) -> Vec<f64> {
+    let m = p.len();
+    let mut order: Vec<usize> = (0..m).collect();
+    order.sort_by(|&a, &b| p[a].total_cmp(&p[b]));
+    let mut adjusted = vec![1.0; m];
+    let mut running = 1.0_f64;
+    for (rank, &i) in order.iter().enumerate().rev() {
+        running = running.min(p[i] * m as f64 / (rank + 1) as f64);
+        adjusted[i] = running.min(1.0);
+    }
+    adjusted
 }
 
 /// The `q` quantile of sorted values, interpolated between neighbours.
@@ -1118,6 +1315,7 @@ mod tests {
                 pnl_usd,
                 reference_pnl_usd,
                 informed_pnl_usd: Some(150.0),
+                hindsight_ceiling_usd: None,
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
@@ -1137,12 +1335,12 @@ mod tests {
     const REFERENCE: [f64; 6] = [40.0, -10.0, 25.0, 60.0, 0.0, 15.0];
 
     fn informed() -> Params {
-        Params::new(Ceiling::Informed { proxy_eta: None })
+        Params::new(Ceiling::Informed { eta_override: None })
     }
 
     fn proxy(eta: f64) -> Params {
         Params::new(Ceiling::Informed {
-            proxy_eta: Some(eta),
+            eta_override: Some(eta),
         })
     }
 
@@ -1190,17 +1388,31 @@ mod tests {
     }
 
     #[test]
-    fn without_an_informed_bot_the_proxy_is_used_and_flagged() {
-        let sessions = without_informed(set(&REFERENCE, &REFERENCE));
+    fn without_an_informed_bot_the_cost_aware_hindsight_bound_is_the_ceiling() {
+        let mut sessions = without_informed(set(&REFERENCE, &REFERENCE));
+        for s in &mut sessions {
+            s.hindsight_ceiling_usd = Some(600.0);
+        }
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.ceiling, "hindsight");
+        assert_eq!(v2.ceiling_usd, 3_600.0);
+        // Its 0.5 floor is 0.05 of it: 180, above the reference's 125.
+        assert_eq!(v2.anchor_floor, 0.05);
+        assert!(v2.anchor_floored);
+        // η only when forced, and flagged.
         let v2 = score(&sessions, &proxy(0.15), None, None).unwrap();
-        assert_eq!(v2.ceiling, "proxy");
+        assert_eq!(v2.ceiling, "eta_override");
+        assert_eq!(v2.anchor_floor, 0.10);
+        // Without the reference's sessions, nothing to fall back to.
+        let bare = without_informed(set(&REFERENCE, &REFERENCE));
+        assert!(
+            score(&bare, &informed(), None, None)
+                .unwrap_err()
+                .contains("no reference session")
+        );
+        let v2 = score(&bare, &proxy(0.15), None, None).unwrap();
         assert_eq!(v2.eta, Some(0.15));
         assert_eq!(v2.ceiling_usd, 900.0);
-        assert!(
-            score(&sessions, &informed(), None, None)
-                .unwrap_err()
-                .contains("informed")
-        );
         // With the informed bot's PnL on every session, η isn't used.
         let both = score(&set(&REFERENCE, &REFERENCE), &proxy(0.5), None, None).unwrap();
         assert_eq!(both.ceiling, "informed");
@@ -1317,7 +1529,7 @@ mod tests {
     fn the_anchor_floor_must_be_above_zero() {
         for floor in [0.0, -0.1, 1.0] {
             let mut params = informed();
-            params.anchor_floor = floor;
+            params.anchor_floor = Some(floor);
             let refused = score(&set(&REFERENCE, &REFERENCE), &params, None, None);
             assert!(refused.unwrap_err().contains("anchor floor"), "{floor}");
         }
@@ -1351,7 +1563,88 @@ mod tests {
         )
         .unwrap();
         assert_eq!(v2.score, 0.0);
-        assert!(v2.raw > 0.0);
+        assert_eq!(v2.raw, -1.0);
+        assert_eq!(v2.edge, -1.5);
+        assert!(v2.measured_raw > 0.0, "what it made is still reported");
+        assert_eq!(v2.ci_use, "not for ranking");
+    }
+
+    /// A bot that fails on purpose when it is losing scores below the
+    /// losing bot it wraps, in `raw`, in `raw_unfloored`, and in a ranking.
+    #[test]
+    fn crashing_when_losing_scores_below_losing() {
+        let losing = [-20.0, -10.0, 5.0, -30.0, 0.0, -5.0];
+        let honest = score(&set(&losing, &REFERENCE), &informed(), None, None).unwrap();
+        assert!(honest.raw < 0.0 && honest.raw > -1.0, "{}", honest.raw);
+        let crashed = score(
+            &set(&losing, &REFERENCE),
+            &informed(),
+            Some("ended the session liquidatable".into()),
+            None,
+        )
+        .unwrap();
+        assert!(crashed.raw < honest.raw);
+        assert!(crashed.raw_unfloored < honest.raw_unfloored);
+        // Far below the floor, the fatal grade's unfloored raw is no better
+        // than what its sessions made.
+        let ruinous = [-900.0; 6];
+        let lost = score(&set(&ruinous, &REFERENCE), &informed(), None, None).unwrap();
+        assert_eq!(lost.raw, -1.0);
+        assert!(lost.raw_unfloored < -1.0);
+        let crashed = score(
+            &set(&ruinous, &REFERENCE),
+            &informed(),
+            Some("x".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(crashed.raw_unfloored, lost.raw_unfloored);
+
+        let mut graded = runs(&[losing, losing], &[losing, losing]);
+        for (_, v2) in &mut graded[..2] {
+            v2.make_fatal("refused call".into());
+        }
+        let c = compared(&graded);
+        assert_eq!(c.models[0].mean_raw, -1.0);
+        assert!(c.models[0].mean_raw < c.models[1].mean_raw);
+    }
+
+    #[test]
+    fn an_unscored_grade_is_the_floor() {
+        let v2 = unscored(&informed(), "no bot.wasm".into());
+        assert_eq!((v2.raw, v2.raw_unfloored, v2.score), (-1.0, -1.0, 0.0));
+        // No informed bot was used: none is claimed.
+        assert_eq!(v2.ceiling, "none");
+    }
+
+    #[test]
+    fn a_models_headline_clamps_its_mean_raw_once() {
+        let good = [140.0, 120.0, 150.0, 130.0, 145.0, 150.0];
+        let bad = [-60.0, -40.0, -50.0, -70.0, -45.0, -60.0];
+        let graded = runs(&[good, bad], &[good, good]);
+        let (up, down) = (graded[0].1.raw, graded[1].1.raw);
+        assert!(up > 0.0 && down < 0.0);
+        let c = compared(&graded);
+        assert!((c.models[0].mean_raw - (up + down) / 2.0).abs() < 1e-12);
+        assert_eq!(c.models[0].mean_score, ((up + down) / 2.0).clamp(0.0, 1.0));
+        // Not the mean of clamped runs, which hides the losing run.
+        assert!(c.models[0].mean_score < (up.clamp(0.0, 1.0) + 0.0) / 2.0);
+    }
+
+    #[test]
+    fn pairwise_ties_are_adjusted_for_every_pair() {
+        let adjusted = benjamini_hochberg(&[0.01, 0.04, 0.03, 0.2]);
+        let want = [0.04, 0.04 * 4.0 / 3.0, 0.04 * 4.0 / 3.0, 0.2];
+        for (a, w) in adjusted.iter().zip(want) {
+            assert!((a - w).abs() < 1e-12, "{adjusted:?}");
+        }
+        assert_eq!(two_sided_p(&[1.0, 2.0, 3.0, -1.0]), 0.5);
+        assert_eq!(two_sided_p(&[1.0; 10]), 0.0);
+        let strong = [[140.0, 120.0, 150.0, 130.0, 145.0, 150.0]; 3];
+        let weak = [[10.0, -20.0, 5.0, 0.0, 15.0, 10.0]; 3];
+        let c = compared(&runs(&strong, &weak));
+        let pair = &c.pairs[0];
+        assert!(!pair.tie_adjusted && pair.p_adjusted < 0.05, "{pair:?}");
     }
 
     #[test]
@@ -1543,8 +1836,8 @@ mod tests {
         let mut fatal = graded.clone();
         fatal[0].1.fatal = Some("tampered".into());
         let c = compared(&fatal);
-        // One of model a's two runs now counts 0.
-        assert!((c.models[0].mean_raw - graded[1].1.raw / 2.0).abs() < 1e-12);
+        // One of model a's two runs now counts −1, the floor.
+        assert!((c.models[0].mean_raw - (graded[1].1.raw - 1.0) / 2.0).abs() < 1e-12);
     }
 
     #[test]
@@ -1834,6 +2127,23 @@ mod tests {
         }];
         let c = compare(&runs, &informed(), None).unwrap();
         assert_eq!(c.models[0].mean_raw, v2.raw);
+    }
+
+    #[test]
+    fn the_hindsight_dp_pays_its_costs() {
+        // Up 10, down 10, up 10 with a cap of 2: 60 without costs.
+        let marks = [100.0, 110.0, 100.0, 110.0];
+        assert_eq!(hindsight_dp(&marks, 2.0, 0.0), 60.0);
+        // At 1% a trade: enter long at 100 (2), flip at 110 (4.4), flip at
+        // 100 (4): 60 − 10.4 = 49.6, better than any other path.
+        assert!((hindsight_dp(&marks, 2.0, 0.01) - 49.6).abs() < 1e-9);
+        // Costs that eat a move make it sit the move out.
+        assert_eq!(hindsight_dp(&[100.0, 100.5, 100.0], 1.0, 0.01), 0.0);
+        assert_eq!(hindsight_dp(&[], 1.0, 0.0), 0.0);
+        let haircut = cost_aware_bound(1_000.0, &marks, 2.0, 0.01);
+        assert!((haircut - 1_000.0 * 49.6 / 60.0).abs() < 1e-9);
+        // A flat path: no bound to keep.
+        assert_eq!(cost_aware_bound(1_000.0, &[100.0, 100.0], 2.0, 0.01), 0.0);
     }
 
     #[test]
