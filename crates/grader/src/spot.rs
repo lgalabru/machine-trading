@@ -1213,6 +1213,7 @@ mod tests {
                 bound_usd: None,
             }),
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
         }
     }
 

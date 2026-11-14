@@ -220,6 +220,10 @@ pub struct Scoring {
     /// it. Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// PnL the task's informed bot makes on this scenario: scoring v2's 1.
+    /// Written by `mtx calibrate --informed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_pnl_usd: Option<f64>,
     /// A spot session's bound, which the reward divides the PnL by. Without
     /// it the reward is 0 and only `skill` against the reference is reported.
     /// A perp session's bound follows from its path.
@@ -939,6 +943,7 @@ impl ScenarioV2 {
             start_positions: assets.start_positions,
             close_out: scoring.close_out,
             reference_pnl_usd: scoring.reference_pnl_usd,
+            informed_pnl_usd: scoring.informed_pnl_usd,
             fair_path,
             raw_sends: tx.and_then(|tx| tx.raw_sends),
             market_model: record,
@@ -1051,6 +1056,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
             order: v1.order.clone(),
             scoring: Scoring {
                 reference_pnl_usd: v1.reference_pnl_usd,
+                informed_pnl_usd: v1.informed_pnl_usd,
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
