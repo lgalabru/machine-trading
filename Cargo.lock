@@ -5023,6 +5023,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-searcher-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-spot-smoke"
 version = "0.1.0"
 dependencies = [

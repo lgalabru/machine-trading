@@ -435,7 +435,10 @@ impl PoolSide {
         let vaults = self.vaults();
         let base_before = self.balance(&vaults[0]).await?;
         let ran = engine
-            .simulate_bundle(std::slice::from_ref(&pending.tx.wire), std::slice::from_ref(&vaults))
+            .simulate_bundle(
+                std::slice::from_ref(&pending.tx.wire),
+                std::slice::from_ref(&vaults),
+            )
             .await
             .ok()?;
         let after = ran.first().filter(|r| r.ok)?;
