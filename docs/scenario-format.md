@@ -95,8 +95,23 @@ own cap and start mark, summed. A session's report lists each market
 (`markets`: start and end marks, positions, valuation, flow), and each step
 records each market (`markets` in the timeline's steps).
 
+What a session on several markets doesn't do yet:
+
+- **Library actors** (`actors.library`) trade the primary market only.
+- **Markout:** the grade's markout, luck and residual split is a
+  one-market split; a session on several markets reports none, whatever
+  fair paths it has.
+- **Raw sends** (`tx.raw_sends`) are refused: their pre-check audits one
+  market's position and value.
+- **Closed periods** stay a one-market scenario's.
+- **Process bots** built on `mtx_kit::run` trade the primary market only:
+  its run loop holds one trader. A process bot that wants the others reads
+  `MTX_MARKETS` and trades them itself; a strategy component gets a seat
+  on every market.
+
 There is no v1 form: `Scenario::save` refuses such a scenario and
-`save_v2` writes it. `mtx market-cal generate` draws one from a template
+`save_v2` writes it (`save_any` writes each scenario in the layout it has,
+as `mtx calibrate` does). `mtx market-cal generate` draws one from a template
 on several markets, given `--calibration SYMBOL=FILE` per market and
 `--correlation`.
 

@@ -399,7 +399,11 @@ cross-margin account trades them all. `MTX_SYMBOL` and `MTX_MAX_POSITION`
 stay the first market's; the mandate lists every market with its own cap.
 A strategy component gets each market in `session.venues`, tradable, and
 sends a line to one with `.at("phoenix:perp:<SYMBOL>")`; each step's
-`market.venues` carries its position and top.
+`market.venues` carries its position and top. The sheet's planner cuts
+every line to `market.cap`, the first market's cap: read each market's own
+cap from `session.mandate`. A process bot on `mtx_kit::run` trades only
+`MTX_SYMBOL`'s market; to trade the others, it reads `MTX_MARKETS` and
+sends to them itself.
 
 A perp scenario that starts the bot holding a position, or gives it an
 order to work, says so:
