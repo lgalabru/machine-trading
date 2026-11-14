@@ -53,6 +53,9 @@ pub enum Error {
     StopOut(String),
     #[error("timed out waiting for {0}")]
     Timeout(String),
+    /// The transaction layer couldn't start or read the chain.
+    #[error("transaction layer: {0}")]
+    TxLayer(String),
     /// A session failed before its bot started.
     #[error(transparent)]
     Setup(Box<Error>),
