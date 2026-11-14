@@ -188,7 +188,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
             .await?
             .remove(0);
-        cast.add(Box::new(Competitor::new(seat, making)));
+        cast.add(Box::new(Competitor::new(
+            seat,
+            making,
+            opts.keys.seed("competitor", 0),
+        )));
     }
     // The library's actors: a wallet each, onboarded like the takers. They
     // are built once the session's first slot is known.
