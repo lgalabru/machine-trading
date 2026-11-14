@@ -822,6 +822,18 @@ impl ScenarioV2 {
                 "stop_out: closes on a drawdown, but the mandate sets no drawdown limit".into(),
             );
         }
+        // The desk closes to flat: a mandate that forbids flat would
+        // disqualify the bot for the desk's own close.
+        for allowance in &self.mandate.universe {
+            let min = allowance.min_position.unwrap_or(-allowance.max_position);
+            if min > 0.0 || allowance.max_position < 0.0 {
+                return Err(format!(
+                    "stop_out: the desk closes {} to flat, which its mandate range, {min} to {}, \
+                     doesn't allow",
+                    allowance.instrument, allowance.max_position
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1671,6 +1683,28 @@ mod tests {
         let mut spot_stop = spot();
         spot_stop.scoring.stop_out = s.scoring.stop_out.clone();
         assert!(spot_stop.validate().is_err());
+
+        // The desk closes to flat, so the mandate must allow flat: not a
+        // floor above it (a start long the bot must keep some of)...
+        let mut floor = s.clone();
+        let cap = floor.mandate.universe[0].max_position;
+        floor
+            .assets
+            .start_positions
+            .insert("SPCX".into(), cap / 2.0);
+        floor.mandate.universe[0].min_position = Some(cap / 4.0);
+        assert!(floor.validate().unwrap_err().contains("closes phoenix:perp:SPCX to flat"));
+        // ...which is fine without the desk, or with a floor at flat.
+        let mut no_desk = floor.clone();
+        no_desk.scoring.stop_out = None;
+        assert_eq!(no_desk.validate(), Ok(()));
+        floor.mandate.universe[0].min_position = Some(0.0);
+        assert_eq!(floor.validate(), Ok(()));
+        // A cap below flat is the mandate's own error already.
+        let mut short_only = s.clone();
+        short_only.mandate.universe[0].max_position = -1.0;
+        short_only.mandate.universe[0].min_position = Some(-2.0);
+        assert!(short_only.validate().unwrap_err().contains("max_position"));
     }
 
     #[test]

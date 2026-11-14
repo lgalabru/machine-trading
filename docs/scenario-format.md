@@ -98,7 +98,14 @@ The PnL is the account's value then, so the close pays the book's impact
 and the taker fee. The report lists each close in `forced_closes` (reason,
 step, the value before and after, the orders, whether it ended flat), and
 the audit then reads the drawdown as at most the limit: every other rule
-still disqualifies. A component sees `MTX_STOP_OUT=1` in its session vars.
+still disqualifies. Each close order records its transaction's
+`signature`. The desk trades in the bot's account but is not the bot: in
+a session that reads fills, the fills of those transactions are marked
+`forced` in `perp_fills`, and the sides and price rules (and an order's
+"traded the other way" and "grew the position") leave them out; they still
+count toward the position and the PnL. Because the desk closes to flat, a
+scenario with `stop_out` must allow flat in every instrument's range: a
+`min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
 The code is `crates/grader/src/risk.rs` and the session loop.
 
 ## Example
