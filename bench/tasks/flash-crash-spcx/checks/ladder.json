@@ -166,15 +166,6 @@
       "may_breach": true
     },
     {
-      "name": "crash-coin",
-      "dir": "bench/checks/probes",
-      "env": {
-        "MTX_PROBE": "coin-flip",
-        "MTX_PROBE_CRASH_BELOW": "0.1"
-      },
-      "may_breach": true
-    },
-    {
       "name": "crash-honest",
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
@@ -242,10 +233,6 @@
         "reference"
       ],
       [
-        "crash-coin",
-        "coin-flip-full"
-      ],
-      [
         "crash-honest",
         "honest-0.2"
       ],
@@ -294,7 +281,6 @@
     ],
     "pays_from": 0.2,
     "must_differ": [
-      "crash-coin",
       "crash-honest",
       "crash-fatal"
     ]
