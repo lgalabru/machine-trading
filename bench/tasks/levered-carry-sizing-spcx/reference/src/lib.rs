@@ -402,7 +402,14 @@ impl Strategy for LevCarry {
             if delta > 0.0 {
                 orders.buy(qty, r.book * 1.004);
             } else {
-                orders.sell(qty.min(pos), r.book * 0.996);
+                // The mark-pusher's last ask may fill before this sale lands
+                // (the tape trades first): keep its size back.
+                let keep = if self.rung == Rung::MarkPusher { 0.5 } else { 0.0 };
+                let qty = qty.min(pos - keep);
+                if qty <= 0.0 {
+                    break;
+                }
+                orders.sell(qty, r.book * 0.996);
             }
             pos += qty.copysign(delta);
         }
