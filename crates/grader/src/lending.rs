@@ -1717,6 +1717,7 @@ impl Account for LendingAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             lending: Some(LendingReport {
                 start: start.holdings.clone(),
                 end: end.holdings.clone(),
