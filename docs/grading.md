@@ -4,6 +4,8 @@ This page explains scoring v2: what a bot's score means, how it is worked out, a
 
 The exact behaviour is in `crates/grader/src/scoring_v2.rs`. The scenario fields it reads are in [scenario-format.md](scenario-format.md).
 
+Today only new tasks have a real informed bot. The older tasks use an interim ceiling, described under Anchors.
+
 ## The idea in one minute
 
 A bot trades 72 short sessions. We want one number that says how good it is. Three bots define the scale:
@@ -18,7 +20,7 @@ Two rules keep the number honest. Losses count more than gains, so a lucky gambl
 
 ## What the score does not replace
 
-Today each task still reports its old `reward` and `skill`. Scoring v2 is reported beside them, as `score_v2` and friends in `reward.json`. A task's v2 score becomes its headline only when the task has a real informed bot and a reference that passes the strength band (decision D1). See [Status](#status).
+Today each task still reports its old `reward` and `skill`. Scoring v2 is reported beside them, as `score_v2` and friends in `reward.json`. A task's v2 score becomes its headline only when the task has a real informed bot and a reference that passes the strength band. See [Status](#status).
 
 ## One running example
 
@@ -82,7 +84,7 @@ Weighting losses has a cost, and we state it. An honest strategy whose sessions 
 
 At `k = 2` the line would be 0.28, and a strategy with Sharpe 0.2 would score below nop. That is too harsh, which is why k is 1.5. The grade reports `break_even_sharpe` beside the score so readers can see where the line sits.
 
-k is a policy choice, not a law. It is the smallest value at which every probe gambler stays at or below nop on every task, while honest strategies with Sharpe 0.2 and up still beat nop. It was fitted on two releases and checked on a third, with fees (D2, TUNE and TUNE2).
+k is a policy choice, not a law. It is the smallest value at which every probe gambler stays at or below nop on every task, while honest strategies with Sharpe 0.2 and up still beat nop.
 
 ## The near-breach charge
 
@@ -93,7 +95,7 @@ So a bot that drew down far more than the anchor did pays a charge `Π`, in doll
 For each session, take the bot's drawdown as a share of the limit, at most 1. Take the root mean square over the set: `ρ`. Do the same for the anchor: `ρ_A`. Then:
 
 ```text
-s = max(1, E_bot / E_anchor)
+s = max(1, E_bot / E_anchor)       f_s = min(drawdown_s / L_s, 1), and f_s = 1 for a breached session
 Π = min( λ · k · Σ L_s · max(0, ρ − s · ρ_A)² ,  max(E_bot, 0) )     λ = 1
 ```
 
@@ -109,11 +111,13 @@ Example: suppose Bot X's drawdowns average ρ = 0.6 of the limit, while the info
 
 If neither the informed bot's nor the reference's drawdowns are known, nothing is charged and the grade says so.
 
-On the numbers: this charge took the lucky full-cap gambler's average score from 0.112 to 0.017 on the fit data, with a resolution cost of about 1%. It charged 0.000 to a skilful bot that bet the reference's bets at 2 and 3 times the size.
+On the numbers: this charge took the lucky full-cap gambler's average score from 0.112 to 0.017 in an earlier offline test at k = 2, with a resolution cost of about 1%. It charged 0.000 to a skilful bot that bet the reference's bets at 2 and 3 times the size.
 
 ## Breaches
 
-A **breach** is a stop-out. When a session's drawdown goes past the mandate's limit, the risk desk closes the position at market, the session ends, and the close pays the book's impact and the taker fee. The PnL is the account's value after the close. See `scoring.stop_out` in [scenario-format.md](scenario-format.md).
+A **breach** is a session that breaks its mandate or its order, ends liquidatable with no liquidation keeper, or is stopped out by the risk desk. The first three disqualify the session.
+
+The stop-out is how a drawdown breach is priced instead. When a session's drawdown goes past the mandate's limit, the risk desk closes the position at market and the session ends. The close pays the book's impact and the taker fee. The PnL is the account's value after the close. See `scoring.stop_out` in [scenario-format.md](scenario-format.md).
 
 A breached session counts at least as the worst loss the mandate allows, weighted. It counts its real weighted loss when that is worse:
 
@@ -130,9 +134,9 @@ On top of that, a breach caps the whole run:
 
 Without the cap, a bot that breached now and then could beat its own compliant twin. Breaching on purpose and winning big elsewhere paid. The run cap closes that.
 
-**A keeper liquidation is not a breach.** If a scenario has a liquidation keeper, a liquidation is priced into the PnL like any other loss: the account value after it is what counts. It is not counted as a breach and does not trigger the cap.
+**A keeper liquidation is not a breach.** If a scenario has a liquidation keeper, a liquidation is priced into the PnL like any other loss: the account value after it is what counts. It is not counted as a breach and does not trigger the cap. With no keeper, ending the session liquidatable is a breach.
 
-Breaches are checked on intra-session equity, marked to market each step (D9). The report keeps `breached_sessions` and `breaches_per_100_sessions`.
+Breaches are checked on intra-session equity, marked to market each step. The report keeps `breached_sessions` and `breaches_per_100_sessions`.
 
 In the example, if Bot X had the −$250 session instead of its −$40 one, `E_bot` would be −10, and `raw` would be −0.02: the breach alone took it from 0.58 to below nothing.
 
@@ -158,25 +162,25 @@ Example: five runs with raw 0.58, 0.40, −0.20, 0.60 and −1 (a fatal run). Th
 
 ## Statistics: what we report and why
 
-**Raw beside clamped.** The Harbor `reward` is the clamped per-trial score, which is fine for an eval. `reward.json` also carries `score_v2_raw`, `score_v2_raw_unfloored` and all the metrics (D8). Anyone training on these scores should use raw, or `tanh(raw)`, never the clamped value. Clamping flattens every losing episode to 0 and gives no learning signal.
+**Raw beside clamped.** Today the Harbor `reward` is still the v1 reward. It becomes the clamped v2 score when a task's v2 score becomes its headline, which is fine for an eval. `reward.json` already carries `score_v2_raw`, `score_v2_raw_unfloored` and all the metrics. Anyone training on these scores should use raw, or `tanh(raw)`, never the clamped value. Clamping flattens every losing episode to 0 and gives no learning signal.
 
 **One run's interval.** A single grade carries a 95% interval on `raw`, from a paired bootstrap over its sessions (2,000 resamples, the same session draws for the bot, the reference and the ceiling). It says how much one run's luck of the sessions could move the score. It is labelled `ci_scope: "sessions"` and `ci_use: "not for ranking"`. `within_noise` is true when the interval on `edge` includes 0: the bot cannot be told apart from the reference on this set.
 
-**Comparing models.** `mtx bench rescore` runs a paired hierarchical bootstrap. Each resample draws the scenarios with replacement (the same draws for every model, so differences are paired), then draws each model's runs within the model. For each pair of models it reports the difference in mean `raw` with its interval, a two-sided p-value, and the Benjamini-Hochberg adjustment over the task's pairs. The pair is a **tie** when the adjusted p is 0.05 or more. Ranks are published as tie groups, not as a strict order (D6).
+**Comparing models.** `mtx bench rescore` runs a paired hierarchical bootstrap. Each resample draws the scenarios with replacement (the same draws for every model, so differences are paired), then draws each model's runs within the model. For each pair of models it reports the difference in mean `raw` with its interval, a two-sided p-value, and the Benjamini-Hochberg adjustment over the task's pairs. The pair is a **tie** when the adjusted p is 0.05 or more. Ranks are published as tie groups, not as a strict order.
 
 Naive per-run intervals are about twice too narrow, and most 5-run gaps between close models turn out to be ties. Add runs only for pairs that matter. Runs that did not play the same scenarios are not compared.
 
 **Reproducible.** The bootstrap is seeded from the grade's `eval_seed_sha256`, so a rescore reproduces every interval exactly.
 
-**Across tasks (D4).** The cross-task figure is the mean of the per-task 0 to 1 scores with a 95% interval. We also report the mean raw score, so negatives stay visible, and the interquartile mean as `rliable` defines it.
+**Across tasks.** The cross-task figure will be the mean of the per-task 0 to 1 scores with a 95% interval. We will also report the mean raw score, so negatives stay visible, and the interquartile mean as `rliable` defines it.
 
-**Raw metrics (D10).** Beside every score, the grade reports return on capital, per-session Sharpe, drawdown as a share of the limit (mean and worst), profitable share, worst session, usd lost, and the number of breaches and stop-outs. None of these is scored. They explain a score and keep the harm as prominent as the number. There is no Sortino.
+**Raw metrics.** Beside every score, the grade reports return on capital, per-session Sharpe, drawdown as a share of the limit (mean and worst), profitable share, worst session, usd lost, and the number of breaches and stop-outs. None of these is scored. They explain a score and keep the harm as prominent as the number. There is no Sortino.
 
-## The probe gate (D7)
+## The probe gate
 
 Reward hacking cannot be ruled out. It can only be tested for. Before a task's v2 score is a headline, a set of probe bots must land where they should. This is a blocking release check.
 
-> **To be confirmed once the gate lands (infra/36).** The bots, bands and ordering below follow decision D7 and its updates. The numbers will be filled in from the gate's own table. Keep this table in step with it.
+This table may still change.
 
 | Probe | What it tests | Required result |
 |---|---|---|
@@ -194,17 +198,17 @@ Reward hacking cannot be ruled out. It can only be tested for. Before a task's v
 | Adaptive bot | A bot that gambles when behind | Does not beat its stationary version |
 | Exploit bots (cheater, sneaky) | Harness holes | Score 0 or fatal, per the task |
 
-All probes run with fees. The graceful crash probe scored slightly above a noisy honest bot, because the near-breach charge takes a noisy bot's thin winnings while a bot that cuts losses early pays none. That is the intended effect.
+All probes run with fees. A bot that flattens and stops trading when it is behind is a stop-loss, which a desk rewards, so it is reported and not gated. It can score a little above a noisy honest bot, because the near-breach charge takes a noisy bot's thin winnings while a bot that cuts losses early pays none.
 
 A known residual: a coin-flip entry with a trailing stop has a weak but real edge on funding-carry and weekend-gap, with a Sharpe near 0.2. It scores a little above nop there, about the same as an honest Sharpe-0.2 bot. That is a property of those task generators (paths that trend within a session), so the fix belongs in the task and the reference's strength band, not in the grade.
 
 ## Fairness
 
-**What agents are told (D5).** Agents are told the scoring rule in plain words in the task prompt: the three anchors, that losses count more, and that breaches and reckless betting are charged. Real traders know their mandate and how they are judged. Hidden rules would make failures unfair. The grader's code stays out of the sandbox.
+**What agents are told.** Agents are to be told the scoring rule in plain words in the task prompt (planned): the three anchors, that losses count more, and that breaches and reckless betting are charged. Real traders know their mandate and how they are judged. Hidden rules would make failures unfair. The grader's code stays out of the sandbox.
 
 **What is not scored, and why.**
 
-- **Profitable share and best-session share.** Reported, never scored. A rule that caps the best session would punish legitimate profit that arrives in a few bunches.
+- **Profitable share and the worst session.** Reported, never scored. A rule that capped the best session would punish legitimate profit that arrives in a few bunches.
 - **Certainty-equivalent or utility-style scores.** They double count the concavity that loss weighting already supplies, and they charge real edge.
 - **Expected-shortfall and exposure-times-time charges.** Both were tested. Both pushed honest Sharpe-0.2 strategies below nop on held-out tasks, so they would charge a real, weak edge.
 - **The plain hindsight bound.** Never in the score. It is reported as the luck headroom above the ceiling.
@@ -214,8 +218,8 @@ A known residual: a coin-flip entry with a trailing stop has a weak but real edg
 
 **How this compares with common practice.**
 
-- Many RL benchmarks report scores normalised between a random policy and a reference. Our 0 and 0.5 are the same idea, with a fixed, never-graded bot at each end. The anchors come from bots that are never graded against, and are frozen before any run.
-- `rliable` (Agarwal et al.) recommends interval estimates, the interquartile mean and performance profiles instead of a bare mean. We report intervals and the IQM, and keep the raw mean so negatives show.
+- Many RL benchmarks report scores normalised between a random policy and a reference. Our 0 and 0.5 are the same idea, with a fixed, never-graded bot at each end. The anchors come from fixed bots, not from the models being graded.
+- `rliable` (Agarwal et al.) recommends interval estimates, the interquartile mean and performance profiles instead of a bare mean. We report intervals and keep the raw mean so negatives show, and will add the IQM.
 - Prop-trading firms already work this way. They cap drawdown, stop traders out on a breach and judge consistency, not just totals. The stop-out and the run cap copy that.
 - The paired bootstrap follows METR and Miller on why naive intervals mislead.
 
@@ -235,8 +239,8 @@ Two honest limits. First, k is a choice, and it makes some profitable but noisy 
 **Planned:**
 
 - **Informed bots for the four existing tasks** (flash-crash, funding-carry, weekend-gap, market-making), planned for 0.13. Until then they use the hindsight ceiling and v2 is reported beside the old reward. Our new tasks ship with an informed bot from day one.
-- **The probe gate** (infra/36), as a blocking release check. The table above is a draft until it lands.
+- **The probe gate** as a blocking release check. The table above is a draft until it lands.
 - **Market making.** Its 0.5 does not hold yet, because the reference is too weak, so its scores are flagged `anchor_floored` and it is kept out of the v2 headline until it is redesigned. The redesign has the grader close out the position at the end of each session, limits market orders to reducing the position, adds quoting obligations, and replaces the reference with a real market maker.
-- **Reporting.** The interquartile mean across tasks is in the decisions but not yet in the code. The headline over a frozen common task set, with floored tasks left out, is also planned.
-- **The task prompts** carry the scoring rule in plain words (D5). The wording is to be added with each task.
-- **Not yet in v2:** a measured nop anchor for sessions that start holding something, per-step gap attribution, and the optional tail-gap penalty.
+- **Reporting.** The interquartile mean across tasks is not yet in the code. The headline over a frozen common task set, with floored tasks left out, is also planned.
+- **The task prompts** will carry the scoring rule in plain words. The wording is to be added with each task.
+- **Not yet in v2:** a measured nop anchor for sessions that start holding something, a gap report that follows the informed bot step by step, and the optional tail-gap penalty.
