@@ -141,7 +141,9 @@ def scan(root: Path) -> int:
         if len(value) >= 8:
             forms |= key_forms(value)
     if not forms:
-        return 0
+        # Nothing to look for is not a clean result.
+        print(f"no key is set ({', '.join(key_names())}), so nothing was checked")
+        return 1
     hits, unreadable = [], []
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file():

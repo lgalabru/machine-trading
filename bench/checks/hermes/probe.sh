@@ -20,7 +20,7 @@ version="${2:?hermes version}"
 route="${3:?route: openai, anthropic, openrouter or chat}"
 here="$(cd "$(dirname "$0")" && pwd)"
 harness="$(cd "$here/../../harness" && pwd)"
-if [ -n "${4:-}" ]; then jobs="$4"; mkdir -p "$jobs"; else jobs="$(mktemp -d)"; fi
+if [ -n "${4:-}" ]; then jobs="$4"; mkdir -p "$jobs"; temporary=""; else jobs="$(mktemp -d)"; temporary="$jobs"; fi
 case "$route" in
   openai) entry='api = "openai"
 model = "gpt-6.1-sol"
@@ -51,7 +51,7 @@ mock=$!
 host="$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)"
 MTX_MODELS="$registry" python3 -I "$harness/key_proxy.py" --host "$host" --port 0 probe > "$jobs/proxy.url" 2> "$jobs/proxy.log" &
 proxy=$!
-trap 'kill "$mock" "$proxy" 2> /dev/null || true' EXIT
+trap 'kill "$mock" "$proxy" 2> /dev/null || true; [ -z "$temporary" ] || rm -rf -- "$temporary"' EXIT
 for _ in $(seq 50); do [ -s "$jobs/proxy.url" ] && break; sleep 0.2; done
 mapfile -t args < <(MTX_MODELS="$registry" python3 -I "$harness/models.py" args probe "$(cat "$jobs/proxy.url")")
 MTX_PROXY_TOKEN="$(MTX_MODELS="$registry" python3 -I "$harness/models.py" token probe)"

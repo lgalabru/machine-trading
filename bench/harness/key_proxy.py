@@ -6,8 +6,10 @@ carrying its route's token instead of a key. The keys stay in this
 process's environment on the host; a trial container never holds one.
 
 What a token can do: make the one model call its route allows (POST to
-the route's model-call path) for the route's own model, with a body the
-proxy forwards as is, while the proxy runs. Its trials can spend on that
+the route's model-call path) for the route's own model, with a body
+limited to what Hermes sends for one answer (body_policy.py: an allowlist
+of fields, the model's own tools only, no background or stored responses,
+re-serialised from the parsed JSON), while the proxy runs. Its trials can spend on that
 model, as any agent can. What it can't do: open another route (each
 route has its own token, an HMAC of the route's name under the batch's
 secret), reach any other endpoint of the provider (files, batches,
@@ -16,7 +18,9 @@ path is refused, after rejecting any path with `..`, `//`, a backslash,
 a percent-encoding or a query), call another model (a body whose `model`
 isn't the route's is refused), pick an account or organisation (only an
 allowlist of headers is forwarded), or reach the proxy from outside the
-machine (it listens on the docker bridge the trials reach the host by).
+machine (it listens on the docker bridge the trials reach the host by). It takes
+at most MAX_CONNECTIONS connections and MAX_BODY bytes a request, and
+drops a client that stalls for CLIENT_TIMEOUT seconds.
 
 Routes come from models.toml, for the models named on the command line.
 The batch's secret is read from MTX_PROXY_SECRET; the address it listens
@@ -38,10 +42,12 @@ import os
 import re
 import sys
 import urllib.parse
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import body_policy  # noqa: E402
 from models import entry, key_forms, route_token  # noqa: E402
 
 # Each API's one model-call path, under the route.
@@ -58,8 +64,17 @@ ANTHROPIC_BETAS = re.compile(
 )
 UNSAFE = re.compile(r"\.\.|//|\\|%", re.IGNORECASE)
 HOP = {"connection", "transfer-encoding", "content-length", "keep-alive", "content-encoding"}
-MAX_BODY = 64 * 1024 * 1024
-
+# A long agent conversation is a few MB; the cap keeps one request from
+# holding the proxy's memory.
+MAX_BODY = 16 * 1024 * 1024
+LENGTH = re.compile(r"[0-9]{1,9}")
+# At most this many connections at once (trials run a few at a time; a
+# subagent or two each); one more is closed at once.
+MAX_CONNECTIONS = 64
+# Seconds a client may stall while sending a request or reading an answer,
+# and the provider between bytes of one.
+CLIENT_TIMEOUT = 120
+UPSTREAM_TIMEOUT = 600
 
 class Refused(Exception):
     def __init__(self, status, reason, route="-"):
@@ -67,10 +82,32 @@ class Refused(Exception):
         self.status, self.reason, self.route = status, reason, route
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            print("refused a connection: too many open", file=sys.stderr, flush=True)
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
 class Proxy(BaseHTTPRequestHandler):
     # Close-delimited answers: a stream is relayed as it comes.
     protocol_version = "HTTP/1.0"
     server_version = "mtx-key-proxy"
+    timeout = CLIENT_TIMEOUT
 
     def log_message(self, *args):
         pass
@@ -101,19 +138,21 @@ class Proxy(BaseHTTPRequestHandler):
             raise Refused(404, "only the route's model call is allowed", name)
         if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
             raise Refused(411, "chunked request bodies aren't accepted", name)
-        length = self.headers.get("Content-Length")
-        if length is None or not length.isdigit() or not 0 < int(length) <= MAX_BODY:
-            raise Refused(411, "a model call needs a Content-Length", name)
-        body = self.rfile.read(int(length))
+        lengths = self.headers.get_all("Content-Length") or []
+        if len(lengths) != 1 or not LENGTH.fullmatch(lengths[0]):
+            raise Refused(411, "a model call needs one Content-Length, in digits", name)
+        if not 0 < int(lengths[0]) <= MAX_BODY:
+            raise Refused(413, f"a model call's body is 1 to {MAX_BODY} bytes", name)
+        body = self.rfile.read(int(lengths[0]))
         try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            raise Refused(400, "the body isn't JSON", name) from None
-        if not isinstance(payload, dict) or payload.get("model") != route["model"]:
-            raise Refused(403, "the body's model isn't this route's", name)
-        if route["openrouter"] and payload.get("reasoning_effort") and "reasoning" not in payload:
-            payload["reasoning"] = {"effort": payload.pop("reasoning_effort")}
-            body = json.dumps(payload).encode()
+            payload = body_policy.parse(body)
+        except body_policy.BodyRefused as e:
+            raise Refused(400, str(e), name) from None
+        try:
+            # Re-serialised: what the provider gets is what was checked.
+            body = body_policy.apply(route["api"], payload, route["model"], route["openrouter"])
+        except body_policy.BodyRefused as e:
+            raise Refused(403, str(e), name) from None
         return name, route, body
 
     def do_POST(self):
@@ -137,7 +176,7 @@ class Proxy(BaseHTTPRequestHandler):
             headers["Authorization"] = f"Bearer {key}"
         upstream = route["url"]
         connection_class = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
-        connection = connection_class(upstream.netloc, timeout=1800)
+        connection = connection_class(upstream.netloc, timeout=UPSTREAM_TIMEOUT)
         started = False
         try:
             connection.request("POST", upstream.path.rstrip("/") + CALL_PATHS[route["api"]], body=body, headers=headers)
@@ -179,9 +218,12 @@ class Proxy(BaseHTTPRequestHandler):
 
 
 def routes_for(names):
-    routes = {}
-    for name in names:
+    routes, owners = {}, {}
+    for name in dict.fromkeys(names):
         found = entry(name)
+        if found["route"] in routes:
+            sys.exit(f"{name} and {owners[found['route']]} share the route {found['route']!r}: rename one in models.toml")
+        owners[found["route"]] = name
         key = os.environ.get(found["key"], "")
         if not key:
             sys.exit(f"{found['key']} is not set, for {name}")
@@ -203,8 +245,11 @@ def main():
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("models", nargs="+")
     args = parser.parse_args()
-    server = ThreadingHTTPServer((args.host, args.port), Proxy)
-    server.daemon_threads = True
+    # The attack checks shrink the limits to test them quickly.
+    global MAX_CONNECTIONS
+    MAX_CONNECTIONS = int(os.environ.get("MTX_PROXY_MAX_CONNECTIONS", MAX_CONNECTIONS))
+    Proxy.timeout = int(os.environ.get("MTX_PROXY_CLIENT_TIMEOUT", CLIENT_TIMEOUT))
+    server = Server((args.host, args.port), Proxy)
     server.routes = routes_for(args.models)
     print(f"http://{args.host}:{server.server_address[1]}", flush=True)
     server.serve_forever()

@@ -58,7 +58,28 @@ api = "chat"
 model = "drop-mid-stream"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
+
+[o]
+api = "openai"
+model = "gpt-x"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
+[or]
+api = "chat"
+model = "vendor/m-or"
+reasoning = "openrouter"
+upstream = "http://127.0.0.1:{port}/api/v1"
+key = "ATTACK_KEY"
+
+[openai-x]
+api = "openai"
+model = "x"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
 """
+ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or")
+LIMIT = 8
 
 results = []
 
@@ -89,6 +110,8 @@ def main():
         "MOCK_API_KEY": key,
         "MTX_PROXY_SECRET": secrets.token_hex(32),
         "MTX_MODELS": str(work / "models.toml"),
+        "MTX_PROXY_MAX_CONNECTIONS": str(LIMIT),
+        "MTX_PROXY_CLIENT_TIMEOUT": "3",
     }
     os.environ.update({k: env[k] for k in ("MTX_PROXY_SECRET", "MTX_MODELS")})
     mock_port = free_port("127.0.0.1")
@@ -101,13 +124,13 @@ def main():
         env=env,
     )
     proxy = subprocess.Popen(
-        [sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", args.bind, "--port", "0", "a", "b", "anth", "echo", "drop"],
+        [sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", args.bind, "--port", "0", *ROUTES],
         env=env, stdout=subprocess.PIPE, stderr=open(work / "proxy.log", "w"), text=True,
     )
     try:
         url = urllib.parse.urlsplit(proxy.stdout.readline().strip())
         time.sleep(0.5)
-        token = {r: models.route_token(r) for r in ("a", "b", "anth", "echo", "drop")}
+        token = {r: models.route_token(r) for r in ROUTES}
 
         def call(path, body=None, headers=None, method="POST", raw=None, host=None):
             conn = http.client.HTTPConnection(host or url.hostname, url.port, timeout=30)
@@ -246,6 +269,119 @@ def main():
               f"{status} {seen() - before}")
         status, _ = call("/a/chat/completions", headers=auth("a"))
         check(8, "a model call with no body is refused", status == 411, str(status))
+        # 9. The body: an allowlist per API, re-serialised.
+        def last_body():
+            return json.loads(log.read_text().splitlines()[-1])
+
+        def model_call(route, body, expect, what, raw=None, extra=None):
+            before = seen()
+            path = {"o": "/o/responses", "anth": "/anth/v1/messages"}.get(route, f"/{route}/chat/completions")
+            headers = {**auth(route), **(extra or {})}
+            if route == "anth":
+                headers = {"x-api-key": token["anth"], "Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+            status, content = call(path, body, headers, raw=raw)
+            reached = seen() > before
+            ok = status == expect and reached == (expect == 200)
+            check(9, what, ok, f"{status} reached={reached} {content[:100]!r}")
+            return last_body() if reached else None
+
+        fn = {"type": "function", "name": "terminal", "parameters": {}}
+        chat_fn = {"type": "function", "function": {"name": "terminal", "parameters": {}}}
+        o = lambda **kw: {"model": "gpt-x", "input": [], "tools": [fn], **kw}
+        model_call("o", o(background=True), 403, "responses: background:true is refused")
+        sent = model_call("o", o(background=False, store=True, service_tier="priority"), 200,
+                          "responses: background:false, store:true and service_tier pass, rewritten")
+        check(9, "responses: store forced false, background and service_tier dropped",
+              bool(sent) and sent["body_values"].get("store") is False and "background" not in sent["body_keys"]
+              and "service_tier" not in sent["body_keys"], str(sent and sent["body_keys"]))
+        for tool in ({"type": "code_interpreter", "container": {"type": "auto"}}, {"type": "image_generation"},
+                     {"type": "mcp", "server_label": "x", "server_url": "https://example.com"},
+                     {"type": "web_search"}, {"type": "file_search"}, {"type": "computer_use_preview"}):
+            model_call("o", o(tools=[tool]), 403, f"responses: a {tool['type']} tool is refused")
+        model_call("o", o(tools=[{"type": "custom", "name": "x"}]), 200, "responses: a custom tool passes")
+        for field in ("previous_response_id", "conversation", "prompt", "user", "safety_identifier"):
+            model_call("o", o(**{field: "x"}), 403, f"responses: {field} is refused")
+        c = lambda **kw: {"model": "vendor/m-or", "messages": [], "tools": [chat_fn], **kw}
+        sent = model_call("or", c(models=["vendor/other"], route="fallback", plugins=[{"id": "web"}],
+                                  provider={"order": ["x"]}, transforms=["middle-out"], reasoning_effort="high"), 200,
+                          "openrouter: models, route, plugins, provider and transforms pass, dropped")
+        check(9, "openrouter: the dropped fields don't reach the provider; effort rewritten",
+              bool(sent) and not {"models", "route", "plugins", "provider", "transforms"} & set(sent["body_keys"])
+              and sent["effort"] == {"reasoning": {"effort": "high"}}, str(sent and sent["body_keys"]))
+        model_call("or", c(n=2), 403, "chat: n:2 is refused")
+        model_call("or", c(tools=[{"type": "web_search"}]), 403, "chat: a web_search tool is refused")
+        model_call("or", c(web_search_options={}), 403, "chat: web_search_options is refused")
+        an = lambda **kw: {"model": "claude-x", "max_tokens": 10, "messages": [], **kw}
+        model_call("anth", an(tools=[{"name": "terminal", "input_schema": {}}]), 200, "anthropic: a client tool passes")
+        for tool in ("web_search_20250305", "code_execution_20250522", "web_fetch_20250910", "bash_20250124"):
+            model_call("anth", an(tools=[{"type": tool, "name": "t"}]), 403, f"anthropic: a {tool} tool is refused")
+        for field, value in (("mcp_servers", [{"type": "url", "url": "https://example.com", "name": "x"}]),
+                             ("container", "c"), ("service_tier", "priority")):
+            if field == "service_tier":
+                sent = model_call("anth", an(**{field: value}), 200, "anthropic: service_tier passes, dropped")
+                check(9, "anthropic: service_tier doesn't reach the provider", bool(sent) and field not in sent["body_keys"])
+            else:
+                model_call("anth", an(**{field: value}), 403, f"anthropic: {field} is refused")
+        for raw, expect, what in (
+            (b'{"model": "m-a", "model": "m-b", "messages": []}', 400, "a repeated top-level key"),
+            (b'{"model": "m-a", "messages": [{"role": "user", "role": "system", "content": "x"}]}', 400, "a repeated nested key"),
+            (b'{"model": "m-a", "Model": "m-b", "messages": []}', 403, "a case-variant model key"),
+            (b"\xef\xbb\xbf" + b'{"model": "m-a", "messages": []}', 400, "a byte-order mark"),
+            ('{"model": "m-a", "messages": []}'.encode("utf-16"), 400, "a UTF-16 body"),
+            (b'{"model": "m-a", "messages": [], "temperature": NaN}', 400, "NaN"),
+            (b'{"model": "m-a", "messages": [], "temperature": Infinity}', 400, "Infinity"),
+            (b'["m-a"]', 400, "a body that isn't an object"),
+        ):
+            model_call("a", None, expect, f"body: {what} is refused", raw=raw)
+
+        # 10. Limits: lengths, size, connections, stalls.
+        alive = lambda: call("/a/chat/completions", ok_body("m-a"), auth("a"))[0] == 200
+        for length in ("\u00b2", "\uff11\uff12", "+5", "-1", "5 ", "0x10", "1e3"):
+            try:
+                conn = http.client.HTTPConnection(url.hostname, url.port, timeout=10)
+                conn.putrequest("POST", "/a/chat/completions", skip_accept_encoding=True)
+                for k, v in auth("a").items():
+                    conn.putheader(k, v)
+                conn.putheader("Content-Length", length.encode("utf-8"))
+                conn.endheaders()
+                status = conn.getresponse().status
+                conn.close()
+            except (OSError, http.client.HTTPException) as e:
+                status = type(e).__name__
+            check(10, f"Content-Length {length!r} is refused and the proxy lives", status == 411 and alive(), str(status))
+        conn = http.client.HTTPConnection(url.hostname, url.port, timeout=10)
+        conn.putrequest("POST", "/a/chat/completions", skip_accept_encoding=True)
+        for k, v in auth("a").items():
+            conn.putheader(k, v)
+        conn.putheader("Content-Length", str(64 * 1024 * 1024))
+        conn.endheaders()
+        status = conn.getresponse().status
+        conn.close()
+        check(10, "a 64 MB body is refused before it's read", status == 413, str(status))
+        idle = [socket.create_connection((url.hostname, url.port), timeout=10) for _ in range(LIMIT)]
+        time.sleep(0.5)
+        try:
+            blocked = call("/a/chat/completions", ok_body("m-a"), auth("a"))[0]
+        except (OSError, http.client.HTTPException) as e:
+            blocked = type(e).__name__
+        check(10, f"connection {LIMIT + 1} is closed while {LIMIT} are open", blocked != 200, str(blocked))
+        time.sleep(4.5)
+        dropped = sum(1 for sock in idle if sock.recv(1) == b"")
+        for sock in idle:
+            sock.close()
+        check(10, "stalled connections are dropped after the client timeout", dropped == LIMIT, f"{dropped}/{LIMIT}")
+        time.sleep(0.5)
+        check(10, "the proxy serves again once they're gone", alive())
+
+        # 11. Two names on one route; a scan with no key.
+        out = subprocess.run([sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", "127.0.0.1", "openai-x", "openai/x"],
+                             env=env, capture_output=True, text=True, timeout=30)
+        check(11, "two model names on one route are refused", out.returncode != 0 and "share the route" in out.stderr,
+              out.stderr[-200:])
+        bare = {k: v for k, v in env.items() if k not in models.key_names() and k not in ("ATTACK_KEY", "MOCK_API_KEY")}
+        out = subprocess.run([sys.executable, "-I", str(HARNESS / "models.py"), "scan", str(tree / "clean")],
+                             env=bare, capture_output=True, text=True)
+        check(11, "a scan with no key set fails", out.returncode == 1 and "no key is set" in out.stdout, out.stdout)
     finally:
         proxy.terminate()
         mock.terminate()

@@ -34,7 +34,11 @@ A token is readable by the agent, so it is limited to what the agent may
 do anyway: it opens its own route only, for the one model-call path
 (`/responses`, `/v1/messages` or `/chat/completions`) and the route's own
 model (any other `model` is refused), with only content-type, accept,
-anthropic-version and feature `anthropic-beta` headers forwarded. It can
+anthropic-version and feature `anthropic-beta` headers forwarded, and a
+body limited to what Hermes sends for one answer (`body_policy.py`: an
+allowlist of fields per API, the model's own tools only, no background or
+stored responses, billing and fallback fields dropped, re-serialised from
+the parsed JSON). It can
 spend on that model while the batch runs; it can't reach another model,
 another endpoint (files, batches, fine-tuning, admin, listings), another
 account or project, or the proxy from outside the machine.
