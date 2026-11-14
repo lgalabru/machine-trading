@@ -11,6 +11,8 @@ and changes what a benchmark needs to compare models:
   installer leaves no dependency environment ("run `hermes pm repair`"),
   and Harbor checks the install with `hermes version`, a subcommand
   v0.23.1 dropped for `hermes --version`.
+- Subagents: 2 per one-shot run, joined in the call (Hermes's default,
+  pinned), and batches capped at 4 (limits.py).
 - Tools: a shell, files, a todo list, subagents and code execution, the
   tools Claude Code and Codex give a model, all listed from the first turn
   (no tool search). No web, browser, vision, memory, skills or session
@@ -36,12 +38,17 @@ bench/harness on PYTHONPATH).
 """
 
 import json
+import sys
+from pathlib import Path
 from typing import Any, override
 
 import yaml
 from harbor.agents.installed.hermes import Hermes as HarborHermes
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+sys.path.insert(0, str(Path(__file__).parent))
+from limits import DELEGATION_CHILDREN, ONESHOT_CHILDREN  # noqa: E402
 
 # Harbor's adapter writes its config, runs and exports sessions here.
 HERMES_HOME = "/tmp/hermes"
@@ -180,6 +187,17 @@ class Hermes(HarborHermes):
             "memory_enabled": False,
             "user_profile_enabled": False,
             "nudge_interval": 0,
+        }
+        # Subagents bounded and the same for every model (limits.py, which
+        # sizes the key proxy's caps from these): a one-shot run spawns 2 in
+        # all (Hermes's default, pinned), joined inside the call; batches are
+        # capped at 4 (Hermes's default, 10, allows ~100 at once outside
+        # one-shot runs).
+        config["delegation"] = {
+            **config.get("delegation", {}),
+            "oneshot_max_children": ONESHOT_CHILDREN,
+            "max_concurrent_children": DELEGATION_CHILDREN,
+            "max_spawn_depth": 1,
         }
         config["skills"] = {
             "creation_nudge_interval": 0,

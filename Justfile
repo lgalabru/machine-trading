@@ -636,7 +636,8 @@ hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
     # binding, error bodies, the scan, broken streams.
     python3 -I bench/checks/hermes/proxy_attacks.py \
       --bind "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" \
-      --other "$(hostname -I | awk '{print $1}')" || status=1
+      --other "$(hostname -I | awk '{print $1}')" \
+      --container-image {{registry}}/{{image}}:{{tag}}-runtime || status=1
     for route in {{routes}}; do
       bench/checks/hermes/probe.sh {{tasks}}/{{task}} {{hermes}} "$route" || status=1
     done
