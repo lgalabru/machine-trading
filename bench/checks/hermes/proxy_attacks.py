@@ -53,6 +53,12 @@ model = "echo-key"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
 
+[slow]
+api = "chat"
+model = "slow-upstream"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
 [drop]
 api = "chat"
 model = "drop-mid-stream"
@@ -78,8 +84,9 @@ model = "x"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
 """
-ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or")
-LIMIT = 8
+ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or", "slow")
+LIMIT = 6
+PER_CLIENT = 4
 
 results = []
 
@@ -111,7 +118,11 @@ def main():
         "MTX_PROXY_SECRET": secrets.token_hex(32),
         "MTX_MODELS": str(work / "models.toml"),
         "MTX_PROXY_MAX_CONNECTIONS": str(LIMIT),
+        "MTX_PROXY_MAX_PER_CLIENT": str(PER_CLIENT),
         "MTX_PROXY_CLIENT_TIMEOUT": "3",
+        "MTX_PROXY_HEAD_TIMEOUT": "1",
+        "MTX_PROXY_HEAD_DEADLINE": "2",
+        "MTX_PROXY_UPSTREAM_TIMEOUT": "2",
     }
     os.environ.update({k: env[k] for k in ("MTX_PROXY_SECRET", "MTX_MODELS")})
     mock_port = free_port("127.0.0.1")
@@ -132,6 +143,8 @@ def main():
         time.sleep(0.5)
         token = {r: models.route_token(r) for r in ROUTES}
 
+        seen_headers = set()
+
         def call(path, body=None, headers=None, method="POST", raw=None, host=None):
             conn = http.client.HTTPConnection(host or url.hostname, url.port, timeout=30)
             data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
@@ -149,6 +162,8 @@ def main():
             except (http.client.IncompleteRead, ConnectionError) as e:
                 content = getattr(e, "partial", b"")
             conn.close()
+            seen_headers.clear()
+            seen_headers.update(k.lower() for k in response.headers.keys())
             return response.status, content
 
         def seen():
@@ -358,20 +373,107 @@ def main():
         status = conn.getresponse().status
         conn.close()
         check(10, "a 64 MB body is refused before it's read", status == 413, str(status))
-        idle = [socket.create_connection((url.hostname, url.port), timeout=10) for _ in range(LIMIT)]
-        time.sleep(0.5)
-        try:
-            blocked = call("/a/chat/completions", ok_body("m-a"), auth("a"))[0]
-        except (OSError, http.client.HTTPException) as e:
-            blocked = type(e).__name__
-        check(10, f"connection {LIMIT + 1} is closed while {LIMIT} are open", blocked != 200, str(blocked))
-        time.sleep(4.5)
+        def tried(source=None):
+            try:
+                conn = http.client.HTTPConnection(url.hostname, url.port, timeout=10,
+                                                  source_address=(source, 0) if source else None)
+                data = json.dumps(ok_body("m-a")).encode()
+                conn.request("POST", "/a/chat/completions", body=data, headers=auth("a"))
+                status = conn.getresponse().status
+                conn.close()
+                return status
+            except (OSError, http.client.HTTPException) as e:
+                return type(e).__name__
+
+        def opened(n, source=None):
+            return [socket.create_connection((url.hostname, url.port), timeout=10,
+                                             source_address=(source, 0) if source else None) for _ in range(n)]
+
+        # 12. No token is needed to hold a slot, so one client gets few, and
+        # only for the head's few seconds.
+        idle = opened(PER_CLIENT, args.bind if args.other else None)
+        time.sleep(0.3)
+        check(12, f"one address holding {PER_CLIENT} idle connections can't open another",
+              tried(args.bind if args.other else None) != 200, "served")
+        if args.other:
+            check(12, "while another address is still served", tried(args.other) == 200, "refused")
+            more = opened(LIMIT - PER_CLIENT, args.other)
+            time.sleep(0.3)
+            check(12, f"with {LIMIT} open in all, a new connection is closed", tried(args.other) != 200, "served")
+            idle += more
+        start = time.monotonic()
         dropped = sum(1 for sock in idle if sock.recv(1) == b"")
+        took = time.monotonic() - start
         for sock in idle:
             sock.close()
-        check(10, "stalled connections are dropped after the client timeout", dropped == LIMIT, f"{dropped}/{LIMIT}")
-        time.sleep(0.5)
-        check(10, "the proxy serves again once they're gone", alive())
+        check(12, "connections that send no head are dropped at the head deadline",
+              dropped == len(idle) and took < 4, f"{dropped}/{len(idle)} in {took:.1f}s")
+        time.sleep(0.3)
+        check(12, "the proxy serves again once they're gone", alive())
+        trickle = socket.create_connection((url.hostname, url.port), timeout=10)
+        trickle.sendall(b"POST /a/chat/completions HTTP/1.1\r\n")
+        start, closed = time.monotonic(), False
+        while time.monotonic() - start < 6:
+            try:
+                trickle.sendall(b"X")
+                time.sleep(0.5)
+                trickle.setblocking(False)
+                try:
+                    closed = trickle.recv(1) == b""
+                except BlockingIOError:
+                    pass
+                trickle.setblocking(True)
+            except OSError:
+                closed = True
+            if closed:
+                break
+        took = time.monotonic() - start
+        trickle.close()
+        check(12, "a head sent a byte at a time is cut at the deadline", closed and took < 4, f"closed={closed} {took:.1f}s")
+        slow = socket.create_connection((url.hostname, url.port), timeout=10)
+        data = json.dumps(ok_body("m-a")).encode()
+        head = "".join(f"{k}: {v}\r\n" for k, v in auth("a").items())
+        slow.sendall(f"POST /a/chat/completions HTTP/1.1\r\nHost: x\r\n{head}Content-Length: {len(data)}\r\n\r\n".encode())
+        time.sleep(1.5)
+        slow.sendall(data)
+        answer = slow.recv(64)
+        slow.close()
+        check(12, "a body sent after the head timeout but within the client timeout is served",
+              answer.startswith(b"HTTP/1.0 200"), repr(answer[:30]))
+
+        # 13. tool_choice, overflowing numbers, bodies that break the checks.
+        model_call("o", o(tool_choice="auto"), 200, "responses: tool_choice auto passes")
+        model_call("o", o(tool_choice={"type": "function", "name": "terminal"}), 200, "responses: a function tool_choice passes")
+        for choice in ({"type": "web_search"}, {"type": "mcp", "server_label": "x"}, {"type": "allowed_tools", "tools": []},
+                       {"type": "image_generation"}, {"type": "code_interpreter"}, "bogus", 5):
+            model_call("o", o(tool_choice=choice), 403, f"responses: tool_choice {choice!r} is refused")
+        model_call("or", c(tool_choice={"type": "function", "function": {"name": "terminal"}}), 200, "chat: a function tool_choice passes")
+        model_call("or", c(tool_choice={"type": "web_search"}), 403, "chat: tool_choice web_search is refused")
+        model_call("anth", an(tools=[{"name": "terminal", "input_schema": {}}], tool_choice={"type": "tool", "name": "terminal"}), 200,
+                   "anthropic: a tool tool_choice passes")
+        for choice in ({"type": "web_search"}, "auto"):
+            model_call("anth", an(tool_choice=choice), 403, f"anthropic: tool_choice {choice!r} is refused")
+        for raw, what in ((b'{"model": "m-a", "messages": [], "temperature": 1e400}', "1e400"),
+                          (b'{"model": "m-a", "messages": [], "temperature": -1e400}', "-1e400"),
+                          (b'{"model": "m-a", "messages": [], "seed": 1' + b"0" * 5000 + b"}", "a 5000-digit integer"),
+                          (b'{"model": "m-a", "messages": ' + b"[" * 200000 + b"]" * 200000 + b"}", "200000 nested lists")):
+            before_log = (work / "proxy.log").read_text().count("\n")
+            model_call("a", None, 400, f"body: {what} is refused with a 400", raw=raw)
+            logged = (work / "proxy.log").read_text().count("\n") > before_log
+            check(13, f"body: {what} is logged and the proxy lives", logged and alive())
+        for tools in (5, {"type": "function"}, "terminal"):
+            model_call("a", {"model": "m-a", "messages": [], "tools": tools}, 403, f"body: tools {tools!r} is refused with a 403")
+
+        # 14. Answers name no account; a silent provider is logged.
+        status, _ = call("/a/chat/completions", ok_body("m-a"), auth("a"))
+        leaked = {"openai-organization", "anthropic-organization-id", "set-cookie"} & seen_headers
+        check(14, "an answer's account headers are dropped", status == 200 and not leaked, f"{status} {sorted(leaked)}")
+        status, _ = call("/echo/chat/completions", ok_body("echo-key"), auth("echo"))
+        leaked = {"openai-organization", "anthropic-organization-id", "set-cookie"} & seen_headers
+        check(14, "an error's account headers are dropped", status == 400 and not leaked, f"{status} {sorted(leaked)}")
+        status, _ = call("/slow/chat/completions", ok_body("slow-upstream"), auth("slow"))
+        check(14, "a provider silent past the upstream timeout gets a 502, logged",
+              status == 502 and "upstream silent" in (work / "proxy.log").read_text(), str(status))
 
         # 11. Two names on one route; a scan with no key.
         out = subprocess.run([sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", "127.0.0.1", "openai-x", "openai/x"],

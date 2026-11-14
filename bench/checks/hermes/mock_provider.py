@@ -82,9 +82,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def account_headers(self):
+        # What real providers name the account by; the proxy must drop them.
+        self.send_header("openai-organization", "org-mock-account")
+        self.send_header("anthropic-organization-id", "mock-account-id")
+        self.send_header("Set-Cookie", "session=mock-account")
+
     def reply_json(self, code, body):
         data = json.dumps(body).encode()
         self.send_response(code)
+        self.account_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -166,6 +173,8 @@ class Handler(BaseHTTPRequestHandler):
                      base64.b64encode(b"x" + expected.encode()).decode(), urllib.parse.quote(expected, safe="")]
             self.reply_json(400, {"error": {"message": "bad key " + " | ".join(forms)}})
             return
+        if body.get("model") == "slow-upstream":
+            time.sleep(4)
         if body.get("model") == "drop-mid-stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -185,6 +194,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def sse(self, events):
         self.send_response(200)
+        self.account_headers()
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
