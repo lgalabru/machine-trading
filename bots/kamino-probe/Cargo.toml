@@ -1,0 +1,18 @@
+# A check, not a strategy: a component that opens a Kamino loan, probes a
+# borrow now and then, and liquidates what it can (bench/checks/kamino).
+[package]
+name = "mtx-bot-kamino-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+bs58 = "0.5"
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
+serde_json = "1"

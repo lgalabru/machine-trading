@@ -170,11 +170,64 @@ impl PerpMarket {
 pub struct PerpSeat {
     market: String,
     trader: Arc<Trader>,
+    /// The signature of its last market order that landed.
+    last: std::sync::Mutex<Option<String>>,
+    /// Its trader sends through the transaction layer's pool: every send
+    /// must go through its chain client, which returns without waiting.
+    pooled: bool,
 }
 
 impl PerpSeat {
     pub fn new(market: String, trader: Arc<Trader>) -> Self {
-        Self { market, trader }
+        Self {
+            market,
+            trader,
+            last: std::sync::Mutex::default(),
+            pooled: false,
+        }
+    }
+
+    /// This seat, its sends through the transaction layer's pool if
+    /// `pooled`.
+    pub fn pooled(self, pooled: bool) -> Self {
+        Self { pooled, ..self }
+    }
+
+    /// Cancel every resting order through the trader's chain client, not
+    /// its blocking RPC client, which would wait for a block the pool has
+    /// yet to build.
+    async fn cancel_all_pooled(&self) -> Sent {
+        let trader = &self.trader;
+        let instructions = match trader.phoenix.tx().build_cancel_all_orders(
+            trader.authority(),
+            trader.account,
+            &trader.env.symbol,
+        ) {
+            Ok(instructions) => instructions,
+            Err(e) => {
+                return Sent {
+                    state: mtx_kit::SendState::failed(e.to_string()),
+                    sent: false,
+                };
+            }
+        };
+        let plan = mtx_kit::chain::ExecutionPlan {
+            payer: trader.authority(),
+            steps: vec![mtx_kit::chain::TransactionPlan::from_group(
+                &mtx_kit::chain::InstructionGroup::new("cancel all", instructions),
+                mtx_kit::protocols::phoenix::eternal::COMPUTE_UNIT_LIMIT,
+            )],
+        };
+        match trader.inner.execute(&plan, &trader.keypair).await {
+            Ok(signature) => Sent {
+                state: mtx_kit::SendState::Landed(signature.to_string()),
+                sent: true,
+            },
+            Err(e) => Sent {
+                state: mtx_kit::SendState::failed(e.to_string()),
+                sent: true,
+            },
+        }
     }
 }
 
@@ -189,15 +242,25 @@ impl Seat for PerpSeat {
     }
 
     async fn send(&self, planned: &Planned) -> Sent {
+        if self.pooled && matches!(planned.action, Action::CancelAll) {
+            return self.cancel_all_pooled().await;
+        }
         self.trader.send_planned(planned).await
     }
 
     async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
-        self.trader
+        let signature = self
+            .trader
             .place_market(side, size, limit)
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        *self.last.lock().expect("seat lock") = Some(signature.to_string());
+        Ok(())
+    }
+
+    /// The signature of the last market order [`Seat::take`] landed.
+    fn last_signature(&self) -> Option<String> {
+        self.last.lock().expect("seat lock").clone()
     }
 
     async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {
@@ -232,6 +295,54 @@ impl Seat for PerpSeat {
             })
         };
         Ok((usd(bbo.best_bid_ticks()), usd(bbo.best_ask_ticks())))
+    }
+
+    /// The best resting limit orders of at least `min_size` at their price,
+    /// read from the orderbook account. The splines the snapshot's makers
+    /// quote through aren't in it, and are never odd lots.
+    async fn top_sized(&self, min_size: f64) -> SeatResult<(Option<f64>, Option<f64>)> {
+        let inner = &self.trader.inner;
+        let market = inner.market();
+        let key = inner
+            .exchange()
+            .metadata()
+            .get_market(market.symbol())
+            .and_then(|m| m.market_pubkey.parse::<Pubkey>().ok())
+            .ok_or_else(|| format!("no orderbook account for {}", market.symbol()))?;
+        let account = patiently("the orderbook account", || inner.chain().get_account(&key))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "the orderbook account is missing".to_string())?;
+        let book = phoenix_rise::accounts::owned::Orderbook::try_from_account_bytes(&account.data)
+            .map_err(|e| e.to_string())?;
+        let sized = |entries: &[phoenix_rise::accounts::owned::OrderbookEntry],
+                     best: fn(u64, u64) -> u64| {
+            let mut levels: std::collections::BTreeMap<u64, u64> = Default::default();
+            for entry in entries {
+                *levels
+                    .entry(entry.order_id.price_in_ticks.as_inner())
+                    .or_default() += entry.order.num_base_lots_remaining;
+            }
+            levels
+                .into_iter()
+                .filter(|(_, lots)| {
+                    market
+                        .base_lots_to_quantity(*lots as i64)
+                        .to_string()
+                        .parse::<f64>()
+                        .is_ok_and(|size| size >= min_size)
+                })
+                .map(|(ticks, _)| ticks)
+                .reduce(best)
+                .map(|ticks| {
+                    market
+                        .ticks_to_price(ticks)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap_or(0.0)
+                })
+        };
+        Ok((sized(&book.bids, u64::max), sized(&book.asks, u64::min)))
     }
 
     /// Phoenix's index price.
@@ -374,6 +485,10 @@ impl Seat for UniquePerpSeat {
 
     async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
         self.seat.top().await
+    }
+
+    async fn top_sized(&self, min_size: f64) -> SeatResult<(Option<f64>, Option<f64>)> {
+        self.seat.top_sized(min_size).await
     }
 
     async fn position(&self) -> SeatResult<f64> {

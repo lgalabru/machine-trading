@@ -16,16 +16,20 @@ collateral.
 | `kamino:money-market:<SYMBOL>` | The reserve `<SYMBOL>` names in the table below. |
 | `kamino:money-market:<ADDRESS>` | The reserve at the base58 address `<ADDRESS>`, in its own lending market. |
 
-Named reserves, in Kamino's primary market, the SOL/BTC Market
-(`7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF`):
+Named reserves:
 
-| Symbol | Reserve address | Asset |
-| --- | --- | --- |
-| `SOL` | `d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q` | SOL (`So11111111111111111111111111111111111111112`) |
-| `USDC` | `D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59` | USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`), variable rate |
+| Symbol | Lending market | Reserve address | Asset |
+| --- | --- | --- | --- |
+| `SOL` | Main (`7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF`) | `d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q` | SOL (`So11111111111111111111111111111111111111112`) |
+| `USDC` | Main | `D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59` | USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`), variable rate |
+| `SPCX-BACKPACK` | Backpack (`4iRHKGsTq3e4uut6e4PfyV9AEbNuXaMu9JaSP378p9qy`) | `GrtBFz6BSky1PiyVBL7jy3w4Z1hKz2wvSjT4vd2iouC3` | SPCX (`SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb`), Token-2022; collateral only |
+| `USDC-BACKPACK` | Backpack | `7gHxajRCcU5sb9rQrpYDvkugSqgGsi9EG947pW7xJueT` | USDC |
+| `SPYX-XSTOCKS` | xStocks (`5wJeMrUYECGq41fxRESKALVcHnNX26TAWy4W98yULsua`) | `UvXjBuC7YZYaGB9Rn1PpBD1GySmjzunXgE8Zev9ua8d` | SPYx (`XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`), Token-2022 with a UI multiplier |
+| `USDC-XSTOCKS` | xStocks | `97zoywd8mPZsGTg8q1wdD2Wgkdrs2tqusp1Qqcxbyj7E` | USDC |
 
-The same market has other USDC reserves, such as fixed-rate ones, so a
-symbol names one reserve, never an asset.
+A symbol names one reserve, never an asset: a market has other reserves of
+the same asset (fixed-rate ones), and USDC has a reserve in every market. A
+reserve outside Kamino's primary market is named `<ASSET>-<MARKET>`.
 
 ## Account
 
@@ -85,6 +89,77 @@ program's `max_liquidatable_borrowed_amount` agree on its shape:
   and the end of a fixed-rate borrow's term. They are the venue's, and this
   profile does not count them as the agent's breach.
 
+## Instrument mapping
+
+Every reserve is a [money-market](../instruments/money-market.md)
+instrument, and Kamino offers no other kind. Where Kamino's reserves
+differ from the profile, or the profile leaves the venue to say:
+
+- **Collateral and borrowing are per reserve.** A reserve with a
+  loan-to-value of 0 (Backpack's and the Main market's USDC, among others)
+  can be supplied but backs no borrow; one with a borrow limit of 0
+  (Backpack's SPCX) can back borrows but can't be borrowed. The mandate's
+  `min_position` can only forbid what the reserve allows.
+- **Health is the obligation's, not the reserve's.** One obligation's
+  deposits back all its borrows in that lending market, so every reserve of
+  one market reports the same health.
+- **A reserve can refuse an action the profile allows** while it is outside
+  its price checks: a reserve whose oracle price is older than its maximum
+  age, or more than its divergence threshold away from its TWAP, refuses
+  borrows and withdrawals (repays, deposits and liquidations still go
+  through). Deposit and borrow limits, and a utilization ceiling on
+  borrowing, refuse more.
+- **An emptied obligation is closed.** A withdrawal that leaves an
+  obligation with no deposits and no debt closes it; the next deposit opens
+  it again.
+- **Tokenized stocks scale their UI amounts.** xStocks mints carry a UI
+  multiplier (Token-2022 `ScaledUiAmount`). klend and this profile count raw
+  atoms; the multiplier is what a wallet displays.
+
+## Lending actions
+
+`mtx:strategy@0.2.0`'s lending lines map to klend's instructions, each sent
+as one transaction after a refresh of every reserve the obligation touches
+and of the obligation:
+
+| Line | klend instruction | Notes |
+| --- | --- | --- |
+| `deposit(amount)` | `deposit_reserve_liquidity_and_obligation_collateral_v2` | None deposits the whole wallet balance. |
+| `withdraw(amount)` | `withdraw_obligation_collateral_and_redeem_reserve_collateral_v2` | The amount is converted to collateral tokens at the reserve's exchange rate; none withdraws everything. |
+| `borrow(amount)` | `borrow_obligation_liquidity_v2` | A borrow names its amount; none is not sent. |
+| `repay(amount)` | `repay_obligation_liquidity_v2` | None repays all of the debt. |
+| `liquidate{obligation, collateral, repay, min-received}` | `liquidate_obligation_and_redeem_reserve_collateral_v2` | `repay` is in the debt reserve's asset (the line's venue), `min-received` in the collateral's; the program pays no less. |
+
+A reduce-only lending line is not sent. Anything else klend offers (flash
+loans, elevation groups, other obligations, deposits without an
+obligation) goes through a raw transaction.
+
 ## The benchmark's enforcer
 
-No benchmark task enforces this profile yet.
+A scenario with a `lending` section runs a lending session on a snapshot of
+Kamino's markets (`snapshots/kamino-2026-11-13`: the Backpack and xStocks
+markets, their reserves, Scope's prices and the klend, Farms and Scope
+programs, pinned by code hash). Only the reserves the scenario names are
+the bot's universe.
+
+- **Measured** every step, after the step's blocks: each of the bot's
+  obligations refreshed in that slot by a simulation of `refresh_reserve`
+  and `refresh_obligation`, paid for by the engine's keeper so a bot with no
+  SOL left is still measured, and the wallet's assets and collateral tokens.
+- **Valued** at the scenario's price path for each reserve's asset: the
+  price its oracle feed is planned to walk, before the feed's failures. A
+  feed that goes stale or prints off the path changes what the bot can do
+  on Kamino, not what its account is worth. Amounts are the program's.
+- **Kept current** by the engine's keeper: every step it refreshes each of
+  the session's reserves, where interest accrues, and fails the session if
+  a refresh lands on any slot but the step's.
+- **Oracles.** Every reserve reads Scope. The scenario's Scope feeds write
+  the price entry a reserve's chain starts with, any further chain entries
+  restamped, and the TWAP entry with an hour's moving average of the path,
+  so a fast move opens the divergence Kamino checks. Every other session
+  reserve gets a feed that holds its price fresh.
+- **Others in the market.** Synthetic borrowers, drawn from the scenario's
+  seed near their liquidation threshold, and competing liquidators that
+  act in a drawn order after a drawn delay; their liquidations are in the
+  report. Real mainnet obligations are not copied.
+- **Not enforced yet:** the mandate's `min_health` limit.

@@ -57,9 +57,9 @@ interface types {
     /// world's clock and the fee market. Where the tape is reported, an
     /// empty one is a step without trades.
     reports: reports,
-    /// Whether the session applies intents' transaction options. None does
-    /// yet: they are accepted and counted, and every order is sent as it
-    /// would be without them.
+    /// Whether the session applies intents' transaction options: one with a
+    /// transaction layer does. Elsewhere they are accepted and counted, and
+    /// every order is sent as it would be without them.
     applies-tx-options: bool,
   }
 
@@ -459,8 +459,8 @@ interface types {
   }
 
   /// How the line's transactions are sent. None of this is applied unless
-  /// the session says so (`session.applies-tx-options`): it is accepted and
-  /// counted, and changes nothing.
+  /// the session says so (`session.applies-tx-options`); elsewhere it is
+  /// accepted and counted, and changes nothing.
   record tx-options {
     /// Compute units the transaction asks for; none is the simulation's
     /// units plus a margin.

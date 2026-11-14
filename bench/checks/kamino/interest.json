@@ -1,0 +1,51 @@
+{
+  "name": "kamino-interest",
+  "description": "The clock jumps a day at step 10; the bot's USDC debt accrues a day of interest at the reserve's curve rate in one refresh",
+  "symbol": "SPCX-BACKPACK",
+  "duration_slots": 40,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "kamino:money-market:SPCX-BACKPACK",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "kamino:money-market:USDC-BACKPACK",
+        "max_position": 100000.0
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "lending": {
+    "seed": 11,
+    "reserves": [
+      "SPCX-BACKPACK",
+      "USDC-BACKPACK"
+    ],
+    "wallet": {
+      "SPCX-BACKPACK": 20.0,
+      "USDC-BACKPACK": 5000.0
+    },
+    "open": [
+      {
+        "action": "deposit",
+        "reserve": "SPCX-BACKPACK",
+        "amount": 10.0
+      },
+      {
+        "action": "borrow",
+        "reserve": "USDC-BACKPACK",
+        "amount": 300.0
+      }
+    ],
+    "bound_usd": 500.0
+  },
+  "warps": [
+    {
+      "step": 10,
+      "slots": 345600
+    }
+  ]
+}

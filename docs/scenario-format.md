@@ -25,15 +25,29 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
-| `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
-| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the market calibration the path was drawn from |
+| `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
-| `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
+| `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net`, `bound_on`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position; if the scenario has a `market_model.fair_path`, it must end at the level the path ends at (within 0.01%), or it is refused. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `bound_on`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position; if the scenario has a `market_model.fair_path`, it must end at the level the path ends at (within 0.01%), or it is refused. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
+
+`informed_pnl_usd` is what the task's informed bot makes on the scenario
+(`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
+v2`), as `reference_pnl_usd` is its 0.5. Without it on every scenario,
+scoring v2 falls back to the cost-aware hindsight bound (`ceiling:
+"hindsight"`): perfect foresight on the reference session's marks, paying
+the taker fee and half-spread on every trade. It needs the reference's
+session (the grade's `--reference` run, or `details/reference/` on a
+rescore), and is never computed on the bot's own marks.
+`reference_max_drawdown_usd` and `informed_max_drawdown_usd`, written by
+`mtx calibrate` beside the PnL, are the anchor of v2's near-breach charge:
+the informed bot's drawdowns when it is the ceiling, else the reference's.
+A grade that runs the reference (`--reference`) uses the drawdowns it
+measures instead.
 
 Optional sections are left out when empty. Unknown fields are errors in
 every section.
@@ -42,8 +56,11 @@ Each section checks only itself (`Assets::validate`, `Venues::validate`,
 `MarketModel::validate`, `Actors::validate`, `Scoring::validate`, and the
 leaf types' own). A few rules join sections and are listed, one function
 each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
-having no path or competitor (their takers are a tape), the mandate covering exactly the scenario's markets,
-a sell order fitting the wallet, and, on a perp (`positions_fit_the_market`):
+having no path or competitor (their takers are a tape), lending scenarios
+moving prices through their Scope feeds only (no path, actors, order or spot
+scoring; clock jumps inside the session and without faults), the mandate
+covering exactly the scenario's markets, a sell order fitting the wallet, and,
+on a perp (`positions_fit_the_market`):
 
 - `start_positions` and `close_out` are perp-only and name the scenario's
   market; a start position is not 0 and lies inside the mandate's range for
@@ -59,7 +76,97 @@ the last slot (the index, not Phoenix's mark, which quotes can push), and
 the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
-won't margin fails the session's setup.
+won't margin fails the session's setup. Scoring v2 takes a start position only with
+an order, which scores the session against doing nothing, and only on a
+market without the scenario's `funding`: otherwise doing nothing moves with
+the price, or earns or pays the funding, and v2 refuses the grade. A v1
+grade takes a funded start position as it is: the funding the start earns
+or pays is in the session's PnL, order or not.
+
+## The risk desk: `scoring.stop_out`
+
+By default a session that breaks its mandate disqualifies the bot. A
+perp scenario can price a breach instead:
+
+```json
+"scoring": { "stop_out": { "on": ["drawdown"], "close": "market", "slice_base": 100 } }
+```
+
+- `on`: the mandate limits whose breach the desk closes instead of
+  disqualifying. Only `drawdown` so far; a later limit (a money market's
+  `min_health`, say) joins the list.
+- `close`: `market`, the only mode: the desk cancels the bot's orders and
+  sends market orders against its position through the book, each at most
+  `slice_base` base units (one order when absent) and filling no worse
+  than 4% from the best price, signed with the bot's key.
+
+The breach is detected on the step measurement the audit reads (peak value
+minus value over `max_drawdown_usd`). The bot is stopped first and gets no
+more turns; the desk sends at most 8 orders a step until the position is
+flat, and the session ends on the step it is flat (or at its last slot).
+The PnL is the account's value then, so the close pays the book's impact
+and the taker fee. The report lists each close in `forced_closes` (reason,
+step, the value before and after, the orders, whether it ended flat), and
+the audit then reads the drawdown as at most the limit: every other rule
+still disqualifies. Each close order records its transaction's
+`signature`. The desk trades in the bot's account but is not the bot: in
+a session that reads fills, the fills of those transactions are marked
+`forced` in `perp_fills`, and the sides and price rules (and an order's
+"traded the other way" and "grew the position") leave them out; they still
+count toward the position and the PnL. Because the desk closes to flat, a
+scenario with `stop_out` must allow flat in every instrument's range: a
+`min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
+The code is `crates/grader/src/risk.rs` and the session loop.
+
+## The liquidation keeper: `venues.perp.liquidator`
+
+By default nothing liquidates a perp session, and a bot that ends it
+liquidatable is disqualified. A scenario can add a competing keeper, as
+mainnet has, and price the liquidation instead:
+
+```json
+"venues": { "perp": { "liquidator": { "reaction_slots": [2, 12], "check_every_steps": 1 } } }
+```
+
+- `reaction_slots`: `[min, max]`, the slots between the first step the bot's
+  account reads liquidatable and the keeper's first liquidation. It is drawn
+  once per session from the session's seed (role `liquidator`), reported as
+  `liquidator.delay_slots`, and never in the bot's environment: the bot is
+  told the range.
+- `check_every_steps`: how often the keeper looks. Every step by default.
+
+After each step's blocks land, the keeper reads Phoenix's margin view of
+every trader account the bot holds (the cross-margin account and any
+subaccount, as the meter does). When one reads liquidatable and the reaction
+time has passed, it sends `LiquidateViaMarketOrder` for up to the market's
+maximum liquidation size, or `LiquidationTransfer` once the account reads
+past the backstop margin, and again on each later step while the account
+stays liquidatable. Phoenix decides what a call closes and charges: the
+keeper computes no liquidation. A call Phoenix refuses (the bot traded back
+to health in the same block) is a `crank_refusals` entry, and the session
+goes on. When the account reads healthy again the reaction time starts over
+with the same draw.
+
+The bot keeps running with what the liquidation leaves it. Each stretch of
+liquidations is one entry of `forced_closes` with reason
+`{"kind": "liquidation", "by": "keeper"}`: the first step it fired at, the
+account's value before and after, and the keeper's orders, each with its
+transaction's `signature`. They are made in the bot's account but are not
+the bot's: in a session that reads fills, their fills are marked `forced` in
+`perp_fills`, as the risk desk's are, and the sides and price rules leave
+them out. `liquidator` reports the draw,
+the number of liquidations that landed and `cost_usd`, the sum over stretches
+of the value before less the value after: Phoenix's penalty and the fill's
+impact, which are inside the account's value and score. After the last step,
+with the bot stopped, the keeper takes one more turn that doesn't wait for the
+reaction time, and the account is measured after it. An account that still
+ends liquidatable is then valued as it is, not disqualified; the mandate's
+other rules, a drawdown limit included, still apply.
+
+A scenario that lists Phoenix's program in `tx.raw_sends` is refused with a
+liquidator: a bot that could send Phoenix's own instructions could liquidate
+its accounts itself. The code is `crates/grader/src/keeper.rs`, and
+`bench/checks/keeper/run.sh` checks it end to end.
 
 ## Example
 

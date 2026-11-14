@@ -1,0 +1,23 @@
+set = "us-eq"
+# The calibrations the matrix is pinned to (calibration/market/<id>.toml); the file's assets are these, in this order.
+assets = ["nvda", "qqq", "spcx", "spy", "tsla"]
+calibrations = [
+  "nvda.20261113.903d1120",
+  "qqq.20261113.60ee1c12",
+  "spcx.20261112.d1f48be2",
+  "spy.20261113.2b088307",
+  "tsla.20261113.8b7bca8e",
+]
+# One common window for every pair, so the matrix is one sample: the first full week of the shortest history (SPY and QQQ)
+# to the end of the SPCX pull (2026-11-10). Dates are New York session dates, the end exclusive.
+window_from = "2026-09-14"
+window_to = "2026-11-11"
+# Phoenix marks, 1 m, from these archives (archive.json, archive-tickers.json): the file name each symbol is read from.
+archives = ["calibration-raw-2026-11-11.tar.gz", "calibration-raw-tickers-2026-11-13.tar.gz"]
+window_minutes = 30
+shrinkage = 0.1
+msm_sessions = 6000
+# Pins used with --from-archive so a rerun writes the shipped file's bytes.
+fit_date = "20261113"
+fitted_at = "2026-11-13T22:00:00+00:00"
+expected_id = "us-eq.20261113.617e47d8"

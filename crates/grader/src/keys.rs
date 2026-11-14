@@ -27,6 +27,9 @@ const SEED_DOMAIN: &[u8] = b"mtx-grader/session-keys/v1/seed";
 #[derive(Clone)]
 pub struct SessionKeys {
     secret: [u8; 32],
+    /// The bot's strategy seeds come from the secret too (see
+    /// [`SessionKeys::salt_strategy_seeds`]).
+    salted: bool,
 }
 
 impl std::fmt::Debug for SessionKeys {
@@ -40,6 +43,7 @@ impl SessionKeys {
     pub fn from_eval_seed(seed: &[u8]) -> Self {
         Self {
             secret: digest(&[SECRET_DOMAIN, seed]),
+            salted: false,
         }
     }
 
@@ -49,7 +53,19 @@ impl SessionKeys {
         let (a, b) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
         Self {
             secret: digest(&[SECRET_DOMAIN, a.as_bytes(), b.as_bytes()]),
+            salted: false,
         }
+    }
+
+    /// Salt the seed each of the bot's sessions hands its strategy with
+    /// the grade's secret (scoring v2's session rules). Unsalted, a session's
+    /// seed is a hash of its scenario's name, the same in every grade, so a
+    /// bot could tell which session it is in; salted, nothing without the
+    /// secret maps one to the other. The reference's seeds stay as they are,
+    /// as calibrated.
+    pub fn salt_strategy_seeds(mut self) -> Self {
+        self.salted = true;
+        self
     }
 
     /// One session's keys. `session` names it among the grade's sessions
@@ -58,6 +74,7 @@ impl SessionKeys {
         SessionKeyring {
             keys: self,
             session: session.to_string(),
+            salted: false,
         }
     }
 
@@ -77,8 +94,12 @@ pub struct RoleKeys<'a> {
 impl<'a> RoleKeys<'a> {
     /// The keys of the `index`th session, on `scenario`.
     pub fn session(&self, index: usize, scenario: &str) -> SessionKeyring<'a> {
-        self.keys
-            .session(&format!("{}/{index}/{scenario}", self.role))
+        SessionKeyring {
+            salted: self.keys.salted && self.role == "bot",
+            ..self
+                .keys
+                .session(&format!("{}/{index}/{scenario}", self.role))
+        }
     }
 }
 
@@ -86,6 +107,7 @@ impl<'a> RoleKeys<'a> {
 pub struct SessionKeyring<'a> {
     keys: &'a SessionKeys,
     session: String,
+    salted: bool,
 }
 
 impl SessionKeyring<'_> {
@@ -100,6 +122,17 @@ impl SessionKeyring<'_> {
     /// No key derives from it, and it is never written anywhere.
     pub fn seed(&self, role: &str, index: u32) -> [u8; 32] {
         derive(SEED_DOMAIN, self.keys, &self.session, role, index)
+    }
+
+    /// The seed the strategy gets for its randomness, in `scenario`: the
+    /// scenario's [`mtx_core::turns::scenario_seed`], or salted with the
+    /// grade's secret (see [`SessionKeys::salt_strategy_seeds`]).
+    pub fn strategy_seed(&self, scenario: &str) -> u64 {
+        if !self.salted {
+            return mtx_core::turns::scenario_seed(scenario);
+        }
+        let seed = self.seed("strategy", 0);
+        u64::from_le_bytes(seed[..8].try_into().expect("8 of 32 bytes"))
     }
 
     /// The session's fresh signers for raw sends, which outlive this
@@ -170,9 +203,47 @@ fn digest(parts: &[&[u8]]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use solana_signer::Signer;
 
     use super::*;
+
+    #[test]
+    fn a_salted_strategy_seed_hides_the_session_and_replays() {
+        let secret = b"a batch secret of at least 32 chars";
+        let plain = SessionKeys::from_eval_seed(secret);
+        // Unsalted, as every grade before v2's rules: the scenario's hash.
+        assert_eq!(
+            plain
+                .role("bot")
+                .session(3, "hidden-3")
+                .strategy_seed("hidden-3"),
+            mtx_core::turns::scenario_seed("hidden-3")
+        );
+        let salted = SessionKeys::from_eval_seed(secret).salt_strategy_seeds();
+        let bot = |keys: &SessionKeys, i: usize| {
+            let name = format!("hidden-{i}");
+            keys.role("bot").session(i, &name).strategy_seed(&name)
+        };
+        assert_ne!(bot(&salted, 3), mtx_core::turns::scenario_seed("hidden-3"));
+        // The same grade replays the same seeds; another secret doesn't.
+        let again = SessionKeys::from_eval_seed(secret).salt_strategy_seeds();
+        assert_eq!(bot(&salted, 3), bot(&again, 3));
+        let other = SessionKeys::from_eval_seed(b"another batch secret, 32 chars long")
+            .salt_strategy_seeds();
+        assert_ne!(bot(&salted, 3), bot(&other, 3));
+        let seeds: HashSet<u64> = (0..72).map(|i| bot(&salted, i)).collect();
+        assert_eq!(seeds.len(), 72);
+        // The reference keeps its calibrated seeds.
+        assert_eq!(
+            salted
+                .role("reference")
+                .session(3, "hidden-3")
+                .strategy_seed("hidden-3"),
+            mtx_core::turns::scenario_seed("hidden-3")
+        );
+    }
 
     #[test]
     fn keys_replay_and_never_repeat() {

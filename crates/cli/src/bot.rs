@@ -406,6 +406,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         trusted: false,
         observer: None,
         keys: &mtx_grader::keys::SessionKeys::random(),
+        v2_sessions: false,
     })
     .await?;
     if options.json {

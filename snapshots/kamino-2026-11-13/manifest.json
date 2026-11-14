@@ -1,0 +1,96 @@
+{
+  "created_at_unix": 1794545347,
+  "fork_host": "api.mainnet-beta.solana.com",
+  "fork_slot": 468798351,
+  "accounts": 323,
+  "symbol": "SPCX-BACKPACK",
+  "mark_price_usd": 140.3225,
+  "kind": "lending",
+  "recipe_sha256": "756b9c6e6004c27a7b4783b82806ebc08950de266b66b4a1b48889e8ee3c6c45",
+  "sources": [
+    {
+      "role": "program",
+      "name": "klend",
+      "address": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "programdata": "9uSbGW1y9H5Av6H5TKxQ1wnFApSq2t3oEpfF2YfjDQGA",
+      "deploy_slot": 461744249,
+      "code_sha256": "6482390f659a6774b059768313b6f701b14819110f9e10db8fa651a311e9c97b"
+    },
+    {
+      "role": "program",
+      "name": "kamino-farms",
+      "address": "FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr",
+      "programdata": "5Fz4tY19ihWJAW1j9RNoEQJKSdn5mQHjcVrcZ5BRK5E9",
+      "deploy_slot": 444035168,
+      "code_sha256": "67c4a989342024efedf6181c1d91cf6aac2bb2bcd17f43b8848c9f3d8ba21011"
+    },
+    {
+      "role": "program",
+      "name": "kamino-scope",
+      "address": "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
+      "programdata": "DuKtB88SQGJbow5jxmUSwgJWmC7zma8mX3Nodz1Gsjs2",
+      "deploy_slot": 467682419,
+      "code_sha256": "0d4a3bcdb27b245b9a6b6fd4ecf151fc55de0fc78fbb8b7f90de143a36d400ce"
+    },
+    {
+      "role": "market",
+      "name": "kamino Backpack market",
+      "address": "4iRHKGsTq3e4uut6e4PfyV9AEbNuXaMu9JaSP378p9qy"
+    },
+    {
+      "role": "lookup-table",
+      "name": "kamino Backpack lookup table",
+      "address": "DQUBKNkMfRjKsYD6fwrAjA34TNMS3P5ytxNcrSJiTqBy"
+    },
+    {
+      "role": "reserve",
+      "name": "kamino Backpack SPCX",
+      "address": "GrtBFz6BSky1PiyVBL7jy3w4Z1hKz2wvSjT4vd2iouC3"
+    },
+    {
+      "role": "reserve",
+      "name": "kamino Backpack USDC",
+      "address": "7gHxajRCcU5sb9rQrpYDvkugSqgGsi9EG947pW7xJueT"
+    },
+    {
+      "role": "market",
+      "name": "kamino xStocks market",
+      "address": "5wJeMrUYECGq41fxRESKALVcHnNX26TAWy4W98yULsua"
+    },
+    {
+      "role": "lookup-table",
+      "name": "kamino xStocks lookup table",
+      "address": "8ofreL6hKfEet1DnhHVGvCTnSdz4pg85PpbuCUHnEcKm"
+    },
+    {
+      "role": "reserve",
+      "name": "kamino xStocks SPYx",
+      "address": "UvXjBuC7YZYaGB9Rn1PpBD1GySmjzunXgE8Zev9ua8d"
+    },
+    {
+      "role": "reserve",
+      "name": "kamino xStocks USDC",
+      "address": "97zoywd8mPZsGTg8q1wdD2Wgkdrs2tqusp1Qqcxbyj7E"
+    },
+    {
+      "role": "mint",
+      "name": "SPCX",
+      "address": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb"
+    },
+    {
+      "role": "mint",
+      "name": "SPYx",
+      "address": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W"
+    },
+    {
+      "role": "mint",
+      "name": "USDC",
+      "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    },
+    {
+      "role": "oracle",
+      "name": "scope prices",
+      "address": "3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH"
+    }
+  ]
+}

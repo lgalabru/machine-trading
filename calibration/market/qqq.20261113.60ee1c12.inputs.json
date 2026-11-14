@@ -1,0 +1,667 @@
+[
+ {
+  "name": "phoenix/candles_QQQ_1m_1788912000_1788972000.json",
+  "bytes": 2,
+  "fetched_at": "2026-11-13T21:16:48+00:00",
+  "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1788912000000&endTime=1788972000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1788972000_1789032000.json",
+  "bytes": 211639,
+  "fetched_at": "2026-11-13T21:16:50+00:00",
+  "sha256": "b53ef55bf84351ca28e3149b94f29736ac9e252d53bee71da70da0631a3fe1d0",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1788972000000&endTime=1789032000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789032000_1789092000.json",
+  "bytes": 217392,
+  "fetched_at": "2026-11-13T21:16:51+00:00",
+  "sha256": "2200f3bf631de52068b2da0a98a0537d9935f7236304b5573613030a4a678e4e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789032000000&endTime=1789092000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789092000_1789152000.json",
+  "bytes": 217944,
+  "fetched_at": "2026-11-13T21:16:52+00:00",
+  "sha256": "29c0dc68869ebe7b1f070a9a0ac9ccbaf5d7859c9e0e389e668ab4bc95f16f2a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789092000000&endTime=1789152000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789152000_1789212000.json",
+  "bytes": 217281,
+  "fetched_at": "2026-11-13T21:16:53+00:00",
+  "sha256": "9c109fd1f3d478436ad62cb442fa3fcb4a211b04b0d3ba81c3f232a69f269cc6",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789152000000&endTime=1789212000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789212000_1789272000.json",
+  "bytes": 218476,
+  "fetched_at": "2026-11-13T21:16:54+00:00",
+  "sha256": "14c4adb93472ce5c6031c241cd09071bdc1fed068da29c60b1e9ad11baa344f8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789212000000&endTime=1789272000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789272000_1789332000.json",
+  "bytes": 221325,
+  "fetched_at": "2026-11-13T21:16:56+00:00",
+  "sha256": "0951e7462164fb16a5ccc7b2400bd7d9d6c8f2fdeb7ab89592a122830071cc13",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789272000000&endTime=1789332000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789332000_1789392000.json",
+  "bytes": 221528,
+  "fetched_at": "2026-11-13T21:16:57+00:00",
+  "sha256": "a69a8694ea92032c82106ee9574aab0e72857822169d47d2fe50f391907f6668",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789332000000&endTime=1789392000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789392000_1789452000.json",
+  "bytes": 221279,
+  "fetched_at": "2026-11-13T21:16:58+00:00",
+  "sha256": "fe9ad36a2a7e25a1a4a160490ab55ba646e7cd1e011004d2a4a3bec4d6e8c9c2",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789392000000&endTime=1789452000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789452000_1789512000.json",
+  "bytes": 219823,
+  "fetched_at": "2026-11-13T21:16:59+00:00",
+  "sha256": "b07d8db71e9463b1b2cb7f1da6877d46fe4b1220f0a08eea1323b7ee0726efa1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789452000000&endTime=1789512000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789512000_1789572000.json",
+  "bytes": 219139,
+  "fetched_at": "2026-11-13T21:17:01+00:00",
+  "sha256": "93f0708a8132faec56a4b624a99f123b23e965c75403c0f77fa3ca9cdcab4d49",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789512000000&endTime=1789572000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789572000_1789632000.json",
+  "bytes": 217775,
+  "fetched_at": "2026-11-13T21:17:02+00:00",
+  "sha256": "775b027ed1f6e0e75648b56e74e3644cdfb4cca4944f368f08f97f0857ea0c2f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789572000000&endTime=1789632000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789632000_1789692000.json",
+  "bytes": 218532,
+  "fetched_at": "2026-11-13T21:17:03+00:00",
+  "sha256": "2599262f97193724f432b24372650ecb031f6d0c33890716a4395d6e04d3c0e5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789632000000&endTime=1789692000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789692000_1789752000.json",
+  "bytes": 218839,
+  "fetched_at": "2026-11-13T21:17:04+00:00",
+  "sha256": "f4f77f5821bb640cfa5214e132c3cccf8b5d0ae37c7270a2aebece9a74d86ed8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789692000000&endTime=1789752000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789752000_1789812000.json",
+  "bytes": 219941,
+  "fetched_at": "2026-11-13T21:17:05+00:00",
+  "sha256": "87ef6757d59205bd8c54ccba9237a1de982e12a5ba78e8a144ecec46c38c8959",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789752000000&endTime=1789812000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789812000_1789872000.json",
+  "bytes": 214393,
+  "fetched_at": "2026-11-13T21:17:06+00:00",
+  "sha256": "65bc41ef564cc9d8482a55dbd24ab97ddbaab4357992d5e9cfd7922813873abf",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789812000000&endTime=1789872000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789872000_1789932000.json",
+  "bytes": 217587,
+  "fetched_at": "2026-11-13T21:17:08+00:00",
+  "sha256": "cfd670a236c04d0fcd3413a952a401f3622ba83d47cef3832dfb8d226d52b3a1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789872000000&endTime=1789932000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789932000_1789992000.json",
+  "bytes": 216371,
+  "fetched_at": "2026-11-13T21:17:09+00:00",
+  "sha256": "1349bac8c05ea7f2ccb4c16d35a6d40cda2d18bddfa94863f9c23c12249f3a70",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789932000000&endTime=1789992000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1789992000_1790052000.json",
+  "bytes": 215778,
+  "fetched_at": "2026-11-13T21:17:10+00:00",
+  "sha256": "12746e23dc7db97eef42edc5fd4d1376776aee9ce5c70bec4933fb09455cdd4e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1789992000000&endTime=1790052000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790052000_1790112000.json",
+  "bytes": 216033,
+  "fetched_at": "2026-11-13T21:17:11+00:00",
+  "sha256": "a2b68aca513798e9184ca9aac5a51cecb6b470ec01829721df66572a91e7a8ee",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790052000000&endTime=1790112000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790112000_1790172000.json",
+  "bytes": 217270,
+  "fetched_at": "2026-11-13T21:17:12+00:00",
+  "sha256": "4d8029a909ef4e0accb79c5e17ce29998f6b7f468978a06d1b8bf07738abd3d6",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790112000000&endTime=1790172000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790172000_1790232000.json",
+  "bytes": 217185,
+  "fetched_at": "2026-11-13T21:17:14+00:00",
+  "sha256": "17c5c500fb7e08c49988e831fe5687ef4a1111be83bce785a83108366e071f24",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790172000000&endTime=1790232000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790232000_1790292000.json",
+  "bytes": 216542,
+  "fetched_at": "2026-11-13T21:17:15+00:00",
+  "sha256": "415e334cde0b6b82d51e85dccda350bb7aa3016876ced42836ec20cd50e74b33",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790232000000&endTime=1790292000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790292000_1790352000.json",
+  "bytes": 215380,
+  "fetched_at": "2026-11-13T21:17:16+00:00",
+  "sha256": "abc6898d7b81f8fce19cf44b7cf6313b9f0158f1cdf6d868c9203294fabe0a04",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790292000000&endTime=1790352000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790352000_1790412000.json",
+  "bytes": 216390,
+  "fetched_at": "2026-11-13T21:17:17+00:00",
+  "sha256": "ee19fe36a49615222a8f195a32df13dc4c5252b505be820dd9b8aa7fbd68f23c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790352000000&endTime=1790412000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790412000_1790472000.json",
+  "bytes": 216971,
+  "fetched_at": "2026-11-13T21:17:18+00:00",
+  "sha256": "7279c7716fca38bed8c26dde620c1d8b115f3f53dc991e3d6d01616e6cfe4064",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790412000000&endTime=1790472000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790472000_1790532000.json",
+  "bytes": 215784,
+  "fetched_at": "2026-11-13T21:17:19+00:00",
+  "sha256": "3623827df0291f21bbd34686e5831bdc2a3cb61219afb8793ba4074e8c5244dd",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790472000000&endTime=1790532000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790532000_1790592000.json",
+  "bytes": 215429,
+  "fetched_at": "2026-11-13T21:17:21+00:00",
+  "sha256": "822704cab657ee54b2fbe544194d014e9207883c5f2565578afb12f23f47403f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790532000000&endTime=1790592000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790592000_1790652000.json",
+  "bytes": 216742,
+  "fetched_at": "2026-11-13T21:17:22+00:00",
+  "sha256": "6c59f8895194b0f1a641264e53976db796c0399ab5327f35290f275f764e6fe3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790592000000&endTime=1790652000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790652000_1790712000.json",
+  "bytes": 214985,
+  "fetched_at": "2026-11-13T21:17:23+00:00",
+  "sha256": "3e1f33695be2e4b524d62a6dd0b6b8f656fab1d68e8c3f373296e3afd7851fac",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790652000000&endTime=1790712000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790712000_1790772000.json",
+  "bytes": 214956,
+  "fetched_at": "2026-11-13T21:17:24+00:00",
+  "sha256": "8f4c0669711b36511063ab694005d3f5ea713c3de0a0c0d89b2bda5598c4673d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790712000000&endTime=1790772000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790772000_1790832000.json",
+  "bytes": 215738,
+  "fetched_at": "2026-11-13T21:17:26+00:00",
+  "sha256": "a0ec207ab3c6392ee9406251da45eba9cee0f46d47185f5e2f76742f27da5ccc",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790772000000&endTime=1790832000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790832000_1790892000.json",
+  "bytes": 216731,
+  "fetched_at": "2026-11-13T21:17:27+00:00",
+  "sha256": "af3381534c6b4f0c6fa2ecd53753acc73fb61d7f6cfa0312a3fe89de128216de",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790832000000&endTime=1790892000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790892000_1790952000.json",
+  "bytes": 215650,
+  "fetched_at": "2026-11-13T21:17:28+00:00",
+  "sha256": "1c25129d710fd5153b2ca256ab78374fbe0586a1949db37a155b0c0898997d0f",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790892000000&endTime=1790952000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1790952000_1791012000.json",
+  "bytes": 216227,
+  "fetched_at": "2026-11-13T21:17:30+00:00",
+  "sha256": "8c65d017d96e981295f2dc44bab5f6df15d12bdd5837966086669b521721e5d1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1790952000000&endTime=1791012000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791012000_1791072000.json",
+  "bytes": 215669,
+  "fetched_at": "2026-11-13T21:17:31+00:00",
+  "sha256": "7d649f964d6f0056d2807ded960c51d9b2a1a02b45cb73a44dd498e7b9bc0a16",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791012000000&endTime=1791072000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791072000_1791132000.json",
+  "bytes": 216024,
+  "fetched_at": "2026-11-13T21:17:32+00:00",
+  "sha256": "cc735df76750df6a6f9e8f49bf2d5e56f3d2933fb2af0237259a96bb3b6dd357",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791072000000&endTime=1791132000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791132000_1791192000.json",
+  "bytes": 214094,
+  "fetched_at": "2026-11-13T21:17:33+00:00",
+  "sha256": "a2a53c712c06b8d683714003bbaa2a30a8f8648848bbdf36757d7821ba81c971",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791132000000&endTime=1791192000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791192000_1791252000.json",
+  "bytes": 215639,
+  "fetched_at": "2026-11-13T21:17:34+00:00",
+  "sha256": "c6fd177170d68622a4b4c59020947ebe4863273c2673974684e615dffee589c5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791192000000&endTime=1791252000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791252000_1791312000.json",
+  "bytes": 216375,
+  "fetched_at": "2026-11-13T21:17:36+00:00",
+  "sha256": "011d771255c0b9a596b3355021e423a063d463135348fb35baa813f19839634e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791252000000&endTime=1791312000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791312000_1791372000.json",
+  "bytes": 217181,
+  "fetched_at": "2026-11-13T21:17:37+00:00",
+  "sha256": "9d646ab135040e1dbe207e1b99b918f851cae998b300d6230cf687ecbb5e68d5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791312000000&endTime=1791372000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791372000_1791432000.json",
+  "bytes": 217585,
+  "fetched_at": "2026-11-13T21:17:38+00:00",
+  "sha256": "e695bc3675fabf9a65308bb1c43c1a2e7f57ef7012429e089d0f637a92a5babc",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791372000000&endTime=1791432000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791432000_1791492000.json",
+  "bytes": 217139,
+  "fetched_at": "2026-11-13T21:17:39+00:00",
+  "sha256": "bd04c5a121bf2a876891b29ae0110b10197b8651dc1e32b3b945f4f8bf1fd1a3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791432000000&endTime=1791492000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791492000_1791552000.json",
+  "bytes": 215491,
+  "fetched_at": "2026-11-13T21:17:40+00:00",
+  "sha256": "b2de30d0f34abeda6a51692bb6a0969a0baa2c58728919ba5b4263c11946d831",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791492000000&endTime=1791552000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791552000_1791612000.json",
+  "bytes": 215578,
+  "fetched_at": "2026-11-13T21:17:42+00:00",
+  "sha256": "25d04eb20abc5d03523999029ffa040de14bf785139ab32462a363e0f741f339",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791552000000&endTime=1791612000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791612000_1791672000.json",
+  "bytes": 217037,
+  "fetched_at": "2026-11-13T21:17:43+00:00",
+  "sha256": "1e5e13e5fade7d99b13e09c2b9e5351eb231ffebf16351932fde4de3aa7b066c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791612000000&endTime=1791672000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791672000_1791732000.json",
+  "bytes": 216267,
+  "fetched_at": "2026-11-13T21:17:44+00:00",
+  "sha256": "e13eabf6428bb1578e340d7b6096297cd57ff5e0bdae3be98a66d0433bb74d53",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791672000000&endTime=1791732000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791732000_1791792000.json",
+  "bytes": 216446,
+  "fetched_at": "2026-11-13T21:17:45+00:00",
+  "sha256": "c4a75b1032310cae0e459987e37b745b51a91a32569292b9a6e2d2019f376cc3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791732000000&endTime=1791792000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791792000_1791852000.json",
+  "bytes": 217357,
+  "fetched_at": "2026-11-13T21:17:46+00:00",
+  "sha256": "ae7f39a59b35fafca51c715e5b52814b4f5fd33c5978b4584a5198a63601ff9e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791792000000&endTime=1791852000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791852000_1791912000.json",
+  "bytes": 215935,
+  "fetched_at": "2026-11-13T21:17:48+00:00",
+  "sha256": "838785b3e222c0a047e27a29c233e444f2cdd2e855d53b128d6fc8fe2b659c39",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791852000000&endTime=1791912000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791912000_1791972000.json",
+  "bytes": 215549,
+  "fetched_at": "2026-11-13T21:17:49+00:00",
+  "sha256": "71fcdbb1b631ec06d850a8aaf5d09a117ddc1c3948be4b860d9e2f5b18e637b3",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791912000000&endTime=1791972000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1791972000_1792032000.json",
+  "bytes": 217949,
+  "fetched_at": "2026-11-13T21:17:50+00:00",
+  "sha256": "cc083ec320183fee1f653776a56728c665ec7fd588faf2395b8ae330b34d0de4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1791972000000&endTime=1792032000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792032000_1792092000.json",
+  "bytes": 216451,
+  "fetched_at": "2026-11-13T21:17:51+00:00",
+  "sha256": "83b81603ce06b18fb86f691fa6fa59601786d52b9bc683589fafeeb2ffafce4b",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792032000000&endTime=1792092000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792092000_1792152000.json",
+  "bytes": 216934,
+  "fetched_at": "2026-11-13T21:17:52+00:00",
+  "sha256": "dbc57bfc258dd574f27fd82003e58fa47fa185e2daab5b242e87208c92695e31",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792092000000&endTime=1792152000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792152000_1792212000.json",
+  "bytes": 216897,
+  "fetched_at": "2026-11-13T21:17:53+00:00",
+  "sha256": "198a4bbb0768aec4d3bc5a63899b8d33c34d505878a39ce9a3b8dad04b4f4687",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792152000000&endTime=1792212000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792212000_1792272000.json",
+  "bytes": 216707,
+  "fetched_at": "2026-11-13T21:17:54+00:00",
+  "sha256": "f3f382bf5fc1a91e07420698797010336a291b1c711e5e785eb98591021374f1",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792212000000&endTime=1792272000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792272000_1792332000.json",
+  "bytes": 215497,
+  "fetched_at": "2026-11-13T21:17:55+00:00",
+  "sha256": "fc68c1e3e3bb88810b3eb3c56cd0740f82b53a9355faca50f2f4c10d621c947c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792272000000&endTime=1792332000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792332000_1792392000.json",
+  "bytes": 215120,
+  "fetched_at": "2026-11-13T21:17:56+00:00",
+  "sha256": "22667586555721f0858d2a97ee4fb0abafd9eac80c9bc179365cc4db41888c53",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792332000000&endTime=1792392000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792392000_1792452000.json",
+  "bytes": 214743,
+  "fetched_at": "2026-11-13T21:17:58+00:00",
+  "sha256": "506f989f179177222f1b8b9441e41246071ec0241e0279b60cbea57056e83ce4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792392000000&endTime=1792452000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792452000_1792512000.json",
+  "bytes": 216016,
+  "fetched_at": "2026-11-13T21:17:59+00:00",
+  "sha256": "53742f2c575a2aaf8003bfa6fc595df7a304a031a9e753fc93c843872fa0a6e7",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792452000000&endTime=1792512000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792512000_1792572000.json",
+  "bytes": 215901,
+  "fetched_at": "2026-11-13T21:18:00+00:00",
+  "sha256": "8640a465213e4bce8094757249df7339607691f4b6b486e913b9df7cb6c8cc04",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792512000000&endTime=1792572000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792572000_1792632000.json",
+  "bytes": 215543,
+  "fetched_at": "2026-11-13T21:18:01+00:00",
+  "sha256": "15ae44227dc8ee6df256a0d1687bd55fc6b6f5c95a8ba6a4f7d8bac54c18d75e",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792572000000&endTime=1792632000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792632000_1792692000.json",
+  "bytes": 216920,
+  "fetched_at": "2026-11-13T21:18:02+00:00",
+  "sha256": "5ee219d0d6d2aa804b5de5df9d7cd4219ea9ef02c4302891d0b05ceba6b51905",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792632000000&endTime=1792692000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792692000_1792752000.json",
+  "bytes": 213940,
+  "fetched_at": "2026-11-13T21:18:04+00:00",
+  "sha256": "5038afd55ce3515b39b570c9f30deffab92a95f8ee20935354e144a665c181cb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792692000000&endTime=1792752000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792752000_1792812000.json",
+  "bytes": 216458,
+  "fetched_at": "2026-11-13T21:18:05+00:00",
+  "sha256": "100aa3e3aa3521a3aabf5d506f036dd0e90e9812f8a4f8686adaa115756628ca",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792752000000&endTime=1792812000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792812000_1792872000.json",
+  "bytes": 215543,
+  "fetched_at": "2026-11-13T21:18:06+00:00",
+  "sha256": "a34653e17942debd4bc6e116748eb6a557e8351f3a4715e69a6518e7eb346f63",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792812000000&endTime=1792872000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792872000_1792932000.json",
+  "bytes": 214689,
+  "fetched_at": "2026-11-13T21:18:07+00:00",
+  "sha256": "a9a36df6f5d55739ce1b1e890940170a3c33955a2252faeb2f4c09d69e979ee8",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792872000000&endTime=1792932000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792932000_1792992000.json",
+  "bytes": 214882,
+  "fetched_at": "2026-11-13T21:18:08+00:00",
+  "sha256": "d99e50641f265570aa4386eceed066c7046cf9490ca6d82670b9112d0e570e5c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792932000000&endTime=1792992000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1792992000_1793052000.json",
+  "bytes": 216198,
+  "fetched_at": "2026-11-13T21:18:10+00:00",
+  "sha256": "2ca63fdcfab9078fbf3d0a00e89a2971b6e447d65a9d33c2130783cff32d94d6",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1792992000000&endTime=1793052000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793052000_1793112000.json",
+  "bytes": 216122,
+  "fetched_at": "2026-11-13T21:18:11+00:00",
+  "sha256": "64aadae681cf4652d0fca25d5232a3c7b3c83c5ade995bacdebeae99adb8f61d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793052000000&endTime=1793112000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793112000_1793172000.json",
+  "bytes": 216284,
+  "fetched_at": "2026-11-13T21:18:12+00:00",
+  "sha256": "aaab2d118a38c10c8130e0e8dbf35d7a28ee93692c04b2f376eb6d6ef771f6aa",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793112000000&endTime=1793172000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793172000_1793232000.json",
+  "bytes": 215881,
+  "fetched_at": "2026-11-13T21:18:13+00:00",
+  "sha256": "c749fd77d2c49f28b7c956dc43ca69aaf2ed2b0e914ede5220d1e535916a51d9",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793172000000&endTime=1793232000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793232000_1793292000.json",
+  "bytes": 216089,
+  "fetched_at": "2026-11-13T21:18:14+00:00",
+  "sha256": "5ee1ae6cc297c7f421a289b8beab8d6207daeb3e8d5b9440a0f6f76cf05aeff5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793232000000&endTime=1793292000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793292000_1793352000.json",
+  "bytes": 216904,
+  "fetched_at": "2026-11-13T21:18:16+00:00",
+  "sha256": "1e7f6110147ffabe40f210960ee61f2ed2fd14ca35b4d8a73bb1fab4c65a4150",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793292000000&endTime=1793352000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793352000_1793412000.json",
+  "bytes": 216369,
+  "fetched_at": "2026-11-13T21:18:17+00:00",
+  "sha256": "53e0135aa5278fd89d1571d156d6d36d7df7464016a557ee5cb0be2b8f0cfa88",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793352000000&endTime=1793412000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793412000_1793472000.json",
+  "bytes": 214748,
+  "fetched_at": "2026-11-13T21:18:18+00:00",
+  "sha256": "5019043b02eeb3b8998dcd94091510782ad23860663a11ebbedaf1c96e03a5a5",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793412000000&endTime=1793472000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793472000_1793532000.json",
+  "bytes": 215573,
+  "fetched_at": "2026-11-13T21:18:19+00:00",
+  "sha256": "2084a32f5a25f0b0aac0e1f8c93605beb7b49f748b3f85af3197c426bc6ee139",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793472000000&endTime=1793532000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793532000_1793592000.json",
+  "bytes": 214683,
+  "fetched_at": "2026-11-13T21:18:20+00:00",
+  "sha256": "c1970e4013281e9f114f7032f17bfe95c3746538747654faa1a1d17d6b33864a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793532000000&endTime=1793592000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793592000_1793652000.json",
+  "bytes": 216014,
+  "fetched_at": "2026-11-13T21:18:21+00:00",
+  "sha256": "690da8f682da532f9f477d1aa2f36e378ddea366d53ffb816ad5142bb62d9e57",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793592000000&endTime=1793652000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793652000_1793712000.json",
+  "bytes": 216151,
+  "fetched_at": "2026-11-13T21:18:23+00:00",
+  "sha256": "f49026bf013369c7248e10290c22e87bc3e58ad5ab08a9cf2edff4991d3acebb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793652000000&endTime=1793712000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793712000_1793772000.json",
+  "bytes": 216226,
+  "fetched_at": "2026-11-13T21:18:24+00:00",
+  "sha256": "82160439aa0dabdb2a466a7cff905226a52cb8911d66e72b80bb244443216a43",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793712000000&endTime=1793772000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793772000_1793832000.json",
+  "bytes": 216982,
+  "fetched_at": "2026-11-13T21:18:25+00:00",
+  "sha256": "63666f92e99c089ac915a5e643a5b42bb80ccbb9380bba33695cbf5e50a271f4",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793772000000&endTime=1793832000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793832000_1793892000.json",
+  "bytes": 215540,
+  "fetched_at": "2026-11-13T21:18:26+00:00",
+  "sha256": "231a0aa606126a1d9ca7f22e7db06bdf5ccf3a743aa286149a38894c8923b86c",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793832000000&endTime=1793892000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793892000_1793952000.json",
+  "bytes": 214307,
+  "fetched_at": "2026-11-13T21:18:27+00:00",
+  "sha256": "593bf6fb2cb7ee50ea1082f6e2294ea85795b703453e26a642aff5c4b6733166",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793892000000&endTime=1793952000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1793952000_1794012000.json",
+  "bytes": 213205,
+  "fetched_at": "2026-11-13T21:18:28+00:00",
+  "sha256": "5b3141780c1d161518ac5ac7f80b2691a6e6be93fd18ffa81de9324a9587b2fb",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1793952000000&endTime=1794012000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794012000_1794072000.json",
+  "bytes": 213858,
+  "fetched_at": "2026-11-13T21:18:29+00:00",
+  "sha256": "ae3839bd721dbf0602649d0db7b1675bbc60f1657464b1402695718f8e4e241d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794012000000&endTime=1794072000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794072000_1794132000.json",
+  "bytes": 213444,
+  "fetched_at": "2026-11-13T21:18:30+00:00",
+  "sha256": "bf048ea5cc2c7f47d41b98419d1f47726b18d251c5552127b5c7387b50412a62",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794072000000&endTime=1794132000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794132000_1794192000.json",
+  "bytes": 213966,
+  "fetched_at": "2026-11-13T21:18:31+00:00",
+  "sha256": "15d3a0e8beebf9f43257e699f35e79ea2cad8fc067ae5b4fc678895b9ecf2025",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794132000000&endTime=1794192000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794192000_1794252000.json",
+  "bytes": 214576,
+  "fetched_at": "2026-11-13T21:18:33+00:00",
+  "sha256": "7657252816f1aac6973c91a5ee65c8a60c2b38d7dd337d60ca2308a39deb973a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794192000000&endTime=1794252000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794252000_1794312000.json",
+  "bytes": 216219,
+  "fetched_at": "2026-11-13T21:18:34+00:00",
+  "sha256": "674859e35281a3cc7e9812dab0d3586a50a86cbadc20e8bc12d4f356ae74b61d",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794252000000&endTime=1794312000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794312000_1794372000.json",
+  "bytes": 214947,
+  "fetched_at": "2026-11-13T21:18:35+00:00",
+  "sha256": "c76dd7f2a1e8ae5c6ae71bfd072734d26c8c77b33b76fc72f0bad87d4efab526",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794312000000&endTime=1794372000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794372000_1794432000.json",
+  "bytes": 217773,
+  "fetched_at": "2026-11-13T21:18:36+00:00",
+  "sha256": "7c7bd17138ce74c4c888d875a4db7be27ba122bed0f76a4a8b7ba19c67e03d84",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794372000000&endTime=1794432000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794432000_1794492000.json",
+  "bytes": 215968,
+  "fetched_at": "2026-11-13T21:18:38+00:00",
+  "sha256": "74b19fa7cae0951e98496ed827e3fe5812b2ac7879d0ea4862b45707452ab702",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794432000000&endTime=1794492000000"
+ },
+ {
+  "name": "phoenix/candles_QQQ_1m_1794492000_1794528000.json",
+  "bytes": 129642,
+  "fetched_at": "2026-11-13T21:18:39+00:00",
+  "sha256": "2b997635544faaf3d630a8148c96d137d44abe8a5e12dd3f573ef11b2586a75a",
+  "url": "https://perp-api.phoenix.trade/candles?symbol=QQQ&timeframe=1m&startTime=1794492000000&endTime=1794528000000"
+ },
+ {
+  "name": "phoenix/exchange.json",
+  "bytes": 233160,
+  "fetched_at": "2026-11-13T21:07:41+00:00",
+  "sha256": "7f7abbe9967ebfe9109241dd2beb7a93e8fad041ce257464ca9cc162b1cc64bc",
+  "url": "https://perp-api.phoenix.trade/exchange"
+ }
+]

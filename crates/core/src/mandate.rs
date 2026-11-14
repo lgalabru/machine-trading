@@ -142,9 +142,8 @@ pub struct InstrumentRef {
     pub symbol: String,
 }
 
-/// Instrument kinds this reader enforces. `specs/instruments/` defines
-/// money markets too, and reserves futures and options; this reader refuses
-/// them.
+/// Instrument kinds this reader enforces. `specs/instruments/` reserves
+/// futures and options; this reader refuses them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     /// A perpetual future: no expiry, held near spot by funding payments.
@@ -152,6 +151,9 @@ pub enum Kind {
     /// A spot market, where the base asset changes hands. The position is
     /// the account's holdings of the base asset, wherever they sit.
     Spot,
+    /// A money market's reserve. The position is what the account supplied
+    /// there minus what it borrowed.
+    MoneyMarket,
 }
 
 impl Mandate {
@@ -245,6 +247,16 @@ impl Mandate {
                 return Err(format!(
                     "{} must be a number no greater than max_position, not {min}",
                     name("min_position")
+                ));
+            }
+            if allowance.instrument.kind == Kind::MoneyMarket
+                && (allowance.sides.is_some()
+                    || allowance.min_sell_price.is_some()
+                    || allowance.max_buy_price.is_some())
+            {
+                return Err(format!(
+                    "{}: sides and prices don't apply to a money market",
+                    allowance.instrument
                 ));
             }
             if let Some(sides) = &allowance.sides {
@@ -606,6 +618,7 @@ impl fmt::Display for Kind {
         f.write_str(match self {
             Self::Perp => "perp",
             Self::Spot => "spot",
+            Self::MoneyMarket => "money-market",
         })
     }
 }
@@ -617,8 +630,9 @@ impl FromStr for Kind {
         match s {
             "perp" => Ok(Self::Perp),
             "spot" => Ok(Self::Spot),
-            "future" | "option" | "money-market" => Err(format!(
-                "instrument kind {s:?} is reserved; this reader enforces perp and spot only"
+            "money-market" => Ok(Self::MoneyMarket),
+            "future" | "option" => Err(format!(
+                "instrument kind {s:?} is reserved; this reader enforces perp, spot and money-market only"
             )),
             _ => Err(format!("unknown instrument kind {s:?}")),
         }
@@ -657,8 +671,21 @@ mod tests {
         ] {
             assert!(bad.parse::<InstrumentRef>().is_err(), "{bad}");
         }
-        assert!(
+        assert_eq!(
             "kamino:money-market:USDC"
+                .parse::<InstrumentRef>()
+                .unwrap()
+                .kind,
+            Kind::MoneyMarket
+        );
+        let mut lending = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        lending.universe[0].instrument = "kamino:money-market:USDC".parse().unwrap();
+        lending.universe[0].min_position = Some(-50_000.0);
+        assert!(lending.validate().is_ok());
+        lending.universe[0].sides = Some(vec![Side::Buy]);
+        assert!(lending.validate().unwrap_err().contains("money market"));
+        assert!(
+            "drift:future:SOL"
                 .parse::<InstrumentRef>()
                 .unwrap_err()
                 .contains("reserved")

@@ -167,7 +167,9 @@ back from anywhere the agent can write. The copy handed to the agent is for
 the agent to plan by.
 
 What follows a breach is the enforcer's policy, not part of the mandate. A
-benchmark grader disqualifies the session. A live deployment might halt the
+benchmark grader disqualifies the session, or, for the limits a scenario
+says it prices, stops the agent and flattens its positions at the market
+(a stop-out), and scores what is left. A live deployment might halt the
 agent or flatten its positions.
 
 ## Non-goals
@@ -187,12 +189,13 @@ specification can state.
 ## Implementation status
 
 The reference implementation, `mtx_core::mandate`, reads and enforces the
-part of this specification the benchmark's tasks use today: `perp` and
-`spot` instruments, on one venue or several, `max_position`,
-`min_position`, `sides`, `min_sell_price`, `max_buy_price`, and
-`max_drawdown_usd`. It rejects documents that use anything else, so the
-example of a money-market mandate below lives here rather than in
-[`examples/`](examples/), which `cargo test` checks against it.
+part of this specification the benchmark's tasks use today: `perp`,
+`spot` and `money-market` instruments, on one venue or several,
+`max_position`, `min_position`, `sides`, `min_sell_price`,
+`max_buy_price`, and `max_drawdown_usd`. It rejects documents that use
+anything else, so the example of a money-market mandate below, which
+limits `min_health`, lives here rather than in [`examples/`](examples/),
+which `cargo test` checks against it.
 
 ## Changes in later versions
 

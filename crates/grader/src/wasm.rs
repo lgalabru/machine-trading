@@ -33,7 +33,7 @@ use wasmtime_wasi::{
     HostMonotonicClock, HostWallClock, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
 };
 
-use crate::Error;
+use crate::{Error, txlayer::engine::Fate};
 
 /// `mtx:strategy@0.2.0`, the kit's.
 pub mod v2 {
@@ -708,11 +708,13 @@ pub trait StepObserver: Send + Sync {
 }
 
 /// A session's clock, as a component's `start` sees it, and its scenario.
-pub struct Clock<'a> {
+pub struct Clock {
+    /// The seed the strategy's randomness starts from (see
+    /// [`crate::keys::SessionKeyring::strategy_seed`]).
+    pub seed: u64,
     pub steps: u64,
     pub slots_per_step: u64,
     pub start_slot: u64,
-    pub scenario: &'a str,
     /// The task's variables for the session ([`mtx_kit::SESSION_VARS`]).
     pub vars: Vec<(String, String)>,
     /// What the session's steps report beyond prices.
@@ -745,6 +747,10 @@ pub struct Desk {
     /// The bot's key, base58.
     pub authority: String,
     pub reader: Reader,
+    /// Under the transaction layer: the chain the seats send through, which
+    /// takes each line's transaction options, and the layer itself.
+    pub pool: Option<std::sync::Arc<crate::txlayer::client::PoolClient>>,
+    pub tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     /// The requests for quotes open to the bot, where clients send any
     /// (see [`crate::actors::library::rfq`]).
     pub rfqs: Option<crate::actors::library::RfqBoard>,
@@ -760,6 +766,13 @@ pub enum Reader {
     /// turn ([`Wallet`]), valued at the oracle, and each market's top as
     /// its seat reads it.
     Wallet {
+        /// The account when the session starts.
+        start: Wallet,
+    },
+    /// A lending account the session measures: its value, and each
+    /// reserve's supply, debt and numbers ([`Wallet::venues`]). Reserves
+    /// have no book.
+    Lending {
         /// The account when the session starts.
         start: Wallet,
     },
@@ -785,6 +798,10 @@ pub struct WasmBot {
     /// next step's market carries them.
     sends: Vec<SendStatus>,
     notes: Vec<String>,
+    /// Under the transaction layer: sends still in its pool, with the
+    /// signature each is known by. A later step's market says what became
+    /// of each, once something did.
+    pending: Vec<(SendStatus, String)>,
     /// Lines that carried transaction options, which no session applies
     /// yet.
     pub tx_options: u64,
@@ -803,7 +820,7 @@ impl WasmBot {
     pub async fn start(
         path: &Path,
         rpc_url: &str,
-        clock: Clock<'_>,
+        clock: Clock,
         terms: Terms<'_>,
         desk: Desk,
         log: Box<dyn Write + Send>,
@@ -811,18 +828,19 @@ impl WasmBot {
         raw: Option<crate::raw::RawConfig>,
     ) -> crate::Result<Self> {
         let Clock {
+            seed,
             steps,
             slots_per_step,
             start_slot,
-            scenario,
             vars,
             reports,
         } = clock;
         let (start_mark, start_oracle) = match &desk.reader {
             Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
-            Reader::Wallet { start } => (start.price_usd, start.price_usd),
+            Reader::Wallet { start } | Reader::Lending { start } => {
+                (start.price_usd, start.price_usd)
+            }
         };
-        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, rpc_url, log, seed, session_fuel).await {
@@ -852,21 +870,28 @@ impl WasmBot {
             seed,
             venues: desk.markets.clone(),
             venue: desk.venue.clone(),
-            reports,
-            applies_tx_options: false,
+            reports: mtx_kit::Reports {
+                fees: reports.fees || desk.tx.is_some(),
+                ..reports
+            },
+            applies_tx_options: desk.tx.is_some(),
         };
         // Raw sends are a perp session's: a scenario enables them nowhere
         // else. They go out as the sheet's do, through the desk's trader.
         if let (Some(strategy), Some(raw), Reader::Perp(trader)) =
             (strategy.as_mut(), raw, &desk.reader)
         {
-            strategy.enable_raw_sends(crate::raw::RawSender::new(
+            let sender = crate::raw::RawSender::new(
                 raw,
                 trader.authority(),
                 trader.env.exchange()?,
                 &trader.env.symbol,
                 &trader.env.rpc_url,
-            ));
+            );
+            strategy.enable_raw_sends(match &desk.pool {
+                Some(pool) => sender.with_pool(pool.clone()),
+                None => sender,
+            });
         }
         if let Some(strategy) = strategy.as_mut() {
             let failed = match strategy.start(&session).await {
@@ -901,6 +926,7 @@ impl WasmBot {
             last: None,
             sends: Vec::new(),
             notes: Vec::new(),
+            pending: Vec::new(),
             tx_options: 0,
             stopped,
             observer,
@@ -916,6 +942,7 @@ impl WasmBot {
         wallet: Option<&Wallet>,
     ) -> Option<mtx_kit::Market> {
         let (k, slot, last) = (step.k, step.slot, step.last);
+        self.resolve();
         let (mark, oracle, index, best_bid, best_ask, position) = match &self.desk.reader {
             Reader::Perp(trader) => {
                 let (top, oracle, position) = match (
@@ -942,6 +969,19 @@ impl WasmBot {
                     top.best_ask,
                     position,
                 )
+            }
+            Reader::Lending { start } => {
+                let Some(wallet) = wallet else {
+                    tracing::warn!(step = k, "no reading of the account; skipping the step");
+                    return None;
+                };
+                self.pnl = wallet.value_usd - start.value_usd;
+                let position = mtx_kit::Position {
+                    size: wallet.base,
+                    entry_usd: start.price_usd,
+                };
+                let price = wallet.price_usd;
+                (price, price, price, None, None, position)
             }
             Reader::Wallet { start } => {
                 let Some(wallet) = wallet else {
@@ -980,6 +1020,20 @@ impl WasmBot {
         }
         // A measured wallet's other markets: the same SOL held, and each
         // seat's own top, where the step's depth didn't give one.
+        if let (Reader::Lending { .. }, Some(wallet)) = (&self.desk.reader, wallet) {
+            for view in &mut venues {
+                let Some(reading) = wallet.venues.iter().find(|r| r.id == view.id) else {
+                    continue;
+                };
+                view.position = None;
+                view.lending = Some(mtx_kit::LendingPosition {
+                    supplied: reading.supplied,
+                    borrowed: reading.borrowed,
+                    health: reading.health,
+                });
+                view.stats = reading.stats.clone();
+            }
+        }
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
             for view in venues.iter_mut().skip(1) {
                 view.position = Some(position);
@@ -1025,8 +1079,53 @@ impl WasmBot {
                 .map(crate::actors::library::RfqBoard::open)
                 .unwrap_or_default(),
             notes: std::mem::take(&mut self.notes),
-            fees: None,
+            fees: self.desk.tx.as_ref().map(|tx| tx.fee_view()),
         })
+    }
+
+    /// What became of the sends still in the transaction layer's pool: each
+    /// that landed, failed or expired since goes into the next market's
+    /// sends, with its slot, fee and tip.
+    fn resolve(&mut self) {
+        let Some(tx) = &self.desk.tx else {
+            return;
+        };
+        let mut still = Vec::new();
+        for (mut status, signature) in std::mem::take(&mut self.pending) {
+            status.state = match tx.fate(&signature) {
+                Some(Fate::Landed {
+                    slot,
+                    ok,
+                    fee,
+                    tip,
+                    error,
+                    signature,
+                }) => {
+                    status.slot = Some(slot);
+                    status.fee = Some(fee);
+                    status.tip = Some(tip);
+                    if ok {
+                        SendState::Landed(signature)
+                    } else {
+                        SendState::Failed {
+                            reason: error.unwrap_or_default(),
+                            signature: Some(signature),
+                        }
+                    }
+                }
+                Some(Fate::Failed(reason)) => SendState::Failed {
+                    reason,
+                    signature: None,
+                },
+                Some(Fate::Expired) => SendState::Expired,
+                Some(Fate::Pending) | None => {
+                    still.push((status, signature));
+                    continue;
+                }
+            };
+            self.sends.push(status);
+        }
+        self.pending = still;
     }
 
     /// The seat for a planned line's venue: the session's own market's for
@@ -1134,10 +1233,14 @@ impl WasmBot {
         // the ledger of what rests only over-counts.
         let mut tried = Vec::new();
         let mut failed = false;
+        let planned_count = planned.len();
         for planned in planned {
             let state = if failed {
                 SendState::NotSent("an earlier order of the step failed".into())
             } else if let Some(seat) = self.seat(planned.venue.as_deref()) {
+                if let Some(pool) = &self.desk.pool {
+                    pool.set_options(planned.tx);
+                }
                 let sent = seat.send(&planned).await;
                 if sent.sent {
                     tried.push(planned.action.clone());
@@ -1178,12 +1281,59 @@ impl WasmBot {
             });
         }
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
+        let from = self.sends.len() - planned_count;
         // Raw sends go after the sheet, whatever became of it.
+        let mut raw_pooled = Vec::new();
         if let (Some(raw), Reader::Perp(trader)) = (
             self.strategy.as_mut().and_then(WasmStrategy::raw_sender),
             &self.desk.reader,
         ) {
             self.sends.extend(raw.flush(&trader.keypair).await);
+            raw_pooled = raw.take_pooled();
+        }
+        // The step's bundles go once the sheet and the raw sends are all in
+        // them.
+        if let Some(pool) = &self.desk.pool {
+            pool.set_options(None);
+            for (signatures, failed) in pool.flush_bundles().await {
+                let Some(reason) = failed else {
+                    continue;
+                };
+                for status in &mut self.sends[from..] {
+                    let signature = match (&status.state, status.source) {
+                        (SendState::Landed(signature), _) => Some(signature.clone()),
+                        (SendState::Delayed, SendSource::Raw(id)) => raw_pooled
+                            .iter()
+                            .find(|(raw, _)| *raw == id)
+                            .map(|(_, signature)| signature.to_string()),
+                        _ => None,
+                    };
+                    if signature.is_some_and(|s| signatures.contains(&s)) {
+                        status.state = SendState::Failed {
+                            reason: reason.clone(),
+                            signature: None,
+                        };
+                    }
+                }
+            }
+        }
+        // Under the transaction layer, what the step sent is in the pool:
+        // delayed, until a later step says what became of it.
+        if self.desk.tx.is_some() {
+            for status in &mut self.sends[from..] {
+                let signature = match (&status.state, status.source) {
+                    (SendState::Landed(signature), _) => Some(signature.clone()),
+                    (SendState::Delayed, SendSource::Raw(id)) => raw_pooled
+                        .iter()
+                        .find(|(raw, _)| *raw == id)
+                        .map(|(_, signature)| signature.to_string()),
+                    _ => None,
+                };
+                if let Some(signature) = signature {
+                    status.state = SendState::Delayed;
+                    self.pending.push((status.clone(), signature));
+                }
+            }
         }
         self.observe(trace);
         true

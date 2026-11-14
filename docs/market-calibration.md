@@ -27,13 +27,24 @@ calibration/market/<asset>.<date>.<hash>.inputs.json   every input: url, sha256,
   (`mtx_grader::market::calibration`). Unknown fields and unknown models
   fail to load.
 
-Two files ship. Both were written by the fitter in `calibration/fitter`
-from keyless public data pulled on 2026-11-11 and 2026-11-12.
+Six files ship. All were written by the fitter in `calibration/fitter` from
+keyless public data pulled on 2026-11-11, 2026-11-12 and 2026-11-13.
 
 | File | Fair value from | Main limits |
 |---|---|---|
 | `sol-usd.20261112.0dbc6cdf` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
 | `spcx.20261112.d1f48be2` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
+| `nvda.20261113.903d1120` | Phoenix NVDA perp mark, 1 m, 2026-06-15 to 2026-11-12 (109 regular sessions) | As SPCX, plus two volatility states (the lower and upper halves of the days, not separate clusters). The open gap rests on 109 opens. |
+| `tsla.20261113.8b7bca8e` | Phoenix TSLA perp mark, 1 m, 2026-06-22 to 2026-11-12 (104 regular sessions) | As NVDA, with 104 opens. GARCH persistence sits at the top of its search (weakly identified). |
+| `spy.20261113.2b088307` | Phoenix SPY perp mark, 1 m, 2026-09-14 to 2026-11-12 (44 regular sessions) | One state (60 days). The open gap is SPCX's scaled by the volatility ratio, not fitted. The mark is effectively unsmoothed, and its closed-hours volatility is 1.08 of the regular-hours one. |
+| `qqq.20261113.60ee1c12` | Phoenix QQQ perp mark, 1 m, 2026-09-14 to 2026-11-12 (44 regular sessions) | One state (60 days). The open gap is SPCX's scaled by the volatility ratio, not fitted. |
+
+NVDA, TSLA, SPY and QQQ share SPCX's limits: the mark is the oracle plus the
+perp's premium, Pyth's history is not keyless and so not used, and the book and
+impact are defaults (a Phoenix book and signed fills have not been recorded;
+the candles hold 122,000 to 427,000 trades per market, not signed fills).
+Every US equity file has `block_seconds = 60`, so `draw_joint` accepts any set
+of them together.
 
 Each file lists its sources and limits under `[meta]`.
 
@@ -45,14 +56,18 @@ SHA-256), and a rerun from it is offline and deterministic:
 
 ```sh
 python3 -I calibration/fitter/run.py --from-archive calibration-raw-2026-11-11.tar.gz --out /tmp/cal
+python3 -I calibration/fitter/run.py --from-archive calibration-raw-tickers-2026-11-13.tar.gz --out /tmp/cal
 ```
 
-This writes `sol-usd.20261112.0dbc6cdf` and `spcx.20261112.d1f48be2`, with
-their inputs files, byte for byte as shipped. The run checks every archived
+The first writes `sol-usd.20261112.0dbc6cdf` and `spcx.20261112.d1f48be2`; the
+second (`archive-tickers.json`) the four equity files; each with its inputs
+file, byte for byte as shipped. A run writes the assets whose inputs the
+archive holds. The run checks every archived
 file against the archive's manifest first and refuses to touch the network.
 `--fetch` downloads fresh sources instead and stamps the files with today's
-date and time. The id's hash covers `calibration/fitter/calib/*.py`, so any
-change to the fitter makes a new id.
+date and time. The id's hash covers the fitter's code, so any change to it
+makes a new id: `calib/*.py` for SOL and SPCX, and `calib/*.py` with
+`tickers/*.py` for the equity files. `calib/` is frozen for that reason.
 
 ### Sections
 
@@ -117,8 +132,9 @@ calibration:
   fitted tails already hold those moves. A tail move lands in one slot,
   not spread evenly over its block.
 - **Several assets.** `draw_joint` correlates block innovations with a
-  stated correlation matrix on one shared clock. Cross-asset correlation
-  isn't fitted yet, so the matrix is a design parameter.
+  correlation matrix on one shared clock. For the US equity perps the matrix
+  is fitted: see [Correlation files](#correlation-files). For other sets it is
+  a design parameter.
 
 The path compiles to waypoints at most every `waypoint_slots` (default 4),
 spaced so every Phoenix move finishes before the next one starts. These are
@@ -136,6 +152,7 @@ A spec states every departure from the calibration (TOML, all optional):
 ```toml
 vol_mult = 1.0                 # stress beyond the calibration, stated
 regime = "stressed"            # hold one regime; default: drawn, switching
+regime_clock = 1.0             # switch this many times faster than the hourly rates
 waypoint_slots = 4
 jumps = false                  # background jumps on top of the fitted tails
 gaps = true
@@ -143,6 +160,38 @@ gaps = true
 mode = "before"                # draw | session | before | at
 kind = "regular"
 lead_seconds = 60
+```
+
+
+**Regimes at session timescale.** Calibrations switch regimes at hourly
+rates, so a task minutes long almost never sees a switch. Two stated
+departures change that, and the record keeps both (`regime_clock`, and the
+whole chain as `regime_set`); a record without them serialises as before:
+
+- `regime_clock` multiplies every state's leave rate. It changes how often
+  the state changes, not what each state is: GARCH, the tails, the level
+  draw and the calendar are untouched. Switches are drawn at block ends, as
+  always. A clock at which some state would leave within one block more
+  than half the time is refused, with the largest allowed value.
+- `[regimes]` replaces the calibration's regime chain with a stated one,
+  in the calibration's own form (`model = "markov"`, `names`, `vol_mult`,
+  `log_sd_within`, `share`, `transition_per_hour`, and a `source` saying
+  where the numbers come from), checked by the same rules. The median
+  session is normalised over the stated chain, so it still runs at
+  `per_second_sd`. This is how a family switches states on a calibration
+  fitted with one (SPCX's): ground the states in the fitted level spread
+  and say so in `source`.
+
+```toml
+regime_clock = 51.0
+[regimes]
+model = "markov"
+names = ["calm", "stressed"]
+vol_mult = [0.85, 1.7]
+log_sd_within = [0.4, 0.4]
+share = [0.7, 0.3]
+transition_per_hour = [[0.9, 0.1], [0.25, 0.75]]
+source = "SPCX's fitted level spread (log-sd 0.54) split into two states"
 ```
 
 ```sh
@@ -154,6 +203,96 @@ mtx market-cal generate --calibration calibration/market/spcx.20261112.d1f48be2.
 
 `generate` keeps everything in the template (mandate, flow, funding) except
 the path, the fair value and the record.
+
+## Correlation files
+
+A correlation file is the matrix `draw_joint` takes for a set of calibrated
+assets, fitted to the real assets' co-movement. One ships, for the US equity
+perps (`NVDA`, `QQQ`, `SPCX`, `SPY`, `TSLA`):
+
+```
+calibration/correlation/<set>.<date>.<hash>.toml          the correlation
+calibration/correlation/<set>.<date>.<hash>.inputs.json   every input: url, sha256, bytes, fetch time, archive
+```
+
+- **Same rules as a calibration file.** Named by its id, immutable, strict
+  schema (`mtx_grader::market::correlation`, version 1.x), a refit is a new
+  file. The id's hash covers the inputs' SHA-256s, the pinned calibration
+  files' SHA-256s, the fit's parameters and the code of `calibration/fitter/joint/`.
+- **Pinned calibrations.** `[meta].calibrations` names the calibration id each
+  asset was fitted through. `Correlation::joint_matrix` and `Correlation::draw`
+  take any subset of the assets, in any order, and fail if a calibration is not
+  the pinned one: the matrix means nothing for another fit of an asset. A
+  scenario drawn from a file should record its `correlation_id` and SHA-256
+  (`Correlation::sha256`) as it records a calibration's.
+- **Not the correlation of the output.** The matrix is the correlation of the
+  block innovations. The draw gives each asset its own Student-t factor,
+  volatility level and GARCH state, so the generated returns correlate less.
+  `realized_target` is what the draw reproduces; `matrix` is what `draw_joint`
+  is given.
+
+### What the fit does
+
+`python3 -I calibration/fitter/run.py --correlation us-eq --from-archive <a> --from-archive <b>`
+reads the Phoenix 1 m candles of the five assets from the two archives (SPCX's
+is the 2026-11-11 pull, the others the 2026-11-13 one), offline, and writes the
+file and its inputs. `sets/us-eq.toml` holds the parameters and the pins.
+
+1. **Real correlation.** The regular-hours (09:31 to 16:00 New York) 1 m
+   mark-return series of each asset over **one common window**, 2026-09-14 to
+   2026-11-10 (42 sessions, 16,380 minutes): from SPY's and QQQ's first full
+   week to the end of the SPCX pull. A return exists only where both bars do,
+   and no gap is filled forward. For each pair, its statistic is the **median
+   over clock-aligned 30-minute windows of the Pearson correlation of their
+   1 m returns** (546 windows a pair), the one the joint check judges. The
+   pooled 1 m and 5 m correlations are recorded beside it.
+2. **Shrinkage.** The targets are the real medians shrunk 0.1 of the way toward
+   their average off-diagonal (0.4393).
+3. **Simulated moments.** For each pair, the fitter simulates `draw_joint`'s
+   walkers (the two calibrations' GARCH, Student-t factors, regime levels and
+   switching, and mark smoothing, as the default spec draws them) and solves for
+   the matrix entry whose simulated median window correlation equals the
+   target (secant steps, 6,000 sessions of 30 blocks, seeded, common random
+   numbers). The simulated value is in `simulated_realized`; the Rust joint
+   check, which draws with the real model, confirms it.
+4. **Positive definite.** A matrix that is not positive definite (eigenvalue
+   floor 0.02) would be projected to the nearest correlation matrix (Higham). The
+   fitted one was already positive definite, so none was applied.
+
+| Pair | Real median 30 m corr | Target (shrunk) | Matrix entry | Real pooled 1 m | Simulated pooled 1 m | Real pooled 5 m | Co-jumps / expected if independent |
+|---|---|---|---|---|---|---|---|
+| NVDA-QQQ | 0.6071 | 0.5903 | 0.6471 | 0.6360 | 0.4641 | 0.7284 | 13 / 0.18 |
+| NVDA-SPCX | 0.2989 | 0.3129 | 0.3496 | 0.3456 | 0.2329 | 0.3994 | 2 / 0.13 |
+| NVDA-SPY | 0.5463 | 0.5356 | 0.5871 | 0.5685 | 0.4275 | 0.6560 | 12 / 0.17 |
+| NVDA-TSLA | 0.3231 | 0.3347 | 0.3755 | 0.3033 | 0.2627 | 0.3644 | 4 / 0.08 |
+| QQQ-SPCX | 0.3918 | 0.3965 | 0.4372 | 0.4548 | 0.2886 | 0.5464 | 1 / 0.20 |
+| QQQ-SPY | 0.7603 | 0.7282 | 0.7939 | 0.7944 | 0.5717 | 0.8957 | 34 / 0.26 |
+| QQQ-TSLA | 0.4474 | 0.4466 | 0.4940 | 0.4605 | 0.3385 | 0.5273 | 7 / 0.13 |
+| SPCX-SPY | 0.3361 | 0.3464 | 0.3843 | 0.3710 | 0.2602 | 0.4449 | 2 / 0.19 |
+| SPCX-TSLA | 0.2657 | 0.2830 | 0.3162 | 0.2945 | 0.2083 | 0.3846 | 3 / 0.09 |
+| SPY-TSLA | 0.4161 | 0.4184 | 0.4644 | 0.4267 | 0.3232 | 0.4883 | 8 / 0.12 |
+
+### What it can't do
+
+- **The 1 m scale.** Phoenix's mark is the oracle plus the perp's premium, and
+  its 1 m returns carry quote noise the underlyings' don't, so real 1 m
+  correlations read below the underlyings' (the Epps effect): the 5 m ones
+  are higher for every pair (SPY-QQQ 0.90 against 0.79). The model targets 1 m,
+  the scale sessions trade at.
+- **Pooled returns.** The draw can't reproduce the real *pooled* 1 m
+  correlation (SPY-QQQ 0.79 real, 0.57 drawn). Pooled returns weight the
+  large-move windows, where real assets move together and the draw's volatility
+  levels and GARCH states, being independent, do not. A bot that sizes on
+  pooled correlation across a whole session sees less than the real pair
+  shows. Fixing it needs shared volatility levels in `draw_joint`: a model
+  change, not a refit.
+- **Jumps.** The assets' large moves coincide in the data (SPY-QQQ: 34
+  coincident jumps where 0.26 is expected by chance, all in the same
+  direction; the pairs with SPCX have 1 to 3). The
+  draw's background jumps are off by default and independent when on, so
+  co-jumps are reported in the file, not modelled.
+- **One window.** 42 sessions, one market regime; correlations of equities
+  move with it. The bands below are sampling spread, not regime spread.
 
 ## Realism checks
 
@@ -174,7 +313,8 @@ Each file's `[realism]` section names the bars each statistic reads:
   and `cluster_bars`.
 - **The real windows.** SOL uses 120 s windows from 2 held-out days (1,438
   windows). SPCX uses 30-minute windows of regular-hours 1 m returns from
-  2026-06-15 to 2026-11-11 (1,284 windows).
+  2026-06-15 to 2026-11-11 (1,284 windows); NVDA, TSLA, SPY and QQQ the same
+  from their own first full weeks (1,308, 1,248, 528 and 528 windows).
 - **SOL's long windows.** SOL also has `[realism.long]`: 1 h windows of 1 m
   closes over 6 months (4,415 windows). Its 120 s windows are too short
   for volatility clustering within a session to show. `check_model`
@@ -207,7 +347,7 @@ deviations of the difference:
 fair generator fails any of a file's gated return checks at most 1% of
 the time:
 - SOL has 10 gated checks, so 3.29;
-- SPCX has 8, so 3.23.
+- SPCX, NVDA, TSLA, SPY and QQQ have 8 each, so 3.23.
 
 At 3 standard deviations per check, ten checks alone would give a fair
 model a 2–3% chance of failing somewhere.
@@ -222,6 +362,14 @@ never used in fitting.
 | SOL | 1000 | 0/300 | 300/300 | 300/300 |
 | SPCX | 300 | 0/300 | 300/300 | 289/300 (96.3%; not required) |
 | SPCX | 1000 | 1/300 (0.3%) | 300/300 | 300/300 |
+| NVDA | 300 | 1/300 (0.3%) | 300/300 | 175/300 (58%; not required) |
+| NVDA | 1000 | 3/300 (1.0%) | 300/300 | 298/300 (99.3%) |
+| TSLA | 300 | 2/300 (0.7%) | 243/300 (81%; not required) | 299/300 |
+| TSLA | 1000 | 0/300 | 299/300 (99.7%) | 300/300 |
+| SPY | 300 | 0/300 | 300/300 | 94/300 (31%; not required) |
+| SPY | 1000 | 0/300 | 300/300 | 261/300 (87%; not required) |
+| QQQ | 300 | 4/300 (1.3%) | 300/300 | 145/300 (48%; not required) |
+| QQQ | 1000 | 2/300 (0.7%) | 300/300 | 288/300 (96%) |
 
 The test asserts at most 2% false fails and at least 95% catches, with one
 exception. At 300 sessions, SPCX can't reliably tell no GARCH from its
@@ -230,6 +378,17 @@ minutes), and 300 sessions of 30 minutes catch its absence only 90-98% of
 the time, depending on the seeds. That detection is therefore required
 only at 1000 sessions, where it is 100%. To judge SPCX's volatility
 clustering, check at least 1000 sessions.
+
+The four equity files were measured the same way (`FFR_ASSETS=nvda,tsla,spy,qqq
+FFR_SEEDS=300 FFR_OFFSET=500`). Like SPCX, they have 30-minute windows, so no
+GARCH is required only at 1000 sessions. Two cells stay below 95% even so, and the
+test exempts exactly these two:
+- **TSLA, no regimes, 300 sessions (81%).** TSLA's two states move the session
+  level so little beyond what GARCH and sampling already give that 300 sessions
+  catch their removal four times in five. 1000 sessions catch it 299 times in 300.
+- **SPY, no GARCH, 1000 sessions (87%).** SPY's clustering is weak and
+  short-lived (persistence 0.52), so its absence is hard to see in 30-minute
+  windows.
 
 Only the gap check, resting on about a hundred opens, keeps a stated band.
 
@@ -279,6 +438,42 @@ mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file
 - **Output.** It prints a JSON report and exits 0 on `pass`, 2 on `fail`
   and 3 on `not_judged`. `mtx gates` calls it.
 
+### The joint check
+
+`mtx market-cal check-joint <correlation> --calibration <a> --calibration <b> ...`
+draws `--count` (300) joint sessions of any subset of the file's assets, each
+one 30 minutes long and starting inside a regular session, and judges each pair: the median over
+sessions of the correlation of the 1 m returns, against the real median in
+`[realism.pairs]`. `--calibration` repeats (`--calibration a --calibration b`) or takes several
+files; at least two. A usage error exits 64, so exit 2 always means a failed check.
+
+- **Band.** As the other checks: `sigmas` standard deviations of the difference
+  of two sampling errors, the real median's (its spread over resamples of the
+  546 real windows, `corr_spread_sd`) and the generated one's (bootstrapped from
+  the generated windows, and at least the real spread at that many windows).
+  `sigmas` is 3.29, a Sidak correction for the file's 10 pairs at 1%
+  family-wise false fails; a subset is judged at the same width, which is
+  conservative.
+- **Power.** The obviously wrong value is the pair's windows with the sessions
+  of one asset shifted by one against the other's (no correlation). A band that
+  also holds it reports `no_power`. A check with fewer than 30 sessions is
+  `skipped`.
+- **Verdict.** As the others: `pass` needs every pair to pass with power;
+  `fail` if any fails; `not_judged` otherwise. Exit code 0, 2 or 3.
+- `mtx market-cal show-joint <correlation> [--calibration ...]` prints the file's
+  matrices and pairs and, with calibrations, each pair's generated median beside
+  the real one.
+
+Measured by the ignored `joint_false_fail_rates` test (release,
+`FFR_SEEDS=300 FFR_OFFSET=500`; the seeds were never used in the fit): 300
+sessions a check, bars at most 2% false fails and at least 95% catches.
+
+| Assets | Calibrated: false fails | Sessions shuffled between assets: caught | Independent draws (identity matrix): caught |
+|---|---|---|---|
+| SPY, QQQ (1 pair) | 0/300 | 300/300 | 300/300 |
+| NVDA, TSLA, SPY, SPCX (6 pairs) | 0/300 | 300/300 | 300/300 |
+| all five (10 pairs) | 0/300 | 300/300 | 300/300 |
+
 **What the shipped files reject.** A sweep of wrong markets ran at 300
 sessions, on seeds 1-3, against both files. The calibrated model passed
 all 6 runs. The wrong markets failed 58 of 60 runs:
@@ -303,7 +498,7 @@ not that the model generalizes.
 | File | Fitted (in-sample) | Out of fit |
 |---|---|---|
 | SOL | `vol_level`, `vol_of_vol`, `kurtosis_within`, `predictability` (on the 2 held-out days); `long_clustering_lag_1` and `_5` (on the 6 months) | `tail_ratio`, `clustering_lag_1` to `_3`, `round_trips` |
-| SPCX | `vol_level`, `vol_of_vol`, `kurtosis_within`, `predictability`, `clustering_lag_1` and `_5`, `gap_size_median` and `_p90` | `tail_ratio`, `clustering_lag_10`, `round_trips` |
+| SPCX, NVDA, TSLA, SPY, QQQ | `vol_level`, `vol_of_vol`, `kurtosis_within`, `predictability`, `clustering_lag_1` and `_5`, `gap_size_median` and `_p90` (SPY and QQQ: the gap sizes are SPCX's, scaled) | `tail_ratio`, `clustering_lag_10`, `round_trips` |
 
 SOL's `long_clustering_lag_15` is reported, not gated. Real 1 m
 clustering decays more slowly (long memory) than one GARCH(1,1) with

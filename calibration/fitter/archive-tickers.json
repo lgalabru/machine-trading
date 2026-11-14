@@ -1,0 +1,9 @@
+{
+ "pull_id": "2026-11-13-tickers",
+ "file": "calibration-raw-tickers-2026-11-13.tar.gz",
+ "sha256": "f1bb5e2edb87109379c5e6d323157c2213cb35cbda488cc93af6642dc6c62ea0",
+ "bytes": 15314181,
+ "files": 633,
+ "note": "Phoenix /exchange and 1 m /candles for NVDA, TSLA, SPY and QQQ, from each market's first data day to the end of 2026-11-12 (pulled 2026-11-13). Every file's URL, SHA-256 and size are in its manifest.json and in the inputs.json beside each calibration. Rebuild the tarball from a raw folder with pack.py.",
+ "archive_url": null
+}

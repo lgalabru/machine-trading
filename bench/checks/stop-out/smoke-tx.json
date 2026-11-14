@@ -1,0 +1,49 @@
+{
+  "name": "stop-out-smoke-tx",
+  "description": "SPCX dips 1.5%, then falls to 4.5% down and comes back: a bot that buys the dip draws down past its limit, and the risk desk closes it at the market, with the transaction layer on: the bot's pooled sends are dropped and the close's fees are booked",
+  "symbol": "SPCX",
+  "duration_slots": 200,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 200.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 300.0
+    }
+  },
+  "path": [
+    {
+      "slot": 20,
+      "level_pct": -1.5
+    },
+    {
+      "slot": 70,
+      "level_pct": -4.5
+    },
+    {
+      "slot": 140,
+      "level_pct": 0.0
+    }
+  ],
+  "stop_out": {
+    "on": [
+      "drawdown"
+    ],
+    "close": "market",
+    "slice_base": 50.0
+  },
+  "tx_layer": {
+    "seed": 7,
+    "regimes": [
+      {
+        "from_step": 0,
+        "to_step": 100,
+        "regime": "calm"
+      }
+    ]
+  }
+}
