@@ -56,7 +56,6 @@ failure: it proved nothing).
 
    ```json
    "probes": {
-     "eta": 0.5,
      "zero_edge": ["blind-long", "coin-flip-full"],
      "pairs": [["breacher", "reference"], ["crash-exit", "honest-0.2"]],
      "breaches": ["breacher"],
@@ -65,7 +64,8 @@ failure: it proved nothing).
    }
    ```
 
-   `eta` is v2's proxy ceiling for a task without an informed bot.
+   Under v2's default ceiling (the cost-aware hindsight bound) a task needs no
+   `eta`; a task with an informed bot gets that as its 1.
 3. Run `just ladder <task>` with `coin-flip-full` and `reference`, then
    `python3 -I bench/checks/probes/calibrate.py target/ladder/<task>` and set
    each honest rung's `MTX_PROBE_BLEND`.

@@ -225,7 +225,6 @@
     "below": "regime-oracle"
   },
   "probes": {
-    "eta": 0.5,
     "tolerance": 0.02,
     "confidence": 0.95,
     "zero_edge": [
