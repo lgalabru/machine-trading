@@ -203,6 +203,20 @@ impl GradeReport {
             .iter()
             .map(|result| {
                 let session = &result.session;
+                // Its ceiling and its trade markout read one market's marks
+                // and cap.
+                if !session.markets.is_empty() {
+                    return Err(format!(
+                        "{}: scoring v2 scores sessions on one market; this one trades {}",
+                        session.scenario,
+                        session
+                            .markets
+                            .iter()
+                            .map(|m| m.symbol.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 // The cost-aware hindsight ceiling, on the reference's marks
                 // only: the bot's own marks move with its trades, so a bot
                 // could lower its own ceiling. Without a reference session
@@ -1632,6 +1646,37 @@ mod tests {
             assert_eq!(jitter.ceiling_usd, v2.ceiling_usd, "±{bps} bp");
             assert_eq!(jitter.raw, v2.raw, "±{bps} bp");
         }
+    }
+
+    #[test]
+    fn v2_refuses_a_session_on_several_markets() {
+        let s = scenario(Some(100.0));
+        let mut multi = session(30.0);
+        multi.markets = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| session::MarketReport {
+                symbol: symbol.into(),
+                start_mark_usd: 100.0,
+                end_mark_usd: 100.0,
+                start_position: 0.0,
+                end_position: 0.0,
+                valuation: "mark",
+                flow: None,
+                competitor: None,
+            })
+            .collect();
+        let mut report = score(vec![(multi, &s)]);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(
+            refused
+                .contains("scoring v2 scores sessions on one market; this one trades NVDA, SPCX"),
+            "{refused}"
+        );
+        assert!(report.v2.is_none());
+        // One market is scored as before.
+        let mut one = score(vec![(session(30.0), &s)]);
+        one.score_v2(&v2()).unwrap();
+        assert!(one.v2.is_some());
     }
 
     #[test]
