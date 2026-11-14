@@ -12,8 +12,8 @@
 //! with the assets' sessions shuffled against each other (no correlation) has
 //! no power, and judges nothing.
 //!
-//! Sessions are as long as the real windows and start where they come from
-//! (a regular session's open), so a session is one window.
+//! Sessions are as long as the real windows and start inside a regular
+//! session, as the real windows do, so a session is one window.
 
 use serde::{Deserialize, Serialize};
 

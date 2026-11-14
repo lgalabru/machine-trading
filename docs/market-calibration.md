@@ -409,9 +409,10 @@ mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file
 
 `mtx market-cal check-joint <correlation> --calibration <a> --calibration <b> ...`
 draws `--count` (300) joint sessions of any subset of the file's assets, each
-one 30 minutes from a regular open, and judges each pair: the median over
+one 30 minutes long and starting inside a regular session, and judges each pair: the median over
 sessions of the correlation of the 1 m returns, against the real median in
-`[realism.pairs]`.
+`[realism.pairs]`. `--calibration` repeats (`--calibration a --calibration b`) or takes several
+files; at least two. A usage error exits 64, so exit 2 always means a failed check.
 
 - **Band.** As the other checks: `sigmas` standard deviations of the difference
   of two sampling errors, the real median's (its spread over resamples of the

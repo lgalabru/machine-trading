@@ -86,7 +86,7 @@ pub(crate) enum MarketCalCommand {
         correlation: PathBuf,
         /// The pinned calibration files of the assets to draw together (any
         /// subset of the file's, at least two).
-        #[arg(long, required = true, num_args = 2..)]
+        #[arg(long, required = true, num_args = 1..)]
         calibration: Vec<PathBuf>,
         #[command(flatten)]
         model: ModelArgs,
@@ -217,6 +217,10 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
             count,
             seed,
         } => {
+            anyhow::ensure!(
+                calibration.len() >= 2,
+                "check-joint needs at least two --calibration files"
+            );
             let corr = Correlation::load(&correlation)?;
             let report = joint::check_joint(
                 &corr,

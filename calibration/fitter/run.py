@@ -177,7 +177,6 @@ def main() -> None:
     ap.add_argument("--cache", type=Path, default=HERE / ".cache", help="with --fetch: the download cache (a raw folder with manifest.json)")
     ap.add_argument("--correlation", choices=SETS, help="fit this set's correlation file instead of the market files")
     ap.add_argument("--out", type=Path, default=None, help="where the files are written (default calibration/market, or calibration/correlation)")
-    ap.add_argument("--out", type=Path, default=HERE.parent / "market", help="where the files are written")
     args = ap.parse_args()
     if args.out is None:
         args.out = HERE.parent / ("correlation" if args.correlation else "market")
