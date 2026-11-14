@@ -912,9 +912,8 @@ pub(crate) async fn simulate_bundle(
         ],
     });
     let infra = |e: String| format!("couldn't simulate it: {e}");
-    let answer = self
-        .http
-        .post(&rpc_url)
+    let answer = http
+        .post(rpc_url)
         .timeout(crate::session::INTERNAL_RPC_TIMEOUT)
         .header("content-type", "application/json")
         .body(body.to_string())

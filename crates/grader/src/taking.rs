@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(g.check(&limit(Ask, 99.0), false), Ok(()));
         // The position it was shown moved with the guard's own: flat now,
         // so crossing to sell again would open.
-        assert_eq!(g.check(&market(Ask, 1.0), false), Ok(()));
+        assert_eq!(g.check(&market(Ask, 2.0), false), Ok(()));
         assert!(g.check(&limit(Ask, 99.0), false).is_err());
         let mut g = two_sided(-2.0, OTHERS);
         assert_eq!(g.check(&limit(Bid, 101.5), false), Ok(()));

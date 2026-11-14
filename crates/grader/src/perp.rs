@@ -493,6 +493,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
+        exchange: world.exchange.clone(),
         perp,
         market,
         bot: bot.pubkey(),
@@ -1024,6 +1025,8 @@ type Quotes = Vec<(f64, f64)>;
 struct PerpAccount {
     scenario: Scenario,
     phoenix: Phoenix,
+    /// The exchange the account trades on, for the process bots' take gate.
+    exchange: mtx_kit::phoenix_rise::types::exchange::ExchangeResponse,
     perp: PerpMarket,
     market: ExchangeMarketConfig,
     bot: Pubkey,
@@ -1470,7 +1473,7 @@ impl Account for PerpAccount {
         let allowance = self.mandate.allowance(&self.scenario.instrument())?;
         crate::taking::TakeGate::new(
             allowance,
-            self.phoenix.exchange().clone(),
+            self.exchange.clone(),
             &self.scenario.symbol,
             self.bot,
             &self.rpc_url,
