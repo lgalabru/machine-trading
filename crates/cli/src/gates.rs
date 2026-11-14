@@ -468,6 +468,7 @@ pub fn strength_band(
 /// `mtx grade` can (no fallback to the hindsight ceiling). A v1 task reports
 /// them not run.
 pub fn v2_checks(
+    task: &str,
     headline: tasks::Headline,
     ladder: &Value,
     summary: Option<&LadderSummary>,
@@ -494,7 +495,16 @@ pub fn v2_checks(
     let anchors = ladder
         .get("anchors")
         .map(|a| serde_json::from_value::<Anchors>(a.clone()));
+    // The band certifies the task's own bots, or nothing: rungs named
+    // `reference` and `informed` that run anything else aren't anchors.
+    let foreign = authoring::anchor_rung_problems(ladder, task);
     checks.push(match (anchors, settings, summary) {
+        (Some(Ok(_)), _, _) if !foreign.is_empty() => Check::fail(
+            SOLVABLE,
+            band.0,
+            band.1,
+            format!("the anchors aren't the task's own: {}", foreign.join("; ")),
+        ),
         (None, _, _) => Check::fail(
             SOLVABLE,
             band.0,
@@ -885,8 +895,13 @@ fn clear_dir(dir: &Path) -> Result<()> {
 }
 
 /// What a Harbor check run should have scored, read from its `reward.json`.
-fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
-    let title_oracle = "Oracle scores the reference's 1.0";
+/// The oracle is the reference: skill 1 under v1, and under v2, the task's
+/// one score, a `reward` of 0.5 that is v2's (no `skill` beside it).
+fn harbor_checks(jobs: &Path, ran: bool, detail: &str, headline: tasks::Headline) -> Vec<Check> {
+    let title_oracle = match headline {
+        tasks::Headline::V1 => "Oracle scores the reference's 1.0",
+        tasks::Headline::V2 => "Oracle scores the reference's 0.5 (scoring v2)",
+    };
     if !ran {
         let d = format!("`just harbor-checks` failed: {detail}");
         return vec![
@@ -907,17 +922,47 @@ fn harbor_checks(jobs: &Path, ran: bool, detail: &str) -> Vec<Check> {
     }
     let get = |agent: &str, key: &str| reward(&jobs.join(agent)).and_then(|r| r.get(key).copied());
     let mut checks = Vec::new();
-    let skill = get("oracle", "skill");
-    checks.push(Check::from(
-        SOLVABLE,
-        "oracle",
-        title_oracle,
-        skill.is_some_and(|s| (0.999..=1.001).contains(&s)),
-        format!(
-            "oracle skill {}",
-            skill.map_or("missing".into(), |s| format!("{s:.4}"))
-        ),
-    ));
+    checks.push(match headline {
+        tasks::Headline::V1 => {
+            let skill = get("oracle", "skill");
+            Check::from(
+                SOLVABLE,
+                "oracle",
+                title_oracle,
+                skill.is_some_and(|s| (0.999..=1.001).contains(&s)),
+                format!(
+                    "oracle skill {}",
+                    skill.map_or("missing".into(), |s| format!("{s:.4}"))
+                ),
+            )
+        }
+        tasks::Headline::V2 => {
+            let (reward, v2, skill) = (
+                get("oracle", "reward"),
+                get("oracle", "score_v2"),
+                get("oracle", "skill"),
+            );
+            let ok = reward.is_some_and(|r| (0.499..=0.501).contains(&r))
+                && v2 == reward
+                && skill.is_none();
+            Check::from(
+                SOLVABLE,
+                "oracle",
+                title_oracle,
+                ok,
+                format!(
+                    "oracle reward {}, score_v2 {}{}",
+                    reward.map_or("missing".into(), |s| format!("{s:.4}")),
+                    v2.map_or("missing".into(), |s| format!("{s:.4}")),
+                    if skill.is_some() {
+                        "; a v1 skill is reported beside it"
+                    } else {
+                        ""
+                    },
+                ),
+            )
+        }
+    });
     let nop = get("nop", "reward");
     checks.push(Check::from(
         SOLVABLE,
@@ -1324,6 +1369,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
     checks.extend(v2_checks(
+        task,
         headline,
         &config,
         summary.as_ref(),
@@ -1339,7 +1385,10 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(full_only(
             SOLVABLE,
             "oracle",
-            "Oracle scores the reference's 1.0",
+            match headline {
+                tasks::Headline::V1 => "Oracle scores the reference's 1.0",
+                tasks::Headline::V2 => "Oracle scores the reference's 0.5 (scoring v2)",
+            },
         ));
         checks.push(full_only(
             SOLVABLE,
@@ -1372,7 +1421,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             &["harbor-checks", task, "", &jobs.to_string_lossy()],
             true,
         )?;
-        checks.extend(harbor_checks(&jobs, ran, &detail));
+        checks.extend(harbor_checks(&jobs, ran, &detail, headline));
         let (ok, d) = run_in(root, "just", &["leak-audit"], false)?;
         checks.push(Check::from(
             GRADED,
@@ -1547,14 +1596,28 @@ mod tests {
     fn a_v2_task_without_anchors_is_refused_and_a_v1_task_is_untouched() {
         let fit = sessions(&[&[("reference", REFERENCE), ("informed", INFORMED)]]);
         let test = "mtx grade --scoring v2-headline --v2-sessions";
-        let named =
-            serde_json::json!({ "anchors": { "reference": "reference", "informed": "informed" } });
-        let v2 = v2_checks(tasks::Headline::V2, &named, Some(&fit), test, false);
+        let named = serde_json::json!({
+            "anchors": { "reference": "reference", "informed": "informed" },
+            "rungs": [
+                { "name": "blind-long", "dir": "bench/checks/ladder/blind-long" },
+                { "name": "reference", "dir": "bench/tasks/t-spcx/reference" },
+                { "name": "informed", "dir": "bench/tasks/t-spcx/checks/bots/informed", "tell_regime": true }
+            ]
+        });
+        let v2 = v2_checks(
+            "t-spcx",
+            tasks::Headline::V2,
+            &named,
+            Some(&fit),
+            test,
+            false,
+        );
         assert_eq!(v2[0].id, "strength-band");
         assert_eq!(v2[0].status, Status::Pass, "{}", v2[0].detail);
         // Until `mtx grade --informed` exists, no v2 task is releasable.
         assert_eq!(v2[1].status, Status::Fail);
         let none = v2_checks(
+            "t-spcx",
             tasks::Headline::V2,
             &serde_json::json!({}),
             Some(&fit),
@@ -1564,9 +1627,59 @@ mod tests {
         assert_eq!(none[0].status, Status::Fail);
         assert!(none[0].detail.contains("names no `anchors`"));
         let typo = serde_json::json!({ "anchors": { "reference": "reference", "informd": "x" } });
-        let typo = v2_checks(tasks::Headline::V2, &typo, Some(&fit), test, false);
+        let typo = v2_checks(
+            "t-spcx",
+            tasks::Headline::V2,
+            &typo,
+            Some(&fit),
+            test,
+            false,
+        );
         assert_eq!(typo[0].status, Status::Fail, "{}", typo[0].detail);
-        let v1 = v2_checks(tasks::Headline::V1, &serde_json::json!({}), None, "", false);
+        // A `reference` rung that runs another bot (a blind bet here) can't
+        // be certified as the 0.5, however its numbers fall.
+        let mut swapped = named.clone();
+        swapped["anchors"]["reference"] = serde_json::json!("blind-long");
+        let fit_swapped = sessions(&[&[("blind-long", REFERENCE), ("informed", INFORMED)]]);
+        let swapped = v2_checks(
+            "t-spcx",
+            tasks::Headline::V2,
+            &swapped,
+            Some(&fit_swapped),
+            test,
+            false,
+        );
+        assert_eq!(swapped[0].status, Status::Fail);
+        assert!(
+            swapped[0].detail.contains("not the task's reference bot"),
+            "{}",
+            swapped[0].detail
+        );
+        // An informed rung that isn't told the regime isn't the 1.
+        let mut untold = named.clone();
+        untold["rungs"][2]["tell_regime"] = serde_json::json!(false);
+        let untold = v2_checks(
+            "t-spcx",
+            tasks::Headline::V2,
+            &untold,
+            Some(&fit),
+            test,
+            false,
+        );
+        assert_eq!(untold[0].status, Status::Fail);
+        assert!(
+            untold[0].detail.contains("isn't told"),
+            "{}",
+            untold[0].detail
+        );
+        let v1 = v2_checks(
+            "t-spcx",
+            tasks::Headline::V1,
+            &serde_json::json!({}),
+            None,
+            "",
+            false,
+        );
         assert!(v1.iter().all(|c| c.status == Status::NotRun));
     }
 
@@ -1793,15 +1906,40 @@ mod tests {
         put("component-cheater", r#"{"reward": 0.0, "tampered": 0.0}"#);
         put("cheater", r#"{"reward": 0.0, "not_graded": 1.0}"#);
         put("sneaky", r#"{"reward": 0.0, "not_graded": 1.0}"#);
-        let checks = harbor_checks(&dir, true, "");
+        let checks = harbor_checks(&dir, true, "", tasks::Headline::V1);
         assert!(
             checks.iter().all(|c| c.status == Status::Pass),
             "{checks:?}"
         );
+        // Under v2 the oracle's skill 1 isn't the bar: its reward is v2's 0.5.
+        let v2 = |dir: &Path| harbor_checks(dir, true, "", tasks::Headline::V2)[0].status;
+        assert_eq!(v2(&dir), Status::Fail, "a v1 reward of 1.0");
+        put("oracle", r#"{"reward": 0.5, "score_v2": 0.5}"#);
+        assert_eq!(v2(&dir), Status::Pass);
+        assert_eq!(
+            harbor_checks(&dir, true, "", tasks::Headline::V1)[0].status,
+            Status::Fail,
+            "no skill"
+        );
+        put(
+            "oracle",
+            r#"{"reward": 0.5, "score_v2": 0.5, "skill": 1.0}"#,
+        );
+        assert_eq!(v2(&dir), Status::Fail, "a v1 score beside it");
+        put("oracle", r#"{"reward": 0.62, "score_v2": 0.62}"#);
+        assert_eq!(
+            v2(&dir),
+            Status::Fail,
+            "a floored reference scores above 0.5"
+        );
+        put("oracle", r#"{"reward": 1.0, "skill": 1.0}"#);
         put("sneaky", r#"{"reward": 0.4, "not_graded": 0.0}"#);
-        assert_eq!(harbor_checks(&dir, true, "")[2].status, Status::Fail);
+        assert_eq!(
+            harbor_checks(&dir, true, "", tasks::Headline::V1)[2].status,
+            Status::Fail
+        );
         assert!(
-            harbor_checks(&dir, false, "boom")
+            harbor_checks(&dir, false, "boom", tasks::Headline::V1)
                 .iter()
                 .all(|c| c.status == Status::Fail)
         );
@@ -1821,10 +1959,13 @@ mod tests {
         let oracle = jobs.join("oracle/2026-11-01__00-00-00/trial");
         std::fs::create_dir_all(&oracle).unwrap();
         std::fs::write(oracle.join("reward.json"), r#"{"skill": 1.0}"#).unwrap();
-        assert_eq!(harbor_checks(&jobs, true, "")[0].status, Status::Pass);
+        assert_eq!(
+            harbor_checks(&jobs, true, "", tasks::Headline::V1)[0].status,
+            Status::Pass
+        );
         clear_dir(&jobs).unwrap();
         clear_dir(&jobs).unwrap();
-        let oracle = &harbor_checks(&jobs, true, "")[0];
+        let oracle = &harbor_checks(&jobs, true, "", tasks::Headline::V1)[0];
         assert_eq!(oracle.status, Status::Fail);
         assert!(oracle.detail.contains("missing"), "{}", oracle.detail);
     }

@@ -24,7 +24,7 @@ finished ladder) adjust a run.
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
 | | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
-| | the oracle scores 1.0 and nop 0 under Harbor | full: `just harbor-checks` |
+| | the oracle (the reference) scores skill 1.0, or under scoring v2 a `reward` of 0.5 that is v2's score with no `skill` beside it; nop scores 0 under Harbor | full: `just harbor-checks` |
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
 | | a v2 task's verifier runs its informed bot on the hidden set (fails while `mtx grade --informed` isn't in the build: v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh` |
 | Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |

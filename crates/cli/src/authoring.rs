@@ -287,7 +287,12 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     std::fs::write(&toml_path, toml)?;
 
     let test_path = to.join("tests/test.sh");
-    let test = v2_verifier(&std::fs::read_to_string(&test_path)?);
+    // The verifier's 0.5 is this task's reference, which the image builds
+    // under the family's anchor name.
+    let test = v2_verifier(&std::fs::read_to_string(&test_path)?).replace(
+        &format!("--reference /opt/mtx/anchors/{} ", base.generator()),
+        &format!("--reference /opt/mtx/anchors/{family} "),
+    );
     let test = test.replacen(
         "set -euo pipefail\n",
         &format!(
@@ -1004,7 +1009,7 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         state: "manual",
         detail: "needs the image and real runs; can't be read from files".into(),
         next: format!(
-            "`just image && just harbor-checks` (oracle at skill 1, nop/cheater/sneaky 0), `just ladder {task}`, `just leak-audit`, `harbor check bench/tasks/{task}`, then real agents (task_guide step=verify)."
+            "`just image && just harbor-checks` (oracle at skill 1, or a reward of 0.5 under v2; nop/cheater/sneaky 0), `just ladder {task}`, `just leak-audit`, `harbor check bench/tasks/{task}`, then real agents (task_guide step=verify)."
         ),
     });
     Ok(steps)
@@ -1021,56 +1026,105 @@ fn ladder_file(root: &Path, task: &str) -> Value {
     .unwrap_or_default()
 }
 
-/// The directory of the ladder's rung `name`, if it has one.
-fn rung_dir<'a>(ladder: &'a Value, name: &str) -> Option<&'a str> {
-    ladder["rungs"]
-        .as_array()?
-        .iter()
-        .find(|r| r["name"] == name)?["dir"]
-        .as_str()
+/// Where a task's anchors must live, from the repository's root: the
+/// reference is its own `reference/` crate (what the image builds into
+/// `/opt/mtx/anchors/<anchor>` for the verifier), the informed bot its
+/// `checks/bots/informed`.
+pub fn anchor_dirs(task: &str) -> (String, String) {
+    (
+        format!("bench/tasks/{task}/reference"),
+        format!("bench/tasks/{task}/checks/bots/informed"),
+    )
 }
 
-/// The anchors a v2 task's ladder names (`anchors.reference` and
-/// `anchors.informed`), each a rung whose bot exists; the informed bot no
-/// longer the scaffold's copy of the reference. What's wrong, if anything.
-pub fn anchor_problems(root: &Path, task: &str) -> Vec<String> {
-    let ladder = ladder_file(root, task);
-    if ladder.is_null() {
-        return vec!["checks/ladder.json is missing or isn't JSON".into()];
-    }
+/// What's wrong with the rungs a v2 task's ladder names as its anchors,
+/// from the ladder file alone: each must be a rung, the reference the
+/// task's own reference crate, run as it is (no `env`, not told), and the
+/// informed bot the task's informed crate, told the session's regime
+/// (`tell_regime`, the ladder's tell), so a better-tuned bot that reads
+/// nothing can't pose as the 1.
+pub fn anchor_rung_problems(ladder: &Value, task: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    let mut dirs = Vec::new();
-    for (role, scale) in [("reference", "0.5"), ("informed", "1")] {
+    let (reference_dir, informed_dir) = anchor_dirs(task);
+    let norm = |d: &str| d.trim_start_matches("./").trim_end_matches('/').to_string();
+    for (role, scale, want) in [
+        ("reference", "0.5", reference_dir),
+        ("informed", "1", informed_dir),
+    ] {
         let Some(name) = ladder["anchors"][role].as_str() else {
             problems.push(format!(
                 "ladder.json's `anchors.{role}` names no rung (the {scale})"
             ));
             continue;
         };
-        match rung_dir(&ladder, name) {
-            None => problems.push(format!(
+        let Some(rung) = ladder["rungs"]
+            .as_array()
+            .and_then(|rungs| rungs.iter().find(|r| r["name"] == name))
+        else {
+            problems.push(format!(
                 "`anchors.{role}` is `{name}`, which isn't a rung in ladder.json"
+            ));
+            continue;
+        };
+        let dir = rung["dir"].as_str().map(norm).unwrap_or_default();
+        if dir != want {
+            problems.push(format!(
+                "the {role} anchor `{name}` runs {dir}, not the task's {role} bot, {want}"
+            ));
+        }
+        if rung.get("env").is_some_and(|e| !e.is_null()) {
+            problems.push(format!(
+                "the {role} anchor `{name}` sets `env`: an anchor runs as it is"
+            ));
+        }
+        let told = rung["tell_regime"] == Value::Bool(true);
+        match role {
+            "reference" if told => problems.push(format!(
+                "the reference anchor `{name}` is told the regime (`tell_regime`): the 0.5 reads the market as a bot does"
             )),
-            Some(dir) if !root.join(dir).is_dir() => {
-                problems.push(format!("the {role} anchor's bot, {dir}, doesn't exist"))
-            }
-            Some(dir) => dirs.push((role, dir.to_string())),
+            "informed" if !told => problems.push(format!(
+                "the informed anchor `{name}` isn't told the regime (`tell_regime: true`): without the task's tell it isn't the 1"
+            )),
+            _ => {}
         }
     }
-    if let [(_, reference), (_, informed)] = dirs.as_slice() {
-        if reference == informed {
-            problems.push("the informed anchor is the reference itself".into());
-        } else {
-            let unwritten = std::fs::read_dir(root.join(informed).join("src"))
-                .into_iter()
-                .flatten()
-                .flatten()
-                .any(|e| read(&e.path()).contains(INFORMED_TODO));
-            if unwritten {
-                problems.push(format!(
-                    "{informed} is still the scaffold's copy of the reference ({INFORMED_TODO})"
-                ));
-            }
+    problems
+}
+
+/// The anchors a v2 task's ladder names: the task's own bots, the informed
+/// one told the regime and no longer the scaffold's copy of the reference,
+/// and the verifier grading against the anchor the image builds from the
+/// reference crate. What's wrong, if anything.
+pub fn anchor_problems(root: &Path, task: &str) -> Vec<String> {
+    let ladder = ladder_file(root, task);
+    if ladder.is_null() {
+        return vec!["checks/ladder.json is missing or isn't JSON".into()];
+    }
+    let mut problems = anchor_rung_problems(&ladder, task);
+    let (reference, informed) = anchor_dirs(task);
+    for (role, dir) in [("reference", &reference), ("informed", &informed)] {
+        if !root.join(dir).join("Cargo.toml").is_file() {
+            problems.push(format!("the {role} anchor's crate, {dir}, doesn't exist"));
+        }
+    }
+    let unwritten = std::fs::read_dir(root.join(&informed).join("src"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| read(&e.path()).contains(INFORMED_TODO));
+    if unwritten {
+        problems.push(format!(
+            "{informed} is still the scaffold's copy of the reference ({INFORMED_TODO})"
+        ));
+    }
+    // The verifier's 0.5 is the image's build of the reference crate.
+    if let Ok(meta) = tasks::load_one(root, task.to_string()) {
+        let want = format!("/opt/mtx/anchors/{}", meta.mtx.anchor());
+        let test = read(&root.join("bench/tasks").join(task).join("tests/test.sh"));
+        if scoring_text::flag_value(&test, "--reference").as_deref() != Some(want.as_str()) {
+            problems.push(format!(
+                "tests/test.sh doesn't grade against `--reference {want}`, the image's build of {reference}"
+            ));
         }
     }
     problems
@@ -1113,6 +1167,20 @@ pub fn scoring_problems(test: &str, instruction: &str) -> Vec<String> {
                 .to_string(),
         );
     }
+    for flag in ["--ceiling", "--eta"] {
+        if scoring_text::has_flag(test, flag) {
+            problems.push(format!(
+                "tests/test.sh passes `{flag}`: a v2 task's 1 is its informed bot, never a given or proxy ceiling"
+            ));
+        }
+    }
+    let leftovers = v1_wording(instruction);
+    if !leftovers.is_empty() {
+        problems.push(format!(
+            "instruction.md still describes v1 scoring ({}): a v2 task has one score",
+            leftovers.join(", ")
+        ));
+    }
     match scoring_text::Settings::of_verifier(test) {
         Err(e) => problems.push(format!("{e:#}")),
         Ok(settings) => match scoring_text::with_block(instruction, &settings) {
@@ -1126,6 +1194,38 @@ pub fn scoring_problems(test: &str, instruction: &str) -> Vec<String> {
         },
     }
     problems
+}
+
+/// The v1 scoring words an instruction holds outside its scoring block:
+/// `skill`, the hindsight bound, `reference_ratio`.
+pub fn v1_wording(instruction: &str) -> Vec<&'static str> {
+    let outside = match (
+        instruction.find("<!-- mtx:scoring begin"),
+        instruction.find(scoring_text::END),
+    ) {
+        (Some(b), Some(e)) if e > b => {
+            format!("{}{}", &instruction[..b], &instruction[e..])
+        }
+        _ => instruction.to_string(),
+    }
+    .to_lowercase();
+    let word = |w: &str| {
+        outside.match_indices(w).any(|(i, _)| {
+            let before = outside[..i].chars().next_back();
+            let after = outside[i + w.len()..].chars().next();
+            let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            edge(before) && edge(after)
+        })
+    };
+    [
+        ("skill", "`skill`"),
+        ("hindsight bound", "the hindsight bound"),
+        ("reference_ratio", "`reference_ratio`"),
+    ]
+    .into_iter()
+    .filter(|(w, _)| word(w))
+    .map(|(_, label)| label)
+    .collect()
 }
 
 fn scoring_step(task: &str, test: &str, instruction: &str) -> Step {
@@ -1261,7 +1361,7 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "`harbor lint bench/tasks/<task> --select ALL --ignore unpinned-image` checks the task's files against Harbor's rules; images are pinned at release."
         }
         "verify" => {
-            "On the image: `just image && just harbor-checks` (oracle at skill 1, nop 0, cheater 0, sneaky 0), `just ladder <task>` (the order rule on fresh hidden sets), `just leak-audit` (the agent's image holds no answer), `harbor check bench/tasks/<task>` (an LLM review against Harbor's rubric). Then real agents, k runs each, and `harbor analyze`. Read the winning bots: agents state their edge in doc comments. Treat a too-clean risk profile (worst session near 0, 90%+ profitable) as a leak. Target: the best model's mean reward between 0.2 and 0.7. Deeper: SKILL.md steps 7 and 8."
+            "On the image: `just image && just harbor-checks` (oracle at skill 1, or at a reward of 0.5 for a v2 task; nop 0, cheater 0, sneaky 0), `just ladder <task>` (the order rule on fresh hidden sets), `just leak-audit` (the agent's image holds no answer), `harbor check bench/tasks/<task>` (an LLM review against Harbor's rubric). Then real agents, k runs each, and `harbor analyze`. Read the winning bots: agents state their edge in doc comments. Treat a too-clean risk profile (worst session near 0, 90%+ profitable) as a leak. Target: the best model's mean reward between 0.2 and 0.7. Deeper: SKILL.md steps 7 and 8."
         }
         _ => return None,
     })
@@ -1489,6 +1589,21 @@ mod tests {
         let (anchors, detail) = state_of(&steps, "anchors");
         assert_eq!(anchors, "todo");
         assert!(detail.contains(INFORMED_TODO), "{detail}");
+        // The base's contract still mentions v1's scores: flagged until the
+        // author rewrites those lines for v2.
+        let (scoring, detail) = state_of(&steps, "scoring");
+        assert_eq!(scoring, "todo");
+        assert!(detail.contains("still describes v1 scoring"), "{detail}");
+        let rewritten: String = instruction
+            .lines()
+            .filter(|l| {
+                let l = l.to_lowercase();
+                !l.contains("hindsight bound") && !l.contains("skill")
+            })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        std::fs::write(task.join("instruction.md"), &rewritten).unwrap();
+        let steps = status(&root, name).unwrap();
         assert_eq!(
             state_of(&steps, "scoring").0,
             "done",
@@ -1510,6 +1625,50 @@ mod tests {
             "{}",
             state_of(&steps, "anchors").1
         );
+
+        // The anchors are the task's own bots, or none: a `reference` that
+        // runs a blind bet, an informed bot that isn't told the regime, or a
+        // verifier grading against another anchor is refused.
+        let ladder_path = task.join("checks/ladder.json");
+        let tamper = |edit: &dyn Fn(&mut Value)| {
+            let mut l = ladder.clone();
+            edit(&mut l);
+            std::fs::write(&ladder_path, l.to_string()).unwrap();
+            let problems = anchor_problems(&root, name);
+            std::fs::write(&ladder_path, ladder.to_string()).unwrap();
+            problems.join("; ")
+        };
+        let blind = tamper(&|l| l["anchors"]["reference"] = json!("blind-long"));
+        assert!(blind.contains("not the task's reference bot"), "{blind}");
+        let elsewhere =
+            tamper(&|l| l["rungs"][3]["dir"] = json!("bench/tasks/flash-crash-spcx/reference"));
+        assert!(
+            elsewhere.contains("not the task's reference bot"),
+            "{elsewhere}"
+        );
+        let untold = tamper(&|l| l["rungs"][4]["tell_regime"] = json!(false));
+        assert!(untold.contains("isn't told"), "{untold}");
+        let tuned = tamper(&|l| l["rungs"][4]["env"] = json!({ "EDGE": "2" }));
+        assert!(tuned.contains("sets `env`"), "{tuned}");
+        assert!(
+            test.contains("--reference /opt/mtx/anchors/funding-squeeze "),
+            "{test}"
+        );
+        std::fs::write(
+            task.join("tests/test.sh"),
+            test.replace(
+                "/opt/mtx/anchors/funding-squeeze ",
+                "/opt/mtx/anchors/flash-crash ",
+            ),
+        )
+        .unwrap();
+        let verifier = anchor_problems(&root, name).join("; ");
+        assert!(
+            verifier.contains("--reference /opt/mtx/anchors/funding-squeeze"),
+            "{verifier}"
+        );
+        std::fs::write(task.join("tests/test.sh"), &test).unwrap();
+        assert!(anchor_problems(&root, name).is_empty());
 
         // A verifier setting changed: the rules are stale until synced.
         std::fs::write(
@@ -1541,6 +1700,7 @@ mod tests {
         }))
         .unwrap();
         let checks = crate::gates::v2_checks(
+            name,
             meta.mtx.headline,
             &ladder,
             Some(&summary),
@@ -1564,6 +1724,23 @@ mod tests {
         std::fs::write(task.join("checks/ladder.json"), out.to_string()).unwrap();
         assert!(probe_problems(&root, name).is_empty());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn v1_wording_is_found_outside_the_scoring_block_only() {
+        let block = scoring_text::block(&scoring_text::Settings::default());
+        assert!(
+            v1_wording(&block).is_empty(),
+            "the generated rules are v2's"
+        );
+        let text = format!("Intro.\n\n{block}\n\nA skillful bot; `skill_x` too.\n");
+        assert!(v1_wording(&text).is_empty());
+        let text =
+            format!("Your `skill` is PnL over the reference's.\n{block}\nThe Hindsight Bound.\n");
+        assert_eq!(v1_wording(&text), ["`skill`", "the hindsight bound"]);
+        let test = "mtx grade --scoring v2-headline --v2-sessions --ceiling c.json";
+        let problems = scoring_problems(test, &block).join("; ");
+        assert!(problems.contains("`--ceiling`"), "{problems}");
     }
 
     #[test]
