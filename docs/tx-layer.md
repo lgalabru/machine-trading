@@ -66,7 +66,14 @@ The code is in `crates/grader/src/txlayer/`.
       writes, and if its requested units fit what the background left of the
       block (100M) and of each account it writes (12M). With the calibrated
       small chance, two adjacent conflicting transactions swap places.
-   5. A **signature lands once.** A transaction sent alone and inside a
+   5. A send the chain accepts and never runs (the node takes it without
+      preflight and drops it: two compute-budget instructions of a kind, a
+      fee its payer can't cover) fails unpaid, "the chain didn't process
+      it". A send that failed without running (that, or a bundle the leader
+      refused) may be sent again, the same bytes, once the state may let it
+      land. One that ran, even failing, never lands again. The same
+      transaction sent alone and as a bundle of one are two sends that race.
+   6. A **signature lands once.** A transaction sent alone and inside a
       bundle (or in two bundles, or alone twice) lands with whichever the
       builder takes first; the other send then fails, unpaid. Sent again
       after it landed, it is refused as already processed, and a bundle that
@@ -252,7 +259,11 @@ The session report gains a `tx_layer` section:
   again.
 - **`fees`:** the ledger. It splits what the bot paid into base, priority,
   tips, failed transactions' fees, and route fees. It is checked against the
-  wallet's SOL change, and `unexplained` is 0 when they agree.
+  wallet's SOL change, and `unexplained` is 0 when they agree. Fees and tips
+  of the bot's transactions that another key pays (a process bot can sign
+  with a key of its own) are in `paid_by_others`, outside that check. SOL
+  the bot moves out of its wallet itself (a transfer to another key) shows
+  in `unexplained`: the ledger explains fees, not trades.
 
 `--replay` compares the whole report, so ordering is part of the replay
 check.

@@ -518,12 +518,36 @@ impl TxEngine {
                     .unwrap_or(Value::Null);
                 metas.push(found);
             }
+            // Accepted, and not run: the node let it in without preflight
+            // and dropped it (an invalid compute budget, a fee payer that
+            // can't pay). Nothing landed and nothing is paid; the same bytes
+            // may go again.
+            if metas.iter().all(|m| !m.is_object()) {
+                let mut state = self.state();
+                let entry = state
+                    .pool
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    .expect("picked");
+                let reason = "the chain didn't process it".to_string();
+                let sender = entry.sender.clone();
+                entry.state = EntryState::Failed {
+                    slot,
+                    reason: reason.clone(),
+                };
+                if let Some(record) = state.blocks.last_mut() {
+                    record.refused.push(Refused { sender, reason });
+                }
+                continue;
+            }
             let bundle_index = is_bundle.then(|| {
                 bundles += 1;
                 bundles - 1
             });
             let mut state = self.state();
             let state = &mut *state;
+            let bot = state.signer.pubkey();
             let index = state.blocks.last().map_or(0, |b| b.landed.len()) as u32;
             let entry = state
                 .pool
@@ -533,7 +557,10 @@ impl TxEngine {
                 .expect("picked");
             let mut all_ok = true;
             for (tx, meta) in entry.txs.iter().zip(&metas) {
-                let ok = meta["meta"]["err"].is_null() && meta.is_object();
+                if !meta.is_object() {
+                    continue;
+                }
+                let ok = meta["meta"]["err"].is_null();
                 all_ok &= ok;
                 let fee = meta["meta"]["fee"].as_u64().unwrap_or_else(|| tx.fee());
                 let tip = if ok { tx.tip } else { 0 };
@@ -543,7 +570,11 @@ impl TxEngine {
                         .insert(tx.signature.clone(), meta["meta"]["err"].to_string());
                 }
                 if entry.sender == BOT {
-                    state.ledger.landed(ok, fee, BASE_FEE * tx.signatures, tip);
+                    if tx.payer == bot {
+                        state.ledger.landed(ok, fee, BASE_FEE * tx.signatures, tip);
+                    } else {
+                        state.ledger.paid_by_others += fee + tip;
+                    }
                     landed_bot.push(tx.signature.clone());
                 }
                 if let Some(record) = state.blocks.last_mut() {
@@ -864,16 +895,36 @@ impl State {
                 Accepted::Signature(key.to_string())
             }
         };
-        // The same transaction again: a rebroadcast.
+        // The same send again: a rebroadcast. One that failed without
+        // running (a bundle the leader refused, a send the chain dropped)
+        // goes again, as a searcher resends once the state may let it
+        // land; a transaction that ran never does. The same transaction
+        // alone and as a bundle are two sends, and race.
         let route = self.route(submission.route);
         let now = self.slot;
         let seed = self.layer.seed;
-        if let Some(entry) = self
-            .pool
-            .entries
-            .iter_mut()
-            .find(|e| e.txs.iter().map(|t| &t.signature).eq(signatures.iter()))
-        {
+        let landed = self.pool.landed();
+        let pending = self.pool.pending(BOT);
+        let max_pending = self.layer.max_pending;
+        if let Some(entry) = self.pool.entries.iter_mut().find(|e| {
+            e.is_bundle() == submission.bundle
+                && e.txs.iter().map(|t| &t.signature).eq(signatures.iter())
+        }) {
+            if matches!(entry.state, EntryState::Failed { .. }) {
+                if entry.holds_any(&landed) {
+                    return Err(Refusal {
+                        code: PREFLIGHT_FAILED,
+                        message: "Transaction simulation failed: This transaction has already been processed".into(),
+                    });
+                }
+                if pending >= max_pending {
+                    return Err(Refusal {
+                        code: TOO_MANY_REQUESTS,
+                        message: format!("Too many requests: {max_pending} sends are pending"),
+                    });
+                }
+                entry.state = EntryState::Lost;
+            }
             if entry.state == EntryState::Lost || entry.dropped {
                 entry.attempts += 1;
                 entry.state = EntryState::Pending;

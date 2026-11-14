@@ -35,6 +35,8 @@ pub struct PooledTx {
     /// Its wire bytes, as sent.
     pub wire: Vec<u8>,
     pub signatures: u64,
+    /// Who pays its fee: its first account.
+    pub payer: Pubkey,
     /// Requested compute units, and the price per unit in micro-lamports.
     pub cu_limit: u64,
     pub cu_price: u64,
@@ -142,9 +144,11 @@ impl PooledTx {
             .unwrap_or(counted * DEFAULT_UNITS_PER_INSTRUCTION)
             .min(MAX_COMPUTE_UNITS);
         let dont_front = keys.iter().any(jito::is_dont_front);
+        let payer = *statics.first().ok_or("a transaction without accounts")?;
         Ok(Self {
             signature,
             signatures: header.num_required_signatures as u64,
+            payer,
             cu_limit,
             cu_price,
             writable,

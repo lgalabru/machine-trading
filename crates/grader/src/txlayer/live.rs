@@ -199,6 +199,38 @@ fn transfer(
     )
 }
 
+/// A transaction from `payer` of `ixs`, as written.
+fn custom(payer: &Keypair, ixs: &[Instruction], blockhash: Hash) -> (Vec<u8>, String) {
+    let message = Message::new_with_blockhash(ixs, Some(&payer.pubkey()), &blockhash);
+    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(message), &[payer]).unwrap();
+    (
+        wincode::serialize(&tx).unwrap(),
+        tx.signatures[0].to_string(),
+    )
+}
+
+fn cu_limit(units: u32) -> Instruction {
+    let mut data = vec![2];
+    data.extend(units.to_le_bytes());
+    Instruction::new_with_bytes(COMPUTE_BUDGET, &data, vec![])
+}
+
+fn cu_price(price: u64) -> Instruction {
+    let mut data = vec![3];
+    data.extend(price.to_le_bytes());
+    Instruction::new_with_bytes(COMPUTE_BUDGET, &data, vec![])
+}
+
+fn pay(from: &Pubkey, to: Pubkey, lamports: u64) -> Instruction {
+    let mut data = 2u32.to_le_bytes().to_vec();
+    data.extend(lamports.to_le_bytes());
+    Instruction::new_with_bytes(
+        SYSTEM,
+        &data,
+        vec![AccountMeta::new(*from, true), AccountMeta::new(to, false)],
+    )
+}
+
 fn b64(wire: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(wire)
 }
@@ -973,6 +1005,143 @@ async fn what_a_congested_block_takes_is_charged_as_it_landed() {
     send(w.guard.url(), &plain, json!({ "encoding": "base64" })).await;
     w.slots(20).await;
     reconciled(&w, start, &moved);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_send_the_chain_never_ran_is_neither_landed_nor_paid() {
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let me = w.bot.pubkey();
+    let (q, drain) = (Pubkey::new_unique(), Pubkey::new_unique());
+    // Two compute-unit prices: the node takes it without preflight, and
+    // the runtime refuses it before it runs.
+    let (twice, twice_sig) = custom(
+        &w.bot,
+        &[cu_limit(10_000), cu_price(1), cu_price(10_000_000), pay(&me, q, SOL / 100)],
+        w.blockhash(),
+    );
+    send(w.guard.url(), &twice, json!({ "encoding": "base64" })).await;
+    w.slots(4).await;
+    assert!(!w.landed(&twice_sig));
+    assert_eq!(
+        w.engine.fate(&twice_sig),
+        Some(Fate::Failed("the chain didn't process it".into()))
+    );
+    // A fee the wallet can't pay: it keeps 50,000 lamports, and the send
+    // costs 105,000.
+    let start = w.balance(&me);
+    let left = 50_000;
+    let (emptied, _) = custom(&w.bot, &[pay(&me, drain, start - 5_000 - left)], w.blockhash());
+    send(w.guard.url(), &emptied, json!({ "encoding": "base64" })).await;
+    w.slots(4).await;
+    assert_eq!(w.balance(&me), left);
+    let (dear, dear_sig) = custom(
+        &w.bot,
+        &[cu_limit(10_000), cu_price(10_000_000), pay(&me, q, 1_000)],
+        w.blockhash(),
+    );
+    send(w.guard.url(), &dear, json!({ "encoding": "base64" })).await;
+    w.slots(4).await;
+    assert!(!w.landed(&dear_sig));
+    assert!(!matches!(w.engine.fate(&dear_sig), Some(Fate::Landed { .. })));
+    assert_eq!(w.balance(&me), left);
+    let report = w.engine.report(Some((
+        w.balance(&me) as i64 - start as i64 + w.balance(&drain) as i64,
+        0,
+    )));
+    assert_eq!(report.fees.failed_tx_fees, 0, "{:?}", report.fees);
+    assert_eq!(report.fees.unexplained, Some(0), "{:?}", report.fees);
+    let states: Vec<&str> = report.sends.iter().map(|s| s.state.as_str()).collect();
+    assert_eq!(states[0], "failed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bundle_that_failed_without_running_may_go_again() {
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let me = w.bot.pubkey();
+    let q = Pubkey::new_unique();
+    let tip_to: Pubkey = jito::TIP_ACCOUNTS[0].parse().unwrap();
+    let h = w.blockhash();
+    // One lamport to a new account is below its rent: the bundle fails.
+    let (bundle, bundle_sig) = custom(&w.bot, &[pay(&me, q, 1), pay(&me, tip_to, 10_000)], h);
+    let sent = jito(&w, "sendBundle", json!([[b64(&bundle)], { "encoding": "base64" }])).await;
+    let id = sent["result"].clone();
+    w.slots(6).await;
+    let status = jito(&w, "getInflightBundleStatuses", json!([[id.clone()]])).await;
+    assert_eq!(status["result"]["value"][0]["status"], "Failed", "{status}");
+    // Once q holds its rent, the same bytes land.
+    let (fund, _) = custom(&w.bot, &[pay(&me, q, SOL / 100)], h);
+    send(w.guard.url(), &fund, json!({ "encoding": "base64" })).await;
+    w.slots(4).await;
+    let again = jito(&w, "sendBundle", json!([[b64(&bundle)], { "encoding": "base64" }])).await;
+    assert_eq!(again["result"], id, "{again}");
+    w.slots(6).await;
+    assert!(w.landed(&bundle_sig));
+    assert_eq!(w.balance(&q), SOL / 100 + 1);
+    let status = jito(&w, "getInflightBundleStatuses", json!([[id]])).await;
+    assert_eq!(status["result"]["value"][0]["status"], "Landed", "{status}");
+    // Once it ran, never again.
+    let late = jito(&w, "sendBundle", json!([[b64(&bundle)], { "encoding": "base64" }])).await;
+    assert_eq!(late["result"], status["result"]["value"][0]["bundle_id"]);
+    w.slots(4).await;
+    assert_eq!(w.balance(&q), SOL / 100 + 1);
+    reconciled(&w, start, &[q]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transaction_alone_and_as_a_bundle_of_one_race() {
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let me = w.bot.pubkey();
+    let (q, r) = (Pubkey::new_unique(), Pubkey::new_unique());
+    let tip_to: Pubkey = jito::TIP_ACCOUNTS[0].parse().unwrap();
+    let h = w.blockhash();
+    let (x, x_sig) = custom(&w.bot, &[pay(&me, q, SOL / 100), pay(&me, tip_to, 5_000)], h);
+    let (y, y_sig) = custom(&w.bot, &[pay(&me, r, SOL / 100), pay(&me, tip_to, 5_000)], h);
+    send(w.guard.url(), &x, json!({ "encoding": "base64" })).await;
+    let x_bundle = jito(&w, "sendBundle", json!([[b64(&x)], { "encoding": "base64" }])).await;
+    let y_bundle = jito(&w, "sendBundle", json!([[b64(&y)], { "encoding": "base64" }])).await;
+    send(w.guard.url(), &y, json!({ "encoding": "base64" })).await;
+    w.slots(10).await;
+    assert!(w.landed(&x_sig) && w.landed(&y_sig));
+    assert_eq!((w.balance(&q), w.balance(&r)), (SOL / 100, SOL / 100));
+    for id in [&x_bundle["result"], &y_bundle["result"]] {
+        let status = jito(&w, "getInflightBundleStatuses", json!([[id]])).await;
+        let status = &status["result"]["value"][0]["status"];
+        assert!(status == "Landed" || status == "Failed", "{status}");
+    }
+    let report = w.engine.report(None);
+    assert_eq!(report.sends.len(), 4);
+    reconciled(&w, start, &[q, r]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fees_another_key_paid_stay_out_of_the_wallets_ledger() {
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let start = w.balance(&w.bot.pubkey());
+    let me = w.bot.pubkey();
+    let other = Keypair::new();
+    let (fund, _) = custom(&w.bot, &[pay(&me, other.pubkey(), SOL / 10)], w.blockhash());
+    send(w.guard.url(), &fund, json!({ "encoding": "base64" })).await;
+    w.slots(4).await;
+    let q = Pubkey::new_unique();
+    let (paid, paid_sig) = custom(
+        &other,
+        &[cu_limit(10_000), cu_price(1_000_000), pay(&other.pubkey(), q, SOL / 100)],
+        w.blockhash(),
+    );
+    send(w.guard.url(), &paid, json!({ "encoding": "base64" })).await;
+    w.slots(6).await;
+    assert!(w.landed(&paid_sig));
+    // The wallet sent the other key SOL / 10 and paid one base fee.
+    let change = w.balance(&me) as i64 - start as i64 + (SOL / 10) as i64;
+    let report = w.engine.report(Some((change, 0)));
+    assert_eq!(report.fees.paid_by_others, 5_000 + 10_000, "{:?}", report.fees);
+    assert_eq!(report.fees.unexplained, Some(0), "{:?}", report.fees);
 }
 
 /// Every slot's block for a scripted session: the same sends in a fresh

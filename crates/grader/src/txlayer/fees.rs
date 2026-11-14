@@ -74,6 +74,10 @@ pub struct FeeLedger {
     pub route_fees: u64,
     /// Transactions that landed.
     pub transactions: u64,
+    /// Fees and tips of the bot's transactions that another key paid for:
+    /// not from the wallet, so outside the reconciliation.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub paid_by_others: u64,
     /// The wallet's SOL change over the session, and what the ledger leaves
     /// unexplained of it (rent moved into accounts the bot can close
     /// included): 0 when they agree.
@@ -81,6 +85,10 @@ pub struct FeeLedger {
     pub wallet_change: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unexplained: Option<i64>,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl FeeLedger {
