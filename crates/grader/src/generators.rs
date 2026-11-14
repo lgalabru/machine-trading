@@ -8,6 +8,7 @@
 use serde_json::{Value, json};
 
 use crate::{
+    accumulate::AccumulateFamily,
     carry::CarryFamily,
     error::Result,
     making::MakingFamily,
@@ -63,6 +64,13 @@ pub const GENERATORS: &[Generator] = &[
         practice: |prefix, count, seed| WeekendFamily::spcx().sample_set(prefix, count, seed),
         hidden: |count, seed, tell| {
             shaped(WeekendFamily::spcx().draw_set("hidden", count, seed), tell)
+        },
+    },
+    Generator {
+        name: "perp-accumulate",
+        practice: |prefix, count, seed| AccumulateFamily::nvda().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(AccumulateFamily::nvda().draw_set("hidden", count, seed), tell)
         },
     },
 ];

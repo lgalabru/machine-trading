@@ -40,6 +40,12 @@ pub struct Making {
     pub competition: Competition,
     /// The taker orders the grader sends, in slot order.
     pub takers: Vec<TakerOrder>,
+    /// Where the snapshot's makers are widened to, in basis points from the
+    /// mark, when it isn't `competitor_bps`: a book whose depth near the
+    /// touch is the grader's maker alone, with the snapshot's deep curve
+    /// further out behind it. At least `competitor_bps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub makers_bps: Option<f64>,
 }
 
 /// The grader's maker (see [`crate::actors::competitor`]).
@@ -151,10 +157,23 @@ pub enum TakerSide {
 }
 
 impl Making {
+    /// The half-spread the snapshot's makers are widened to, in basis points.
+    pub fn makers_bps(&self) -> f64 {
+        self.makers_bps.unwrap_or(self.competitor_bps)
+    }
+
     pub fn validate(&self, duration_slots: u64) -> std::result::Result<(), String> {
         if !(self.competitor_bps.is_finite() && self.competitor_bps > 0.0) {
             return Err(format!(
                 "competitor_bps {} must be positive",
+                self.competitor_bps
+            ));
+        }
+        if let Some(makers) = self.makers_bps
+            && !(makers.is_finite() && makers >= self.competitor_bps)
+        {
+            return Err(format!(
+                "makers_bps {makers} must be at least competitor_bps {}",
                 self.competitor_bps
             ));
         }
@@ -578,6 +597,7 @@ impl MakingFamily {
                 competitor_bps,
                 competition,
                 takers,
+                makers_bps: None,
             }),
             offhours: None,
             funding: None,
@@ -939,6 +959,7 @@ mod tests {
                     account: 1,
                 },
             ],
+            makers_bps: None,
         };
         let path = [Waypoint::at(5, 10.0)];
         // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1

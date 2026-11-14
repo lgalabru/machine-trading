@@ -197,7 +197,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     };
     let takers = match (&scenario.making, &scenario.offhours) {
         (Some(making), _) => Some((
-            widen(making.competitor_bps)?,
+            widen(making.makers_bps())?,
             &making.takers,
             scenario.takers_pricing.unwrap_or(Pricing::Level),
         )),
