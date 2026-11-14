@@ -139,6 +139,10 @@ class MarkDisplacement(unittest.TestCase):
         self.assertAlmostEqual(ladder.displacement([self.set_dir], "up", 1)["bp"], 0.0)
 
 
+def weighted_loss(x, k=1.5):
+    return k * x if x < 0 else x
+
+
 def grade(bot, ref, ceiling, breach=None, pnl=None, limit=600.0, dd=0.2, anchor_dd=0.2,
           fatal=False, phi=0.05, anchor="reference", k=1.5, lam=1.0):
     """A grade with a v2, scored as the grader would (the ladder checks its
@@ -146,7 +150,7 @@ def grade(bot, ref, ceiling, breach=None, pnl=None, limit=600.0, dd=0.2, anchor_
     breach = breach or [False] * len(bot)
     sessions = [{"bot_usd": b, "reference_usd": r, "ceiling_usd": c, "limit_usd": limit,
                  "drawdown": 1.0 if x else dd, "anchor_drawdown": anchor_dd,
-                 "breach": "over the cap" if x else None}
+                 "nop_usd": 0.0, "breach": "over the cap" if x else None}
                 for b, r, c, x in zip(bot, ref, ceiling, breach)]
     terms = {"raw": 0.0, "fatal": fatal, "phi": phi, "k": k, "lambda": lam, "anchor": anchor,
              "sessions": [{"bot": s["bot_usd"], "ref": s["reference_usd"], "ceil": s["ceiling_usd"],
@@ -352,22 +356,24 @@ class ProbeGate(unittest.TestCase):
         self.assertAlmostEqual(luck[4], luck[1], delta=0.1 * luck[1])
 
     # The breacher: composed runs with exactly b breach sessions.
-    def breach_ladder(self, floor=True, bot_gain=10.0, breaches=6, twin=None):
+    def breach_ladder(self, floor=True, bot_gain=100.0, breaches=6, free=300.0, twin=None):
         """Twin (the clipped lever) makes 10 a session; the breacher breaches
-        in `breaches` sessions, scoring -k * limit there when the grader
-        floors it (`floor`) and a gain when it doesn't, and `bot_gain` in the
-        rest. Built through `grade`, so it is scored as the ladder scores."""
+        in `breaches` sessions, where the session itself made `free` (its PnL):
+        the grader floors it to -k * limit (`floor`) or, without the floor,
+        scores it as it made; `bot_gain` in the rest. Built through `grade`,
+        so it is scored as the ladder scores."""
         breach = [True] * breaches + [False] * (self.N - breaches)
-        floored = -1.5 * 600.0 if floor else 300.0
-        bot = [floored] * breaches + [bot_gain] * (self.N - breaches)
+        pnl = [free] * breaches + [bot_gain] * (self.N - breaches)
+        scored = [weighted_loss(free) if not floor else min(-1.5 * 600.0, weighted_loss(free))
+                  ] * breaches + [bot_gain] * (self.N - breaches)
         return self.ladder(**{TWIN: twin or [10.0] * self.N,
-                              "breacher": {"bot": bot, "breach": breach}})
+                              "breacher": {"bot": scored, "pnl": pnl, "breach": breach}})
 
     def breacher(self, sets):
         got = {c["id"]: c for c in ladder.probe_checks({}, sets, self.N)}
         return {k: v for k, v in got.items() if k.startswith("breacher:")}
 
-    def test_a_breacher_that_loses_its_floor_passes_both_gates_at_every_b(self):
+    def test_a_breacher_with_its_floor_and_cap_passes_every_gate_at_every_b(self):
         got = self.breacher(self.breach_ladder())
         self.assertEqual(sorted(got), sorted(
             f"breacher:b{b}:{g}" for b in (1, 2, 3) for g in ("run_cap", "floor")))
@@ -388,6 +394,29 @@ class ProbeGate(unittest.TestCase):
         got = self.breacher(sets)
         self.assertTrue(all(c["verdict"] == "no_power" for c in got.values()))
 
+    def test_a_check_that_does_not_bind_is_no_power_never_a_pass(self):
+        """Flash-crash's shape: it breaches in nearly every session and the
+        one clean session is flat, so even uncapped the run can't beat its twin
+        and the floor only takes back a loss: neither rule is exercised."""
+        got = self.breacher(self.breach_ladder(breaches=11, bot_gain=0.0, free=-700.0))
+        for b in (1, 2, 3):
+            self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "no_power", b)
+            self.assertIn("not exercised", got[f"breacher:b{b}:run_cap"]["detail"])
+            self.assertEqual(got[f"breacher:b{b}:floor"]["verdict"], "no_power", b)
+            self.assertIn("not exercised", got[f"breacher:b{b}:floor"]["detail"])
+
+    def test_the_floor_is_tested_on_the_sessions_where_it_binds(self):
+        """Sessions that lost more than the floor are not where it binds: the
+        composition picks the ones where breaching paid over the twin."""
+        sets = self.breach_ladder(breaches=6)
+        for i in (0, 1, 2):
+            row = sets[0]["breacher"]["v2"]["sessions"][i]
+            row["bot_usd"] = -1500.0
+            sets[0]["breacher"]["scenarios"][i]["pnl_usd"] = -1000.0
+        got = self.breacher(sets)
+        for b in (1, 2, 3):
+            self.assertEqual(got[f"breacher:b{b}:floor"]["verdict"], "pass", b)
+
     def test_removing_the_per_session_floor_fails_the_gate(self):
         """The grader that no longer floors a breach session at -k * limit
         scores it as the session made: the swap run beats its twin."""
@@ -395,23 +424,57 @@ class ProbeGate(unittest.TestCase):
         for b in (1, 2, 3):
             self.assertEqual(got[f"breacher:b{b}:floor"]["verdict"], "fail", b)
 
-    def test_removing_the_run_cap_fails_the_gate(self):
-        """A bot that levers everywhere (a hundred a session against its
-        twin's ten) and breaches in only b sessions: the cap holds it to its
-        twin's 0.5 (b = 1) or 0 (b >= 2). A scorer without the cap lets its
-        gains through."""
-        sets = self.breach_ladder(bot_gain=100.0)
-        got = self.breacher(sets)
+    def test_the_run_cap_check_fails_a_breacher_the_cap_does_not_hold(self):
+        """The ladder's copy of the scorer is checked against the grader on
+        every grade, and the grader's own cap against its own tests
+        (scoring_v2.rs, the_run_cap_holds_a_bot_that_levers_everywhere). Here:
+        a grade that gains where the cap binds, scored without it, fails."""
+        got = self.breacher(self.breach_ladder())
         for b in (1, 2, 3):
             self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "pass", b)
+            self.assertGreater(got[f"breacher:b{b}:run_cap"]["raw_without_cap"],
+                               got[f"breacher:b{b}:run_cap"]["other_raw"])
         original = ladder.sums_score
         ladder.sums_score = lambda rows, terms, capped=True: original(rows, terms, capped=False)
         try:
-            got = self.breacher(self.breach_ladder(bot_gain=100.0))
+            got = self.breacher(self.breach_ladder())
         finally:
             ladder.sums_score = original
         for b in (1, 2, 3):
             self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "fail", b)
+
+    def test_a_honest_probe_that_never_traded_has_no_power(self):
+        got = self.checks(**{"honest-0.2": [0.0] * self.N})
+        self.assertEqual(got["honest:honest-0.2"]["verdict"], "no_power")
+        self.assertIn("never", got["honest:honest-0.2"]["detail"])
+        got = self.checks(**{"honest-0.2": {"bot": [-1.0] * self.N, "fatal": True}})
+        self.assertEqual(got["honest:honest-0.2"]["verdict"], "no_power")
+        self.assertEqual(got["honest:near-line"]["verdict"], "no_power")
+
+    def test_two_honest_probes_that_played_the_same_sessions_are_not_two_probes(self):
+        same = [1.25, -0.75] * (self.N // 2)
+        got = self.checks(**{"honest-0.1": same, "honest-0.2": same})
+        self.assertNotEqual(got["honest:honest-0.1"]["verdict"], "no_power")
+        self.assertEqual(got["honest:honest-0.2"]["verdict"], "no_power")
+        self.assertIn("not a distinct probe", got["honest:honest-0.2"]["detail"])
+
+    def test_honest_rungs_must_differ_in_blend_or_salt(self):
+        env = {n: {} for n in ladder.REQUIRED}
+        for n in ladder.HONEST:
+            env[n] = {"MTX_PROBE_BLEND": "0.3"}
+        env["crash-honest"] = {"MTX_PROBE_CRASH_BELOW": "0.1", "MTX_PROBE_BLEND": "0.3"}
+        env["crash-fatal"] = dict(env["crash-honest"], MTX_PROBE_CRASH="fatal")
+        env["breacher"] = {"MTX_PROBE_BREACHES": "1"}
+        rungs = [{"name": n, "env": e} for n, e in env.items()]
+        problems = " ".join(ladder.probe_config_problems({"probes": {}, "rungs": rungs}))
+        self.assertIn("must differ from honest-0.1", problems)
+        for i, n in enumerate(ladder.HONEST):
+            env[n]["MTX_PROBE_SALT"] = str(i)
+        env["crash-honest"]["MTX_PROBE_SALT"] = env["crash-fatal"]["MTX_PROBE_SALT"] = "1"
+        rungs = [{"name": n, "env": e} for n, e in env.items()]
+        problems = " ".join(ladder.probe_config_problems({"probes": {}, "rungs": rungs}))
+        self.assertNotIn("must differ", problems)
+        self.assertNotIn("draw like its twin", problems)
 
     def test_the_matched_sharpe_vol_pair_scores_long_vol_ahead(self):
         """TUNE2 section 3: at equal mean and spread, long-vol (rare big wins,

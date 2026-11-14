@@ -2143,6 +2143,39 @@ mod tests {
         assert!((sum - (1.0 - once.raw)).abs() < 1e-12);
     }
 
+    /// The probe gate's run cap, against the real scorer: a bot that levers
+    /// everywhere (ten times the twin's gains) and breaches in exactly `b`
+    /// sessions would beat its twin without the cap; the cap holds it to 0.5
+    /// (one breach) or 0 (two or more). Fails if the cap is removed.
+    #[test]
+    fn the_run_cap_holds_a_bot_that_levers_everywhere() {
+        let twin = [120.0, -60.0, 75.0, 180.0, 0.0, 45.0];
+        let compliant = score(&set(&twin, &REFERENCE), &informed(), None, None).unwrap();
+        for breaches in [1usize, 2, 3] {
+            let mut sessions = set(&twin.map(|p| p * 10.0 + 400.0), &REFERENCE);
+            for s in sessions.iter_mut().take(breaches) {
+                s.pnl_usd = -100.0;
+                s.breach = Some("drew down past its limit".into());
+            }
+            let got = score(&sessions, &informed(), None, None).unwrap();
+            let cap = if breaches == 1 { 0.5 } else { 0.0 };
+            assert_eq!(got.breach_cap, Some(cap), "b = {breaches}");
+            assert!(got.raw <= cap + 1e-12, "b = {breaches}: raw {}", got.raw);
+            assert!(
+                got.raw <= compliant.raw,
+                "b = {breaches}: {} vs {}",
+                got.raw,
+                compliant.raw
+            );
+            // Uncapped, the same sessions would have beaten the twin: the cap binds.
+            for s in &mut sessions {
+                s.breach = None;
+            }
+            let free = score(&sessions, &informed(), None, None).unwrap();
+            assert!(free.raw > compliant.raw, "b = {breaches}: the cap doesn't bind");
+        }
+    }
+
     #[test]
     fn the_metrics_are_what_the_sessions_made_and_risked() {
         let bot = [100.0, -30.0, 50.0, -10.0, 20.0, 0.0];
