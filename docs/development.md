@@ -245,6 +245,7 @@ no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
 The scenario file format, v1 and v2, is in [scenario-format.md](scenario-format.md).
+How bots are scored is in [grading.md](grading.md).
 
 ## Add a task
 
