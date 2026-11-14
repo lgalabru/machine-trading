@@ -128,6 +128,33 @@ class MarkDisplacement(unittest.TestCase):
         self.assertAlmostEqual(got["bp"], 20.0, places=6)
         self.assertIsNone(got["median_premium_bp"])
 
+    def test_a_session_on_several_markets_counts_every_markets_gap(self):
+        def write(name, gaps_bp):
+            folder = os.path.join(self.set_dir, "details", name, "bot")
+            os.makedirs(folder)
+            markets = [
+                {"symbol": s, "mark_usd": 100.0 * (1 + g / 1e4), "index_usd": 100.0}
+                for s, g in zip(["NVDA", "SPCX"], gaps_bp)
+            ]
+            # The step's own fields are the primary's; the markets list has both.
+            step = {"mark_usd": markets[0]["mark_usd"], "index_usd": 100.0, "markets": markets}
+            detail = {
+                "scenario": {"path": [], "markets": [
+                    {"symbol": "NVDA", "path": [{"premium_pct": 0.2}]},
+                    {"symbol": "SPCX", "path": [{"premium_pct": -0.6}]},
+                ]},
+                "timeline": {"steps": [step] * 3},
+            }
+            with gzip.open(os.path.join(folder, "s1.json.gz"), "wt") as f:
+                json.dump(detail, f)
+        write("nop", [0.0, 0.0])
+        # Pushes SPCX's mark 40 bp, NVDA's not at all: 20 bp a market.
+        write("up", [0.0, 40.0])
+        got = ladder.displacement([self.set_dir], "up", 1)
+        self.assertAlmostEqual(got["bp"], 20.0, places=6)
+        # Each market's premium episodes: 20 and 60 bp.
+        self.assertAlmostEqual(got["median_premium_bp"], 40.0)
+
     def test_no_details_is_unmeasured(self):
         self.assertIsNone(ladder.displacement([self.set_dir], "up", 1))
 
