@@ -10,7 +10,8 @@
 //!
 //! A new task is scored by v2 from the start (GRADING_DECISIONS D1): its
 //! `[metadata.mtx]` says `headline = "v2"`, its verifier grades with
-//! `--scoring v2`, its ladder names the two anchors (the reference, 0.5, and
+//! `--scoring v2-headline` (Harbor's `reward` is v2's clamped score, with no
+//! v1 score beside it), its ladder names the two anchors (the reference, 0.5, and
 //! an informed bot, 1, in `checks/bots/informed`) and opts into the probe
 //! gate, and its instruction carries the scoring rules in plain words
 //! ([`crate::scoring_text`]).
@@ -421,11 +422,11 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
 /// What marks the informed bot's slot until it is written.
 pub const INFORMED_TODO: &str = "TODO(informed)";
 
-/// A verifier script graded by scoring v2: `--scoring v2` and
+/// A verifier script graded by scoring v2 alone: `--scoring v2-headline` and
 /// `--v2-sessions`, and every session graded (no stop at the first breach:
 /// v2 scores each one, D9).
 fn v2_verifier(script: &str) -> String {
-    let v2 = "  --scoring v2 \\\n  --v2-sessions \\\n";
+    let v2 = "  --scoring v2-headline \\\n  --v2-sessions \\\n";
     if script.contains("  --stop-on-disqualify \\\n") {
         script.replacen("  --stop-on-disqualify \\\n", v2, 1)
     } else if scoring_text::has_flag(script, "--scoring") {
@@ -596,7 +597,7 @@ fn instruction(
     // The base's contract, with a Scoring section of v2's rules in place of
     // the base's.
     let scoring = format!(
-        "## Scoring\n\nYour bot is graded on {sessions} hidden scenarios, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Every session is graded, a breached one too. <!-- {TODO}: how the hidden set splits by regime, how the account is valued, and anything else this task's grade adds. -->\n\n{block}\n\nThe report also gives your return on capital, your per-session Sharpe ratio, your drawdowns against the loss limit, the share of sessions that made money and your worst session. These explain the score; they aren't scored.\n\n",
+        "## Scoring\n\nYour bot is graded on {sessions} hidden scenarios, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Every session is graded, a breached one too. <!-- {TODO}: how the hidden set splits by regime, how the account is valued, and anything else this task's grade adds. The rest of this contract came from the base task: make every line describe scoring v2 only (no reward over the hindsight bound, no skill). -->\n\n{block}\n\nThe report also gives your return on capital, your per-session Sharpe ratio, your drawdowns against the loss limit, the share of sessions that made money and your worst session. These explain the score; they aren't scored.\n\n",
         sessions = sessions(spec),
         block = scoring_text::block(settings),
     );
@@ -1093,12 +1094,15 @@ fn anchors_step(root: &Path, task: &str) -> Step {
 }
 
 /// What a v2 task's verifier and instruction lack: the verifier grades with
-/// `--scoring v2` and `--v2-sessions` and every session, and the
+/// `--scoring v2-headline` and `--v2-sessions` and every session, and the
 /// instruction carries the current scoring rules.
 pub fn scoring_problems(test: &str, instruction: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    if scoring_text::flag_value(test, "--scoring").as_deref() != Some("v2") {
-        problems.push("tests/test.sh doesn't grade with `--scoring v2`".to_string());
+    if scoring_text::flag_value(test, "--scoring").as_deref() != Some("v2-headline") {
+        problems.push(
+            "tests/test.sh doesn't grade with `--scoring v2-headline` (v2 as the one score)"
+                .to_string(),
+        );
     }
     if !scoring_text::has_flag(test, "--v2-sessions") {
         problems.push("tests/test.sh doesn't pass `--v2-sessions`".to_string());
@@ -1136,7 +1140,7 @@ fn scoring_step(task: &str, test: &str, instruction: &str) -> Step {
             problems.join("; ")
         },
         format!(
-            "In bench/tasks/{task}: grade with `--scoring v2 --v2-sessions` and without `--stop-on-disqualify` in tests/test.sh; put the `mtx:scoring` markers in instruction.md's Scoring section and run `mtx task sync` (task_guide step=scoring)."
+            "In bench/tasks/{task}: grade with `--scoring v2-headline --v2-sessions` and without `--stop-on-disqualify` in tests/test.sh; put the `mtx:scoring` markers in instruction.md's Scoring section and run `mtx task sync` (task_guide step=scoring)."
         ),
     )
 }
@@ -1233,7 +1237,7 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "Scoring v2 has three anchors: doing nothing (0), the reference (0.5) and the informed bot (1). The informed bot is a bot, not a hindsight figure: it knows every fact the task's data could tell in principle (the regime, the informed wallets, the fair-value model, the funding process, the cost curves; the ladder hands it the session's regime as MTX_REGIME through `tell_regime`) but not the session's future randomness, and it trades the same market under the same costs, mandate and latency. The scaffold puts a copy of the reference in checks/bots/informed, marked TODO(informed): rewrite it, drop the marker, and keep both named in checks/ladder.json's `anchors` ({\"reference\": \"reference\", \"informed\": \"informed\"}). Freeze both before any model run. Calibrate the practice scenarios with each: `just calibrate` for the reference, then `mtx calibrate --informed --v2-sessions` for the informed bot. The strength band (`mtx gates`): on the ladder's sets the informed bot beats the reference, the reference's weighted PnL is between 0.2 and 0.7 of the informed bot's (`anchors.band` overrides), so it's never `anchor_floored`, and its per-session Sharpe is at least 0.25 (`anchors.min_sharpe`)."
         }
         "scoring" => {
-            "A v2 task's verifier grades with `--scoring v2 --v2-sessions` and grades every session (no `--stop-on-disqualify`); `--loss-weight`, `--risk-weight` and `--anchor-floor` only if the task needs other settings than the grader's. The agent is told the rules (D5): instruction.md's Scoring section holds the `mtx:scoring` markers, and `mtx task sync` writes the rules between them from the grader's settings and test.sh's flags. `mtx task check` fails when they're stale. Write only what's specific to the task around them: the hidden set's size and split, the valuation."
+            "A v2 task's verifier grades with `--scoring v2-headline --v2-sessions`, so Harbor's `reward` is v2's clamped score and no v1 score is reported, and it grades every session (no `--stop-on-disqualify`). The grade fails rather than fall back to the hindsight ceiling when a session lacks the informed bot's PnL; `--loss-weight`, `--risk-weight` and `--anchor-floor` only if the task needs other settings than the grader's. The agent is told the rules (D5): instruction.md's Scoring section holds the `mtx:scoring` markers, and `mtx task sync` writes the rules between them from the grader's settings and test.sh's flags. `mtx task check` fails when they're stale. Write only what's specific to the task around them: the hidden set's size and split, the valuation."
         }
         "probes" => {
             "The probe gate (bench/checks/probes, D7) grades bots with no skill or a known small amount (gamblers, naive holds, a martingale, levered references, an occasional breacher, honest-but-noisy bots) and fails the task if v2 pays any of them more than it should. A new task opts in: `\"probes\": {}` in checks/ladder.json, which the scaffold writes. Once the gate is in the repository, add its rungs (the scaffold copies them from the base task when it has them; otherwise follow bench/checks/probes/README.md, \"A task opts in\"). A task that can't run them says why: `\"probes\": {\"exempt\": \"why\"}`."
@@ -1416,7 +1420,7 @@ mod tests {
         assert_eq!(meta.mtx.headline, tasks::Headline::V2);
         let test = read(&task.join("tests/test.sh"));
         assert!(
-            test.contains("  --scoring v2 \\\n  --v2-sessions \\\n"),
+            test.contains("  --scoring v2-headline \\\n  --v2-sessions \\\n"),
             "{test}"
         );
         assert!(!test.contains("--stop-on-disqualify"));

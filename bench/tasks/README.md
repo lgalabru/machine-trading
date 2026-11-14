@@ -33,9 +33,10 @@ out of it:
 
 ### Scoring v2
 
-New tasks are judged by scoring v2 (`headline = "v2"` in their
-`[metadata.mtx]`); the four tasks above report `reward` and `skill` until
-they move in 0.13. v2 puts a bot's PnL on a scale with three anchors measured
+A new task has one score, scoring v2 (`headline = "v2"` in its
+`[metadata.mtx]`): its Harbor `reward` is v2's score clamped to between 0
+and 1, and no other score is reported beside it. The four tasks above move
+to it in 0.13. v2 puts a bot's PnL on a scale with three anchors measured
 on the same sessions: doing nothing scores 0, the task's **reference** 0.5,
 and its **informed bot** 1. The informed bot knows everything the task's data
 could tell in principle but not the session's future randomness, and trades
@@ -48,9 +49,11 @@ all of it: `mtx task sync` writes the rules into the task's
 markers). How and why, with worked examples: [grading](../../docs/grading.md).
 
 A task scored by v2 has both anchors, a reference in the strength band (on
-the ladder's sets, its loss-weighted PnL is 0.2 to 0.7 of the informed bot's
-and its per-session Sharpe at least 0.25), and opts into the probe gate;
-`mtx gates` refuses it otherwise. `mtx task new` scaffolds all of it, and the
+the ladder's sets, its loss-weighted PnL is 0.2 to 0.7 of the informed bot's,
+so it is never `anchor_floored`, and its per-session Sharpe at least 0.25),
+and opts into the probe gate. Until it has all of them it isn't released:
+there is no fallback to `reward` and `skill` or to the hindsight ceiling, and
+`mtx gates` refuses it. `mtx task new` scaffolds all of it, and the
 [new-task checklist](../../docs/development.md#add-a-task) walks through it.
 
 ### Risk is a set of limits, not a score
