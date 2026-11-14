@@ -1,0 +1,22 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-perp-accumulate-informed"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# The strategy, and the process the ladder and calibration run (`bin/bot`):
+# only the ladder hands a bot its session's shape, so it is never a
+# component.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "mtx-perp-accumulate-informed"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-perp-accumulate = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }

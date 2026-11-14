@@ -1,0 +1,16 @@
+# The ladder's naive rungs and exploit bots for perp-accumulate-nvda, one
+# process picked by MTX_NAIVE (the ladder sets it per rung).
+[package]
+name = "mtx-bot-perp-accumulate-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-perp-accumulate-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-perp-accumulate = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }

@@ -3,4 +3,5 @@
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
+perp-accumulate mtx-bot-perp-accumulate mtx-perp-accumulate bench/tasks/perp-accumulate-nvda/reference
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
