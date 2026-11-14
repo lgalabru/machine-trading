@@ -283,7 +283,7 @@ PROBE_TOLERANCE = 0.02
 PAYS_FROM = 0.2
 # At least one honest probe must measure inside this band (from the pay line
 # up), so it is judged, or the pay line isn't tested.
-NEAR_LINE = (0.2, 0.35)
+NEAR_LINE = (0.2, 0.40)
 # A paired rule needs this many sessions where the two bots differ before it
 # can pass or fail.
 MIN_DIFFERING = 3

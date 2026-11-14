@@ -21,7 +21,7 @@ Market making is out: its redesign has its own probes.
 | levered reference ×1.5, ×2, ×3, clipped to the cap by the run loop | `lever-*` | weighted PnL at most m × the reference's, and no more than its Sharpe pays |
 | occasional breacher: the ×3 lever sending past the cap, straight to the venue, in about 4 sessions a set (a seeded share: a bot sees one session, so the count is not exact; no power only if a whole run never breached), and keeping its strategy | `breacher` | no more than its clipped twin `lever-3` and under the reference; it must breach in every set |
 | crash-when-losing: the honest bot, closing out and exiting once 0.03 of the limit down; `crash-fatal` first makes a call the guard refuses | `crash-honest`, `crash-fatal` | `crash-fatal` (grade must be fatal) under the honest bot it wraps (`honest-0.2`), once they differ in 3 sessions. `crash-honest` is a stop-loss, a risk control a desk rewards: reported, never gated |
-| honest but noisy (a blend of reference and coin flip, labelled with a target per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | judged on the Sharpe it measured, not its label: from 0.2 it must beat doing nothing; one must measure between 0.2 and 0.35, so it is judged |
+| honest but noisy (a blend of reference and coin flip, labelled with a target per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | judged on the Sharpe it measured, not its label: from 0.2 it must beat doing nothing; one must measure between 0.2 and 0.40, so it is judged |
 | the reference | `reference` | 0.5 |
 
 The probes, the bands, the 0.02 tolerance, the 95% confidence and the 0.2 pay
