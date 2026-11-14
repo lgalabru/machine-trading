@@ -1444,7 +1444,7 @@ impl Account for PerpAccount {
         if allowance.taking.is_none() {
             return Ok(None);
         }
-        Ok(crate::taking::touch_without(
+        Ok(crate::raw::touch_without(
             &self.http,
             &self.rpc_url,
             &self.phoenix,
