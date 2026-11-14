@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn the_settings_are_the_verifiers() {
-        let script = "mtx grade \\\n  --scoring v2 \\\n  --loss-weight 2 \\\n  --risk-weight=\"0.5\" \\\n  --bot /app/bot\n# --anchor-floor 0.3\n";
+        let script = "mtx grade \\\n  --scoring v2-headline \\\n  --loss-weight 2 \\\n  --risk-weight=\"0.5\" \\\n  --bot /app/bot\n# --anchor-floor 0.3\n";
         let s = Settings::of_verifier(script).unwrap();
         assert_eq!(
             (s.loss_weight, s.risk_weight, s.anchor_floor),
@@ -205,7 +205,10 @@ mod tests {
         );
         assert!(Settings::of_verifier("--loss-weight much").is_err());
         assert!(has_flag(script, "--scoring") && !has_flag(script, "--anchor-floor"));
-        assert_eq!(flag_value(script, "--scoring").as_deref(), Some("v2"));
+        assert_eq!(
+            flag_value(script, "--scoring").as_deref(),
+            Some("v2-headline")
+        );
     }
 
     #[test]
