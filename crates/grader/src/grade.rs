@@ -245,13 +245,19 @@ impl GradeReport {
                         session.scenario
                     ));
                 }
+                // The risk desk's stop-out (the scenario's `stop_out`): its
+                // close is in the session's PnL, and a breach all the same,
+                // though the mandate's audit no longer disqualifies it.
+                let stop_out = session
+                    .forced_closes
+                    .iter()
+                    .map(|close| match close.reason {
+                        crate::risk::ForcedCloseReason::StopOut { rule } => rule,
+                    })
+                    .next();
                 Ok(scoring_v2::Session {
                     scenario: session.scenario.clone(),
-                    // A stopped-out session's PnL is what it realised there.
-                    pnl_usd: session
-                        .stop_out
-                        .as_ref()
-                        .map_or(session.pnl_usd, |stopped| stopped.pnl_usd),
+                    pnl_usd: session.pnl_usd,
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
                     hindsight_ceiling_usd: hindsight,
@@ -271,12 +277,19 @@ impl GradeReport {
                     breach: result
                         .disqualified
                         .clone()
-                        .filter(|_| session.refused_calls.is_empty()),
+                        .filter(|_| session.refused_calls.is_empty())
+                        .or_else(|| {
+                            stop_out.map(|rule| match rule {
+                                crate::scenario::StopRule::Drawdown => {
+                                    "stopped out: drew down past its limit".to_string()
+                                }
+                            })
+                        }),
                     max_drawdown_usd: session.max_drawdown_usd,
                     reference_max_drawdown_usd: result.reference_max_drawdown_usd,
                     informed_max_drawdown_usd: result.informed_max_drawdown_usd,
                     start_value_usd: session.start_value_usd,
-                    stopped_out: session.stop_out.is_some(),
+                    stopped_out: stop_out.is_some(),
                     traded: session.peak_position > 0.0,
                     trade_markout_usd: result.trade_markout_usd,
                 })
@@ -486,8 +499,7 @@ pub struct GradeOptions<'a> {
     /// keys every run of the grade.
     pub keys: &'a SessionKeys,
     /// Run the sessions under scoring v2's rules (see [`session::Rules`]):
-    /// the bot's are stopped out at a breach, and the bot's and the
-    /// reference's drawdowns are sampled every slot. Off, the grade runs
+    /// the bot's and the reference's drawdowns are sampled every slot. Off, the grade runs
     /// as it always has. (The bot's seeds are salted through `keys`: see
     /// [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
@@ -555,10 +567,8 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             true,
             None,
             opts.keys.role("reference"),
-            // The anchor's drawdown at the bot's granularity; a reference
-            // that breaches fails the grade anyway (`check_anchors`).
+            // The anchor's drawdown at the bot's granularity.
             session::Rules {
-                stop_out: false,
                 every_slot: opts.v2_sessions,
             },
         )
@@ -586,7 +596,6 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.observer.clone(),
         opts.keys.role("bot"),
         session::Rules {
-            stop_out: opts.v2_sessions,
             every_slot: opts.v2_sessions,
         },
     )
@@ -1018,7 +1027,6 @@ pub async fn calibrate(
         None,
         SessionKeys::random().role("reference"),
         session::Rules {
-            stop_out: false,
             every_slot: v2_sessions,
         },
     )
@@ -1370,9 +1378,9 @@ mod tests {
             participation: None,
             net: None,
             crank_refusals: Vec::new(),
+            forced_closes: Vec::new(),
             oracle_starts: Default::default(),
             turns: Default::default(),
-            stop_out: None,
             wall_ms: 0,
             timeline: Default::default(),
         }
@@ -1437,6 +1445,7 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
         }
     }
 
@@ -1805,33 +1814,88 @@ mod tests {
         );
     }
 
-    #[test]
-    fn v2_scores_a_stopped_out_session_at_what_it_realised() {
-        let s = scenario(Some(100.0));
-        let mut stopped = session(-1_050.0);
-        stopped.max_drawdown_usd = 1_050.0;
-        stopped.stop_out = Some(session::StopOut {
+    /// A session the risk desk stopped out (infra/22's `stop_out`): it lost
+    /// `pnl_usd`, the close included, past the 1,000 limit.
+    fn stopped_out(pnl_usd: f64) -> SessionReport {
+        let mut stopped = session(pnl_usd);
+        stopped.max_drawdown_usd = -pnl_usd;
+        stopped.forced_closes = vec![crate::risk::ForcedClose {
+            reason: crate::risk::ForcedCloseReason::StopOut {
+                rule: crate::scenario::StopRule::Drawdown,
+            },
             step: 3,
             at: 6,
-            reason: "drew down past its limit".into(),
-            position: 50.0,
-            price_usd: 90.0,
-            exit_usd: Some(89.0),
-            close_cost_usd: 50.0,
-            pnl_usd: -1_100.0,
-        });
-        let mut report = score(vec![(session(300.0), &s), (stopped, &s)]);
+            value_before_usd: 10_100.0 + pnl_usd + 40.0,
+            peak_usd: 10_100.0,
+            value_after_usd: 10_100.0 + pnl_usd,
+            position_before: 50.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        stopped
+    }
+
+    #[test]
+    fn v2_scores_a_stop_out_as_a_breach_at_what_it_realised() {
+        let s = scenario(Some(100.0));
+        let mut report = score(vec![(session(300.0), &s), (stopped_out(-1_100.0), &s)]);
+        // v1 prices the stop-out, as infra/22 has it: no disqualification.
+        assert!(report.scenarios[1].disqualified.is_none());
         report.score_v2(&v2()).unwrap();
-        let v2 = report.v2.as_ref().unwrap();
+        let graded = report.v2.as_ref().unwrap();
         // k times the realised loss, past the limit: 1.5 × 1,100.
-        assert_eq!(v2.sessions[1].bot_usd, -1_650.0);
-        assert_eq!(v2.breach_cap, Some(0.5));
-        assert_eq!(v2.metrics.stopped_out_sessions, 1);
-        assert_eq!(v2.metrics.worst_session_usd, -1_100.0);
-        // The stop-out is in the session's report.
-        let json = serde_json::to_value(&report).unwrap();
-        assert_eq!(json["scenarios"][1]["stop_out"]["pnl_usd"], -1_100.0);
-        assert!(json["scenarios"][0].get("stop_out").is_none());
+        assert_eq!(graded.sessions[1].bot_usd, -1_650.0);
+        assert!(
+            graded.sessions[1]
+                .breach
+                .as_deref()
+                .unwrap()
+                .contains("stopped out")
+        );
+        assert_eq!(graded.breached_sessions, 1);
+        assert_eq!(graded.breach_cap, Some(0.5));
+        assert_eq!(graded.metrics.stopped_out_sessions, 1);
+        // A stop-out that lost less than the limit still counts k·L.
+        let mut report = score(vec![(session(300.0), &s), (stopped_out(-900.0), &s)]);
+        report.score_v2(&v2()).unwrap();
+        assert_eq!(report.v2.as_ref().unwrap().sessions[1].bot_usd, -1_500.0);
+    }
+
+    /// The reference levered past its limit: it earns more where it holds,
+    /// and the risk desk stops it out now and then. Under v2 it never beats
+    /// the same strategy sized to comply.
+    #[test]
+    fn an_occasional_breacher_stopped_out_scores_below_its_compliant_twin() {
+        let s = scenario(Some(20.0));
+        let twin_pnl = [400.0, 300.0, 200.0, 500.0, 350.0, 250.0];
+        let twin = || {
+            twin_pnl
+                .iter()
+                .map(|p| (session(*p), &s))
+                .collect::<Vec<_>>()
+        };
+        let mut compliant = score(twin());
+        compliant.score_v2(&v2()).unwrap();
+        for stops in [1, 2] {
+            let mut levered: Vec<(SessionReport, &Scenario)> =
+                twin_pnl.iter().map(|p| (session(p * 3.0), &s)).collect();
+            for (session, _) in levered.iter_mut().skip(2).take(stops) {
+                *session = stopped_out(-1_050.0);
+            }
+            let mut breacher = score(levered);
+            breacher.score_v2(&v2()).unwrap();
+            let (b, c) = (
+                breacher.v2.as_ref().unwrap(),
+                compliant.v2.as_ref().unwrap(),
+            );
+            assert!(b.raw < c.raw, "{stops} stop-outs: {} vs {}", b.raw, c.raw);
+            assert_eq!(b.breach_cap, Some(if stops == 1 { 0.5 } else { 0.0 }));
+            if stops == 1 {
+                // Levering paid in USD (5,400 − 1,575 against 2,000): the
+                // cap is what keeps it below its twin.
+                assert!(b.bot_usd > c.bot_usd);
+            }
+        }
     }
 
     #[test]
@@ -1917,6 +1981,44 @@ mod tests {
         let mut at_limit = session(100.0);
         at_limit.max_drawdown_usd = 1_000.0;
         assert!(score(vec![(at_limit, &s)]).reward > 0.0);
+    }
+
+    /// A drawdown past the limit is priced when the risk desk closed it,
+    /// and still disqualifies without a close, or for another rule.
+    #[test]
+    fn a_stop_out_prices_the_drawdown_and_nothing_else() {
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let s = scenario(None);
+        let mut stopped = session(-1_150.0);
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let report = score(vec![(session(2_000.0), &s), (stopped.clone(), &s)]);
+        assert!(report.scenarios[1].disqualified.is_none());
+        assert_eq!(report.pnl_usd, 850.0, "the close's loss counts");
+        assert!(report.reward > 0.0);
+
+        let mut unclosed = stopped.clone();
+        unclosed.forced_closes.clear();
+        assert_eq!(score(vec![(unclosed, &s)]).reward, 0.0);
+
+        let mut elsewhere = stopped;
+        elsewhere.positions_outside_universe = 1;
+        assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
     }
 
     #[test]

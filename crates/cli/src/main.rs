@@ -161,14 +161,12 @@ enum Command {
         /// whatever the rest do); the report covers the sessions up to it.
         #[arg(long)]
         stop_on_disqualify: bool,
-        /// Run the sessions under scoring v2's rules: a breach the grader
-        /// sees at a step stops that session out (the bot plays no more of
-        /// it, and its position counts as closed at the touch), every other
-        /// session still runs, drawdowns are sampled every slot, and the
-        /// bot's seed in each session is salted with the grade's secret, so
-        /// it can't tell which session it is in. For a task scored by v2;
-        /// off, sessions run as they always have.
-        #[arg(long, conflicts_with = "stop_on_disqualify")]
+        /// Run the sessions under scoring v2's rules: drawdowns are sampled
+        /// every slot, and the bot's seed in each session is salted with the
+        /// grade's secret, so it can't tell which session it is in. (A
+        /// breach's stop-out is the scenario's own `stop_out`.) For a task
+        /// scored by v2; off, sessions run as they always have.
+        #[arg(long)]
         v2_sessions: bool,
         /// Grade the bot only if it is a strategy component (a bot.wasm): the
         /// verifier's rule. The reference can still be a process.

@@ -520,6 +520,7 @@ impl CarryFamily {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
         };
         let shape = Shape {
             informed_share,

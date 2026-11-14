@@ -179,9 +179,9 @@ pub struct Session {
     pub informed_max_drawdown_usd: Option<f64>,
     /// The account's value at the start: the capital returns are taken on.
     pub start_value_usd: f64,
-    /// The session was stopped out at its breach (see
-    /// [`crate::session::Rules::stop_out`]): `pnl_usd` is what it realised
-    /// there.
+    /// The risk desk stopped the session out (the scenario's `stop_out`,
+    /// see [`crate::risk`]): `pnl_usd` is what it realised, the close
+    /// included, and `breach` says so.
     pub stopped_out: bool,
     /// The bot held a position at some point.
     pub traded: bool,
