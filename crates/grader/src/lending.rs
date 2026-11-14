@@ -1692,6 +1692,7 @@ impl Account for LendingAccount {
             end_position: end.holdings[0].supplied - end.holdings[0].borrowed,
             liquidatable: end.health.is_some_and(|h| h < 1.0),
             refused_calls: done.refused_calls,
+            forced_closes: done.forced_closes,
             bot_exit: done.bot_exit,
             late_slots: done.late_slots,
             mandate: done.mandate,
@@ -1722,7 +1723,6 @@ impl Account for LendingAccount {
                 actions,
             }),
             crank_refusals: done.crank_refusals,
-            forced_closes: done.forced_closes,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
