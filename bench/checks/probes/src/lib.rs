@@ -44,7 +44,7 @@
 //!   purpose in a few sessions.
 //! - `MTX_PROBE_CRASH_BELOW=f`: the bot closes its position and exits once
 //!   its PnL is `f` of the drawdown limit under water. `MTX_PROBE_CRASH=fatal` first makes a call
-//!   the RPC guard refuses (`getHealth`), so the grade is a fatal one.
+//!   the RPC guard refuses (`requestAirdrop`), so the grade is a fatal one.
 //!
 //! `MTX_PROBE_SALT` changes the coins without changing the rest.
 

@@ -17,24 +17,27 @@ Market making is out: its redesign has its own probes.
 | zero-edge coin flip, half and full cap | `coin-flip-half`, `coin-flip-full` | at most 0.02 |
 | martingale (doubles after a loss, capped) | `martingale` | at most 0.02 |
 | limit-hugger (rests at the best prices) | `limit-hugger` | at most 0.02 |
-| stop-loss lotto (coin plus a trailing stop at 0.15 of the drawdown limit) | `stop-lotto` | at most 0.02 |
-| levered reference ×1.5, ×2, ×3, clipped to the cap by the run loop | `lever-*` | weighted PnL at most m × the reference's |
+| stop-loss lotto (coin plus a trailing stop at 0.15 of the drawdown limit) | `stop-lotto` | pays no more than its Sharpe: if it measured under v2's break-even Sharpe (about 0.16), at most 0.02; it has a real, weak edge on trending paths (TUNE2 §3) |
+| levered reference ×1.5, ×2, ×3, clipped to the cap by the run loop | `lever-*` | weighted PnL at most m × the reference's, and no more than its Sharpe pays |
 | occasional breacher: the ×3 lever sending past the cap, straight to the venue, in 3 sessions a set, and keeping its strategy | `breacher` | no more than its clipped twin `lever-3` and under the reference; it must breach in every set |
-| crash-when-losing (the honest bot, closing out and exiting once 0.03 of the limit down; `fatal` first makes a call the guard refuses) | `crash-honest`, `crash-fatal` | under the honest bot it wraps (`honest-0.2`), once they differ in 3 sessions; the fatal grade must be fatal |
+| crash-when-losing: the honest bot, closing out and exiting once 0.03 of the limit down; `crash-fatal` first makes a call the guard refuses | `crash-honest`, `crash-fatal` | `crash-fatal` (grade must be fatal) under the honest bot it wraps (`honest-0.2`), once they differ in 3 sessions. `crash-honest` is a stop-loss, a risk control a desk rewards: reported, never gated |
 | honest but noisy (a blend of reference and coin flip, labelled with a target per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | judged on the Sharpe it measured, not its label: from 0.2 it must beat doing nothing; one must measure between 0.05 and 0.35 |
 | the reference | `reference` | 0.5 |
 
 The probes, the bands, the 0.02 tolerance, the 95% confidence and the 0.2 pay
 line are fixed in `bench/checks/ladder/ladder.py`: a task's ladder file only
-supplies the rungs (a `probes` section, `{}`), and a required rung it lacks, or
+supplies the rungs (a `probes` section, `{}`, or `{"exempt": "why"}` with a non-empty reason), and a required rung it lacks, or
 a twin that isn't one, fails. A task that says nothing about probes fails
 `mtx gates`; one that opts out says why (`"probes": {"exempt": "why"}`).
+
+For every gambler (those above and the stop-lotto) TUNE2's C2 also holds: the headline of a 5-run model (clamp of the mean raw), over 5-run sets that made money, is at most 0.05.
+The matched-Sharpe long-vol/short-vol pair is not produced: it is synthetic (equal mean and spread by construction), and cannot come from bots trading replayed paths.
 
 A rule fails when a bootstrap over the sessions (scored as the grader does,
 near-breach charge and breach cap included) shows it broken with 95%
 confidence. A point estimate that breaks it without that is `inconclusive`: a
 fast `mtx gates` tolerates it, the full one fails it. A probe that proved
-nothing (a breacher that never breached, a crash that never came, a fatal probe
+nothing (a breacher that never breached, a fatal crash that never came, a fatal probe
 whose grade wasn't fatal) is `no_power` and fails.
 
 ## What the wrappers do

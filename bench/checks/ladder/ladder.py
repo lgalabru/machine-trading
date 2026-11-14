@@ -288,19 +288,35 @@ NEAR_LINE = (0.05, 0.35)
 # can pass or fail.
 MIN_DIFFERING = 3
 ZERO_EDGE = ["blind-long", "blind-short", "coin-flip-half", "coin-flip-full",
-             "martingale", "limit-hugger", "stop-lotto"]
+             "martingale", "limit-hugger"]
+# The stop-lotto has a real, weak edge on trending paths (TUNE2 section 3): gated
+# as paying no more than its Sharpe, not as a zero-edge gambler; so is leverage.
+STOP_LOTTO = "stop-lotto"
 LEVERED = [("lever-1.5", 1.5), ("lever-2", 2.0), ("lever-3", 3.0)]
+# TUNE2's C2: the headline of a 5-run model (clamp of the mean raw), averaged
+# over the 5-run sets that made money in total, for every gambler.
+LUCK5_LIMIT = 0.05
 BREACHER, TWIN = "breacher", "lever-3"
 HONEST = ["honest-0.1", "honest-0.2", "honest-0.3", "honest-0.5"]
+# Only the fatal crash is gated: a graceful one (closes out and stops) is a
+# stop-loss, a risk control a desk rewards, so it is reported (GRADING_DECISIONS,
+# update after the probe gate's 72-session run).
 CRASHES = [("crash-honest", "honest-0.2"), ("crash-fatal", "honest-0.2")]
-REQUIRED = (["nop", "reference", BREACHER] + ZERO_EDGE + [n for n, _ in LEVERED] + HONEST
-            + [n for n, _ in CRASHES])
+GATED_CRASHES = {"crash-fatal"}
+REQUIRED = (["nop", "reference", BREACHER, STOP_LOTTO] + ZERO_EDGE + [n for n, _ in LEVERED]
+            + HONEST + [n for n, _ in CRASHES])
 
 
 def probe_config_problems(config):
     """What the ladder file gets wrong about the required probes: a missing
     rung, or a twin that isn't one (a different lever or blend)."""
     probes = config.get("probes")
+    if not isinstance(probes, dict):
+        return ["`probes` must be an object: {} or {\"exempt\": \"why\"}"]
+    if "exempt" in probes and not (isinstance(probes["exempt"], str) and probes["exempt"].strip()):
+        return ["`exempt` must say why, in a non-empty string"]
+    if "exempt" in probes:
+        return [] if len(probes) == 1 else ["`exempt` can't come with other `probes` keys"]
     unknown = set(probes) - {"exempt"}
     problems = [f"`probes` can't set {k!r}: the probe rules are fixed in ladder.py"
                 for k in sorted(unknown)]
@@ -334,6 +350,7 @@ def v2_terms(report):
         "fatal": v2.get("fatal") is not None,
         "phi": v2["anchor_floor"],
         "k": v2["loss_weight"],
+        "break_even": v2["break_even_sharpe"],
         "lambda": v2["risk"]["weight"],
         "anchor": v2["risk"]["anchor"],
         "breached": v2.get("breached_sessions", 0),
@@ -390,7 +407,7 @@ def session_sharpe(pnl):
     annualised."""
     if len(pnl) < 2:
         return None
-    sd = statistics.pstdev(pnl)
+    sd = statistics.stdev(pnl)
     return statistics.fmean(pnl) / sd if sd > 0 else 0.0
 
 
@@ -403,15 +420,20 @@ def probe_checks(config, sets, count):
 
     - `zero_edge`: no-edge bots score at most `PROBE_TOLERANCE` over doing
       nothing.
+    - `luck5` (TUNE2's C2), for those and the stop-lotto: the headline of a
+      5-run model, over 5-run sets that made money, is at most `LUCK5_LIMIT`.
+    - `stop_lotto`, and each lever: pays no more than its Sharpe: if it
+      measured under v2's break-even Sharpe, it scores at most
+      `PROBE_TOLERANCE`.
     - `breacher`: the lever that sends past the cap in a few sessions scores
       no more than its clipped twin (and under the reference: breaching never
       beats complying), and breached in every set, or it has no power.
     - `levered`: the lever's weighted PnL is at most m times the reference's.
     - `honest`: from a measured Sharpe of `PAYS_FROM`, beats doing nothing;
       one probe must measure near that line.
-    - `crash`: a bot that crashes when behind scores under the bot it wraps,
-      once the two differ in `MIN_DIFFERING` sessions; the fatal one's grade
-      must be fatal.
+    - `crash`: the fatal crash scores under the bot it wraps, once the two
+      differ in `MIN_DIFFERING` sessions, and its grade must be fatal. The
+      graceful one is a stop-loss: reported (verdict `reported`), never gated.
     - `reference`: 0.5.
     """
     confidence, tol = PROBE_CONFIDENCE, PROBE_TOLERANCE
@@ -441,6 +463,8 @@ def probe_checks(config, sets, count):
         return sum(abs(x["bot"] - y["bot"]) > 0.005 for t in terms
                    for x, y in zip(t[a]["sessions"], t[b]["sessions"]))
 
+    luck_rungs = ZERO_EDGE + [STOP_LOTTO]
+    sharpe_rungs = [STOP_LOTTO] + [n for n, _ in LEVERED]
     rng = random.Random(0)
     draws = []
     for _ in range(BOOTSTRAP_DRAWS):
@@ -450,10 +474,14 @@ def probe_checks(config, sets, count):
                                    for t, idx in zip(terms, picks)) for n in needed}
         usd = {n: sum(sum(t[n]["sessions"][i]["bot"] for i in idx) for t, idx in zip(terms, picks))
                for n in needed}
-        draws.append((raw, usd))
+        net = {n: sum(sum(pnls(reports[n])[i] for i in idx) for reports, idx in zip(sets, picks))
+               for n in luck_rungs}
+        shp = {n: session_sharpe([pnls(reports[n])[i] for reports, idx in zip(sets, picks)
+                                  for i in idx]) for n in sharpe_rungs}
+        draws.append((raw, usd, net, shp))
 
     def verdict(violated, point_violated):
-        odds = sum(violated(raw, usd) for raw, usd in draws) / len(draws)
+        odds = sum(violated(raw, usd) for raw, usd, _, _ in draws) / len(draws)
         v = "pass"
         if point_violated:
             v = "fail" if odds >= confidence else "inconclusive"
@@ -472,6 +500,38 @@ def probe_checks(config, sets, count):
         v = verdict(lambda raw, usd, n=n: raw[n] > tol, base_raw[n] > tol)
         add(f"zero_edge:{n}", "zero_edge", [n], v, f"raw {base_raw[n]:+.3f}, limit {tol:+.2f}",
             raw=base_raw[n])
+
+    # TUNE2's C2: a 5-run model's headline, over the 5-run sets that made money.
+    groups = len(draws) // 5
+    for n in luck_rungs:
+        heads = []
+        for g in range(groups):
+            block = draws[g * 5:(g + 1) * 5]
+            if sum(d[2][n] for d in block) > 0:
+                heads.append(min(max(statistics.fmean(d[0][n] for d in block), 0.0), 1.0))
+        luck = statistics.fmean(heads) if heads else 0.0
+        v = {"verdict": "pass" if luck <= LUCK5_LIMIT else "fail", "violation_odds": None,
+             "point_violated": luck > LUCK5_LIMIT}
+        add(f"luck5:{n}", "luck5", [n], v,
+            f"lucky 5-run headline {luck:.3f} over {len(heads)} winning sets of {groups}, "
+            f"limit {LUCK5_LIMIT}", luck5=luck)
+
+    # Pays no more than its Sharpe: under the break-even it scores at most the tolerance.
+    be = {n: terms[0][n]["break_even"] for n in sharpe_rungs}
+    for n in sharpe_rungs:
+        sharpe = session_sharpe(pnl[n])
+        under = sharpe is not None and sharpe < be[n]
+
+        point = under and base_raw[n] > tol
+        odds = sum((d[3][n] is not None and d[3][n] < be[n]) and d[0][n] > tol for d in draws) / len(draws)
+        v = "pass"
+        if point:
+            v = "fail" if odds >= confidence else "inconclusive"
+        detail = (f"raw {base_raw[n]:+.3f}, measured Sharpe {sharpe:.2f} against the break-even "
+                  f"{be[n]:.2f}" + ("" if under else ": over it, so it may score above nothing"))
+        add(f"pays_its_sharpe:{n}", "pays_its_sharpe", [n],
+            {"verdict": v, "violation_odds": odds, "point_violated": bool(point)}, detail,
+            raw=base_raw[n], sharpe=sharpe)
 
     def paired(lower, higher, extra_violation=None):
         """`lower` scores at most `higher`; too few differing sessions says
@@ -542,6 +602,9 @@ def probe_checks(config, sets, count):
         if crash == "crash-fatal" and not fatal[crash]:
             v = {**v, "verdict": "no_power"}
             detail += "; its grade was not fatal, so it never went fatal"
+        if crash not in GATED_CRASHES:
+            v = {"verdict": "reported", "violation_odds": None, "point_violated": False}
+            detail += "; a stop-loss, reported not gated"
         add(f"crash:{crash}<={twin}", "crash", [crash, twin], v, detail, raw=base_raw[crash],
             other_raw=base_raw[twin], differing_sessions=diff)
 
@@ -582,8 +645,12 @@ def main():
 
     probes = exempt = None
     if "probes" in config:
-        exempt = config["probes"].get("exempt")
-        if exempt is None:
+        if isinstance(config["probes"], dict) and "exempt" in config["probes"]:
+            problems = probe_config_problems(config)
+            if problems:
+                raise SystemExit("probe gate: " + "; ".join(problems))
+            exempt = config["probes"]["exempt"].strip()
+        else:
             problems = probe_config_problems(config)
             if problems:
                 raise SystemExit("probe gate: " + "; ".join(problems))

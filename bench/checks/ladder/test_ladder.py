@@ -152,7 +152,7 @@ def grade(bot, ref, ceiling, breach=None, pnl=None, limit=600.0, dd=0.2, anchor_
                            "limit": limit, "dd": s["drawdown"], "anchor_dd": anchor_dd,
                            "breach": x} for s, x in zip(sessions, breach)]}
     raw = ladder.sums_score(terms["sessions"], terms)
-    v2 = {"raw": raw, "anchor_floor": phi, "loss_weight": k, "risk": {"weight": lam, "anchor": anchor},
+    v2 = {"raw": raw, "anchor_floor": phi, "loss_weight": k, "break_even_sharpe": 0.16, "risk": {"weight": lam, "anchor": anchor},
           "breached_sessions": sum(breach), "anchor_floored": False, "sessions": sessions}
     if fatal:
         v2["fatal"] = "refused"
@@ -258,22 +258,54 @@ class ProbeGate(unittest.TestCase):
         got = self.checks(**{"honest-0.2": [-30.0, 40.0] * (self.N // 2)})
         self.assertEqual(got["honest:near-line"]["verdict"], "pass")
 
-    def test_a_crash_must_differ_enough_and_the_fatal_one_must_go_fatal(self):
+    def test_the_fatal_crash_is_gated_and_must_go_fatal(self):
         twin = [4.0] * self.N
-        got = self.checks(**{"honest-0.2": twin, "crash-honest": twin})
-        self.assertEqual(got["crash:crash-honest<=honest-0.2"]["verdict"], "no_power")
-        # One differing session proves nothing: not a failure either.
-        one = {"bot": [5.0] + twin[1:]}
-        got = self.checks(**{"honest-0.2": twin, "crash-honest": one})
-        self.assertEqual(got["crash:crash-honest<=honest-0.2"]["verdict"], "inconclusive")
         worse = {"bot": [-9.0] * 10 + twin[10:]}
-        got = self.checks(**{"honest-0.2": twin, "crash-honest": worse})
-        self.assertEqual(got["crash:crash-honest<=honest-0.2"]["verdict"], "pass")
+        got = self.checks(**{"honest-0.2": twin, "crash-fatal": twin})
+        self.assertEqual(got["crash:crash-fatal<=honest-0.2"]["verdict"], "no_power")
+        # One differing session proves nothing: not a failure either.
+        one = {"bot": [5.0] + twin[1:], "fatal": True}
+        got = self.checks(**{"honest-0.2": twin, "crash-fatal": one})
+        self.assertEqual(got["crash:crash-fatal<=honest-0.2"]["verdict"], "inconclusive")
         # A fatal-mode probe whose grade isn't fatal has no power.
         got = self.checks(**{"honest-0.2": twin, "crash-fatal": worse})
         self.assertEqual(got["crash:crash-fatal<=honest-0.2"]["verdict"], "no_power")
         got = self.checks(**{"honest-0.2": twin, "crash-fatal": dict(worse, fatal=True)})
         self.assertEqual(got["crash:crash-fatal<=honest-0.2"]["verdict"], "pass")
+
+    def test_the_graceful_crash_is_reported_and_never_gated(self):
+        twin = [4.0] * self.N
+        # It scores above the bot it wraps (a stop-loss pays): still not a failure.
+        better = {"bot": [9.0] * self.N}
+        got = self.checks(**{"honest-0.2": twin, "crash-honest": better})
+        c = got["crash:crash-honest<=honest-0.2"]
+        self.assertEqual(c["verdict"], "reported")
+        self.assertFalse(c["point_violated"])
+
+    def test_the_stop_lotto_may_pay_its_sharpe_but_not_more(self):
+        # Under the break-even and scoring over nothing: fails.
+        got = self.checks(**{"stop-lotto": {"bot": [-30.0, 29.0] * (self.N // 2), "dd": 0.2}})
+        self.assertIn("pays_its_sharpe:stop-lotto", got)
+        # A steady winner measures far over the break-even: allowed above nothing.
+        got = self.checks(**{"stop-lotto": [6.0, 4.0] * (self.N // 2)})
+        self.assertEqual(got["pays_its_sharpe:stop-lotto"]["verdict"], "pass")
+        self.assertIn("over it", got["pays_its_sharpe:stop-lotto"]["detail"])
+
+    def test_a_lucky_five_run_headline_fails_c2(self):
+        got = self.checks(**{"coin-flip-full": [12.0, -1.0] * (self.N // 2)})
+        self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "fail")
+        got = self.checks(**{"coin-flip-full": [-3.0] * self.N})
+        self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "pass")
+
+    def test_the_sharpe_uses_n_minus_one_like_the_grader(self):
+        self.assertAlmostEqual(ladder.session_sharpe([1.0, 3.0]), 2.0 / (2 ** 0.5))
+
+    def test_an_exemption_must_say_why(self):
+        for bad in ("", "   ", None, 3):
+            problems = ladder.probe_config_problems({"probes": {"exempt": bad}, "rungs": []})
+            self.assertTrue(any("exempt" in p for p in problems), bad)
+        self.assertEqual(ladder.probe_config_problems(
+            {"probes": {"exempt": "excluded"}, "rungs": []}), [])
 
     def test_a_missing_required_rung_fails_the_config(self):
         rungs = [{"name": n, "env": {}} for n in ladder.REQUIRED if n != "stop-lotto"]
