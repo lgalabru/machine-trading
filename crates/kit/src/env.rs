@@ -229,9 +229,7 @@ mod tests {
         );
         assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MANDATE));
         assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MARKETS));
-        let several = env
-            .clone()
-            .with_markets(vec!["NVDA".into(), "SPCX".into()]);
+        let several = env.clone().with_markets(vec!["NVDA".into(), "SPCX".into()]);
         assert!(
             several
                 .vars()
