@@ -19,7 +19,7 @@ Market making is out: its redesign has its own probes.
 | limit-hugger (rests at the best prices) | `limit-hugger` | at most 0.02 |
 | stop-loss lotto (coin plus a trailing stop at 0.15 of the drawdown limit) | `stop-lotto` | at most 0.02 |
 | occasional breacher (the reference, with 3 sessions a set over the position cap) | `breacher` | under the reference, and it must have breached |
-| crash-when-losing (an honest bot that exits once 0.3 of the limit down; `fatal` also makes a call the guard refuses) | `crash-exit`, `crash-fatal` | under the honest bot it wraps |
+| crash-when-losing (an honest bot that exits once 0.1 of the limit down; `fatal` also makes a call the guard refuses) | `crash-honest`, `crash-fatal` | under the honest bot it wraps |
 | levered reference ×1.5, ×2, ×3 | `lever-*` | weighted PnL at most m × the reference's; if it breached, under the reference |
 | honest but noisy (per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | from Sharpe 0.2, over doing nothing; 0.1 is reported only (v2's break-even is about 0.16) |
 | the reference | `reference` | 0.5 |
@@ -57,7 +57,7 @@ failure: it proved nothing).
    ```json
    "probes": {
      "zero_edge": ["blind-long", "coin-flip-full"],
-     "pairs": [["breacher", "reference"], ["crash-exit", "honest-0.2"]],
+     "pairs": [["breacher", "reference"], ["crash-honest", "honest-0.2"]],
      "breaches": ["breacher"],
      "levered": [{"rung": "lever-2", "m": 2.0, "base": "reference"}],
      "honest": [{"rung": "honest-0.2", "sharpe": 0.2}]
