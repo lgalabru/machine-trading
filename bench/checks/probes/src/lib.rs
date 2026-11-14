@@ -36,11 +36,12 @@
 //! - `MTX_PROBE_LEVER=m`: the strategy sees a market with its position
 //!   divided by `m` and its orders are multiplied by `m`: the reference's
 //!   decisions, `m` times the size, clipped to the cap by the run loop.
-//! - `MTX_PROBE_BREACHES=b`: in each session, with probability `b` over
-//!   `MTX_PROBE_SESSIONS` (the ladder sets it to the set's count), the bot
-//!   goes 20% over the position cap partway through and stays there, a
-//!   mandate breach on purpose; it sends its orders to the venue directly,
-//!   the run loop would have cut them.
+//! - `MTX_PROBE_BREACHES=b` (with a lever): in each session, with probability
+//!   `b` over `MTX_PROBE_SESSIONS` (the ladder sets it to the set's count),
+//!   the lever sends its orders to the venue directly, past the position cap
+//!   the run loop would have cut them to, and keeps trading its strategy
+//!   after the breach: the same lever as its clipped twin, breaching on
+//!   purpose in a few sessions.
 //! - `MTX_PROBE_CRASH_BELOW=f`: the bot exits once its PnL is `f` of the
 //!   drawdown limit under water. `MTX_PROBE_CRASH=fatal` first makes a call
 //!   the RPC guard refuses (`getHealth`), so the grade is a fatal one.
@@ -55,15 +56,12 @@ use mtx_kit::{
 /// Largest market order, in base units: one order that crosses much of the
 /// book doesn't fit a transaction's compute budget.
 const SLICE: f64 = 10.0;
-/// How far past the position cap a breacher goes, as a share of it.
-const OVERSHOOT: f64 = 1.2;
 /// The last share of a session in which the hugger flattens.
 const FLATTEN_SHARE: f64 = 0.1;
 
 const TAG_COIN: u64 = 1;
 const TAG_BLEND: u64 = 2;
 const TAG_BREACH: u64 = 3;
-const TAG_BREACH_AT: u64 = 4;
 const TAG_HONEST_COIN: u64 = 5;
 
 /// What a probe does.
@@ -164,6 +162,9 @@ impl Config {
         }
         if config.blocks == Some(0) {
             bail!("MTX_PROBE_BLOCKS: at least 1");
+        }
+        if config.breaches.is_some() && config.lever <= 1.0 {
+            bail!("MTX_PROBE_BREACHES: it breaches by levering past the cap; set MTX_PROBE_LEVER");
         }
         if config.sessions < 1.0 {
             bail!("MTX_PROBE_SESSIONS: at least 1");
@@ -410,6 +411,11 @@ impl Strategy for Honest {
 struct Lever {
     inner: Boxed,
     m: f64,
+    /// In the breaching sessions (`MTX_PROBE_BREACHES`): the share of
+    /// sessions that send past the cap, and the venue when this one does.
+    breach_share: Option<f64>,
+    salt: u64,
+    direct: Option<Direct>,
 }
 
 impl Lever {
@@ -489,89 +495,84 @@ impl Lever {
 
 impl Strategy for Lever {
     fn start(&mut self, session: &Session) -> BotResult {
+        if let Some(share) = self.breach_share
+            && breaching(session.seed, self.salt, share)
+        {
+            self.direct = Some(Direct {
+                trader: Trader::connect(&BotEnv::from_env()?)?,
+            });
+        }
         self.inner.start(session)
     }
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         let mut inner = Orders::new();
         self.inner.step(&self.scaled_down(market), &mut inner)?;
-        self.scaled_up(inner, orders);
+        match &self.direct {
+            Some(direct) => {
+                let mut sheet = Orders::new();
+                self.scaled_up(inner, &mut sheet);
+                direct.send(market, sheet);
+            }
+            None => self.scaled_up(inner, orders),
+        }
         Ok(())
     }
 }
 
-/// In some sessions, goes over the position cap partway through.
-struct Breacher {
-    inner: Boxed,
-    share: f64,
-    salt: u64,
-    chosen: bool,
-    at: u64,
-    done: bool,
-    trader: Option<Trader>,
+/// Whether a session with `seed` is one of the breaching ones.
+pub fn breaching(seed: u64, salt: u64, share: f64) -> bool {
+    draw(seed, salt, TAG_BREACH, 0) < share
 }
 
-impl Breacher {
-    /// Whether a session with `seed` is one of the breaching ones.
-    pub fn chooses(seed: u64, salt: u64, share: f64) -> bool {
-        draw(seed, salt, TAG_BREACH, 0) < share
-    }
+/// What a lever that sends past the cap needs: the venue, direct.
+struct Direct {
+    trader: Trader,
+}
 
-    /// The step the breach goes in at: between a quarter and half way.
-    pub fn step_of(seed: u64, salt: u64, steps: u64) -> u64 {
-        let quarter = (steps / 4).max(1);
-        quarter + (draw(seed, salt, TAG_BREACH_AT, 0) * quarter as f64) as u64
-    }
-
-    fn overshoot(&self, market: &Market) -> Result<()> {
-        let trader = self.trader.as_ref().context("no trader")?;
-        let side = if market.position.size != 0.0 {
-            market.position.size.signum()
-        } else {
-            coin(0, self.salt, TAG_BREACH, market.k)
-        };
-        let target = side * OVERSHOOT * market.cap;
-        let mut missing = target - market.position.size;
-        let handle = tokio::runtime::Handle::current();
+impl Direct {
+    /// Market orders toward `target`, at most `max` this step, in slices;
+    /// the run loop's cut to the cap is skipped, so a target over the cap is
+    /// reached.
+    fn toward(&self, market: &Market, target: f64, max: f64) {
+        let mut missing = (target - market.position.size).clamp(-max, max);
         while missing.abs() >= 1.0 {
             let size = missing.abs().floor().min(SLICE);
-            let (order, limit) = if missing > 0.0 {
+            let (side, limit) = if missing > 0.0 {
                 (Side::Bid, market.mark * 1.02)
             } else {
                 (Side::Ask, market.mark * 0.98)
             };
-            let sent = tokio::task::block_in_place(|| {
-                handle.block_on(trader.place_market(order, size, (limit * 100.0).round() / 100.0))
-            });
-            if let Err(e) = sent {
-                tracing::warn!(%e, "overshoot order failed");
-                break;
-            }
+            self.market(side, size, limit);
             missing -= size.copysign(missing);
         }
-        Ok(())
     }
-}
 
-impl Strategy for Breacher {
-    fn start(&mut self, session: &Session) -> BotResult {
-        self.chosen = Self::chooses(session.seed, self.salt, self.share);
-        self.at = Self::step_of(session.seed, self.salt, session.steps);
-        if self.chosen {
-            self.trader = Some(Trader::connect(&BotEnv::from_env()?)?);
+    fn market(&self, side: Side, size: f64, limit: f64) {
+        let handle = tokio::runtime::Handle::current();
+        let sent = tokio::task::block_in_place(|| {
+            handle.block_on(
+                self.trader
+                    .place_market(side, size, (limit * 100.0).round() / 100.0),
+            )
+        });
+        if let Err(e) = sent {
+            tracing::warn!(%e, "direct order failed");
         }
-        self.inner.start(session)
     }
 
-    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
-        if self.chosen && market.k >= self.at {
-            if !self.done {
-                self.done = true;
-                self.overshoot(market)?;
+    /// A sheet's orders, sent straight to the venue.
+    fn send(&self, market: &Market, sheet: Orders) {
+        for intent in sheet.into_intents() {
+            match intent {
+                Intent::Target {
+                    position,
+                    execution,
+                } => self.toward(market, position, execution.max_per_step),
+                Intent::Market { side, size, limit } => self.market(side, size, limit),
+                _ => {}
             }
-            return Ok(());
         }
-        self.inner.step(market, orders)
     }
 }
 
@@ -600,8 +601,8 @@ impl Strategy for Crasher {
         if behind(market.pnl, market.max_drawdown, self.below) {
             mtx_kit::log("behind: crashing on purpose");
             if let Some(trader) = &self.trader {
-                // Any method the guard refuses: the grade is fatal.
-                let _ = trader.rpc.get_health();
+                // A method the guard refuses: the grade is fatal.
+                let _ = trader.rpc.request_airdrop(&trader.authority(), 1);
             }
             std::process::exit(1);
         }
@@ -668,17 +669,9 @@ pub fn build(config: &Config, reference: Option<Box<dyn Strategy>>) -> Result<Bo
         base = Boxed(Box::new(Lever {
             inner: base,
             m: config.lever,
-        }));
-    }
-    if let Some(b) = config.breaches {
-        base = Boxed(Box::new(Breacher {
-            inner: base,
-            share: (b / config.sessions).clamp(0.0, 1.0),
+            breach_share: config.breaches.map(|b| (b / config.sessions).clamp(0.0, 1.0)),
             salt: config.salt,
-            chosen: false,
-            at: 0,
-            done: false,
-            trader: None,
+            direct: None,
         }));
     }
     if let Some(below) = config.crash_below {
@@ -861,6 +854,9 @@ mod tests {
         let mut lever = Lever {
             inner: Boxed(Box::new(Rider)),
             m: 3.0,
+            breach_share: None,
+            salt: 0,
+            direct: None,
         };
         let mut held = market(0, 0.0);
         held.position.size = 60.0;
@@ -884,16 +880,25 @@ mod tests {
     }
 
     #[test]
-    fn a_breacher_is_chosen_at_its_share_and_goes_in_the_first_half() {
+    fn a_breaching_session_is_chosen_at_its_share() {
         let chosen = (0..7200)
-            .filter(|s| Breacher::chooses(*s, 0, 3.0 / 72.0))
+            .filter(|s| breaching(*s, 0, 3.0 / 72.0))
             .count();
         assert!((200..400).contains(&chosen), "{chosen} of 7200");
-        assert!(!Breacher::chooses(1, 0, 0.0));
-        for seed in 0..200 {
-            let at = Breacher::step_of(seed, 0, 120);
-            assert!((30..60).contains(&at), "{at}");
-        }
+        assert!(!breaching(1, 0, 0.0));
+    }
+
+    #[test]
+    fn breaching_needs_a_lever() {
+        assert!(config(&[("MTX_PROBE", "reference"), ("MTX_PROBE_BREACHES", "3")]).is_err());
+        assert!(
+            config(&[
+                ("MTX_PROBE", "reference"),
+                ("MTX_PROBE_BREACHES", "3"),
+                ("MTX_PROBE_LEVER", "3"),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

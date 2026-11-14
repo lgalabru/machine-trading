@@ -24,8 +24,9 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
   every rung is graded with `--scoring v2` against the reference's own run on
   the same sessions, and the ladder checks where the probe bots land on the v2
   score: gamblers and naive holds at most 0.02 over doing nothing, an occasional
-  breacher and a crashing bot under their twins, levered references held to
-  their multiple, honest bots from Sharpe 0.2 over doing nothing. `summary.json`
+  breacher no better than its clipped twin, a crashing bot under the bot it wraps,
+  levered references held to their multiple, honest bots from a measured Sharpe of
+  0.2 over doing nothing. `summary.json`
   carries each rule's verdict (`pass`, `fail`, `inconclusive`, `no_power`).
 
 ## Flash-crash

@@ -248,9 +248,14 @@ pub struct LadderSummary {
     pub rules: Vec<RuleResult>,
     pub exploits: Vec<ExploitResult>,
     pub disqualified: Vec<Disqualified>,
-    /// Absent when the task declares no `probes` in its ladder file.
     #[serde(default)]
     pub probes: Option<Vec<ProbeResult>>,
+    /// `checked`, `exempt` (the ladder file says why: `probes_exempt`) or
+    /// `absent`: the task declares nothing about the probe gate.
+    #[serde(default)]
+    pub probes_status: Option<String>,
+    #[serde(default)]
+    pub probes_exempt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,6 +311,10 @@ pub struct ProbeResult {
     pub id: String,
     pub verdict: String,
     pub detail: String,
+    /// The point estimate breaks the rule, whatever the sample can confirm:
+    /// the full gate fails on it.
+    #[serde(default)]
+    pub point_violated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,7 +503,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
     });
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
-    checks.push(probe_check(summary));
+    checks.push(probe_check(summary, fast));
     checks.push(Check::from(
         GRADED,
         "ladder-clean",
@@ -628,28 +637,44 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
 }
 
 /// The probe bots land where scoring v2's decisions say they must: gamblers
-/// at or under doing nothing, a breacher under its twin, leverage held to
-/// its multiple, honest edge over doing nothing. A rule broken with
-/// confidence fails the gate, and so does a probe with no power; one the
-/// sample can't confirm is inconclusive. A task that declares none isn't run.
-fn probe_check(summary: &LadderSummary) -> Check {
+/// at or under doing nothing, a breacher no better than its clipped twin,
+/// leverage held to its multiple, honest edge over doing nothing, a crash
+/// no better than the bot it wraps. The ladder fixes the rules and applies a
+/// bootstrap: a rule broken with confidence fails, one the sample can't
+/// confirm is inconclusive in a fast run and fails in the full one (as an
+/// exploit over its limit does), and a probe with no power fails. A task
+/// that says nothing about probes fails; one that opts out says why.
+fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
     let (id, title) = ("probe-bots", "Probe bots land in their v2 bands");
-    let Some(probes) = summary.probes.as_ref().filter(|p| !p.is_empty()) else {
+    if summary.probes_status.as_deref() == Some("exempt") {
         return Check::not_run(
             GRADED,
             id,
             title,
-            "the task's ladder file declares no `probes` (docs/gates.md)",
+            format!(
+                "exempt: {}",
+                summary.probes_exempt.as_deref().unwrap_or("no reason given")
+            ),
+        );
+    }
+    let Some(probes) = summary.probes.as_ref().filter(|p| !p.is_empty()) else {
+        return Check::fail(
+            GRADED,
+            id,
+            title,
+            "the task's ladder file has no `probes` section: add one, or exempt the task with a reason (bench/checks/probes/README.md)",
         );
     };
-    let of = |verdict: &str| -> Vec<String> {
+    let of = |keep: &dyn Fn(&ProbeResult) -> bool| -> Vec<String> {
         probes
             .iter()
-            .filter(|p| p.verdict == verdict)
+            .filter(|p| keep(p))
             .map(|p| format!("{} ({})", p.id, p.detail))
             .collect()
     };
-    let (failed, no_power, unsure) = (of("fail"), of("no_power"), of("inconclusive"));
+    let failed = of(&|p| p.verdict == "fail" || (!fast && p.verdict == "inconclusive" && p.point_violated));
+    let no_power = of(&|p| p.verdict == "no_power");
+    let unsure = of(&|p| p.verdict == "inconclusive" && (fast || !p.point_violated));
     if !failed.is_empty() || !no_power.is_empty() {
         let mut parts = Vec::new();
         if !failed.is_empty() {
@@ -1275,6 +1300,8 @@ mod tests {
             exploits: vec![],
             disqualified: vec![],
             probes: None,
+            probes_status: None,
+            probes_exempt: None,
         }
     }
 
@@ -1425,39 +1452,54 @@ mod tests {
             id: id.into(),
             verdict: verdict.into(),
             detail: "raw +0.100".into(),
+            point_violated: verdict != "pass",
         }
     }
 
     #[test]
     fn probe_rules_fail_the_gate_unless_the_sample_cannot_confirm_them() {
-        let check = |probes: Option<Vec<ProbeResult>>| {
+        let check = |probes: Option<Vec<ProbeResult>>, fast: bool| {
             let mut s = summary(&[]);
             s.probes = probes;
-            probe_check(&s)
+            probe_check(&s, fast)
         };
-        assert_eq!(check(None).status, Status::NotRun);
-        assert_eq!(check(Some(vec![])).status, Status::NotRun);
-        let held = check(Some(vec![probe("a", "pass"), probe("b", "pass")]));
+        // Nothing said about probes fails; an exemption says why and isn't run.
+        assert_eq!(check(None, true).status, Status::Fail);
+        assert_eq!(check(Some(vec![]), true).status, Status::Fail);
+        let mut s = summary(&[]);
+        s.probes_status = Some("exempt".into());
+        s.probes_exempt = Some("not wired".into());
+        let exempt = probe_check(&s, false);
+        assert_eq!(exempt.status, Status::NotRun);
+        assert!(exempt.detail.contains("not wired"));
+        let held = check(Some(vec![probe("a", "pass"), probe("b", "pass")]), true);
         assert_eq!(held.status, Status::Pass);
         assert!(held.detail.contains("2 probe rules"));
-        let unsure = check(Some(vec![probe("a", "pass"), probe("b", "inconclusive")]));
-        assert_eq!(unsure.status, Status::Inconclusive);
-        let broken = check(Some(vec![
-            probe("zero_edge:coin", "fail"),
-            probe("b", "pass"),
-        ]));
-        assert_eq!(broken.status, Status::Fail);
-        assert!(
-            broken
-                .detail
-                .contains("out of band: zero_edge:coin (raw +0.100)")
-        );
-        let powerless = check(Some(vec![probe("pair:breacher", "no_power")]));
+        let unsure = vec![probe("a", "pass"), probe("b", "inconclusive")];
+        assert_eq!(check(Some(unsure), true).status, Status::Inconclusive);
+        let broken = vec![probe("zero_edge:coin", "fail"), probe("b", "pass")];
+        let c = check(Some(broken), true);
+        assert_eq!(c.status, Status::Fail);
+        assert!(c.detail.contains("out of band: zero_edge:coin (raw +0.100)"));
+        let powerless = check(Some(vec![probe("breacher", "no_power")]), true);
         assert_eq!(powerless.status, Status::Fail);
         assert!(powerless.detail.contains("no power"));
-        // A rule that fails outweighs one the sample can't confirm.
-        let both = check(Some(vec![probe("a", "inconclusive"), probe("b", "fail")]));
-        assert_eq!(both.status, Status::Fail);
+        let both = vec![probe("a", "inconclusive"), probe("b", "fail")];
+        assert_eq!(check(Some(both), true).status, Status::Fail);
+    }
+
+    #[test]
+    fn the_full_gate_fails_a_broken_point_estimate_the_fast_one_tolerates() {
+        let unsure = || Some(vec![probe("b", "inconclusive")]);
+        let mut s = summary(&[]);
+        s.probes = unsure();
+        assert_eq!(probe_check(&s, true).status, Status::Inconclusive);
+        assert_eq!(probe_check(&s, false).status, Status::Fail);
+        // An inconclusive rule whose point estimate holds is not a failure.
+        let mut fine = probe("c", "inconclusive");
+        fine.point_violated = false;
+        s.probes = Some(vec![fine]);
+        assert_eq!(probe_check(&s, false).status, Status::Inconclusive);
     }
 
     #[test]

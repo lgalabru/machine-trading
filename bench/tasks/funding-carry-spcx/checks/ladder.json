@@ -58,8 +58,16 @@
     }
   ],
   "gates": {
-    "informed": ["told"],
-    "non_reading": ["nop", "blind-long", "blind-short", "fader", "follower"]
+    "informed": [
+      "told"
+    ],
+    "non_reading": [
+      "nop",
+      "blind-long",
+      "blind-short",
+      "fader",
+      "follower"
+    ]
   },
   "rules": [
     "max(blind-long, blind-short) < reference",
@@ -78,5 +86,8 @@
     ],
     "max_profitable": 0.99,
     "below": "told"
+  },
+  "probes": {
+    "exempt": "the probe rungs aren't wired for this task yet (follow-up)"
   }
 }

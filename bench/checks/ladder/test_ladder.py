@@ -138,15 +138,25 @@ class MarkDisplacement(unittest.TestCase):
         self.assertAlmostEqual(ladder.displacement([self.set_dir], "up", 1)["bp"], 0.0)
 
 
-def v2_report(bot, ref, ceiling, pnl=None, breached=0, floor=0.1, fatal=False, raw=None):
-    """A grade with a v2: per-session weighted terms, as the grader writes them."""
-    sessions = [{"bot_usd": b, "reference_usd": r, "ceiling_usd": c}
-                for b, r, c in zip(bot, ref, ceiling)]
-    terms = {"raw": 0.0 if raw is None else raw, "anchor_floor": floor,
-             "breached_sessions": breached, "sessions": sessions}
+def grade(bot, ref, ceiling, breach=None, pnl=None, limit=600.0, dd=0.2, anchor_dd=0.2,
+          fatal=False, phi=0.05, anchor="reference", k=1.5, lam=1.0):
+    """A grade with a v2, scored as the grader would (the ladder checks its
+    copy against `raw`)."""
+    breach = breach or [False] * len(bot)
+    sessions = [{"bot_usd": b, "reference_usd": r, "ceiling_usd": c, "limit_usd": limit,
+                 "drawdown": 1.0 if x else dd, "anchor_drawdown": anchor_dd,
+                 "breach": "over the cap" if x else None}
+                for b, r, c, x in zip(bot, ref, ceiling, breach)]
+    terms = {"raw": 0.0, "fatal": fatal, "phi": phi, "k": k, "lambda": lam, "anchor": anchor,
+             "sessions": [{"bot": s["bot_usd"], "ref": s["reference_usd"], "ceil": s["ceiling_usd"],
+                           "limit": limit, "dd": s["drawdown"], "anchor_dd": anchor_dd,
+                           "breach": x} for s, x in zip(sessions, breach)]}
+    raw = ladder.sums_score(terms["sessions"], terms)
+    v2 = {"raw": raw, "anchor_floor": phi, "loss_weight": k, "risk": {"weight": lam, "anchor": anchor},
+          "breached_sessions": sum(breach), "anchor_floored": False, "sessions": sessions}
     if fatal:
-        terms["fatal"] = "refused"
-    return {"v2": terms, "scenarios": [{"pnl_usd": p} for p in (pnl or bot)]}
+        v2["fatal"] = "refused"
+    return {"v2": v2, "scenarios": [{"pnl_usd": p} for p in (pnl or bot)]}
 
 
 class ProbeGate(unittest.TestCase):
@@ -154,100 +164,149 @@ class ProbeGate(unittest.TestCase):
 
     def ladder(self, **bots):
         """One set of N sessions: the reference earns 10 each, the ceiling 40;
-        `bots` maps a rung to its per-session weighted PnL."""
-        ref = [10.0] * self.N
-        ceiling = [40.0] * self.N
-        reports = {"reference": v2_report(ref, ref, ceiling)}
+        every required rung is there (as nop-like zeros unless `bots` says)."""
+        ref, ceiling = [10.0] * self.N, [40.0] * self.N
+        reports = {n: grade([0.0] * self.N, ref, ceiling) for n in ladder.REQUIRED}
+        reports["reference"] = grade(ref, ref, ceiling)
         for name, spec in bots.items():
-            if isinstance(spec, dict):
-                bot = spec.pop("bot")
-                reports[name] = v2_report(bot, ref, ceiling, **spec)
-            else:
-                reports[name] = v2_report(spec, ref, ceiling)
+            spec = dict(spec) if isinstance(spec, dict) else {"bot": spec}
+            reports[name] = grade(spec.pop("bot"), ref, ceiling, **spec)
         return [reports]
 
-    def test_raw_is_half_at_the_reference_and_one_at_the_ceiling(self):
-        terms = ladder.v2_terms(v2_report([10.0] * 4, [10.0] * 4, [40.0] * 4))
-        self.assertAlmostEqual(ladder.v2_raw(terms), 0.5)
-        terms = ladder.v2_terms(v2_report([40.0] * 4, [10.0] * 4, [40.0] * 4))
-        self.assertAlmostEqual(ladder.v2_raw(terms), 1.0)
-        terms = ladder.v2_terms(v2_report([-5.0] * 4, [10.0] * 4, [40.0] * 4))
-        self.assertAlmostEqual(ladder.v2_raw(terms), -0.25)
+    def checks(self, **bots):
+        return {c["id"]: c for c in ladder.probe_checks({}, self.ladder(**bots), self.N)}
 
-    def test_a_weak_reference_is_floored(self):
-        terms = ladder.v2_terms(v2_report([2.0] * 4, [1.0] * 4, [40.0] * 4))
-        # The floor is 10% of 160 = 16 against a measured 4.
-        self.assertAlmostEqual(ladder.v2_raw(terms), 0.5 * 8 / 16)
+    def test_the_copy_of_the_scoring_matches_the_formulas(self):
+        t = lambda bot, **kw: ladder.sums_score(
+            ladder.v2_terms(grade(bot, [10.0] * 4, [40.0] * 4, **kw))["sessions"],
+            ladder.v2_terms(grade(bot, [10.0] * 4, [40.0] * 4, **kw)))
+        self.assertAlmostEqual(t([10.0] * 4), 0.5)
+        self.assertAlmostEqual(t([40.0] * 4, dd=0.2, anchor_dd=0.2), 1.0 - 0.0, places=1)
+        self.assertAlmostEqual(t([-5.0] * 4), -0.25)
+        # One breach holds the run to the reference's 0.5; two to 0.
+        self.assertLessEqual(t([40.0] * 4, breach=[True, False, False, False]), 0.5)
+        self.assertLessEqual(t([40.0] * 4, breach=[True, True, False, False]), 0.0)
+        # A fatal grade is the floor, and a ceiling under the anchor is 1, not NaN.
+        self.assertEqual(t([40.0] * 4, fatal=True), -1.0)
+        self.assertEqual(ladder.sums_score(
+            [{"bot": 9, "ref": 5, "ceil": 4, "limit": 1, "dd": 0, "anchor_dd": 0, "breach": False}],
+            {"fatal": False, "phi": 0.05, "k": 1.5, "lambda": 1, "anchor": "none"}), 1.0)
 
-    def test_a_fatal_grade_keeps_the_raw_it_was_given(self):
-        terms = ladder.v2_terms(v2_report([30.0] * 4, [10.0] * 4, [40.0] * 4, fatal=True, raw=-1.0))
-        self.assertEqual(ladder.v2_raw(terms, [0, 1]), -1.0)
+    def test_a_charge_takes_back_winnings_when_the_drawdown_is_far_past_the_anchors(self):
+        bot, ref, ceiling = [30.0] * 4, [10.0] * 4, [40.0] * 4
+        calm = grade(bot, ref, ceiling, dd=0.2, anchor_dd=0.2)["v2"]["raw"]
+        wild = grade(bot, ref, ceiling, dd=0.95, anchor_dd=0.2)["v2"]["raw"]
+        self.assertLess(wild, calm)
+
+    def test_a_drifted_copy_stops_the_gate(self):
+        sets = self.ladder()
+        sets[0]["coin-flip-full"]["v2"]["raw"] += 0.1
+        with self.assertRaises(SystemExit):
+            ladder.probe_checks({}, sets, self.N)
 
     def test_a_gambler_that_loses_passes_and_one_that_wins_by_a_lot_fails(self):
-        sets = self.ladder(loser=[-3.0, 1.0] * (self.N // 2), lucky=[8.0, -1.0] * (self.N // 2))
-        got = {c["id"]: c for c in ladder.probe_checks({"zero_edge": ["loser", "lucky"]}, sets, self.N)}
-        self.assertEqual(got["zero_edge:loser"]["verdict"], "pass")
-        self.assertEqual(got["zero_edge:lucky"]["verdict"], "fail")
+        got = self.checks(**{"coin-flip-full": [-3.0, 1.0] * (self.N // 2),
+                             "martingale": [8.0, -1.0] * (self.N // 2)})
+        self.assertEqual(got["zero_edge:coin-flip-full"]["verdict"], "pass")
+        self.assertEqual(got["zero_edge:martingale"]["verdict"], "fail")
 
     def test_a_violation_the_sample_cannot_confirm_is_inconclusive(self):
-        # Mean 0.5 a session against a spread of 40: raw is barely over the limit.
-        bot = [40.0, -39.0] * (self.N // 2)
-        sets = self.ladder(noisy=bot)
-        got = ladder.probe_checks({"zero_edge": ["noisy"]}, sets, self.N)
-        self.assertEqual(got[0]["verdict"], "inconclusive")
+        got = self.checks(**{"coin-flip-full": [40.0, -39.0] * (self.N // 2)})
+        self.assertEqual(got["zero_edge:coin-flip-full"]["verdict"], "inconclusive")
+        self.assertTrue(got["zero_edge:coin-flip-full"]["point_violated"])
 
     def test_a_breacher_must_score_under_its_twin_and_must_have_breached(self):
         twin = [10.0] * self.N
-        worse = {"bot": [10.0] * (self.N - 4) + [-30.0] * 4, "breached": 4}
-        probes = {"pairs": [["breacher", "reference"]], "breaches": ["breacher"]}
-        got = ladder.probe_checks(probes, self.ladder(breacher=worse), self.N)
-        self.assertEqual(got[0]["verdict"], "pass")
-        # One that never breached, and so equals its twin, proves nothing.
-        got = ladder.probe_checks(probes, self.ladder(breacher={"bot": twin, "breached": 0}), self.N)
-        self.assertEqual(got[0]["verdict"], "no_power")
+        breach = [True] * 4 + [False] * (self.N - 4)
+        worse = {"bot": [-5.0] * 4 + [10.0] * (self.N - 4), "breach": breach}
+        got = self.checks(**{TWIN: twin, "breacher": worse})
+        self.assertEqual(got[f"breacher:breacher<={TWIN}"]["verdict"], "pass")
+        # One that never breached is the twin and proves nothing.
+        got = self.checks(**{TWIN: twin, "breacher": twin})
+        self.assertEqual(got[f"breacher:breacher<={TWIN}"]["verdict"], "no_power")
         # One that breached and still beats its twin fails.
-        better = {"bot": [20.0] * self.N, "breached": 2}
-        got = ladder.probe_checks(probes, self.ladder(breacher=better), self.N)
-        self.assertEqual(got[0]["verdict"], "fail")
+        # One that breaches once is held to 0.5 by the cap: that is no help
+        # against a twin that scores less than the reference.
+        weak = [5.0] * self.N
+        once = {"bot": [30.0] * self.N, "breach": [True] + [False] * (self.N - 1)}
+        got = self.checks(**{TWIN: weak, "breacher": once})
+        # The point estimate breaks the rule; a resample that draws the breach
+        # twice is held to 0, so the sample can't confirm it: the full gate fails it.
+        self.assertTrue(got[f"breacher:breacher<={TWIN}"]["point_violated"])
+        self.assertIn(got[f"breacher:breacher<={TWIN}"]["verdict"], ("fail", "inconclusive"))
 
-    def test_a_crash_that_never_came_has_no_power(self):
-        probes = {"pairs": [["crash", "honest"]], "must_differ": ["crash"]}
-        same = [4.0] * self.N
-        got = ladder.probe_checks(probes, self.ladder(crash=same, honest=same), self.N)
-        self.assertEqual(got[0]["verdict"], "no_power")
-        worse = ladder.probe_checks(
-            probes, self.ladder(crash=[-9.0] * self.N, honest=same), self.N)
-        self.assertEqual(worse[0]["verdict"], "pass")
+    def test_leverage_is_held_to_m_times_the_reference(self):
+        self.assertEqual(self.checks(**{"lever-2": [18.0] * self.N})["levered:lever-2"]["verdict"], "pass")
+        self.assertEqual(self.checks(**{"lever-2": [25.0] * self.N})["levered:lever-2"]["verdict"], "fail")
 
-    def test_leverage_is_held_to_m_times_the_base_and_never_pays_for_a_breach(self):
-        probes = {"levered": [{"rung": "x2", "m": 2, "base": "reference"}]}
-        ok = ladder.probe_checks(probes, self.ladder(x2=[18.0] * self.N), self.N)
-        self.assertEqual(ok[0]["verdict"], "pass")
-        too_much = ladder.probe_checks(probes, self.ladder(x2=[25.0] * self.N), self.N)
-        self.assertEqual(too_much[0]["verdict"], "fail")
-        pays = {"bot": [16.0] * (self.N - 1) + [12.0], "breached": 1, "pnl": [16.0] * self.N}
-        # Beats the reference (16 > 10) despite a breach.
-        paying = ladder.probe_checks(probes, self.ladder(x2=pays), self.N)
-        self.assertEqual(paying[0]["verdict"], "fail")
+    def test_an_honest_bot_is_held_to_the_sharpe_it_measured_not_its_label(self):
+        # Label 0.3, but it measured under the pay line: reported only.
+        noisy = [-30.0, 29.0] * (self.N // 2)
+        got = self.checks(**{"honest-0.3": noisy})
+        self.assertIn("under the pay line", got["honest:honest-0.3"]["detail"])
+        self.assertEqual(got["honest:honest-0.3"]["verdict"], "pass")
+        # Measured over the line and losing: it fails.
+        # (the near-breach charge takes its winnings back).
+        bot = [-4.0] * 30 + [28.0] * 10
+        got = self.checks(**{"honest-0.5": {"bot": bot, "dd": 0.99}})
+        self.assertGreaterEqual(ladder.session_sharpe(bot), ladder.PAYS_FROM)
+        self.assertEqual(got["honest:honest-0.5"]["verdict"], "fail")
 
-    def test_an_honest_bot_over_the_pay_line_must_beat_doing_nothing(self):
-        probes = {"honest": [{"rung": "h1", "sharpe": 0.1}, {"rung": "h3", "sharpe": 0.3}]}
-        sets = self.ladder(h1=[-5.0] * self.N, h3=[-5.0] * self.N)
-        got = {c["id"]: c for c in ladder.probe_checks(probes, sets, self.N)}
-        self.assertEqual(got["honest:h1"]["verdict"], "pass")
-        self.assertEqual(got["honest:h3"]["verdict"], "fail")
+    def test_one_honest_probe_must_measure_near_the_line(self):
+        got = self.checks()
+        self.assertEqual(got["honest:near-line"]["verdict"], "no_power")
+        got = self.checks(**{"honest-0.2": [-30.0, 40.0] * (self.N // 2)})
+        self.assertEqual(got["honest:near-line"]["verdict"], "pass")
 
-    def test_a_probe_rung_missing_from_the_ladder_is_an_error(self):
-        with self.assertRaises(SystemExit):
-            ladder.probe_checks({"zero_edge": ["ghost"]}, self.ladder(), self.N)
+    def test_a_crash_must_differ_enough_and_the_fatal_one_must_go_fatal(self):
+        twin = [4.0] * self.N
+        got = self.checks(**{"honest-0.2": twin, "crash-honest": twin})
+        self.assertEqual(got["crash:crash-honest<=honest-0.2"]["verdict"], "no_power")
+        # One differing session proves nothing: not a failure either.
+        one = {"bot": [5.0] + twin[1:]}
+        got = self.checks(**{"honest-0.2": twin, "crash-honest": one})
+        self.assertEqual(got["crash:crash-honest<=honest-0.2"]["verdict"], "inconclusive")
+        worse = {"bot": [-9.0] * 10 + twin[10:]}
+        got = self.checks(**{"honest-0.2": twin, "crash-honest": worse})
+        self.assertEqual(got["crash:crash-honest<=honest-0.2"]["verdict"], "pass")
+        # A fatal-mode probe whose grade isn't fatal has no power.
+        got = self.checks(**{"honest-0.2": twin, "crash-fatal": worse})
+        self.assertEqual(got["crash:crash-fatal<=honest-0.2"]["verdict"], "no_power")
+        got = self.checks(**{"honest-0.2": twin, "crash-fatal": dict(worse, fatal=True)})
+        self.assertEqual(got["crash:crash-fatal<=honest-0.2"]["verdict"], "pass")
+
+    def test_a_missing_required_rung_fails_the_config(self):
+        rungs = [{"name": n, "env": {}} for n in ladder.REQUIRED if n != "stop-lotto"]
+        problems = ladder.probe_config_problems({"probes": {}, "rungs": rungs})
+        self.assertTrue(any("stop-lotto" in p for p in problems))
+
+    def test_a_task_cannot_loosen_the_rules(self):
+        problems = ladder.probe_config_problems(
+            {"probes": {"tolerance": 0.5, "zero_edge": []}, "rungs": []})
+        self.assertTrue(any("tolerance" in p for p in problems))
+
+    def test_twins_must_be_twins(self):
+        env = {n: {} for n in ladder.REQUIRED}
+        env["breacher"] = {"MTX_PROBE_LEVER": "2", "MTX_PROBE_BREACHES": "3"}
+        env["lever-3"] = {"MTX_PROBE_LEVER": "3"}
+        env["crash-honest"] = {"MTX_PROBE_BLEND": "0.4", "MTX_PROBE_CRASH_BELOW": "0.1"}
+        env["crash-fatal"] = {"MTX_PROBE_BLEND": "0.4", "MTX_PROBE_CRASH_BELOW": "0.1"}
+        env["honest-0.2"] = {"MTX_PROBE_BLEND": "0.5"}
+        rungs = [{"name": n, "env": e} for n, e in env.items()]
+        problems = " ".join(ladder.probe_config_problems({"probes": {}, "rungs": rungs}))
+        self.assertIn("lever like its twin", problems)
+        self.assertIn("blend like its twin", problems)
+        self.assertIn("MTX_PROBE_CRASH=fatal", problems)
 
     def test_a_probe_rung_knows_its_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
             rung = {"name": "b", "dir": "bench/checks/probes", "env": {"MTX_PROBE": "coin-flip"}}
-            os.makedirs(os.path.join(ladder.ROOT, rung["dir"]), exist_ok=True)
             path = os.path.join(ladder.rung_bot(rung, tmp, 72), "run.sh")
             with open(path) as f:
                 self.assertIn("MTX_PROBE_SESSIONS=72", f.read())
+
+
+TWIN = ladder.TWIN
 
 
 if __name__ == "__main__":
