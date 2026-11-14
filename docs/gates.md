@@ -26,7 +26,7 @@ finished ladder) adjust a run.
 | | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
 | | the oracle scores 1.0 and nop 0 under Harbor | full: `just harbor-checks` |
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
-| | a v2 task's verifier runs its informed bot on the hidden set (fails while `mtx grade --informed` isn't in the build: v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh` |
+| | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
 | Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
 | | the agent's image holds no answer; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit`, `keypair-probe`, `clock-probe` |
@@ -94,6 +94,19 @@ Sharpe of at least 0.25 (`"min_sharpe"`). A v2 task is released on v2
 alone, so either miss refuses it: there is no fallback to v1 or to the
 hindsight ceiling. A v1 task (the four that move in 0.13) reports both v2
 checks `not run`.
+
+The verifier measures the 1 on the hidden set it grades: `mtx grade
+--informed <dir>` runs the informed bot on the same sessions after the
+reference and before the bot, and v2 anchors its 1 to that PnL. The informed
+bot is handed each session's latent state as `MTX_REGIME`: the fields of the
+draw its family's generator picks as knowable (`Hidden::latent`: a shock's
+kind, the funding process, who is who), never the session's future (where a
+move ends, when an order comes, the path). The bot is handed nothing; the
+informed bot's logs stay in a directory only the grader can enter until
+every bot has stopped; its sessions have their own keys and surfnets, so
+the bot's sessions are the same with or without it. The ladder's informed
+rung is told the same (`"tell_latent": true`). It costs one more bot run
+per session.
 
 ## Adding a check
 
