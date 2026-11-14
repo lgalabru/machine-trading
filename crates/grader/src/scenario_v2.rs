@@ -674,9 +674,9 @@ impl ScenarioV2 {
             lending.is_some(),
             stake.is_some(),
         ]
-            .iter()
-            .filter(|kind| **kind)
-            .count()
+        .iter()
+        .filter(|kind| **kind)
+        .count()
         {
             1 => Ok(()),
             _ => Err("venues: exactly one of perp, spot, lending and stake".into()),
