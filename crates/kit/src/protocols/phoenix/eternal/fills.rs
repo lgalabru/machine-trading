@@ -23,7 +23,8 @@
 //! (a keeper takes a liquidatee's position into its own account) and
 //! `CloseMatchedPositions` (auto-deleveraging closes a long against a
 //! short). Neither names the order book, so they show in the transactions
-//! of the trader accounts they move. They are [`PerpPositionChange`]s: an
+//! of the trader accounts they move, and Phoenix logs them under no
+//! header: each names its own market. They are [`PerpPositionChange`]s: an
 //! account's fills and its position changes together sum to its change in
 //! position.
 //!
@@ -98,9 +99,12 @@ pub struct PerpPositionChange {
     pub slot: u64,
     /// The market, as the mandate names it.
     pub instrument: InstrumentId,
-    /// As [`PerpOrderPlaced::sequence`]; the two accounts' changes share
-    /// it.
-    pub sequence: u128,
+    /// The transaction, its instruction and the event's place among the
+    /// instruction's events: what identifies the change, which the two
+    /// accounts' changes share. Phoenix logs these events under no market
+    /// header, so they carry no market sequence number.
+    pub transaction: Signature,
+    pub event: (u8, u32),
     pub kind: PositionChangeKind,
     /// The trader account whose position moved.
     pub trader: Pubkey,
@@ -135,8 +139,7 @@ pub struct TraderRecords {
 }
 
 /// What a perp market recorded in the transactions read, between any
-/// accounts, each list in the market's own order (by slot, then sequence)
-/// once [`PerpMarketRecords::sort`] has run. A transaction added twice
+/// accounts, each list in order once [`PerpMarketRecords::sort`] has run. A transaction added twice
 /// counts once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PerpMarketRecords {
@@ -190,7 +193,7 @@ impl PerpMarketRecords {
                     ),
                 ));
             }
-            added.add_events(&parsed.events, market, summary)?;
+            added.add_events(&parsed.events, market, summary, index)?;
         }
         self.fills.append(&mut added.fills);
         self.placed.append(&mut added.placed);
@@ -204,6 +207,7 @@ impl PerpMarketRecords {
         events: &[MarketEvent],
         market: &PhoenixMarket,
         summary: &TransactionSummary,
+        instruction: u8,
     ) -> Result<(), MeterError> {
         let mut header: Option<&MarketEventHeader> = None;
         // The fills since the last trade summary, with their quote lots: its
@@ -215,8 +219,10 @@ impl PerpMarketRecords {
         for (i, event) in events.iter().enumerate() {
             let at = |what: &'static str| -> Result<(u128, &MarketEventHeader), MeterError> {
                 let h = header.ok_or_else(|| decode(what, "logged before any header".into()))?;
-                let index = u32::try_from(i).map_err(|_| decode(what, format!("event {i}")))?;
-                Ok(((u128::from(h.sequence_number) << 32) | u128::from(index), h))
+                Ok((
+                    (u128::from(h.sequence_number) << 32) | u128::from(place(i, what)?),
+                    h,
+                ))
             };
             let fill = |what: &'static str,
                         maker: [u8; 32],
@@ -323,7 +329,7 @@ impl PerpMarketRecords {
                     });
                 }
                 MarketEvent::LiquidationTransfer(t) if t.asset_id == asset_id => {
-                    let (sequence, _) = at("a liquidation transfer")?;
+                    let event = (instruction, place(i, "a liquidation transfer")?);
                     // The liquidatee's position, signed, moves to the
                     // liquidator.
                     let lots = t.base_lots_transferred.as_inner();
@@ -343,7 +349,8 @@ impl PerpMarketRecords {
                         self.position_changes.push(PerpPositionChange {
                             slot: summary.slot,
                             instrument: market.id().clone(),
-                            sequence,
+                            transaction: summary.signature,
+                            event,
                             kind: PositionChangeKind::LiquidationTransfer,
                             trader,
                             counterparty,
@@ -353,7 +360,7 @@ impl PerpMarketRecords {
                     }
                 }
                 MarketEvent::CloseMatchedPositions(c) if c.asset_id == asset_id => {
-                    let (sequence, _) = at("an auto-deleveraging close")?;
+                    let event = (instruction, place(i, "an auto-deleveraging close")?);
                     let quantity = market.base_lots_to_quantity(lots_i64(
                         "an auto-deleveraging close",
                         c.base_lots_closed.as_inner().unsigned_abs(),
@@ -368,7 +375,8 @@ impl PerpMarketRecords {
                         self.position_changes.push(PerpPositionChange {
                             slot: summary.slot,
                             instrument: market.id().clone(),
-                            sequence,
+                            transaction: summary.signature,
+                            event,
                             kind: PositionChangeKind::AutoDeleverage,
                             trader,
                             counterparty,
@@ -388,12 +396,14 @@ impl PerpMarketRecords {
         self.transactions.contains(signature)
     }
 
-    /// Puts the records in the market's own order: by slot, then sequence.
+    /// Puts the records in the market's own order: by slot, then sequence;
+    /// position changes, which have none, by slot, then transaction and
+    /// event.
     pub fn sort(&mut self) {
         self.fills.sort_by_key(|f| (f.slot, f.sequence));
         self.placed.sort_by_key(|p| (p.slot, p.sequence));
         self.position_changes
-            .sort_by_key(|c| (c.slot, c.sequence, c.trader));
+            .sort_by_key(|c| (c.slot, c.transaction, c.event, c.trader));
     }
 
     /// What `accounts` did: each fill once for each side they traded, with
@@ -455,6 +465,11 @@ fn split(fee: u64, run: &[(usize, u64)]) -> Vec<u64> {
         *last = fee - before.iter().sum::<u64>();
     }
     shares
+}
+
+/// The `i`th event's place among its instruction's events.
+fn place(i: usize, what: &'static str) -> Result<u32, MeterError> {
+    u32::try_from(i).map_err(|_| decode(what, format!("event {i}")))
 }
 
 fn lots_i64(what: &'static str, lots: u64) -> Result<i64, MeterError> {

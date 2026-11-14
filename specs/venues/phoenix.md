@@ -80,7 +80,8 @@ cross-margin account.
   own trader account) and `CloseMatchedPositions` (auto-deleveraging closes
   `base_lots_closed` of a long against a short) move positions with no
   fill, and name the trader accounts rather than the order book, so an
-  enforcer also reads the transactions of the account's traders. The
+  enforcer also reads the transactions of the account's traders. Phoenix
+  logs them under no `Header`: each event names its own `asset_id`. The
   fills and these changes together sum to the change in position.
 - **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
   order it placed to rest on the book, its side the sign of its

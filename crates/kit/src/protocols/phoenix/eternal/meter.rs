@@ -880,7 +880,8 @@ mod tests {
             &[book],
         );
         // A keeper takes 600 of the long into its own account: the
-        // transaction names the trader accounts, not the order book.
+        // transaction names the trader accounts, not the order book, and
+        // Phoenix logs it under no header.
         let transfer = MarketEvent::LiquidationTransfer(LiquidationTransferEvent {
             liquidatee: main.to_bytes(),
             liquidator: keeper.to_bytes(),
@@ -909,15 +910,7 @@ mod tests {
         if let MarketEvent::LiquidationTransfer(t) = &mut elsewhere {
             t.asset_id += 1;
         }
-        chain.record_transaction(
-            logged(
-                20,
-                2,
-                &[header(&spcx, 2, keeper), transfer, adl, elsewhere],
-                false,
-            ),
-            &[main],
-        );
+        chain.record_transaction(logged(20, 2, &[transfer, adl, elsewhere], false), &[main]);
 
         let mine = meter.records(0).await.unwrap();
         let changes: Vec<(PositionChangeKind, Side, Decimal, Pubkey)> = mine
