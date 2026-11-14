@@ -2,6 +2,7 @@
 
     python3 -I calibration/fitter/run.py --from-archive <dir|.tar.gz> [--asset spcx] [--out DIR]
     python3 -I calibration/fitter/run.py --fetch [--asset spcx] [--out DIR] [--cache DIR]
+    python3 -I calibration/fitter/run.py --correlation us-eq --from-archive <a> --from-archive <b> [--out DIR]
 
 With --from-archive the run is offline: every archived file is checked against
 the archive's manifest first, any network access is an error, and the pins in
@@ -13,6 +14,10 @@ An asset config with `kind = "equity"` is fitted by tickers/equity.py from its
 own archive (named in `archive`); the others by the SOL/SPCX code in calib/.
 --asset equity runs every equity asset. The archives are listed in
 archive*.json beside this file.
+
+--correlation <set> fits the cross-asset correlation file of sets/<set>.toml from
+the archives that hold its assets' candles (--from-archive once per archive, offline
+only), and writes it with the inputs file; the default --out is calibration/correlation.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ sys.path.insert(0, str(HERE))
 
 from calib import export_v1, fetch, fit, toml_out  # noqa: E402
 
+SETS = sorted(p.stem for p in (HERE / "sets").glob("*.toml"))
 ASSETS = sorted(p.stem for p in (HERE / "assets").glob("*.toml"))
 CONFIGS = {a: tomllib.loads((HERE / "assets" / f"{a}.toml").read_text()) for a in ASSETS}
 EQUITY = [a for a in ASSETS if CONFIGS[a].get("kind") == "equity"]
@@ -130,15 +136,56 @@ def fit_asset(cfg: dict, work: Path, pinned: bool) -> Path:
     return export_v1.write(new, new_inputs, lineage)
 
 
+def correlation(args) -> None:
+    if args.fetch:
+        sys.exit("--correlation reads the archived pulls: give --from-archive for each")
+    from joint import corr
+
+    cfg = tomllib.loads((HERE / "sets" / f"{args.correlation}.toml").read_text())
+    with tempfile.TemporaryDirectory() as t:
+        raws = []
+        for i, a in enumerate(args.from_archive):
+            tmp = Path(t) / str(i)
+            tmp.mkdir()
+            raw = open_archive(a.resolve(), tmp)
+            verify_archive(raw)
+            raws.append(raw)
+        names = [a.name for a in args.from_archive]
+        missing = [a for a in cfg["archives"] if a not in names]
+        if missing:
+            sys.exit(f"correlation: the fit reads {cfg['archives']}; missing {missing}")
+        fetch._get = no_network
+        cal, inputs = corr.fit(cfg, raws, cfg["fitted_at"], cfg["fit_date"])
+        for r in inputs:
+            r["archive"] = next(n for n, raw in zip(names, raws) if (raw / r["name"]).exists())
+        made = corr.write(cal, inputs, Path(t) / "out")
+        if cfg["expected_id"] and made.stem != cfg["expected_id"]:
+            sys.exit(f"{args.correlation}: wrote {made.stem}, expected {cfg['expected_id']}")
+        args.out.mkdir(parents=True, exist_ok=True)
+        for p in (made, made.with_suffix(".inputs.json")):
+            (args.out / p.name).write_bytes(p.read_bytes())
+        print(args.out / made.name)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--from-archive", type=Path, help="archived pull: a folder, or the .tar.gz named in archive.json")
+    src.add_argument("--from-archive", type=Path, action="append",
+                     help="archived pull: a folder, or the .tar.gz named in archive.json (--correlation takes one per archive)")
     src.add_argument("--fetch", action="store_true", help="download the sources (cached under calibration/fitter/.cache)")
     ap.add_argument("--asset", choices=[*ASSETS, "equity", "all"], default="all")
     ap.add_argument("--cache", type=Path, default=HERE / ".cache", help="with --fetch: the download cache (a raw folder with manifest.json)")
-    ap.add_argument("--out", type=Path, default=HERE.parent / "market", help="where the files are written")
+    ap.add_argument("--correlation", choices=SETS, help="fit this set's correlation file instead of the market files")
+    ap.add_argument("--out", type=Path, default=None, help="where the files are written (default calibration/market, or calibration/correlation)")
     args = ap.parse_args()
+    if args.out is None:
+        args.out = HERE.parent / ("correlation" if args.correlation else "market")
+    if args.correlation:
+        return correlation(args)
+    if args.from_archive and len(args.from_archive) != 1:
+        sys.exit("--from-archive is given once, except with --correlation")
+    if args.from_archive:
+        args.from_archive = args.from_archive[0]
 
     with tempfile.TemporaryDirectory() as t:
         tmp = Path(t)
