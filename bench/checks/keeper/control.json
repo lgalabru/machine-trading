@@ -1,0 +1,36 @@
+{
+  "schema": 2,
+  "name": "keeper-smoke-control",
+  "description": "keeper-smoke without the keeper: the same bot ends the session liquidatable, and is disqualified",
+  "duration_slots": 200,
+  "assets": {
+    "symbol": "NVDA"
+  },
+  "venues": {
+    "perp": {}
+  },
+  "market_model": {
+    "path": [
+      {
+        "slot": 20,
+        "level_pct": -1.5
+      },
+      {
+        "slot": 70,
+        "level_pct": -10.0
+      }
+    ]
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:NVDA",
+        "max_position": 1800.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 20000.0
+    }
+  }
+}

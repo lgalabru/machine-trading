@@ -1696,6 +1696,7 @@ impl Account for LendingAccount {
             liquidatable: end.health.is_some_and(|h| h < 1.0),
             refused_calls: done.refused_calls,
             forced_closes: done.forced_closes,
+            liquidator: done.liquidator,
             bot_exit: done.bot_exit,
             late_slots: done.late_slots,
             mandate: done.mandate,
