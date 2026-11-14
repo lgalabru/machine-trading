@@ -282,9 +282,11 @@ else, so the example of a money-market mandate below, which limits
 The benchmark's grader measures every step and checks rules 7 to 9 in perp
 sessions, at the scenario's level for each market (its book level where the
 session values the account at the book), not at Phoenix's mark. A spot
-session does not check them yet, so a spot scenario may not use them. No
-session tells taker fills from maker fills yet, so no scenario may use
-`taking`. Every session starts flat, so no scenario may use
+session does not check them yet, so a spot scenario may not use them. Only
+a market-making perp session tells the account's taker fills from its maker
+fills, so only one (without a liquidation keeper) may use `taking`; it also
+refuses, before they are sent, a strategy component's orders it can tell
+would break the rule (see `docs/scenario-format.md`). Every session starts flat, so no scenario may use
 `max_abs_fraction_of_start` yet: it would bound the exposure at zero. The
 grader's pre-trade gate on raw sends refuses a send that would break a
 position cap or the drawdown limit, but does not check rules 7 to 9: a raw send that takes the

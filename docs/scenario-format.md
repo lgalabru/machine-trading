@@ -28,7 +28,7 @@ docs together.
 | `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
-| `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
+| `actors` | The `competitor` maker (in a market-making scenario, with the bot's quoting `obligations`), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
@@ -117,6 +117,67 @@ count toward the position and the PnL. Because the desk closes to flat, a
 scenario with `stop_out` must allow flat in every instrument's range: a
 `min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
 The code is `crates/grader/src/risk.rs` and the session loop.
+
+## Market making: obligations and reduce-only taking
+
+A market-making scenario can hold its bot to two terms a designated market
+maker works under, each opt-in; without them a session runs and grades as
+before.
+
+**Quoting obligations**, `actors.competitor.obligations` (v2) or
+`making.obligations` (v1):
+
+```json
+"actors": { "competitor": { "competitor_bps": 12, "competition": { "...": "" },
+  "obligations": { "presence": 0.75, "max_half_spread_bps": 18, "min_size": 1.0 } } }
+```
+
+- `presence`: the share of the session's steps, in (0, 1], at which the bot
+  must quote both sides;
+- `max_half_spread_bps`: how far each side may sit from fair value (the
+  scenario's level, the price the account is valued at), in basis points of
+  it;
+- `min_size`: what the bot's orders within that band must add up to on each
+  side, in base units.
+
+After each of the bot's turns, before the next step's takers trade, the
+session reads Phoenix's order book and samples the bot's resting orders
+(orders past their last valid slot don't count). The report's
+`obligations` gives the session's `steps` (what `presence` is a share of),
+the steps it quoted both sides within the band at the size (`two_sided`),
+the steps it fell short and why (`one_sided`: a side with no order;
+`too_wide`: a side with orders, none within the band; `too_small`: a side
+within the band under `min_size`), the steps a stop-out kept the session
+from reaching (`unsampled`, which count as missed), `uptime` and whether it
+`met` `presence`. The book names each order's trader by Phoenix's trader id;
+the session finds the bot's from an order of its resting where only the
+bot's own market events place one. Obligations are reported, not scored: a
+shortfall is no breach and changes no PnL or reward.
+
+**Reduce-only taking**, the mandate's `"taking": "reduce_only"` on the
+scenario's market (a v0.1 mandate; [mandate spec](../specs/mandate.md) rule
+10). Only a market-making perp session records which of the bot's fills it
+took (`making_fills`, `role` `taker`), so only one, without a
+`liquidator`, may use it. Two layers enforce it:
+
+- before a component's order on its market goes out, the grader refuses
+  one it can tell would take liquidity to open, add to or flip the
+  position: a market or immediate-or-cancel order, or a resting order
+  priced at or through the opposite best price the bot was shown when the
+  bot had nothing resting on that side. An order flagged reduce-only goes
+  (Phoenix applies the flag), and so does a post-only one. A refused order
+  is not sent, its status tells the bot why, and `turns.refused_takes`
+  counts it: the act doesn't happen, so it is no breach;
+- the audit judges every taker fill against the position just before it,
+  counted from the start position through the bot's fills in Phoenix's
+  order (a match between the bot's own orders moves nothing). A take that
+  opened, added to or flipped the position is a `taking` breach, as any
+  mandate rule's. This catches what the check can't see before the trade:
+  a process bot's transactions, a raw send, or a cross of a touch that may
+  have been the bot's own.
+
+The code is `crates/grader/src/obligations.rs`, `crates/grader/src/taking.rs`
+and the perp session.
 
 ## The liquidation keeper: `venues.perp.liquidator`
 
