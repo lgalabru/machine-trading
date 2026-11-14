@@ -1,0 +1,85 @@
+name = "kamino-2026-11-13"
+kind = "lending"
+symbol = "SPCX-BACKPACK"
+
+[[program]]
+name = "klend"
+expect_code_sha256 = "6482390f659a6774b059768313b6f701b14819110f9e10db8fa651a311e9c97b"
+address = "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+
+[[program]]
+name = "kamino-farms"
+expect_code_sha256 = "67c4a989342024efedf6181c1d91cf6aac2bb2bcd17f43b8848c9f3d8ba21011"
+address = "FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr"
+
+[[program]]
+name = "kamino-scope"
+expect_code_sha256 = "0d4a3bcdb27b245b9a6b6fd4ecf151fc55de0fc78fbb8b7f90de143a36d400ce"
+address = "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ"
+
+[[account]]
+name = "kamino Backpack market"
+kind = "market"
+address = "4iRHKGsTq3e4uut6e4PfyV9AEbNuXaMu9JaSP378p9qy"
+
+[[account]]
+name = "kamino Backpack lookup table"
+kind = "lookup-table"
+address = "DQUBKNkMfRjKsYD6fwrAjA34TNMS3P5ytxNcrSJiTqBy"
+
+[[account]]
+name = "kamino Backpack SPCX"
+kind = "reserve"
+address = "GrtBFz6BSky1PiyVBL7jy3w4Z1hKz2wvSjT4vd2iouC3"
+
+[[account]]
+name = "kamino Backpack USDC"
+kind = "reserve"
+address = "7gHxajRCcU5sb9rQrpYDvkugSqgGsi9EG947pW7xJueT"
+
+[[account]]
+name = "kamino xStocks market"
+kind = "market"
+address = "5wJeMrUYECGq41fxRESKALVcHnNX26TAWy4W98yULsua"
+
+[[account]]
+name = "kamino xStocks lookup table"
+kind = "lookup-table"
+address = "8ofreL6hKfEet1DnhHVGvCTnSdz4pg85PpbuCUHnEcKm"
+
+[[account]]
+name = "kamino xStocks SPYx"
+kind = "reserve"
+address = "UvXjBuC7YZYaGB9Rn1PpBD1GySmjzunXgE8Zev9ua8d"
+
+[[account]]
+name = "kamino xStocks USDC"
+kind = "reserve"
+address = "97zoywd8mPZsGTg8q1wdD2Wgkdrs2tqusp1Qqcxbyj7E"
+
+[[account]]
+name = "SPCX"
+kind = "mint"
+address = "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb"
+
+[[account]]
+name = "SPYx"
+kind = "mint"
+address = "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W"
+
+[[account]]
+name = "USDC"
+kind = "mint"
+address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[account]]
+name = "scope prices"
+kind = "oracle"
+address = "3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH"
+
+[[warmup]]
+action = "kamino-markets"
+pairs = [
+  ["GrtBFz6BSky1PiyVBL7jy3w4Z1hKz2wvSjT4vd2iouC3", "7gHxajRCcU5sb9rQrpYDvkugSqgGsi9EG947pW7xJueT"],
+  ["UvXjBuC7YZYaGB9Rn1PpBD1GySmjzunXgE8Zev9ua8d", "97zoywd8mPZsGTg8q1wdD2Wgkdrs2tqusp1Qqcxbyj7E"],
+]

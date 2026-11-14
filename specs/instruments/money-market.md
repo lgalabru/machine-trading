@@ -14,7 +14,8 @@ one pool (a **reserve**) per asset in each lending market. The reserves of
 one lending market back each other: assets supplied to one serve as
 collateral for borrows from another.
 
-The reference implementation does not read money-market instruments yet.
+The reference implementation reads Kamino's reserves as money-market
+instruments ([Kamino's profile](../venues/kamino.md)).
 
 ## Position
 

@@ -49,6 +49,8 @@ pub enum Error {
     Transaction { label: String, reason: String },
     #[error("spline collection {account}: {reason}")]
     Splines { account: String, reason: String },
+    #[error("stop-out: {0}")]
+    StopOut(String),
     #[error("timed out waiting for {0}")]
     Timeout(String),
     /// A session failed before its bot started.
@@ -70,6 +72,9 @@ pub enum Error {
     /// Two runs of the same grade disagreed (see [`crate::replay`]).
     #[error("the grade didn't replay: {0}")]
     Replay(String),
+    /// Scoring v2 couldn't score a grade's sessions (see [`crate::scoring_v2`]).
+    #[error("scoring v2: {0}")]
+    ScoringV2(String),
     #[error("invalid scenario {}: {reason}", path.display())]
     InvalidScenario { path: PathBuf, reason: String },
     #[error("invalid market calibration {}: {reason}", path.display())]
