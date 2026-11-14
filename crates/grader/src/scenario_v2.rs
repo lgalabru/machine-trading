@@ -1693,7 +1693,12 @@ mod tests {
             .start_positions
             .insert("SPCX".into(), cap / 2.0);
         floor.mandate.universe[0].min_position = Some(cap / 4.0);
-        assert!(floor.validate().unwrap_err().contains("closes phoenix:perp:SPCX to flat"));
+        assert!(
+            floor
+                .validate()
+                .unwrap_err()
+                .contains("closes phoenix:perp:SPCX to flat")
+        );
         // ...which is fine without the desk, or with a floor at flat.
         let mut no_desk = floor.clone();
         no_desk.scoring.stop_out = None;
