@@ -123,6 +123,8 @@ What a session on several markets doesn't do yet:
 - **Raw sends** (`tx.raw_sends`) are refused: their pre-check audits one
   market's position and value.
 - **Closed periods** stay a one-market scenario's.
+- **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
+  liquidates the scenario's market only.
 - **Process bots** built on `mtx_kit::run` trade the primary market only:
   its run loop holds one trader. A process bot that wants the others reads
   `MTX_MARKETS` and trades them itself; a strategy component gets a seat
