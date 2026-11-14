@@ -36,9 +36,9 @@ pub enum Scoring {
     V2,
     /// Scoring v2 as the grade's one score, what a released task grades by:
     /// `reward` is v2's clamped score, `skill` and `reference_ratio` are
-    /// left out, and the 1 must be the task's informed bot (`--ceiling`
-    /// aside): a grade without it on every session fails rather than fall
-    /// back to the hindsight ceiling. `--eta` is refused.
+    /// left out, and the 1 must be the task's informed bot: a grade without
+    /// it on every session fails rather than fall back to the hindsight
+    /// ceiling. `--eta` and `--ceiling` are refused.
     #[value(name = "v2-headline")]
     V2Headline,
 }
@@ -87,8 +87,8 @@ impl ScoringArgs {
             return Ok(None);
         }
         let headline = self.scoring == Scoring::V2Headline;
-        if headline && !self.eta.is_empty() {
-            bail!("--eta forces a proxy ceiling, and a v2 headline takes the informed bot's");
+        if headline && (!self.eta.is_empty() || self.ceiling.is_some()) {
+            bail!("--eta and --ceiling replace the 1, and a v2 headline takes the informed bot's");
         }
         let ceiling = match &self.ceiling {
             Some(path) => Ceiling::Given(
