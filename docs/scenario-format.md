@@ -25,10 +25,10 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet` |
-| `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, `turn_data`) |
+| `venues` | Exactly one of `perp` (with its `funding`) and `spot` (`markets`, the pool markets in `liquidity`, `turn_data`) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, and the `record` of the market calibration the path was drawn from |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
-| `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
+| `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`), and a pools' `arbitrage` |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
@@ -51,7 +51,7 @@ Each section checks only itself (`Assets::validate`, `Venues::validate`,
 `MarketModel::validate`, `Actors::validate`, `Scoring::validate`, and the
 leaf types' own). A few rules join sections and are listed, one function
 each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
-having no path or competitor (their takers are a tape), the mandate covering exactly the scenario's markets,
+having no path or competitor (their takers are a tape) and trading a pair each venue's profile names (an arbitrageur needs a pool), the mandate covering exactly the scenario's markets,
 a sell order fitting the wallet.
 
 ## Example

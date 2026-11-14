@@ -1,0 +1,43 @@
+name = "spcx-pools-2026-11-13"
+kind = "spot"
+symbol = "SPCX-USDC"
+
+[[program]]
+name = "raydium-clmm"
+expect_code_sha256 = "e9ae00f7bdfa3b104595e68b3e328d108029e16af3ba4fb1f3968210178ffc5c"
+pin_from = "."
+address = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
+
+[[program]]
+name = "meteora-dlmm"
+expect_code_sha256 = "d296c6771cec945601027613ca637c1be6721044c5859009d41c453477844c1f"
+pin_from = "."
+address = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+
+[[account]]
+name = "raydium-clmm SPCX/USDC"
+kind = "pool"
+address = "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza"
+
+[[account]]
+name = "meteora-dlmm SPCX/USDC"
+kind = "pool"
+address = "7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu"
+
+[[account]]
+name = "SPCX"
+kind = "mint"
+address = "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb"
+
+[[account]]
+name = "USDC"
+kind = "mint"
+address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[account]]
+name = "pyth SPCX/USD"
+kind = "oracle"
+address = "6WRG9ZLzhqykJ6fdAYZeTHMg79JnnYjjZTs5QDUb9iwv"
+
+[[warmup]]
+action = "pools-exercise"
