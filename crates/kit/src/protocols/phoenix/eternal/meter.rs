@@ -64,7 +64,8 @@ impl PhoenixEternalMeter {
 
     /// Measures `owner`'s trader account on each of `symbols`, one holding
     /// each, in that order; a position or order in any other market counts
-    /// as outside the universe. Fails on an unknown symbol, and on none.
+    /// as outside the universe. Fails on an unknown symbol, a symbol listed
+    /// twice, and on none.
     pub fn for_markets(
         exchange: Arc<PhoenixExchange>,
         rpc_url: impl Into<String>,
@@ -76,6 +77,15 @@ impl PhoenixEternalMeter {
             return Err(PhoenixError::UnknownMarket(
                 "no market to measure".to_string(),
             ));
+        }
+        if let Some(twice) = symbols
+            .iter()
+            .enumerate()
+            .find_map(|(i, symbol)| symbols[..i].contains(symbol).then_some(symbol))
+        {
+            return Err(PhoenixError::UnknownMarket(format!(
+                "{twice} is listed twice"
+            )));
         }
         Ok(Self {
             markets: symbols
@@ -616,6 +626,17 @@ mod tests {
                 chain.clone(),
                 owner,
                 &["NVDA", "NOPE"]
+            )
+            .is_err()
+        );
+        // A market measured twice would count its position twice.
+        assert!(
+            PhoenixEternalMeter::for_markets(
+                exchange,
+                url,
+                chain,
+                owner,
+                &["NVDA", "SPCX", "NVDA"]
             )
             .is_err()
         );
