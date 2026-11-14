@@ -19,8 +19,8 @@ build probe="maker":
     cp "$wasm" "$dest"
     echo "built $dest from $wasm"
 
-# Build a probe as a process bot into <probe>-process/bin/bot, which
-# `mtx grade --trusted --bot` runs.
+# Build a probe as a process bot into <probe>-process (bin/bot and a
+# Justfile whose `run` starts it), which `mtx grade --trusted --bot` runs.
 process probe="maker":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -30,4 +30,5 @@ process probe="maker":
       | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
     mkdir -p "{{probe}}-process/bin"
     cp "$exe" "{{probe}}-process/bin/bot"
+    printf 'run:\n    @exec ./bin/bot\n' > "{{probe}}-process/Justfile"
     echo "built {{probe}}-process/bin/bot"
