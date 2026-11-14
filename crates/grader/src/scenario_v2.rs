@@ -1604,6 +1604,7 @@ mod tests {
             raw_sends: Some(RawSends {
                 programs: vec![phoenix.into(), "11111111111111111111111111111111".into()],
             }),
+            layer: None,
         });
         s.validate().unwrap();
         s.venues
