@@ -984,10 +984,13 @@ impl PerpAccount {
                 .await
                 .map_err(|e| failed(e.to_string()))?
                 .ok_or_else(|| failed(format!("transaction {signature} not found")))?;
-            records.add_transaction(&summary, &market);
+            records
+                .add_transaction(&summary, &market)
+                .map_err(|e| failed(e.to_string()))?;
         }
         let forced: HashSet<FillId> = records
-            .fills_for(&[self.meter.trader()])
+            .for_traders(&[self.meter.trader()])
+            .fills
             .into_iter()
             .map(|recorded| recorded.fill.id)
             .collect();

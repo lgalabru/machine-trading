@@ -70,9 +70,21 @@ cross-margin account.
   transaction that names the market's order book (its `marketPubkey` in the
   `/exchange` metadata) and counts each fill where one of the account's
   traders is the taker or the maker. It MUST NOT infer fills from the
-  position.
+  position. A fill between two of the account's traders counts once on each
+  side. A fill's identity is its market, the header's sequence number and
+  the event's place after it, and the side, so a fill read twice counts
+  once. An event that doesn't decode is an error, never skipped: a skipped
+  `Header` would put the fills after it on the market before it.
+- **Position changes without a fill.** `LiquidationTransfer` (a keeper
+  takes part of a liquidatee's position, `base_lots_transferred`, into its
+  own trader account) and `CloseMatchedPositions` (auto-deleveraging closes
+  `base_lots_closed` of a long against a short) move positions with no
+  fill, and name the trader accounts rather than the order book, so an
+  enforcer also reads the transactions of the account's traders. The
+  fills and these changes together sum to the change in position.
 - **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
-  order it left on the book, its side the sign of its `quantity`.
+  order it placed to rest on the book, its side the sign of its
+  `quantity`; it may since have filled or been cancelled.
 
 ### Liquidation
 
