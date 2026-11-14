@@ -25,7 +25,7 @@ use mtx_grader::{
     chain,
     grade::MAX_FAILED_TAKER_SHARE,
     guard::Guard,
-    making::{Competition, Making, TAKER_ACCOUNTS, TakerOrder, TakerSide},
+    making::{Competition, Making, Reactive, TAKER_ACCOUNTS, TakerOrder, TakerSide},
     oracles::{self, Failure, Feed, Mode, Oracles, PhoenixOracle, Source, Window},
     phoenix::{self, MarkConfig, Phoenix},
     scenario::{self, Funding, Scenario},
@@ -676,10 +676,11 @@ async fn competitor_run(symbol: &str) {
             floor_bps: 4.0,
             react_slots: 2,
             size: 5.0,
+            reactive: None,
         },
         takers: Vec::new(),
     };
-    let mut maker = Competitor::new(rig.seat(0).await, &making);
+    let mut maker = Competitor::new(rig.seat(0).await, &making, [0; 32]);
     let bot = rig.seat(1).await;
     let taker = rig.seat(2).await;
     let mut at = 0u64;
@@ -833,10 +834,11 @@ async fn competitor_rounding_run(symbol: &str) {
             floor_bps: 1.0,
             react_slots: 1,
             size: 1.0,
+            reactive: None,
         },
         takers: Vec::new(),
     };
-    let mut maker = Competitor::new(rig.seat(0).await, &making);
+    let mut maker = Competitor::new(rig.seat(0).await, &making, [0; 32]);
     let (mut off_by_one, mut worse, mut n) = (0, 0, 0);
     let mut samples = Vec::new();
     for i in 0..50u64 {
@@ -1303,6 +1305,7 @@ async fn fair_run(symbol: &str) {
             floor_bps: 5.0,
             react_slots: 1,
             size: 50.0,
+            reactive: None,
         },
         takers: Vec::new(),
     };
@@ -1338,7 +1341,7 @@ async fn fair_run(symbol: &str) {
         let quoter_account = rows.len();
         let quoter_seat = rig.seat(quoter_account).await;
         let cancel = rig.seat(quoter_account).await;
-        let mut quoter = Competitor::new(quoter_seat, &making);
+        let mut quoter = Competitor::new(quoter_seat, &making, [0; 32]);
         let level_for_quoter = if centre_oracle { oracle } else { fair };
         let moment = |at: u64| Moment {
             at,
@@ -1672,3 +1675,156 @@ async fn refill_actor_run(symbol: &str) {
 }
 
 per_market!(refill_actor, refill_actor_run);
+
+// 6. the reactive competitor ---------------------------------------------
+
+fn reactive_making(bps: f64, floor: f64, react: u64, size: f64) -> Making {
+    Making {
+        competitor_bps: bps,
+        competition: Competition {
+            floor_bps: floor,
+            react_slots: react,
+            size,
+            reactive: Some(Reactive {
+                jitter: 0.0,
+                step_ticks: (1, 1),
+                ..Reactive::default()
+            }),
+        },
+        takers: Vec::new(),
+    }
+}
+
+/// With the reactive competitor: it steps exactly one tick inside a rival on
+/// both sides (never a tie), ignores odd lots, and its quotes sit on the
+/// exact tick at every level of a sweep.
+async fn reactive_run(symbol: &str) {
+    let rig = Rig::new(symbol, 3).await;
+    rig.widen(15.0);
+    let tick = rig.tick_usd();
+    let level = rig.usd(rig.book().await.index);
+    let making = reactive_making(15.0, 4.0, 2, 5.0);
+    let mut maker = Competitor::new(rig.seat(0).await, &making, [5; 32]);
+    let bot = rig.seat(1).await;
+    let mut at = 0u64;
+    macro_rules! look {
+        () => {{
+            at += 2;
+            rig.step(2).await;
+            maker
+                .after_blocks(&Moment {
+                    at,
+                    level_usd: level,
+                    book_usd: level,
+                    fair_usd: None,
+                })
+                .await;
+        }};
+    }
+    let on_grid = |usd: f64, up: bool| {
+        let ticks = usd / tick;
+        (if up { ticks.ceil() } else { ticks.floor() }) * tick
+    };
+    look!();
+    let rival_bid = on_grid(level * (1.0 - 9.0 / 1e4), false);
+    let rival_ask = on_grid(level * (1.0 + 9.0 / 1e4), true);
+    bot.rest(Side::Bid, rival_bid, 1.0).await.unwrap();
+    bot.rest(Side::Ask, rival_ask, 1.0).await.unwrap();
+    look!();
+    let book = rig.book().await;
+    let (b, a) = (rig.usd(book.bid.unwrap()), rig.usd(book.ask.unwrap()));
+    let gap = (cents(b) - cents(rival_bid), cents(rival_ask) - cents(a));
+    let one_tick = cents(tick);
+    table(
+        "5 reactive step inside",
+        symbol,
+        status(gap == (one_tick, one_tick)),
+        format!(
+            "rival at 9 bp: {} / {} cents inside it (tick {one_tick}c)",
+            gap.0, gap.1
+        ),
+    );
+    assert_eq!(gap, (one_tick, one_tick), "one tick inside on both sides");
+
+    // Odd lots 5 bp out, under the reaction size: it doesn't step in on them.
+    bot.cancel_all().await.unwrap();
+    let odd_bid = on_grid(level * (1.0 - 5.0 / 1e4), false);
+    let odd_ask = on_grid(level * (1.0 + 5.0 / 1e4), true);
+    bot.rest(Side::Bid, odd_bid, 0.4).await.unwrap();
+    bot.rest(Side::Ask, odd_ask, 0.4).await.unwrap();
+    let mut before = ActorsReport::default();
+    maker.report(&mut before).await;
+    for _ in 0..4 {
+        look!();
+    }
+    let mut after = ActorsReport::default();
+    maker.report(&mut after).await;
+    let (u0, u1) = (
+        before.competitor.unwrap().undercuts,
+        after.competitor.unwrap().undercuts,
+    );
+    table(
+        "5 reactive odd lots",
+        symbol,
+        status(u0 == u1),
+        format!("quotes of 0.4 at 5 bp: undercuts {u0} -> {u1}"),
+    );
+    assert_eq!(u0, u1, "odd lots draw no undercut");
+    bot.cancel_all().await.unwrap();
+}
+
+per_market!(reactive, reactive_run);
+
+/// The reactive competitor's quotes land on the exact tick across a sweep of
+/// levels: no quote one tick off (the legacy competitor's float drift).
+async fn reactive_rounding_run(symbol: &str) {
+    let rig = Rig::new(symbol, 1).await;
+    rig.widen(80.0);
+    let base = rig.usd(rig.book().await.index);
+    let making = reactive_making(3.0, 1.0, 1, 1.0);
+    let mut maker = Competitor::new(rig.seat(0).await, &making, [6; 32]);
+    let (mut off, mut n) = (0, 0);
+    let mut samples = Vec::new();
+    for i in 0..50u64 {
+        let level_cents = cents(base) as i128 + i as i128;
+        let level = level_cents as f64 / 100.0;
+        maker
+            .after_blocks(&Moment {
+                at: i + 1,
+                level_usd: level,
+                book_usd: level,
+                fair_usd: None,
+            })
+            .await;
+        rig.step(1).await;
+        let book = rig.book().await;
+        // Whole cents (the markets' tick is one cent): the half-spread is the
+        // 3 bp of the level rounded up to a tick, from the level's cent.
+        let width = (level_cents * 300 + 999_999) / 1_000_000;
+        let bid = cents(rig.usd(book.bid.unwrap())) as i128;
+        let ask = cents(rig.usd(book.ask.unwrap())) as i128;
+        for (side, diff) in [
+            ("bid", bid - (level_cents - width)),
+            ("ask", ask - (level_cents + width)),
+        ] {
+            n += 1;
+            if diff != 0 {
+                off += 1;
+                if samples.len() < 6 {
+                    samples.push(format!("{level:.2} {side} {diff:+}c"));
+                }
+            }
+        }
+    }
+    table(
+        "5b reactive tick rounding",
+        symbol,
+        status(off == 0),
+        format!(
+            "{n} quotes over 50 levels from ${base:.2}: {off} not on the exact tick; {samples:?}"
+        ),
+    );
+    assert_eq!(off, 0, "{samples:?}");
+}
+
+per_market!(reactive_rounding, reactive_rounding_run);

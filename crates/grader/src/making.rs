@@ -52,6 +52,78 @@ pub struct Competition {
     pub react_slots: u64,
     /// Its quote on each side, in base units.
     pub size: f64,
+    /// Opt-in: the reactive competitor of the redesigned family, which
+    /// counts in whole ticks, ignores odd lots, jitters its timing and
+    /// widens after one-sided fills. Absent, it competes as it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactive: Option<Reactive>,
+}
+
+/// The redesigned competitor's rules (see [`crate::actors::competitor`]).
+/// Every field has a default, so `{}` turns the whole behaviour on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Reactive {
+    /// The smallest resting size it reacts to, in base units: quotes under
+    /// it are odd lots and set no touch.
+    pub q_react: f64,
+    /// How far each look's delay varies around `react_slots`, as a fraction
+    /// of it: the delay is drawn from `react_slots * (1 ± jitter)`.
+    pub jitter: f64,
+    /// The ticks it steps inside a rival by, drawn from this range.
+    pub step_ticks: (u32, u32),
+    /// It reads toxic flow when its own fills on one side within
+    /// `toxic_window` slots reach `toxic_size_mult` times its quote size.
+    pub toxic_size_mult: f64,
+    pub toxic_window: u64,
+    /// Then it quotes the hit side at its full half-spread for a number of
+    /// slots drawn from this range.
+    pub widen_slots: (u64, u64),
+}
+
+impl Default for Reactive {
+    fn default() -> Self {
+        Self {
+            q_react: 1.0,
+            jitter: 0.5,
+            step_ticks: (1, 2),
+            toxic_size_mult: 2.0,
+            toxic_window: 8,
+            widen_slots: (20, 40),
+        }
+    }
+}
+
+impl Reactive {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if !(self.q_react.is_finite() && self.q_react >= 0.0) {
+            return Err(format!(
+                "reactive q_react {} must be 0 or more",
+                self.q_react
+            ));
+        }
+        if !(self.jitter.is_finite() && (0.0..1.0).contains(&self.jitter)) {
+            return Err(format!("reactive jitter {} must be in [0, 1)", self.jitter));
+        }
+        if self.step_ticks.0 == 0 || self.step_ticks.0 > self.step_ticks.1 {
+            return Err(format!(
+                "reactive step_ticks {:?} must be an ascending range of at least 1",
+                self.step_ticks
+            ));
+        }
+        if !(self.toxic_size_mult.is_finite() && self.toxic_size_mult > 0.0)
+            || self.toxic_window == 0
+        {
+            return Err("reactive toxicity needs a positive size multiple and window".into());
+        }
+        if self.widen_slots.0 == 0 || self.widen_slots.0 > self.widen_slots.1 {
+            return Err(format!(
+                "reactive widen_slots {:?} must be an ascending range of at least 1",
+                self.widen_slots
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One market order from a taker, filled against the best quotes in the
@@ -98,6 +170,9 @@ impl Making {
                 "competition needs react_slots >= 1 and a positive size, not {} and {}",
                 c.react_slots, c.size
             ));
+        }
+        if let Some(reactive) = &c.reactive {
+            reactive.validate()?;
         }
         let mut last = 0;
         for (i, order) in self.takers.iter().enumerate() {
@@ -406,6 +481,7 @@ impl MakingFamily {
             floor_bps: round2(rng.range_f64(self.floor_bps).min(0.5 * competitor_bps)),
             react_slots: rng.range_u64(self.react_slots),
             size: round2(rng.range_f64(self.competitor_size)),
+            reactive: None,
         };
 
         let description = match regime {
@@ -462,6 +538,7 @@ impl MakingFamily {
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -686,6 +763,7 @@ mod tests {
                 floor_bps: 3.0,
                 react_slots: 4,
                 size: 2.0,
+                reactive: None,
             },
             takers: vec![
                 TakerOrder {
