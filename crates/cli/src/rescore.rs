@@ -217,6 +217,13 @@ pub fn rescore(
         report
             .score_v2(params)
             .with_context(|| path.display().to_string())?;
+        // A grade v2 was the headline of (`mtx grade --v2-headline`) is
+        // scored again the same way.
+        if original.get("reward_v1").is_some() {
+            report
+                .make_v2_headline()
+                .with_context(|| path.display().to_string())?;
+        }
         if let Some(v2) = &report.v2 {
             check_reference_sessions(
                 &original,

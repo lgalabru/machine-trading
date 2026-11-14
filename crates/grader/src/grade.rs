@@ -73,8 +73,14 @@ pub struct ScenarioResult {
 
 #[derive(Debug, Serialize)]
 pub struct GradeReport {
-    /// Total PnL over the total hindsight bound, clamped to [0, 1].
+    /// Total PnL over the total hindsight bound, clamped to [0, 1]; or, for
+    /// a task scored by v2 (see [`GradeReport::make_v2_headline`]), v2's
+    /// score, with this one kept in [`Self::reward_v1`].
     pub reward: f64,
+    /// The hindsight-bound reward, when v2 is the headline and `reward` is
+    /// v2's score.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reward_v1: Option<f64>,
     pub pnl_usd: f64,
     pub bound_pnl_usd: f64,
     /// The reference's total PnL, when every scenario carries one.
@@ -313,6 +319,26 @@ impl GradeReport {
         Ok(())
     }
 
+    /// Make scoring v2 the headline: `reward` becomes v2's score (`raw`
+    /// clamped to [0, 1]), and the hindsight-bound reward moves to
+    /// `reward_v1`, still reported. For a task with a real informed bot as its
+    /// 1 and a reference that anchors 0.5 unfloored: fails, leaving the
+    /// report as it was, unless v2 scored the grade against an informed bot.
+    pub fn make_v2_headline(&mut self) -> Result<()> {
+        let v2 = self.v2.as_ref().ok_or_else(|| {
+            Error::ScoringV2("v2 is the headline, and the grade wasn't scored by it".into())
+        })?;
+        if v2.fatal.is_none() && v2.ceiling != "informed" {
+            return Err(Error::ScoringV2(format!(
+                "v2 is the headline only against a task's informed bot, not a `{}` ceiling",
+                v2.ceiling
+            )));
+        }
+        self.reward_v1 = Some(self.reward);
+        self.reward = v2.score;
+        Ok(())
+    }
+
     /// Harbor's `reward.json`: flat numeric values. `reward` is the headline;
     /// the rest are diagnostics that aggregate across trials.
     pub fn rewards(&self) -> BTreeMap<String, f64> {
@@ -359,6 +385,9 @@ impl GradeReport {
             rewards.insert("markout_usd".to_string(), markout.markout_usd);
             rewards.insert("luck_usd".to_string(), markout.luck_usd);
             rewards.insert("edge_usd".to_string(), markout.edge_usd());
+        }
+        if let Some(reward_v1) = self.reward_v1 {
+            rewards.insert("reward_v1".to_string(), reward_v1);
         }
         if let Some(v2) = &self.v2 {
             rewards.extend([
@@ -470,6 +499,10 @@ pub struct GradeOptions<'a> {
     /// with `anchor_jobs` sessions at once (it's trusted: it can share the
     /// machine with itself). Its PnL replaces whatever the scenarios carry.
     pub reference_dir: Option<&'a Path>,
+    /// The task's informed bot, to run on the same scenarios after the
+    /// reference, as scoring v2's 1 (see [`Informed`]). Its PnL replaces
+    /// whatever the scenarios carry, as the reference's does.
+    pub informed: Option<Informed<'a>>,
     pub anchor_jobs: usize,
     /// Each scenario's regime, as JSON, handed to the bot (not the
     /// reference): the ladder's regime oracle only.
@@ -502,6 +535,19 @@ pub struct GradeOptions<'a> {
     /// as it always has. (The bot's seeds are salted through `keys`: see
     /// [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
+}
+
+/// The task's informed bot as a grade runs it (see
+/// [`GradeOptions::informed`]): trusted like the reference, with
+/// `anchor_jobs` sessions at once.
+pub struct Informed<'a> {
+    pub dir: &'a Path,
+    /// Each scenario's regime, handed to the informed bot (never to the bot)
+    /// as `MTX_REGIME`: what the draw was. The informed bot reads only what
+    /// it is entitled to know of it (see [`crate::scoring_v2`]); the rest of
+    /// a regime (where a shock ends, say) is the session's future, and an
+    /// informed bot that read it would be an oracle, not the 1.
+    pub regimes: Option<&'a [String]>,
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -573,7 +619,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         )
         .await?;
         check_timing(&anchors)?;
-        check_anchors(&anchors)?;
+        check_anchors("the reference", &anchors)?;
         for (scenario, anchor) in scenarios.iter_mut().zip(&anchors) {
             scenario.reference_pnl_usd = Some((anchor.pnl_usd * 100.0).round() / 100.0);
         }
@@ -582,6 +628,38 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "reference graded"
         );
         anchored = anchors;
+    }
+    let mut informed_sessions = Vec::new();
+    if let Some(informed) = &opts.informed {
+        let sessions = run_sessions(
+            opts.snapshot_dir,
+            informed.dir,
+            &scenarios,
+            &opts.log_dir.join("informed"),
+            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+            informed.regimes,
+            false,
+            true,
+            None,
+            opts.keys.role("informed"),
+            session::Rules {
+                every_slot: opts.v2_sessions,
+            },
+        )
+        .await?;
+        check_timing(&sessions)?;
+        check_anchors("the informed bot", &sessions)?;
+        // As `calibrate --informed` saves them in a scenario file.
+        for (scenario, session) in scenarios.iter_mut().zip(&sessions) {
+            scenario.informed_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            scenario.informed_max_drawdown_usd =
+                Some((session.max_drawdown_usd * 100.0).round() / 100.0);
+        }
+        info!(
+            informed_pnl_usd = sessions.iter().map(|s| s.pnl_usd).sum::<f64>(),
+            "informed bot graded"
+        );
+        informed_sessions = sessions;
     }
     let sessions = run_sessions(
         opts.snapshot_dir,
@@ -610,6 +688,15 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             Err(_) => {}
         }
         write_details(dir, "reference", &anchored, &scenarios, opts.annotations)?;
+        if opts.informed.is_some() {
+            write_details(
+                dir,
+                "informed",
+                &informed_sessions,
+                &scenarios,
+                opts.annotations,
+            )?;
+        }
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
@@ -806,6 +893,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         replay: None,
         markout: total_markout(&scenarios),
         v2: None,
+        reward_v1: None,
         scenarios,
         anchors: Vec::new(),
     }
@@ -950,7 +1038,7 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
 /// Void the grade, rather than score the bot against a broken baseline, if
 /// the reference didn't run cleanly: a disqualification, a crash, or turns
 /// it didn't finish.
-fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
+fn check_anchors(role: &str, anchors: &[SessionReport]) -> Result<()> {
     let broken: Vec<String> = anchors
         .iter()
         .filter_map(|a| {
@@ -973,10 +1061,7 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
     if broken.is_empty() {
         Ok(())
     } else {
-        Err(Error::Degraded(format!(
-            "the reference: {}",
-            broken.join(", ")
-        )))
+        Err(Error::Degraded(format!("{role}: {}", broken.join(", "))))
     }
 }
 
@@ -1003,35 +1088,49 @@ fn disqualification(session: &SessionReport) -> Option<String> {
 /// Run the bot on each scenario and record its PnL as the scenario's
 /// reference, losses included: the reward normalizes by the set's total.
 /// Sessions the reference itself would be disqualified from are reported, not
-/// saved.
+/// saved. A scenario with a path is saved there; a drawn one, which has no
+/// file, keeps its PnL in memory, for the caller to write out (`mtx calibrate
+/// --draw` writes an anchors file).
 ///
 /// With `informed`, the bot is the task's informed bot and its PnL is saved
 /// as the scenario's [`Scenario::informed_pnl_usd`] instead: scoring v2's 1.
-#[allow(clippy::too_many_arguments)]
+/// It is handed `regimes`, as a grade hands them to its informed bot (see
+/// [`Informed`]). `keys` are the sessions' keys: a drawn set's, from its
+/// secret, sign as a grade of the same set does.
+pub struct Calibration<'a> {
+    pub snapshot_dir: &'a Path,
+    pub bot_dir: &'a Path,
+    pub log_dir: &'a Path,
+    pub first_bot_user: usize,
+    pub jobs: usize,
+    pub informed: bool,
+    pub regimes: Option<&'a [String]>,
+    pub keys: &'a SessionKeys,
+    pub v2_sessions: bool,
+}
+
 pub async fn calibrate(
-    snapshot_dir: &Path,
-    bot_dir: &Path,
-    scenarios: &mut [(std::path::PathBuf, Scenario)],
-    log_dir: &Path,
-    first_bot_user: usize,
-    jobs: usize,
-    informed: bool,
-    v2_sessions: bool,
+    opts: Calibration<'_>,
+    scenarios: &mut [(Option<std::path::PathBuf>, Scenario)],
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(
-        snapshot_dir,
-        bot_dir,
+        opts.snapshot_dir,
+        opts.bot_dir,
         &list,
-        log_dir,
-        first_bot_user..first_bot_user + jobs,
-        None,
+        opts.log_dir,
+        opts.first_bot_user..opts.first_bot_user + opts.jobs,
+        opts.regimes,
         false,
         true,
         None,
-        SessionKeys::random().role("reference"),
+        opts.keys.role(if opts.informed {
+            "informed"
+        } else {
+            "reference"
+        }),
         session::Rules {
-            every_slot: v2_sessions,
+            every_slot: opts.v2_sessions,
         },
     )
     .await?;
@@ -1042,19 +1141,21 @@ pub async fn calibrate(
         if disqualification(session).is_none() {
             let pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
             let drawdown_usd = Some((session.max_drawdown_usd * 100.0).round() / 100.0);
-            if informed {
+            if opts.informed {
                 scenario.informed_pnl_usd = pnl_usd;
                 scenario.informed_max_drawdown_usd = drawdown_usd;
             } else {
                 scenario.reference_pnl_usd = pnl_usd;
                 scenario.reference_max_drawdown_usd = drawdown_usd;
             }
-            scenario.save(path)?;
+            if let Some(path) = path {
+                scenario.save(path)?;
+            }
         } else {
             tracing::warn!(
                 scenario = scenario.name,
                 pnl_usd = session.pnl_usd,
-                "reference bot was disqualified; not calibrated"
+                "the anchor was disqualified; not calibrated"
             );
         }
     }
@@ -1333,6 +1434,7 @@ mod tests {
             jobs: 1,
             first_bot_user: 0,
             reference_dir: None,
+            informed: None,
             anchor_jobs: 1,
             regimes: None,
             stop_on_disqualify: false,
@@ -1759,6 +1861,38 @@ mod tests {
         assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
         assert_eq!(v2.bound_usd, informed.bound_pnl_usd);
         assert_eq!(informed.rewards()["score_v2_ceiling_informed"], 1.0);
+    }
+
+    #[test]
+    fn v2_is_the_headline_only_against_an_informed_bot() {
+        let mut s = scenario(Some(100.0));
+        let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        // Not scored by v2: nothing to make the headline.
+        assert!(proxied.make_v2_headline().is_err());
+        proxied.score_v2(&v2()).unwrap();
+        // A proxy ceiling isn't a 1 a headline can stand on.
+        let refused = proxied.make_v2_headline().unwrap_err().to_string();
+        assert!(refused.contains("eta_override"), "{refused}");
+        assert_eq!(proxied.reward_v1, None);
+        assert!(!proxied.rewards().contains_key("reward_v1"));
+
+        s.informed_pnl_usd = Some(400.0);
+        let mut informed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let v1 = informed.reward;
+        informed.score_v2(&v2()).unwrap();
+        informed.make_v2_headline().unwrap();
+        let score_v2 = informed.v2.as_ref().unwrap().score;
+        assert_eq!(informed.reward, score_v2);
+        assert_eq!(informed.reward_v1, Some(v1));
+        let rewards = informed.rewards();
+        assert_eq!(rewards["reward"], score_v2);
+        assert_eq!(rewards["reward_v1"], v1);
+        assert_eq!(rewards["score_v2"], score_v2);
+
+        // Tampering zeroes the headline, as it zeroes v1's.
+        informed.tamper("wrote the reward".into());
+        assert_eq!(informed.reward, 0.0);
+        assert_eq!(informed.v2.as_ref().unwrap().score, 0.0);
     }
 
     #[test]

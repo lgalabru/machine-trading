@@ -1,4 +1,8 @@
-use std::{io::IsTerminal, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    io::IsTerminal,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -149,7 +153,22 @@ enum Command {
         /// against its PnL rather than what the scenario files carry.
         #[arg(long)]
         reference: Option<PathBuf>,
-        /// Reference sessions to run at once (1-4).
+        /// Run this informed bot on the same scenarios after the reference,
+        /// handed each drawn session's regime as MTX_REGIME (it reads only
+        /// what it is entitled to know of it), and anchor scoring v2's 1 to
+        /// its PnL rather than what the scenario files carry.
+        #[arg(long)]
+        informed: Option<PathBuf>,
+        /// The anchors' PnL and drawdowns per scenario, as `mtx calibrate`
+        /// saves them in scenario files, for a drawn set, which has none: a
+        /// JSON object from scenario name to `reference_pnl_usd`,
+        /// `reference_max_drawdown_usd`, `informed_pnl_usd` and
+        /// `informed_max_drawdown_usd` (each optional). Every scenario must
+        /// be in it. A bot run with --reference or --informed replaces its
+        /// part.
+        #[arg(long)]
+        anchors: Option<PathBuf>,
+        /// Reference sessions to run at once (1-4); the informed bot's too.
         #[arg(long, default_value_t = 4)]
         anchor_jobs: usize,
         /// Hand the bot each drawn session's regime as MTX_REGIME: the
@@ -168,6 +187,12 @@ enum Command {
         /// scored by v2; off, sessions run as they always have.
         #[arg(long)]
         v2_sessions: bool,
+        /// Make scoring v2 the headline: `reward` is v2's score, and the
+        /// hindsight-bound reward is kept as `reward_v1`. Needs `--scoring v2`
+        /// and the task's informed bot (--informed, or scenario files that
+        /// carry its PnL).
+        #[arg(long)]
+        v2_headline: bool,
         /// Grade the bot only if it is a strategy component (a bot.wasm): the
         /// verifier's rule. The reference can still be a process.
         #[arg(long)]
@@ -241,6 +266,21 @@ enum Command {
         /// so the drawdowns saved anchor a v2 grade at its granularity.
         #[arg(long)]
         v2_sessions: bool,
+        /// Draw the scenarios from this generator instead of reading files,
+        /// seeded by the secret in `MTX_EVAL_SEED` as `mtx grade --draw`
+        /// draws them (the informed bot is handed each one's regime), and
+        /// save the PnL in `--anchors`, not in the scenarios.
+        #[arg(long, value_parser = generator_names(), conflicts_with = "scenarios", requires = "anchors")]
+        draw: Option<String>,
+        /// How many scenarios to draw.
+        #[arg(long, default_value_t = 12, requires = "draw")]
+        count: usize,
+        /// The anchors file a drawn set's PnL goes to (`mtx grade
+        /// --anchors`), by scenario name. What it already holds for other
+        /// anchors is kept, so the reference and the informed bot can be
+        /// calibrated into one file in turn.
+        #[arg(long, requires = "draw")]
+        anchors: Option<PathBuf>,
     },
     /// Market calibration: per-asset files fitted to real data, the market
     /// model they drive, and realism checks against them.
@@ -1306,10 +1346,13 @@ async fn run() -> Result<()> {
             draw,
             count,
             reference,
+            informed,
+            anchors,
             anchor_jobs,
             tell_regime,
             stop_on_disqualify,
             v2_sessions,
+            v2_headline,
             components_only,
             trusted,
             replay,
@@ -1321,6 +1364,9 @@ async fn run() -> Result<()> {
             scoring,
         } => {
             let v2 = scoring.params(None)?;
+            if v2_headline && v2.is_none() {
+                anyhow::bail!("--v2-headline needs --scoring v2");
+            }
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
             let mut annotations: Option<Vec<serde_json::Value>> = None;
@@ -1333,7 +1379,10 @@ async fn run() -> Result<()> {
                     keys = batch_keys;
                     let generator = generators::generator(&family)
                         .with_context(|| format!("no scenario generator `{family}`"))?;
-                    let hidden = (generator.hidden)(count, seed, tell_regime)?;
+                    // The informed bot is handed the regime, and the bot
+                    // only with --tell-regime.
+                    let hidden =
+                        (generator.hidden)(count, seed, tell_regime || informed.is_some())?;
                     annotations = Some(hidden.annotations);
                     regimes = hidden.regimes;
                     let scenarios = hidden.scenarios;
@@ -1344,6 +1393,10 @@ async fn run() -> Result<()> {
                 }
                 None => (sessions.load()?.into_iter().map(|(_, s)| s).collect(), None),
             };
+            let mut scenarios = scenarios;
+            if let Some(path) = &anchors {
+                set_anchors(&mut scenarios, path)?;
+            }
             // Bots run on the same file system, and some mounts (Docker
             // Desktop's) ignore permissions: start from no reward file, and
             // treat one that appears while bots run as tampering.
@@ -1362,8 +1415,12 @@ async fn run() -> Result<()> {
                 jobs,
                 first_bot_user: sessions.first_bot_user,
                 reference_dir: reference.as_deref(),
+                informed: informed.as_deref().map(|dir| grade::Informed {
+                    dir,
+                    regimes: regimes.as_deref(),
+                }),
                 anchor_jobs,
-                regimes: regimes.as_deref(),
+                regimes: regimes.as_deref().filter(|_| tell_regime),
                 stop_on_disqualify,
                 detail_dir: details.as_deref(),
                 annotations: annotations.as_deref(),
@@ -1414,7 +1471,18 @@ async fn run() -> Result<()> {
             // v2 was asked for: a grade it can't score (no reference session
             // for its ceiling, say) fails, after the report is written with
             // its v1 scores, and writes no reward.
-            let v2_failed = v2.as_ref().and_then(|params| graded.score_v2(params).err());
+            let v2_failed = v2.as_ref().and_then(|params| {
+                graded
+                    .score_v2(params)
+                    .and_then(|()| {
+                        if v2_headline {
+                            graded.make_v2_headline()
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .err()
+            });
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
                 std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
@@ -1529,19 +1597,49 @@ async fn run() -> Result<()> {
             sessions,
             informed,
             v2_sessions,
+            draw,
+            count,
+            anchors,
         } => {
-            let mut scenarios = sessions.load()?;
+            let mut keys = SessionKeys::random();
+            let mut regimes = None;
+            let mut scenarios: Vec<(Option<PathBuf>, Scenario)> = match &draw {
+                Some(family) => {
+                    let (seed, _, batch_keys) = eval_seed()?;
+                    keys = batch_keys;
+                    let generator = generators::generator(family)
+                        .with_context(|| format!("no scenario generator `{family}`"))?;
+                    let hidden = (generator.hidden)(count, seed, informed)?;
+                    regimes = hidden.regimes;
+                    hidden.scenarios.into_iter().map(|s| (None, s)).collect()
+                }
+                None => sessions
+                    .load()?
+                    .into_iter()
+                    .map(|(path, s)| (Some(path), s))
+                    .collect(),
+            };
+            if v2_sessions {
+                keys = keys.salt_strategy_seeds();
+            }
             let reports = grade::calibrate(
-                &sessions.snapshot,
-                &sessions.bot,
+                grade::Calibration {
+                    snapshot_dir: &sessions.snapshot,
+                    bot_dir: &sessions.bot,
+                    log_dir: &sessions.logs,
+                    first_bot_user: sessions.first_bot_user,
+                    jobs: sessions.jobs,
+                    informed,
+                    regimes: regimes.as_deref(),
+                    keys: &keys,
+                    v2_sessions,
+                },
                 &mut scenarios,
-                &sessions.logs,
-                sessions.first_bot_user,
-                sessions.jobs,
-                informed,
-                v2_sessions,
             )
             .await?;
+            if let Some(path) = &anchors {
+                save_anchors(path, scenarios.iter().map(|(_, s)| s))?;
+            }
             serde_json::to_string_pretty(&reports)?
         }
         Command::MarketCal(command) => market_cal::run(command)?,
@@ -1550,6 +1648,89 @@ async fn run() -> Result<()> {
         println!("{output}");
     }
     Ok(())
+}
+
+/// One scenario's anchors in an `mtx grade --anchors` file: what
+/// `mtx calibrate` saves in a scenario file.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScenarioAnchors {
+    reference_pnl_usd: Option<f64>,
+    reference_max_drawdown_usd: Option<f64>,
+    informed_pnl_usd: Option<f64>,
+    informed_max_drawdown_usd: Option<f64>,
+}
+
+/// Give each scenario the anchors `path` holds for it, as if its file had
+/// been calibrated. Every scenario must be there, and nothing else.
+fn set_anchors(scenarios: &mut [Scenario], path: &Path) -> Result<()> {
+    let mut anchors: BTreeMap<String, ScenarioAnchors> =
+        serde_json::from_slice(&std::fs::read(path).with_context(|| path.display().to_string())?)
+            .with_context(|| format!("{}: not a map of scenario anchors", path.display()))?;
+    for scenario in scenarios.iter_mut() {
+        let given = anchors
+            .remove(&scenario.name)
+            .with_context(|| format!("{}: no anchors for {}", path.display(), scenario.name))?;
+        for (value, slot) in [
+            (given.reference_pnl_usd, &mut scenario.reference_pnl_usd),
+            (
+                given.reference_max_drawdown_usd,
+                &mut scenario.reference_max_drawdown_usd,
+            ),
+            (given.informed_pnl_usd, &mut scenario.informed_pnl_usd),
+            (
+                given.informed_max_drawdown_usd,
+                &mut scenario.informed_max_drawdown_usd,
+            ),
+        ] {
+            if let Some(value) = value {
+                anyhow::ensure!(
+                    value.is_finite(),
+                    "{}: {}'s anchors must be finite",
+                    path.display(),
+                    scenario.name
+                );
+                *slot = Some(value);
+            }
+        }
+    }
+    if let Some(name) = anchors.keys().next() {
+        anyhow::bail!("{}: {name} isn't a scenario of this grade", path.display());
+    }
+    Ok(())
+}
+
+/// Write the anchors `scenarios` carry into the anchors file at `path`
+/// (see [`set_anchors`]), keeping what it holds for any anchor they don't.
+fn save_anchors<'a>(path: &Path, scenarios: impl Iterator<Item = &'a Scenario>) -> Result<()> {
+    let mut file: BTreeMap<String, serde_json::Map<String, serde_json::Value>> =
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .with_context(|| format!("{}: not a map of scenario anchors", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(e) => return Err(anyhow::Error::from(e).context(path.display().to_string())),
+        };
+    for scenario in scenarios {
+        let entry = file.entry(scenario.name.clone()).or_default();
+        for (key, value) in [
+            ("reference_pnl_usd", scenario.reference_pnl_usd),
+            (
+                "reference_max_drawdown_usd",
+                scenario.reference_max_drawdown_usd,
+            ),
+            ("informed_pnl_usd", scenario.informed_pnl_usd),
+            (
+                "informed_max_drawdown_usd",
+                scenario.informed_max_drawdown_usd,
+            ),
+        ] {
+            if let Some(value) = value {
+                entry.insert(key.to_string(), value.into());
+            }
+        }
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&file)?)
+        .with_context(|| path.display().to_string())
 }
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
@@ -1587,8 +1768,66 @@ fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use mtx_grader::scenario::ShockFamily;
 
-    use super::Cli;
+    use super::{Cli, save_anchors, set_anchors};
+
+    #[test]
+    fn an_anchors_file_calibrates_a_drawn_set_and_names_every_scenario() {
+        let dir = std::env::temp_dir().join(format!("mtx-anchors-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("anchors.json");
+        let _ = std::fs::remove_file(&path);
+        let mut drawn = ShockFamily::spcx().sample_set("hidden", 2, 7);
+        // The reference, then the informed bot, saved in turn into one file.
+        drawn[0].reference_pnl_usd = Some(10.0);
+        drawn[1].reference_pnl_usd = Some(-4.5);
+        save_anchors(&path, drawn.iter()).unwrap();
+        let mut informed = ShockFamily::spcx().sample_set("hidden", 2, 7);
+        informed[0].informed_pnl_usd = Some(30.0);
+        informed[0].informed_max_drawdown_usd = Some(120.0);
+        informed[1].informed_pnl_usd = Some(12.0);
+        save_anchors(&path, informed.iter()).unwrap();
+
+        let mut fresh = ShockFamily::spcx().sample_set("hidden", 2, 7);
+        set_anchors(&mut fresh, &path).unwrap();
+        assert_eq!(fresh[0].reference_pnl_usd, Some(10.0));
+        assert_eq!(fresh[1].reference_pnl_usd, Some(-4.5));
+        assert_eq!(fresh[0].informed_pnl_usd, Some(30.0));
+        assert_eq!(fresh[0].informed_max_drawdown_usd, Some(120.0));
+        assert_eq!(fresh[1].informed_max_drawdown_usd, None);
+
+        // A scenario the file doesn't name, or one it names that the grade
+        // doesn't have, is refused.
+        let mut more = ShockFamily::spcx().sample_set("hidden", 3, 7);
+        assert!(set_anchors(&mut more, &path).is_err());
+        let mut fewer = ShockFamily::spcx().sample_set("hidden", 1, 7);
+        assert!(set_anchors(&mut fewer, &path).is_err());
+        // And so is a field it doesn't know.
+        std::fs::write(&path, r#"{"hidden-1": {"reference_pnl": 1.0}}"#).unwrap();
+        assert!(set_anchors(&mut fewer, &path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_v2_headline_needs_v2_and_the_informed_bot_a_drawn_set() {
+        let grade = |extra: &[&str]| {
+            let mut args = vec!["mtx", "grade", "--snapshot", "s", "--bot", "b"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        assert!(grade(&["--v2-headline", "--scoring", "v2", "x.json"]).is_ok());
+        assert!(grade(&["--informed", "i", "--draw", "flash-crash"]).is_ok());
+        let calibrate = |extra: &[&str]| {
+            let mut args = vec!["mtx", "calibrate", "--snapshot", "s", "--bot", "b"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args)
+        };
+        // A drawn calibration has no files to save in: it needs --anchors.
+        assert!(calibrate(&["--draw", "flash-crash"]).is_err());
+        assert!(calibrate(&["--draw", "flash-crash", "--anchors", "a.json", "--informed"]).is_ok());
+        assert!(calibrate(&["--anchors", "a.json"]).is_err());
+    }
 
     #[test]
     fn check_joint_takes_the_calibration_flag_repeated_or_with_several_files() {
