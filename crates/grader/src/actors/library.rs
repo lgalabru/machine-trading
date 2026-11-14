@@ -20,6 +20,8 @@
 //!   informed, and trade with it when a quote suits them.
 //! - **A competing liquidator** ([`Liquidator`]) races the bot for
 //!   liquidations on a lending venue.
+//! - **A refill** ([`Refill`]) puts back the depth takers consume, at a
+//!   half-life the session draws.
 //!
 //! Every one of them trades from wallets of its own, through a
 //! [`Seat`](crate::venue::Seat) on the session's market, with ordinary
@@ -40,6 +42,7 @@
 mod arbitrageur;
 mod front_runner;
 mod liquidator;
+mod refill;
 pub mod rfq;
 mod spoofer;
 mod stop_hunter;
@@ -57,6 +60,7 @@ pub use self::{
     arbitrageur::Arbitrageur,
     front_runner::FrontRunner,
     liquidator::{Candidate, Liquidations, Liquidator},
+    refill::Refill,
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
@@ -98,6 +102,9 @@ pub struct Library {
     pub rfq_clients: Option<RfqClients>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquidator: Option<Liquidator>,
+    /// The book's makers refilling after takes (see [`Refill`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refill: Option<Refill>,
     /// Keep every action in the report's tape (checks and studies: it
     /// grows with the session).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -236,6 +243,11 @@ impl Library {
                 .validate()
                 .map_err(|e| format!("actors.liquidator: {e}"))?;
         }
+        if let Some(refill) = &self.refill {
+            refill
+                .validate()
+                .map_err(|e| format!("actors.refill: {e}"))?;
+        }
         Ok(())
     }
 
@@ -276,6 +288,9 @@ impl Library {
         }
         if self.liquidator.is_some() {
             add("liquidator", 1);
+        }
+        if self.refill.is_some() {
+            add("refill", 1);
         }
         wallets
     }
@@ -400,6 +415,15 @@ impl Library {
                 spec.clone(),
                 wallet,
                 setting.liquidations,
+            )));
+        }
+        if let Some(spec) = &self.refill {
+            let wallet = ledger.wallets("refill", take(1)).remove(0);
+            built.actors.push(Box::new(refill::RefillActor::new(
+                spec.clone(),
+                scale,
+                wallet,
+                rng("refill"),
             )));
         }
         built.actors.push(Box::new(Reporter {
@@ -991,6 +1015,7 @@ pub(crate) mod tests {
             at,
             level_usd,
             book_usd: level_usd,
+            fair_usd: None,
         }
     }
 

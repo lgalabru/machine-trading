@@ -5,6 +5,7 @@
 //! and the result is compared with the report, field by field.
 
 use std::{
+    collections::BTreeMap,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -14,11 +15,123 @@ use mtx_grader::{
     grade::{self, GradeReport, StoredSession, Verdict},
     replay::{self, Difference},
     scenario::Scenario,
+    scoring_v2::{self, Ceiling, Params},
     session::SessionReport,
 };
 use serde_json::{Value, json};
 
 use crate::review::Root;
+
+/// Which scores a grade reports.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum Scoring {
+    /// `reward` and `skill`, as always.
+    #[default]
+    V1,
+    /// Those, and scoring v2 beside them (`v2` in the report, `score_v2*`
+    /// in the rewards): 0 = doing nothing, 0.5 = the reference, 1 = the
+    /// task's informed bot, losses counted 1.5 times, a breach scored per
+    /// session and capping the run, and a charge for drawing down far more
+    /// than the anchor. Report-only: `reward` and `skill` don't change.
+    V2,
+}
+
+/// How a grade is scored: `mtx grade`, `mtx rescore` and `mtx bench rescore`.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct ScoringArgs {
+    #[arg(long, value_enum, default_value_t = Scoring::V1)]
+    pub scoring: Scoring,
+    /// For analysis only, never a task's setting: force v2's ceiling, for a
+    /// task whose scenarios carry no informed bot's PnL, to this share of
+    /// each session's hindsight bound instead of the cost-aware hindsight
+    /// bound (the score says `ceiling: eta_override`). `<task>=<eta>` gives
+    /// one task's (as named in bench/tasks), for a batch of several.
+    #[arg(long, value_name = "[TASK=]ETA")]
+    pub eta: Vec<String>,
+    /// v2's ceiling given outright instead: a JSON object from scenario
+    /// name to ceiling PnL in USD.
+    #[arg(long, conflicts_with = "eta")]
+    pub ceiling: Option<PathBuf>,
+    /// v2: how many times a loss counts.
+    #[arg(long, default_value_t = scoring_v2::LOSS_WEIGHT)]
+    pub loss_weight: f64,
+    /// v2: the least the reference anchor can be, as a share of the
+    /// ceiling; a weaker reference is floored there and flagged (default
+    /// 0.10, or 0.05 of the cost-aware hindsight ceiling).
+    #[arg(long)]
+    pub anchor_floor: Option<f64>,
+    /// v2: what the cost-aware hindsight ceiling pays per trade, in basis
+    /// points of the price: the venue's taker fee plus half-spread.
+    #[arg(long, default_value_t = scoring_v2::HINDSIGHT_COST * 1e4)]
+    pub ceiling_cost_bps: f64,
+    /// v2: the near-breach charge's weight λ (1 by default; 0 turns it
+    /// off). `<task>=<λ>` gives one task's, as `--eta` does.
+    #[arg(long, value_name = "[TASK=]LAMBDA")]
+    pub risk_weight: Vec<String>,
+}
+
+impl ScoringArgs {
+    /// v2's parameters for a grade of `task`, or `None` under v1.
+    pub fn params(&self, task: Option<&str>) -> Result<Option<Params>> {
+        if self.scoring == Scoring::V1 {
+            if !self.eta.is_empty() || self.ceiling.is_some() || !self.risk_weight.is_empty() {
+                bail!("--eta, --ceiling and --risk-weight are for --scoring v2");
+            }
+            return Ok(None);
+        }
+        let ceiling = match &self.ceiling {
+            Some(path) => Ceiling::Given(
+                serde_json::from_slice::<BTreeMap<String, f64>>(
+                    &std::fs::read(path).with_context(|| path.display().to_string())?,
+                )
+                .with_context(|| format!("{}: not a map of ceilings", path.display()))?,
+            ),
+            None => Ceiling::Informed {
+                eta_override: self.eta(task)?,
+            },
+        };
+        Ok(Some(Params {
+            loss_weight: self.loss_weight,
+            anchor_floor: self.anchor_floor,
+            hindsight_cost: self.ceiling_cost_bps / 1e4,
+            risk_weight: per_task("--risk-weight", &self.risk_weight, task)?
+                .unwrap_or(scoring_v2::RISK_WEIGHT),
+            ..Params::new(ceiling)
+        }))
+    }
+
+    /// The `--eta` for `task`: its own, else the one without a task.
+    fn eta(&self, task: Option<&str>) -> Result<Option<f64>> {
+        let eta = per_task("--eta", &self.eta, task)?;
+        if let Some(eta) = eta
+            && !(eta > 0.0 && eta <= 1.0)
+        {
+            bail!("--eta {eta}: a share of the bound, in (0, 1]");
+        }
+        Ok(eta)
+    }
+}
+
+/// A `[TASK=]VALUE` option's value for `task`: its own, else the one
+/// without a task.
+fn per_task(flag: &str, given: &[String], task: Option<&str>) -> Result<Option<f64>> {
+    let mut any = None;
+    for given in given {
+        let (name, value) = match given.split_once('=') {
+            Some((name, value)) => (Some(name), value),
+            None => (None, given.as_str()),
+        };
+        let value: f64 = value
+            .parse()
+            .with_context(|| format!("{flag} {given}: not a number"))?;
+        match name {
+            Some(name) if Some(name) == task => return Ok(Some(value)),
+            Some(_) => {}
+            None => any = Some(value),
+        }
+    }
+    Ok(any)
+}
 
 /// A grade scored again, and where it differs from its report.
 pub struct Rescored {
@@ -28,8 +141,15 @@ pub struct Rescored {
 
 /// Score again the grade whose report is at `report`, its detail files
 /// under `details` (`bot/<scenario>.json.gz`). `release` is the published
-/// release they're in, for a compact one's scenarios.
-pub fn rescore(report: &Path, details: &Path, release: Option<&Path>) -> Result<Rescored> {
+/// release they're in, for a compact one's scenarios. With `v2`, scoring v2
+/// is added; a report that had none isn't compared on it.
+pub fn rescore(
+    report: &Path,
+    details: &Path,
+    release: Option<&Path>,
+    v2: Option<&Params>,
+) -> Result<Rescored> {
+    let path = report;
     let original: Value = serde_json::from_slice(
         &std::fs::read(report).with_context(|| report.display().to_string())?,
     )
@@ -44,19 +164,128 @@ pub fn rescore(report: &Path, details: &Path, release: Option<&Path>) -> Result<
             let name = result["scenario"]
                 .as_str()
                 .with_context(|| format!("{}: a session without a name", report.display()))?;
-            read_session(&details.join("bot"), name, release)
+            let (session, mut scenario) = read_session(&details.join("bot"), name, release)?;
+            // The reference's drawdown as the grade measured it, when it ran
+            // the reference, as the grade itself takes it: what scoring
+            // v2's charge is anchored to.
+            if v2.is_some()
+                && let Some(drawdown) = reference_drawdown(&details.join("reference"), name)?
+            {
+                scenario.reference_max_drawdown_usd = Some(drawdown);
+            }
+            Ok((session, scenario))
         })
         .collect::<Result<Vec<_>>>()?;
-    let report = grade::rescore(sessions, verdict);
-    let differences = replay::compare(
-        &named(&original),
-        &named(&serde_json::to_value(&report)?),
-        2,
-    );
+    let mut report = grade::rescore(sessions, verdict);
+    if let Some(params) = v2 {
+        // The cost-aware hindsight ceiling reads the reference's sessions,
+        // whose marks the bot's trades can't move: when the grade needs it,
+        // every one must be there. It is never computed on the bot's own.
+        let needs_hindsight = matches!(params.ceiling, Ceiling::Informed { eta_override: None })
+            && report
+                .scenarios
+                .iter()
+                .any(|s| s.informed_pnl_usd.is_none());
+        // A grade that recorded which reference sessions it read is checked
+        // against them (see `check_reference_sessions`).
+        let recorded = original["v2"]["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|s| s.get("reference_session_sha256").is_some());
+        if needs_hindsight || recorded {
+            report.anchors = report
+                .scenarios
+                .iter()
+                .map(|result| {
+                    read_session(
+                        &details.join("reference"),
+                        &result.session.scenario,
+                        release,
+                    )
+                    .map(|(session, _)| session)
+                    .with_context(|| {
+                        format!(
+                            "{}: scoring v2's cost-aware hindsight ceiling needs the \
+                                 reference's session",
+                            path.display()
+                        )
+                    })
+                })
+                .collect::<Result<_>>()?;
+        }
+        report
+            .score_v2(params)
+            .with_context(|| path.display().to_string())?;
+        if let Some(v2) = &report.v2 {
+            check_reference_sessions(
+                &original,
+                v2.sessions
+                    .iter()
+                    .map(|s| (s.scenario.as_str(), s.reference_session_sha256.as_deref())),
+            )
+            .with_context(|| path.display().to_string())?;
+        }
+    }
+    let mut rescored = serde_json::to_value(&report)?;
+    if original.get("v2").is_none()
+        && let Value::Object(fields) = &mut rescored
+    {
+        fields.remove("v2");
+    }
+    let differences = replay::compare(&named(&original), &named(&rescored), 2);
     Ok(Rescored {
         report,
         differences,
     })
+}
+
+/// The reference sessions a rescore reads (for the hindsight ceiling and
+/// the near-breach charge's anchor) must be the ones the grade read: each session's `reference_session_sha256`, where both
+/// the report and the rescore have one, must match.
+fn check_reference_sessions<'a>(
+    original: &Value,
+    rescored: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Result<()> {
+    let recorded: BTreeMap<&str, &str> = original["v2"]["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            Some((
+                s["scenario"].as_str()?,
+                s["reference_session_sha256"].as_str()?,
+            ))
+        })
+        .collect();
+    for (scenario, marks) in rescored {
+        if let (Some(was), Some(is)) = (recorded.get(scenario), marks)
+            && *was != is
+        {
+            bail!(
+                "{scenario}: the reference session in details/reference isn't the one the \
+                 grade scored v2 against (hash {is}, graded on {was})"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The reference's drawdown in one session, from its detail file, if the
+/// grade wrote one.
+fn reference_drawdown(dir: &Path, name: &str) -> Result<Option<f64>> {
+    let path = dir.join(format!("{name}.json.gz"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut json = Vec::new();
+    flate2::read::GzDecoder::new(
+        std::fs::File::open(&path).with_context(|| path.display().to_string())?,
+    )
+    .read_to_end(&mut json)
+    .with_context(|| path.display().to_string())?;
+    let value: Value = serde_json::from_slice(&json).with_context(|| path.display().to_string())?;
+    Ok(value["report"]["max_drawdown_usd"].as_f64())
 }
 
 /// One session's report and scenario, from its detail file.
@@ -110,13 +339,21 @@ pub fn describe(difference: &Difference) -> String {
 /// as reported and as scored now, and the first field that differs. A trial
 /// with no report (it never graded) is listed as skipped, and one whose
 /// files don't read back (a release from before reports had their present
-/// shape) as failed, with why.
-pub fn rescore_trials(root: &Root) -> Result<Value> {
+/// shape) as failed, with why. Under `--scoring v2`, each trial's v2 too,
+/// with its task's `--eta`.
+pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
     let trials = crate::review::discover(&root.path);
     if trials.is_empty() {
         bail!("no Harbor trials under {}", root.path.display());
     }
     let mut rows = Vec::new();
+    // Each task's v2 grades, by model, for the comparison across runs.
+    let mut graded: BTreeMap<String, Vec<Graded>> = BTreeMap::new();
+    // Per task and model, the trials that weren't rescored (no report: the
+    // grade never finished; or files that don't read back): reported, never
+    // dropped silently. A grade the bot broke is scored, not here: fatal
+    // or not graded is raw −1.
+    let mut unscored: BTreeMap<String, BTreeMap<String, Unrescored>> = BTreeMap::new();
     let (mut same, mut changed, mut skipped, mut failed) = (0, 0, 0, 0);
     for trial in &trials {
         let name = trial
@@ -127,19 +364,36 @@ pub fn rescore_trials(root: &Root) -> Result<Value> {
         let report = trial.join("verifier/report.json");
         if !report.is_file() {
             skipped += 1;
+            *unscored
+                .entry(task_of(trial))
+                .or_default()
+                .entry(model_of(trial))
+                .or_default()
+                .entry("skipped")
+                .or_default() += 1;
             rows.push(json!({ "trial": name, "skipped": "no verifier/report.json" }));
             continue;
         }
         // A published trial is <release>/<job>/<trial>.
         let release: Option<PathBuf> = trial.parent().and_then(Path::parent).map(Path::to_path_buf);
-        let rescored = match rescore(
-            &report,
-            &trial.join("verifier/sessions"),
-            release.as_deref(),
-        ) {
+        let rescored = match scoring.params(Some(&task_of(trial))).and_then(|v2| {
+            rescore(
+                &report,
+                &trial.join("verifier/sessions"),
+                release.as_deref(),
+                v2.as_ref(),
+            )
+        }) {
             Ok(rescored) => rescored,
             Err(error) => {
                 failed += 1;
+                *unscored
+                    .entry(task_of(trial))
+                    .or_default()
+                    .entry(model_of(trial))
+                    .or_default()
+                    .entry("failed")
+                    .or_default() += 1;
                 rows.push(json!({ "trial": name, "failed": format!("{error:#}") }));
                 continue;
             }
@@ -150,16 +404,51 @@ pub fn rescore_trials(root: &Root) -> Result<Value> {
         } else {
             changed += 1;
         }
-        rows.push(json!({
+        let mut row = json!({
             "trial": name,
             "reward": [original["reward"], rescored.report.reward],
             "skill": [original["skill"], rescored.report.skill],
             "same": rescored.differences.is_empty(),
             "differences": rescored.differences.len(),
             "first": rescored.differences.first().map(describe),
-        }));
+        });
+        if let Some(v2) = &rescored.report.v2 {
+            row["v2"] = json!({
+                "task": task_of(trial),
+                "score": v2.score,
+                "raw": v2.raw,
+                "raw_unfloored": v2.raw_unfloored,
+                "edge": v2.edge,
+                "ci": [v2.ci_lo, v2.ci_hi],
+                "ci_scope": v2.ci_scope,
+                "ci_use": v2.ci_use,
+                "within_noise": v2.within_noise,
+                "beats_informed": v2.beats_informed,
+                "ceiling": v2.ceiling,
+                "anchor_floored": v2.anchor_floored,
+                "gap": {
+                    "wrong_read": v2.gap.wrong_read,
+                    "missed": v2.gap.missed,
+                    "execution": v2.gap.execution,
+                    "risk": v2.gap.risk,
+                    "unattributed": v2.gap.unattributed,
+                    "noise": v2.gap.noise,
+                },
+                "breached_sessions": v2.breached_sessions,
+                "breach_cap": v2.breach_cap,
+                "risk": v2.risk,
+                "metrics": v2.metrics,
+                "fatal": v2.fatal,
+            });
+            graded.entry(task_of(trial)).or_default().push((
+                model_of(trial),
+                v2.clone(),
+                rescored.report.eval_seed_sha256.clone(),
+            ));
+        }
+        rows.push(row);
     }
-    Ok(json!({
+    let mut summary = json!({
         "root": root.label,
         "trials": trials.len(),
         "same": same,
@@ -167,11 +456,187 @@ pub fn rescore_trials(root: &Root) -> Result<Value> {
         "skipped": skipped,
         "failed": failed,
         "rescored": rows,
-    }))
+    });
+    if scoring.scoring == Scoring::V2 {
+        summary["v2_comparison"] = compare_models(&graded, scoring)?;
+        for (task, models) in &unscored {
+            let entry = &mut summary["v2_comparison"][task];
+            if entry.is_null() {
+                *entry = json!({});
+            }
+            entry["not_rescored"] = json!(models);
+        }
+    }
+    Ok(summary)
+}
+
+/// A model's trials of a task that weren't rescored, by why.
+type Unrescored = BTreeMap<&'static str, usize>;
+
+/// One trial's model, v2 score and `eval_seed_sha256`.
+type Graded = (String, scoring_v2::ScoreV2, Option<String>);
+
+/// Per task with more than one run: each model's mean v2 `raw` and the
+/// paired interval of every difference between models, from a bootstrap of
+/// scenarios and runs (see [`scoring_v2::compare`]). A task whose runs
+/// can't be compared says why.
+fn compare_models(graded: &BTreeMap<String, Vec<Graded>>, scoring: &ScoringArgs) -> Result<Value> {
+    let mut tasks = serde_json::Map::new();
+    for (task, runs) in graded {
+        if runs.len() < 2 {
+            continue;
+        }
+        let Some(params) = scoring.params(Some(task))? else {
+            continue;
+        };
+        let compared = scoring_v2::compare(
+            &runs
+                .iter()
+                .map(|(model, v2, _)| scoring_v2::Run {
+                    model: model.clone(),
+                    v2,
+                })
+                .collect::<Vec<_>>(),
+            &params,
+            runs.iter().find_map(|(_, _, seed)| seed.as_deref()),
+        );
+        tasks.insert(
+            task.clone(),
+            match compared {
+                Ok(comparison) => serde_json::to_value(comparison)?,
+                Err(why) => json!({ "failed": why }),
+            },
+        );
+    }
+    Ok(Value::Object(tasks))
+}
+
+/// A trial's model: the last part of its agent's model name.
+fn model_of(trial: &Path) -> String {
+    let config = crate::review::read_json(&trial.join("config.json")).unwrap_or(Value::Null);
+    config["agent"]["model_name"]
+        .as_str()
+        .map(|m| m.rsplit('/').next().unwrap_or(m).to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// A trial's task, as named in bench/tasks: the last part of its config's
+/// task path, else the part of the trial's name before `__`.
+fn task_of(trial: &Path) -> String {
+    let config = crate::review::read_json(&trial.join("config.json")).unwrap_or(Value::Null);
+    config["task"]["path"]
+        .as_str()
+        .and_then(|p| p.trim_end_matches('/').rsplit('/').next())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            let name = trial.file_name().unwrap_or_default().to_string_lossy();
+            name.split("__").next().unwrap_or_default().to_string()
+        })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn args(scoring: Scoring, eta: &[&str]) -> ScoringArgs {
+        ScoringArgs {
+            scoring,
+            eta: eta.iter().map(|e| e.to_string()).collect(),
+            ceiling: None,
+            loss_weight: scoring_v2::LOSS_WEIGHT,
+            anchor_floor: None,
+            ceiling_cost_bps: scoring_v2::HINDSIGHT_COST * 1e4,
+            risk_weight: Vec::new(),
+        }
+    }
+
+    /// A trial that can't be rescored is counted against its model and
+    /// task, never dropped silently.
+    #[test]
+    fn trials_not_rescored_are_counted_per_model() {
+        let dir = std::env::temp_dir().join(format!("mtx-rescore-v2-{}", std::process::id()));
+        for (trial, model, report) in [
+            ("flash-crash-spcx__a", "openai/gpt-6-astra", false),
+            ("flash-crash-spcx__b", "openai/gpt-6-astra", true),
+            ("flash-crash-spcx__c", "openai/gpt-6.1-sol", true),
+        ] {
+            let path = dir.join("job").join(trial);
+            std::fs::create_dir_all(path.join("verifier")).unwrap();
+            let config = json!({
+                "trial_name": trial,
+                "task": { "path": "bench/tasks/flash-crash-spcx" },
+                "agent": { "model_name": model },
+            });
+            std::fs::write(path.join("config.json"), config.to_string()).unwrap();
+            if report {
+                // A report whose detail files are gone: it doesn't read back.
+                let graded = json!({ "reward": 0.1, "scenarios": [{ "scenario": "hidden-1" }] });
+                std::fs::write(path.join("verifier/report.json"), graded.to_string()).unwrap();
+            }
+        }
+        let root = Root {
+            label: "test".into(),
+            path: dir.clone(),
+            published: false,
+        };
+        let summary = rescore_trials(&root, &args(Scoring::V2, &[])).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            (summary["skipped"].clone(), summary["failed"].clone()),
+            (json!(1), json!(2))
+        );
+        let counted = &summary["v2_comparison"]["flash-crash-spcx"]["not_rescored"];
+        assert_eq!(counted["gpt-6-astra"], json!({ "skipped": 1, "failed": 1 }));
+        assert_eq!(counted["gpt-6.1-sol"], json!({ "failed": 1 }));
+    }
+
+    #[test]
+    fn a_rescore_checks_it_read_the_graded_reference_sessions() {
+        let original = json!({ "v2": { "sessions": [
+            { "scenario": "hidden-1", "reference_session_sha256": "aa" },
+            { "scenario": "hidden-2" },
+        ] } });
+        let same = [("hidden-1", Some("aa")), ("hidden-2", Some("cc"))];
+        assert!(check_reference_sessions(&original, same.into_iter()).is_ok());
+        let swapped = [("hidden-1", Some("bb")), ("hidden-2", None)];
+        let error = check_reference_sessions(&original, swapped.into_iter()).unwrap_err();
+        assert!(error.to_string().contains("hidden-1"), "{error}");
+        // A report graded without v2 has nothing to check.
+        assert!(check_reference_sessions(&json!({}), swapped.into_iter()).is_ok());
+    }
+
+    #[test]
+    fn v2s_risk_weight_defaults_to_one_and_can_be_set_per_task() {
+        let lambda = |given: &ScoringArgs, task| given.params(task).unwrap().unwrap().risk_weight;
+        let mut given = args(Scoring::V2, &["0.3"]);
+        assert_eq!(lambda(&given, Some("flash-crash-spcx")), 1.0);
+        given.risk_weight = vec!["2".into(), "market-making-spcx=0".into()];
+        assert_eq!(lambda(&given, Some("flash-crash-spcx")), 2.0);
+        assert_eq!(lambda(&given, Some("market-making-spcx")), 0.0);
+        let mut v1 = args(Scoring::V1, &[]);
+        v1.risk_weight = vec!["2".into()];
+        assert!(v1.params(None).is_err());
+    }
+
+    #[test]
+    fn v2_takes_a_tasks_own_eta_before_the_default() {
+        let given = args(Scoring::V2, &["0.3", "flash-crash-spcx=0.37"]);
+        let eta = |given: &ScoringArgs, task| match given.params(task).unwrap().unwrap().ceiling {
+            Ceiling::Informed { eta_override } => eta_override,
+            Ceiling::Given(_) => unreachable!(),
+        };
+        assert_eq!(eta(&given, Some("flash-crash-spcx")), Some(0.37));
+        assert_eq!(eta(&given, Some("weekend-gap-spcx")), Some(0.3));
+        assert_eq!(eta(&given, None), Some(0.3));
+        let only = args(Scoring::V2, &["flash-crash-spcx=0.37"]);
+        assert_eq!(eta(&only, Some("weekend-gap-spcx")), None);
+        // Without η, only an informed bot's PnL can be the ceiling.
+        assert_eq!(eta(&args(Scoring::V2, &[]), None), None);
+        assert!(args(Scoring::V2, &["2"]).params(None).is_err());
+        assert!(args(Scoring::V1, &[]).params(None).unwrap().is_none());
+        assert!(args(Scoring::V1, &["0.3"]).params(None).is_err());
+    }
+
     /// A rescore compares the floats it reads back with the ones in the
     /// report, so a float must parse to the value it was written from,
     /// bit for bit, even where its shortest form has 17 digits.

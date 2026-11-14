@@ -708,11 +708,13 @@ pub trait StepObserver: Send + Sync {
 }
 
 /// A session's clock, as a component's `start` sees it, and its scenario.
-pub struct Clock<'a> {
+pub struct Clock {
+    /// The seed the strategy's randomness starts from (see
+    /// [`crate::keys::SessionKeyring::strategy_seed`]).
+    pub seed: u64,
     pub steps: u64,
     pub slots_per_step: u64,
     pub start_slot: u64,
-    pub scenario: &'a str,
     /// The task's variables for the session ([`mtx_kit::SESSION_VARS`]).
     pub vars: Vec<(String, String)>,
     /// What the session's steps report beyond prices.
@@ -763,6 +765,13 @@ pub enum Reader {
         /// The account when the session starts.
         start: Wallet,
     },
+    /// A lending account the session measures: its value, and each
+    /// reserve's supply, debt and numbers ([`Wallet::venues`]). Reserves
+    /// have no book.
+    Lending {
+        /// The account when the session starts.
+        start: Wallet,
+    },
 }
 
 /// A wallet as the session measures it, at the session's oracle price.
@@ -803,7 +812,7 @@ impl WasmBot {
     pub async fn start(
         path: &Path,
         rpc_url: &str,
-        clock: Clock<'_>,
+        clock: Clock,
         terms: Terms<'_>,
         desk: Desk,
         log: Box<dyn Write + Send>,
@@ -811,18 +820,19 @@ impl WasmBot {
         raw: Option<crate::raw::RawConfig>,
     ) -> crate::Result<Self> {
         let Clock {
+            seed,
             steps,
             slots_per_step,
             start_slot,
-            scenario,
             vars,
             reports,
         } = clock;
         let (start_mark, start_oracle) = match &desk.reader {
             Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
-            Reader::Wallet { start } => (start.price_usd, start.price_usd),
+            Reader::Wallet { start } | Reader::Lending { start } => {
+                (start.price_usd, start.price_usd)
+            }
         };
-        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, rpc_url, log, seed, session_fuel).await {
@@ -943,6 +953,19 @@ impl WasmBot {
                     position,
                 )
             }
+            Reader::Lending { start } => {
+                let Some(wallet) = wallet else {
+                    tracing::warn!(step = k, "no reading of the account; skipping the step");
+                    return None;
+                };
+                self.pnl = wallet.value_usd - start.value_usd;
+                let position = mtx_kit::Position {
+                    size: wallet.base,
+                    entry_usd: start.price_usd,
+                };
+                let price = wallet.price_usd;
+                (price, price, price, None, None, position)
+            }
             Reader::Wallet { start } => {
                 let Some(wallet) = wallet else {
                     tracing::warn!(step = k, "no reading of the wallet; skipping the step");
@@ -980,6 +1003,20 @@ impl WasmBot {
         }
         // A measured wallet's other markets: the same SOL held, and each
         // seat's own top, where the step's depth didn't give one.
+        if let (Reader::Lending { .. }, Some(wallet)) = (&self.desk.reader, wallet) {
+            for view in &mut venues {
+                let Some(reading) = wallet.venues.iter().find(|r| r.id == view.id) else {
+                    continue;
+                };
+                view.position = None;
+                view.lending = Some(mtx_kit::LendingPosition {
+                    supplied: reading.supplied,
+                    borrowed: reading.borrowed,
+                    health: reading.health,
+                });
+                view.stats = reading.stats.clone();
+            }
+        }
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
             for view in venues.iter_mut().skip(1) {
                 view.position = Some(position);

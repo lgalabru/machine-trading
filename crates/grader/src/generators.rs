@@ -45,40 +45,12 @@ pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "market-making",
         practice: |prefix, count, seed| MakingFamily::spcx().sample_set(prefix, count, seed),
-        hidden: |count, seed, tell| {
-            let drawn = MakingFamily::spcx().sample_set_labeled("hidden", count, seed);
-            let annotations = drawn
-                .iter()
-                .map(|(_, informed)| json!({ "informed": informed }))
-                .collect();
-            let regimes = if tell {
-                // The informed orders, by slot and side: what a perfect
-                // reader of the tape would know.
-                Some(
-                    drawn
-                        .iter()
-                        .map(|(scenario, informed)| {
-                            let orders: Vec<_> = scenario
-                                .making
-                                .iter()
-                                .flat_map(|m| m.takers.iter())
-                                .zip(informed)
-                                .filter(|(_, informed)| **informed)
-                                .map(|(o, _)| json!({"slot": o.slot, "side": o.side}))
-                                .collect();
-                            Ok(serde_json::to_string(&orders)?)
-                        })
-                        .collect::<Result<_>>()?,
-                )
-            } else {
-                None
-            };
-            Ok(Hidden {
-                scenarios: drawn.into_iter().map(|(scenario, _)| scenario).collect(),
-                annotations,
-                regimes,
-            })
-        },
+        hidden: |count, seed, tell| making_hidden(&MakingFamily::spcx(), count, seed, tell),
+    },
+    Generator {
+        name: "market-making-v2",
+        practice: |prefix, count, seed| MakingFamily::v2().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| making_hidden(&MakingFamily::v2(), count, seed, tell),
     },
     Generator {
         name: "funding-carry",
@@ -116,6 +88,42 @@ pub fn generator(name: &str) -> Option<&'static Generator> {
 /// Every generator's name.
 pub fn names() -> Vec<&'static str> {
     GENERATORS.iter().map(|g| g.name).collect()
+}
+
+/// A market-making hidden set, each scenario annotated with its informed
+/// orders and, when told, the regime as those orders by slot and side: what a
+/// perfect reader of the tape would know.
+fn making_hidden(family: &MakingFamily, count: usize, seed: u64, tell: bool) -> Result<Hidden> {
+    let drawn = family.sample_set_labeled("hidden", count, seed);
+    let annotations = drawn
+        .iter()
+        .map(|(_, informed)| json!({ "informed": informed }))
+        .collect();
+    let regimes = if tell {
+        Some(
+            drawn
+                .iter()
+                .map(|(scenario, informed)| {
+                    let orders: Vec<_> = scenario
+                        .making
+                        .iter()
+                        .flat_map(|m| m.takers.iter())
+                        .zip(informed)
+                        .filter(|(_, informed)| **informed)
+                        .map(|(o, _)| json!({"slot": o.slot, "side": o.side}))
+                        .collect();
+                    Ok(serde_json::to_string(&orders)?)
+                })
+                .collect::<Result<_>>()?,
+        )
+    } else {
+        None
+    };
+    Ok(Hidden {
+        scenarios: drawn.into_iter().map(|(scenario, _)| scenario).collect(),
+        annotations,
+        regimes,
+    })
 }
 
 /// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`

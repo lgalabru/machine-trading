@@ -1,0 +1,73 @@
+name = "phoenix-perps-oracles-2026-11-13"
+symbol = "SPCX"
+
+# The perps snapshot with the Pyth price accounts the oracle-fault scenarios
+# drive: both feeds of TSLA, NVDA, SPY and QQQ (the US equity feed and the
+# xStock's), and SPCX's. It starts offline from the perps snapshot, so its
+# markets, marks and every account in it are untouched, and adds the accounts
+# as they were on mainnet on 2026-11-13. Each file is the account as
+# `solana account <address> --output json` printed it; the build checks it is
+# the shard 0 account of the feed id, owned by the Pyth Receiver, and decodes
+# as that feed's price update.
+#
+# The copies are stale: no equity feed has a fresh account on Solana mainnet
+# (the newest was updated days before the fetch, the US feeds weeks before).
+# A session anchors and rewrites a feed it uses; none should read one as it
+# is.
+
+[fork]
+from_snapshot = "../phoenix-perps-2026-11-13"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Crypto.TSLAX/USD"
+feed_id = "47a156470288850a440df3a6ce85a55917b813a19bb5b31128a33a986566a362"
+from_file = "accounts/GpoWLTd6GoisYxYgHz7mTcZvgnfJu4SN7T6PxWjgUTFY.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Equity.US.TSLA/USD"
+feed_id = "16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1"
+from_file = "accounts/E8WFH8brgP58arcuW2wwsPHiomYrSvrgWTsRLZLAEZUQ.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Crypto.NVDAX/USD"
+feed_id = "4244d07890e4610f46bbde67de8f43a4bf8b569eebe904f136b469f148503b7f"
+from_file = "accounts/6TPsjFigUaMFanRCsxQ4WbmG215xhRBXsb5y5Cn5L6eE.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Equity.US.NVDA/USD"
+feed_id = "b1073854ed24cbc755dc527418f52b7d271f6cc967bbf8d8129112b18860a593"
+from_file = "accounts/2w1Tg1XTZbUib7srfRoStJ4v5JXVsK7roQEGMsMaGZFC.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Crypto.SPYX/USD"
+feed_id = "2817b78438c769357182c04346fddaad1178c82f4048828fe0997c3c64624e14"
+from_file = "accounts/jf8MarLKgBte4f3NWufbNpGRCuBfJLhuZPuFigvSQR2.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Equity.US.SPY/USD"
+feed_id = "19e09bb805456ada3979a7d1cbb4b6d63babc3a0f8e8a9509f68afa5c4c11cd5"
+from_file = "accounts/9owhtgrdLiUMAH9JKxYFt5pUY4Luy4EzzLhdcWPVuDyy.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Crypto.QQQX/USD"
+feed_id = "178a6f73a5aede9d0d682e86b0047c9f333ed0efe5c6537ca937565219c4054d"
+from_file = "accounts/BRZ4SSorCG3DQ1KLgTPu7TYmQWsxa8ghqz2BAfDzs6a3.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Equity.US.QQQ/USD"
+feed_id = "9695e2b96ea7b3859da9ed25b7a46a920a776e2fdae19a7bcfdf2b219230452d"
+from_file = "accounts/EwssJrQ7UVz6itHEaQQsKWikhZ3iHddyxRhmR7pTvwt5.json"
+
+[[warmup]]
+action = "pyth-feed-account"
+name = "pyth Equity.US.SPCX/USD"
+feed_id = "8a593d6edde7a3095213c88116d8840d01e93c2ddeb800bc891772eb8b93bb94"
+from_file = "accounts/6WRG9ZLzhqykJ6fdAYZeTHMg79JnnYjjZTs5QDUb9iwv.json"

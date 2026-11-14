@@ -2437,6 +2437,7 @@ mod tests {
                 trusted: false,
                 keys: keys.role("bot").session(0, &scenario.name),
                 observer: None,
+                rules: crate::session::Rules::default(),
             })
             .await
             .unwrap();

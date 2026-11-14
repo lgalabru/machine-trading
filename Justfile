@@ -12,9 +12,12 @@ image := "machine-trading"
 # Bump on every image change that tasks should pick up.
 tag := "0.12.0"
 tasks := "bench/tasks"
-# The harness versions `just bench` runs, pinned so results compare: each
-# provider's own coding agent, Claude Code for Anthropic models and Codex for
-# OpenAI's.
+# The harness versions `just bench` runs, pinned so results compare. Every
+# model runs in Hermes (NousResearch/hermes-agent): one harness for every
+# provider, so no model is helped or hurt by its harness. `native:<model>`
+# runs a model in its provider's own coding agent instead (Claude Code,
+# Codex), as releases up to 0.11.0 did.
+hermes := "v0.23.1"
 claude_code := "2.1.312"
 codex := "0.166.0"
 
@@ -52,6 +55,10 @@ install bin="mtx":
 
 # Build a snapshot from its recipe: fork mainnet, warm up, export.
 # Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+# The ladder script's own tests.
+ladder-test:
+    python3 -I bench/checks/ladder/test_ladder.py
+
 snapshot-build name *flags:
     cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
@@ -107,6 +114,44 @@ spot-smoke:
     grade spot-smoke-rest spot-smoke/rest smoke-rest rested --components-only
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
+
+# Kamino lending sessions (bench/checks/kamino), graded with the probe: the
+# bot and a competing liquidator both liquidate borrowers a crash pushes
+# under; a stale oracle blocks borrows but not repays; a day's clock jump
+# accrues a day's interest; a process bot that sends all its SOL away is
+# still measured.
+kamino-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/kamino-probe/Justfile build
+    just --justfile bots/kamino-drain/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/kamino-2026-11-13 \
+        --bot bots/kamino-probe --logs "target/logs/kamino-$1" --report "target/logs/kamino-$1.json" \
+        "bench/checks/kamino/$1.json" > /dev/null
+    }
+    grade liquidation
+    jq -e '.scenarios[0] | .lending.liquidations >= 1
+      and ([.lending.actions[] | select(.action == "liquidate" and .error == null)] | length) >= 1
+      and (has("crank_refusals") | not)' target/logs/kamino-liquidation.json > /dev/null
+    grade stale-oracle
+    log=$(cat target/logs/kamino-stale-oracle/*)
+    grep -q 'Borrow { amount: Some(1.0) }.*Landed' <<< "$log"
+    grep -q 'Borrow { amount: Some(1.0) }.*Failed.*price status' <<< "$log"
+    grade interest
+    jq -e '.scenarios[0].lending.end[1].borrowed > 600.03' target/logs/kamino-interest.json > /dev/null
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --snapshot snapshots/kamino-2026-11-13 \
+      --bot bots/kamino-drain --logs target/logs/kamino-drain --report target/logs/kamino-drain.json \
+      bench/checks/kamino/drain.json > /dev/null
+    grep -rq 'drain: sent all SOL away' target/logs/kamino-drain
+    jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
+    echo "kamino-smoke: ok"
+
+# The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
+# SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
+actors-markets:
+    cargo test -p mtx-grader --test actors_non_spcx -- --ignored --nocapture
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
@@ -370,15 +415,27 @@ release-publish:
     [ "$got" = "$want" ] || { echo "the published dataset holds $got tasks, bench/tasks $want"; exit 1; }
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
-# Benchmark agents on the published dataset, on an idle machine: other load
-# slows the surfnets' clocks, and the grader fails sessions it can't run on
-# time. Models are `provider/model`, `anthropic/` when there's no provider:
-# Anthropic models run in Claude Code, OpenAI models in Codex. Reads
-# ANTHROPIC_API_KEY and OPENAI_API_KEY (for the providers it runs) from .env
-# or ~/.machine-trading.env. Results go to jobs/bench/; read them with
-# `mtx bench review`. Arguments are positional:
-# just bench "claude-opus-5-5 openai/<model>" 5 3 0.11.0
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1":
+# Benchmark agents on the published dataset. Models are names from
+# bench/harness/models.toml, or `provider/model` (`anthropic/` when there's
+# no provider), and run in Hermes; `native:<model>` runs one in its
+# provider's own harness instead (Claude Code, Codex). Reads each model's
+# key (ANTHROPIC_API_KEY, OPENAI_API_KEY, or the one models.toml names) from
+# .env or ~/.machine-trading.env, and checks each Hermes model with a
+# 1-token request before the first trial (`just preflight`). Hermes's
+# trials reach their providers through a key proxy on this machine and
+# never hold a key; a key found in the batch's files quarantines it.
+# `effort`, when given, applies to every harness; left empty, each keeps its
+# own default. Results go to jobs/bench/; read them with `mtx bench review`.
+# Arguments are positional (models, attempts, at a time, version, limit,
+# together, effort):
+# just bench "claude-opus-5-5 openai/<model> kimi-k3" 5 3 0.12.0 1 0 high
+# `together=1` runs the models at once (each with n trials at a time)
+# instead of one after the other: grades don't depend on load.
+#
+# A provider that refuses an agent for quota or credit stops the whole
+# batch at once: its other agents would be cut off too, and a cut-off trial
+# can't be ranked. The batch is marked (.stopped) and gets no report.
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-2" k="5" n="3" version="" limit="1" together="0" effort="":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
@@ -387,12 +444,27 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     set +a
     for model in {{models}}; do
       case "$model" in
-        openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
-        */*) [ "${model%%/*}" = anthropic ] || { echo "$model: only anthropic/ and openai/ models have a pinned harness"; exit 1; }
+        native:openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
+        native:*/*) [ "${model#native:anthropic/}" != "$model" ] || { echo "$model: only anthropic/ and openai/ models have a native harness"; exit 1; }
           [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set, for $model"; exit 1; } ;;
-        *) [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set, for $model"; exit 1; } ;;
+        native:*) [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set, for $model"; exit 1; } ;;
+        *) key="$(python3 -I bench/harness/models.py key "$model")"
+          [ -n "${!key:-}" ] || { echo "$key is not set, for $model"; exit 1; } ;;
       esac
     done
+    # Hermes's models: a wrong name or a dead key fails here, not in every
+    # trial.
+    hermes_models=()
+    for model in {{models}}; do
+      case "$model" in native:*) ;; *) hermes_models+=("${model#hermes:}") ;; esac
+    done
+    if [ "${#hermes_models[@]}" -gt 0 ]; then
+      python3 -I bench/harness/models.py preflight "${hermes_models[@]}"
+    fi
+    # No harness run gets a flag the batch didn't ask for: each keeps its own
+    # default effort unless `effort` is given.
+    effort=()
+    [ -z "{{effort}}" ] || effort=(--effort "{{effort}}")
     version="{{version}}"
     dataset="solana-foundation/machine-trading${version:+@$version}"
     batch="jobs/bench/$(date +%Y%m%d-%H%M%S)-x{{limit}}"
@@ -410,38 +482,166 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     # The plan, written before the first trial starts: what runs (models,
     # harnesses and their versions, attempts, time), what's measured and on
     # which commit. `mtx bench review` shows trials not started yet as queued.
-    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, commit = sys.argv[1:]
+    python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, hm, effort, commit = sys.argv[1:]
     models = m.split()
-    harness = lambda m: {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
-    json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x),
+    harness = lambda m: ({"agent": "codex", "version": cx} if m.startswith("native:openai/") else {"agent": "claude-code", "version": cc}) if m.startswith("native:") else {"agent": "hermes", "version": hm}
+    json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x), "effort": effort or None,
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
-      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    for model in {{models}}; do
+      "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "{{hermes}}" "{{effort}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    # What the providers say when the account, not the model, is out: a
+    # quota, a credit balance or a usage cap. Rate limits are retried by the
+    # harnesses and don't stop a batch.
+    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached'
+    run_model() {
+      local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
       # Each harness is pinned, so numbers compare across releases, with no
       # web and no memory across trials.
       case "$model" in
-        openai/*)
+        native:openai/*)
+          model="${model#native:}"
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} \
+            --agent-timeout-multiplier {{limit}} "${effort[@]}" \
             --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
           ;;
-        *)
+        native:*)
+          model="${model#native:}"
           harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} \
+            --agent-timeout-multiplier {{limit}} "${effort[@]}" \
             --ak version={{claude_code}} \
             --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
           ;;
+        *)
+          # Every provider's model in one harness, routed by models.toml
+          # through the batch's key proxy: Harbor and the trials get the
+          # proxy's token, never a key. bench/harness/mtx_hermes.py:
+          # Harbor's adapter, with the bench's tools and no memory or skills.
+          local route
+          mapfile -t route < <(python3 -I bench/harness/models.py args "${model#hermes:}" "$proxy_url")
+          MTX_PROXY_TOKEN="$(python3 -I bench/harness/models.py token "${model#hermes:}")" \
+          env "${unset_keys[@]}" PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
+          harbor run -y -d "$dataset" -a mtx_hermes:Hermes "${route[@]}" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --ak version={{hermes}}
+          ;;
       esac
-    done
+    }
+    # Watch the agents' logs while the batch runs; at the first refusal,
+    # interrupt every harbor run writing to this batch.
+    (
+      while sleep 20; do
+        hit="$(grep -rlE "$refused" "$batch"/*/*/agent 2>/dev/null | head -1 || true)"
+        if [ -n "$hit" ]; then
+          { echo "refused: $(grep -hoE "$refused" "$hit" | head -1)"; echo "in: $hit"; date -u +%FT%TZ; } > "$batch/.stopped"
+          # INT first, for a clean stop; TERM for what's left: a run started
+          # in the background (together=1) ignores INT.
+          pkill -INT -f -- "harbor run .* -o $batch" || true
+          sleep 30
+          pkill -TERM -f -- "harbor run .* -o $batch" || true
+          exit 0
+        fi
+      done
+    ) &
+    watcher=$!
+    # No key may reach a trial's files, however the batch ends: a hit
+    # quarantines the batch; a clean scan writes .scan-passed, which
+    # `just publish` requires.
+    scanned=""
+    scan_batch() {
+      [ -z "$scanned" ] || return 0
+      scanned=1
+      kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
+      if python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
+        mv "$batch/.scan" "$batch/.scan-passed"
+      else
+        mv "$batch/.scan" "$batch/.quarantined"
+        echo "quarantined: a provider key is in the batch's files, or a file couldn't be checked ($batch/.quarantined);"
+        echo "rotate any key named there, and don't publish or share the batch"
+        return 1
+      fi
+    }
+    trap 'scan_batch || true' EXIT
+    # Hermes's trials reach their providers through a proxy on this machine
+    # that holds the keys (bench/harness/key_proxy.py): a key inside a trial
+    # could be read by the agent from /proc and printed into its trajectory.
+    # Each route (model) has its own token; the proxy listens on the docker
+    # bridge, so only this machine's containers reach it.
+    proxy=""
+    unset_keys=(-u MTX_PROXY_SECRET)
+    for key in $(python3 -I bench/harness/models.py keys); do unset_keys+=(-u "$key"); done
+    if [ "${#hermes_models[@]}" -gt 0 ]; then
+      MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
+      export MTX_PROXY_SECRET
+      bridge="$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)"
+      [ -n "$bridge" ] || { echo "no docker0 address for the key proxy"; exit 1; }
+      python3 -I bench/harness/key_proxy.py --host "$bridge" --port 0 \
+        "${hermes_models[@]}" > "$batch/.proxy" 2> "$batch/proxy.log" &
+      proxy=$!
+      for _ in $(seq 50); do [ -s "$batch/.proxy" ] && break; sleep 0.2; done
+      [ -s "$batch/.proxy" ] || { echo "the key proxy didn't start:"; cat "$batch/proxy.log"; exit 1; }
+      proxy_url="$(cat "$batch/.proxy")"
+    fi
+    status=0
+    if [ "{{together}}" = 1 ]; then
+      pids=()
+      for model in {{models}}; do
+        run_model "$model" & pids+=("$!")
+        # Two runs starting at once can race on Harbor's task cache.
+        sleep 60
+      done
+      for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+    else
+      for model in {{models}}; do
+        [ -e "$batch/.stopped" ] && break
+        run_model "$model" || status=1
+      done
+    fi
+    scan_batch || exit 1
+    if [ -e "$batch/.stopped" ]; then
+      echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"
+      cat "$batch/.stopped"
+      echo "raise the account's limit, then run the batch again"
+      exit 1
+    fi
+    [ "$status" = 0 ] || { echo "a harbor run failed; see above"; exit 1; }
     if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
     fi
     python3 -I bench/report.py "$batch"
     echo "browse it: just review $batch"
     echo "publish it: just publish $batch {{version}}"
+
+# Check each model's name and key with a 1-token request: names from
+# bench/harness/models.toml, or `provider/model`. Reads the keys as `bench` does.
+preflight models:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a
+    [ -f .env ] && . ./.env
+    [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
+    set +a
+    python3 -I bench/harness/models.py preflight {{models}}
+
+# The Hermes harness check (bench/checks/hermes), with no model: two trials
+# per route through the key proxy to a stand-in provider on this machine;
+# the second must see nothing the first planted, and the key must reach no
+# trial file, nor anything the agent can read under /proc.
+hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    # The key proxy under attack first: tokens, paths, models, headers,
+    # binding, error bodies, the scan, broken streams.
+    python3 -I bench/checks/hermes/proxy_attacks.py \
+      --bind "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" \
+      --other "$(hostname -I | awk '{print $1}')" \
+      --container-image {{registry}}/{{image}}:{{tag}}-runtime || status=1
+    for route in {{routes}}; do
+      bench/checks/hermes/probe.sh {{tasks}}/{{task}} {{hermes}} "$route" || status=1
+    done
+    exit "$status"
 
 # Browse a bench's results: a batch, a Harbor job, one trial, or a
 # published release by its version (`just review 0.9.0`).
@@ -451,6 +651,8 @@ review path:
 # Publish a finished batch: upload it to the results dataset (needs hf and
 # HF_TOKEN) and write bench/results/<version>/release.json, to commit.
 publish batch version:
+    [ ! -e "{{batch}}/.quarantined" ] || { echo "{{batch}} is quarantined: a provider key is in its files"; exit 1; }
+    [ -e "{{batch}}/.scan-passed" ] || { echo "{{batch}} has no clean key scan (.scan-passed); run: python3 -I bench/harness/models.py scan {{batch}}"; exit 1; }
     cargo run --release -q -- bench publish {{batch}} {{version}}
 
 # Compare two releases task by task, as in `just compare 0.9.0...0.8.0`.
@@ -581,6 +783,12 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     done
     for bot in {{tasks}}/{{task}}/checks/exploits/*/; do
       [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
+    done
+    # The shared exploit bots the ladder lists (bench/checks/exploits).
+    for bot in $(jq -r '.rungs[].dir' "{{tasks}}/{{task}}/checks/ladder.json" | sort -u); do
+      case "$bot" in bench/checks/exploits/*)
+        [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null ;;
+      esac
     done
     python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \

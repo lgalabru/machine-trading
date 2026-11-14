@@ -157,10 +157,18 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         (Some(making), _) => Some((
             widen(making.competitor_bps)?,
             &making.takers,
-            Pricing::Level,
+            scenario.takers_pricing.unwrap_or(Pricing::Level),
         )),
-        (None, Some(off)) => Some((widen(off.half_spread_bps)?, &off.takers, Pricing::Level)),
-        (None, None) if !scenario.tape.is_empty() => Some((0, &scenario.tape, Pricing::Book)),
+        (None, Some(off)) => Some((
+            widen(off.half_spread_bps)?,
+            &off.takers,
+            scenario.takers_pricing.unwrap_or(Pricing::Level),
+        )),
+        (None, None) if !scenario.tape.is_empty() => Some((
+            0,
+            &scenario.tape,
+            scenario.takers_pricing.unwrap_or(Pricing::Book),
+        )),
         (None, None) => None,
     };
     if let Some((widened_ticks, orders, pricing)) = takers {
@@ -181,7 +189,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
             .await?
             .remove(0);
-        cast.add(Box::new(Competitor::new(seat, making)));
+        cast.add(Box::new(Competitor::new(
+            seat,
+            making,
+            opts.keys.seed("competitor", 0),
+        )));
     }
     // The library's actors: a wallet each, onboarded like the takers. They
     // are built once the session's first slot is known.
@@ -317,10 +329,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let mut rfqs = None;
     if let Some((library, seats)) = library {
         let (path, start) = (scenario.path.clone(), start_mark_usd);
+        let fair_path = scenario.fair_path.clone();
         let path = Arc::new(move |at| Moment {
             at,
             level_usd: start * (1.0 + level_at(&path, at) / 100.0),
             book_usd: start * (1.0 + book_at(&path, at) / 100.0),
+            fair_usd: fair_path
+                .as_ref()
+                .map(|fair| start * (1.0 + level_at(fair, at) / 100.0)),
         });
         // Front-runners read the bot's trading through a seat on its
         // account, and its sends as they arrive.
@@ -418,6 +434,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .as_ref()
             .map(|off| base_slot + off.reopen_slot),
         cast,
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -729,6 +746,7 @@ impl Account for PerpAccount {
             at,
             level_usd: self.start_mark_usd * (1.0 + level_at(path, at) / 100.0),
             book_usd: self.start_mark_usd * (1.0 + book_at(path, at) / 100.0),
+            fair_usd: self.scenario.fair_value_usd(self.start_mark_usd, at),
         }
     }
 
@@ -769,6 +787,19 @@ impl Account for PerpAccount {
     }
 
     async fn turn_data(&mut self, _step: &mut Step) -> Result<()> {
+        Ok(())
+    }
+
+    async fn sample(&mut self, slot: u64) -> Result<()> {
+        let now = self.measure().await?;
+        record(&mut self.observed, &now)?;
+        let position = position_in(&now, &self.market_id);
+        self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
+        let value_usd = self
+            .value_with_desk(grader_f64(now.value_usd), position, slot)
+            .await?;
+        self.peak_value_usd = self.peak_value_usd.max(value_usd);
+        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
         Ok(())
     }
 
@@ -924,6 +955,7 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
             oracle_starts: std::mem::take(&mut self.oracle_starts),

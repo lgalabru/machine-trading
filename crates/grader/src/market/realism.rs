@@ -482,7 +482,7 @@ pub fn compare(realism: &Realism, windows: &[Vec<f64>]) -> (WindowStats, Vec<Che
 
 /// Judge a gated check; a pass whose band holds a null value (`held`) has
 /// no power.
-fn gate(name: &str, real: f64, generated: f64, band: Band, held: Option<f64>) -> Check {
+pub(super) fn gate(name: &str, real: f64, generated: f64, band: Band, held: Option<f64>) -> Check {
     let mut check = judge(name, real, generated, band);
     if let (Status::Pass, Some(null)) = (check.status, held) {
         check.status = Status::NoPower;
@@ -1256,7 +1256,34 @@ mod tests {
         );
         println!("|---|---|---|---|---|---|---|---|");
         let mut false_fails = Vec::new();
-        for cal in [sol(), spcx()] {
+        let mut missed = Vec::new();
+        // FFR_ASSETS=nvda,tsla measures those shipped files instead of SOL and SPCX.
+        let assets = std::env::var("FFR_ASSETS").unwrap_or_default();
+        let cals: Vec<Calibration> = if assets.is_empty() {
+            vec![sol(), spcx()]
+        } else {
+            let dir =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../calibration/market");
+            assets
+                .split(',')
+                .map(|asset| {
+                    let prefix = format!("{asset}.");
+                    let path = std::fs::read_dir(&dir)
+                        .unwrap()
+                        .map(|e| e.unwrap().path())
+                        .find(|p| {
+                            p.extension().is_some_and(|e| e == "toml")
+                                && p.file_name()
+                                    .unwrap()
+                                    .to_string_lossy()
+                                    .starts_with(&prefix)
+                        })
+                        .unwrap_or_else(|| panic!("no file for {asset}"));
+                    Calibration::load(&path).unwrap()
+                })
+                .collect()
+        };
+        for cal in cals {
             for (count, base) in [(300, 1000), (1000, 2000)] {
                 let range = base * 1000 + offset..base * 1000 + offset + seeds;
                 let (pass, fail, unjudged, names) = run(&cal, count, range.clone());
@@ -1273,24 +1300,42 @@ mod tests {
                         "| {name} | {} | {count} | {seeds} | {pass} | {fail} | {unjudged} | {names} |",
                         cal.meta.asset
                     );
-                    // SPCX's 30-minute windows can't reliably tell no GARCH
-                    // from its short-lived clustering at 300 sessions (about
-                    // 90-98% caught); 1000 sessions catch it every time.
-                    let required =
-                        !(name == "no GARCH" && cal.meta.asset == "spcx" && count < 1000);
-                    assert!(
-                        !required || fail as f64 >= 0.95 * seeds as f64,
-                        "{name} caught {fail}/{seeds}"
+                    // The 30-minute windows of the US equities (SPCX, and
+                    // the files fitted the same way) can't reliably tell no
+                    // GARCH from their short-lived clustering at 300
+                    // sessions (about 90-98% caught for SPCX); 1000
+                    // sessions catch it every time.
+                    let required = !(name == "no GARCH"
+                        && cal.calendar.model
+                            == crate::market::calibration::CalendarModel::Sessions
+                        && count < 1000);
+                    // Two cells the data can't settle, measured at 300 seeds:
+                    // TSLA's regimes change the session level so little that
+                    // 300 sessions catch their absence 81% of the time (1000
+                    // catch it 99.7%); SPY's GARCH is weak and short-lived
+                    // (persistence 0.52), so even 1000 sessions catch its
+                    // absence 87% of the time.
+                    let weak = matches!(
+                        (cal.meta.asset.as_str(), name, count),
+                        ("tsla", "no regimes", 300) | ("spy", "no GARCH", 1000)
                     );
+                    let required = required && !weak;
+                    if required && (fail as f64) < 0.95 * seeds as f64 {
+                        missed.push(format!(
+                            "{} at {count}: {name} caught {fail}/{seeds}",
+                            cal.meta.asset
+                        ));
+                    }
                 }
             }
         }
+        // The table is printed in full before the bars are asserted.
         for (asset, count, fail) in false_fails {
-            assert!(
-                fail as f64 <= 0.02 * seeds as f64,
-                "{asset} at {count}: {fail}/{seeds} false fails"
-            );
+            if fail as f64 > 0.02 * seeds as f64 {
+                missed.push(format!("{asset} at {count}: {fail}/{seeds} false fails"));
+            }
         }
+        assert!(missed.is_empty(), "{missed:?}");
     }
 
     /// The adversarial table in PR_NOTES: each wrong market against each

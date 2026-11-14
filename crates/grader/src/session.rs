@@ -125,6 +125,18 @@ pub struct SessionOptions<'a> {
     pub keys: crate::keys::SessionKeyring<'a>,
     /// Watches a component's session step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    /// Scoring v2's session rules, if the grade runs under them.
+    pub rules: Rules,
+}
+
+/// Scoring v2's session rules (`mtx grade --v2-sessions`). Off by
+/// default, and a session then runs as it always has. (A breach's stop-out
+/// is the scenario's own risk desk, `stop_out`: see [`crate::risk`].)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Rules {
+    /// The account is valued at every slot for its drawdown, not only at
+    /// every step.
+    pub every_slot: bool,
 }
 
 /// A session's outcome, as the grade reports it. It reads back from the
@@ -196,6 +208,10 @@ pub struct SessionReport {
     /// A spot session scored net of the starting holding's drift.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
+    /// A lending session: the bot's supply and debt, its health, and what
+    /// the borrowers and liquidators did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lending: Option<crate::lending::LendingReport>,
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
@@ -431,6 +447,9 @@ pub(crate) struct Prepared {
     /// Off hours: the slot the external market reopens at.
     pub reopen_slot: Option<u64>,
     pub cast: Cast,
+    /// Upkeep the session's venues need, beyond the options' (see
+    /// [`crate::crank`]).
+    pub cranks: Vec<Box<dyn crate::crank::VenueCrank>>,
     pub account: Box<dyn Account>,
 }
 
@@ -492,6 +511,12 @@ pub(crate) trait Account: Send + Sync {
 
     /// One instruction of a bot's transaction, as the report shows it.
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
+
+    /// Between a step's slots, at `slot`: value the account for its
+    /// drawdown (see [`Rules::every_slot`]). Nothing by default.
+    async fn sample(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
 
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
@@ -559,8 +584,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         reports,
         reopen_slot,
         mut cast,
+        cranks: kind_cranks,
         mut account,
-    } = if scenario.spot.is_some() {
+    } = if scenario.lending.is_some() {
+        crate::lending::prepare(&opts).await?
+    } else if scenario.spot.is_some() {
         crate::spot::prepare(&opts).await?
     } else {
         crate::perp::prepare(&opts).await?
@@ -609,10 +637,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 &component,
                 &env.rpc_url,
                 crate::wasm::Clock {
+                    seed: opts.keys.strategy_seed(&scenario.name),
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    scenario: &scenario.name,
                     vars: opts
                         .regime
                         .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
@@ -689,7 +717,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
-            seed: Some(turns::scenario_seed(&scenario.name)),
+            seed: Some(opts.keys.strategy_seed(&scenario.name)),
             reports,
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
@@ -709,6 +737,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let mut bot_exit = None;
     let mut steps_seen: Vec<StepRecord> = Vec::with_capacity(steps as usize);
     let mut cranks = crate::crank::Cranks::new(opts.cranks);
+    for crank in kind_cranks {
+        cranks.push(crank);
+    }
     let mut slot = start_slot;
     // The risk desk (a scenario's `stop_out`): the account's running peak,
     // the close under way, and the slot the session ends at once the
@@ -725,10 +756,17 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
         cast.before_blocks().await;
+        // A scenario's clock jump lands before the step's blocks.
+        if let Some(warp) = scenario.warps.iter().find(|w| w.step == k) {
+            slot = crate::lending::warp(surfnet, &rpc, warp.slots).await?;
+        }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
+            if opts.rules.every_slot && slot < target {
+                account.sample(slot).await?;
+            }
         }
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks, unless the risk
