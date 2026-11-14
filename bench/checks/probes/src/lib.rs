@@ -669,7 +669,9 @@ pub fn build(config: &Config, reference: Option<Box<dyn Strategy>>) -> Result<Bo
         base = Boxed(Box::new(Lever {
             inner: base,
             m: config.lever,
-            breach_share: config.breaches.map(|b| (b / config.sessions).clamp(0.0, 1.0)),
+            breach_share: config
+                .breaches
+                .map(|b| (b / config.sessions).clamp(0.0, 1.0)),
             salt: config.salt,
             direct: None,
         }));
@@ -881,9 +883,7 @@ mod tests {
 
     #[test]
     fn a_breaching_session_is_chosen_at_its_share() {
-        let chosen = (0..7200)
-            .filter(|s| breaching(*s, 0, 3.0 / 72.0))
-            .count();
+        let chosen = (0..7200).filter(|s| breaching(*s, 0, 3.0 / 72.0)).count();
         assert!((200..400).contains(&chosen), "{chosen} of 7200");
         assert!(!breaching(1, 0, 0.0));
     }

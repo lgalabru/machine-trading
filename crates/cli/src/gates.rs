@@ -653,7 +653,10 @@ fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
             title,
             format!(
                 "exempt: {}",
-                summary.probes_exempt.as_deref().unwrap_or("no reason given")
+                summary
+                    .probes_exempt
+                    .as_deref()
+                    .unwrap_or("no reason given")
             ),
         );
     }
@@ -672,7 +675,8 @@ fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
             .map(|p| format!("{} ({})", p.id, p.detail))
             .collect()
     };
-    let failed = of(&|p| p.verdict == "fail" || (!fast && p.verdict == "inconclusive" && p.point_violated));
+    let failed =
+        of(&|p| p.verdict == "fail" || (!fast && p.verdict == "inconclusive" && p.point_violated));
     let no_power = of(&|p| p.verdict == "no_power");
     let unsure = of(&|p| p.verdict == "inconclusive" && (fast || !p.point_violated));
     if !failed.is_empty() || !no_power.is_empty() {
@@ -1480,7 +1484,10 @@ mod tests {
         let broken = vec![probe("zero_edge:coin", "fail"), probe("b", "pass")];
         let c = check(Some(broken), true);
         assert_eq!(c.status, Status::Fail);
-        assert!(c.detail.contains("out of band: zero_edge:coin (raw +0.100)"));
+        assert!(
+            c.detail
+                .contains("out of band: zero_edge:coin (raw +0.100)")
+        );
         let powerless = check(Some(vec![probe("breacher", "no_power")]), true);
         assert_eq!(powerless.status, Status::Fail);
         assert!(powerless.detail.contains("no power"));
