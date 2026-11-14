@@ -2,10 +2,12 @@
 key scan, each with what must happen. Runs the stand-in provider and the
 proxy on this machine, with throwaway keys; no model, no real key.
 
-    python3 -I proxy_attacks.py --bind <address the proxy listens on> [--other <another address of this machine>]
+    python3 -I proxy_attacks.py --bind <address> [--other <another address>] [--container-image <image>]
 
 `--other` checks the proxy can't be reached on any other address (the
 bench binds it to the docker bridge, not the machine's network address).
+`--container-image` calls it from a container on its own network, as a
+trial does, while this machine's own address holds its share of slots.
 """
 
 import argparse
@@ -108,6 +110,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--other")
+    parser.add_argument("--container-image", help="an image with bash, to call the proxy from a container")
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix="proxy-attacks-"))
     key = "sk-attack-" + secrets.token_hex(20)
@@ -373,10 +376,9 @@ def main():
         status = conn.getresponse().status
         conn.close()
         check(10, "a 64 MB body is refused before it's read", status == 413, str(status))
-        def tried(source=None):
+        def tried(port=None):
             try:
-                conn = http.client.HTTPConnection(url.hostname, url.port, timeout=10,
-                                                  source_address=(source, 0) if source else None)
+                conn = http.client.HTTPConnection(url.hostname, port or url.port, timeout=10)
                 data = json.dumps(ok_body("m-a")).encode()
                 conn.request("POST", "/a/chat/completions", body=data, headers=auth("a"))
                 status = conn.getresponse().status
@@ -385,22 +387,31 @@ def main():
             except (OSError, http.client.HTTPException) as e:
                 return type(e).__name__
 
-        def opened(n, source=None):
-            return [socket.create_connection((url.hostname, url.port), timeout=10,
-                                             source_address=(source, 0) if source else None) for _ in range(n)]
+        def opened(n, port=None):
+            return [socket.create_connection((url.hostname, port or url.port), timeout=10) for _ in range(n)]
 
-        # 12. No token is needed to hold a slot, so one client gets few, and
-        # only for the head's few seconds.
-        idle = opened(PER_CLIENT, args.bind if args.other else None)
+        # 12. No token is needed to hold a slot, so one client (address)
+        # gets few, and only for the head's few seconds.
+        idle = opened(PER_CLIENT)
         time.sleep(0.3)
-        check(12, f"one address holding {PER_CLIENT} idle connections can't open another",
-              tried(args.bind if args.other else None) != 200, "served")
-        if args.other:
-            check(12, "while another address is still served", tried(args.other) == 200, "refused")
-            more = opened(LIMIT - PER_CLIENT, args.other)
-            time.sleep(0.3)
-            check(12, f"with {LIMIT} open in all, a new connection is closed", tried(args.other) != 200, "served")
-            idle += more
+        check(12, f"one address holding {PER_CLIENT} idle connections can't open another", tried() != 200, "served")
+        if args.container_image:
+            # A trial's container has its own address on its own network.
+            network = f"proxy-attacks-{secrets.token_hex(4)}"
+            subprocess.run(["docker", "network", "create", network], check=True, capture_output=True)
+            data = json.dumps(ok_body("m-a"))
+            request = (f"POST /a/chat/completions HTTP/1.0\r\nAuthorization: Bearer $TOKEN\r\n"
+                       f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n{data}")
+            try:
+                out = subprocess.run(
+                    ["docker", "run", "--rm", "--name", network, "--network", network, "-e", "TOKEN",
+                     "--entrypoint", "bash", args.container_image, "-c",
+                     f"exec 3<>/dev/tcp/{url.hostname}/{url.port}; printf '%s' \"{request.replace(chr(34), chr(92) + chr(34))}\" >&3; head -c 12 <&3"],
+                    env={**os.environ, "TOKEN": token["a"]}, capture_output=True, text=True, timeout=120)
+            finally:
+                subprocess.run(["docker", "network", "rm", network], capture_output=True)
+            check(12, "while a container on another network is still served", out.stdout.startswith("HTTP/1.0 200"),
+                  repr(out.stdout[:40] + out.stderr[-200:]))
         start = time.monotonic()
         dropped = sum(1 for sock in idle if sock.recv(1) == b"")
         took = time.monotonic() - start
@@ -440,6 +451,23 @@ def main():
         slow.close()
         check(12, "a body sent after the head timeout but within the client timeout is served",
               answer.startswith(b"HTTP/1.0 200"), repr(answer[:30]))
+
+        # 12. The global cap, on a second proxy with no per-address cap.
+        second = subprocess.Popen(
+            [sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", args.bind, "--port", "0", "a"],
+            env={**env, "MTX_PROXY_MAX_PER_CLIENT": "100"}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        try:
+            port = urllib.parse.urlsplit(second.stdout.readline().strip()).port
+            held = opened(LIMIT, port)
+            time.sleep(0.3)
+            check(12, f"with {LIMIT} open in all, a new connection is closed", tried(port) != 200, "served")
+            for sock in held:
+                sock.close()
+            time.sleep(0.3)
+            check(12, "and served once they close", tried(port) == 200, "refused")
+        finally:
+            second.terminate()
+            second.wait()
 
         # 13. tool_choice, overflowing numbers, bodies that break the checks.
         model_call("o", o(tool_choice="auto"), 200, "responses: tool_choice auto passes")
