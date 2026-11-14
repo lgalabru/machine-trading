@@ -1035,14 +1035,48 @@ fn has_command(path: &[&str], arg: Option<&str>) -> bool {
     arg.is_none_or(|arg| cmd.get_arguments().any(|a| a.get_id() == arg))
 }
 
-/// The snapshot the Justfile grades on (`snapshot := "..."`).
-fn snapshot(root: &Path) -> String {
-    let justfile = std::fs::read_to_string(root.join("Justfile")).unwrap_or_default();
-    let name = justfile
-        .lines()
-        .find_map(|l| l.strip_prefix("snapshot := "))
-        .map_or(DEFAULT_SNAPSHOT, |v| v.trim().trim_matches('"'));
-    format!("snapshots/{name}")
+/// The name of the snapshot `task` trades on: its task.toml's `[metadata]
+/// snapshot`, else the one its verifier image sets (`ENV MTX_SNAPSHOT=` in
+/// tests/Dockerfile), else the Justfile's (`snapshot := "..."`). A task on
+/// another market than SPCX is graded on its own chain state.
+fn snapshot_name(root: &Path, task: &str) -> String {
+    let folder = root.join("bench/tasks").join(task);
+    let from_toml = std::fs::read_to_string(folder.join("task.toml"))
+        .ok()
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .and_then(|t| {
+            t.get("metadata")?
+                .get("snapshot")?
+                .as_str()
+                .map(str::to_string)
+        });
+    let from_image = || {
+        std::fs::read_to_string(folder.join("tests/Dockerfile"))
+            .ok()?
+            .lines()
+            .find_map(|l| {
+                l.trim()
+                    .strip_prefix("ENV MTX_SNAPSHOT=/opt/mtx/snapshots/")
+            })
+            .map(|v| v.trim().to_string())
+    };
+    let from_justfile = || {
+        std::fs::read_to_string(root.join("Justfile"))
+            .ok()?
+            .lines()
+            .find_map(|l| l.strip_prefix("snapshot := "))
+            .map(|v| v.trim().trim_matches('"').to_string())
+    };
+    from_toml
+        .filter(|n| !n.is_empty())
+        .or_else(from_image)
+        .or_else(from_justfile)
+        .unwrap_or_else(|| DEFAULT_SNAPSHOT.to_string())
+}
+
+/// The snapshot `task` trades on, from the repository's root.
+fn snapshot(root: &Path, task: &str) -> String {
+    format!("snapshots/{}", snapshot_name(root, task))
 }
 
 /// A fresh eval secret for one check, never printed.
@@ -1056,6 +1090,7 @@ fn secret() -> Result<String> {
 /// hidden set (`mtx grade --replay`), the machine loaded in full mode.
 fn replay_check(
     root: &Path,
+    task: &str,
     exe: &Path,
     family: &str,
     ladder: &Value,
@@ -1092,7 +1127,12 @@ fn replay_check(
     let trusted = has_command(&["grade"], Some("trusted"));
     let output = Command::new(exe)
         .args(["grade", "--draw", family, "--jobs", "4", "--bot", bot])
-        .args(["--count", &count.to_string(), "--snapshot", &snapshot(root)])
+        .args([
+            "--count",
+            &count.to_string(),
+            "--snapshot",
+            &snapshot(root, task),
+        ])
         .args([
             "--replay",
             &runs.to_string(),
@@ -1345,10 +1385,13 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             clear_dir(&ladder_out.join(task))?;
             let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
             // The ladder exits nonzero when a rule fails: the summary says which.
+            // On the task's own snapshot, not the Justfile's default.
+            let snapshot_override = format!("snapshot={}", snapshot_name(root, task));
             run_in(
                 root,
                 "just",
                 &[
+                    &snapshot_override,
                     "ladder",
                     task,
                     &sets,
@@ -1478,7 +1521,9 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         }
     }
 
-    checks.push(replay_check(root, &exe, &family, &config, opts.fast, &out));
+    checks.push(replay_check(
+        root, task, &exe, &family, &config, opts.fast, &out,
+    ));
     checks.push(calibration_check(root, &exe, task, &family));
 
     let report = Report::new(
@@ -1969,9 +2014,54 @@ mod tests {
     }
 
     #[test]
-    fn the_snapshot_and_calibration_come_from_the_repo() {
+    fn each_task_is_graded_on_its_own_snapshot() {
         let root = authoring::repo_root();
-        assert!(root.join(snapshot(&root)).is_dir(), "{}", snapshot(&root));
+        for task in tasks::load(&root).unwrap() {
+            let snapshot = snapshot(&root, &task.dir);
+            assert!(root.join(&snapshot).is_dir(), "{snapshot}");
+            assert_eq!(
+                snapshot, "snapshots/phoenix-spcx-2026-10-29",
+                "{}",
+                task.dir
+            );
+        }
+        // A task on another market: task.toml's `[metadata] snapshot` first,
+        // then the verifier image's MTX_SNAPSHOT, then the Justfile's.
+        let dir = std::env::temp_dir().join(format!("mtx-gates-snap-{}", std::process::id()));
+        let folder = dir.join("bench/tasks/nvda-task");
+        std::fs::create_dir_all(folder.join("tests")).unwrap();
+        std::fs::write(
+            dir.join("Justfile"),
+            "snapshot := \"phoenix-spcx-2026-10-29\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot(&dir, "nvda-task"),
+            "snapshots/phoenix-spcx-2026-10-29"
+        );
+        std::fs::write(
+            folder.join("tests/Dockerfile"),
+            "FROM x\nENV MTX_SNAPSHOT=/opt/mtx/snapshots/phoenix-perps-oracles-2026-11-13\n",
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot(&dir, "nvda-task"),
+            "snapshots/phoenix-perps-oracles-2026-11-13"
+        );
+        std::fs::write(
+            folder.join("task.toml"),
+            "[task]\nname = \"x\"\n\n[metadata]\nsnapshot = \"phoenix-perps-2026-11-13\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot(&dir, "nvda-task"),
+            "snapshots/phoenix-perps-2026-11-13"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_calibration_comes_from_the_repo() {
         let dir = std::env::temp_dir().join(format!("mtx-gates-cal-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("calibration/market")).unwrap();
         for f in [
