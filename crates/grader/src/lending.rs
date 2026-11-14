@@ -1716,6 +1716,7 @@ impl Account for LendingAccount {
             order: None,
             participation: None,
             net: None,
+            start_position: 0.0,
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),

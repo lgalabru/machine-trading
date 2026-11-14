@@ -208,6 +208,10 @@ pub struct SessionReport {
     /// A spot session scored net of the starting holding's drift.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
+    /// A perp session that starts holding a position: what it started
+    /// with in the scenario's market, in base units.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub start_position: f64,
     /// A perp session with close-outs: what each residual cost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub close_outs: Vec<crate::orders::CloseOutReport>,
@@ -480,6 +484,10 @@ impl SessionReport {
             _ => self.max_drawdown_usd,
         }
     }
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 /// Run one session. An error before the bot starts comes back as

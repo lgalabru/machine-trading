@@ -1146,6 +1146,7 @@ impl Account for SpotAccount {
             order,
             participation,
             net,
+            start_position: 0.0,
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
