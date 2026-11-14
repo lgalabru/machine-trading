@@ -171,7 +171,10 @@ impl Cranks {
             .iter_mut()
             .flat_map(|crank| crank.forced_closes())
             .collect();
-        let liquidator = self.cranks.iter().find_map(|crank| crank.liquidator_report());
+        let liquidator = self
+            .cranks
+            .iter()
+            .find_map(|crank| crank.liquidator_report());
         CrankReport {
             refusals: self.refusals,
             closes,

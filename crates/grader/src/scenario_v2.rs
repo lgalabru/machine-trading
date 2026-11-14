@@ -1517,7 +1517,10 @@ mod tests {
     fn a_liquidator_lives_on_the_perp_venue_and_round_trips_through_v1() {
         use crate::keeper::Liquidator;
         let mut s = shock();
-        s.venues.perp.get_or_insert_with(Default::default).liquidator = Some(Liquidator {
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
             reaction_slots: [2, 12],
             check_every_steps: 1,
         });
@@ -1530,7 +1533,11 @@ mod tests {
 
         // Absent, nothing of it is written: scenarios without a keeper
         // serialize as they did.
-        assert!(!serde_json::to_string(&shock()).unwrap().contains("liquidator"));
+        assert!(
+            !serde_json::to_string(&shock())
+                .unwrap()
+                .contains("liquidator")
+        );
 
         let mut backwards = s.clone();
         backwards.venues.perp.as_mut().unwrap().liquidator = Some(Liquidator {
@@ -1556,7 +1563,10 @@ mod tests {
             }),
         });
         s.validate().unwrap();
-        s.venues.perp.get_or_insert_with(Default::default).liquidator = Some(Liquidator {
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
             reaction_slots: [2, 12],
             check_every_steps: 1,
         });

@@ -227,11 +227,7 @@ pub fn liquidate_via_market_order(
 /// `ForceCancelRiskIncreasing`: cancels `trader`'s risk-increasing orders
 /// on the market, which Phoenix lets any signer do while the trader is
 /// liquidatable. A liquidation needs them gone first.
-pub fn force_cancel_risk_increasing(
-    keys: &Keys,
-    keeper: Pubkey,
-    trader: Pubkey,
-) -> Instruction {
+pub fn force_cancel_risk_increasing(keys: &Keys, keeper: Pubkey, trader: Pubkey) -> Instruction {
     let mut accounts = keys.head().to_vec();
     accounts.extend([
         AccountMeta::new_readonly(keeper, true),

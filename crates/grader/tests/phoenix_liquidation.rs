@@ -22,7 +22,9 @@ use mtx_core::AccountMeter;
 use mtx_grader::{
     chain::{self, Override},
     guard::Guard,
-    keeper::{Keys, force_cancel_risk_increasing, liquidate_via_market_order, liquidation_transfer},
+    keeper::{
+        Keys, force_cancel_risk_increasing, liquidate_via_market_order, liquidation_transfer,
+    },
     phoenix::{self, Phoenix},
     snapshot,
     venue::{Market, perps::PerpMarket},
@@ -93,10 +95,15 @@ impl Rig {
         let rpc = mtx_kit::rpc_client_with_timeout(&url, Duration::from_secs(600));
         let phoenix = Phoenix::new(world.exchange.clone(), &url);
         let (victim, keeper, outsider) = (key(0), key(1), key(2));
-        let victim_trader =
-            phoenix::onboard_traders_stepped(&world.surfnet, &phoenix, &rpc, &[&victim], DEPOSIT_USDC)
-                .await
-                .unwrap()[0];
+        let victim_trader = phoenix::onboard_traders_stepped(
+            &world.surfnet,
+            &phoenix,
+            &rpc,
+            &[&victim],
+            DEPOSIT_USDC,
+        )
+        .await
+        .unwrap()[0];
         let keeper_trader = phoenix::onboard_traders_stepped(
             &world.surfnet,
             &phoenix,
@@ -128,11 +135,7 @@ impl Rig {
             victim.pubkey(),
         )
         .unwrap();
-        let keys = Keys::of(
-            phoenix.exchange(),
-            phoenix.market(SYMBOL).unwrap(),
-        )
-        .unwrap();
+        let keys = Keys::of(phoenix.exchange(), phoenix.market(SYMBOL).unwrap()).unwrap();
         Rig {
             world,
             _guard: guard,
@@ -218,7 +221,8 @@ impl Rig {
         let mark = self.mark_ticks().await;
         let through = mark / 10;
         let limit = if long { mark - through } else { mark + through };
-        let ix = liquidate_via_market_order(&self.keys, by.pubkey(), self.victim_trader, lots, limit);
+        let ix =
+            liquidate_via_market_order(&self.keys, by.pubkey(), self.victim_trader, lots, limit);
         mtx_kit::send(&self.rpc, by, vec![ix], "liquidate")
             .map(|_| ())
             .map_err(|error| error.to_string())
@@ -290,7 +294,13 @@ async fn liquidation_rules() {
     table(
         "healthy account",
         status(refused.is_err()),
-        format!("refused: {}", refused.as_ref().err().map_or("NOT REFUSED".into(), |e| short(e))),
+        format!(
+            "refused: {}",
+            refused
+                .as_ref()
+                .err()
+                .map_or("NOT REFUSED".into(), |e| short(e))
+        ),
     );
     assert!(refused.is_err(), "a healthy account was liquidated");
 
@@ -326,26 +336,39 @@ async fn liquidation_rules() {
             margin.high_risk_margin_quote_lots as f64 / 1e6,
         ),
     );
-    assert!(margin.is_liquidatable != 0, "the move left the account healthy");
+    assert!(
+        margin.is_liquidatable != 0,
+        "the move left the account healthy"
+    );
 
     // Who may call: a wallet with SOL and no trader account of its own.
-    let too_big = rig.liquidate(&rig.keeper, before.base_lots.unsigned_abs(), true).await;
+    let too_big = rig
+        .liquidate(&rig.keeper, before.base_lots.unsigned_abs(), true)
+        .await;
     table(
         "over the max size",
         status(too_big.is_err()),
         format!(
             "asked {} lots against a max of {MAX_LIQUIDATION_LOTS}: {}",
             before.base_lots,
-            too_big.as_ref().err().map_or("NOT REFUSED".into(), |e| short(e))
+            too_big
+                .as_ref()
+                .err()
+                .map_or("NOT REFUSED".into(), |e| short(e))
         ),
     );
-    let outsider = rig.liquidate(&rig.outsider, MAX_LIQUIDATION_LOTS, true).await;
+    let outsider = rig
+        .liquidate(&rig.outsider, MAX_LIQUIDATION_LOTS, true)
+        .await;
     table(
         "permission",
         "NOTE",
         format!(
             "a funded wallet with no trader account: {}",
-            outsider.as_ref().map_or_else(|e| format!("refused: {}", short(e)), |_| "liquidated".into())
+            outsider.as_ref().map_or_else(
+                |e| format!("refused: {}", short(e)),
+                |_| "liquidated".into()
+            )
         ),
     );
     let keeper = if outsider.is_ok() {
@@ -358,7 +381,10 @@ async fn liquidation_rules() {
         status(keeper.is_ok()),
         format!(
             "an onboarded keeper: {}",
-            keeper.as_ref().map_or_else(|e| format!("refused: {}", short(e)), |_| "liquidated".into())
+            keeper.as_ref().map_or_else(
+                |e| format!("refused: {}", short(e)),
+                |_| "liquidated".into()
+            )
         ),
     );
     assert!(keeper.is_ok(), "no wallet could liquidate");
@@ -387,7 +413,8 @@ async fn liquidation_rules() {
     let mut held = after_first.base_lots;
     let mut m = rig.margin().await;
     while m.is_liquidatable != 0 && held != 0 && calls < 10 {
-        rig.liquidate(&rig.keeper, MAX_LIQUIDATION_LOTS, true).await
+        rig.liquidate(&rig.keeper, MAX_LIQUIDATION_LOTS, true)
+            .await
             .unwrap_or_else(|e| panic!("call {}: {}", calls + 1, short(&e)));
         calls += 1;
         held = rig.asset().await.base_lots;
@@ -425,15 +452,24 @@ async fn backstop_liquidation() {
             .await
             .unwrap();
         let to = (start_ticks as f64 * (1.0 - 6.0 / 100.0)).round() as u64;
-        let (moves, last) =
-            phoenix::market_move(rig.phoenix.perp_asset_map().unwrap(), SYMBOL, start_ticks, to, 1);
+        let (moves, last) = phoenix::market_move(
+            rig.phoenix.perp_asset_map().unwrap(),
+            SYMBOL,
+            start_ticks,
+            to,
+            1,
+        );
         chain::register_scenario(&rig.rpc, "move", moves).unwrap();
         rig.step(last + 4).await;
         let margin = rig.margin().await;
         let before = rig.asset().await;
         let value_before = rig.value().await;
         let mark = rig.phoenix.ticks_to_usd(&market, rig.mark_ticks().await);
-        let name = if transfer { "backstop transfer" } else { "backstop market order" };
+        let name = if transfer {
+            "backstop transfer"
+        } else {
+            "backstop market order"
+        };
         table(
             name,
             "NOTE",
@@ -445,7 +481,10 @@ async fn backstop_liquidation() {
                 margin.backstop_margin_quote_lots as f64 / 1e6,
             ),
         );
-        assert!(margin.is_liquidatable != 0, "the move left the account healthy");
+        assert!(
+            margin.is_liquidatable != 0,
+            "the move left the account healthy"
+        );
         let sent = if transfer {
             let ix = liquidation_transfer(
                 &rig.keys,
@@ -459,7 +498,8 @@ async fn backstop_liquidation() {
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         } else {
-            rig.liquidate(&rig.keeper, before.base_lots.unsigned_abs(), true).await
+            rig.liquidate(&rig.keeper, before.base_lots.unsigned_abs(), true)
+                .await
         };
         let after = rig.asset().await;
         let value_after = rig.value().await;
@@ -477,7 +517,8 @@ async fn backstop_liquidation() {
             status(sent.is_ok()),
             format!(
                 "{}: the victim's position {} -> {} lots ({:.0} shares at {mark:.2}), its value fell ${:.2}; the keeper's own position is {keeper_position} lots",
-                sent.as_ref().map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
+                sent.as_ref()
+                    .map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
                 before.base_lots,
                 after.base_lots,
                 moved as f64 * lot,
@@ -525,7 +566,10 @@ async fn resting_orders_are_force_cancelled_first() {
             break;
         }
     }
-    assert!(margin.is_liquidatable != 0, "no move left the account liquidatable");
+    assert!(
+        margin.is_liquidatable != 0,
+        "no move left the account liquidatable"
+    );
     let held = rig.asset().await.base_lots;
     let blocked = rig.liquidate(&rig.keeper, held.unsigned_abs(), true).await;
     table(
@@ -534,7 +578,10 @@ async fn resting_orders_are_force_cancelled_first() {
         format!(
             "after -{dropped}% (tier {}): a liquidation with a bid resting is {}",
             margin.risk_tier,
-            blocked.as_ref().err().map_or("NOT REFUSED".into(), |e| format!("refused: {}", short(e)))
+            blocked
+                .as_ref()
+                .err()
+                .map_or("NOT REFUSED".into(), |e| format!("refused: {}", short(e)))
         ),
     );
     let cancel = force_cancel_risk_increasing(&rig.keys, rig.keeper.pubkey(), rig.victim_trader);
@@ -548,9 +595,13 @@ async fn resting_orders_are_force_cancelled_first() {
         status(cancelled.is_ok() && again.is_ok()),
         format!(
             "the keeper's force cancel: {}; liquidatable after it: {}; then the liquidation: {}",
-            cancelled.as_ref().map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
+            cancelled
+                .as_ref()
+                .map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
             after_cancel.is_liquidatable,
-            again.as_ref().map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
+            again
+                .as_ref()
+                .map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
         ),
     );
     assert!(blocked.is_err() && cancelled.is_ok() && again.is_ok());
