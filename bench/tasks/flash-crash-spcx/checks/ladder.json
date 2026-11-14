@@ -172,7 +172,7 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_BLEND": "0.29",
-        "MTX_PROBE_CRASH_BELOW": "0.1"
+        "MTX_PROBE_CRASH_BELOW": "0.03"
       },
       "may_breach": true
     },
@@ -182,7 +182,7 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_BLEND": "0.29",
-        "MTX_PROBE_CRASH_BELOW": "0.1",
+        "MTX_PROBE_CRASH_BELOW": "0.03",
         "MTX_PROBE_CRASH": "fatal"
       },
       "may_breach": true
