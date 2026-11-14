@@ -1434,6 +1434,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_trial_whose_v2_headline_grade_failed_is_not_graded() {
+        // `mtx grade --scoring v2-headline` that v2 couldn't score writes
+        // neither report.json nor reward.json: the trial reads as finished
+        // without a grade, with no score from v1 or anything else.
+        let dir =
+            std::env::temp_dir().join(format!("mtx-review-{}", uuid::Uuid::new_v4().simple()));
+        let trial = dir.join("job/trial-1");
+        std::fs::create_dir_all(trial.join("verifier")).unwrap();
+        std::fs::write(
+            trial.join("result.json"),
+            r#"{"trial_name": "trial-1", "finished_at": "2026-11-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            trial.join("verifier/test-stdout.txt"),
+            "--scoring v2: no informed bot",
+        )
+        .unwrap();
+        let root = Root {
+            label: "test".into(),
+            path: dir.clone(),
+            published: false,
+        };
+        let s = summary(&root, 0, &trial);
+        assert_eq!(s["status"], "error");
+        assert_eq!(s["graded"], false);
+        assert!(s["reward"].is_null() && s["skill"].is_null());
+        let (trials, sessions) = crate::tables::tables(&dir, "test");
+        assert!(sessions.is_empty());
+        assert_eq!(trials.len(), 1);
+        for t in &trials {
+            assert_eq!(t["graded"], false);
+            assert!(t["reward"].is_null() && t["skill"].is_null());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn only_trial_files_are_served() {
         assert!(allowed("artifacts/app/bot/src/main.rs"));
         assert!(allowed("verifier/bot/hidden-3.log"));

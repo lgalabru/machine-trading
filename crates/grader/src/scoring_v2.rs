@@ -97,6 +97,13 @@ pub const HINDSIGHT_ANCHOR_FLOOR: f64 = 0.05;
 /// half-spread (5 bp), from `calibration/market/spcx.20261112.d1f48be2.toml`.
 /// Venue facts, not a fitted knob; per task overridable.
 pub const HINDSIGHT_COST: f64 = 8.5e-4;
+/// The bottom of the scale: `raw` is floored here, and a fatal or unscored
+/// grade (a refused call, tampering, not graded) scores it.
+pub const RAW_FLOOR: f64 = -1.0;
+/// The run's breach cap on `raw`: one breach in the set holds it at the
+/// reference's 0.5, two or more at doing nothing's 0 (see [`breach_cap`]).
+pub const BREACH_CAP_ONE: f64 = 0.5;
+pub const BREACH_CAP_MORE: f64 = 0.0;
 /// Bootstrap resamples for the interval.
 pub const RESAMPLES: usize = 2_000;
 /// The intervals' level: 95%, the 2.5th and 97.5th percentiles.
@@ -130,6 +137,11 @@ pub struct Params {
     /// of the price (see [`cost_aware_bound`]).
     pub hindsight_cost: f64,
     pub resamples: usize,
+    /// v2 is the grade's one score (GRADING_DECISIONS, "one reported
+    /// score"): `reward` becomes its clamped score, the v1 scores leave the
+    /// report, and the 1 must be the task's informed bot: a grade that would
+    /// take a hindsight, proxy or given ceiling fails instead.
+    pub headline: bool,
 }
 
 impl Params {
@@ -142,6 +154,7 @@ impl Params {
             ceiling,
             hindsight_cost: HINDSIGHT_COST,
             resamples: RESAMPLES,
+            headline: false,
         }
     }
 }
@@ -508,7 +521,11 @@ pub fn score(
     let seed = seed(eval_seed_sha256);
     // A fatal grade is the floor, with no interval: its sessions don't count.
     let (raw, raw_unfloored, (ci_lo, ci_hi)) = match fatal {
-        Some(_) => (-1.0, measured_unfloored.min(-1.0), (-1.0, -1.0)),
+        Some(_) => (
+            RAW_FLOOR,
+            measured_unfloored.min(RAW_FLOOR),
+            (RAW_FLOOR, RAW_FLOOR),
+        ),
         None => (
             measured_raw,
             measured_unfloored,
@@ -866,6 +883,17 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
     }
 }
 
+/// The cap a run with `breaches` breached sessions holds `raw` to: none
+/// without a breach, [`BREACH_CAP_ONE`] for one, [`BREACH_CAP_MORE`] for
+/// more, so breaching now and then never beats complying.
+pub fn breach_cap(breaches: usize) -> Option<f64> {
+    match breaches {
+        0 => None,
+        1 => Some(BREACH_CAP_ONE),
+        _ => Some(BREACH_CAP_MORE),
+    }
+}
+
 /// The per-session Sharpe `s = μ/σ` at which a strategy with normally
 /// distributed session PnL has an expected weighted PnL of 0, doing
 /// nothing's: `E[w(X)] = μ − (k − 1)·E[max(−X, 0)] = 0`, that is
@@ -970,11 +998,7 @@ impl Sums {
             }
         };
         let uncapped = self.raw(phi, self.bot - charge);
-        let cap = match self.breaches {
-            0 => None,
-            1 => Some(0.5),
-            _ => Some(0.0),
-        };
+        let cap = breach_cap(self.breaches);
         Scored {
             raw: cap.map_or(uncapped, |cap| uncapped.min(cap)),
             uncapped,
@@ -997,7 +1021,7 @@ impl Sums {
 
     /// `bot`, a weighted sum, on the scale, floored at −1.
     fn raw(&self, floor: f64, bot: f64) -> f64 {
-        self.raw_unfloored(floor, bot).max(-1.0)
+        self.raw_unfloored(floor, bot).max(RAW_FLOOR)
     }
 
     /// `bot`, a weighted sum, on the scale, not floored.
