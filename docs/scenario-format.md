@@ -169,6 +169,20 @@ scenario with `stop_out` must allow flat in every instrument's range: a
 `min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
 The code is `crates/grader/src/risk.rs` and the session loop.
 
+On a session on several markets the desk closes every market of the
+account. It cancels the bot's orders on each, then goes round the markets
+in symbol order, one order to each market still open per round, within the
+same 8 orders a step: one market's book can't take the whole budget while
+another's exposure runs on, and a market whose book took nothing gets no
+more orders that step. `slice_base` caps every market's orders in that
+market's own base units, so on markets whose prices differ widely (SPY
+against SPCX, say) it slices the dearer one finer in dollars; set it for
+the market that most needs it. Each close order names its `market`, the
+forced close records each market's position at the trigger in
+`positions_before` (`position_before` stays the primary's), and `flat`
+holds only once every market is flat. The desk's fills on any market are
+marked `forced`.
+
 ## Example
 
 ```json
