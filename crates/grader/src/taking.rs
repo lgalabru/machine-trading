@@ -228,13 +228,10 @@ impl TakeGate {
         self.refused.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    async fn position(
-        &self,
-        send: &[String],
-        view: &str,
-    ) -> Result<Option<f64>, String> {
+    async fn position(&self, send: &[String], view: &str) -> Result<Option<f64>, String> {
         let bundle: Vec<String> = send.iter().cloned().chain([view.to_string()]).collect();
-        let results = crate::raw::simulate_bundle(&self.http, &self.rpc_url, &bundle, &[], 0).await?;
+        let results =
+            crate::raw::simulate_bundle(&self.http, &self.rpc_url, &bundle, &[], 0).await?;
         if results.iter().take(send.len()).any(|r| !r["err"].is_null()) {
             return Ok(None);
         }
@@ -250,7 +247,12 @@ impl TakeGate {
             tracing::warn!("the taking check couldn't simulate the send: {e}");
             Ok(())
         };
-        let views = match crate::raw::view_transactions(&self.phoenix, &self.symbol, &self.authority, false) {
+        let views = match crate::raw::view_transactions(
+            &self.phoenix,
+            &self.symbol,
+            &self.authority,
+            false,
+        ) {
             Ok(views) => views,
             Err(e) => return infra(e),
         };

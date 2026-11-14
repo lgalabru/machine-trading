@@ -959,7 +959,8 @@ pub(crate) fn view_transactions(
     let builder = phoenix.tx();
     let market = phoenix.exact_market(symbol).map_err(|e| e.to_string())?;
     let trader = phoenix.trader_account(authority);
-    let mut views = vec![builder.build_hawkeye_view_margin_for_asset(*authority, 0, 0, market.asset_id)];
+    let mut views =
+        vec![builder.build_hawkeye_view_margin_for_asset(*authority, 0, 0, market.asset_id)];
     if margin {
         views.push(builder.build_hawkeye_view_margin_for_trader(trader));
     }
@@ -991,13 +992,9 @@ pub(crate) async fn touch_without(
     symbol: &str,
     authority: &Pubkey,
 ) -> Result<Option<crate::taking::Touch>, String> {
-    let trader = mtx_kit::PhoenixTrader::new(
-        phoenix.exchange().clone(),
-        symbol,
-        *authority,
-        rpc_url,
-    )
-    .map_err(|e| e.to_string())?;
+    let trader =
+        mtx_kit::PhoenixTrader::new(phoenix.exchange().clone(), symbol, *authority, rpc_url)
+            .map_err(|e| e.to_string())?;
     let plan = trader.plan_cancel_all().map_err(|e| e.to_string())?;
     let step = plan.steps.first().ok_or("no cancel")?;
     let mut cancel = vec![compute_limit(step.compute_unit_limit)];
@@ -1287,7 +1284,10 @@ fn usdc_of(owner: &Pubkey, state: &Value) -> i128 {
 /// One Hawkeye view's return data, from a bundle result: its
 /// `returnData`, or, where the node leaves that out of a bundle's results,
 /// the `Program return:` line the runtime logs for it.
-pub(crate) fn view<T: bytemuck::Pod + Copy>(result: &Value, kind: &'static str) -> Result<T, String> {
+pub(crate) fn view<T: bytemuck::Pod + Copy>(
+    result: &Value,
+    kind: &'static str,
+) -> Result<T, String> {
     let fail = |why: &str| format!("couldn't measure the account after it: {kind}: {why}");
     if !result["err"].is_null() {
         return Err(fail(&result["err"].to_string()));
@@ -2139,7 +2139,10 @@ mod tests {
             .check(&[signed_market(&world, &world.bot, 2).await])
             .await
             .unwrap_err();
-        assert!(refused.contains("as a taker from a position of 0"), "{refused}");
+        assert!(
+            refused.contains("as a taker from a position of 0"),
+            "{refused}"
+        );
         assert!(
             gate.check(&[signed_market(&world, &world.bot, -2).await])
                 .await

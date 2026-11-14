@@ -1638,7 +1638,11 @@ mod tests {
         // One the gate lets through is forwarded, and reads are never gated.
         let (_, sent) = call(&guard, send(2, 0)).await;
         assert!(sent["error"].is_null(), "{sent}");
-        call(&guard, json!({ "jsonrpc": "2.0", "id": 3, "method": "getSlot" })).await;
+        call(
+            &guard,
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "getSlot" }),
+        )
+        .await;
         assert_eq!(*seen.lock().unwrap(), ["sendTransaction", "getSlot"]);
         assert_eq!(*gate.0.lock().unwrap(), 2);
         // A batch with a refused member is refused whole.
