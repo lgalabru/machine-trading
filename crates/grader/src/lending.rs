@@ -1722,6 +1722,7 @@ impl Account for LendingAccount {
                 actions,
             }),
             crank_refusals: done.crank_refusals,
+            forced_closes: done.forced_closes,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
