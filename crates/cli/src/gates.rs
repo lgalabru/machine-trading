@@ -464,10 +464,11 @@ pub fn strength_band(
 }
 
 /// The checks only a task scored by v2 has: its strength band, and the
-/// verifier running its informed bot on the hidden set, which fails until
-/// `mtx grade` can (no fallback to the hindsight ceiling). A v1 task reports
+/// verifier running its informed bot on the hidden set (no fallback to the
+/// hindsight ceiling; see [`informed_on_hidden_sets`]). A v1 task reports
 /// them not run.
 pub fn v2_checks(
+    root: &Path,
     task: &str,
     headline: tasks::Headline,
     ladder: &Value,
@@ -479,15 +480,11 @@ pub fn v2_checks(
         "strength-band",
         "The reference is a fit 0.5 against the informed bot (strength band)",
     );
-    let live = (
-        "informed-on-hidden-sets",
-        "The verifier runs the informed bot on the hidden set",
-    );
     if headline == tasks::Headline::V1 {
         let why = "a v1 task (one of the four that move to v2 in 0.13)";
         return vec![
             Check::not_run(SOLVABLE, band.0, band.1, why),
-            Check::not_run(SOLVABLE, live.0, live.1, why),
+            Check::not_run(SOLVABLE, INFORMED_LIVE.0, INFORMED_LIVE.1, why),
         ];
     }
     let mut checks = Vec::new();
@@ -523,25 +520,96 @@ pub fn v2_checks(
             strength_band(summary, &anchors, &settings, fast)
         }
     });
-    checks.push(if !has_command(&["grade"], Some("informed")) {
+    checks.push(informed_on_hidden_sets(root, task, test));
+    checks
+}
+
+const INFORMED_LIVE: (&str, &str) = (
+    "informed-on-hidden-sets",
+    "The verifier runs the informed bot on the hidden set",
+);
+
+/// A v2 task's verifier runs its informed bot on every hidden set it draws,
+/// so the grade's 1 is measured on the sessions the bot played: `mtx grade
+/// --informed` exists; tests/test.sh draws its set and grades only a
+/// strategy component (no files or network, so nothing the informed bot was
+/// told can reach it); it passes `--informed` at the path the image builds
+/// the task's informed bot into, which `bench/image/anchors.txt` lists; and
+/// the informed bot is written (not the scaffold's copy of the reference).
+pub fn informed_on_hidden_sets(root: &Path, task: &str, test: &str) -> Check {
+    let (id, title) = INFORMED_LIVE;
+    if !has_command(&["grade"], Some("informed")) {
         // No fallback: a v2 grade without the informed bot on its hidden
         // sessions fails, so the task can't be released until it runs.
-        Check::fail(
+        return Check::fail(
             SOLVABLE,
-            live.0,
-            live.1,
-            "`mtx grade --informed` isn't in this build yet: a hidden grade has no informed bot's PnL, and v2 as the one score doesn't fall back to the hindsight ceiling, so the task isn't releasable until it is",
+            id,
+            title,
+            "`mtx grade --informed` isn't in this build: a hidden grade has no informed bot's PnL, and v2 as the one score doesn't fall back to the hindsight ceiling, so the task isn't releasable",
+        );
+    }
+    let loaded = match tasks::load_one(root, task.to_string()) {
+        Ok(t) => t,
+        Err(e) => return Check::fail(SOLVABLE, id, title, format!("{e:#}")),
+    };
+    let path = format!("/opt/mtx/anchors/{}", loaded.informed_anchor());
+    let mut problems = Vec::new();
+    for (flag, why) in [
+        ("--draw", "draws no hidden set"),
+        (
+            "--components-only",
+            "doesn't grade only a strategy component (`--components-only`)",
+        ),
+    ] {
+        if !scoring_text::has_flag(test, flag) {
+            problems.push(format!("tests/test.sh {why}"));
+        }
+    }
+    match scoring_text::flag_value(test, "--informed") {
+        None => problems.push("tests/test.sh doesn't pass `mtx grade --informed`".into()),
+        Some(given) if given != path => problems.push(format!(
+            "tests/test.sh runs the informed bot from {given}, not {path}, where the image builds it"
+        )),
+        Some(_) => {}
+    }
+    match &loaded.informed {
+        None => problems.push(
+            "the ladder's `anchors.informed` names no rung with a bot crate for the image to build"
+                .into(),
+        ),
+        Some(bot) => {
+            let line = format!(
+                "{} {} {} {}",
+                loaded.informed_anchor(),
+                bot.package,
+                bot.bin,
+                bot.dir
+            );
+            let listed = std::fs::read_to_string(root.join("bench/image/anchors.txt"))
+                .unwrap_or_default()
+                .lines()
+                .any(|l| l == line);
+            if !listed {
+                problems.push(format!(
+                    "bench/image/anchors.txt doesn't list `{line}` (run `mtx task sync`)"
+                ));
+            }
+        }
+    }
+    problems.extend(authoring::anchor_problems(root, task));
+    if problems.is_empty() {
+        Check::pass(
+            SOLVABLE,
+            id,
+            title,
+            format!(
+                "tests/test.sh grades with `--informed {path}`, which the image builds from {}",
+                loaded.informed.map(|b| b.dir).unwrap_or_default()
+            ),
         )
     } else {
-        Check::from(
-            SOLVABLE,
-            live.0,
-            live.1,
-            scoring_text::has_flag(test, "--informed"),
-            "tests/test.sh passes `mtx grade --informed`",
-        )
-    });
-    checks
+        Check::fail(SOLVABLE, id, title, problems.join("; "))
+    }
 }
 
 fn total(summary: &LadderSummary, rung: &str) -> Option<f64> {
@@ -1383,6 +1451,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
     checks.extend(v2_checks(
+        root,
         task,
         headline,
         &config,
@@ -1615,71 +1684,54 @@ mod tests {
             "rungs": [
                 { "name": "blind-long", "dir": "bench/checks/ladder/blind-long" },
                 { "name": "reference", "dir": "bench/tasks/t-spcx/reference" },
-                { "name": "informed", "dir": "bench/tasks/t-spcx/checks/bots/informed", "tell_regime": true }
+                { "name": "informed", "dir": "bench/tasks/t-spcx/checks/bots/informed", "tell_latent": true }
             ]
         });
-        let v2 = v2_checks(
-            "t-spcx",
-            tasks::Headline::V2,
-            &named,
-            Some(&fit),
-            test,
-            false,
+        let root = authoring::repo_root();
+        let v2 = |ladder: &Value, summary, test| {
+            v2_checks(
+                &root,
+                "flash-crash-spcx",
+                tasks::Headline::V2,
+                ladder,
+                summary,
+                test,
+                false,
+            )
+        };
+        let checks = v2(&named, Some(&fit), test);
+        assert_eq!(checks[0].id, "strength-band");
+        assert_eq!(checks[0].status, Status::Pass, "{}", checks[0].detail);
+        // A verifier that doesn't run the informed bot isn't releasable.
+        assert_eq!(checks[1].id, "informed-on-hidden-sets");
+        assert_eq!(checks[1].status, Status::Fail);
+        assert!(
+            checks[1].detail.contains("--informed"),
+            "{}",
+            checks[1].detail
         );
-        assert_eq!(v2[0].id, "strength-band");
-        assert_eq!(v2[0].status, Status::Pass, "{}", v2[0].detail);
-        // Until `mtx grade --informed` exists, no v2 task is releasable.
-        assert_eq!(v2[1].status, Status::Fail);
-        let none = v2_checks(
-            "t-spcx",
-            tasks::Headline::V2,
-            &serde_json::json!({}),
-            Some(&fit),
-            test,
-            false,
-        );
+        let none = v2(&serde_json::json!({}), Some(&fit), test);
         assert_eq!(none[0].status, Status::Fail);
         assert!(none[0].detail.contains("names no `anchors`"));
         let typo = serde_json::json!({ "anchors": { "reference": "reference", "informd": "x" } });
-        let typo = v2_checks(
-            "t-spcx",
-            tasks::Headline::V2,
-            &typo,
-            Some(&fit),
-            test,
-            false,
-        );
+        let typo = v2(&typo, Some(&fit), test);
         assert_eq!(typo[0].status, Status::Fail, "{}", typo[0].detail);
         // A `reference` rung that runs another bot (a blind bet here) can't
         // be certified as the 0.5, however its numbers fall.
         let mut swapped = named.clone();
         swapped["anchors"]["reference"] = serde_json::json!("blind-long");
         let fit_swapped = sessions(&[&[("blind-long", REFERENCE), ("informed", INFORMED)]]);
-        let swapped = v2_checks(
-            "t-spcx",
-            tasks::Headline::V2,
-            &swapped,
-            Some(&fit_swapped),
-            test,
-            false,
-        );
+        let swapped = v2(&swapped, Some(&fit_swapped), test);
         assert_eq!(swapped[0].status, Status::Fail);
         assert!(
             swapped[0].detail.contains("not the task's reference bot"),
             "{}",
             swapped[0].detail
         );
-        // An informed rung that isn't told the regime isn't the 1.
+        // An informed rung that isn't told the latent state isn't the 1.
         let mut untold = named.clone();
-        untold["rungs"][2]["tell_regime"] = serde_json::json!(false);
-        let untold = v2_checks(
-            "t-spcx",
-            tasks::Headline::V2,
-            &untold,
-            Some(&fit),
-            test,
-            false,
-        );
+        untold["rungs"][2]["tell_latent"] = serde_json::json!(false);
+        let untold = v2(&untold, Some(&fit), test);
         assert_eq!(untold[0].status, Status::Fail);
         assert!(
             untold[0].detail.contains("isn't told"),
@@ -1689,14 +1741,7 @@ mod tests {
         // Nor one whose breaches the ladder would leave out of its clean runs.
         let mut breaching = named.clone();
         breaching["rungs"][1]["may_breach"] = serde_json::json!(true);
-        let breaching = v2_checks(
-            "t-spcx",
-            tasks::Headline::V2,
-            &breaching,
-            Some(&fit),
-            test,
-            false,
-        );
+        let breaching = v2(&breaching, Some(&fit), test);
         assert_eq!(breaching[0].status, Status::Fail);
         assert!(
             breaching[0].detail.contains("`may_breach`"),
@@ -1704,7 +1749,8 @@ mod tests {
             breaching[0].detail
         );
         let v1 = v2_checks(
-            "t-spcx",
+            &root,
+            "flash-crash-spcx",
             tasks::Headline::V1,
             &serde_json::json!({}),
             None,
