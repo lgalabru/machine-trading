@@ -652,7 +652,7 @@ impl Mandate {
     pub fn check_sample(&self, sample: &Sample, start: &ExposureStart) -> Option<Breach> {
         if let Some(limit) = self.limits.max_gross_notional_usd {
             let notional = self.gross_notional_usd(sample);
-            if notional > limit + slack(limit) {
+            if over(notional, limit) {
                 return Some(Breach::GrossNotional { notional, limit });
             }
         }
@@ -662,7 +662,7 @@ impl Mandate {
             }
             let value = exposure.value(sample);
             let limit = exposure.bound(start.0.get(i).copied().unwrap_or(0.0));
-            if value.abs() > limit + slack(limit) {
+            if over(value.abs(), limit) {
                 return Some(Breach::Exposure {
                     name: exposure.name.clone(),
                     value,
@@ -678,7 +678,7 @@ impl Mandate {
             let notional = sample.notional(&allowance.instrument);
             let against_notional = sample.notional(&hedge.against);
             let bound = hedge.max_ratio * against_notional.abs();
-            if notional * against_notional > 0.0 || notional.abs() > bound + slack(bound) {
+            if notional * against_notional > 0.0 || over(notional.abs(), bound) {
                 return Some(Breach::Hedge {
                     instrument: allowance.instrument.clone(),
                     against: hedge.against.clone(),
@@ -746,6 +746,13 @@ impl Mandate {
 /// it, as for positions.
 fn slack(bound: f64) -> f64 {
     bound.abs() * POSITION_TOLERANCE
+}
+
+/// Whether `value` breaks `bound`. A measurement the enforcer couldn't
+/// price, a non-finite value or bound, breaks it: a rule that can't be
+/// checked is never read as kept.
+fn over(value: f64, bound: f64) -> bool {
+    !value.is_finite() || !bound.is_finite() || value > bound + slack(bound)
 }
 
 fn positive(name: &str, value: f64) -> std::result::Result<(), String> {
@@ -1891,5 +1898,45 @@ mod tests {
         let json = serde_json::to_value(&breach).unwrap();
         assert_eq!(json["rule"], "taking");
         assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
+    }
+
+    #[test]
+    fn a_measurement_without_a_finite_price_breaks_the_rules_it_feeds() {
+        let mut gross = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        gross.version = "v0.1".into();
+        gross.limits.max_gross_notional_usd = Some(10_000.0);
+        let none = ExposureStart::default();
+        for price in [f64::NAN, f64::INFINITY] {
+            let holdings = [(spcx(), 1.0, price)];
+            assert!(matches!(
+                gross.check_sample(&at(0, &holdings), &none),
+                Some(Breach::GrossNotional { .. })
+            ));
+        }
+        let mut book = book();
+        book.term = None;
+        let wide = ExposureStart(vec![-1e12]);
+        let nan_qqq = vec![(qqq(), -10.0, f64::NAN), (spy(), 10.0, 600.0)];
+        assert!(matches!(
+            book.check_sample(&at(0, &nan_qqq), &wide),
+            Some(Breach::Exposure { .. })
+        ));
+        // A start the enforcer couldn't price leaves no bound to keep.
+        let fine = held(-10_000.0, 6_000.0);
+        assert!(matches!(
+            book.check_sample(&at(0, &fine), &ExposureStart(vec![f64::NAN])),
+            Some(Breach::Exposure { .. })
+        ));
+        book.limits.exposures.clear();
+        assert!(matches!(
+            book.check_sample(&at(0, &nan_qqq), &wide),
+            Some(Breach::Hedge { .. })
+        ));
+        let nan_spy = vec![(qqq(), -10.0, 500.0), (spy(), 10.0, f64::NAN)];
+        assert!(matches!(
+            book.check_sample(&at(0, &nan_spy), &wide),
+            Some(Breach::Hedge { .. })
+        ));
+        assert_eq!(book.check_sample(&at(0, &fine), &wide), None);
     }
 }

@@ -183,7 +183,10 @@ these holds:
 10. **Taking.** The account has a fill as the taker, in an instrument whose
     allowance sets `taking` to `"reduce_only"`, that leaves its position
     further from zero than before the fill, or on the other side of zero.
-    A fill as the maker is never a take.
+    A fill as the maker is never a take. A take is judged against the
+    position when it executes, not when the order was sent: an agent that
+    can't be sure of that position can use the venue's own reduce-only
+    order flag, which the venue applies at execution.
 
 Rules 7 to 9 hold at any one measurement: each is checked against what the
 account holds at that moment, at that moment's prices, not against ranges
@@ -195,7 +198,8 @@ The rules are cumulative: a mandate allows only what every rule allows.
 
 An instrument's **notional** is the position, signed as its instrument
 profile signs it, times its price in USD per base unit: negative for a short
-or a borrow. The enforcer MUST use one price per instrument at each
+or a borrow. The position is the account's net holding in the instrument,
+across all of its sub-accounts on the venue. The enforcer MUST use one price per instrument at each
 measurement, and state which. It SHOULD be a price the agent's own trading
 cannot move, such as an index or an oracle, so that an agent cannot loosen a
 notional limit by pushing a mark.
@@ -277,7 +281,12 @@ sessions, at the scenario's level for each market (its book level where the
 session values the account at the book), not at Phoenix's mark. A spot
 session does not check them yet, so a spot scenario may not use them. No
 session tells taker fills from maker fills yet, so no scenario may use
-`taking`.
+`taking`. Every session starts flat, so no scenario may use
+`max_abs_fraction_of_start` yet: it would bound the exposure at zero. The
+grader's pre-trade gate on raw sends refuses a send that would break a
+position cap or the drawdown limit, but does not check rules 7 to 9: a raw send that takes the
+account over a notional limit is let through and the session is
+disqualified by the audit.
 
 ## Changes in later versions
 
