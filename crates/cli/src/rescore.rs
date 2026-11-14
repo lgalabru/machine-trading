@@ -186,7 +186,14 @@ pub fn rescore(
                 .scenarios
                 .iter()
                 .any(|s| s.informed_pnl_usd.is_none());
-        if needs_hindsight {
+        // A grade that recorded which reference sessions it read is checked
+        // against them (see `check_reference_sessions`).
+        let recorded = original["v2"]["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|s| s.get("reference_session_sha256").is_some());
+        if needs_hindsight || recorded {
             report.anchors = report
                 .scenarios
                 .iter()
@@ -211,11 +218,11 @@ pub fn rescore(
             .score_v2(params)
             .with_context(|| path.display().to_string())?;
         if let Some(v2) = &report.v2 {
-            check_reference_marks(
+            check_reference_sessions(
                 &original,
                 v2.sessions
                     .iter()
-                    .map(|s| (s.scenario.as_str(), s.reference_marks_sha256.as_deref())),
+                    .map(|s| (s.scenario.as_str(), s.reference_session_sha256.as_deref())),
             )
             .with_context(|| path.display().to_string())?;
         }
@@ -233,10 +240,10 @@ pub fn rescore(
     })
 }
 
-/// The reference sessions a rescore's hindsight ceiling read must be the
-/// ones the grade read: each session's `reference_marks_sha256`, where both
+/// The reference sessions a rescore reads (for the hindsight ceiling and
+/// the near-breach charge's anchor) must be the ones the grade read: each session's `reference_session_sha256`, where both
 /// the report and the rescore have one, must match.
-fn check_reference_marks<'a>(
+fn check_reference_sessions<'a>(
     original: &Value,
     rescored: impl Iterator<Item = (&'a str, Option<&'a str>)>,
 ) -> Result<()> {
@@ -247,7 +254,7 @@ fn check_reference_marks<'a>(
         .filter_map(|s| {
             Some((
                 s["scenario"].as_str()?,
-                s["reference_marks_sha256"].as_str()?,
+                s["reference_session_sha256"].as_str()?,
             ))
         })
         .collect();
@@ -257,7 +264,7 @@ fn check_reference_marks<'a>(
         {
             bail!(
                 "{scenario}: the reference session in details/reference isn't the one the \
-                 grade computed scoring v2's hindsight ceiling on (marks {is}, graded on {was})"
+                 grade scored v2 against (hash {is}, graded on {was})"
             );
         }
     }
@@ -586,16 +593,16 @@ mod tests {
     #[test]
     fn a_rescore_checks_it_read_the_graded_reference_sessions() {
         let original = json!({ "v2": { "sessions": [
-            { "scenario": "hidden-1", "reference_marks_sha256": "aa" },
+            { "scenario": "hidden-1", "reference_session_sha256": "aa" },
             { "scenario": "hidden-2" },
         ] } });
         let same = [("hidden-1", Some("aa")), ("hidden-2", Some("cc"))];
-        assert!(check_reference_marks(&original, same.into_iter()).is_ok());
+        assert!(check_reference_sessions(&original, same.into_iter()).is_ok());
         let swapped = [("hidden-1", Some("bb")), ("hidden-2", None)];
-        let error = check_reference_marks(&original, swapped.into_iter()).unwrap_err();
+        let error = check_reference_sessions(&original, swapped.into_iter()).unwrap_err();
         assert!(error.to_string().contains("hidden-1"), "{error}");
         // A report graded without v2 has nothing to check.
-        assert!(check_reference_marks(&json!({}), swapped.into_iter()).is_ok());
+        assert!(check_reference_sessions(&json!({}), swapped.into_iter()).is_ok());
     }
 
     #[test]

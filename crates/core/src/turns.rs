@@ -68,7 +68,7 @@ pub struct Hello {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reports: Option<Reports>,
     /// The session's seed, for a strategy that wants randomness: the
-    /// scenario's [`scenario_seed`], what a component gets too. Absent from
+    /// scenario's [`scenario_seed`], or salted per grade (v2). Absent from
     /// older graders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
