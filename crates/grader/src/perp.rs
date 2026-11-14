@@ -517,6 +517,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             last_scan: base_slot,
             seen: HashSet::new(),
             fills: Vec::new(),
+            keys: Vec::new(),
         }),
         quotes: match scenario.making.as_ref().and_then(|m| m.obligations) {
             Some(obligations) => Some(QuoteSampler::new(
@@ -810,6 +811,8 @@ struct MakingFills {
     last_scan: u64,
     seen: HashSet<((u64, u32), bool)>,
     fills: Vec<MakingFill>,
+    /// Each fill's key in `seen`, to find it again.
+    keys: Vec<((u64, u32), bool)>,
 }
 
 /// A market-making session's samples of what the bot quotes, for its
@@ -1167,9 +1170,9 @@ impl PerpAccount {
     /// from the chain and decoded as the meter decodes fills, so the ids
     /// match.
     async fn mark_forced(&mut self, closes: &[crate::risk::ForcedClose]) -> Result<()> {
-        let Some(read) = self.fills.as_mut() else {
+        if self.fills.is_none() && self.making_fills.is_none() {
             return Ok(());
-        };
+        }
         let signatures: Vec<&String> = closes
             .iter()
             .flat_map(|close| &close.orders)
@@ -1199,13 +1202,32 @@ impl PerpAccount {
                 .ok_or_else(|| failed(format!("transaction {signature} not found")))?;
             records.add_transaction(&summary, &market);
         }
-        let forced: HashSet<FillId> = records
-            .fills_for(&[self.meter.trader()])
-            .into_iter()
-            .map(|recorded| recorded.fill.id)
-            .collect();
-        for (fill, id) in read.fills.iter_mut().zip(&read.ids) {
-            fill.forced = forced.contains(id);
+        if let Some(read) = self.fills.as_mut() {
+            let forced: HashSet<FillId> = records
+                .fills_for(&[self.meter.trader()])
+                .into_iter()
+                .map(|recorded| recorded.fill.id)
+                .collect();
+            for (fill, id) in read.fills.iter_mut().zip(&read.ids) {
+                fill.forced = forced.contains(id);
+            }
+        }
+        if let Some(read) = self.making_fills.as_mut() {
+            let bot = read.bot;
+            let forced: HashSet<((u64, u32), bool)> = records
+                .fills
+                .iter()
+                .flat_map(|fill| {
+                    [
+                        (fill.taker == bot).then_some((fill.sequence, true)),
+                        (fill.maker == bot).then_some((fill.sequence, false)),
+                    ]
+                })
+                .flatten()
+                .collect();
+            for (fill, key) in read.fills.iter_mut().zip(&read.keys) {
+                fill.forced = forced.contains(key);
+            }
         }
         Ok(())
     }
@@ -1255,8 +1277,10 @@ impl PerpAccount {
         for fill in &records.fills {
             for record in MakingFill::of(fill, &read.bot, &read.parties, self.base_slot) {
                 // A trade between the bot's own accounts is two records.
-                if read.seen.insert((fill.sequence, record.role == "taker")) {
+                let key = (fill.sequence, record.role == "taker");
+                if read.seen.insert(key) {
                     read.fills.push(record);
+                    read.keys.push(key);
                 }
             }
         }
