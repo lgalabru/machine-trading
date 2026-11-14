@@ -6,12 +6,7 @@
 //! every session against it; the copy a bot reads (`MTX_MANDATE`) is for the
 //! bot to plan by. The format is specified in `specs/mandate.md`.
 
-use std::{
-    collections::{BTreeMap, btree_map::Entry},
-    fmt,
-    path::Path,
-    str::FromStr,
-};
+use std::{fmt, path::Path, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -109,14 +104,36 @@ pub struct Allowance {
     pub taking: Option<Taking>,
 }
 
-/// What an order that trades on arrival may do to the position.
+/// What an order that trades on arrival may do to the position. Written
+/// as a string, like an instrument reference: a bot reads one with the
+/// string code it links already, not an enum's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(try_from = "String", into = "&'static str")]
 #[non_exhaustive]
 pub enum Taking {
-    /// Only bring the position toward zero: never open it, add to it or
-    /// take it past zero. Positions are opened by orders that rest.
+    /// `"reduce_only"`: only bring the position toward zero, never open
+    /// it, add to it or take it past zero. Positions are opened by orders
+    /// that rest.
     ReduceOnly,
+}
+
+impl TryFrom<String> for Taking {
+    type Error = String;
+
+    fn try_from(s: String) -> std::result::Result<Self, String> {
+        match s.as_str() {
+            "reduce_only" => Ok(Self::ReduceOnly),
+            _ => Err(format!("taking {s:?}, this reader knows \"reduce_only\"")),
+        }
+    }
+}
+
+impl From<Taking> for &'static str {
+    fn from(taking: Taking) -> Self {
+        match taking {
+            Taking::ReduceOnly => "reduce_only",
+        }
+    }
 }
 
 /// A hedge bound: the allowance's position is held only against
@@ -267,11 +284,13 @@ pub struct Limits {
 pub struct Exposure {
     /// Unique among the mandate's exposures; a breach names it.
     pub name: String,
-    /// Each instrument's weight: the exposure is the sum of weight times
-    /// position times price. A document that weighs an instrument twice is
-    /// refused.
-    #[serde(deserialize_with = "unique_weights")]
-    pub weights: BTreeMap<InstrumentRef, f64>,
+    /// Each instrument and its weight, written as a JSON object: the
+    /// exposure is the sum of weight times position times price. An
+    /// instrument weighed twice is refused, by the reader and by
+    /// [`Mandate::validate`]. A list rather than a map: a bot reads one
+    /// without linking a map's code.
+    #[serde(deserialize_with = "unique_weights", serialize_with = "weights_as_map")]
+    pub weights: Vec<(InstrumentRef, f64)>,
     /// The most the exposure may be, in USD, either way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_abs_usd: Option<f64>,
@@ -293,14 +312,14 @@ fn is_zero(n: &u64) -> bool {
 /// reader would otherwise keep the last.
 fn unique_weights<'de, D>(
     deserializer: D,
-) -> std::result::Result<BTreeMap<InstrumentRef, f64>, D::Error>
+) -> std::result::Result<Vec<(InstrumentRef, f64)>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     struct Weights;
 
     impl<'de> serde::de::Visitor<'de> for Weights {
-        type Value = BTreeMap<InstrumentRef, f64>;
+        type Value = Vec<(InstrumentRef, f64)>;
 
         fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_str("a map from instrument references to weights")
@@ -310,19 +329,14 @@ where
         where
             A: serde::de::MapAccess<'de>,
         {
-            let mut weights = BTreeMap::new();
+            let mut weights: Vec<(InstrumentRef, f64)> = Vec::new();
             while let Some((instrument, weight)) = map.next_entry::<InstrumentRef, f64>()? {
-                match weights.entry(instrument) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(weight);
-                    }
-                    Entry::Occupied(entry) => {
-                        return Err(serde::de::Error::custom(format!(
-                            "{} is weighed twice",
-                            entry.key()
-                        )));
-                    }
+                if weights.iter().any(|(weighed, _)| *weighed == instrument) {
+                    return Err(serde::de::Error::custom(format!(
+                        "{instrument} is weighed twice"
+                    )));
                 }
+                weights.push((instrument, weight));
             }
             Ok(weights)
         }
@@ -331,11 +345,25 @@ where
     deserializer.deserialize_map(Weights)
 }
 
+fn weights_as_map<S>(
+    weights: &[(InstrumentRef, f64)],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.collect_map(
+        weights
+            .iter()
+            .map(|(instrument, weight)| (instrument, weight)),
+    )
+}
+
 impl Exposure {
     /// An exposure bounded at `usd` either way.
     pub fn max_abs_usd(
         name: impl Into<String>,
-        weights: BTreeMap<InstrumentRef, f64>,
+        weights: Vec<(InstrumentRef, f64)>,
         usd: f64,
     ) -> Self {
         Self {
@@ -351,7 +379,7 @@ impl Exposure {
     /// term's start, either way.
     pub fn max_abs_fraction_of_start(
         name: impl Into<String>,
-        weights: BTreeMap<InstrumentRef, f64>,
+        weights: Vec<(InstrumentRef, f64)>,
         fraction: f64,
     ) -> Self {
         Self {
@@ -858,7 +886,10 @@ impl Mandate {
         if exposure.weights.is_empty() {
             return Err(format!("exposure {name:?} has no weights"));
         }
-        for (instrument, weight) in &exposure.weights {
+        for (i, (instrument, weight)) in exposure.weights.iter().enumerate() {
+            if exposure.weights[..i].iter().any(|(w, _)| w == instrument) {
+                return Err(format!("exposure {name:?} weighs {instrument} twice"));
+            }
             if self.allowance(instrument).is_none() {
                 return Err(format!(
                     "exposure {name:?} weighs {instrument}, which isn't in the universe"
@@ -2082,16 +2113,22 @@ mod tests {
         assert!(check(&|m| exposure(m).weights.clear()).is_err());
         assert!(
             check(&|m| {
-                exposure(m).weights.insert(spcx(), 1.0);
+                exposure(m).weights.push((spcx(), 1.0));
             })
             .unwrap_err()
             .contains("universe")
         );
         assert!(
             check(&|m| {
-                exposure(m).weights.insert(qqq().clone(), f64::NAN);
+                exposure(m).weights[0].1 = f64::NAN;
             })
             .is_err()
+        );
+        assert_eq!(
+            check(&|m| {
+                exposure(m).weights.push((qqq().clone(), 2.0));
+            }),
+            Err(r#"exposure "deadline" weighs phoenix:perp:QQQ twice"#.into())
         );
         assert!(check(&|m| exposure(m).max_abs_fraction_of_start = Some(1.5)).is_err());
         assert!(check(&|m| exposure(m).max_abs_fraction_of_start = Some(1.0)).is_ok());

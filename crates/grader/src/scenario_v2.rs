@@ -1540,11 +1540,10 @@ mod tests {
             .map(|a| (a.instrument.clone(), 1.0))
             .collect();
         assert_eq!(both.len(), 2);
-        s.mandate.limits.exposures.push(Exposure::max_abs_usd(
-            "net",
-            both.into_iter().collect(),
-            1_000.0,
-        ));
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_usd("net", both, 1_000.0));
         assert_eq!(s.mandate.validate(), Ok(()));
         assert!(
             s.validate()
