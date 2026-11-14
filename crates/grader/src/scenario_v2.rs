@@ -1955,7 +1955,7 @@ mod tests {
         let mut s = v2(&lending("liquidation"));
         s.venues.spot = spot().venues.spot;
         s.assets.wallet = spot().assets.wallet;
-        refused(&s, "exactly one of perp, spot and lending");
+        refused(&s, "exactly one of perp, spot, lending and stake");
 
         let mut s = v2(&lending("liquidation"));
         s.market_model.path.push(Waypoint::at(4, -1.0));
