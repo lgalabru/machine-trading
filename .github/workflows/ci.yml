@@ -27,6 +27,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: The title is a conventional commit
+        # A squash merge makes the title main's commit subject.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TITLE" =~ ^(feat|fix|docs|chore|refactor|test|ci|build|perf|style|revert)(\([a-z0-9./-]+\))?!?:\ [^[:space:]] ]]; then
+            echo "::error::the title isn't a conventional commit: type(scope): summary, as in 'fix(grader): …'"
+            echo "$TITLE"
+            exit 1
+          fi
       - name: No AI co-authors
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -125,7 +136,7 @@ jobs:
         # session as its scenario allows.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings

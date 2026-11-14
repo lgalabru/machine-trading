@@ -52,8 +52,19 @@ cross-margin account.
   market's sequence number, its `asset_id` and the acting trader account),
   then an `OrderFilled` event for each resting order it took from and a
   `SplineFilled` event for each spline, each naming the maker's trader
-  account, the maker's side, the price in ticks and `base_lots_filled`. The
-  taker is the header's trader account, on the side opposite the maker's.
+  account, the maker's side, the price in ticks, `base_lots_filled` and
+  `quote_lots_filled`. Each run of fills is closed by a `TradeSummary` event
+  whose `trader` is the run's taker, on the side opposite the makers', and
+  which carries the fee the taker paid (`fee_in_quote_lots`). The taker need
+  not be the header's trader: an instruction can match two other parties (a
+  spline that re-centres crosses a stale resting order) and logs that under
+  the same header. The header's trader is the taker only for a run no
+  summary closes. The summary's fee is split across its run of fills by
+  `quote_lots_filled`, each share rounded down and the last fill taking the
+  remainder, so the shares add up to it exactly. A maker's fee is its
+  `maker_fee_rate` applied to the fill's `quote_lots_filled` as Phoenix
+  applies it, in whole quote lots: a fee rounds up, a rebate rounds toward
+  zero.
   Positions live in Phoenix's market-wide state, so a maker's trader account
   is in none of the transactions that fill it: an enforcer reads every
   transaction that names the market's order book (its `marketPubkey` in the

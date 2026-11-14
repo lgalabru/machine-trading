@@ -33,9 +33,14 @@ def trials(batch):
             result = json.load(f)
         if "trial_name" not in result:
             continue
-        model = ((result.get("config") or {}).get("agent") or {}).get("model_name") or (
-            result.get("agent_info") or {}
-        ).get("name")
+        agent = (result.get("config") or {}).get("agent") or {}
+        info = result.get("agent_info") or {}
+        model = agent.get("model_name") or info.get("name")
+        # A model run outside its provider's own harness is its own row. An
+        # agent given by import path has no name in the config: it says it.
+        harness = agent.get("name") or info.get("name")
+        if harness not in (None, "claude-code", "codex"):
+            model = f"{model} · {harness}"
         task = (result.get("task_name") or "").split("/")[-1]
         report_path = os.path.join(os.path.dirname(path), "verifier", "report.json")
         report = None

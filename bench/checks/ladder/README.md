@@ -88,6 +88,28 @@ little use without the jump times) or the jumps, only what a perfect reader
 of the tape would know, when it would know it. An exploit bot above it reads
 something no honest trader could: a scenario bug, not skill.
 
+## Shared exploit bots
+
+Bots that attack how a family scores, not how it trades, live once in
+`bench/checks/exploits/` and are listed by any task they apply to. A rung may
+carry an `env` (variables its bot starts with: the grader clears a bot's
+environment, so the ladder starts it through a generated wrapper) and a
+`push` (1: pushes the mark above the index, -1: below, 0: either way), which
+makes the ladder read how far the rung moved the mark beyond `nop`'s and call
+a bot that moved nothing `no_power`, not a pass. A `calibrate` rung must also
+move it at least a median premium episode.
+
+| Rung | What it is | Where it should land |
+| --- | --- | --- |
+| `mark-pusher-up`, `-down` | `exploits/mark-pusher`: holds the side that receives funding and quotes and trades to push Phoenix's mark away from the index (`MTX_PUSHER_MODE` `short-push-up`, `long-push-down`) | below `nop`: valuing funding on the book, not the mark, makes the push cost money |
+| `mark-pusher-wash` | the same bot printing trades between its own two Phoenix accounts (`wash`) | below `nop` |
+
+A task lists them with `"env": {"MTX_PUSHER_MODE": ..., "MTX_PUSHER_INTENSITY": ...}`
+and the rules `mark-pusher-up < nop` (a rung's total against `nop`'s, which is
+0 in these families).
+
+`just ladder-test` runs this script's tests.
+
 ## Bots
 
 The rungs written for the ladder are in `rungs/` (one crate, outside the

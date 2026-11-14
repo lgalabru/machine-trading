@@ -425,17 +425,22 @@ impl WeekendFamily {
             spot: None,
             faults: None,
             actors: None,
+            takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         };
         (scenario, shape)
     }
