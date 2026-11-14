@@ -321,7 +321,7 @@ impl Correlation {
                 ));
             }
             seen.push((i, j));
-            if !(p.corr_median.abs() <= 1.0)
+            if !(p.corr_median.is_finite() && p.corr_median.abs() <= 1.0)
                 || !(p.corr_spread_sd.is_finite() && p.corr_spread_sd > 0.0)
                 || p.window_minutes == 0
                 || p.n_windows < MIN_WINDOWS
@@ -356,15 +356,15 @@ fn correlation_matrix(name: &str, m: &[Vec<f64>], k: usize) -> std::result::Resu
     if m.len() != k || m.iter().any(|row| row.len() != k) {
         return Err(format!("correlation.{name} must be {k} by {k}"));
     }
-    for i in 0..k {
-        if m[i][i] != 1.0 {
+    for (i, row) in m.iter().enumerate() {
+        if row[i] != 1.0 {
             return Err(format!("correlation.{name} needs a unit diagonal"));
         }
-        for j in 0..i {
-            if m[i][j] != m[j][i] {
+        for (j, v) in row.iter().enumerate().take(i) {
+            if *v != m[j][i] {
                 return Err(format!("correlation.{name} must be symmetric"));
             }
-            if !(m[i][j].abs() < 1.0) {
+            if !(v.is_finite() && v.abs() < 1.0) {
                 return Err(format!("correlation.{name} entries must be in (-1, 1)"));
             }
         }

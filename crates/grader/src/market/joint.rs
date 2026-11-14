@@ -29,6 +29,9 @@ use crate::scenario::{SLOT_SECONDS, SplitMix64};
 pub const MIN_SESSIONS: usize = 30;
 const SPREAD_DRAWS: usize = 200;
 
+/// The assets drawn and each one's generated windows, session by session.
+pub type JointWindows = (Vec<String>, Vec<Vec<Vec<f64>>>);
+
 /// What `mtx market-cal check-joint` prints.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JointReport {
@@ -93,7 +96,7 @@ pub fn joint_windows(
     spec: &ModelSpec,
     count: usize,
     seed: u64,
-) -> Result<(Vec<String>, Vec<Vec<Vec<f64>>>), String> {
+) -> Result<JointWindows, String> {
     let refs: Vec<&Calibration> = calibrations.iter().collect();
     let matrix = correlation.joint_matrix(&refs)?;
     draw_windows(correlation, calibrations, spec, &matrix, count, seed)
@@ -108,7 +111,7 @@ pub fn draw_windows(
     matrix: &[Vec<f64>],
     count: usize,
     seed: u64,
-) -> Result<(Vec<String>, Vec<Vec<Vec<f64>>>), String> {
+) -> Result<JointWindows, String> {
     let minutes = correlation
         .realism
         .pairs
