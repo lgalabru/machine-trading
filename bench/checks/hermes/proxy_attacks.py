@@ -2,10 +2,12 @@
 key scan, each with what must happen. Runs the stand-in provider and the
 proxy on this machine, with throwaway keys; no model, no real key.
 
-    python3 -I proxy_attacks.py --bind <address the proxy listens on> [--other <another address of this machine>]
+    python3 -I proxy_attacks.py --bind <address> [--other <another address>] [--container-image <image>]
 
 `--other` checks the proxy can't be reached on any other address (the
 bench binds it to the docker bridge, not the machine's network address).
+`--container-image` calls it from a container on its own network, as a
+trial does, while this machine's own address holds its share of slots.
 """
 
 import argparse
@@ -19,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -26,6 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 HARNESS = HERE.parent.parent / "harness"
 sys.path.insert(0, str(HARNESS))
+import limits  # noqa: E402
 import models  # noqa: E402
 
 REGISTRY = """
@@ -50,6 +54,24 @@ key = "ATTACK_KEY"
 [echo]
 api = "chat"
 model = "echo-key"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
+[slow]
+api = "chat"
+model = "slow-upstream"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
+[hold]
+api = "chat"
+model = "hold-1s"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
+[hose]
+api = "chat"
+model = "firehose"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
 
@@ -78,8 +100,9 @@ model = "x"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
 """
-ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or")
-LIMIT = 8
+ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or", "slow", "hold", "hose")
+LIMIT = 6
+PER_CLIENT = 4
 
 results = []
 
@@ -101,6 +124,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--other")
+    parser.add_argument("--container-image", help="an image with bash, to call the proxy from a container")
     args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix="proxy-attacks-"))
     key = "sk-attack-" + secrets.token_hex(20)
@@ -111,7 +135,11 @@ def main():
         "MTX_PROXY_SECRET": secrets.token_hex(32),
         "MTX_MODELS": str(work / "models.toml"),
         "MTX_PROXY_MAX_CONNECTIONS": str(LIMIT),
+        "MTX_PROXY_MAX_PER_CLIENT": str(PER_CLIENT),
         "MTX_PROXY_CLIENT_TIMEOUT": "3",
+        "MTX_PROXY_HEAD_TIMEOUT": "1",
+        "MTX_PROXY_HEAD_DEADLINE": "2",
+        "MTX_PROXY_UPSTREAM_TIMEOUT": "2",
     }
     os.environ.update({k: env[k] for k in ("MTX_PROXY_SECRET", "MTX_MODELS")})
     mock_port = free_port("127.0.0.1")
@@ -132,6 +160,8 @@ def main():
         time.sleep(0.5)
         token = {r: models.route_token(r) for r in ROUTES}
 
+        seen_headers = set()
+
         def call(path, body=None, headers=None, method="POST", raw=None, host=None):
             conn = http.client.HTTPConnection(host or url.hostname, url.port, timeout=30)
             data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
@@ -149,6 +179,8 @@ def main():
             except (http.client.IncompleteRead, ConnectionError) as e:
                 content = getattr(e, "partial", b"")
             conn.close()
+            seen_headers.clear()
+            seen_headers.update(k.lower() for k in response.headers.keys())
             return response.status, content
 
         def seen():
@@ -358,20 +390,191 @@ def main():
         status = conn.getresponse().status
         conn.close()
         check(10, "a 64 MB body is refused before it's read", status == 413, str(status))
-        idle = [socket.create_connection((url.hostname, url.port), timeout=10) for _ in range(LIMIT)]
-        time.sleep(0.5)
-        try:
-            blocked = call("/a/chat/completions", ok_body("m-a"), auth("a"))[0]
-        except (OSError, http.client.HTTPException) as e:
-            blocked = type(e).__name__
-        check(10, f"connection {LIMIT + 1} is closed while {LIMIT} are open", blocked != 200, str(blocked))
-        time.sleep(4.5)
+        retry_after = {}
+
+        def tried(port=None, route="a", model="m-a"):
+            try:
+                conn = http.client.HTTPConnection(url.hostname, port or url.port, timeout=30)
+                data = json.dumps(ok_body(model)).encode()
+                conn.request("POST", f"/{route}/chat/completions", body=data, headers=auth(route))
+                response = conn.getresponse()
+                response.read()
+                retry_after[response.status] = response.getheader("Retry-After")
+                conn.close()
+                return response.status
+            except (OSError, http.client.HTTPException) as e:
+                return type(e).__name__
+
+        def opened(n, port=None):
+            return [socket.create_connection((url.hostname, port or url.port), timeout=10) for _ in range(n)]
+
+        # 12. No token is needed to hold a slot, so one client (address)
+        # gets few, and only for the head's few seconds.
+        idle = opened(PER_CLIENT)
+        time.sleep(0.3)
+        over = tried()
+        check(12, f"one address holding {PER_CLIENT} idle connections gets a 503 with Retry-After for another",
+              over == 503 and retry_after.get(503) == "2", f"{over} {retry_after.get(503)}")
+        if args.container_image:
+            # A trial's container has its own address on its own network.
+            network = f"proxy-attacks-{secrets.token_hex(4)}"
+            subprocess.run(["docker", "network", "create", network], check=True, capture_output=True)
+            data = json.dumps(ok_body("m-a"))
+            request = (f"POST /a/chat/completions HTTP/1.0\r\nAuthorization: Bearer $TOKEN\r\n"
+                       f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n\r\n{data}")
+            try:
+                out = subprocess.run(
+                    ["docker", "run", "--rm", "--name", network, "--network", network, "-e", "TOKEN",
+                     "--entrypoint", "bash", args.container_image, "-c",
+                     f"exec 3<>/dev/tcp/{url.hostname}/{url.port}; printf '%s' \"{request.replace(chr(34), chr(92) + chr(34))}\" >&3; head -c 12 <&3"],
+                    env={**os.environ, "TOKEN": token["a"]}, capture_output=True, text=True, timeout=120)
+            finally:
+                subprocess.run(["docker", "network", "rm", network], capture_output=True)
+            check(12, "while a container on another network is still served", out.stdout.startswith("HTTP/1.0 200"),
+                  repr(out.stdout[:40] + out.stderr[-200:]))
+        start = time.monotonic()
         dropped = sum(1 for sock in idle if sock.recv(1) == b"")
+        took = time.monotonic() - start
         for sock in idle:
             sock.close()
-        check(10, "stalled connections are dropped after the client timeout", dropped == LIMIT, f"{dropped}/{LIMIT}")
+        check(12, "connections that send no head are dropped at the head deadline",
+              dropped == len(idle) and took < 4, f"{dropped}/{len(idle)} in {took:.1f}s")
+        time.sleep(0.3)
+        check(12, "the proxy serves again once they're gone", alive())
+        trickle = socket.create_connection((url.hostname, url.port), timeout=10)
+        trickle.sendall(b"POST /a/chat/completions HTTP/1.1\r\n")
+        start, closed = time.monotonic(), False
+        while time.monotonic() - start < 6:
+            try:
+                trickle.sendall(b"X")
+                time.sleep(0.5)
+                trickle.setblocking(False)
+                try:
+                    closed = trickle.recv(1) == b""
+                except BlockingIOError:
+                    pass
+                trickle.setblocking(True)
+            except OSError:
+                closed = True
+            if closed:
+                break
+        took = time.monotonic() - start
+        trickle.close()
+        check(12, "a head sent a byte at a time is cut at the deadline", closed and took < 4, f"closed={closed} {took:.1f}s")
+        slow = socket.create_connection((url.hostname, url.port), timeout=10)
+        data = json.dumps(ok_body("m-a")).encode()
+        head = "".join(f"{k}: {v}\r\n" for k, v in auth("a").items())
+        slow.sendall(f"POST /a/chat/completions HTTP/1.1\r\nHost: x\r\n{head}Content-Length: {len(data)}\r\n\r\n".encode())
+        time.sleep(1.5)
+        slow.sendall(data)
+        answer = slow.recv(64)
+        slow.close()
+        check(12, "a body sent after the head timeout but within the client timeout is served",
+              answer.startswith(b"HTTP/1.0 200"), repr(answer[:30]))
+
+        # 12. The global cap, on a second proxy with no per-address cap.
+        second = subprocess.Popen(
+            [sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", args.bind, "--port", "0", "a"],
+            env={**env, "MTX_PROXY_MAX_PER_CLIENT": "100"}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        try:
+            port = urllib.parse.urlsplit(second.stdout.readline().strip()).port
+            held = opened(LIMIT, port)
+            time.sleep(0.3)
+            over = tried(port)
+            check(12, f"with {LIMIT} open in all, a new connection gets a 503", over == 503, str(over))
+            for sock in held:
+                sock.close()
+            time.sleep(0.3)
+            check(12, "and served once they close", tried(port) == 200, "refused")
+        finally:
+            second.terminate()
+            second.wait()
+
+        # 15. The caps fit the most a Hermes trial calls at once (limits.py):
+        # a proxy at the real caps serves that many from one address.
+        third = subprocess.Popen(
+            [sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", args.bind, "--port", "0", "hold"],
+            env={k: v for k, v in env.items() if not k.startswith("MTX_PROXY_") or k == "MTX_PROXY_SECRET"},
+            stdout=subprocess.PIPE, stderr=open(work / "third.log", "w"), text=True)
+        try:
+            port = urllib.parse.urlsplit(third.stdout.readline().strip()).port
+            statuses = []
+            lock = threading.Lock()
+
+            def one():
+                status = tried(port, "hold", "hold-1s")
+                with lock:
+                    statuses.append(status)
+
+            def fan(n):
+                threads = [threading.Thread(target=one) for _ in range(n)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+
+            fan(limits.WORST_CASE_CALLS)
+            check(15, f"{limits.WORST_CASE_CALLS} calls at once from one trial's address are all served",
+                  statuses.count(200) == limits.WORST_CASE_CALLS, str(sorted(set(map(str, statuses)))))
+            statuses.clear()
+            fan(limits.MAX_PER_CLIENT + 8)
+            check(15, f"beyond {limits.MAX_PER_CLIENT} at once, the rest get a 503 the client can retry",
+                  statuses.count(200) >= limits.MAX_PER_CLIENT - 2 and 503 in statuses
+                  and set(statuses) <= {200, 503}, f"{statuses.count(200)} served, {statuses.count(503)} 503")
+        finally:
+            third.terminate()
+            third.wait()
+        third_log = (work / "third.log").read_text()
+        check(15, "the over-cap log is one line per interval, with a count",
+              third_log.count("answered 503") == 1 and "from " in third_log, third_log[-300:])
+
+        # 16. A client that stops reading is logged as that, not as the provider.
+        conn = socket.create_connection((url.hostname, url.port), timeout=10)
+        data = json.dumps(ok_body("firehose")).encode()
+        head = "".join(f"{k}: {v}\r\n" for k, v in auth("hose").items())
+        conn.sendall(f"POST /hose/chat/completions HTTP/1.1\r\nHost: x\r\n{head}Content-Length: {len(data)}\r\n\r\n".encode() + data)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        time.sleep(6)
+        conn.close()
         time.sleep(0.5)
-        check(10, "the proxy serves again once they're gone", alive())
+        proxy_log = (work / "proxy.log").read_text()
+        check(16, "a client that stops reading is logged as such",
+              "client stopped reading" in proxy_log and "upstream silent" not in proxy_log.split("client stopped reading")[0][-200:],
+              proxy_log[-300:])
+
+        # 13. tool_choice, overflowing numbers, bodies that break the checks.
+        model_call("o", o(tool_choice="auto"), 200, "responses: tool_choice auto passes")
+        model_call("o", o(tool_choice={"type": "function", "name": "terminal"}), 200, "responses: a function tool_choice passes")
+        for choice in ({"type": "web_search"}, {"type": "mcp", "server_label": "x"}, {"type": "allowed_tools", "tools": []},
+                       {"type": "image_generation"}, {"type": "code_interpreter"}, "bogus", 5):
+            model_call("o", o(tool_choice=choice), 403, f"responses: tool_choice {choice!r} is refused")
+        model_call("or", c(tool_choice={"type": "function", "function": {"name": "terminal"}}), 200, "chat: a function tool_choice passes")
+        model_call("or", c(tool_choice={"type": "web_search"}), 403, "chat: tool_choice web_search is refused")
+        model_call("anth", an(tools=[{"name": "terminal", "input_schema": {}}], tool_choice={"type": "tool", "name": "terminal"}), 200,
+                   "anthropic: a tool tool_choice passes")
+        for choice in ({"type": "web_search"}, "auto"):
+            model_call("anth", an(tool_choice=choice), 403, f"anthropic: tool_choice {choice!r} is refused")
+        for raw, what in ((b'{"model": "m-a", "messages": [], "temperature": 1e400}', "1e400"),
+                          (b'{"model": "m-a", "messages": [], "temperature": -1e400}', "-1e400"),
+                          (b'{"model": "m-a", "messages": [], "seed": 1' + b"0" * 5000 + b"}", "a 5000-digit integer"),
+                          (b'{"model": "m-a", "messages": ' + b"[" * 200000 + b"]" * 200000 + b"}", "200000 nested lists")):
+            before_log = (work / "proxy.log").read_text().count("\n")
+            model_call("a", None, 400, f"body: {what} is refused with a 400", raw=raw)
+            logged = (work / "proxy.log").read_text().count("\n") > before_log
+            check(13, f"body: {what} is logged and the proxy lives", logged and alive())
+        for tools in (5, {"type": "function"}, "terminal"):
+            model_call("a", {"model": "m-a", "messages": [], "tools": tools}, 403, f"body: tools {tools!r} is refused with a 403")
+
+        # 14. Answers name no account; a silent provider is logged.
+        status, _ = call("/a/chat/completions", ok_body("m-a"), auth("a"))
+        leaked = {"openai-organization", "anthropic-organization-id", "set-cookie"} & seen_headers
+        check(14, "an answer's account headers are dropped", status == 200 and not leaked, f"{status} {sorted(leaked)}")
+        status, _ = call("/echo/chat/completions", ok_body("echo-key"), auth("echo"))
+        leaked = {"openai-organization", "anthropic-organization-id", "set-cookie"} & seen_headers
+        check(14, "an error's account headers are dropped", status == 400 and not leaked, f"{status} {sorted(leaked)}")
+        status, _ = call("/slow/chat/completions", ok_body("slow-upstream"), auth("slow"))
+        check(14, "a provider silent past the upstream timeout gets a 502, logged",
+              status == 502 and "upstream silent" in (work / "proxy.log").read_text(), str(status))
 
         # 11. Two names on one route; a scan with no key.
         out = subprocess.run([sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", "127.0.0.1", "openai-x", "openai/x"],
