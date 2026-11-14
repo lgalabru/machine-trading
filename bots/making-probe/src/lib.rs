@@ -12,9 +12,11 @@
 //!   that would open or add.
 //! - `crosser`: the maker, but every few steps it cancels and sends a
 //!   plain bid through the best ask while its own ask was resting. The
-//!   grader can't tell before the send that the touch isn't the bot's own,
-//!   so the order goes, opens a position as a taker, and the audit
-//!   catches it.
+//!   grader judges the cross against the touch the bot's own orders don't
+//!   make, so the order is refused however much the bot has resting.
+//!
+//! Built as a process too (`just process`), the same probes go through the
+//! RPC guard, which refuses a transaction whose fills would take.
 
 use mtx_kit::prelude::*;
 
@@ -30,7 +32,7 @@ const ONE_SIDED_TURN: f64 = 5.0;
 const EVERY: u64 = 10;
 
 #[derive(Default)]
-struct Probe;
+pub struct Probe;
 
 impl Strategy for Probe {
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
@@ -68,4 +70,5 @@ impl Strategy for Probe {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Probe);

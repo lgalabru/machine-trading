@@ -10,11 +10,22 @@ publish = false
 # A strategy component: `just build` builds it for wasm32-wasip2 into
 # bot.wasm, which the grader loads and calls (docs/rfd/0002-wasm-strategies.md).
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
+# The same strategy as a process (`just process`): what the RPC guard's
+# taking check is tested against.
+[[bin]]
+name = "mtx-making-probe"
+path = "src/main.rs"
+
 [dependencies]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-kit = { path = "../../crates/kit" }
 
 # Which probe it builds: a two-sided maker by default.
 [features]

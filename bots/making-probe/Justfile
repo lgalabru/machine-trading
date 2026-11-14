@@ -1,6 +1,7 @@
 # The market-making mandate's probes: `just build` builds the two-sided
 # maker into bot.wasm, `just build one-sided` (or `taker`, `crosser`) the
-# others, each into its own folder's bot.wasm.
+# others, each into its own folder's bot.wasm. `just process <probe>` builds
+# one as a process bot.
 
 # Build a probe into bot.wasm (`maker`), or into <probe>/bot.wasm.
 build probe="maker":
@@ -17,3 +18,16 @@ build probe="maker":
       | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
     cp "$wasm" "$dest"
     echo "built $dest from $wasm"
+
+# Build a probe as a process bot into <probe>-process/bin/bot, which
+# `mtx grade --trusted --bot` runs.
+process probe="maker":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features=""
+    if [ "{{probe}}" != "maker" ]; then features="--features {{probe}}"; fi
+    exe="$(cargo build --release --bin mtx-making-probe $features --message-format=json-render-diagnostics \
+      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
+    mkdir -p "{{probe}}-process/bin"
+    cp "$exe" "{{probe}}-process/bin/bot"
+    echo "built {{probe}}-process/bin/bot"

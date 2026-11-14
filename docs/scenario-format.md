@@ -160,21 +160,29 @@ scenario's market (a v0.1 mandate; [mandate spec](../specs/mandate.md) rule
 took (`making_fills`, `role` `taker`), so only one, without a
 `liquidator`, may use it. Two layers enforce it:
 
-- before a component's order on its market goes out, the grader refuses
-  one it can tell would take liquidity to open, add to or flip the
-  position: a market or immediate-or-cancel order, or a resting order
-  priced at or through the opposite best price the bot was shown when the
-  bot had nothing resting on that side. An order flagged reduce-only goes
-  (Phoenix applies the flag), and so does a post-only one. A refused order
-  is not sent, its status tells the bot why, and `turns.refused_takes`
-  counts it: the act doesn't happen, so it is no breach;
+- before an order goes out, the grader refuses one it can tell would take
+  liquidity to open, add to or flip the position. A component's market or
+  immediate-or-cancel order is one; so is a resting order priced at or
+  through the best opposite price of the *other* traders on Phoenix's book
+  (the bot's own orders are left out, however many it has resting, and a
+  sheet that cancels first and then crosses is judged the same). Until the
+  session has learned the bot's trader id, a side the bot has orders
+  resting on is trusted and left to the audit. A process bot has no sheet:
+  the RPC guard simulates each transaction it sends (`sendTransaction`,
+  `sendBundle`, the staked route) against the paused chain, and refuses one
+  whose fills would move the position as a taker to open, add to or flip
+  it (a post-only order, a cancel or a match against its own orders moves
+  nothing). An order flagged reduce-only goes (Phoenix applies the flag),
+  and so does a post-only one. A refused order is not sent, its status or
+  the RPC error tells the bot why, and `turns.refused_takes` counts it: the
+  act doesn't happen, so it is no breach;
 - the audit judges every taker fill against the position just before it,
   counted from the start position through the bot's fills in Phoenix's
-  order (a match between the bot's own orders moves nothing). A take that
-  opened, added to or flipped the position is a `taking` breach, as any
-  mandate rule's. This catches what the check can't see before the trade:
-  a process bot's transactions, a raw send, or a cross of a touch that may
-  have been the bot's own.
+  order (a match between the bot's own orders, which the fill record
+  marks, moves nothing). A take that opened, added to or flipped the
+  position is a `taking` breach, as any mandate rule's. This catches what
+  the checks can't see before the trade: a raw send, or a cross of a touch
+  before the bot's trader id is known.
 
 The code is `crates/grader/src/obligations.rs`, `crates/grader/src/taking.rs`
 and the perp session.

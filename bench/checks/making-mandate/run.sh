@@ -8,13 +8,18 @@
 #   - its one-sided build misses them, and is not disqualified for it;
 #   - its taker build sends market orders that would open or add: each is
 #     refused before it goes out, counted, and no breach;
-#   - its crosser build crosses a touch the grader can't tell from its own:
-#     the order goes, and the audit disqualifies it for taking;
+#   - its crosser build cancels and then sends a plain bid through the
+#     other traders' ask while its own ask rests (a touch that looks like its
+#     own to a check that trusts its resting orders): refused all the same;
+#   - the same taker and crosser as process bots (`--trusted`), which have no
+#     sheet: the RPC guard simulates each transaction and refuses one whose
+#     fills would take, so no taker fill reaches the book, and no breach;
 #   - the two-sided probe on the same scenarios without the new fields
 #     reports neither.
 #   bench/checks/making-mandate/run.sh <mtx> <snapshot> <out>
 # The probes must be built: `just build`, `just build one-sided`,
-# `just build taker` and `just build crosser` in bots/making-probe.
+# `just build taker` and `just build crosser` in bots/making-probe, and
+# `just process taker` and `just process crosser` for the process bots.
 set -euo pipefail
 mtx=$1 snapshot=$2 out=$3
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -48,6 +53,15 @@ grade maker "$probe" obliged
 grade one-sided "$probe/one-sided" obliged
 grade taker "$probe/taker" obliged
 grade crosser "$probe/crosser" obliged
+grade_process() { # name bot-dir
+  local name=$1 bot=$2
+  mkdir -p "$out/$name"
+  "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$bot" --logs "$out/$name/logs" \
+    --report "$out/$name/report.json" "$out/obliged"/*.json \
+    >"$out/$name/stdout.log" 2>"$out/$name/stderr.log" || { echo "$name: the grade failed"; tail -20 "$out/$name/stderr.log"; exit 1; }
+}
+grade_process process-taker "$probe/taker-process"
+grade_process process-crosser "$probe/crosser-process"
 grade plain "$probe" plain
 python3 -I - "$out" <<'PY'
 import json, sys
@@ -57,7 +71,7 @@ def sessions(name):
             for s in json.load(open(f"{out}/{name}/report.json"))["scenarios"]]
 def takes(s):
     return [f for f in s.get("making_fills", []) if f["role"] == "taker"]
-for name in ("maker", "one-sided", "taker", "crosser", "plain"):
+for name in ("maker", "one-sided", "taker", "crosser", "process-taker", "process-crosser", "plain"):
     for s in sessions(name):
         o = s.get("obligations") or {}
         print(f"{name} {s['scenario']}: uptime {o.get('uptime')} met {o.get('met')} "
@@ -79,19 +93,12 @@ for s in sessions("taker"):
     assert s["turns"]["refused_takes"] > 0, "nothing refused"
     assert not takes(s), "a refused take went out"
     assert taking not in (s["disqualified"] or ""), "a refusal was taken for a breach"
-def opened(s):
-    """Whether a taker fill left the position further from zero, or past it."""
-    position = s.get("start_position", 0.0)
-    for f in s.get("making_fills", []):
-        after = position + (f["base"] if f["side"] == "buy" else -f["base"])
-        if f["role"] == "taker" and (abs(after) > abs(position) + 1e-9 or after * position < -1e-12):
-            return True
-        position = after
-    return False
-crossers = sessions("crosser")
-assert any(opened(s) for s in crossers), "the crosser never took to open"
-for s in crossers:
-    assert (taking in (s["disqualified"] or "")) == opened(s), f"crosser {s['scenario']}: audit and fills disagree"
+for name in ("crosser", "process-taker", "process-crosser"):
+    ss = sessions(name)
+    assert any(s["turns"].get("refused_takes") for s in ss), f"{name}: nothing refused"
+    for s in ss:
+        assert not takes(s), f"{name} {s['scenario']}: a refused take went out"
+        assert taking not in (s["disqualified"] or ""), f"{name} {s['scenario']}: a refusal was taken for a breach"
 for s in sessions("plain"):
     assert "obligations" not in s and "refused_takes" not in s["turns"], "opt-in fields without opting in"
 print("MAKING_MANDATE_SMOKE_OK")
