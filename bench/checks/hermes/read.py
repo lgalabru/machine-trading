@@ -6,6 +6,7 @@ log and the two trials Harbor kept. Exits non-zero on any failure.
 The key and the token come from the environment, never the command line.
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -62,6 +63,17 @@ def main():
         fails.append("a system prompt mentions what a trial planted")
     inventories = [r["last_tool_result"] for r in agent_turns if r["tool_results"] == 1]
     plants = [r["last_tool_result"] for r in agent_turns if r["tool_results"] == 3]
+    # What the agent read from every process environment under /proc, as
+    # hashes of the values.
+    sha = lambda v: hashlib.sha256(v.encode()).hexdigest()
+    reads = [r["last_tool_result"] for r in agent_turns if r["tool_results"] == 2]
+    if len(reads) < 2 or not all("PROC-READ" in seen for seen in reads):
+        fails.append(f"the /proc read didn't run in both trials ({len(reads)})")
+    for i, seen in enumerate(reads):
+        if sha(key) in seen:
+            fails.append(f"trial {i + 1}: the agent read the provider's key from /proc")
+        if sha(token) not in seen:
+            fails.append(f"trial {i + 1}: the /proc read didn't reach Hermes's environment (no token either)")
     if len(inventories) < 2 or not plants or "PLANTED" not in plants[0]:
         fails.append(f"the script didn't run through twice ({len(inventories)} inventories, {len(plants)} plants)")
     else:
@@ -85,15 +97,8 @@ def main():
             fails.append(f"{trial.name}: Hermes's home at the start: {start.read_text() if start.exists() else 'not recorded'}")
         if not end.exists() or "leak-probe" not in end.read_text() or "MEMORY.md" not in end.read_text():
             fails.append(f"{trial.name}: the end inventory doesn't show what the trial planted")
-        environ = agent / "proc-environ.txt"
-        if not environ.exists():
-            fails.append(f"{trial.name}: the agent's /proc read left no record")
-        else:
-            seen = environ.read_text(errors="replace")
-            if key in seen:
-                fails.append(f"{trial.name}: the agent read the provider's key from /proc")
-            if token not in seen:
-                fails.append(f"{trial.name}: the /proc read didn't reach Hermes's environment (no token either)")
+        if not (agent / "proc-environ.txt").exists():
+            fails.append(f"{trial.name}: the agent's /proc read left no copy")
         trajectory = agent / "trajectory.json"
         if not trajectory.exists():
             fails.append(f"{trial.name}: no trajectory.json")
@@ -114,7 +119,7 @@ def main():
     print(
         f"hermes probe ({route}): pass, 2 trials, {len(requests)} provider requests, tools {sorted(offered)}, "
         f"effort {efforts}, nothing carried from trial 1 to trial 2, the agent's /proc read holds the token "
-        "but not the key"
+        "but not the key, and no trial file holds the key"
         + (f", other requests {other}" if other else "")
     )
 

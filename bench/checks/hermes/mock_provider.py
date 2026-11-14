@@ -44,11 +44,17 @@ PLANT = (
     "echo PLANTED"
 )
 
-# Every process environment the agent can read, into the trial's logs,
-# where the check looks for the key (and, as a control, the proxy's token).
+# Every process environment the agent can read: a copy in the trial's
+# logs, and a hash of every value in the answer. Harbor masks the values it
+# knows (the proxy's token) in the logs it keeps, so the check compares
+# hashes: the token's must be there (the read reached Hermes's own
+# environment), the key's must not.
 PROC = (
-    "for f in /proc/[0-9]*/environ; do cat \"$f\" 2>/dev/null | tr '\\0' '\\n'; done "
-    "> /logs/agent/proc-environ.txt; echo PROC-READ $(wc -l < /logs/agent/proc-environ.txt)"
+    "for f in /proc/[0-9]*/environ; do cat \"$f\" 2>/dev/null | tr '\\0' '\\n'; done > /tmp/proc-environ.txt; "
+    "cp /tmp/proc-environ.txt /logs/agent/proc-environ.txt; "
+    "echo PROC-READ $(wc -l < /tmp/proc-environ.txt); "
+    "grep -a -E '^[A-Za-z_][A-Za-z0-9_]*=.{16,}$' /tmp/proc-environ.txt | cut -d= -f2- | sort -u | "
+    "while IFS= read -r v; do printf %s \"$v\" | sha256sum | cut -c1-64; done"
 )
 
 SCRIPT = [
@@ -137,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
             "key_ok": bool(expected) and secrets.compare_digest(auth.encode(), expected.encode()),
             "system_chars": len(system),
             "system_mentions_leak_probe": "leak-probe" in system or "planted by an earlier trial" in system,
-            "last_tool_result": (results[-1] if results else "")[:4000],
+            "last_tool_result": (results[-1] if results else "")[:40000],
         }
         with open(self.server.log_path, "a") as log:
             log.write(json.dumps(record) + "\n")
