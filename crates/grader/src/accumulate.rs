@@ -522,4 +522,29 @@ mod tests {
         }
         assert!(along * 10 >= informed * 8, "{along} of {informed}");
     }
+
+    /// The backstop is the snapshot makers' own widening, apart from the
+    /// grader's maker's half-spread; it round-trips through v2 and can't
+    /// sit inside the maker.
+    #[test]
+    fn the_backstop_round_trips_and_sits_behind_the_maker() {
+        let scenario = AccumulateFamily::nvda().sample("s", 4);
+        let making = scenario.making.clone().unwrap();
+        assert!(making.makers_bps() > making.competitor_bps);
+        let v2 = crate::scenario_v2::ScenarioV2::try_from(&scenario).unwrap();
+        assert_eq!(v2.into_scenario().unwrap(), scenario);
+        let inside = Scenario {
+            making: Some(Making {
+                makers_bps: Some(making.competitor_bps / 2.0),
+                ..making.clone()
+            }),
+            ..scenario.clone()
+        };
+        assert!(inside.validate().unwrap_err().contains("makers_bps"));
+        let none = Making {
+            makers_bps: None,
+            ..making
+        };
+        assert_eq!(none.makers_bps(), none.competitor_bps);
+    }
 }
