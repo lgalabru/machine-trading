@@ -158,6 +158,10 @@ pub struct Session {
     /// computed on the bot's own marks, which its trades can move.
     pub hindsight_ceiling_usd: Option<f64>,
     pub nop_pnl_usd: f64,
+    /// SHA-256 of the reference session's marks the cost-aware hindsight
+    /// ceiling was computed on, when it was: recorded in the report so a
+    /// rescore can check it reads the same session.
+    pub reference_marks_sha256: Option<String>,
     /// The hindsight bound (see [`crate::scenario::Scenario::bound_usd`]).
     pub bound_usd: f64,
     /// `L`: the mandate's drawdown limit, the most a compliant session can lose.
@@ -385,6 +389,9 @@ pub struct SessionV2 {
     pub nop_usd: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breach: Option<String>,
+    /// See [`Session::reference_marks_sha256`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_marks_sha256: Option<String>,
     /// `L`, and the near-breach charge's `f_s` and `a_s`: the bot's
     /// drawdown and the anchor's as shares of it, each at most 1.
     pub limit_usd: f64,
@@ -410,7 +417,14 @@ pub fn score(
     if !(k >= 1.0 && k.is_finite()) {
         return Err(format!("loss weight {k}: it must be at least 1"));
     }
-    let (source, eta, ceilings) = ceilings(sessions, &params.ceiling)?;
+    // A fatal grade is the floor whatever its sessions made: one that can't
+    // resolve a ceiling (no reference ran, say) is the floor too, not an
+    // error.
+    let (source, eta, ceilings) = match (ceilings(sessions, &params.ceiling), &fatal) {
+        (Ok(resolved), _) => resolved,
+        (Err(_), Some(reason)) => return Ok(unscored(params, reason.clone())),
+        (Err(why), None) => return Err(why),
+    };
     let phi = params.anchor_floor.unwrap_or(if source == "hindsight" {
         HINDSIGHT_ANCHOR_FLOOR
     } else {
@@ -451,6 +465,7 @@ pub fn score(
             ceiling_usd: weigh(ceiling - s.nop_pnl_usd),
             nop_usd: s.nop_pnl_usd,
             breach: s.breach.clone(),
+            reference_marks_sha256: s.reference_marks_sha256.clone(),
             limit_usd: s.worst_loss_usd,
             drawdown: match s.breach {
                 Some(_) => 1.0,
@@ -1316,6 +1331,7 @@ mod tests {
                 reference_pnl_usd,
                 informed_pnl_usd: Some(150.0),
                 hindsight_ceiling_usd: None,
+                reference_marks_sha256: None,
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
@@ -2026,6 +2042,18 @@ mod tests {
         assert_eq!(none.risk.anchor, "none");
         assert_eq!(none.risk.charge_usd, 0.0);
         assert_eq!(none.risk.dd_rms_anchor, None);
+    }
+
+    #[test]
+    fn a_fatal_grade_with_no_ceiling_is_the_floor_not_an_error() {
+        // No informed bot, no η, no reference session for a hindsight
+        // ceiling: an honest grade can't be scored...
+        let sessions = without_informed(set(&REFERENCE, &REFERENCE));
+        assert!(score(&sessions, &informed(), None, None).is_err());
+        // ...a fatal one is the floor.
+        let v2 = score(&sessions, &informed(), Some("tampered".into()), None).unwrap();
+        assert_eq!((v2.raw, v2.score), (-1.0, 0.0));
+        assert_eq!(v2.fatal.as_deref(), Some("tampered"));
     }
 
     #[test]

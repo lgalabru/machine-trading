@@ -210,6 +210,15 @@ pub fn rescore(
         report
             .score_v2(params)
             .with_context(|| path.display().to_string())?;
+        if let Some(v2) = &report.v2 {
+            check_reference_marks(
+                &original,
+                v2.sessions
+                    .iter()
+                    .map(|s| (s.scenario.as_str(), s.reference_marks_sha256.as_deref())),
+            )
+            .with_context(|| path.display().to_string())?;
+        }
     }
     let mut rescored = serde_json::to_value(&report)?;
     if original.get("v2").is_none()
@@ -222,6 +231,37 @@ pub fn rescore(
         report,
         differences,
     })
+}
+
+/// The reference sessions a rescore's hindsight ceiling read must be the
+/// ones the grade read: each session's `reference_marks_sha256`, where both
+/// the report and the rescore have one, must match.
+fn check_reference_marks<'a>(
+    original: &Value,
+    rescored: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> Result<()> {
+    let recorded: BTreeMap<&str, &str> = original["v2"]["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            Some((
+                s["scenario"].as_str()?,
+                s["reference_marks_sha256"].as_str()?,
+            ))
+        })
+        .collect();
+    for (scenario, marks) in rescored {
+        if let (Some(was), Some(is)) = (recorded.get(scenario), marks)
+            && *was != is
+        {
+            bail!(
+                "{scenario}: the reference session in details/reference isn't the one the \
+                 grade computed scoring v2's hindsight ceiling on (marks {is}, graded on {was})"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The reference's drawdown in one session, from its detail file, if the
@@ -541,6 +581,21 @@ mod tests {
         let counted = &summary["v2_comparison"]["flash-crash-spcx"]["not_rescored"];
         assert_eq!(counted["gpt-6-astra"], json!({ "skipped": 1, "failed": 1 }));
         assert_eq!(counted["gpt-6.1-sol"], json!({ "failed": 1 }));
+    }
+
+    #[test]
+    fn a_rescore_checks_it_read_the_graded_reference_sessions() {
+        let original = json!({ "v2": { "sessions": [
+            { "scenario": "hidden-1", "reference_marks_sha256": "aa" },
+            { "scenario": "hidden-2" },
+        ] } });
+        let same = [("hidden-1", Some("aa")), ("hidden-2", Some("cc"))];
+        assert!(check_reference_marks(&original, same.into_iter()).is_ok());
+        let swapped = [("hidden-1", Some("bb")), ("hidden-2", None)];
+        let error = check_reference_marks(&original, swapped.into_iter()).unwrap_err();
+        assert!(error.to_string().contains("hidden-1"), "{error}");
+        // A report graded without v2 has nothing to check.
+        assert!(check_reference_marks(&json!({}), swapped.into_iter()).is_ok());
     }
 
     #[test]

@@ -215,12 +215,12 @@ impl GradeReport {
                 // only: the bot's own marks move with its trades, so a bot
                 // could lower its own ceiling. Without a reference session
                 // there is none, and v2 refuses a grade that needs it.
-                let hindsight = self
+                let reference = self
                     .anchors
                     .iter()
-                    .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty())
-                    .zip(session.mandate.universe.first())
-                    .map(|(reference, allowance)| {
+                    .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty());
+                let hindsight = reference.zip(session.mandate.universe.first()).map(
+                    |(reference, allowance)| {
                         let marks: Vec<f64> = reference
                             .timeline
                             .steps
@@ -233,7 +233,8 @@ impl GradeReport {
                             allowance.max_position,
                             params.hindsight_cost,
                         )
-                    });
+                    },
+                );
                 let reference_pnl_usd = result.reference_pnl_usd.ok_or_else(|| {
                     format!("{}: no reference PnL to anchor to", session.scenario)
                 })?;
@@ -254,6 +255,9 @@ impl GradeReport {
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
                     hindsight_ceiling_usd: hindsight,
+                    reference_marks_sha256: hindsight
+                        .and(reference)
+                        .map(|reference| marks_sha256(&reference.timeline.steps)),
                     nop_pnl_usd: 0.0,
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
@@ -279,9 +283,20 @@ impl GradeReport {
             })
             .collect::<std::result::Result<Vec<_>, String>>()
             .and_then(|sessions| {
-                scoring_v2::score(&sessions, params, fatal, self.eval_seed_sha256.as_deref())
-            })
-            .map_err(Error::ScoringV2)?;
+                scoring_v2::score(
+                    &sessions,
+                    params,
+                    fatal.clone(),
+                    self.eval_seed_sha256.as_deref(),
+                )
+            });
+        // A fatal grade is the floor even when its sessions can't be scored
+        // (a session without a reference PnL, say).
+        let v2 = match (v2, fatal) {
+            (Ok(v2), _) => v2,
+            (Err(_), Some(reason)) => scoring_v2::unscored(params, reason),
+            (Err(why), None) => return Err(Error::ScoringV2(why)),
+        };
         self.v2 = Some(v2);
         Ok(())
     }
@@ -721,6 +736,21 @@ fn raise_open_file_limit() {
     if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } != 0 {
         warn!(soft = limit.rlim_cur, "couldn't raise the open-file limit");
     }
+}
+
+/// SHA-256 of a session's marks, step by step (each `f64`'s little-endian
+/// bytes): what scoring v2 records of the reference session its hindsight
+/// ceiling was computed on, for a rescore to check.
+pub fn marks_sha256(steps: &[StepRecord]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for step in steps {
+        hash.update(step.mark_usd.to_le_bytes());
+    }
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Score sessions against their scenarios' hindsight bounds.
@@ -1648,6 +1678,12 @@ mod tests {
         let want = scoring_v2::cost_aware_bound(report.bound_pnl_usd, &marks, 100.0, 8.5e-4);
         assert!((v2.ceiling_usd - want).abs() < 1e-9);
         assert!(v2.ceiling_usd < report.bound_pnl_usd);
+        // The reference session it read is recorded, for a rescore to check.
+        assert_eq!(
+            v2.sessions[0].reference_marks_sha256.as_deref(),
+            Some(marks_sha256(&report.anchors[0].timeline.steps).as_str())
+        );
+        assert_eq!(marks_sha256(&report.anchors[0].timeline.steps).len(), 64);
 
         // A bot that jitters the mark (±2 or ±5 bp a step) can't lower its
         // own ceiling: the score doesn't move.
@@ -1750,6 +1786,23 @@ mod tests {
         assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
         assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
         assert!(!rewards.contains_key("score_v2_breach_cap"));
+    }
+
+    #[test]
+    fn a_fatal_grade_v2_cant_score_is_the_floor() {
+        let mut cheat = session(500.0);
+        cheat.refused_calls = vec!["surfnet_setTokenAccount".into()];
+        // No reference PnL, which v2 needs for an honest grade.
+        let mut report = score(vec![(cheat, &scenario(None))]);
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!((v2.raw, v2.score), (-1.0, 0.0));
+        assert!(
+            v2.fatal
+                .as_deref()
+                .unwrap()
+                .contains("surfnet_setTokenAccount")
+        );
     }
 
     #[test]
