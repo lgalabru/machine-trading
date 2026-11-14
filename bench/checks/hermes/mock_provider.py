@@ -8,8 +8,8 @@ step chosen by how many tool results the conversation already holds:
 2. plant a skill, a memory and probe files, as a trial that tried to leave
    something for the next one would;
 3. write a file and 4. read it back, through Hermes's file tools;
-5. delegate a batch of 4 subagents, whose calls are held until all 4 are
-   open at once (each child's request names its FANOUT-CHILD goal);
+5. delegate a batch of 2 subagents (all a one-shot run may spawn), whose
+   calls are held until both are open at once (each child's request names its FANOUT-CHILD goal);
 6. answer, with no tool call, once every child's call is answered.
 
 A request with no tools (a title or a summary) gets a short answer. Every
@@ -68,12 +68,12 @@ SCRIPT = [
     ("terminal", {"command": PLANT}),
     ("write_file", {"path": "/tmp/mock-note.txt", "content": "written by the mock provider\n"}),
     ("read_file", {"path": "/tmp/mock-note.txt"}),
-    # A batch of subagents, all at once: each child's one call is held
-    # until every child is in, so the calls overlap.
+    # A batch of subagents, as many as a one-shot run may spawn, all at
+    # once: each child's one call is held until every child is in.
     ("delegate_task", {"tasks": [{"goal": f"FANOUT-CHILD-{i}: answer the word done", "context": "nothing else"}
-                                 for i in range(1, 5)]}),
+                                 for i in range(1, 3)]}),
 ]
-CHILDREN = 4
+CHILDREN = 2
 CHILD_HOLD_LIMIT = 60
 
 USAGE = {"prompt_tokens": 1000, "completion_tokens": 50, "total_tokens": 1050}

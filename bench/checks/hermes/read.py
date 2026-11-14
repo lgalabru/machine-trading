@@ -24,7 +24,7 @@ ALLOWED = {
     "execute_code",
 }
 CALLS = ["terminal", "terminal", "terminal", "write_file", "read_file", "delegate_task"]
-CHILDREN = 4
+CHILDREN = 2
 
 
 def effort_ok(route: str, fields: dict) -> bool:
