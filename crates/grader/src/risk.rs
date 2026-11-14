@@ -64,6 +64,10 @@ pub struct CloseOrder {
     /// The position once it executed, in base units.
     pub position_after: f64,
     pub ok: bool,
+    /// Its transaction, when it landed: the per-fill audit leaves its fills
+    /// out, as the desk's, not the bot's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -105,6 +109,7 @@ mod tests {
                 position_after: 0.0,
                 ok: true,
                 error: None,
+                signature: None,
             }],
             flat: true,
         };

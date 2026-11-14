@@ -1269,6 +1269,7 @@ mod tests {
             side,
             price,
             base: 1.0,
+            forced: false,
         };
         // A buy and a sell inside one step net to nothing; the sell is still
         // a fill.
@@ -1793,6 +1794,63 @@ mod tests {
         let mut elsewhere = stopped;
         elsewhere.positions_outside_universe = 1;
         assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
+    }
+
+    /// The risk desk's forced close trades in the bot's account; a
+    /// buy-only mandate's sides rule leaves its sells out, and still
+    /// catches the bot's own.
+    #[test]
+    fn a_stop_outs_forced_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let s = scenario(None);
+        let mut stopped = session(-1_150.0);
+        stopped.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        stopped.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(disqualification(&stopped).is_none());
+        assert!(
+            score(vec![(stopped.clone(), &s)]).scenarios[0]
+                .disqualified
+                .is_none()
+        );
+        // The forced fill still reads back as one.
+        let json = serde_json::to_string(&stopped).unwrap();
+        let back: SessionReport = serde_json::from_str(&json).unwrap();
+        assert!(back.perp_fills[1].forced);
+
+        let mut own = stopped;
+        own.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&own)
+                .unwrap()
+                .contains("a side its mandate")
+        );
     }
 
     #[test]

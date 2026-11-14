@@ -360,11 +360,16 @@ impl SessionReport {
                 .map(|spot| spot.observed_fills())
                 .unwrap_or_default()
                 .into_iter()
-                .chain(self.perp_fills.iter().map(|fill| ObservedFill {
-                    instrument: fill.instrument.clone(),
-                    side: fill.side,
-                    price: fill.price,
-                }))
+                .chain(
+                    self.perp_fills
+                        .iter()
+                        .filter(|fill| !fill.forced)
+                        .map(|fill| ObservedFill {
+                            instrument: fill.instrument.clone(),
+                            side: fill.side,
+                            price: fill.price,
+                        }),
+                )
                 .collect(),
             open_orders: self
                 .spot
