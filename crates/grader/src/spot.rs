@@ -1139,6 +1139,7 @@ impl Account for SpotAccount {
             net,
             lending: None,
             crank_refusals: done.crank_refusals,
+            forced_closes: done.forced_closes,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -1206,6 +1207,7 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
             turn_data: None,
             oracles: None,
             lending: None,
@@ -1221,6 +1223,8 @@ mod tests {
             }),
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
         }
     }
 

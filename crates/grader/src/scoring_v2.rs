@@ -51,6 +51,25 @@
 //! (`eta_override`), never by default. The plain hindsight bound is never in
 //! the score: it is reported as the luck headroom above the ceiling.
 //!
+//! A bot that wins by drawing down far more than the anchor does pays a
+//! near-breach charge `Π` before the map, in USD (see [`Risk`]): drawdowns
+//! as a share of the limit, pooled over the set, against the anchor's, the
+//! anchor's allowed to grow with what the bot earns over it. It takes back
+//! winnings, never deepens a loss, and is 0 for doing nothing, the anchor
+//! itself, and a bot taking the anchor's risk in proportion to its edge:
+//!
+//! ```text
+//! f_s = min(DD_s / L_s, 1)   (1 for a breach)      a_s = the same for the anchor
+//! ρ   = √(Σ f_s² / n)        ρ_A = √(Σ a_s² / n)   s = max(1, E_bot / E_A)
+//! Π   = min(λ·k·Σ L_s·max(0, ρ − s·ρ_A)², max(E_bot, 0))
+//! ```
+//!
+//! The anchor is the informed bot when its drawdowns are known, else the
+//! reference, never a proxy ceiling, which has no drawdowns; without
+//! either's drawdowns there is no charge, and the score says so. A breach
+//! also caps the run: one at `raw` 0.5, the reference's, two or more at 0,
+//! so breaching now and then never beats complying.
+//!
 //! The gap to 1 is split into what it came from (see [`Gap`]). Doing
 //! nothing is taken as PnL 0, which holds for a flat start with no carry; a
 //! session that starts holding something needs a measured nop run, which v2
@@ -64,6 +83,10 @@ use serde::{Deserialize, Serialize};
 pub const LOSS_WEIGHT: f64 = 1.5;
 /// The reference anchor's floor `φ`, as a share of the ceiling, by default.
 pub const ANCHOR_FLOOR: f64 = 0.10;
+/// The near-breach charge's weight `λ` by default: at 1, a bot that drew down
+/// to its limit in every session while the anchor never moved pays `k·L` a
+/// session, what a breach costs.
+pub const RISK_WEIGHT: f64 = 1.0;
 /// `φ` against the cost-aware hindsight ceiling by default: 0.05 of it, the
 /// same dollars as 0.10 of half of it, so the 0.5 point doesn't move with
 /// how much of the hindsight bound is called reachable.
@@ -99,6 +122,8 @@ pub struct Params {
     /// `None`: [`ANCHOR_FLOOR`], or [`HINDSIGHT_ANCHOR_FLOOR`] against the
     /// cost-aware hindsight ceiling.
     pub anchor_floor: Option<f64>,
+    /// `λ`: the near-breach charge's weight; 0 turns it off.
+    pub risk_weight: f64,
     pub ceiling: Ceiling,
     /// The cost the cost-aware hindsight ceiling pays per trade, as a share
     /// of the price (see [`cost_aware_bound`]).
@@ -112,6 +137,7 @@ impl Params {
         Self {
             loss_weight: LOSS_WEIGHT,
             anchor_floor: None,
+            risk_weight: RISK_WEIGHT,
             ceiling,
             hindsight_cost: HINDSIGHT_COST,
             resamples: RESAMPLES,
@@ -132,6 +158,10 @@ pub struct Session {
     /// computed on the bot's own marks, which its trades can move.
     pub hindsight_ceiling_usd: Option<f64>,
     pub nop_pnl_usd: f64,
+    /// SHA-256 of the reference session's marks the cost-aware hindsight
+    /// ceiling was computed on, when it was: recorded in the report so a
+    /// rescore can check it reads the same session.
+    pub reference_marks_sha256: Option<String>,
     /// The hindsight bound (see [`crate::scenario::Scenario::bound_usd`]).
     pub bound_usd: f64,
     /// `L`: the mandate's drawdown limit, the most a compliant session can lose.
@@ -141,6 +171,18 @@ pub struct Session {
     pub worst_loss_from_bound: bool,
     /// Why the session breached its mandate or order, if it did.
     pub breach: Option<String>,
+    /// The deepest the bot's account fell below its running peak.
+    pub max_drawdown_usd: f64,
+    /// The same for the reference and the informed bot, when known: the
+    /// near-breach charge's anchor.
+    pub reference_max_drawdown_usd: Option<f64>,
+    pub informed_max_drawdown_usd: Option<f64>,
+    /// The account's value at the start: the capital returns are taken on.
+    pub start_value_usd: f64,
+    /// The risk desk stopped the session out (the scenario's `stop_out`,
+    /// see [`crate::risk`]): `pnl_usd` is what it realised, the close
+    /// included, and `breach` says so.
+    pub stopped_out: bool,
     /// The bot held a position at some point.
     pub traded: bool,
     /// What the bot's trades made against the price at the time they were
@@ -201,6 +243,12 @@ pub struct ScoreV2 {
     pub bound_usd: f64,
     pub luck_headroom_usd: f64,
     pub breached_sessions: usize,
+    /// The near-breach charge, taken from `bot_usd` before the map.
+    pub risk: Risk,
+    /// The breach cap `raw` was held to: 0.5 for one breach in the set, 0
+    /// for two or more; absent without a breach.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub breach_cap: Option<f64>,
     /// The per-session Sharpe below which a profitable strategy scores under
     /// doing nothing at this `k` (see [`break_even_sharpe`]).
     pub break_even_sharpe: f64,
@@ -227,17 +275,74 @@ pub struct ScoreV2 {
     pub seeded_from_eval: bool,
     /// Where the gap from `raw` to 1 came from.
     pub gap: Gap,
+    /// What the sessions made and risked, plainly: reported beside the
+    /// score, never in it.
+    pub metrics: Metrics,
     pub sessions: Vec<SessionV2>,
+}
+
+/// The near-breach charge `Π` (see the module's formula).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Risk {
+    /// `Π`, in USD.
+    pub charge_usd: f64,
+    /// `ρ`: the root mean square of the bot's drawdowns as a share of their
+    /// limits, each at most 1.
+    pub dd_rms: f64,
+    /// `ρ_A`, the anchor's; absent when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dd_rms_anchor: Option<f64>,
+    /// `s`: how many times the anchor's risk the bot's earnings allow it.
+    pub allowance: f64,
+    /// `λ`.
+    pub weight: f64,
+    /// Whose drawdowns the bot's are held to: `informed`, `reference`, or
+    /// `none` when neither's are known, and nothing is charged.
+    pub anchor: String,
+}
+
+/// What the sessions made and risked, plainly, in USD and not weighted:
+/// what a desk reads beside a score. Each session is its own scenario of
+/// minutes, so nothing is annualised.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Metrics {
+    pub sessions: usize,
+    /// The mean of each session's PnL over its starting value.
+    pub return_on_capital: f64,
+    /// The mean session PnL over its standard deviation (`n − 1`), no
+    /// risk-free rate: how consistently the edge shows across scenarios.
+    /// Absent under two sessions, or when every session made the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharpe: Option<f64>,
+    /// Each session's drawdown over its limit: the mean, and the deepest.
+    pub drawdown_to_limit_mean: f64,
+    pub drawdown_to_limit_max: f64,
+    /// The share of sessions that made money.
+    pub profitable_share: f64,
+    /// The worst session, and what it made.
+    pub worst_session: String,
+    pub worst_session_usd: f64,
+    /// The harm, as prominent as the score: the set's PnL, `raw` below
+    /// doing nothing's, the sessions that lost and what they lost together,
+    /// and breaches and stop-outs.
+    pub pnl_usd: f64,
+    pub raw_negative: bool,
+    pub losing_sessions: usize,
+    pub usd_lost: f64,
+    pub breaches_per_100_sessions: f64,
+    pub stopped_out_sessions: usize,
 }
 
 /// The gap from `raw` to 1, the informed bot, split by where it came from,
 /// in score points. The buckets are dollar amounts of `E_inf − E_bot`, each
-/// converted at the grade's average rate, `(1 − raw) / (E_inf − E_bot)`, so
-/// they sum to `1 − raw` exactly; `noise` is the interval's half-width, and
+/// converted at the grade's average rate, `(1 − raw) / (E_inf − E_bot + Π)`
+/// before the breach cap, which `risk` then carries in full, so they sum
+/// to `1 − raw` exactly; `noise` is the interval's half-width, and
 /// a bucket smaller than it isn't told from zero.
 ///
-/// - `risk`: what the loss weight and breaches cost: `Σ (X_s − Xw_s)`, less
-///   the same for the informed bot's losing sessions.
+/// - `risk`: what the loss weight, breaches and the near-breach charge
+///   cost: `Σ (X_s − Xw_s)`, less the same for the informed bot's losing
+///   sessions, plus `Π`; in score points, also what the breach cap took.
 /// - `missed`: the whole gap in sessions the bot never held a position in.
 /// - `execution`: in sessions it traded, what its trades paid against the
 ///   price at the time (`−` its trade markout): spread, fees and impact,
@@ -259,7 +364,8 @@ pub struct Gap {
     pub risk: f64,
     pub unattributed: f64,
     pub noise: f64,
-    /// The same buckets in USD; they sum to `E_inf − E_bot`.
+    /// The same buckets in USD; they sum to `E_inf − E_bot + Π`. The breach
+    /// cap has no USD amount.
     pub usd: GapUsd,
 }
 
@@ -283,6 +389,15 @@ pub struct SessionV2 {
     pub nop_usd: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breach: Option<String>,
+    /// See [`Session::reference_marks_sha256`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_marks_sha256: Option<String>,
+    /// `L`, and the near-breach charge's `f_s` and `a_s`: the bot's
+    /// drawdown and the anchor's as shares of it, each at most 1.
+    pub limit_usd: f64,
+    pub drawdown: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_drawdown: Option<f64>,
 }
 
 /// Score `sessions` under v2. With `fatal`, the grade is the floor: `raw`
@@ -302,7 +417,14 @@ pub fn score(
     if !(k >= 1.0 && k.is_finite()) {
         return Err(format!("loss weight {k}: it must be at least 1"));
     }
-    let (source, eta, ceilings) = ceilings(sessions, &params.ceiling)?;
+    // A fatal grade is the floor whatever its sessions made: one that can't
+    // resolve a ceiling (no reference ran, say) is the floor too, not an
+    // error.
+    let (source, eta, ceilings) = match (ceilings(sessions, &params.ceiling), &fatal) {
+        (Ok(resolved), _) => resolved,
+        (Err(_), Some(reason)) => return Ok(unscored(params, reason.clone())),
+        (Err(why), None) => return Err(why),
+    };
     let phi = params.anchor_floor.unwrap_or(if source == "hindsight" {
         HINDSIGHT_ANCHOR_FLOOR
     } else {
@@ -313,7 +435,21 @@ pub fn score(
     if !(phi > 0.0 && phi < 1.0) {
         return Err(format!("anchor floor {phi}: it must be in (0, 1)"));
     }
+    if !(params.risk_weight >= 0.0 && params.risk_weight.is_finite()) {
+        return Err(format!(
+            "risk weight {}: it must be at least 0",
+            params.risk_weight
+        ));
+    }
+    let risk_anchor = RiskAnchor::of_sessions(sessions, source);
     let weigh = |x: f64| if x < 0.0 { k * x } else { x };
+    let share = |drawdown: f64, limit: f64| {
+        if limit > 0.0 {
+            (drawdown / limit).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
     let terms: Vec<SessionV2> = sessions
         .iter()
         .zip(&ceilings)
@@ -329,6 +465,18 @@ pub fn score(
             ceiling_usd: weigh(ceiling - s.nop_pnl_usd),
             nop_usd: s.nop_pnl_usd,
             breach: s.breach.clone(),
+            reference_marks_sha256: s.reference_marks_sha256.clone(),
+            limit_usd: s.worst_loss_usd,
+            drawdown: match s.breach {
+                Some(_) => 1.0,
+                None => share(s.max_drawdown_usd, s.worst_loss_usd),
+            },
+            anchor_drawdown: match risk_anchor {
+                RiskAnchor::Informed => s.informed_max_drawdown_usd,
+                RiskAnchor::Reference => s.reference_max_drawdown_usd,
+                RiskAnchor::None => None,
+            }
+            .map(|drawdown| share(drawdown, s.worst_loss_usd)),
         })
         .collect();
     let sums = Sums::of(terms.iter());
@@ -345,8 +493,9 @@ pub fn score(
             sums.ceiling
         ));
     }
-    let measured_raw = sums.raw(phi);
-    let measured_unfloored = sums.raw_unfloored(phi);
+    let scored = sums.score(phi, k, params.risk_weight, risk_anchor);
+    let measured_raw = scored.raw;
+    let measured_unfloored = scored.raw_unfloored;
     let seed = seed(eval_seed_sha256);
     // A fatal grade is the floor, with no interval: its sessions don't count.
     let (raw, raw_unfloored, (ci_lo, ci_hi)) = match fatal {
@@ -354,10 +503,16 @@ pub fn score(
         None => (
             measured_raw,
             measured_unfloored,
-            interval(&terms, phi, params.resamples, seed.unwrap_or(FIXED_SEED)),
+            interval(
+                &terms,
+                (phi, k, params.risk_weight, risk_anchor),
+                params.resamples,
+                seed.unwrap_or(FIXED_SEED),
+            ),
         ),
     };
     let bound_usd: f64 = sessions.iter().map(|s| s.bound_usd).sum();
+    let gap = gap(sessions, &ceilings, &terms, &scored, (ci_hi - ci_lo) / 2.0);
     Ok(ScoreV2 {
         score: raw.clamp(0.0, 1.0),
         raw,
@@ -378,22 +533,128 @@ pub fn score(
         nop_usd: sessions.iter().map(|s| s.nop_pnl_usd).sum(),
         bound_usd,
         luck_headroom_usd: bound_usd - sums.ceiling,
-        breached_sessions: sessions.iter().filter(|s| s.breach.is_some()).count(),
+        breached_sessions: sums.breaches,
+        risk: Risk {
+            charge_usd: scored.charge,
+            dd_rms: scored.dd_rms,
+            dd_rms_anchor: (risk_anchor != RiskAnchor::None).then_some(scored.dd_rms_anchor),
+            allowance: scored.allowance,
+            weight: params.risk_weight,
+            anchor: risk_anchor.name().into(),
+        },
+        breach_cap: scored.cap,
         limit_from_bound_sessions: sessions.iter().filter(|s| s.worst_loss_from_bound).count(),
         ceiling: source.into(),
         eta,
         resamples: params.resamples,
         seeded_from_eval: seed.is_some(),
-        gap: gap(
-            sessions,
-            &ceilings,
-            &terms,
-            measured_raw,
-            (ci_hi - ci_lo) / 2.0,
-        ),
+        gap,
+        metrics: Metrics::of(sessions, raw),
         sessions: terms,
         ..unscored(params, String::new())
     })
+}
+
+/// Whose drawdowns the near-breach charge holds the bot's to: the informed
+/// bot's when it is the ceiling and every session has its drawdown, else
+/// the reference's when every session has its, else none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RiskAnchor {
+    Informed,
+    Reference,
+    None,
+}
+
+impl RiskAnchor {
+    fn of_sessions(sessions: &[Session], ceiling: &str) -> Self {
+        if ceiling == "informed"
+            && sessions
+                .iter()
+                .all(|s| s.informed_max_drawdown_usd.is_some())
+        {
+            Self::Informed
+        } else if sessions
+            .iter()
+            .all(|s| s.reference_max_drawdown_usd.is_some())
+        {
+            Self::Reference
+        } else {
+            Self::None
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Informed => "informed",
+            Self::Reference => "reference",
+            Self::None => "none",
+        }
+    }
+
+    /// Back from [`Self::name`], as a report gives it.
+    fn named(name: &str) -> Self {
+        match name {
+            "informed" => Self::Informed,
+            "reference" => Self::Reference,
+            _ => Self::None,
+        }
+    }
+}
+
+impl Metrics {
+    fn of(sessions: &[Session], raw: f64) -> Self {
+        let n = sessions.len();
+        let count = n.max(1) as f64;
+        let pnl: Vec<f64> = sessions.iter().map(|s| s.pnl_usd).collect();
+        let mean = pnl.iter().sum::<f64>() / count;
+        let sharpe = (n >= 2)
+            .then(|| {
+                let variance = pnl.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
+                variance.sqrt()
+            })
+            .filter(|sd| *sd > 0.0)
+            .map(|sd| mean / sd);
+        let to_limit: Vec<f64> = sessions
+            .iter()
+            .map(|s| {
+                if s.worst_loss_usd > 0.0 {
+                    s.max_drawdown_usd / s.worst_loss_usd
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let worst = sessions
+            .iter()
+            .min_by(|a, b| a.pnl_usd.total_cmp(&b.pnl_usd));
+        let breaches = sessions.iter().filter(|s| s.breach.is_some()).count();
+        Self {
+            sessions: n,
+            return_on_capital: sessions
+                .iter()
+                .map(|s| {
+                    if s.start_value_usd > 0.0 {
+                        s.pnl_usd / s.start_value_usd
+                    } else {
+                        0.0
+                    }
+                })
+                .sum::<f64>()
+                / count,
+            sharpe,
+            drawdown_to_limit_mean: to_limit.iter().sum::<f64>() / count,
+            drawdown_to_limit_max: to_limit.iter().copied().fold(0.0, f64::max),
+            profitable_share: pnl.iter().filter(|x| **x > 0.0).count() as f64 / count,
+            worst_session: worst.map(|s| s.scenario.clone()).unwrap_or_default(),
+            worst_session_usd: worst.map_or(0.0, |s| s.pnl_usd),
+            pnl_usd: pnl.iter().sum(),
+            raw_negative: raw < 0.0,
+            losing_sessions: pnl.iter().filter(|x| **x < 0.0).count(),
+            usd_lost: pnl.iter().map(|x| (-x).max(0.0)).sum(),
+            breaches_per_100_sessions: 100.0 * breaches as f64 / count,
+            stopped_out_sessions: sessions.iter().filter(|s| s.stopped_out).count(),
+        }
+    }
 }
 
 /// Each session's ceiling, and where they came from.
@@ -437,9 +698,19 @@ fn ceilings(
     }
 }
 
-/// [`Gap`]: `E_inf − E_bot` split into buckets, then into score points.
-fn gap(sessions: &[Session], ceilings: &[f64], terms: &[SessionV2], raw: f64, noise: f64) -> Gap {
-    let mut usd = GapUsd::default();
+/// [`Gap`]: `E_inf − E_bot + Π` split into buckets, then into score points,
+/// the breach cap's points added to `risk`.
+fn gap(
+    sessions: &[Session],
+    ceilings: &[f64],
+    terms: &[SessionV2],
+    scored: &Scored,
+    noise: f64,
+) -> Gap {
+    let mut usd = GapUsd {
+        risk: scored.charge,
+        ..GapUsd::default()
+    };
     for ((s, ceiling), t) in sessions.iter().zip(ceilings).zip(terms) {
         let informed = ceiling - s.nop_pnl_usd;
         let bot = s.pnl_usd - s.nop_pnl_usd;
@@ -457,7 +728,7 @@ fn gap(sessions: &[Session], ceilings: &[f64], terms: &[SessionV2], raw: f64, no
     }
     let total = usd.wrong_read + usd.missed + usd.execution + usd.risk + usd.unattributed;
     let rate = if total.abs() > 1e-9 {
-        (1.0 - raw) / total
+        (1.0 - scored.uncapped) / total
     } else {
         0.0
     };
@@ -465,7 +736,7 @@ fn gap(sessions: &[Session], ceilings: &[f64], terms: &[SessionV2], raw: f64, no
         wrong_read: usd.wrong_read * rate,
         missed: usd.missed * rate,
         execution: usd.execution * rate,
-        risk: usd.risk * rate,
+        risk: usd.risk * rate + (scored.uncapped - scored.raw),
         unattributed: usd.unattributed * rate,
         noise,
         usd,
@@ -557,6 +828,13 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         bound_usd: 0.0,
         luck_headroom_usd: 0.0,
         breached_sessions: 0,
+        risk: Risk {
+            weight: params.risk_weight,
+            anchor: RiskAnchor::None.name().into(),
+            allowance: 1.0,
+            ..Risk::default()
+        },
+        breach_cap: None,
         limit_from_bound_sessions: 0,
         hindsight_cost: params.hindsight_cost,
         break_even_sharpe: break_even_sharpe(params.loss_weight),
@@ -568,6 +846,7 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         resamples: 0,
         seeded_from_eval: false,
         gap: Gap::default(),
+        metrics: Metrics::default(),
         sessions: Vec::new(),
     }
 }
@@ -608,26 +887,92 @@ fn erfc(x: f64) -> f64 {
     if x >= 0.0 { tail } else { 2.0 - tail }
 }
 
-/// The weighted sums over some sessions.
+/// The weighted sums over some sessions, and what the near-breach charge
+/// and the breach cap read.
+#[derive(Default)]
 struct Sums {
     bot: f64,
     reference: f64,
     ceiling: f64,
+    /// `Σ L_s`, `Σ f_s²` and `Σ a_s²`.
+    limit: f64,
+    drawdown: f64,
+    anchor_drawdown: f64,
+    sessions: usize,
+    breaches: usize,
+}
+
+/// The sums scored: `raw`, the charge, and the cap.
+struct Scored {
+    raw: f64,
+    /// `raw` before the breach cap, and `raw` not floored at −1.
+    uncapped: f64,
+    raw_unfloored: f64,
+    charge: f64,
+    dd_rms: f64,
+    dd_rms_anchor: f64,
+    allowance: f64,
+    cap: Option<f64>,
 }
 
 impl Sums {
     fn of<'a>(terms: impl Iterator<Item = &'a SessionV2>) -> Self {
-        let mut sums = Self {
-            bot: 0.0,
-            reference: 0.0,
-            ceiling: 0.0,
-        };
+        let mut sums = Self::default();
         for t in terms {
             sums.bot += t.bot_usd;
             sums.reference += t.reference_usd;
             sums.ceiling += t.ceiling_usd;
+            sums.limit += t.limit_usd;
+            sums.drawdown += t.drawdown * t.drawdown;
+            sums.anchor_drawdown += t.anchor_drawdown.map_or(0.0, |a| a * a);
+            sums.sessions += 1;
+            sums.breaches += usize::from(t.breach.is_some());
         }
         sums
+    }
+
+    /// The bot on the scale after the near-breach charge, held to the
+    /// breach cap.
+    fn score(&self, phi: f64, k: f64, lambda: f64, anchor: RiskAnchor) -> Scored {
+        let n = self.sessions.max(1) as f64;
+        let dd_rms = (self.drawdown / n).sqrt();
+        let dd_rms_anchor = (self.anchor_drawdown / n).sqrt();
+        // `E_A`: what the anchor whose risk the bot is held to earned.
+        let earned = match anchor {
+            RiskAnchor::Informed => self.ceiling,
+            _ => self.anchor(phi),
+        };
+        let allowance = if earned > 0.0 {
+            (self.bot / earned).max(1.0)
+        } else {
+            1.0
+        };
+        let charge = match anchor {
+            RiskAnchor::None => 0.0,
+            _ => {
+                let excess = (dd_rms - allowance * dd_rms_anchor).max(0.0);
+                (lambda * k * self.limit * excess * excess).min(self.bot.max(0.0))
+            }
+        };
+        let uncapped = self.raw(phi, self.bot - charge);
+        let cap = match self.breaches {
+            0 => None,
+            1 => Some(0.5),
+            _ => Some(0.0),
+        };
+        Scored {
+            raw: cap.map_or(uncapped, |cap| uncapped.min(cap)),
+            uncapped,
+            raw_unfloored: {
+                let unfloored = self.raw_unfloored(phi, self.bot - charge);
+                cap.map_or(unfloored, |cap| unfloored.min(cap))
+            },
+            charge,
+            dd_rms,
+            dd_rms_anchor,
+            allowance,
+            cap,
+        }
     }
 
     /// `E_ref`: the reference's sum, floored at `φ` of the ceiling's.
@@ -635,28 +980,32 @@ impl Sums {
         self.reference.max(floor * self.ceiling)
     }
 
-    /// The bot on the scale, floored at −1.
-    fn raw(&self, floor: f64) -> f64 {
-        self.raw_unfloored(floor).max(-1.0)
+    /// `bot`, a weighted sum, on the scale, floored at −1.
+    fn raw(&self, floor: f64, bot: f64) -> f64 {
+        self.raw_unfloored(floor, bot).max(-1.0)
     }
 
-    /// The bot on the scale, not floored.
-    fn raw_unfloored(&self, floor: f64) -> f64 {
+    /// `bot`, a weighted sum, on the scale, not floored.
+    fn raw_unfloored(&self, floor: f64, bot: f64) -> f64 {
         let anchor = self.anchor(floor);
-        if self.bot <= anchor {
-            0.5 * self.bot / anchor
+        if bot <= anchor {
+            0.5 * bot / anchor
         } else if self.ceiling > anchor {
-            0.5 + 0.5 * (self.bot - anchor) / (self.ceiling - anchor)
+            0.5 + 0.5 * (bot - anchor) / (self.ceiling - anchor)
         } else {
             1.0
         }
     }
 }
 
+/// What a resample is scored with: `φ`, `k`, `λ` and the risk anchor.
+type Rule = (f64, f64, f64, RiskAnchor);
+
 /// The 95% interval of `raw` over resamples of the sessions,
 /// each drawn with replacement and used for the bot, the reference and the
-/// ceiling alike.
-fn interval(terms: &[SessionV2], phi: f64, resamples: usize, seed: u64) -> (f64, f64) {
+/// ceiling alike; the charge and the cap are taken again on each.
+fn interval(terms: &[SessionV2], rule: Rule, resamples: usize, seed: u64) -> (f64, f64) {
+    let (phi, k, lambda, anchor) = rule;
     let mut rng = SplitMix64(seed);
     let n = terms.len();
     let mut raws: Vec<f64> = (0..resamples)
@@ -665,7 +1014,7 @@ fn interval(terms: &[SessionV2], phi: f64, resamples: usize, seed: u64) -> (f64,
             if sums.ceiling <= 0.0 {
                 return 0.0;
             }
-            sums.raw(phi)
+            sums.score(phi, k, lambda, anchor).raw
         })
         .collect();
     if raws.is_empty() {
@@ -787,7 +1136,14 @@ pub fn compare(
                 if sums.ceiling <= 0.0 {
                     0.0
                 } else {
-                    sums.raw(runs[i].v2.anchor_floor)
+                    let v2 = runs[i].v2;
+                    sums.score(
+                        v2.anchor_floor,
+                        v2.loss_weight,
+                        v2.risk.weight,
+                        RiskAnchor::named(&v2.risk.anchor),
+                    )
+                    .raw
                 }
             }
             None => -1.0,
@@ -975,11 +1331,17 @@ mod tests {
                 reference_pnl_usd,
                 informed_pnl_usd: Some(150.0),
                 hindsight_ceiling_usd: None,
+                reference_marks_sha256: None,
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
                 worst_loss_from_bound: false,
                 breach: None,
+                max_drawdown_usd: 0.0,
+                reference_max_drawdown_usd: None,
+                informed_max_drawdown_usd: None,
+                start_value_usd: 10_000.0,
+                stopped_out: false,
                 traded: pnl_usd != 0.0,
                 trade_markout_usd: Some(-5.0),
             })
@@ -1151,7 +1513,10 @@ mod tests {
         let breached = score(&sessions, &informed(), None, None).unwrap();
         assert_eq!(breached.sessions[5].bot_usd, -150.0);
         assert_eq!(breached.breached_sessions, 1);
-        assert_eq!(breached.raw, compliant_worst.raw);
+        // Above the reference, so the one breach caps the run there.
+        assert!(compliant_worst.raw > 0.5);
+        assert_eq!(breached.raw, 0.5);
+        assert_eq!(breached.breach_cap, Some(0.5));
         // One breach no longer zeroes the set.
         assert!(breached.score > 0.0);
     }
@@ -1510,6 +1875,286 @@ mod tests {
         let v2 = score(&set(&REFERENCE, &REFERENCE), &informed(), None, None).unwrap();
         assert_eq!(v2.ci_scope, "sessions");
         assert_eq!(v2.ci_level, 0.95);
+    }
+
+    /// [`set`] with each session's drawdowns: the bot's, and the
+    /// reference's, as the near-breach charge reads them.
+    fn risked(
+        pnls: &[f64],
+        drawdowns: &[f64],
+        references: &[f64],
+        ref_drawdowns: &[f64],
+    ) -> Vec<Session> {
+        let mut sessions = set(pnls, references);
+        for ((s, &dd), &ref_dd) in sessions.iter_mut().zip(drawdowns).zip(ref_drawdowns) {
+            s.max_drawdown_usd = dd;
+            s.reference_max_drawdown_usd = Some(ref_dd);
+        }
+        sessions
+    }
+
+    /// The reference's drawdowns against its [`REFERENCE`] PnL, the limit
+    /// being 100.
+    const REFERENCE_DD: [f64; 6] = [10.0, 25.0, 15.0, 20.0, 5.0, 10.0];
+
+    #[test]
+    fn the_charge_leaves_doing_nothing_at_zero_and_the_reference_at_one_half() {
+        let reference = score(
+            &risked(&REFERENCE, &REFERENCE_DD, &REFERENCE, &REFERENCE_DD),
+            &informed(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(reference.risk.anchor, "reference");
+        assert_eq!(reference.risk.charge_usd, 0.0);
+        assert_eq!(reference.risk.weight, 1.0);
+        assert_eq!(reference.raw, 0.5);
+        let nop = score(
+            &risked(&[0.0; 6], &[0.0; 6], &REFERENCE, &REFERENCE_DD),
+            &informed(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(nop.risk.charge_usd, 0.0);
+        assert_eq!(nop.risk.dd_rms, 0.0);
+        assert_eq!(nop.raw, 0.0);
+    }
+
+    /// RECKLESS.md's lucky gambler: it drew down to its limit in every
+    /// session, the reference barely moving, and came out ahead anyway.
+    #[test]
+    fn a_lucky_full_cap_gambler_is_charged_for_its_drawdowns() {
+        let lucky = [95.0, -100.0, 98.0, 97.0, -100.0, 96.0];
+        let sessions = risked(&lucky, &[100.0; 6], &REFERENCE, &REFERENCE_DD);
+        let before = {
+            let mut off = informed();
+            off.risk_weight = 0.0;
+            score(&sessions, &off, None, None).unwrap()
+        };
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        // E_bot = 386 − 300 = 86, under the reference's 125: s = 1.
+        assert_eq!(v2.bot_usd, 86.0);
+        assert_eq!(v2.risk.allowance, 1.0);
+        assert_eq!(v2.risk.dd_rms, 1.0);
+        let anchor = (REFERENCE_DD
+            .iter()
+            .map(|d| (d / 100.0) * (d / 100.0))
+            .sum::<f64>()
+            / 6.0)
+            .sqrt();
+        assert!((v2.risk.dd_rms_anchor.unwrap() - anchor).abs() < 1e-12);
+        // λ·k·ΣL·(1 − ρ_A)², over its 86 of winnings: all of them.
+        assert!(1.0 * 1.5 * 600.0 * (1.0 - anchor).powi(2) > 86.0);
+        assert_eq!(v2.risk.charge_usd, 86.0);
+        assert_eq!(v2.raw, 0.0);
+        assert!(before.raw > 0.3, "{}", before.raw);
+        // The charge counts in the gap's risk bucket.
+        assert!(v2.gap.usd.risk >= 86.0);
+        let g = &v2.gap;
+        let sum = g.wrong_read + g.missed + g.execution + g.risk + g.unattributed;
+        assert!((sum - (1.0 - v2.raw)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn at_lambda_one_drawing_to_the_limit_every_session_costs_what_a_breach_does() {
+        // Anchor never moved, the bot drew to the limit everywhere, and made
+        // enough that the cap at its winnings doesn't bind.
+        let sessions = risked(&[400.0; 6], &[100.0; 6], &REFERENCE, &[0.0; 6]);
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.risk.charge_usd, 1.5 * 100.0 * 6.0);
+    }
+
+    /// The reference's bets at two and three times the size: PnL and
+    /// drawdowns scale together, so the earnings allow the risk.
+    #[test]
+    fn a_skilful_bot_betting_bigger_is_not_charged() {
+        for m in [2.0, 3.0] {
+            let pnl: Vec<f64> = REFERENCE.iter().map(|p| p * m).collect();
+            let dd: Vec<f64> = REFERENCE_DD.iter().map(|d| d * m).collect();
+            let v2 = score(
+                &risked(&pnl, &dd, &REFERENCE, &REFERENCE_DD),
+                &informed(),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                (v2.risk.allowance - m).abs() < 1e-12,
+                "{}",
+                v2.risk.allowance
+            );
+            assert_eq!(v2.risk.charge_usd, 0.0, "×{m}");
+            let mut off = informed();
+            off.risk_weight = 0.0;
+            let uncharged = score(
+                &risked(&pnl, &dd, &REFERENCE, &REFERENCE_DD),
+                &off,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(v2.raw, uncharged.raw);
+        }
+    }
+
+    #[test]
+    fn the_charge_never_deepens_a_loss() {
+        let losing = [-20.0, -40.0, 10.0, -5.0, 0.0, 15.0];
+        let v2 = score(
+            &risked(&losing, &[100.0; 6], &REFERENCE, &REFERENCE_DD),
+            &informed(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(v2.bot_usd < 0.0);
+        assert_eq!(v2.risk.charge_usd, 0.0);
+    }
+
+    #[test]
+    fn the_risk_anchor_is_the_informed_bot_then_the_reference_never_a_proxy() {
+        let mut sessions = risked(&REFERENCE, &REFERENCE_DD, &REFERENCE, &REFERENCE_DD);
+        for s in &mut sessions {
+            s.informed_max_drawdown_usd = Some(30.0);
+        }
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.risk.anchor, "informed");
+        assert!((v2.risk.dd_rms_anchor.unwrap() - 0.3).abs() < 1e-12);
+        // Under a proxy ceiling, the informed bot's drawdowns aren't the
+        // ceiling's: the reference's are used.
+        let proxied = score(
+            &without_informed(sessions.clone()),
+            &proxy(0.15),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(proxied.risk.anchor, "reference");
+        // Without the reference's on every session, nothing is charged.
+        let mut bare = without_informed(sessions);
+        bare[3].reference_max_drawdown_usd = None;
+        for s in &mut bare {
+            s.max_drawdown_usd = 100.0;
+        }
+        let none = score(&bare, &proxy(0.15), None, None).unwrap();
+        assert_eq!(none.risk.anchor, "none");
+        assert_eq!(none.risk.charge_usd, 0.0);
+        assert_eq!(none.risk.dd_rms_anchor, None);
+    }
+
+    #[test]
+    fn a_fatal_grade_with_no_ceiling_is_the_floor_not_an_error() {
+        // No informed bot, no η, no reference session for a hindsight
+        // ceiling: an honest grade can't be scored...
+        let sessions = without_informed(set(&REFERENCE, &REFERENCE));
+        assert!(score(&sessions, &informed(), None, None).is_err());
+        // ...a fatal one is the floor.
+        let v2 = score(&sessions, &informed(), Some("tampered".into()), None).unwrap();
+        assert_eq!((v2.raw, v2.score), (-1.0, 0.0));
+        assert_eq!(v2.fatal.as_deref(), Some("tampered"));
+    }
+
+    #[test]
+    fn the_risk_weight_must_not_be_negative() {
+        let mut params = informed();
+        params.risk_weight = -1.0;
+        let refused = score(&set(&REFERENCE, &REFERENCE), &params, None, None);
+        assert!(refused.unwrap_err().contains("risk weight"));
+    }
+
+    /// The reference levered up as far as it stays inside its limit, and
+    /// further, breaching (and stopped out) once or twice for it.
+    #[test]
+    fn an_occasional_breacher_scores_below_its_compliant_twin() {
+        let twin = [120.0, -60.0, 75.0, 180.0, 0.0, 45.0];
+        let compliant = score(&set(&twin, &REFERENCE), &informed(), None, None).unwrap();
+        assert!(compliant.raw > 0.5);
+        let mut once = set(&twin.map(|p| p * 1.6), &REFERENCE);
+        once[1].pnl_usd = -100.0;
+        once[1].breach = Some("drew down past its limit".into());
+        once[1].stopped_out = true;
+        let once = score(&once, &informed(), None, None).unwrap();
+        assert_eq!(once.breach_cap, Some(0.5));
+        assert!(
+            once.raw < compliant.raw,
+            "{} vs {}",
+            once.raw,
+            compliant.raw
+        );
+        assert_eq!(once.metrics.stopped_out_sessions, 1);
+        let mut twice = set(&twin.map(|p| p * 2.0), &REFERENCE);
+        for i in [1, 4] {
+            twice[i].pnl_usd = -100.0;
+            twice[i].breach = Some("drew down past its limit".into());
+        }
+        let twice = score(&twice, &informed(), None, None).unwrap();
+        assert_eq!(twice.breach_cap, Some(0.0));
+        assert!(twice.raw <= 0.0);
+        // The cap's points count as risk in the gap.
+        let g = &once.gap;
+        let sum = g.wrong_read + g.missed + g.execution + g.risk + g.unattributed;
+        assert!((sum - (1.0 - once.raw)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_metrics_are_what_the_sessions_made_and_risked() {
+        let bot = [100.0, -30.0, 50.0, -10.0, 20.0, 0.0];
+        let mut sessions = risked(
+            &bot,
+            &[40.0, 60.0, 10.0, 30.0, 0.0, 0.0],
+            &REFERENCE,
+            &REFERENCE_DD,
+        );
+        sessions[1].breach = Some("drew down past its limit".into());
+        let m = score(&sessions, &informed(), None, None).unwrap().metrics;
+        assert_eq!(m.sessions, 6);
+        // 130 over six sessions of 10,000.
+        assert!((m.return_on_capital - 130.0 / 6.0 / 10_000.0).abs() < 1e-15);
+        // Mean 21.67, sample SD 47.08 (n − 1).
+        let mean = 130.0 / 6.0;
+        let sd = (bot.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / 5.0).sqrt();
+        assert!((m.sharpe.unwrap() - mean / sd).abs() < 1e-12);
+        assert!((m.sharpe.unwrap() - 0.4602).abs() < 1e-4, "{:?}", m.sharpe);
+        assert!((m.drawdown_to_limit_mean - 140.0 / 600.0).abs() < 1e-15);
+        assert_eq!(m.drawdown_to_limit_max, 0.6);
+        assert_eq!(m.profitable_share, 0.5);
+        assert_eq!(
+            (m.worst_session.as_str(), m.worst_session_usd),
+            ("hidden-1", -30.0)
+        );
+        assert_eq!(m.pnl_usd, 130.0);
+        assert_eq!(m.losing_sessions, 2);
+        assert_eq!(m.usd_lost, 40.0);
+        assert!((m.breaches_per_100_sessions - 100.0 / 6.0).abs() < 1e-12);
+        assert!(!m.raw_negative);
+        // One session, or all alike: no Sharpe.
+        let flat = score(&set(&[10.0; 6], &REFERENCE), &informed(), None, None).unwrap();
+        assert_eq!(flat.metrics.sharpe, None);
+    }
+
+    #[test]
+    fn the_interval_and_comparison_charge_each_resample() {
+        let lucky = [95.0, -100.0, 98.0, 97.0, -100.0, 96.0];
+        let sessions = risked(&lucky, &[100.0; 6], &REFERENCE, &REFERENCE_DD);
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        let mut off = informed();
+        off.risk_weight = 0.0;
+        let uncharged = score(&sessions, &off, None, None).unwrap();
+        assert!(v2.ci_lo <= v2.raw && v2.raw <= v2.ci_hi);
+        assert!(
+            v2.ci_hi < uncharged.ci_hi,
+            "{} vs {}",
+            v2.ci_hi,
+            uncharged.ci_hi
+        );
+        let runs = [Run {
+            model: "a".into(),
+            v2: &v2,
+        }];
+        let c = compare(&runs, &informed(), None).unwrap();
+        assert_eq!(c.models[0].mean_raw, v2.raw);
     }
 
     #[test]

@@ -33,7 +33,7 @@ docs together.
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `bound_usd`, `participation`, `net` |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out` |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -43,6 +43,11 @@ scoring v2 falls back to the cost-aware hindsight bound (`ceiling:
 the taker fee and half-spread on every trade. It needs the reference's
 session (the grade's `--reference` run, or `details/reference/` on a
 rescore), and is never computed on the bot's own marks.
+`reference_max_drawdown_usd` and `informed_max_drawdown_usd`, written by
+`mtx calibrate` beside the PnL, are the anchor of v2's near-breach charge:
+the informed bot's drawdowns when it is the ceiling, else the reference's.
+A grade that runs the reference (`--reference`) uses the drawdowns it
+measures instead.
 
 Optional sections are left out when empty. Unknown fields are errors in
 every section.
@@ -55,6 +60,34 @@ having no path or competitor (their takers are a tape), lending scenarios
 moving prices through their Scope feeds only (no path, actors, order or spot
 scoring; clock jumps inside the session and without faults), the mandate
 covering exactly the scenario's markets, a sell order fitting the wallet.
+
+## The risk desk: `scoring.stop_out`
+
+By default a session that breaks its mandate disqualifies the bot. A
+perp scenario can price a breach instead:
+
+```json
+"scoring": { "stop_out": { "on": ["drawdown"], "close": "market", "slice_base": 100 } }
+```
+
+- `on`: the mandate limits whose breach the desk closes instead of
+  disqualifying. Only `drawdown` so far; a later limit (a money market's
+  `min_health`, say) joins the list.
+- `close`: `market`, the only mode: the desk cancels the bot's orders and
+  sends market orders against its position through the book, each at most
+  `slice_base` base units (one order when absent) and filling no worse
+  than 4% from the best price, signed with the bot's key.
+
+The breach is detected on the step measurement the audit reads (peak value
+minus value over `max_drawdown_usd`). The bot is stopped first and gets no
+more turns; the desk sends at most 8 orders a step until the position is
+flat, and the session ends on the step it is flat (or at its last slot).
+The PnL is the account's value then, so the close pays the book's impact
+and the taker fee. The report lists each close in `forced_closes` (reason,
+step, the value before and after, the orders, whether it ended flat), and
+the audit then reads the drawdown as at most the limit: every other rule
+still disqualifies. A component sees `MTX_STOP_OUT=1` in its session vars.
+The code is `crates/grader/src/risk.rs` and the session loop.
 
 ## Example
 
