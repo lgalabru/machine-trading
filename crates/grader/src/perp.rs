@@ -189,7 +189,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
             .await?
             .remove(0);
-        cast.add(Box::new(Competitor::new(seat, making)));
+        cast.add(Box::new(Competitor::new(
+            seat,
+            making,
+            opts.keys.seed("competitor", 0),
+        )));
     }
     // The library's actors: a wallet each, onboarded like the takers. They
     // are built once the session's first slot is known.
@@ -430,6 +434,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .as_ref()
             .map(|off| base_slot + off.reopen_slot),
         cast,
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -950,6 +955,7 @@ impl Account for PerpAccount {
             order: None,
             participation: None,
             net: None,
+            lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
             oracle_starts: std::mem::take(&mut self.oracle_starts),

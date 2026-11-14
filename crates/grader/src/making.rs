@@ -24,7 +24,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::scenario::{Scenario, SplitMix64, VENUE, Waypoint};
+use crate::scenario::{Scenario, SplitMix64, VENUE, Waypoint, move_slots};
 
 /// Taker accounts the grader trades from. Every order picks one at random,
 /// so an account says nothing about whether its flow is informed.
@@ -52,6 +52,78 @@ pub struct Competition {
     pub react_slots: u64,
     /// Its quote on each side, in base units.
     pub size: f64,
+    /// Opt-in: the reactive competitor of the redesigned family, which
+    /// counts in whole ticks, ignores odd lots, jitters its timing and
+    /// widens after one-sided fills. Absent, it competes as it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactive: Option<Reactive>,
+}
+
+/// The redesigned competitor's rules (see [`crate::actors::competitor`]).
+/// Every field has a default, so `{}` turns the whole behaviour on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct Reactive {
+    /// The smallest resting size it reacts to, in base units: quotes under
+    /// it are odd lots and set no touch.
+    pub q_react: f64,
+    /// How far each look's delay varies around `react_slots`, as a fraction
+    /// of it: the delay is drawn from `react_slots * (1 ± jitter)`.
+    pub jitter: f64,
+    /// The ticks it steps inside a rival by, drawn from this range.
+    pub step_ticks: (u32, u32),
+    /// It reads toxic flow when its own fills on one side within
+    /// `toxic_window` slots reach `toxic_size_mult` times its quote size.
+    pub toxic_size_mult: f64,
+    pub toxic_window: u64,
+    /// Then it quotes the hit side at its full half-spread for a number of
+    /// slots drawn from this range.
+    pub widen_slots: (u64, u64),
+}
+
+impl Default for Reactive {
+    fn default() -> Self {
+        Self {
+            q_react: 1.0,
+            jitter: 0.5,
+            step_ticks: (1, 2),
+            toxic_size_mult: 2.0,
+            toxic_window: 8,
+            widen_slots: (20, 40),
+        }
+    }
+}
+
+impl Reactive {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if !(self.q_react.is_finite() && self.q_react >= 0.0) {
+            return Err(format!(
+                "reactive q_react {} must be 0 or more",
+                self.q_react
+            ));
+        }
+        if !(self.jitter.is_finite() && (0.0..1.0).contains(&self.jitter)) {
+            return Err(format!("reactive jitter {} must be in [0, 1)", self.jitter));
+        }
+        if self.step_ticks.0 == 0 || self.step_ticks.0 > self.step_ticks.1 {
+            return Err(format!(
+                "reactive step_ticks {:?} must be an ascending range of at least 1",
+                self.step_ticks
+            ));
+        }
+        if !(self.toxic_size_mult.is_finite() && self.toxic_size_mult > 0.0)
+            || self.toxic_window == 0
+        {
+            return Err("reactive toxicity needs a positive size multiple and window".into());
+        }
+        if self.widen_slots.0 == 0 || self.widen_slots.0 > self.widen_slots.1 {
+            return Err(format!(
+                "reactive widen_slots {:?} must be an ascending range of at least 1",
+                self.widen_slots
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One market order from a taker, filled against the best quotes in the
@@ -98,6 +170,9 @@ impl Making {
                 "competition needs react_slots >= 1 and a positive size, not {} and {}",
                 c.react_slots, c.size
             ));
+        }
+        if let Some(reactive) = &c.reactive {
+            reactive.validate()?;
         }
         let mut last = 0;
         for (i, order) in self.takers.iter().enumerate() {
@@ -214,6 +289,14 @@ pub struct MakingFamily {
     /// away and the best bots took the cap with every burst.
     pub informed_orders: (u64, u64),
     pub informed_lead: (u64, u64),
+    /// The share of an announced jump that leaks into the price over its
+    /// burst, in steps that follow the informed orders (drawn per jump); the
+    /// rest lands at the jump slot. `None` lands the whole jump at its slot.
+    pub leak: Option<(f64, f64)>,
+    /// Sets round the calm and trend counts to the nearest and give the jump
+    /// sessions the rest (72 sessions: 22, 28, 22), instead of the largest
+    /// remainder (22, 29, 21).
+    pub jumps_take_rest: bool,
     /// Fake-out bursts per session, in any regime: drawn exactly like an
     /// informed burst, with no jump after it. As common as real bursts, so a
     /// burst alone is about a coin flip.
@@ -254,6 +337,8 @@ impl MakingFamily {
             informed_odds: 0.85,
             informed_orders: (6, 14),
             informed_lead: (6, 30),
+            leak: None,
+            jumps_take_rest: false,
             fakeouts: (0, 2),
             floor_bps: (2.0, 6.0),
             react_slots: (2, 8),
@@ -267,6 +352,20 @@ impl MakingFamily {
             // costs ~$70, so only a maker that keeps adding into a move gets
             // near it.
             max_drawdown_usd: 250.0,
+        }
+    }
+
+    /// The redesigned family: longer sessions, fewer jump sessions, and
+    /// announced jumps that leak into the price over their burst. Opt-in
+    /// (the `market-making-v2` generator); [`MakingFamily::spcx`] is unchanged.
+    pub fn v2() -> Self {
+        Self {
+            calm_odds: 0.3,
+            jumps_odds: 0.4,
+            duration: (960, 1600),
+            leak: Some((0.3, 0.6)),
+            jumps_take_rest: true,
+            ..Self::spcx()
         }
     }
 
@@ -290,6 +389,13 @@ impl MakingFamily {
     /// order. The labels are for the ladder's flow oracle only: they never go
     /// in a scenario file.
     pub fn sample_labeled(&self, name: &str, seed: u64) -> (Scenario, Vec<bool>) {
+        let (scenario, informed, _) = self.sample_detailed(name, seed);
+        (scenario, informed)
+    }
+
+    /// [`MakingFamily::sample_labeled`], with each announced jump's leak
+    /// (empty unless the family leaks). For checks: never in a scenario file.
+    pub fn sample_detailed(&self, name: &str, seed: u64) -> (Scenario, Vec<bool>, Vec<Leak>) {
         let mut rng = SplitMix64(seed);
         // The regime comes first, so `regime` can read it alone.
         let regime = match rng.next_f64() {
@@ -338,6 +444,7 @@ impl MakingFamily {
         let mut pending = jumps.iter().peekable();
         while slot + 4 < duration {
             let jump = pending.next_if(|(at, _)| *at <= slot);
+            let (prev_slot, prev_level) = (slot, level);
             level = match jump {
                 Some((_, size)) => level + size,
                 None => {
@@ -348,6 +455,10 @@ impl MakingFamily {
             level = round3(level);
             path.push(Waypoint::at(slot, level));
             slot += rng.range_u64(self.step_gap);
+            if self.leak.is_some() {
+                // A jump of 4% can take two of Phoenix's steps: wait them out.
+                slot = slot.max(prev_slot + move_slots(prev_level, level) + 1);
+            }
         }
 
         // Flow: noise every slot at the scenario's rate, informed bursts
@@ -376,9 +487,11 @@ impl MakingFamily {
             }
         };
         let mut bursts: Vec<(u64, TakerSide)> = Vec::new();
+        let mut announced: Vec<(u64, f64)> = Vec::new();
         for &(at, size) in &jumps {
             if rng.next_f64() < self.informed_odds {
                 bursts.push((at, side_of(size)));
+                announced.push((at, size));
             }
         }
         let informed_bursts = bursts.len();
@@ -387,10 +500,13 @@ impl MakingFamily {
             let sign = if rng.next_f64() < 0.5 { -1.0 } else { 1.0 };
             bursts.push((at, side_of(sign)));
         }
+        let mut burst_slots: Vec<Vec<u64>> = Vec::new();
         for (burst, (at, side)) in bursts.into_iter().enumerate() {
             let lead = rng.range_u64(self.informed_lead).min(at);
+            burst_slots.push(Vec::new());
             for _ in 0..rng.range_u64(self.informed_orders) {
                 let slot = at - rng.range_u64((1, lead.max(1)));
+                burst_slots[burst].push(slot);
                 let size = self.size(&mut rng);
                 let limit = self.limit(&mut rng, competitor_bps);
                 takers.push((
@@ -406,7 +522,21 @@ impl MakingFamily {
             floor_bps: round2(rng.range_f64(self.floor_bps).min(0.5 * competitor_bps)),
             react_slots: rng.range_u64(self.react_slots),
             size: round2(rng.range_f64(self.competitor_size)),
+            reactive: None,
         };
+
+        let mut leaks = Vec::new();
+        if let Some(range) = self.leak {
+            for (&(at, size), slots) in announced.iter().zip(&burst_slots) {
+                let share = round3(rng.range_f64(range));
+                leak_into(&mut path, at, size * share, slots);
+                leaks.push(Leak {
+                    slot: at,
+                    size_pct: size,
+                    share,
+                });
+            }
+        }
 
         let description = match regime {
             Regime::Calm => format!("{} walks without jumps", self.symbol),
@@ -458,6 +588,8 @@ impl MakingFamily {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
@@ -470,7 +602,7 @@ impl MakingFamily {
             raw_sends: None,
             stop_out: None,
         };
-        (scenario, informed)
+        (scenario, informed, leaks)
     }
 
     /// `count` scenarios named `<prefix>-<n>`, each regime in proportion to
@@ -502,6 +634,18 @@ impl MakingFamily {
                 (regime, exact.floor() as usize, exact - exact.floor())
             })
             .collect();
+        if self.jumps_take_rest {
+            for q in quotas.iter_mut().filter(|q| q.0 != Regime::Jumps) {
+                q.1 += (q.2 >= 0.5) as usize;
+            }
+            let others: usize = quotas
+                .iter()
+                .filter(|q| q.0 != Regime::Jumps)
+                .map(|q| q.1)
+                .sum();
+            quotas[1].1 = count - others;
+            quotas[1].2 = 0.0;
+        }
         let short = count - quotas.iter().map(|q| q.1).sum::<usize>();
         let mut by_remainder: Vec<usize> = (0..quotas.len()).collect();
         by_remainder.sort_by(|&a, &b| quotas[b].2.total_cmp(&quotas[a].2));
@@ -558,6 +702,89 @@ impl MakingFamily {
             account: rng.range_u64((0, TAKER_ACCOUNTS as u64 - 1)) as u8,
         }
     }
+}
+
+/// How much of one announced jump leaked into the price ahead of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Leak {
+    /// The jump's slot.
+    pub slot: u64,
+    /// The whole jump, in percent.
+    pub size_pct: f64,
+    /// The share of it that leaked over the burst.
+    pub share: f64,
+}
+
+/// Moves `leaked` percent of the jump at slot `at` into the path ahead of
+/// it: each informed
+/// order, at `slots`, lifts the level by an equal part of it from its slot
+/// on. The waypoint that carries the jump keeps the remainder, since the
+/// levels after it already include the whole jump.
+fn leak_into(path: &mut Vec<Waypoint>, at: u64, leaked: f64, slots: &[u64]) {
+    let Some(&first) = slots.iter().min() else {
+        return;
+    };
+    let part = leaked / slots.len() as f64;
+    let cum = |slot: u64| part * slots.iter().filter(|&&s| s <= slot).count() as f64;
+    // The jump's waypoint: the first one at or after its slot.
+    let carrier = path.iter().position(|w| w.slot >= at).unwrap_or(path.len());
+    let mut moved: Vec<Waypoint> = Vec::new();
+    for (i, w) in path.iter().enumerate() {
+        if i < carrier && w.slot >= first {
+            moved.push(Waypoint::at(w.slot, round3(w.level_pct + cum(w.slot))));
+        } else {
+            moved.push(*w);
+        }
+    }
+    let mut slots = slots.to_vec();
+    slots.sort_unstable();
+    slots.dedup();
+    // A step goes in at its order's slot, or a few slots later where each
+    // move wouldn't finish before the next starts; it stays before the jump.
+    for slot in slots {
+        let level = cum(slot);
+        for at_slot in slot..(slot + 6).min(at) {
+            if moved.iter().any(|w| w.slot == at_slot) {
+                continue;
+            }
+            let mut trial = moved.clone();
+            trial.push(Waypoint::at(
+                at_slot,
+                round3(level_at(path, at_slot) + level),
+            ));
+            trial.sort_by_key(|w| w.slot);
+            if moves_fit(&trial) {
+                moved = trial;
+                break;
+            }
+        }
+    }
+    moved.sort_by_key(|w| w.slot);
+    // Orders too close to the jump for a step of their own still leak: the
+    // last step before it carries whatever is left.
+    if let Some(last) = moved.iter().rposition(|w| w.slot < at) {
+        let slot = moved[last].slot;
+        let level = round3(level_at(path, slot) + cum(u64::MAX));
+        moved[last] = Waypoint::at(slot, level);
+        if !moves_fit(&moved) {
+            // Leave the path as built rather than break a move.
+            moved[last] = Waypoint::at(slot, round3(level_at(path, slot) + cum(slot)));
+        }
+    }
+    *path = moved;
+}
+
+/// Whether each move finishes before the next waypoint starts.
+fn moves_fit(path: &[Waypoint]) -> bool {
+    let (mut level, mut free_from) = (0.0, 0);
+    for w in path {
+        if w.slot < free_from {
+            return false;
+        }
+        free_from = w.slot + move_slots(level, w.level_pct) + 1;
+        level = w.level_pct;
+    }
+    true
 }
 
 fn round2(v: f64) -> f64 {
@@ -690,6 +917,7 @@ mod tests {
                 floor_bps: 3.0,
                 react_slots: 4,
                 size: 2.0,
+                reactive: None,
             },
             takers: vec![
                 TakerOrder {
@@ -796,5 +1024,96 @@ mod tests {
         );
         assert!(making.competition.floor_bps < making.competitor_bps);
         assert_eq!(s.validate(), Ok(()));
+    }
+
+    #[test]
+    fn v2_sessions_are_longer_and_the_mix_is_calmer() {
+        let family = MakingFamily::v2();
+        let mut counts = [0usize; 3];
+        for seed in 0..600 {
+            let s = family.sample("m", seed);
+            assert_eq!(s.validate(), Ok(()), "seed {seed}");
+            assert!((960..=1600).contains(&s.duration_slots), "seed {seed}");
+            counts[family.regime(seed) as usize] += 1;
+        }
+        let share = |n: usize| n as f64 / 600.0;
+        assert!((share(counts[0]) - 0.3).abs() < 0.06, "{counts:?}");
+        assert!((share(counts[1]) - 0.4).abs() < 0.06, "{counts:?}");
+        assert!((share(counts[2]) - 0.3).abs() < 0.06, "{counts:?}");
+    }
+
+    /// Announced jumps leak 30-60% of their size into the price over the
+    /// burst, in steps that follow the informed orders, and the whole jump
+    /// has landed after it.
+    #[test]
+    fn v2_announced_jumps_leak_into_the_burst() {
+        let family = MakingFamily::v2();
+        let mut seen = 0;
+        for seed in (0..2000).filter(|&s| family.regime(s) == Regime::Jumps) {
+            let (s, informed, leaks) = family.sample_detailed("m", seed);
+            let takers = &s.making.as_ref().unwrap().takers;
+            for leak in &leaks {
+                seen += 1;
+                assert!((0.3..=0.6).contains(&leak.share), "seed {seed}: {leak:?}");
+                let slots: Vec<u64> = takers
+                    .iter()
+                    .zip(&informed)
+                    .filter(|(o, i)| **i && o.slot < leak.slot && o.slot + 30 >= leak.slot)
+                    .map(|(o, _)| o.slot)
+                    .collect();
+                assert!(!slots.is_empty(), "seed {seed}");
+                // Against the same session with no leak, the walk is the same.
+                let flat = MakingFamily {
+                    leak: None,
+                    ..family.clone()
+                }
+                .sample("m", seed);
+                let leaked = level_at(&s.path, leak.slot - 1) - level_at(&flat.path, leak.slot - 1);
+                assert!(
+                    (leaked - leak.share * leak.size_pct).abs() < 0.2,
+                    "seed {seed}: leaked {leaked} of {leak:?}"
+                );
+                let landed =
+                    level_at(&s.path, leak.slot + 12) - level_at(&flat.path, leak.slot + 12);
+                assert!(landed.abs() < 0.2, "seed {seed}: {landed} after the jump");
+            }
+        }
+        assert!(seen > 100);
+    }
+
+    /// The v1 family draws exactly what it drew before the v2 knobs existed.
+    #[test]
+    fn v1_has_no_leaks() {
+        let family = MakingFamily::spcx();
+        assert!(family.leak.is_none());
+        assert!(family.sample_detailed("m", 5).2.is_empty());
+    }
+
+    #[test]
+    fn a_leak_moves_its_share_ahead_of_the_jump_and_keeps_the_total() {
+        let mut path = vec![
+            Waypoint::at(10, 0.1),
+            Waypoint::at(40, 0.1),
+            Waypoint::at(70, 3.1),
+            Waypoint::at(80, 3.2),
+        ];
+        leak_into(&mut path, 70, 1.0, &[45, 52, 52, 60]);
+        assert_eq!(level_at(&path, 44), 0.1);
+        assert!((level_at(&path, 45) - 0.35).abs() < 1e-9);
+        assert!((level_at(&path, 52) - 0.85).abs() < 1e-9);
+        assert!((level_at(&path, 60) - 1.1).abs() < 1e-9);
+        assert!((level_at(&path, 70) - 3.1).abs() < 1e-9);
+        assert_eq!(level_at(&path, 80), 3.2);
+        assert!(moves_fit(&path));
+    }
+
+    #[test]
+    fn v2_hidden_sets_of_72_hold_22_28_22() {
+        let set = MakingFamily::v2().sample_set("h", 72, 11);
+        let count = |text: &str| set.iter().filter(|s| s.description.contains(text)).count();
+        assert_eq!(
+            (count("without jumps"), count("and jumps"), count("trends")),
+            (22, 28, 22)
+        );
     }
 }
