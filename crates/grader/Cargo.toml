@@ -18,6 +18,9 @@ mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2"] }
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true
+# A component's seats send through the transaction layer's chain client
+# (src/txlayer/client.rs).
+solana-account = "4"
 serde_json.workspace = true
 # Derives each session's keypairs from the grade's secret (see src/keys.rs),
 # hashes a snapshot recipe, and pins market-calibration files (src/market).
