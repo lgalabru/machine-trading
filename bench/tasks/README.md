@@ -45,7 +45,7 @@ scores at least the whole loss limit lost and caps the run (one at 0.5, two
 or more at 0), and a refused call or tampering scores −1. The agent is told
 all of it: `mtx task sync` writes the rules into the task's
 `instruction.md` from the grader's settings (between its `mtx:scoring`
-markers). The grader's side is `crates/grader/src/scoring_v2.rs`.
+markers). How and why, with worked examples: [grading](../../docs/grading.md).
 
 A task scored by v2 has both anchors, a reference in the strength band (on
 the ladder's sets, its loss-weighted PnL is 0.2 to 0.7 of the informed bot's
