@@ -1,0 +1,218 @@
+# Market calibration nvda.20261113.903d1120 (schema 1.0). Written by calibration/fitter (tickers/equity.py)
+# from the asset's config; never edited by hand. A refit is a new file with a new id.
+# Every input (url, sha256, bytes, fetch time) is in nvda.20261113.903d1120.inputs.json.
+
+
+[meta]
+schema_version = "1.0"
+calibration_id = "nvda.20261113.903d1120"
+asset = "nvda"
+symbol = "NVDA"
+fitted_at = "2026-11-13T21:45:00+00:00"
+exported_at = "2026-11-13T21:45:00+00:00"
+fitter = "calibration/fitter (tickers/equity.py on calib/)"
+fitter_code_sha256_12 = "e930e866c951"
+inputs_file = "nvda.20261113.903d1120.inputs.json"
+inputs_digest = "33fb0464c60a61d9"
+inputs_count = 228
+sources = ["Phoenix perp API /exchange and /candles (NVDA mark, 1 m, since its first full week)", "NYSE holiday calendar"]
+limits = ["Fair value is Phoenix's NVDA mark (the oracle plus the perp's premium), 2026-06-15 to 2026-11-12, not the underlying's tape. Pyth's Equity.US history is not keyless (benchmarks.pyth.network answers 404 and Hermes needs a key), so no longer underlying history was used.", "The market's history is 151 days from its first full week (109 regular sessions, 42401 regular-hours 1 m returns).", "Two volatility states on 109 trading days: halves of the days by their level, not separate clusters (the levels are unimodal), so they carry day-to-day calm and stress, not the time-of-day shape (that stays in the within-state spread); the hourly switching rates are the daily ones spread over 24 hours.", "The open gap is fitted on 109 opens.", "Only regular hours vs everything else is fitted: pre, post, overnight and weekend share the closed-hours volatility (0.511 of the regular-hours 1 m sd).", "Fitted to the realism windows themselves (in-sample checks): per_second_sd (vol_level), df (kurtosis_within), the level's log-sd (vol_of_vol), GARCH alpha and persistence (clustering_lag_1 and _5) and the mark's half-life (predictability); the gap sizes are the open gaps above (gap_size). The realism windows are the history the model is fitted on.", "Out of fit: tail_ratio, clustering_lag_10 and round_trips.", "Venue numbers (trades, sizes, premium) come from 30 days (2026-10-14 to 2026-11-12); fees, tick, lots and funding caps are /exchange as of the pull.", "Book depth and impact are defaults: no NVDA book or fill tape has been recorded (426506 trades in the candles over the whole pull, not signed fills).", "Realism bands are each statistic's sampling spread over these windows; other periods would add period-to-period spread."]
+
+[meta.windows]
+phoenix_fair_value = ["2026-06-15", "2026-11-12"]
+phoenix_venue = ["2026-10-14", "2026-11-12"]
+
+[fair_value]
+model = "regime_garch_t"
+reference = "Phoenix NVDA mark (tracks Pyth Equity.US.NVDA/USD plus the perp's premium)"
+per_second_sd = 8.29717e-05
+per_second_sd_source = "the median session's level: the realism windows' median 1 m sd / sqrt(60), over 0.8715, the median window sd of the model's own 30-block windows at unit median level (simulated)"
+block_seconds = 60
+
+[fair_value.tails]
+model = "student_t"
+df = 6.634
+df_source = "simulated moments: the df at which the model's 30-minute windows of 1 m mark returns match the realism windows' within-window kurtosis (0.4561); the GARCH-standardized estimate is 4.783"
+hill_alpha_1m = 3.178
+
+[fair_value.tails.excess_kurtosis_by_horizon]
+60s = 23.27
+
+[fair_value.clustering]
+model = "garch11"
+alpha = 0.07929
+beta = 0.8208
+half_life_seconds = 395.1
+source = "alpha and alpha + beta by simulated moments to the realism windows' |r| ACF at lags 1 and 5 (0.01441, -0.01933); variance-targeted Gaussian QMLE on 1 m regular-hours mark returns gave alpha 0.0963, beta 0.8985"
+
+[fair_value.mark]
+model = "ema"
+half_life_seconds = 2.849
+update_seconds = 5.0
+source = "Phoenix's mark is a smoothed price: every update_seconds it moves toward the fair path, an exponential average with this half-life, by simulated moments to the realism windows' lag-1 return ACF (-0.00983)"
+
+[fair_value.regimes]
+model = "markov"
+names = ["calm", "stressed"]
+vol_mult = [0.7497, 1.341]
+log_sd_within = [0.5386, 0.2407]
+share = [0.5046, 0.4954]
+transition_per_hour = [[0.9883, 0.01168], [0.01117, 0.9888]]
+source = "two states, the lower and upper halves of 109 trading days by the median over each day's regular hours of the log hourly realized vol (hours with 50+ bars) with each clock hour's mean removed (a mixture on these finds no separate component); shares from the halves; the daily transitions of 108 consecutive-day pairs (+1 pseudo-count a cell), daily stay chances 0.754 and 0.764, as hourly rates (the 24th root); multipliers relative to their share-weighted geometric mean; the within-state log-sds are the days' own spread in each state times 1.079, by simulated moments to the realism windows' vol of vol (0.5298), drawn as check_model draws (30-minute regular-session sessions, GARCH from its target)"
+
+[fair_value.jumps]
+model = "poisson_lognormal"
+per_hour = 0.5824
+abs_size_median_pct = 0.2842
+abs_size_p90_pct = 0.4893
+rule = "1 m regular-hours return beyond 5 robust sigmas of the trailing hour"
+
+[calendar]
+model = "sessions"
+timezone = "America/New_York"
+closed_vol_mult = 0.5105
+closed_source = "1 m mark sd outside regular hours over the regular-hours sd; weekends and holidays are closed"
+holidays = ["2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25", "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"]
+draw_range = ["2027-01-04", "2027-12-31"]
+
+[[calendar.sessions]]
+kind = "pre"
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "04:00"
+end = "09:30"
+vol_mult = 0.5105
+
+[[calendar.sessions]]
+kind = "regular"
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "09:30"
+end = "16:00"
+vol_mult = 1.0
+
+[[calendar.sessions]]
+kind = "post"
+days = ["mon", "tue", "wed", "thu", "fri"]
+start = "16:00"
+end = "20:00"
+vol_mult = 0.5105
+
+[[calendar.sessions]]
+kind = "overnight"
+days = ["sun", "mon", "tue", "wed", "thu"]
+start = "20:00"
+end = "04:00"
+vol_mult = 0.5105
+
+[[calendar.gaps]]
+into = "regular"
+n = 109
+abs_median_pct = 0.2634
+abs_p90_pct = 0.5732
+source = "1 m mark move at the 09:30 New York open, 109 opens"
+
+[calendar.closed_hours_move]
+n = 108
+abs_median_pct = 1.041
+abs_p90_pct = 2.29
+source = "16:00 close to 09:30 open, nights and weekends together"
+
+[venues]
+
+[venues.phoenix_perp]
+market = "AzySnZQCNjkQMtm5ZDd2FjKYTjBoNb5Bv5Dsm3WyRkbj"
+taker_fee = 0.00035
+maker_fee = 5e-05
+tick_size = 10
+base_lots_decimals = 3
+trades_per_minute = 1.24
+trades_dispersion_index = 0.8209
+trade_share_by_hour = [0.0398, 0.0414, 0.0402, 0.0398, 0.0399, 0.0397, 0.0399, 0.0404, 0.0421, 0.0518, 0.0444, 0.0442, 0.0414, 0.0416, 0.0411, 0.0421, 0.0416, 0.0458, 0.041, 0.0419, 0.0401, 0.04, 0.0401, 0.0398]
+
+[venues.phoenix_perp.trade_size]
+model = "lognormal"
+median = 0.015
+sigma = 1.04
+unit = "base"
+source = "per-minute mean trade size from Phoenix candles"
+
+[venues.phoenix_perp.premium_bps]
+p10 = -1.88
+median = 1.06
+p90 = 8.03
+source = "last trade vs mark per minute (not mark vs index)"
+
+[venues.phoenix_perp.funding]
+interval_seconds = 3600
+period_seconds = 28800
+max_rate_per_interval = 388
+max_rate_per_interval_pct = 0.2392
+source = "Phoenix /exchange"
+
+[book]
+model = "defaults"
+half_spread_bps = 5.0
+half_spread_source = "default, as for spcx: no NVDA book recorded"
+depth_bps = [5.0, 10.0, 25.0, 50.0, 100.0]
+depth_base = [2.0, 5.0, 15.0, 35.0, 80.0]
+depth_source = "default, as for spcx (in base units, not scaled to NVDA's price); no NVDA book recorded"
+
+[book.impact]
+model = "power_law"
+k_bps = 1.0
+gamma = 0.5
+size_unit = "base"
+permanent_share = 0.5
+decay_half_life_seconds = 30.0
+source = "defaults (square-root law); no fill tapes yet"
+
+[realism]
+source = "Phoenix NVDA mark 1 m returns in US regular hours (09:31-16:00 New York), 2026-06-15 to 2026-11-12, non-overlapping 30-minute windows of consecutive minutes"
+windows = 1308
+bar_seconds = 60
+window_bars = 30
+vol_bars = 1
+agg_bars = 1
+cluster_bars = 1
+cluster_lags = [1, 5, 10]
+session_kind = "regular"
+round_trip_min_losing_share = 0.95
+fitted = ["vol_level", "vol_of_vol", "kurtosis_within", "predictability", "clustering_lag_1", "clustering_lag_5", "gap_size_median", "gap_size_p90"]
+out_of_fit = ["tail_ratio", "clustering_lag_10", "round_trips"]
+
+[realism.reference]
+vol_level = 0.00056014
+vol_of_vol = 0.5298
+kurtosis_within = 0.4561
+kurtosis_pooled = 24.34
+tail_index = 3.152
+clustering = [0.01441, -0.01933, -0.02336]
+predictability = -0.00983
+tail_ratio = 1.663
+
+[realism.spread]
+windows = 300
+draws = 400
+sigmas = 3.226
+sigmas_source = "Sidak: each of the 8 gated return checks at 1% family-wise false fails"
+
+[realism.spread.log_sd]
+vol_level = 0.03894
+vol_of_vol = 0.06717
+tail_ratio = 0.01429
+
+[realism.spread.sd]
+kurtosis_within = 0.09259
+clustering = [0.01111, 0.01059, 0.01246]
+predictability = 0.01079
+
+[realism.null]
+source = "Gaussian returns at each real window's sd (tails), at the windows' median sd (vol of vol), and each real window shuffled (clustering); mean of 4 draws"
+vol_of_vol = 0.1307
+tail_ratio = 1.512
+kurtosis_within = -0.1913
+clustering = [-0.02316, -0.02328, -0.02202]
+
+[realism.bands]
+
+[realism.bands.gap_size]
+ratio = [0.67, 1.5]
