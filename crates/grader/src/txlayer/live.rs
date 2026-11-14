@@ -1333,6 +1333,7 @@ async fn the_tx_probe_pays_for_what_it_lands_and_replays() {
             trusted: false,
             keys: keys.role("bot").session(0, &scenario.name),
             observer: None,
+            rules: crate::session::Rules::default(),
         })
         .await
         .unwrap();
