@@ -519,14 +519,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             fills: Vec::new(),
             keys: Vec::new(),
         }),
-        quotes: match scenario.making.as_ref().and_then(|m| m.obligations) {
-            Some(obligations) => Some(QuoteSampler::new(
-                obligations,
-                &world.exchange,
-                &scenario.symbol,
-                internal.url(),
-            )?),
-            None => None,
+        quotes: {
+            let obligations = scenario.making.as_ref().and_then(|m| m.obligations);
+            let takes_only_to_reduce = mandate
+                .allowance(&scenario.instrument())
+                .is_some_and(|allowance| allowance.taking.is_some());
+            if obligations.is_some() || (scenario.making.is_some() && takes_only_to_reduce) {
+                Some(QuoteSampler::new(
+                    obligations,
+                    &world.exchange,
+                    &scenario.symbol,
+                    internal.url(),
+                )?)
+            } else {
+                None
+            }
         },
         oracle_starts,
         peak_value_usd: start_value_usd,
@@ -826,7 +833,9 @@ struct MakingFills {
 /// The id never changes, so a sample taken before it is found reads the
 /// same once it is.
 struct QuoteSampler {
-    obligations: Obligations,
+    /// The session's quoting obligations, if it has any: without them the
+    /// sampler only tells the bot's orders from the others on the book.
+    obligations: Option<Obligations>,
     orderbook: Pubkey,
     market: PhoenixMarket,
     chain: RpcChainClient,
@@ -841,7 +850,7 @@ struct QuoteSampler {
 
 impl QuoteSampler {
     fn new(
-        obligations: Obligations,
+        obligations: Option<Obligations>,
         exchange: &mtx_kit::phoenix_rise::types::exchange::ExchangeResponse,
         symbol: &str,
         rpc_url: &str,
@@ -865,10 +874,8 @@ impl QuoteSampler {
         })
     }
 
-    /// Reads the book at `slot` and samples what each trader quotes,
-    /// against fair value `fair_usd`. Orders past their last valid slot
-    /// don't count: nothing can fill them.
-    async fn sample(&mut self, slot: u64, fair_usd: f64) -> Result<()> {
+    /// The order book, as it stands.
+    async fn read_book(&self) -> Result<mtx_kit::phoenix_rise::accounts::owned::Orderbook> {
         let failed = |reason: String| Error::Transaction {
             label: "the order book".into(),
             reason,
@@ -879,10 +886,43 @@ impl QuoteSampler {
         .await
         .map_err(|e| failed(e.to_string()))?
         .ok_or_else(|| failed("the orderbook account is missing".into()))?;
-        let book = mtx_kit::phoenix_rise::accounts::owned::Orderbook::try_from_account_bytes(
-            &account.data,
-        )
-        .map_err(|e| failed(e.to_string()))?;
+        mtx_kit::phoenix_rise::accounts::owned::Orderbook::try_from_account_bytes(&account.data)
+            .map_err(|e| failed(e.to_string()))
+    }
+
+    /// The best bid and ask the bot's orders don't make, at `slot`, once
+    /// the bot's trader id is known: what its own orders could cross
+    /// without matching against itself. `None` until then.
+    async fn touch(&self, slot: u64) -> Result<Option<crate::taking::Touch>> {
+        let Some(bot) = self.bot_id else {
+            return Ok(None);
+        };
+        let book = self.read_book().await?;
+        let best = |bid: bool, entries: &[_]| {
+            let prices = entries.iter().filter_map(|entry: &mtx_kit::phoenix_rise::accounts::owned::OrderbookEntry| {
+                let order = &entry.order;
+                let id = order.trader_position_id.trader_id?;
+                (id != bot && !order.last_valid_slot.is_some_and(|last| last < slot)).then(|| {
+                    grader_f64(self.market.ticks_to_price(entry.order_id.price_in_ticks.as_inner()))
+                })
+            });
+            if bid {
+                prices.fold(None, |best: Option<f64>, p| Some(best.map_or(p, |b| b.max(p))))
+            } else {
+                prices.fold(None, |best: Option<f64>, p| Some(best.map_or(p, |b| b.min(p))))
+            }
+        };
+        Ok(Some(crate::taking::Touch {
+            bid: best(true, &book.bids),
+            ask: best(false, &book.asks),
+        }))
+    }
+
+    /// Reads the book at `slot` and samples what each trader quotes,
+    /// against fair value `fair_usd`. Orders past their last valid slot
+    /// don't count: nothing can fill them.
+    async fn sample(&mut self, slot: u64, fair_usd: f64) -> Result<()> {
+        let book = self.read_book().await?;
         let mut quotes: BTreeMap<u32, (Quotes, Quotes)> = BTreeMap::new();
         for (bid, entries) in [(true, &book.bids), (false, &book.asks)] {
             for entry in entries {
@@ -914,7 +954,12 @@ impl QuoteSampler {
         self.samples.push(
             quotes
                 .into_iter()
-                .map(|(id, (bids, asks))| (id, self.obligations.check(fair_usd, &bids, &asks)))
+                .map(|(id, (bids, asks))| {
+                    let quoting = self
+                        .obligations
+                        .map_or(Quoting::OneSided, |o| o.check(fair_usd, &bids, &asks));
+                    (id, quoting)
+                })
                 .collect(),
         );
         Ok(())
@@ -957,7 +1002,8 @@ impl QuoteSampler {
     }
 
     /// The report for a session of `steps` steps.
-    fn report(&self, steps: u64) -> ObligationReport {
+    fn report(&self, steps: u64) -> Option<ObligationReport> {
+        let obligations = self.obligations?;
         let samples: Vec<Quoting> = self
             .samples
             .iter()
@@ -967,7 +1013,7 @@ impl QuoteSampler {
                     .unwrap_or(Quoting::OneSided)
             })
             .collect();
-        ObligationReport::of(self.obligations, steps, &samples)
+        Some(ObligationReport::of(obligations, steps, &samples))
     }
 }
 
@@ -1420,6 +1466,25 @@ impl Account for PerpAccount {
         self.fills.is_some() || self.making_fills.is_some()
     }
 
+    fn take_gate(&self) -> Option<Arc<crate::taking::TakeGate>> {
+        let allowance = self.mandate.allowance(&self.scenario.instrument())?;
+        crate::taking::TakeGate::new(
+            allowance,
+            self.phoenix.exchange().clone(),
+            &self.scenario.symbol,
+            self.bot,
+            &self.rpc_url,
+        )
+        .map(Arc::new)
+    }
+
+    async fn net_touch(&self, slot: u64) -> Result<Option<crate::taking::Touch>> {
+        match self.quotes.as_ref() {
+            Some(quotes) => quotes.touch(slot).await,
+            None => Ok(None),
+        }
+    }
+
     async fn sample_quotes(&mut self, slot: u64) -> Result<()> {
         let fair_usd = self.moment(slot.saturating_sub(self.base_slot)).level_usd;
         match self.quotes.as_mut() {
@@ -1632,7 +1697,7 @@ impl Account for PerpAccount {
             .take()
             .map(|read| read.fills)
             .unwrap_or_default();
-        let obligations = self.quotes.as_ref().map(|quotes| {
+        let obligations = self.quotes.as_ref().and_then(|quotes| {
             quotes.report(
                 scenario
                     .duration_slots

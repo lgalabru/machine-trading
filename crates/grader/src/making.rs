@@ -71,6 +71,10 @@ pub struct MakingFill {
     /// the keeper's), which isn't the bot's own trading.
     #[serde(default, skip_serializing_if = "is_false")]
     pub forced: bool,
+    /// Whether the bot was on both sides of the match, which moves nothing
+    /// and takes nothing (both its records say so).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub self_match: bool,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -104,6 +108,7 @@ impl MakingFill {
         let base = crate::session::grader_f64(fill.quantity);
         let at = fill.slot.saturating_sub(base_slot);
         let mut out = Vec::new();
+        let self_match = fill.taker == *bot && fill.maker == *bot;
         let mut push = |side, role, other: &Pubkey, fee| {
             out.push(Self {
                 at,
@@ -114,6 +119,7 @@ impl MakingFill {
                 base,
                 fee_usd: fee,
                 forced: false,
+                self_match,
             });
         };
         if fill.taker == *bot {
@@ -1192,6 +1198,7 @@ mod tests {
                 base: 2.5,
                 fee_usd: -0.01,
                 forced: false,
+                self_match: false,
             }]
         );
         // A taker sells: the bot bought.
@@ -1228,6 +1235,10 @@ mod tests {
         let fills = MakingFill::of(&fill(bot, bot, Side::Buy), &bot, &parties(), 0);
         let roles: Vec<_> = fills.iter().map(|f| (f.role, f.side)).collect();
         assert_eq!(roles, [("taker", Side::Buy), ("maker", Side::Sell)]);
+        assert!(fills.iter().all(|f| f.self_match));
+        // A match against anyone else is no self-match.
+        let other = MakingFill::of(&fill(bot, account(20), Side::Buy), &bot, &parties(), 0);
+        assert!(other.iter().all(|f| !f.self_match));
     }
 
     #[test]
@@ -1241,6 +1252,7 @@ mod tests {
             base: 1.0,
             fee_usd: 0.0,
             forced: false,
+            self_match: false,
         };
         let json = serde_json::to_string(&record).unwrap();
         assert_eq!(serde_json::from_str::<MakingFill>(&json).unwrap(), record);

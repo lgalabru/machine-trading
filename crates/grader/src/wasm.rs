@@ -944,6 +944,14 @@ impl WasmBot {
         })
     }
 
+    /// The touch the session read for the coming turn, net of the bot's own
+    /// orders, for the taking check.
+    pub fn touched(&mut self, touch: Option<crate::taking::Touch>) {
+        if let Some(guard) = self.taking.as_mut() {
+            guard.touch(touch);
+        }
+    }
+
     /// The orders the taking check refused, where the mandate has one.
     pub fn refused_takes(&self) -> Option<u64> {
         self.taking.as_ref().map(|guard| guard.refused)

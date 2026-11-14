@@ -604,6 +604,19 @@ pub(crate) trait Account: Send + Sync {
         Ok(())
     }
 
+    /// Under a mandate that allows taking only to reduce, in a market-making
+    /// session: the check the RPC guard runs on a process bot's sends.
+    fn take_gate(&self) -> Option<std::sync::Arc<crate::taking::TakeGate>> {
+        None
+    }
+
+    /// At `slot`, before the bot's turn: the best bid and ask on the book
+    /// that aren't the bot's own orders, once the session can tell which
+    /// are (see [`crate::taking`]). Nothing by default.
+    async fn net_touch(&self, _slot: u64) -> Result<Option<crate::taking::Touch>> {
+        Ok(None)
+    }
+
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
 }
@@ -737,6 +750,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // grader calls (`crate::wasm`, RFD 0002).
     let mut process = None;
     let mut wasm_bot = None;
+    let mut take_gate: Option<std::sync::Arc<crate::taking::TakeGate>> = None;
     let legacy;
     if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
         let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
@@ -815,6 +829,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     } else {
         if user.is_none() {
             return Err(Error::NoBotUser);
+        }
+        take_gate = account.take_gate();
+        if let Some(gate) = &take_gate {
+            guard.set_send_gate(gate.clone());
         }
         let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
         let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
@@ -1054,6 +1072,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     },
                 });
             }
+            if bot.refused_takes().is_some() {
+                bot.touched(account.net_touch(slot).await?);
+            }
             let started = Instant::now();
             account.turn_data(&mut step).await?;
             let answered = bot.turn(&step, account.wallet()).await;
@@ -1098,6 +1119,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     if let Some((mut child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
         stop_bot(&mut child, workdir.bot_user.and(user)).await;
+    }
+    if let Some(gate) = &take_gate {
+        turns.refused_takes = Some(gate.refused());
     }
     if let Some(bot) = wasm_bot.as_mut() {
         if closing.is_none() {

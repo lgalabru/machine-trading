@@ -140,6 +140,8 @@ const INVALID_REQUEST: i64 = -32600;
 const PARSE_ERROR: i64 = -32700;
 /// A send outside the bot's turn: the world is moving.
 pub const TURN_CLOSED: i64 = -32099;
+/// The code of a send the session's [`SendGate`] refused.
+pub const SEND_REFUSED: i64 = -32098;
 
 /// Methods whose `commitment` is left alone: a real cluster refuses
 /// `processed` for them, and the surfnet answers them from what it executed
@@ -204,6 +206,16 @@ pub trait SendHook: Send + Sync {
     fn after(&self) -> futures::future::BoxFuture<'_, ()>;
 }
 
+/// A check on each of the bot's sends, run before the guard forwards it:
+/// `Err` says why the send is refused, and nothing is forwarded.
+pub trait SendGate: Send + Sync {
+    /// The transactions one send carries, decoded.
+    fn check<'a>(
+        &'a self,
+        wires: &'a [Vec<u8>],
+    ) -> futures::future::BoxFuture<'a, std::result::Result<(), String>>;
+}
+
 pub struct Guard {
     url: String,
     /// The path the grader's host side calls at: a secret, so a process bot
@@ -229,6 +241,8 @@ struct GuardState {
     /// Set by [`Guard::set_send_hook`]; with it, `calls` orders the bot's
     /// calls around hooked sends.
     hook: Mutex<Option<Arc<dyn SendHook>>>,
+    /// Set by [`Guard::set_send_gate`].
+    gate: Mutex<Option<Arc<dyn SendGate>>>,
     calls: tokio::sync::RwLock<()>,
     /// The scenario's execution faults, if it has any.
     faults: Mutex<Option<FaultState>>,
@@ -283,6 +297,7 @@ impl Guard {
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
             hook: Mutex::default(),
+            gate: Mutex::default(),
             calls: tokio::sync::RwLock::new(()),
             faults: Mutex::default(),
             tx: Mutex::default(),
@@ -341,6 +356,11 @@ impl Guard {
     /// Run `hook` around each of the bot's transactions from now on.
     pub fn set_send_hook(&self, hook: Arc<dyn SendHook>) {
         *self.state.hook.lock().expect("guard lock") = Some(hook);
+    }
+
+    /// Check each of the bot's sends with `gate` before it goes out.
+    pub fn set_send_gate(&self, gate: Arc<dyn SendGate>) {
+        *self.state.gate.lock().expect("guard lock") = Some(gate);
     }
 
     /// What the bot asked for so far.
@@ -460,6 +480,29 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
         };
     }
 
+    if !host && state.allowlist {
+        let mut gated = Vec::with_capacity(calls.len());
+        for call in &calls {
+            gated.push(gate(state, call).await);
+        }
+        if gated.iter().any(Option::is_some) {
+            return match request {
+                Value::Array(_) => reply(Value::Array(
+                    calls
+                        .iter()
+                        .zip(gated)
+                        .map(|(call, refused)| {
+                            refused.unwrap_or_else(|| {
+                                error_response(call["id"].clone(), INVALID_REQUEST, "batch refused")
+                            })
+                        })
+                        .collect(),
+                )),
+                _ => reply(gated.into_iter().flatten().next().expect("one refusal")),
+            };
+        }
+    }
+
     let hook = state.hook.lock().expect("guard lock").clone();
     let Some(hook) = hook else {
         return serve(state, request, host).await;
@@ -490,6 +533,20 @@ async fn handle_as(state: &GuardState, body: Bytes, host: bool) -> axum::respons
             response
         }
     }
+}
+
+/// The refusal of `call` by the session's [`SendGate`], if it has one and
+/// `call` is a send it refuses.
+async fn gate(state: &GuardState, call: &Value) -> Option<Value> {
+    let gate = state.gate.lock().expect("guard lock").clone()?;
+    let wires = match call["method"].as_str()? {
+        "sendTransaction" => wires_of(&json!([call["params"][0].clone()]), &call["params"][1]),
+        "sendBundle" => wires_of(&call["params"][0], &call["params"][1]),
+        _ => return None,
+    }
+    .ok()?;
+    let why = gate.check(&wires).await.err()?;
+    Some(error_response(call["id"].clone(), SEND_REFUSED, &why))
 }
 
 /// The members of a forwarded batch's reply.
@@ -595,6 +652,11 @@ async fn handle_staked(State(state): State<Arc<GuardState>>, body: Bytes) -> imp
     {
         return reply(refused);
     }
+    for call in &calls {
+        if let Some(refused) = gate(&state, call).await {
+            return reply(refused);
+        }
+    }
     pooled(&state, &engine, request, false, RouteKind::Staked).await
 }
 
@@ -630,6 +692,9 @@ async fn handle_jito(
             TURN_CLOSED,
             "sent outside the bot's turn: the world is moving",
         ));
+    }
+    if is_send && let Some(refused) = gate(&state, &call).await {
+        return reply(refused);
     }
     let step = state.step().unwrap_or(0);
     let answer = match method.as_str() {
@@ -1315,6 +1380,7 @@ mod tests {
             step: AtomicU64::new(NO_STEP),
             log: Mutex::default(),
             hook: Mutex::default(),
+            gate: Mutex::default(),
             calls: tokio::sync::RwLock::new(()),
             faults: Mutex::default(),
             tx: Mutex::default(),
@@ -1531,6 +1597,60 @@ mod tests {
             *seen.lock().unwrap(),
             ["before", "sendTransaction", "after", "getSlot"]
         );
+    }
+
+    /// Refuses a send whose first transaction byte is 1.
+    struct RefusingGate(Mutex<usize>);
+
+    impl SendGate for RefusingGate {
+        fn check<'a>(
+            &'a self,
+            wires: &'a [Vec<u8>],
+        ) -> futures::future::BoxFuture<'a, std::result::Result<(), String>> {
+            Box::pin(async move {
+                *self.0.lock().unwrap() += 1;
+                match wires.iter().any(|wire| wire.first() == Some(&1)) {
+                    true => Err("refused: it would open".into()),
+                    false => Ok(()),
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_send_the_gate_refuses_never_reaches_the_surfnet() {
+        use base64::Engine;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let guard = Guard::start(noting_upstream(seen.clone()).await)
+            .await
+            .unwrap();
+        let gate = Arc::new(RefusingGate(Mutex::new(0)));
+        guard.set_send_gate(gate.clone());
+        let send = |id: u64, first: u8| {
+            json!({ "jsonrpc": "2.0", "id": id, "method": "sendTransaction",
+                "params": [base64::engine::general_purpose::STANDARD.encode([first, 2, 3]),
+                           { "encoding": "base64" }] })
+        };
+        let (_, refused) = call(&guard, send(1, 1)).await;
+        assert_eq!(refused["error"]["code"], SEND_REFUSED);
+        assert_eq!(refused["error"]["message"], "refused: it would open");
+        assert!(seen.lock().unwrap().is_empty(), "nothing was forwarded");
+        // One the gate lets through is forwarded, and reads are never gated.
+        let (_, sent) = call(&guard, send(2, 0)).await;
+        assert!(sent["error"].is_null(), "{sent}");
+        call(&guard, json!({ "jsonrpc": "2.0", "id": 3, "method": "getSlot" })).await;
+        assert_eq!(*seen.lock().unwrap(), ["sendTransaction", "getSlot"]);
+        assert_eq!(*gate.0.lock().unwrap(), 2);
+        // A batch with a refused member is refused whole.
+        let (_, batch) = call(&guard, json!([send(4, 0), send(5, 1)])).await;
+        let codes: Vec<_> = batch
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["error"]["code"].clone())
+            .collect();
+        assert_eq!(codes, [json!(INVALID_REQUEST), json!(SEND_REFUSED)]);
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     /// A surfnet that answers every send with the signature in its params
