@@ -261,9 +261,7 @@ impl GradeReport {
                     reference_pnl_usd,
                     informed_pnl_usd: result.informed_pnl_usd,
                     hindsight_ceiling_usd: hindsight,
-                    reference_marks_sha256: hindsight
-                        .and(reference)
-                        .map(|reference| marks_sha256(&reference.timeline.steps)),
+                    reference_session_sha256: reference.map(reference_sha256),
                     nop_pnl_usd: 0.0,
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
@@ -747,15 +745,17 @@ fn raise_open_file_limit() {
     }
 }
 
-/// SHA-256 of a session's marks, step by step (each `f64`'s little-endian
-/// bytes): what scoring v2 records of the reference session its hindsight
-/// ceiling was computed on, for a rescore to check.
-pub fn marks_sha256(steps: &[StepRecord]) -> String {
+/// SHA-256 of what scoring v2 reads of a reference session: its marks, step
+/// by step (the hindsight ceiling's input), then its max drawdown (the
+/// near-breach charge's anchor), each `f64`'s little-endian bytes. Recorded
+/// per session, for a rescore to check it reads the same session.
+pub fn reference_sha256(reference: &SessionReport) -> String {
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
-    for step in steps {
+    for step in &reference.timeline.steps {
         hash.update(step.mark_usd.to_le_bytes());
     }
+    hash.update(reference.max_drawdown_usd.to_le_bytes());
     hash.finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1692,10 +1692,14 @@ mod tests {
         assert!(v2.ceiling_usd < report.bound_pnl_usd);
         // The reference session it read is recorded, for a rescore to check.
         assert_eq!(
-            v2.sessions[0].reference_marks_sha256.as_deref(),
-            Some(marks_sha256(&report.anchors[0].timeline.steps).as_str())
+            v2.sessions[0].reference_session_sha256.as_deref(),
+            Some(reference_sha256(&report.anchors[0]).as_str())
         );
-        assert_eq!(marks_sha256(&report.anchors[0].timeline.steps).len(), 64);
+        assert_eq!(reference_sha256(&report.anchors[0]).len(), 64);
+        // The reference's drawdown, the charge's anchor, is in the hash too.
+        let mut deeper = report.anchors[0].clone();
+        deeper.max_drawdown_usd += 1.0;
+        assert_ne!(reference_sha256(&deeper), reference_sha256(&report.anchors[0]));
 
         // A bot that jitters the mark (±2 or ±5 bp a step) can't lower its
         // own ceiling: the score doesn't move.
@@ -1937,6 +1941,8 @@ mod tests {
         skipped.score_v2(&v2()).unwrap();
         assert_eq!(skipped.v2.as_ref().unwrap().score, 0.0);
         assert_eq!(skipped.rewards()["score_v2_raw"], -1.0);
+        // reward.json says the same: a run that wasn't graded is below nop.
+        assert_eq!(skipped.rewards()["metric_raw_negative"], 1.0);
     }
 
     #[test]

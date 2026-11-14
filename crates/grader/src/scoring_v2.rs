@@ -158,10 +158,12 @@ pub struct Session {
     /// computed on the bot's own marks, which its trades can move.
     pub hindsight_ceiling_usd: Option<f64>,
     pub nop_pnl_usd: f64,
-    /// SHA-256 of the reference session's marks the cost-aware hindsight
-    /// ceiling was computed on, when it was: recorded in the report so a
-    /// rescore can check it reads the same session.
-    pub reference_marks_sha256: Option<String>,
+    /// SHA-256 of what v2 read of the reference's session, when the grade
+    /// has it: its marks (the cost-aware hindsight ceiling's input) and its
+    /// max drawdown (the near-breach charge's anchor), recorded in the report
+    /// so a rescore can check it reads the same session (see
+    /// [`crate::grade::reference_sha256`]).
+    pub reference_session_sha256: Option<String>,
     /// The hindsight bound (see [`crate::scenario::Scenario::bound_usd`]).
     pub bound_usd: f64,
     /// `L`: the mandate's drawdown limit, the most a compliant session can lose.
@@ -389,9 +391,9 @@ pub struct SessionV2 {
     pub nop_usd: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breach: Option<String>,
-    /// See [`Session::reference_marks_sha256`].
+    /// See [`Session::reference_session_sha256`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference_marks_sha256: Option<String>,
+    pub reference_session_sha256: Option<String>,
     /// `L`, and the near-breach charge's `f_s` and `a_s`: the bot's
     /// drawdown and the anchor's as shares of it, each at most 1.
     pub limit_usd: f64,
@@ -422,7 +424,13 @@ pub fn score(
     // error.
     let (source, eta, ceilings) = match (ceilings(sessions, &params.ceiling), &fatal) {
         (Ok(resolved), _) => resolved,
-        (Err(_), Some(reason)) => return Ok(unscored(params, reason.clone())),
+        (Err(_), Some(reason)) => {
+            // The floor, with what the sessions made still reported.
+            return Ok(ScoreV2 {
+                metrics: Metrics::of(sessions, -1.0),
+                ..unscored(params, reason.clone())
+            });
+        }
         (Err(why), None) => return Err(why),
     };
     let phi = params.anchor_floor.unwrap_or(if source == "hindsight" {
@@ -465,7 +473,7 @@ pub fn score(
             ceiling_usd: weigh(ceiling - s.nop_pnl_usd),
             nop_usd: s.nop_pnl_usd,
             breach: s.breach.clone(),
-            reference_marks_sha256: s.reference_marks_sha256.clone(),
+            reference_session_sha256: s.reference_session_sha256.clone(),
             limit_usd: s.worst_loss_usd,
             drawdown: match s.breach {
                 Some(_) => 1.0,
@@ -756,6 +764,8 @@ impl ScoreV2 {
         self.within_noise = false;
         self.beats_informed = false;
         self.fatal = Some(reason);
+        // What the sessions made stays as measured; the grade is the floor.
+        self.metrics.raw_negative = true;
     }
 }
 
@@ -846,7 +856,11 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         resamples: 0,
         seeded_from_eval: false,
         gap: Gap::default(),
-        metrics: Metrics::default(),
+        // Nothing was measured, but the grade is the floor.
+        metrics: Metrics {
+            raw_negative: true,
+            ..Metrics::default()
+        },
         sessions: Vec::new(),
     }
 }
@@ -1331,7 +1345,7 @@ mod tests {
                 reference_pnl_usd,
                 informed_pnl_usd: Some(150.0),
                 hindsight_ceiling_usd: None,
-                reference_marks_sha256: None,
+                reference_session_sha256: None,
                 nop_pnl_usd: 0.0,
                 bound_usd: 1_000.0,
                 worst_loss_usd: 100.0,
@@ -2054,6 +2068,36 @@ mod tests {
         let v2 = score(&sessions, &informed(), Some("tampered".into()), None).unwrap();
         assert_eq!((v2.raw, v2.score), (-1.0, 0.0));
         assert_eq!(v2.fatal.as_deref(), Some("tampered"));
+        // The harm counters still say what the sessions made.
+        assert!(v2.metrics.raw_negative);
+        assert_eq!(v2.metrics.sessions, 6);
+        assert_eq!((v2.metrics.losing_sessions, v2.metrics.usd_lost), (1, 10.0));
+    }
+
+    /// A fatal or unscored run is the floor, `raw` −1, and its metrics say
+    /// so; the harm the sessions did is reported as measured.
+    #[test]
+    fn a_fatal_or_unscored_run_counts_as_raw_negative() {
+        let none = unscored(&informed(), "no bot.wasm".into());
+        assert_eq!(none.raw, -1.0);
+        assert!(none.metrics.raw_negative);
+        assert_eq!((none.metrics.sessions, none.metrics.usd_lost), (0, 0.0));
+
+        let mut sessions = set(&[120.0, -30.0, 50.0, -10.0, 20.0, 0.0], &REFERENCE);
+        sessions[1].breach = Some("drew down past its limit".into());
+        let honest = score(&sessions, &informed(), None, None).unwrap();
+        assert!(!honest.metrics.raw_negative);
+        let fatal = score(&sessions, &informed(), Some("tampered".into()), None).unwrap();
+        assert_eq!(fatal.raw, -1.0);
+        assert!(fatal.metrics.raw_negative);
+        let mut later = honest.clone();
+        later.make_fatal("a bot wrote reward.json".into());
+        assert!(later.metrics.raw_negative);
+        for m in [&fatal.metrics, &later.metrics] {
+            assert_eq!((m.losing_sessions, m.usd_lost), (2, 40.0));
+            assert!((m.breaches_per_100_sessions - 100.0 / 6.0).abs() < 1e-12);
+            assert_eq!(m.pnl_usd, honest.metrics.pnl_usd);
+        }
     }
 
     #[test]
