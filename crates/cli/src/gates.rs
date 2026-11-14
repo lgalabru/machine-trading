@@ -493,8 +493,9 @@ pub fn strength_band(
 }
 
 /// The checks only a task scored by v2 has: its strength band, and the
-/// verifier running its informed bot on the hidden set (once `mtx grade`
-/// can). A v1 task reports them not run.
+/// verifier running its informed bot on the hidden set, which fails until
+/// `mtx grade` can (no fallback to the hindsight ceiling). A v1 task reports
+/// them not run.
 pub fn v2_checks(
     headline: tasks::Headline,
     ladder: &Value,
@@ -511,7 +512,7 @@ pub fn v2_checks(
         "The verifier runs the informed bot on the hidden set",
     );
     if headline == tasks::Headline::V1 {
-        let why = "v1 headline: scoring v2 is reported beside it, if at all (D1)";
+        let why = "a v1 task (one of the four that move to v2 in 0.13)";
         return vec![
             Check::not_run(SOLVABLE, band.0, band.1, why),
             Check::not_run(SOLVABLE, live.0, live.1, why),
@@ -542,11 +543,13 @@ pub fn v2_checks(
         }
     });
     checks.push(if !has_command(&["grade"], Some("informed")) {
-        Check::not_run(
+        // No fallback: a v2 grade without the informed bot on its hidden
+        // sessions fails, so the task can't be released until it runs.
+        Check::fail(
             SOLVABLE,
             live.0,
             live.1,
-            "`mtx grade --informed` isn't in this build yet: until it is, a hidden grade takes v2's 1 from the cost-aware hindsight bound (`ceiling: hindsight`)",
+            "`mtx grade --informed` isn't in this build yet: a hidden grade has no informed bot's PnL, and v2 as the one score doesn't fall back to the hindsight ceiling, so the task isn't releasable until it is",
         )
     } else {
         Check::from(
@@ -1659,14 +1662,14 @@ mod tests {
     #[test]
     fn a_v2_task_without_anchors_is_refused_and_a_v1_task_is_untouched() {
         let fit = sessions(&[&[("reference", REFERENCE), ("informed", INFORMED)]]);
-        let test = "mtx grade --scoring v2 --v2-sessions";
+        let test = "mtx grade --scoring v2-headline --v2-sessions";
         let named =
             serde_json::json!({ "anchors": { "reference": "reference", "informed": "informed" } });
         let v2 = v2_checks(tasks::Headline::V2, &named, Some(&fit), test, false);
         assert_eq!(v2[0].id, "strength-band");
         assert_eq!(v2[0].status, Status::Pass, "{}", v2[0].detail);
-        // Until `mtx grade --informed` exists, the live check isn't run.
-        assert_eq!(v2[1].status, Status::NotRun);
+        // Until `mtx grade --informed` exists, no v2 task is releasable.
+        assert_eq!(v2[1].status, Status::Fail);
         let none = v2_checks(
             tasks::Headline::V2,
             &serde_json::json!({}),

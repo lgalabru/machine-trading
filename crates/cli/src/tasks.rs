@@ -97,10 +97,11 @@ pub struct Mtx {
     /// `just leak-audit` fails if the agent's image holds one.
     #[serde(default)]
     pub leak_needles: Vec<String>,
-    /// The score the task is judged by. `v2` needs both anchors (the
-    /// reference and an informed bot), a reference in the strength band and
-    /// the scoring rules in the instruction; `mtx gates` refuses the task
-    /// otherwise (GRADING_DECISIONS D1).
+    /// The score the task is judged by, its one reported score. `v2` needs
+    /// both anchors (the reference and an informed bot), a reference in the
+    /// strength band, a verifier that grades `--scoring v2-headline` and the
+    /// scoring rules in the instruction; `mtx gates` refuses to release the
+    /// task otherwise (GRADING_DECISIONS D1, "one reported score").
     #[serde(default)]
     pub headline: Headline,
 }
@@ -109,11 +110,11 @@ pub struct Mtx {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Headline {
-    /// `reward` and `skill`; scoring v2, if the verifier asks for it, is
-    /// reported beside them.
+    /// `reward` and `skill`: the four tasks until they move to v2 in 0.13.
     #[default]
     V1,
-    /// Scoring v2: 0 doing nothing, 0.5 the reference, 1 the informed bot.
+    /// Scoring v2, alone: 0 doing nothing, 0.5 the reference, 1 the informed
+    /// bot; Harbor's `reward` is its clamped score.
     V2,
 }
 

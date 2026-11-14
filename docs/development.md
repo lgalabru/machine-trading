@@ -283,10 +283,12 @@ skill, which Claude Code loads in this repo. Write the task's README to
 
 ### The new-task checklist
 
-A new task is scored by [scoring v2](../bench/tasks/README.md#scoring-v2)
-from day one. `mtx task new` scaffolds it that way: `headline = "v2"` in
-`[metadata.mtx]`, a verifier that grades with `--scoring v2 --v2-sessions`
-and grades every session, the informed bot's slot, a ladder that names both
+A new task's one score is [scoring v2](../bench/tasks/README.md#scoring-v2),
+from day one: its Harbor `reward` is v2's clamped score, with no v1 score
+beside it, and it isn't released until both anchors are ready (no fallback
+to v1 or to the hindsight ceiling). `mtx task new` scaffolds it that way:
+`headline = "v2"` in `[metadata.mtx]`, a verifier that grades with
+`--scoring v2-headline --v2-sessions` and grades every session, the informed bot's slot, a ladder that names both
 anchors and opts into the probe gate, and the scoring rules in the
 instruction. `mtx task status <name>` says which steps are done;
 `mtx task guide <step>` says how to do one.
@@ -315,7 +317,9 @@ instruction. `mtx task status <name>` says which steps are done;
    per-session Sharpe is at least 0.25 (`anchors.band` and
    `anchors.min_sharpe` adjust them, with a reason in `DESIGN.md`). If the
    reference misses, change the reference or the market, never the band.
-7. **Instruction.** Write `instruction.md` as a contract. Its Scoring
+7. **Instruction.** Write `instruction.md` as a contract that describes
+   scoring v2 only (the scaffold keeps the base task's other sections: drop
+   any mention of the hindsight-bound reward or `skill`). Its Scoring
    section keeps the `mtx:scoring` markers: `mtx task sync` writes v2's rules
    between them from the grader's settings and the verifier's flags, and
    `mtx task check` fails when they're stale (`guide scoring`).
@@ -325,8 +329,11 @@ instruction. `mtx task status <name>` says which steps are done;
    `mtx task sync` and `harbor lint` (`guide readme`, `guide lint`).
 10. **Gates.** `mtx gates <name> --fast` while building, then
     `mtx gates <name>` before a release: it refuses a v2 task without both
-    anchors, with a reference outside the strength band, or with stale
-    scoring rules (see [gates](gates.md)).
+    anchors, with a reference outside the strength band (a floored one
+    included), with stale scoring rules, or whose verifier can't run the
+    informed bot on the hidden set; that last needs `mtx grade --informed`,
+    which isn't built yet, so no v2 task is releasable until it is (see
+    [gates](gates.md)).
 11. **Identity.** The anchors replay byte for byte (`mtx grade --replay 3`,
     which `mtx gates` runs), and a change to the grader or the CLI leaves
     the existing tasks' reports identical to `origin/main`'s on the same
