@@ -449,12 +449,17 @@ impl LiquidationKeeper {
             liquidate_via_market_order(&self.keys, self.wallet.pubkey(), trader, size, limit_ticks)
         };
         let (value_before, position_before) = self.account().await?;
-        let sent = mtx_kit::send(rpc, &self.wallet, vec![instruction], "liquidate");
-        let outcome = match sent {
-            Ok(_) => Ok(()),
-            Err(mtx_kit::Error::Transaction { reason, .. }) => Err(reason),
-            Err(error) => return Err(error.into()),
-        };
+        let mut outcome = self.send(rpc, instruction.clone(), "liquidate")?;
+        // Phoenix refuses to liquidate a trader with risk-increasing orders
+        // resting: a keeper force-cancels them first, which Phoenix allows
+        // any signer while the trader is liquidatable. Without it, resting
+        // an order would make an account unliquidatable.
+        if outcome.is_err() && !backstop {
+            let cancel = force_cancel_risk_increasing(&self.keys, self.wallet.pubkey(), trader);
+            if self.send(rpc, cancel, "force cancel")?.is_ok() {
+                outcome = self.send(rpc, instruction, "liquidate")?;
+            }
+        }
         let ok = outcome.is_ok();
         let (value_after, position_after) = if ok {
             self.account().await?
@@ -499,8 +504,22 @@ impl LiquidationKeeper {
         Ok(Some(outcome))
     }
 
-    /// A turn: `due` is whether the reaction time has passed (the final
-    /// turn doesn't wait for it).
+    /// Send one of the keeper's transactions: `Err` inside is Phoenix
+    /// refusing it, which the session goes on from.
+    fn send(
+        &self,
+        rpc: &RpcClient,
+        instruction: Instruction,
+        label: &str,
+    ) -> Result<std::result::Result<(), String>> {
+        match mtx_kit::send(rpc, &self.wallet, vec![instruction], label) {
+            Ok(_) => Ok(Ok(())),
+            Err(mtx_kit::Error::Transaction { reason, .. }) => Ok(Err(reason)),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// A turn. The final one (`settling`) doesn't wait out the reaction time.
     async fn turn(
         &mut self,
         rpc: &RpcClient,
