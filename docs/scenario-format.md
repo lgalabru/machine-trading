@@ -33,7 +33,7 @@ docs together.
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `bound_usd`, `participation`, `net`, `stop_out` |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out` |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -43,6 +43,11 @@ scoring v2 falls back to the cost-aware hindsight bound (`ceiling:
 the taker fee and half-spread on every trade. It needs the reference's
 session (the grade's `--reference` run, or `details/reference/` on a
 rescore), and is never computed on the bot's own marks.
+`reference_max_drawdown_usd` and `informed_max_drawdown_usd`, written by
+`mtx calibrate` beside the PnL, are the anchor of v2's near-breach charge:
+the informed bot's drawdowns when it is the ceiling, else the reference's.
+A grade that runs the reference (`--reference`) uses the drawdowns it
+measures instead.
 
 Optional sections are left out when empty. Unknown fields are errors in
 every section.
