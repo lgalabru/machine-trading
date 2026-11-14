@@ -247,14 +247,15 @@ impl GradeReport {
                 }
                 // The risk desk's stop-out (the scenario's `stop_out`): its
                 // close is in the session's PnL, and a breach all the same,
-                // though the mandate's audit no longer disqualifies it.
+                // though the mandate's audit no longer disqualifies it. A
+                // keeper's liquidation is priced, not a breach.
                 let stop_out = session
                     .forced_closes
                     .iter()
-                    .map(|close| match close.reason {
-                        crate::risk::ForcedCloseReason::StopOut { rule } => rule,
-                    })
-                    .next();
+                    .find_map(|close| match &close.reason {
+                        crate::risk::ForcedCloseReason::StopOut { rule } => Some(*rule),
+                        crate::risk::ForcedCloseReason::Liquidation { .. } => None,
+                    });
                 Ok(scoring_v2::Session {
                     scenario: session.scenario.clone(),
                     pnl_usd: session.pnl_usd,
