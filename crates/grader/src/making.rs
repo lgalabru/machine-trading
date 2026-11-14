@@ -111,7 +111,7 @@ impl MakingFill {
                 fill.taker_side,
                 "taker",
                 &fill.maker,
-                price * base * TAKER_FEE,
+                crate::session::grader_f64(fill.taker_fee),
             );
         }
         if fill.maker == *bot {
