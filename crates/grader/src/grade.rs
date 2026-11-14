@@ -260,11 +260,20 @@ impl GradeReport {
                     ));
                 }
                 // A perp start position moves with the price too, unless an
-                // order scores the session against doing nothing.
+                // order scores the session against doing nothing; and it
+                // earns or pays the scenario's funding, which the order's
+                // drift doesn't take out.
                 if session.start_position != 0.0 && session.order.is_none() {
                     return Err(format!(
                         "{}: a perp session's starting position can move with the price, \
                          and v2 doesn't run a nop anchor yet",
+                        session.scenario
+                    ));
+                }
+                if session.start_funded {
+                    return Err(format!(
+                        "{}: a perp session's starting position accrues the scenario's \
+                         funding, and v2 doesn't run a nop anchor yet",
                         session.scenario
                     ));
                 }
@@ -1436,6 +1445,7 @@ mod tests {
             participation: None,
             net: None,
             start_position: 0.0,
+            start_funded: false,
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
@@ -2057,6 +2067,15 @@ mod tests {
         assert!(!traded(&held));
         let mut report = score(vec![(held.clone(), &s)]);
         report.score_v2(&v2()).unwrap();
+        // With funding on the market, the start earns or pays it whatever
+        // the order: refused.
+        let mut funded = held.clone();
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
         let mut sold = held;
         sold.positions[0].lowest = 0.0;
         assert!(traded(&sold));
@@ -2223,6 +2242,51 @@ mod tests {
         let mut elsewhere = stopped;
         elsewhere.positions_outside_universe = 1;
         assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
+    }
+
+    /// The keeper's liquidation sells a buy-only bot's long in its own
+    /// account: the sides rule leaves that sell out.
+    #[test]
+    fn a_keepers_liquidating_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::risk::{ForcedClose, ForcedCloseReason, LiquidatedBy};
+        let mut liquidated = session(-900.0);
+        liquidated.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        liquidated.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::Liquidation {
+                by: LiquidatedBy::Keeper,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 9_300.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 9_100.0,
+            position_before: 70.0,
+            positions_before: Default::default(),
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(
+            !disqualification(&liquidated)
+                .unwrap_or_default()
+                .contains("a side its mandate")
+        );
+        liquidated.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&liquidated)
+                .unwrap()
+                .contains("a side its mandate")
+        );
     }
 
     /// The risk desk's forced close trades in the bot's account; a

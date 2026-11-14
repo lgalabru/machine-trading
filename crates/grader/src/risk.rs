@@ -87,7 +87,7 @@ pub struct CloseOrder {
     pub position_after: f64,
     pub ok: bool,
     /// Its transaction, when it landed: the per-fill audit leaves its fills
-    /// out, as the desk's, not the bot's.
+    /// out, as the risk desk's or the keeper's, not the bot's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

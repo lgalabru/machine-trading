@@ -435,7 +435,7 @@ impl LiquidationKeeper {
         let (value_before, position_before) = self.account().await?;
         // Past the backstop margin the keeper takes the position over; if
         // Phoenix refuses that, or short of it, it closes through the book.
-        let mut outcome = Err(String::new());
+        let mut outcome: std::result::Result<String, String> = Err(String::new());
         let mut transferred = false;
         if backstop {
             let transfer = liquidation_transfer(
@@ -490,7 +490,7 @@ impl LiquidationKeeper {
             error: outcome.clone().err(),
             // Its transaction: a session that audits fills leaves the
             // liquidation's out, as the keeper's, not the bot's.
-            signature: outcome.as_ref().ok().cloned(),
+            signature: outcome.clone().ok(),
             market: None,
         };
         if ok {

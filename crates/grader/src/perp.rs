@@ -919,9 +919,10 @@ pub struct PerpFillRecord {
     /// Price in USDC per base unit, before fees, and size in base units.
     pub price: f64,
     pub base: f64,
-    /// A fill of the risk desk's forced close (the scenario's `stop_out`),
-    /// sent in the bot's account but not by the bot: it counts toward the
-    /// position and the PnL, and the sides and price rules leave it out.
+    /// A fill of a forced close (the risk desk's `stop_out`, or the
+    /// liquidation keeper's), made in the bot's account but not by the bot:
+    /// it counts toward the position and the PnL, and the sides and price
+    /// rules leave it out.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forced: bool,
 }
@@ -1134,10 +1135,10 @@ impl PerpAccount {
             .collect()
     }
 
-    /// Mark the fills of the risk desk's forced closes: each close order's
-    /// transaction, by the signature the desk recorded, read from the chain
-    /// and decoded as the meter decodes fills, on every market of the
-    /// session, so the ids match.
+    /// Mark the fills of forced closes, the risk desk's and the keeper's:
+    /// each close order's transaction, by the signature it recorded, read
+    /// from the chain and decoded as the meter decodes fills, on every
+    /// market of the session, so the ids match.
     async fn mark_forced(&mut self, closes: &[crate::risk::ForcedClose]) -> Result<()> {
         let Some(read) = self.fills.as_mut() else {
             return Ok(());
@@ -1721,6 +1722,11 @@ impl Account for PerpAccount {
             participation: None,
             net: None,
             start_position: own.start_position,
+            // A start position on any market where funding accrues.
+            start_funded: self
+                .markets
+                .iter()
+                .any(|m| m.start_position != 0.0 && m.scenario.funding.is_some()),
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,

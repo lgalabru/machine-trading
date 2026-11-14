@@ -80,8 +80,11 @@ the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup. Scoring v2 takes a start position only with
-an order, which scores the session against doing nothing; without one,
-doing nothing moves with the price, and v2 refuses the grade.
+an order, which scores the session against doing nothing, and only on a
+market without the scenario's `funding`: otherwise doing nothing moves with
+the price, or earns or pays the funding, and v2 refuses the grade. A v1
+grade takes a funded start position as it is: the funding the start earns
+or pays is in the session's PnL, order or not.
 
 ## Several perp markets
 
@@ -217,8 +220,11 @@ with the same draw.
 The bot keeps running with what the liquidation leaves it. Each stretch of
 liquidations is one entry of `forced_closes` with reason
 `{"kind": "liquidation", "by": "keeper"}`: the first step it fired at, the
-account's value before and after, and the keeper's orders (apart from the
-bot's, so a `sides` rule never sees them). `liquidator` reports the draw,
+account's value before and after, and the keeper's orders, each with its
+transaction's `signature`. They are made in the bot's account but are not
+the bot's: in a session that reads fills, their fills are marked `forced` in
+`perp_fills`, as the risk desk's are, and the sides and price rules leave
+them out. `liquidator` reports the draw,
 the number of liquidations that landed and `cost_usd`, the sum over stretches
 of the value before less the value after: Phoenix's penalty and the fill's
 impact, which are inside the account's value and score. After the last step,

@@ -213,6 +213,11 @@ pub struct SessionReport {
     /// with in the scenario's market, in base units.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub start_position: f64,
+    /// Whether that start position accrues the funding the scenario sets
+    /// (`venues.perp.funding`): the account's value counts it, and an
+    /// order's drift, which is price only, doesn't take it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_funded: bool,
     /// A perp session with close-outs: what each residual cost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub close_outs: Vec<crate::orders::CloseOutReport>,
@@ -1159,9 +1164,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             },
         )
         .await?;
-    // The bot's last turn landed in the session's last slot, which no step
-    // moved past: a session that reads fills steps one slot more, so they
-    // are listed and audited like every other turn's.
+    // The bot's last turn, and the keeper's, landed in the session's last
+    // slot, which no step moved past: a session that reads fills steps one
+    // slot more, so they are listed and audited like every other turn's.
     if account.reads_fills() {
         crate::chain::next_slot(surfnet, &rpc).await?;
     }
