@@ -403,7 +403,12 @@ order to work, says so:
 | `MTX_BROKER_HAIRCUT_BPS` | What a broker charges, in basis points off the scenario's closing price, to trade whatever the order leaves undone. |
 | `MTX_CLOSE_OUT` | Markets whose leftover position a broker closes at the end, and its haircut in basis points: `{"SPY": 10.0}`. |
 
-A component reads them with `session.var("MTX_ORDER")`.
+A bot reads them as types: `session.start_positions()?`, `session.order()?`
+(a `SessionOrder` whose `side` is the kit's `Side::Bid` or `Side::Ask`;
+JSON writes them `"buy"` and `"sell"`, as the mandate's `sides` does),
+`session.broker_haircut()?` and `session.close_outs()?`. Each is empty or
+`None` when the session doesn't set it, and an error if the variable doesn't
+read as its type.
 
 What the account holds at the start is the task's: on `flash-crash-spcx`,
 SOL for fees and 10,000 USDC of collateral.

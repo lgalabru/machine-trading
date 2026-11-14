@@ -692,44 +692,45 @@ impl Seed<'_> {
 }
 
 /// What the scenario tells a perp session's bot beyond the runtime
-/// contract, as session variables: `MTX_START_POSITIONS`, its starting
-/// positions (`{symbol: base units}`); `MTX_ORDER`, its order without the
-/// haircut, with `MTX_BROKER_HAIRCUT_BPS`; and `MTX_CLOSE_OUT`, each
-/// close-out's haircut (`{symbol: bps}`). Each only when the scenario has
-/// it.
+/// contract, as session variables, each written as the kit's bot-facing
+/// type writes it: its starting positions ([`mtx_kit::StartPositions`]),
+/// its order ([`mtx_kit::SessionOrder`]) with the broker's haircut
+/// ([`mtx_kit::BrokerHaircut`]), and the markets a broker closes out
+/// ([`mtx_kit::CloseOuts`]). Each only when the scenario has it.
 fn session_vars(scenario: &Scenario) -> Result<Vec<(String, String)>> {
     let mut vars = Vec::new();
     if !scenario.start_positions.is_empty() {
-        vars.push((
-            "MTX_START_POSITIONS".to_string(),
-            serde_json::to_string(&scenario.start_positions)?,
-        ));
+        let positions = mtx_kit::StartPositions(scenario.start_positions.clone());
+        vars.push((mtx_kit::StartPositions::VAR.to_string(), positions.to_var()));
     }
     if let Some(order) = &scenario.order {
-        let mut order = order.clone();
-        order
-            .instrument
-            .get_or_insert_with(|| scenario.instrument());
-        let mut told = serde_json::to_value(&order)?;
-        if let Some(fields) = told.as_object_mut() {
-            fields.remove("haircut_bps");
-        }
-        vars.push(("MTX_ORDER".to_string(), told.to_string()));
+        let told = mtx_kit::SessionOrder {
+            instrument: order
+                .instrument
+                .clone()
+                .unwrap_or_else(|| scenario.instrument()),
+            side: match order.side {
+                CoreSide::Buy => mtx_kit::Side::Bid,
+                CoreSide::Sell => mtx_kit::Side::Ask,
+            },
+            quantity: order.quantity,
+            reduce_only: order.reduce_only,
+        };
+        vars.push((mtx_kit::SessionOrder::VAR.to_string(), told.to_var()));
         vars.push((
-            "MTX_BROKER_HAIRCUT_BPS".to_string(),
-            order.haircut_bps.to_string(),
+            mtx_kit::BrokerHaircut::VAR.to_string(),
+            mtx_kit::BrokerHaircut(order.haircut_bps).to_var(),
         ));
     }
     if !scenario.close_out.is_empty() {
-        let haircuts: std::collections::BTreeMap<&String, f64> = scenario
-            .close_out
-            .iter()
-            .map(|(symbol, close_out)| (symbol, close_out.haircut_bps))
-            .collect();
-        vars.push((
-            "MTX_CLOSE_OUT".to_string(),
-            serde_json::to_string(&haircuts)?,
-        ));
+        let close_outs = mtx_kit::CloseOuts(
+            scenario
+                .close_out
+                .iter()
+                .map(|(symbol, close_out)| (symbol.clone(), close_out.haircut_bps))
+                .collect(),
+        );
+        vars.push((mtx_kit::CloseOuts::VAR.to_string(), close_outs.to_var()));
     }
     Ok(vars)
 }
