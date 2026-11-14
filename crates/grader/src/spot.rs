@@ -1120,7 +1120,8 @@ impl Account for SpotAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
-            notional_breach: None,
+            samples: Default::default(),
+            term_start: Default::default(),
             valuation: "pyth",
             flow: done.actors.flow,
             competitor: done.actors.competitor,
@@ -1453,20 +1454,16 @@ mod tests {
         };
         let mut mandate = scenario().mandate;
         mandate.universe[0].min_sell_price = Some(149.0);
-        let observed = Observed {
-            fills: report.observed_fills(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.fills = report.observed_fills();
         assert_eq!(mandate.audit(&observed), None);
         let mut bought = report.clone();
         bought.fills.push(SpotFill {
             side: Side::Buy,
             ..sell(150.0)
         });
-        let observed = Observed {
-            fills: bought.observed_fills(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.fills = bought.observed_fills();
         assert!(mandate.audit(&observed).is_some());
     }
 

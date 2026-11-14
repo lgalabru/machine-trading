@@ -14,7 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use mtx_core::{
     AccountMeter, InstrumentId, Measurement, MeterError,
-    mandate::{ExposureStart, InstrumentRef, Mandate, Observed, PositionRange, Sample},
+    mandate::{InstrumentRef, Mandate, Observed, PositionRange, PricedPosition, Sample},
     turns::Step,
 };
 use mtx_kit::{
@@ -437,12 +437,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         meter,
         universe,
         market_id: scenario.instrument().id(),
+        instrument: scenario.instrument(),
         start_mark_usd,
         start_value_usd,
         base_slot,
         mandate: mandate.clone(),
         observed: Observed::default(),
-        exposure_start: ExposureStart::default(),
         oracle_starts,
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
@@ -457,15 +457,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         account.peak_value_usd = account.start_value_usd;
         account.desk_start = Some(start);
     }
-    // What the mandate's exposures are fractions of: their values as the
-    // term starts.
-    if !mandate.limits.exposures.is_empty() {
+    // What an exposure bounded by a fraction of its start is a fraction
+    // of: the account as the term starts.
+    if mandate.needs_term_start() {
         let now = account.measure().await?;
-        let holdings = account.priced(&now, base_slot)?;
-        account.exposure_start = mandate.exposure_start(&Sample {
-            slot: base_slot,
-            holdings: &holdings,
-        });
+        let (position, price) = account.priced(&now, base_slot);
+        let holdings = [PricedPosition {
+            instrument: &account.instrument,
+            position,
+            price,
+        }];
+        let sample = Sample::new(base_slot, &holdings).map_err(MeterError::Unsupported)?;
+        account
+            .observed
+            .record_term_start(&sample)
+            .map_err(MeterError::Unsupported)?;
     }
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
@@ -555,6 +561,8 @@ struct PerpAccount {
     meter: PhoenixEternalMeter,
     universe: Vec<InstrumentId>,
     market_id: InstrumentId,
+    /// The scenario's market, as the mandate names it.
+    instrument: InstrumentRef,
     start_mark_usd: f64,
     oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
@@ -564,8 +572,6 @@ struct PerpAccount {
     /// Sampled every step: a fill persists until the bot trades out of it,
     /// so a position over the cap is caught.
     observed: Observed,
-    /// The mandate's exposures as the term started.
-    exposure_start: ExposureStart,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
@@ -801,39 +807,31 @@ impl PerpAccount {
         self.start_mark_usd * (1.0 + level / 100.0)
     }
 
-    /// The account's holdings in `measurement` in the session's market, as
-    /// the mandate's notional rules read them. Holdings elsewhere break the
-    /// universe rule already.
-    fn priced(
-        &self,
-        measurement: &Measurement,
-        slot: u64,
-    ) -> Result<Vec<(InstrumentRef, f64, f64)>> {
-        let price = self.notional_price_usd(slot);
-        let mut holdings = Vec::new();
-        for (id, holding) in &measurement.holdings {
-            if *id == self.market_id {
-                let instrument =
-                    InstrumentRef::of_holding(id, holding).map_err(MeterError::Unsupported)?;
-                holdings.push((instrument, grader_f64(holding.position()), price));
-            }
-        }
-        Ok(holdings)
+    /// The account's position in the session's market in `measurement`,
+    /// flat if it holds none, and the price the notional rules read it at:
+    /// the market's entry in a sample. The session's only market: holdings
+    /// elsewhere break the universe rule already.
+    fn priced(&self, measurement: &Measurement, slot: u64) -> (f64, f64) {
+        (
+            position_in(measurement, &self.market_id),
+            self.notional_price_usd(slot),
+        )
     }
 
-    /// Checks `measurement` against the mandate's notional rules, if it has
-    /// any.
+    /// Keeps `measurement`, priced, for the mandate's notional rules, if it
+    /// has any: the audit judges the samples against its own mandate.
     fn record_notional(&mut self, measurement: &Measurement, slot: u64) -> Result<()> {
         if self.mandate.checks_samples() {
-            let holdings = self.priced(measurement, slot)?;
-            self.observed.record_sample(
-                &self.mandate,
-                &Sample {
-                    slot,
-                    holdings: &holdings,
-                },
-                &self.exposure_start,
-            );
+            let (position, price) = self.priced(measurement, slot);
+            let holdings = [PricedPosition {
+                instrument: &self.instrument,
+                position,
+                price,
+            }];
+            let sample = Sample::new(slot, &holdings).map_err(MeterError::Unsupported)?;
+            self.observed
+                .record_sample(&sample)
+                .map_err(MeterError::Unsupported)?;
         }
         Ok(())
     }
@@ -1063,7 +1061,8 @@ impl Account for PerpAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
-            notional_breach: observed.notional_breach,
+            samples: observed.samples,
+            term_start: observed.term_start,
             valuation: scenario.valuation(),
             flow: done.actors.flow,
             competitor: done.actors.competitor,

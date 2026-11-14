@@ -6,7 +6,12 @@
 //! every session against it; the copy a bot reads (`MTX_MANDATE`) is for the
 //! bot to plan by. The format is specified in `specs/mandate.md`.
 
-use std::{collections::BTreeMap, fmt, path::Path, str::FromStr};
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    fmt,
+    path::Path,
+    str::FromStr,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -38,19 +43,44 @@ pub struct Mandate {
     pub limits: Limits,
 }
 
+/// When a mandate applies. Build it with [`Term::until`] or
+/// [`Term::between`], or set it with [`Mandate::with_term`]: later versions
+/// may add members.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Term {
     /// The term's first slot (v0.1): limits that start partway through the
-    /// term count from it.
+    /// term count from it. No later than `until_slot`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_slot: Option<u64>,
     /// The last slot the mandate covers; the account is valued at it.
     pub until_slot: u64,
 }
 
+impl Term {
+    /// A term that ends at `until_slot`, with no first slot: v0's term.
+    pub fn until(until_slot: u64) -> Self {
+        Self {
+            from_slot: None,
+            until_slot,
+        }
+    }
+
+    /// A term from `from_slot` to `until_slot`, both included (v0.1).
+    pub fn between(from_slot: u64, until_slot: u64) -> Self {
+        Self {
+            from_slot: Some(from_slot),
+            until_slot,
+        }
+    }
+}
+
+/// One instrument the mandate allows, and its limits. Build it with
+/// [`Allowance::new`]: later versions may add members.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Allowance {
     pub instrument: InstrumentRef,
     /// The largest position, in base units. Without `min_position`, it
@@ -82,6 +112,7 @@ pub struct Allowance {
 /// What an order that trades on arrival may do to the position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Taking {
     /// Only bring the position toward zero: never open it, add to it or
     /// take it past zero. Positions are opened by orders that rest.
@@ -92,10 +123,17 @@ pub enum Taking {
 /// `against`'s.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Hedge {
     pub against: InstrumentRef,
     /// The most notional the hedge may hold, as a multiple of `against`'s.
     pub max_ratio: f64,
+}
+
+impl Hedge {
+    pub fn new(against: InstrumentRef, max_ratio: f64) -> Self {
+        Self { against, max_ratio }
+    }
 }
 
 /// [`Allowance::room`] for a cap of `max_position`, for callers that hold
@@ -117,6 +155,21 @@ pub fn position_room(
 const POSITION_TOLERANCE: f64 = 1e-9;
 
 impl Allowance {
+    /// An allowance for `instrument` up to `max_position` either way, with
+    /// no other limit.
+    pub fn new(instrument: InstrumentRef, max_position: f64) -> Self {
+        Self {
+            instrument,
+            max_position,
+            min_position: None,
+            sides: None,
+            min_sell_price: None,
+            max_buy_price: None,
+            hedge: None,
+            taking: None,
+        }
+    }
+
     /// How much more the account may buy and sell in this instrument,
     /// `(buy, sell)` in base units, if every order resting now fills: its
     /// `resting_bids` can only take the position up and its `resting_asks`
@@ -135,8 +188,12 @@ impl Allowance {
     /// `position`: always, unless `taking` is reduce-only and the fill
     /// would leave the position further from zero, or past it. The rule
     /// [`Mandate::audit`] checks on every taker fill, asked before an order
-    /// is sent, as a gate would.
+    /// is sent, as a gate would. A negative or non-finite quantity, or a
+    /// non-finite position, is never allowed: no fill takes one.
     pub fn may_take(&self, position: f64, side: Side, quantity: f64) -> bool {
+        if !(quantity >= 0.0 && quantity.is_finite() && position.is_finite()) {
+            return false;
+        }
         match self.taking {
             None => true,
             Some(Taking::ReduceOnly) => {
@@ -180,8 +237,11 @@ impl Allowance {
     }
 }
 
+/// Limits on the account as a whole. Start from [`Limits::default`], no
+/// limits, and set the ones wanted: later versions may add members.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Limits {
     /// The most, in USD, the account's value may fall below its running
     /// peak. Absent, the mandate has no drawdown limit: a mandate to sell a
@@ -198,14 +258,19 @@ pub struct Limits {
 }
 
 /// A bound on a weighted sum of notionals: a net limit across instruments,
-/// a beta-neutral book, or a de-risking deadline.
+/// a beta-neutral book, or a de-risking deadline. Build it with
+/// [`Exposure::max_abs_usd`] or [`Exposure::max_abs_fraction_of_start`]:
+/// later versions may add members.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Exposure {
     /// Unique among the mandate's exposures; a breach names it.
     pub name: String,
     /// Each instrument's weight: the exposure is the sum of weight times
-    /// position times price.
+    /// position times price. A document that weighs an instrument twice is
+    /// refused.
+    #[serde(deserialize_with = "unique_weights")]
     pub weights: BTreeMap<InstrumentRef, f64>,
     /// The most the exposure may be, in USD, either way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -224,55 +289,328 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-impl Exposure {
-    /// The exposure in `sample`, in USD.
-    pub fn value(&self, sample: &Sample) -> f64 {
-        self.weights
-            .iter()
-            .map(|(instrument, weight)| weight * sample.notional(instrument))
-            .sum()
+/// Reads an exposure's weights, refusing an instrument named twice: a JSON
+/// reader would otherwise keep the last.
+fn unique_weights<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<InstrumentRef, f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Weights;
+
+    impl<'de> serde::de::Visitor<'de> for Weights {
+        type Value = BTreeMap<InstrumentRef, f64>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a map from instrument references to weights")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut weights = BTreeMap::new();
+            while let Some((instrument, weight)) = map.next_entry::<InstrumentRef, f64>()? {
+                match weights.entry(instrument) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(weight);
+                    }
+                    Entry::Occupied(entry) => {
+                        return Err(serde::de::Error::custom(format!(
+                            "{} is weighed twice",
+                            entry.key()
+                        )));
+                    }
+                }
+            }
+            Ok(weights)
+        }
     }
 
-    /// The bound, in USD, given the exposure at the term's start.
-    pub fn bound(&self, start: f64) -> f64 {
-        match (self.max_abs_usd, self.max_abs_fraction_of_start) {
-            (Some(usd), _) => usd,
-            (None, Some(fraction)) => fraction * start.abs(),
-            (None, None) => 0.0,
+    deserializer.deserialize_map(Weights)
+}
+
+impl Exposure {
+    /// An exposure bounded at `usd` either way.
+    pub fn max_abs_usd(
+        name: impl Into<String>,
+        weights: BTreeMap<InstrumentRef, f64>,
+        usd: f64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            weights,
+            max_abs_usd: Some(usd),
+            max_abs_fraction_of_start: None,
+            from_slots_after_start: 0,
+        }
+    }
+
+    /// An exposure bounded at `fraction` of its absolute value at the
+    /// term's start, either way.
+    pub fn max_abs_fraction_of_start(
+        name: impl Into<String>,
+        weights: BTreeMap<InstrumentRef, f64>,
+        fraction: f64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            weights,
+            max_abs_usd: None,
+            max_abs_fraction_of_start: Some(fraction),
+            from_slots_after_start: 0,
+        }
+    }
+
+    /// This exposure, bounded only from `slots` after the term's start.
+    pub fn from_slots_after_start(self, slots: u64) -> Self {
+        Self {
+            from_slots_after_start: slots,
+            ..self
+        }
+    }
+
+    /// The exposure in `sample`, in USD; `None` if `sample` can't price an
+    /// instrument it weighs (see [`Sample::notional`]).
+    pub fn value(&self, sample: &Sample) -> Option<f64> {
+        self.priced_value(sample).ok()
+    }
+
+    /// [`Exposure::value`], or the first instrument `sample` can't price.
+    fn priced_value<'m>(&'m self, sample: &Sample) -> std::result::Result<f64, &'m InstrumentRef> {
+        self.weights
+            .iter()
+            .try_fold(0.0, |sum, (instrument, weight)| {
+                Ok(sum + weight * sample.notional(instrument).ok_or(instrument)?)
+            })
+    }
+}
+
+/// One instrument in a [`Sample`]: the account's position in it and the
+/// price the enforcer states for it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PricedPosition<'a> {
+    pub instrument: &'a InstrumentRef,
+    /// In base units, signed as the instrument profile signs it: short or
+    /// borrowed below zero. Zero when the account holds none.
+    pub position: f64,
+    /// In USD per base unit: the one price the enforcer states for the
+    /// instrument at this measurement.
+    pub price: f64,
+}
+
+impl PricedPosition<'_> {
+    /// The position times the price, in USD; `None` unless the position is
+    /// finite and the price is finite and positive. No rule reads a price
+    /// it can't trust as kept.
+    pub fn notional(&self) -> Option<f64> {
+        let usable = self.position.is_finite() && self.price.is_finite() && self.price > 0.0;
+        let notional = self.position * self.price;
+        (usable && notional.is_finite()).then_some(notional)
+    }
+}
+
+/// One measurement of the account, for the rules that need prices: each
+/// instrument the enforcer measured, once. An instrument a rule needs must
+/// be in it, flat ones included: one missing breaks the rule (fail closed).
+/// It borrows its instruments, so building one each step allocates nothing.
+#[derive(Debug, Clone, Copy)]
+pub struct Sample<'a> {
+    slot: u64,
+    holdings: &'a [PricedPosition<'a>],
+}
+
+impl<'a> Sample<'a> {
+    /// The measurement at `slot` of `holdings`; an error if an instrument is
+    /// in it twice, since a rule couldn't tell which to read.
+    pub fn new(slot: u64, holdings: &'a [PricedPosition<'a>]) -> std::result::Result<Self, String> {
+        for (i, held) in holdings.iter().enumerate() {
+            if holdings[..i]
+                .iter()
+                .any(|h| h.instrument == held.instrument)
+            {
+                return Err(format!(
+                    "the sample at slot {slot} lists {} twice",
+                    held.instrument
+                ));
+            }
+        }
+        Ok(Self { slot, holdings })
+    }
+
+    pub fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    pub fn holdings(&self) -> &'a [PricedPosition<'a>] {
+        self.holdings
+    }
+
+    /// The entry for `instrument`, if the sample has one.
+    pub fn held(&self, instrument: &InstrumentRef) -> Option<&'a PricedPosition<'a>> {
+        self.holdings.iter().find(|h| h.instrument == instrument)
+    }
+
+    /// The position in `instrument` times its price, in USD; `None` if the
+    /// sample has no entry for it, or one it can't price (see
+    /// [`PricedPosition::notional`]). A rule that needs it then breaks.
+    pub fn notional(&self, instrument: &InstrumentRef) -> Option<f64> {
+        self.held(instrument)?.notional()
+    }
+}
+
+/// The measurements an enforcer took for the notional rules, kept so
+/// [`Mandate::audit`] judges them against its own mandate rather than
+/// trusting a verdict reached against another. Every sample in a log lists
+/// the same instruments in the same order: the first fixes them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "SampleLogData", into = "SampleLogData")]
+pub struct SampleLog {
+    instruments: Vec<InstrumentRef>,
+    slots: Vec<u64>,
+    /// Each sample's positions and prices, instrument by instrument.
+    values: Vec<(f64, f64)>,
+}
+
+impl SampleLog {
+    /// Keeps `sample`; an error if it lists other instruments than the
+    /// log's first sample.
+    pub fn record(&mut self, sample: &Sample) -> std::result::Result<(), String> {
+        if self.slots.is_empty() {
+            self.instruments.clear();
+            self.instruments
+                .extend(sample.holdings.iter().map(|h| h.instrument.clone()));
+        } else if !sample
+            .holdings
+            .iter()
+            .map(|h| h.instrument)
+            .eq(self.instruments.iter())
+        {
+            return Err(format!(
+                "the sample at slot {} lists other instruments than the first",
+                sample.slot
+            ));
+        }
+        self.slots.push(sample.slot);
+        self.values
+            .extend(sample.holdings.iter().map(|h| (h.position, h.price)));
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// The instruments each sample lists.
+    pub fn instruments(&self) -> &[InstrumentRef] {
+        &self.instruments
+    }
+
+    /// The first `Some` that `f` returns for the samples, in the order
+    /// recorded.
+    pub fn find_map<B>(&self, mut f: impl FnMut(&Sample) -> Option<B>) -> Option<B> {
+        let width = self.instruments.len();
+        let mut holdings: Vec<PricedPosition> = self
+            .instruments
+            .iter()
+            .map(|instrument| PricedPosition {
+                instrument,
+                position: 0.0,
+                price: 0.0,
+            })
+            .collect();
+        for (row, &slot) in self.slots.iter().enumerate() {
+            let values = &self.values[row * width..(row + 1) * width];
+            for (held, &(position, price)) in holdings.iter_mut().zip(values) {
+                held.position = position;
+                held.price = price;
+            }
+            // Unique: the log was built from samples, or checked as read.
+            let sample = Sample {
+                slot,
+                holdings: &holdings,
+            };
+            if let Some(found) = f(&sample) {
+                return Some(found);
+            }
+        }
+        None
+    }
+}
+
+/// A [`SampleLog`] as written: per sample, its slot, and each instrument's
+/// position and price, `null` where not a number.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SampleLogData {
+    instruments: Vec<InstrumentRef>,
+    samples: Vec<WrittenSample>,
+}
+
+/// A sample's slot, and each instrument's position and price.
+type WrittenSample = (u64, Vec<(Option<f64>, Option<f64>)>);
+
+impl From<SampleLog> for SampleLogData {
+    fn from(log: SampleLog) -> Self {
+        let finite = |x: f64| x.is_finite().then_some(x);
+        let width = log.instruments.len();
+        let samples = log
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(row, &slot)| {
+                let values = &log.values[row * width..(row + 1) * width];
+                (
+                    slot,
+                    values
+                        .iter()
+                        .map(|&(position, price)| (finite(position), finite(price)))
+                        .collect(),
+                )
+            })
+            .collect();
+        Self {
+            instruments: log.instruments,
+            samples,
         }
     }
 }
 
-/// One measurement of the account, for the rules that need prices.
-#[derive(Debug, Clone, Copy)]
-pub struct Sample<'a> {
-    pub slot: u64,
-    /// Each instrument held, its position in base units and its price in
-    /// USD per base unit: the one price the enforcer states for it.
-    pub holdings: &'a [(InstrumentRef, f64 /* position */, f64 /* price */)],
-}
+impl TryFrom<SampleLogData> for SampleLog {
+    type Error = String;
 
-impl Sample<'_> {
-    /// The position in `instrument` times its price, in USD: zero if it
-    /// isn't held.
-    pub fn notional(&self, instrument: &InstrumentRef) -> f64 {
-        self.held(instrument)
-            .map_or(0.0, |(position, price)| position * price)
+    fn try_from(data: SampleLogData) -> std::result::Result<Self, String> {
+        for (i, instrument) in data.instruments.iter().enumerate() {
+            if data.instruments[..i].contains(instrument) {
+                return Err(format!("the sample log lists {instrument} twice"));
+            }
+        }
+        let width = data.instruments.len();
+        let mut log = Self {
+            instruments: data.instruments,
+            ..Self::default()
+        };
+        for (slot, values) in data.samples {
+            if values.len() != width {
+                return Err(format!(
+                    "the sample at slot {slot} has {} values for {width} instruments",
+                    values.len()
+                ));
+            }
+            log.slots.push(slot);
+            log.values
+                .extend(values.into_iter().map(|(position, price)| {
+                    (position.unwrap_or(f64::NAN), price.unwrap_or(f64::NAN))
+                }));
+        }
+        Ok(log)
     }
-
-    /// The position in `instrument` and its price.
-    pub fn held(&self, instrument: &InstrumentRef) -> Option<(f64, f64)> {
-        self.holdings
-            .iter()
-            .find(|(held, _, _)| held == instrument)
-            .map(|(_, position, price)| (*position, *price))
-    }
 }
-
-/// Each exposure's value at the term's start, in the mandate's order: what
-/// `max_abs_fraction_of_start` is a fraction of.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ExposureStart(pub Vec<f64>);
 
 /// An instrument on a venue, written `<venue>:<kind>:<symbol>`, e.g.
 /// `phoenix:perp:SPCX`.
@@ -304,20 +642,14 @@ impl Mandate {
         Self {
             version: VERSION.into(),
             term: None,
-            universe: vec![Allowance {
-                instrument: InstrumentRef {
+            universe: vec![Allowance::new(
+                InstrumentRef {
                     venue: venue.into(),
                     kind: Kind::Perp,
                     symbol: symbol.into(),
                 },
                 max_position,
-                min_position: None,
-                sides: None,
-                min_sell_price: None,
-                max_buy_price: None,
-                hedge: None,
-                taking: None,
-            }],
+            )],
             limits: Limits {
                 max_drawdown_usd: Some(max_drawdown_usd),
                 ..Limits::default()
@@ -334,19 +666,15 @@ impl Mandate {
             term: None,
             universe: venues
                 .iter()
-                .map(|venue| Allowance {
-                    instrument: InstrumentRef {
-                        venue: (*venue).into(),
-                        kind: Kind::Spot,
-                        symbol: symbol.into(),
-                    },
-                    max_position,
-                    min_position: None,
-                    sides: None,
-                    min_sell_price: None,
-                    max_buy_price: None,
-                    hedge: None,
-                    taking: None,
+                .map(|venue| {
+                    Allowance::new(
+                        InstrumentRef {
+                            venue: (*venue).into(),
+                            kind: Kind::Spot,
+                            symbol: symbol.into(),
+                        },
+                        max_position,
+                    )
                 })
                 .collect(),
             limits: Limits::default(),
@@ -427,6 +755,16 @@ impl Mandate {
         {
             return Err(format!("member {member} needs version {V0_1}"));
         }
+        if let Some(Term {
+            from_slot: Some(from),
+            until_slot,
+        }) = self.term
+            && from > until_slot
+        {
+            return Err(format!(
+                "term.from_slot {from} is after term.until_slot {until_slot}"
+            ));
+        }
         if self.universe.is_empty() {
             return Err("the universe is empty".into());
         }
@@ -450,10 +788,11 @@ impl Mandate {
             if allowance.instrument.kind == Kind::MoneyMarket
                 && (allowance.sides.is_some()
                     || allowance.min_sell_price.is_some()
-                    || allowance.max_buy_price.is_some())
+                    || allowance.max_buy_price.is_some()
+                    || allowance.taking.is_some())
             {
                 return Err(format!(
-                    "{}: sides and prices don't apply to a money market",
+                    "{}: sides, prices and taking don't apply to a money market",
                     allowance.instrument
                 ));
             }
@@ -584,8 +923,8 @@ impl Mandate {
                 limit,
             });
         }
-        if let Some(breach) = &observed.notional_breach {
-            return Some(breach.clone());
+        if let Some(breach) = self.audit_samples(observed) {
+            return Some(breach);
         }
         for (instrument, side) in observed
             .fills
@@ -640,6 +979,28 @@ impl Mandate {
         None
     }
 
+    /// The first notional rule the samples in `observed` break, judged
+    /// against this mandate. One it has but `observed` never measured, or
+    /// measured without what it needs, is broken: never read as kept.
+    fn audit_samples(&self, observed: &Observed) -> Option<Breach> {
+        if !self.checks_samples() {
+            return None;
+        }
+        if observed.samples.is_empty() {
+            return Some(Breach::Unmeasured);
+        }
+        if observed.term_start.is_empty() {
+            return observed
+                .samples
+                .find_map(|sample| self.check_sample(sample, None));
+        }
+        observed.term_start.find_map(|start| {
+            observed
+                .samples
+                .find_map(|sample| self.check_sample(sample, Some(start)))
+        })
+    }
+
     /// Whether the mandate has a rule [`Mandate::check_sample`] checks:
     /// one an enforcer must price the account for at every measurement.
     pub fn checks_samples(&self) -> bool {
@@ -648,32 +1009,78 @@ impl Mandate {
             || self.universe.iter().any(|a| a.hedge.is_some())
     }
 
-    /// The account's gross notional in `sample`, in USD: every position in
-    /// the universe at its price, long and short alike.
-    pub fn gross_notional_usd(&self, sample: &Sample) -> f64 {
-        sample
-            .holdings
+    /// Whether a rule is bounded by the account at the term's start: an
+    /// exposure with `max_abs_fraction_of_start`. The enforcer then also
+    /// measures the account as the term starts.
+    pub fn needs_term_start(&self) -> bool {
+        self.limits
+            .exposures
             .iter()
-            .filter(|(instrument, _, _)| self.allowance(instrument).is_some())
-            .map(|(_, position, price)| (position * price).abs())
-            .sum()
+            .any(|e| e.max_abs_fraction_of_start.is_some())
     }
 
-    /// The first notional rule (gross, exposure, hedge) `sample` breaks,
-    /// given the exposures' values at the term's start.
-    pub fn check_sample(&self, sample: &Sample, start: &ExposureStart) -> Option<Breach> {
+    /// The account's gross notional in `sample`, in USD: every position in
+    /// the universe at its price, long and short alike. `None` if `sample`
+    /// can't price an instrument in the universe; instruments outside it
+    /// are the universe rule's, not counted.
+    pub fn gross_notional_usd(&self, sample: &Sample) -> Option<f64> {
+        self.priced_gross(sample).ok()
+    }
+
+    /// [`Mandate::gross_notional_usd`], or the first instrument `sample`
+    /// can't price.
+    fn priced_gross(&self, sample: &Sample) -> std::result::Result<f64, &InstrumentRef> {
+        self.universe.iter().try_fold(0.0, |sum, allowance| {
+            let notional = sample
+                .notional(&allowance.instrument)
+                .ok_or(&allowance.instrument)?;
+            Ok(sum + notional.abs())
+        })
+    }
+
+    /// The first notional rule (gross, exposure, hedge) `sample` breaks.
+    /// `term_start` is the account measured as the term started, which a
+    /// fraction-of-start exposure is bounded by. An instrument a rule needs
+    /// that `sample` can't price breaks it ([`Breach::Unpriced`]). Each
+    /// rule looks up the instruments it reads, so a check costs
+    /// O(H·(U + ΣW)) comparisons for H holdings, U allowances and ΣW
+    /// weights across the exposures: a few dozen for a desk's book.
+    pub fn check_sample(&self, sample: &Sample, term_start: Option<&Sample>) -> Option<Breach> {
+        let unpriced = |instrument: &InstrumentRef, at: &Sample| Breach::Unpriced {
+            instrument: instrument.clone(),
+            slot: at.slot,
+        };
         if let Some(limit) = self.limits.max_gross_notional_usd {
-            let notional = self.gross_notional_usd(sample);
+            let notional = match self.priced_gross(sample) {
+                Ok(notional) => notional,
+                Err(instrument) => return Some(unpriced(instrument, sample)),
+            };
             if over(notional, limit) {
                 return Some(Breach::GrossNotional { notional, limit });
             }
         }
-        for (i, exposure) in self.limits.exposures.iter().enumerate() {
+        for exposure in &self.limits.exposures {
             if !self.exposure_applies(exposure, sample.slot) {
                 continue;
             }
-            let value = exposure.value(sample);
-            let limit = exposure.bound(start.0.get(i).copied().unwrap_or(0.0));
+            let value = match exposure.priced_value(sample) {
+                Ok(value) => value,
+                Err(instrument) => return Some(unpriced(instrument, sample)),
+            };
+            let limit = match (exposure.max_abs_usd, exposure.max_abs_fraction_of_start) {
+                (Some(usd), _) => usd,
+                (None, Some(fraction)) => {
+                    let Some(start) = term_start else {
+                        return Some(Breach::Unmeasured);
+                    };
+                    match exposure.priced_value(start) {
+                        Ok(at_start) => fraction * at_start.abs(),
+                        Err(instrument) => return Some(unpriced(instrument, start)),
+                    }
+                }
+                // Validation refuses an exposure without a bound.
+                (None, None) => 0.0,
+            };
             if over(value.abs(), limit) {
                 return Some(Breach::Exposure {
                     name: exposure.name.clone(),
@@ -687,8 +1094,12 @@ impl Mandate {
             let Some(hedge) = &allowance.hedge else {
                 continue;
             };
-            let notional = sample.notional(&allowance.instrument);
-            let against_notional = sample.notional(&hedge.against);
+            let Some(notional) = sample.notional(&allowance.instrument) else {
+                return Some(unpriced(&allowance.instrument, sample));
+            };
+            let Some(against_notional) = sample.notional(&hedge.against) else {
+                return Some(unpriced(&hedge.against, sample));
+            };
             let bound = hedge.max_ratio * against_notional.abs();
             if notional * against_notional > 0.0 || over(notional.abs(), bound) {
                 return Some(Breach::Hedge {
@@ -702,18 +1113,6 @@ impl Mandate {
         None
     }
 
-    /// The exposures' values in `sample`, taken at the term's start, for
-    /// `max_abs_fraction_of_start`.
-    pub fn exposure_start(&self, sample: &Sample) -> ExposureStart {
-        ExposureStart(
-            self.limits
-                .exposures
-                .iter()
-                .map(|exposure| exposure.value(sample))
-                .collect(),
-        )
-    }
-
     /// Whether `exposure`'s bound applies at `slot`: from its offset after
     /// the term's `from_slot`. Without a start to count from, always: a
     /// mandate is never read looser than written.
@@ -724,33 +1123,34 @@ impl Mandate {
     }
 
     /// How much more gross notional, in USD, the account may take on before
-    /// it breaks `max_gross_notional_usd`; `None` without that limit.
-    /// Advisory, like [`Allowance::room`]: orders resting now aren't
-    /// counted.
+    /// it breaks `max_gross_notional_usd`; `None` without that limit, or if
+    /// `sample` can't price the universe. Advisory, like
+    /// [`Allowance::room`]: orders resting now aren't counted.
     pub fn gross_room_usd(&self, sample: &Sample) -> Option<f64> {
-        self.limits
-            .max_gross_notional_usd
-            .map(|limit| (limit - self.gross_notional_usd(sample)).max(0.0))
+        let limit = self.limits.max_gross_notional_usd?;
+        Some((limit - self.gross_notional_usd(sample)?).max(0.0))
     }
 
     /// How much more of `instrument` the account may buy and sell, `(buy,
     /// sell)` in base units, before its position breaks its hedge bound, at
-    /// the prices in `sample`; `None` if it has no hedge, or `sample` has
-    /// no price for it. Advisory, like [`Allowance::room`].
+    /// the prices in `sample`; `None` if it has no hedge, or `sample` can't
+    /// price it or what it hedges (see [`Sample::notional`]). Advisory,
+    /// like [`Allowance::room`].
     pub fn hedge_room(&self, instrument: &InstrumentRef, sample: &Sample) -> Option<(f64, f64)> {
         let hedge = self.allowance(instrument)?.hedge.as_ref()?;
-        let (position, price) = sample.held(instrument)?;
-        if price.is_nan() || price <= 0.0 {
-            return None;
-        }
-        let against = sample.notional(&hedge.against);
-        let most = hedge.max_ratio * against.abs() / price;
+        let held = sample.held(instrument)?;
+        held.notional()?;
+        let against = sample.notional(&hedge.against)?;
+        let most = hedge.max_ratio * against.abs() / held.price;
         let (lowest, highest) = if against > 0.0 {
             (-most, 0.0)
         } else {
             (0.0, most)
         };
-        Some(((highest - position).max(0.0), (position - lowest).max(0.0)))
+        Some((
+            (highest - held.position).max(0.0),
+            (held.position - lowest).max(0.0),
+        ))
     }
 }
 
@@ -775,8 +1175,11 @@ fn positive(name: &str, value: f64) -> std::result::Result<(), String> {
     }
 }
 
-/// What an enforcer measured over a session, for [`Mandate::audit`].
+/// What an enforcer measured over a session, for [`Mandate::audit`]. Start
+/// from [`Observed::default`] and record into it: later versions may add
+/// members.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Observed {
     /// The range of positions held in each instrument measured, in the order
     /// first seen.
@@ -792,10 +1195,13 @@ pub struct Observed {
     /// Each side the account was seen with an order resting on, per
     /// instrument.
     pub open_orders: Vec<(InstrumentRef, Side)>,
-    /// The first notional rule a measurement broke (see
-    /// [`Observed::record_sample`]). Ranges can't say what was held at one
-    /// moment, so these rules are checked as each measurement is taken.
-    pub notional_breach: Option<Breach>,
+    /// The account priced at each measurement, for the notional rules
+    /// (see [`Observed::record_sample`]): ranges can't say what was held
+    /// together at one moment.
+    pub samples: SampleLog,
+    /// The account priced as the term started, for exposures bounded by a
+    /// fraction of their start: at most one sample.
+    pub term_start: SampleLog,
     /// Every fill the account took liquidity in, for the taking rule, from
     /// an enforcer that tells takers from makers.
     pub takes: Vec<ObservedTake>,
@@ -853,12 +1259,18 @@ impl Observed {
         });
     }
 
-    /// Checks one measurement against `mandate`'s notional rules, keeping
-    /// the first breach.
-    pub fn record_sample(&mut self, mandate: &Mandate, sample: &Sample, start: &ExposureStart) {
-        if self.notional_breach.is_none() {
-            self.notional_breach = mandate.check_sample(sample, start);
-        }
+    /// Keeps one measurement for the notional rules, which the audit judges
+    /// against its own mandate. An error if it lists other instruments than
+    /// the first.
+    pub fn record_sample(&mut self, sample: &Sample) -> std::result::Result<(), String> {
+        self.samples.record(sample)
+    }
+
+    /// Keeps the measurement taken as the term started, replacing any
+    /// earlier one.
+    pub fn record_term_start(&mut self, sample: &Sample) -> std::result::Result<(), String> {
+        self.term_start = SampleLog::default();
+        self.term_start.record(sample)
     }
 
     /// Counts an order seen resting on `side` of `instrument`.
@@ -897,8 +1309,11 @@ impl PositionRange {
     }
 }
 
+/// A rule a session broke. Later versions add rules, so a match needs a
+/// wildcard arm.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "rule", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Breach {
     OutsideUniverse {
         positions: u32,
@@ -957,6 +1372,16 @@ pub enum Breach {
         quantity: f64,
         position_before: f64,
     },
+    /// A measurement at `slot` without a usable position and price for an
+    /// instrument a notional rule needs: missing, or not a finite number, or
+    /// a price that isn't positive.
+    Unpriced {
+        instrument: InstrumentRef,
+        slot: u64,
+    },
+    /// The mandate has a notional rule the enforcer never measured: no
+    /// samples, or none at the term's start for an exposure bounded by it.
+    Unmeasured,
 }
 
 impl fmt::Display for Breach {
@@ -1051,13 +1476,19 @@ impl fmt::Display for Breach {
                     Side::Sell => "sold",
                 }
             ),
+            Self::Unpriced { instrument, slot } => write!(
+                f,
+                "held {instrument} at slot {slot} without a price its mandate's notional limits \
+                 could use"
+            ),
+            Self::Unmeasured => f.write_str("its mandate's notional limits were never measured"),
         }
     }
 }
 
 impl InstrumentRef {
-    /// The instrument's [`InstrumentId`], `<venue>:<symbol>`: what a meter
-    /// reports holdings under.
+    /// The instrument's [`InstrumentId`]: the reference itself,
+    /// `<venue>:<kind>:<symbol>`, which a meter reports holdings under.
     pub fn id(&self) -> InstrumentId {
         InstrumentId::new(self.to_string())
     }
@@ -1150,6 +1581,8 @@ impl FromStr for Kind {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use super::*;
 
     fn spcx() -> InstrumentRef {
@@ -1477,12 +1910,24 @@ mod tests {
         assert!(allowance.breach(9.5, 60.0).is_some());
     }
 
-    fn qqq() -> InstrumentRef {
-        "phoenix:perp:QQQ".parse().unwrap()
+    static SPCX: LazyLock<InstrumentRef> = LazyLock::new(spcx);
+    static QQQ: LazyLock<InstrumentRef> = LazyLock::new(|| "phoenix:perp:QQQ".parse().unwrap());
+    static SPY: LazyLock<InstrumentRef> = LazyLock::new(|| "phoenix:perp:SPY".parse().unwrap());
+
+    fn qqq() -> &'static InstrumentRef {
+        &QQQ
     }
 
-    fn spy() -> InstrumentRef {
-        "phoenix:perp:SPY".parse().unwrap()
+    fn spy() -> &'static InstrumentRef {
+        &SPY
+    }
+
+    fn priced(instrument: &InstrumentRef, position: f64, price: f64) -> PricedPosition<'_> {
+        PricedPosition {
+            instrument,
+            position,
+            price,
+        }
     }
 
     /// The spec's v0.1 example: QQQ hedged with SPY, net down to a quarter
@@ -1509,15 +1954,24 @@ mod tests {
         mandate
     }
 
-    fn held(qqq_usd: f64, spy_usd: f64) -> Vec<(InstrumentRef, f64, f64)> {
-        vec![
-            (qqq(), qqq_usd / 500.0, 500.0),
-            (spy(), spy_usd / 600.0, 600.0),
+    /// `qqq_usd` of QQQ at 500 and `spy_usd` of SPY at 600.
+    fn held(qqq_usd: f64, spy_usd: f64) -> [PricedPosition<'static>; 2] {
+        [
+            priced(qqq(), qqq_usd / 500.0, 500.0),
+            priced(spy(), spy_usd / 600.0, 600.0),
         ]
     }
 
-    fn at(slot: u64, holdings: &[(InstrumentRef, f64, f64)]) -> Sample<'_> {
-        Sample { slot, holdings }
+    fn at<'a>(slot: u64, holdings: &'a [PricedPosition<'a>]) -> Sample<'a> {
+        Sample::new(slot, holdings).unwrap()
+    }
+
+    /// A v0.1 mandate for SPCX alone, with a gross notional limit.
+    fn gross(limit: f64) -> Mandate {
+        let mut mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        mandate.version = "v0.1".into();
+        mandate.limits.max_gross_notional_usd = Some(limit);
+        mandate
     }
 
     #[test]
@@ -1527,31 +1981,22 @@ mod tests {
         type Edit<'a> = (&'a str, &'a dyn Fn(&mut Mandate));
         let edits: [Edit; 5] = [
             ("term.from_slot", &|m: &mut Mandate| {
-                m.term = Some(Term {
-                    from_slot: Some(1),
-                    until_slot: 2,
-                })
+                m.term = Some(Term::between(1, 2))
             }),
             ("limits.max_gross_notional_usd", &|m: &mut Mandate| {
                 m.limits.max_gross_notional_usd = Some(10_000.0)
             }),
             ("limits.exposures", &|m: &mut Mandate| {
-                m.limits.exposures.push(Exposure {
-                    name: "net".into(),
-                    weights: [(spcx(), 1.0)].into(),
-                    max_abs_usd: Some(1_000.0),
-                    max_abs_fraction_of_start: None,
-                    from_slots_after_start: 0,
-                })
+                m.limits.exposures.push(Exposure::max_abs_usd(
+                    "net",
+                    [(spcx(), 1.0)].into(),
+                    1_000.0,
+                ))
             }),
             ("hedge", &|m: &mut Mandate| {
-                m.universe.push(Allowance {
-                    hedge: Some(Hedge {
-                        against: spcx(),
-                        max_ratio: 1.0,
-                    }),
-                    ..Mandate::perp("phoenix", "SPY", 10.0, 1.0).universe[0].clone()
-                })
+                let mut hedge = Allowance::new(spy().clone(), 10.0);
+                hedge.hedge = Some(Hedge::new(spcx(), 1.0));
+                m.universe.push(hedge)
             }),
             ("taking", &|m: &mut Mandate| {
                 m.universe[0].taking = Some(Taking::ReduceOnly)
@@ -1576,19 +2021,14 @@ mod tests {
     #[test]
     fn a_v0_mandate_with_its_term_set_serializes_as_before() {
         let mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0).with_term(400_000, 412_480);
+        assert_eq!(mandate.term, Some(Term::until(412_480)));
         assert_eq!(
             serde_json::to_string(&mandate).unwrap(),
             r#"{"version":"v0","term":{"until_slot":412480},"universe":[{"instrument":"phoenix:perp:SPCX","max_position":70.0}],"limits":{"max_drawdown_usd":1000.0}}"#
         );
         // A v0.1 mandate gets the start its exposures count from.
         let book = book().with_term(5, 9);
-        assert_eq!(
-            book.term,
-            Some(Term {
-                from_slot: Some(5),
-                until_slot: 9
-            })
-        );
+        assert_eq!(book.term, Some(Term::between(5, 9)));
         let json = serde_json::to_string(&book).unwrap();
         assert_eq!(serde_json::from_str::<Mandate>(&json).unwrap(), book);
     }
@@ -1597,24 +2037,30 @@ mod tests {
     fn unknown_v0_1_members_are_refused_at_every_level() {
         let replace = |from: &str, to: &str| {
             assert!(BOOK.contains(from), "{from}");
-            serde_json::from_str::<Mandate>(&BOOK.replace(from, to)).is_err()
+            serde_json::from_str::<Mandate>(&BOOK.replace(from, to)).map(|_| ())
         };
-        assert!(replace(
-            r#""from_slot": 1000"#,
-            r#""from_slot": 1000, "to_slot": 3"#
-        ));
-        assert!(replace(
-            r#""max_ratio": 1.2"#,
-            r#""max_ratio": 1.2, "min_ratio": 0.5"#
-        ));
-        assert!(replace(
-            r#""name": "deadline""#,
-            r#""name": "deadline", "decay": 1"#
-        ));
-        assert!(replace(
-            r#""exposures""#,
-            r#""max_notional_usd": 5, "exposures""#
-        ));
+        assert!(replace(r#""from_slot": 1000"#, r#""from_slot": 1000, "to_slot": 3"#).is_err());
+        assert!(
+            replace(
+                r#""max_ratio": 1.2"#,
+                r#""max_ratio": 1.2, "min_ratio": 0.5"#
+            )
+            .is_err()
+        );
+        assert!(replace(r#""name": "deadline""#, r#""name": "deadline", "decay": 1"#).is_err());
+        assert!(replace(r#""exposures""#, r#""max_notional_usd": 5, "exposures""#).is_err());
+        // An instrument weighed twice is refused, not read as its last weight.
+        let twice = replace(
+            r#""phoenix:perp:SPY": 1.2 }"#,
+            r#""phoenix:perp:SPY": 1.2, "phoenix:perp:QQQ": 9.0 }"#,
+        )
+        .unwrap_err();
+        assert!(
+            twice
+                .to_string()
+                .contains("phoenix:perp:QQQ is weighed twice"),
+            "{twice}"
+        );
     }
 
     #[test]
@@ -1643,7 +2089,7 @@ mod tests {
         );
         assert!(
             check(&|m| {
-                exposure(m).weights.insert(qqq(), f64::NAN);
+                exposure(m).weights.insert(qqq().clone(), f64::NAN);
             })
             .is_err()
         );
@@ -1674,9 +2120,15 @@ mod tests {
                 .contains("from_slot")
         );
         assert!(check(&|m| m.term = None).is_ok());
+        // A term can't start after it ends; one slot long is fine.
+        assert_eq!(
+            check(&|m| m.term = Some(Term::between(2_001, 2_000))),
+            Err("term.from_slot 2001 is after term.until_slot 2000".into())
+        );
+        assert!(check(&|m| m.term = Some(Term::between(2_000, 2_000))).is_ok());
         assert!(check(&|m| hedge(m).max_ratio = 0.0).is_err());
         assert!(
-            check(&|m| hedge(m).against = spy())
+            check(&|m| hedge(m).against = spy().clone())
                 .unwrap_err()
                 .contains("itself")
         );
@@ -1686,29 +2138,36 @@ mod tests {
                 .contains("universe")
         );
         assert!(
-            check(&|m| {
-                m.universe[0].hedge = Some(Hedge {
-                    against: spy(),
-                    max_ratio: 1.0,
-                });
-            })
-            .unwrap_err()
-            .contains("itself a hedge")
+            check(&|m| m.universe[0].hedge = Some(Hedge::new(spy().clone(), 1.0)))
+                .unwrap_err()
+                .contains("itself a hedge")
         );
     }
 
     #[test]
+    fn a_sample_lists_each_instrument_once() {
+        let twice = [priced(qqq(), 1.0, 500.0), priced(qqq(), -1.0, 500.0)];
+        assert_eq!(
+            Sample::new(7, &twice).unwrap_err(),
+            "the sample at slot 7 lists phoenix:perp:QQQ twice"
+        );
+        let holdings = held(-1_000.0, 600.0);
+        let sample = at(7, &holdings);
+        assert_eq!(sample.slot(), 7);
+        assert_eq!(sample.held(spy()).unwrap().position, 1.0);
+        assert_eq!(sample.notional(qqq()), Some(-1_000.0));
+        assert_eq!(sample.notional(&spcx()), None);
+    }
+
+    #[test]
     fn gross_notional_breaches_past_its_limit() {
-        let mut mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
-        mandate.version = "v0.1".into();
-        mandate.limits.max_gross_notional_usd = Some(10_000.0);
-        let start = ExposureStart::default();
+        let mandate = gross(10_000.0);
         // 25 short at 400: exactly the limit.
-        let at_limit = [(spcx(), -25.0, 400.0)];
-        assert_eq!(mandate.check_sample(&at(0, &at_limit), &start), None);
+        let at_limit = [priced(&SPCX, -25.0, 400.0)];
+        assert_eq!(mandate.check_sample(&at(0, &at_limit), None), None);
         assert_eq!(mandate.gross_room_usd(&at(0, &at_limit)), Some(0.0));
-        let over = [(spcx(), -25.01, 400.0)];
-        let breach = mandate.check_sample(&at(0, &over), &start).unwrap();
+        let over = [priced(&SPCX, -25.01, 400.0)];
+        let breach = mandate.check_sample(&at(0, &over), None).unwrap();
         assert!(matches!(
             breach,
             Breach::GrossNotional {
@@ -1718,8 +2177,11 @@ mod tests {
         ));
         assert!(breach.to_string().contains("gross notional"), "{breach}");
         // Outside the universe is the universe rule's, not counted twice.
-        let elsewhere = [(spcx(), 10.0, 400.0), (qqq(), 100.0, 500.0)];
-        assert_eq!(mandate.gross_notional_usd(&at(0, &elsewhere)), 4_000.0);
+        let elsewhere = [priced(&SPCX, 10.0, 400.0), priced(qqq(), 100.0, 500.0)];
+        assert_eq!(
+            mandate.gross_notional_usd(&at(0, &elsewhere)),
+            Some(4_000.0)
+        );
         assert_eq!(mandate.gross_room_usd(&at(0, &elsewhere)), Some(6_000.0));
         assert_eq!(
             Mandate::perp("phoenix", "SPCX", 1.0, 1.0).gross_room_usd(&at(0, &over)),
@@ -1727,63 +2189,116 @@ mod tests {
         );
     }
 
+    /// Review probe: a sample without an entry for a held instrument read
+    /// it as flat, so gross, exposure and hedge passed.
+    #[test]
+    fn an_instrument_a_rule_needs_missing_from_the_sample_breaks_it() {
+        let unpriced = |instrument: &InstrumentRef, slot| {
+            Some(Breach::Unpriced {
+                instrument: instrument.clone(),
+                slot,
+            })
+        };
+        // Gross needs every instrument in the universe.
+        let mandate = gross(10_000.0);
+        let elsewhere = [priced(qqq(), 100.0, 500.0)];
+        assert_eq!(
+            mandate.check_sample(&at(3, &elsewhere), None),
+            unpriced(&SPCX, 3)
+        );
+        assert_eq!(mandate.check_sample(&at(3, &[]), None), unpriced(&SPCX, 3));
+        assert_eq!(mandate.gross_notional_usd(&at(3, &[])), None);
+        assert_eq!(mandate.gross_room_usd(&at(3, &[])), None);
+        // A flat instrument is listed with a zero position, and passes.
+        let flat = [priced(&SPCX, 0.0, 400.0)];
+        assert_eq!(mandate.check_sample(&at(3, &flat), None), None);
+
+        // An exposure needs what it weighs; the hedge, both legs.
+        let mut book = book();
+        book.term = None;
+        let only_spy = [priced(spy(), 10.0, 600.0)];
+        let start_holdings = held(-10_000.0, 6_000.0);
+        let start = at(0, &start_holdings);
+        assert_eq!(
+            book.check_sample(&at(5, &only_spy), Some(&start)),
+            unpriced(qqq(), 5)
+        );
+        book.limits.exposures.clear();
+        assert_eq!(
+            book.check_sample(&at(5, &only_spy), None),
+            unpriced(qqq(), 5)
+        );
+        let only_qqq = [priced(qqq(), -10.0, 500.0)];
+        assert_eq!(
+            book.check_sample(&at(5, &only_qqq), None),
+            unpriced(spy(), 5)
+        );
+        // hedge_room reads "missing" the same way: no answer.
+        assert_eq!(book.hedge_room(spy(), &at(5, &only_spy)), None);
+        assert_eq!(book.hedge_room(spy(), &at(5, &only_qqq)), None);
+    }
+
     #[test]
     fn an_exposure_applies_from_its_start_and_scales_with_the_start() {
         let mandate = book();
         let opening = held(-10_000.0, 6_000.0);
-        let start = mandate.exposure_start(&at(1_000, &opening));
+        let start = at(1_000, &opening);
         // QQQ −10,000 + 1.2 × SPY 6,000: −2,800, so the bound is 700.
-        assert!((start.0[0] + 2_800.0).abs() < 1e-9, "{start:?}");
-        assert_eq!(mandate.check_sample(&at(1_000, &opening), &start), None);
+        let value = mandate.limits.exposures[0].value(&start).unwrap();
+        assert!((value + 2_800.0).abs() < 1e-9, "{value}");
+        let check = |slot, holdings: &[PricedPosition]| {
+            mandate.check_sample(&at(slot, holdings), Some(&start))
+        };
+        assert_eq!(check(1_000, &opening), None);
         // Before slot 1600 the deadline isn't enforced.
-        assert_eq!(mandate.check_sample(&at(1_599, &opening), &start), None);
-        let breach = mandate.check_sample(&at(1_600, &opening), &start).unwrap();
+        assert_eq!(check(1_599, &opening), None);
+        let breach = check(1_600, &opening).unwrap();
         assert!(
             matches!(&breach, Breach::Exposure { name, slot: 1_600, .. } if name == "deadline")
         );
         assert!(breach.to_string().contains("deadline exposure"), "{breach}");
         // −3,000 + 1.2 × 1,916.67 = −700: on the bound passes, past it doesn't.
-        let within = held(-3_000.0, 2_300.0 / 1.2);
-        assert_eq!(mandate.check_sample(&at(1_600, &within), &start), None);
-        let past = held(-3_000.0, 2_290.0 / 1.2);
+        assert_eq!(check(1_600, &held(-3_000.0, 2_300.0 / 1.2)), None);
         assert!(matches!(
-            mandate.check_sample(&at(1_999, &past), &start),
+            check(1_999, &held(-3_000.0, 2_290.0 / 1.2)),
             Some(Breach::Exposure { .. })
         ));
         // The bound is a fraction of the start's size, either way.
         assert!(matches!(
-            mandate.check_sample(
-                &at(1_600, &held(-1_000.0, 3_000.0 / 1.2 + 700.0 / 1.2)),
-                &start
-            ),
+            check(1_600, &held(-1_000.0, 3_000.0 / 1.2 + 700.0 / 1.2)),
             Some(Breach::Exposure { .. })
         ));
+        // Without the term's start, the bound has nothing to be a fraction of.
+        assert_eq!(
+            mandate.check_sample(&at(1_600, &opening), None),
+            Some(Breach::Unmeasured)
+        );
     }
 
     #[test]
     fn an_exposure_without_a_start_to_count_from_always_applies() {
         let mut mandate = book();
         mandate.term = None;
-        let start = ExposureStart(vec![-2_800.0]);
+        let opening = held(-10_000.0, 6_000.0);
+        let start = at(0, &opening);
         assert!(matches!(
-            mandate.check_sample(&at(0, &held(-10_000.0, 6_000.0)), &start),
+            mandate.check_sample(&at(0, &held(-10_000.0, 6_000.0)), Some(&start)),
             Some(Breach::Exposure { .. })
         ));
-        // max_abs_usd ignores the start.
+        // max_abs_usd needs no start.
         mandate.limits.exposures[0].max_abs_fraction_of_start = None;
         mandate.limits.exposures[0].max_abs_usd = Some(3_000.0);
         assert_eq!(
-            mandate.check_sample(&at(0, &held(-10_000.0, 6_000.0)), &ExposureStart::default()),
+            mandate.check_sample(&at(0, &held(-10_000.0, 6_000.0)), None),
             None
         );
     }
 
     #[test]
     fn a_hedge_must_face_what_it_hedges_within_its_ratio() {
-        let mandate = book();
-        let start = ExposureStart(vec![-1e9]);
-        let check =
-            |qqq_usd, spy_usd| mandate.check_sample(&at(0, &held(qqq_usd, spy_usd)), &start);
+        let mut mandate = book();
+        mandate.limits.exposures.clear();
+        let check = |qqq_usd, spy_usd| mandate.check_sample(&at(0, &held(qqq_usd, spy_usd)), None);
         assert_eq!(check(-10_000.0, 12_000.0), None);
         assert_eq!(check(0.0, 0.0), None);
         assert_eq!(check(-10_000.0, 0.0), None);
@@ -1795,12 +2310,10 @@ mod tests {
         // With QQQ flat, the hedge must be flat.
         assert!(matches!(check(0.0, 600.0), Some(Breach::Hedge { .. })));
         // The same side as QQQ: a flip, however small.
-        let breach = mandate
-            .check_sample(&at(0, &held(-10_000.0, -600.0)), &start)
-            .unwrap();
+        let breach = check(-10_000.0, -600.0).unwrap();
         assert!(matches!(
             &breach,
-            Breach::Hedge { instrument, against, .. } if *instrument == spy() && *against == qqq()
+            Breach::Hedge { instrument, against, .. } if instrument == spy() && against == qqq()
         ));
         assert!(
             breach.to_string().contains("outside its hedge bound"),
@@ -1813,42 +2326,191 @@ mod tests {
         let mandate = book();
         let holdings = held(-10_000.0, 6_000.0);
         // SPY is 10 long of a 20 bound at 600 a share: 10 more to buy, 10 to sell.
-        let (buy, sell) = mandate.hedge_room(&spy(), &at(0, &holdings)).unwrap();
+        let (buy, sell) = mandate.hedge_room(spy(), &at(0, &holdings)).unwrap();
         assert!(
             (buy - 10.0).abs() < 1e-9 && (sell - 10.0).abs() < 1e-9,
             "{buy} {sell}"
         );
-        let start = ExposureStart(vec![-1e9]);
+        let mut hedge_only = mandate.clone();
+        hedge_only.limits.exposures.clear();
         let full = held(-10_000.0, 6_000.0 + buy * 600.0);
-        assert_eq!(mandate.check_sample(&at(0, &full), &start), None);
-        assert_eq!(mandate.hedge_room(&qqq(), &at(0, &holdings)), None);
-        assert_eq!(mandate.hedge_room(&spy(), &at(0, &holdings[..1])), None);
+        assert_eq!(hedge_only.check_sample(&at(0, &full), None), None);
+        assert_eq!(mandate.hedge_room(qqq(), &at(0, &holdings)), None);
+        assert_eq!(mandate.hedge_room(spy(), &at(0, &holdings[..1])), None);
     }
 
+    /// Review probes: a NaN `against` price, or an infinite own price, gave
+    /// a room; a negative price let a same-side hedge pass.
     #[test]
-    fn the_audit_reports_a_notional_breach_after_drawdown() {
+    fn prices_that_are_not_finite_and_positive_break_the_rules_they_feed() {
+        let mut book = book();
+        book.term = None;
+        let unpriced = |instrument: &InstrumentRef| {
+            Some(Breach::Unpriced {
+                instrument: instrument.clone(),
+                slot: 0,
+            })
+        };
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -600.0] {
+            let bad_spy = [priced(qqq(), -10.0, 500.0), priced(spy(), 10.0, bad)];
+            let bad_qqq = [priced(qqq(), -10.0, bad), priced(spy(), 10.0, 600.0)];
+            assert_eq!(book.hedge_room(spy(), &at(0, &bad_spy)), None, "{bad}");
+            assert_eq!(book.hedge_room(spy(), &at(0, &bad_qqq)), None, "{bad}");
+            let start_holdings = held(-10_000.0, 6_000.0);
+            let start = at(0, &start_holdings);
+            assert_eq!(
+                book.check_sample(&at(0, &bad_qqq), Some(&start)),
+                unpriced(qqq())
+            );
+            let mut hedge_only = book.clone();
+            hedge_only.limits.exposures.clear();
+            assert_eq!(
+                hedge_only.check_sample(&at(0, &bad_spy), None),
+                unpriced(spy())
+            );
+            assert_eq!(
+                hedge_only.check_sample(&at(0, &bad_qqq), None),
+                unpriced(qqq())
+            );
+            let gross = gross(10_000.0);
+            let bad_spcx = [priced(&SPCX, 1.0, bad)];
+            assert_eq!(gross.check_sample(&at(0, &bad_spcx), None), unpriced(&SPCX));
+            assert_eq!(gross.gross_room_usd(&at(0, &bad_spcx)), None);
+        }
+        // A non-finite position is no measurement either.
+        let nan_position = [priced(&SPCX, f64::NAN, 400.0)];
+        assert_eq!(
+            gross(10_000.0).check_sample(&at(0, &nan_position), None),
+            unpriced(&SPCX)
+        );
+        // A start the enforcer couldn't price leaves no bound to keep.
+        let fine = held(-10_000.0, 6_000.0);
+        let nan_start = [priced(qqq(), -10.0, f64::NAN), priced(spy(), 10.0, 600.0)];
+        assert_eq!(
+            book.check_sample(&at(9, &fine), Some(&at(0, &nan_start))),
+            unpriced(qqq())
+        );
+        assert!(matches!(
+            book.check_sample(&at(9, &fine), Some(&at(0, &fine))),
+            Some(Breach::Exposure { .. })
+        ));
+    }
+
+    /// Review probe: the audit returned a verdict reached against whichever
+    /// mandate recorded the sample. It now judges the samples itself.
+    #[test]
+    fn the_audit_judges_the_samples_against_its_own_mandate() {
         let mut mandate = book();
+        mandate.limits.exposures.clear();
         mandate.limits.max_drawdown_usd = Some(100.0);
         let mut observed = Observed::default();
-        let start = ExposureStart(vec![-1e9]);
-        observed.record_sample(&mandate, &at(0, &held(-1_000.0, 0.0)), &start);
+        // Measured without a notional rule: nothing to judge.
+        assert_eq!(
+            Mandate::perp("phoenix", "QQQ", 30.0, 100.0).audit(&observed),
+            None
+        );
+        // A mandate with one, never measured, is never read as kept.
+        assert_eq!(mandate.audit(&observed), Some(Breach::Unmeasured));
+        observed
+            .record_sample(&at(0, &held(-1_000.0, 0.0)))
+            .unwrap();
         assert_eq!(mandate.audit(&observed), None);
-        observed.record_sample(&mandate, &at(1, &held(-1_000.0, 2_000.0)), &start);
-        observed.record_sample(&mandate, &at(2, &held(0.0, 600.0)), &start);
-        // The first breach is kept.
-        assert!(matches!(
-            &observed.notional_breach,
-            Some(Breach::Hedge { notional, .. }) if (notional - 2_000.0).abs() < 1e-9
-        ));
+        observed
+            .record_sample(&at(1, &held(-1_000.0, 2_000.0)))
+            .unwrap();
+        observed.record_sample(&at(2, &held(0.0, 600.0))).unwrap();
+        // The first breach.
         assert!(matches!(
             mandate.audit(&observed),
-            Some(Breach::Hedge { .. })
+            Some(Breach::Hedge { notional, .. }) if (notional - 2_000.0).abs() < 1e-9
         ));
+        // A looser hedge keeps slot 1, and breaks only at slot 2.
+        let mut looser = mandate.clone();
+        looser.universe[1].hedge.as_mut().unwrap().max_ratio = 3.0;
+        assert!(matches!(
+            looser.audit(&observed),
+            Some(Breach::Hedge { notional, .. }) if (notional - 600.0).abs() < 1e-9
+        ));
+        // A mandate without the hedge keeps them all.
+        let mut unhedged = mandate.clone();
+        unhedged.universe[1].hedge = None;
+        unhedged.limits.max_gross_notional_usd = Some(10_000.0);
+        assert_eq!(unhedged.audit(&observed), None);
+        // Drawdown is audited first.
         observed.max_drawdown_usd = 101.0;
         assert!(matches!(
             mandate.audit(&observed),
             Some(Breach::Drawdown { .. })
         ));
+        observed.max_drawdown_usd = 0.0;
+        // A sample listing other instruments is refused.
+        assert!(
+            observed
+                .record_sample(&at(3, &[priced(qqq(), 0.0, 500.0)]))
+                .unwrap_err()
+                .contains("other instruments")
+        );
+        assert_eq!(observed.samples.len(), 3);
+
+        // A fraction-of-start exposure is judged from the term's start.
+        let book = book();
+        let mut observed = Observed::default();
+        let opening = held(-10_000.0, 6_000.0);
+        observed.record_sample(&at(1_700, &opening)).unwrap();
+        assert_eq!(book.audit(&observed), Some(Breach::Unmeasured));
+        observed.record_term_start(&at(1_000, &opening)).unwrap();
+        assert!(matches!(
+            book.audit(&observed),
+            Some(Breach::Exposure { slot: 1_700, .. })
+        ));
+        let flat = held(-500.0, 0.0);
+        observed.record_term_start(&at(1_000, &flat)).unwrap();
+        assert_eq!(observed.term_start.len(), 1);
+    }
+
+    #[test]
+    fn a_sample_log_reads_back_as_written() {
+        let mut log = SampleLog::default();
+        log.record(&at(4, &held(-1_000.0, 600.0))).unwrap();
+        let bad = [
+            priced(qqq(), f64::NAN, 500.0),
+            priced(spy(), 1.0, f64::INFINITY),
+        ];
+        log.record(&at(5, &bad)).unwrap();
+        let json = serde_json::to_value(&log).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "instruments": ["phoenix:perp:QQQ", "phoenix:perp:SPY"],
+                "samples": [[4, [[-2.0, 500.0], [1.0, 600.0]]], [5, [[null, 500.0], [1.0, null]]]]
+            })
+        );
+        let back: SampleLog = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back.instruments(), [qqq().clone(), spy().clone()]);
+        // What wasn't a number reads back as no price: the same verdict.
+        let mandate = {
+            let mut m = book();
+            m.limits.exposures.clear();
+            m
+        };
+        let observed = Observed {
+            samples: back,
+            ..Observed::default()
+        };
+        assert_eq!(
+            mandate.audit(&observed),
+            Some(Breach::Unpriced {
+                instrument: spy().clone(),
+                slot: 5
+            })
+        );
+        let mut twice = json.clone();
+        twice["instruments"][1] = "phoenix:perp:QQQ".into();
+        assert!(serde_json::from_value::<SampleLog>(twice).is_err());
+        let mut short = json;
+        short["samples"][0][1] = serde_json::json!([[1.0, 2.0]]);
+        assert!(serde_json::from_value::<SampleLog>(short).is_err());
     }
 
     #[test]
@@ -1865,19 +2527,25 @@ mod tests {
                 slot: 7,
             },
             Breach::Hedge {
-                instrument: spy(),
-                against: qqq(),
+                instrument: spy().clone(),
+                against: qqq().clone(),
                 notional: 1.0,
                 against_notional: 2.0,
             },
             Breach::Side {
-                instrument: spy(),
+                instrument: spy().clone(),
                 side: Side::Buy,
             },
+            Breach::Unpriced {
+                instrument: spy().clone(),
+                slot: 3,
+            },
+            Breach::Unmeasured,
         ] {
             let json = serde_json::to_value(&breach).unwrap();
             assert!(json["rule"].is_string(), "{json}");
             assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
+            assert!(!breach.to_string().is_empty());
         }
     }
 
@@ -1904,10 +2572,18 @@ mod tests {
         assert!(!allowance.may_take(10.0, Side::Buy, 0.5));
         assert!(!allowance.may_take(10.0, Side::Sell, 10.5));
         assert!(!allowance.may_take(-3.0, Side::Sell, 1.0));
-        // Without the member, taking is free.
-        assert!(
-            Mandate::perp("phoenix", "SPCX", 20.0, 250.0).universe[0].may_take(0.0, Side::Buy, 5.0)
-        );
+        // Review probe: a negative quantity is no fill, whichever way.
+        assert!(!allowance.may_take(10.0, Side::Buy, -4.0));
+        assert!(!allowance.may_take(10.0, Side::Sell, f64::NAN));
+        assert!(!allowance.may_take(f64::NAN, Side::Sell, 1.0));
+        // Without the member, taking is free; bad inputs still aren't.
+        let free = &Mandate::perp("phoenix", "SPCX", 20.0, 250.0).universe[0];
+        assert!(free.may_take(0.0, Side::Buy, 5.0));
+        assert!(!free.may_take(0.0, Side::Buy, -5.0));
+        // Not for a money market, like sides and prices.
+        let mut lending = mandate.clone();
+        lending.universe[0].instrument = "kamino:money-market:USDC".parse().unwrap();
+        assert!(lending.validate().unwrap_err().contains("taking"));
 
         let take = |side, quantity, position_before| ObservedTake {
             instrument: spcx(),
@@ -1925,45 +2601,5 @@ mod tests {
         let json = serde_json::to_value(&breach).unwrap();
         assert_eq!(json["rule"], "taking");
         assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
-    }
-
-    #[test]
-    fn a_measurement_without_a_finite_price_breaks_the_rules_it_feeds() {
-        let mut gross = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
-        gross.version = "v0.1".into();
-        gross.limits.max_gross_notional_usd = Some(10_000.0);
-        let none = ExposureStart::default();
-        for price in [f64::NAN, f64::INFINITY] {
-            let holdings = [(spcx(), 1.0, price)];
-            assert!(matches!(
-                gross.check_sample(&at(0, &holdings), &none),
-                Some(Breach::GrossNotional { .. })
-            ));
-        }
-        let mut book = book();
-        book.term = None;
-        let wide = ExposureStart(vec![-1e12]);
-        let nan_qqq = vec![(qqq(), -10.0, f64::NAN), (spy(), 10.0, 600.0)];
-        assert!(matches!(
-            book.check_sample(&at(0, &nan_qqq), &wide),
-            Some(Breach::Exposure { .. })
-        ));
-        // A start the enforcer couldn't price leaves no bound to keep.
-        let fine = held(-10_000.0, 6_000.0);
-        assert!(matches!(
-            book.check_sample(&at(0, &fine), &ExposureStart(vec![f64::NAN])),
-            Some(Breach::Exposure { .. })
-        ));
-        book.limits.exposures.clear();
-        assert!(matches!(
-            book.check_sample(&at(0, &nan_qqq), &wide),
-            Some(Breach::Hedge { .. })
-        ));
-        let nan_spy = vec![(qqq(), -10.0, 500.0), (spy(), 10.0, f64::NAN)];
-        assert!(matches!(
-            book.check_sample(&at(0, &nan_spy), &wide),
-            Some(Breach::Hedge { .. })
-        ));
-        assert_eq!(book.check_sample(&at(0, &fine), &wide), None);
     }
 }
