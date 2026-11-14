@@ -1383,15 +1383,16 @@ async fn run() -> Result<()> {
             {
                 graded.tamper(format!("a bot wrote {}", path.display()));
             }
-            // Report-only: a grade v2 can't score keeps its v1 scores.
-            if let Some(params) = &v2
-                && let Err(error) = graded.score_v2(params)
-            {
-                eprintln!("{error}");
-            }
+            // v2 was asked for: a grade it can't score (no reference session
+            // for its ceiling, say) fails, after the report is written with
+            // its v1 scores, and writes no reward.
+            let v2_failed = v2.as_ref().and_then(|params| graded.score_v2(params).err());
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
                 std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
+            }
+            if let Some(error) = v2_failed {
+                return Err(anyhow::Error::from(error).context("--scoring v2"));
             }
             if let Some(check) = graded.replay.as_ref().filter(|check| !check.identical) {
                 let first = check.differences.first().map(ToString::to_string);
