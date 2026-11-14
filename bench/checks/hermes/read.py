@@ -25,7 +25,11 @@ def main():
     jobs = Path(sys.argv[1])
     logged = [json.loads(line) for line in (jobs / "requests.jsonl").read_text().splitlines()]
     requests = [r for r in logged if "unsupported_path" not in r]
-    fails = sorted({f"a request to {r['unsupported_path']}" for r in logged if "unsupported_path" in r})
+    # Hermes asks a custom host about the model (Ollama's /api/show) and
+    # carries on without an answer; the agent's own turns must be chat
+    # completions.
+    other = sorted({r["unsupported_path"] for r in logged if "unsupported_path" in r})
+    fails = [f"an agent turn sent to {p}" for p in other if p.rstrip("/").endswith(("/responses", "/messages"))]
     agent_turns = [r for r in requests if r["tools"]]
     if not agent_turns:
         sys.exit("hermes probe: FAIL, the provider got no request with tools")
@@ -84,6 +88,7 @@ def main():
     print(
         f"hermes probe: pass, 2 trials, {len(requests)} provider requests, tools {sorted(offered)}, "
         f"effort {sorted(efforts)}, nothing carried from trial 1 to trial 2, no key in the trial files"
+        + (f", other requests {other}" if other else "")
     )
 
 

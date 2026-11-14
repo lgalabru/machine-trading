@@ -27,8 +27,9 @@ trap 'kill "$mock" 2> /dev/null || true' EXIT
 sleep 1
 case "$route" in
   custom) model=(-m custom/mock-trader --api-format openai_chat_completions) ;;
-  openrouter) model=(-m openrouter/mock/mock-trader) ;;
-  openai) model=(-m openai/mock-trader) ;;
+  # Real names, so Hermes treats the stand-in as it would the model.
+  openrouter) model=(-m openrouter/moonshotai/kimi-k3) ;;
+  openai) model=(-m openai/gpt-6.1-sol) ;;
   *) echo "route: custom, openrouter or openai" >&2; exit 2 ;;
 esac
 PYTHONPATH="$here/../../harness${PYTHONPATH:+:$PYTHONPATH}" \
