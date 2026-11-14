@@ -338,7 +338,7 @@ mod tests {
         api::TraderKey,
         events::market_events::{
             MarketEvent, MarketEventHeader, OptionalNonZeroU64, OrderFilledEvent, OrderFlags,
-            OrderPlacedEvent, SplineFilledEvent, Symbol,
+            OrderPlacedEvent, SplineFilledEvent, Symbol, TradeSummaryEvent,
         },
         math::{
             BaseLots, QuoteLots, Side as MathSide, SignedBaseLots, SignedFeeRateMicro,
@@ -673,5 +673,88 @@ mod tests {
         let theirs = meter.market_records(0).await.unwrap().fills_for(&[other]);
         let sides: Vec<Side> = theirs.iter().map(|f| f.fill.side).collect();
         assert_eq!(sides, vec![Side::Sell, Side::Sell, Side::Sell]);
+    }
+
+    /// The run of fills a trade summary closes was taken by its trader.
+    fn summary_of(taker: Pubkey, taker_side: MathSide, lots: u64, fee_lots: u64) -> MarketEvent {
+        MarketEvent::TradeSummary(TradeSummaryEvent {
+            trader: taker.to_bytes(),
+            trade_sequence_number: 1,
+            prev_trade_sequence_number_slot: 0,
+            side: taker_side,
+            base_lots_filled: BaseLots::new(lots),
+            quote_lots_filled: QuoteLots::ZERO,
+            fee_in_quote_lots: QuoteLots::new(fee_lots),
+            base_lot_position: SignedBaseLots::ZERO,
+            virtual_quote_lot_position: SignedQuoteLots::ZERO,
+            quote_lot_collateral: SignedQuoteLots::ZERO,
+            cumulative_funding_snapshot: SignedQuoteLotsPerBaseLot::ZERO,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_cross_match_inside_the_owners_instruction_is_not_the_owners() {
+        let exchange = Arc::new(
+            PhoenixExchange::load(std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../snapshots/phoenix-spcx-2026-10-29/exchange.json"
+            )))
+            .unwrap(),
+        );
+        let book: Pubkey = exchange
+            .market_config("SPCX")
+            .unwrap()
+            .market_pubkey
+            .parse()
+            .unwrap();
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let (spline, stale, maker) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let meter =
+            PhoenixEternalMeter::new(exchange, "http://127.0.0.1:1", chain.clone(), owner, "SPCX")
+                .unwrap();
+        let spcx = meter.market.clone();
+        // The owner's instruction (a cancel, then an order): first a
+        // re-centred spline crosses another trader's stale bid, which
+        // Phoenix logs under the owner's header and closes with a summary
+        // naming that trader; then the owner buys from a resting ask and
+        // pays 4,200 quote lots of fee, split by notional.
+        let events = [
+            header(&spcx, 20, main),
+            spline_filled(spline, MathSide::Ask, 14_000, 300),
+            summary_of(stale, MathSide::Bid, 300, 1_000),
+            order_filled(maker, MathSide::Ask, 15_000, 100),
+            spline_filled(spline, MathSide::Ask, 15_000, 200),
+            summary_of(main, MathSide::Bid, 300, 4_200),
+        ];
+        chain.record_transaction(logged(40, 9, &events, false), &[book]);
+
+        let all = meter.market_records(0).await.unwrap();
+        let takers: Vec<Pubkey> = all.fills.iter().map(|f| f.taker).collect();
+        assert_eq!(takers, vec![stale, main, main]);
+        let fee = |lots: i64| Decimal::new(lots, u32::from(spcx.quote_lot_decimals));
+        assert_eq!(all.fills[0].taker_fee, fee(1_000));
+        assert_eq!(all.fills[1].taker_fee, fee(1_400));
+        assert_eq!(all.fills[2].taker_fee, fee(2_800));
+
+        // The owner's fills are its own buys, with its fees; the cross-match
+        // isn't one, and its position change is what they add up to.
+        let mine = meter.records(0).await.unwrap().fills;
+        let bought: Decimal = mine.iter().map(|f| f.fill.quantity).sum();
+        assert_eq!(mine.len(), 2);
+        assert!(mine.iter().all(|f| f.fill.side == Side::Buy));
+        assert_eq!(bought, spcx.base_lots_to_quantity(300));
+        assert_eq!(mine[0].fill.fees + mine[1].fill.fees, fee(4_200));
+        // The stale order's owner took its side of the cross.
+        let theirs = all.fills_for(&[stale]);
+        assert_eq!(theirs.len(), 1);
+        assert_eq!(theirs[0].fill.side, Side::Buy);
+        assert_eq!(theirs[0].fill.fees, fee(1_000));
     }
 }

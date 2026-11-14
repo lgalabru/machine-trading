@@ -12,6 +12,12 @@
 //! in Phoenix's market-wide state, so a maker's account is in none of the
 //! transactions that fill it: an enforcer reads the market's transactions,
 //! and every trade names the market's order book.
+//!
+//! An instruction can also match orders between other parties: a spline
+//! that re-centres crosses a stale resting order, and Phoenix logs that
+//! under the same header. Each run of fills is closed by a `TradeSummary`
+//! naming the trade's real taker and its fee, so a fill's taker is the
+//! summary's trader, not the header's.
 
 use phoenix_rise::{
     events::{
@@ -52,12 +58,19 @@ pub struct PerpFill {
     pub quantity: Decimal,
     /// When Phoenix says it happened, in Unix seconds.
     pub unix_timestamp: i64,
+    /// The fee the taker paid on this fill, in USDC: its share of the
+    /// trade's fee, by notional. Zero where the log has no trade summary.
+    pub taker_fee: Decimal,
+    /// The fee the maker paid on this fill, in USDC, at its fee rate;
+    /// negative is a rebate.
+    pub maker_fee: Decimal,
 }
 
 impl PerpFill {
     /// The fill as one party traded it, on `side`. Its id comes from
     /// [`PerpFill::sequence`] (the maker's and the taker's differ by the
-    /// side), so the same fill read twice has the same id.
+    /// side), so the same fill read twice has the same id. Its fees are
+    /// left at zero: [`PerpMarketRecords::fills_for`] sets each party's.
     pub fn recorded(&self, side: Side) -> RecordedFill {
         let (sequence, event) = self.sequence;
         let party = (u64::from(event) << 1) | u64::from(side == Side::Sell);
@@ -145,6 +158,8 @@ impl PerpMarketRecords {
         summary: &TransactionSummary,
     ) {
         let mut header: Option<&MarketEventHeader> = None;
+        // The fills since the last trade summary: its trader took them.
+        let mut run: Vec<usize> = Vec::new();
         let mut unix_timestamp = summary.block_time.map_or(0, |t| t.timestamp());
         for (i, event) in events.iter().enumerate() {
             let on_market = header.filter(|h| h.asset_id == market.asset_id);
@@ -160,27 +175,60 @@ impl PerpMarketRecords {
                         price: market.ticks_to_price(ticks),
                         quantity: market.base_lots_to_quantity(lots as i64),
                         unix_timestamp,
+                        taker_fee: Decimal::ZERO,
+                        maker_fee: Decimal::ZERO,
                     }
                 };
             match (event, on_market) {
                 (MarketEvent::SlotContext(context), _) => {
                     unix_timestamp = context.timestamp as i64;
                 }
-                (MarketEvent::Header(next), _) => header = Some(next),
-                (MarketEvent::OrderFilled(f), Some(h)) => self.fills.push(fill(
-                    f.maker,
-                    f.side,
-                    f.price.as_inner(),
-                    f.base_lots_filled.as_inner(),
-                    h,
-                )),
-                (MarketEvent::SplineFilled(f), Some(h)) => self.fills.push(fill(
-                    f.maker,
-                    f.side,
-                    f.price.as_inner(),
-                    f.base_lots_filled.as_inner(),
-                    h,
-                )),
+                (MarketEvent::Header(next), _) => {
+                    header = Some(next);
+                    run.clear();
+                }
+                (MarketEvent::OrderFilled(f), Some(h)) => {
+                    let mut taken = fill(
+                        f.maker,
+                        f.side,
+                        f.price.as_inner(),
+                        f.base_lots_filled.as_inner(),
+                        h,
+                    );
+                    taken.maker_fee = maker_fee(&taken, i64::from(f.maker_fee_rate.as_inner()));
+                    run.push(self.fills.len());
+                    self.fills.push(taken);
+                }
+                (MarketEvent::SplineFilled(f), Some(h)) => {
+                    let mut taken = fill(
+                        f.maker,
+                        f.side,
+                        f.price.as_inner(),
+                        f.base_lots_filled.as_inner(),
+                        h,
+                    );
+                    taken.maker_fee = maker_fee(&taken, i64::from(f.maker_fee_rate.as_inner()));
+                    run.push(self.fills.len());
+                    self.fills.push(taken);
+                }
+                (MarketEvent::TradeSummary(trade), Some(_)) => {
+                    let taker = Pubkey::new_from_array(trade.trader);
+                    let fee = Decimal::from(trade.fee_in_quote_lots.as_inner())
+                        * Decimal::new(1, u32::from(market.quote_lot_decimals));
+                    let notional: Decimal = run
+                        .iter()
+                        .map(|&i| self.fills[i].price * self.fills[i].quantity)
+                        .sum();
+                    for &i in &run {
+                        let fill = &mut self.fills[i];
+                        fill.taker = taker;
+                        if !notional.is_zero() {
+                            fill.taker_fee =
+                                (fee * fill.price * fill.quantity / notional).round_dp(8);
+                        }
+                    }
+                    run.clear();
+                }
                 (MarketEvent::OrderPlaced(p), Some(h)) => {
                     let lots = p.quantity.as_inner();
                     self.placed.push(PerpOrderPlaced {
@@ -203,16 +251,21 @@ impl PerpMarketRecords {
         self.placed.sort_by_key(|p| (p.slot, p.sequence));
     }
 
-    /// The fills `accounts` took part in, each as they traded it: a trade
-    /// between two of them counts once for each side.
+    /// The fills `accounts` took part in, each as they traded it, with the
+    /// fee it paid in that role: a trade between two of them counts once
+    /// for each side.
     pub fn fills_for(&self, accounts: &[Pubkey]) -> Vec<RecordedFill> {
         let mut own = Vec::new();
         for fill in &self.fills {
             if accounts.contains(&fill.taker) {
-                own.push(fill.recorded(fill.taker_side));
+                let mut taken = fill.recorded(fill.taker_side);
+                taken.fill.fees = fill.taker_fee;
+                own.push(taken);
             }
             if accounts.contains(&fill.maker) {
-                own.push(fill.recorded(opposite(fill.taker_side)));
+                let mut made = fill.recorded(opposite(fill.taker_side));
+                made.fill.fees = fill.maker_fee;
+                own.push(made);
             }
         }
         own
@@ -226,6 +279,12 @@ impl PerpMarketRecords {
             .cloned()
             .collect()
     }
+}
+
+/// What a maker paid on `fill`, at its fee rate in millionths of the
+/// notional (negative for a rebate).
+fn maker_fee(fill: &PerpFill, rate_micro: i64) -> Decimal {
+    (fill.price * fill.quantity * Decimal::new(rate_micro, 6)).round_dp(8)
 }
 
 fn side(side: phoenix_rise::math::Side) -> Side {
