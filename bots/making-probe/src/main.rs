@@ -3,7 +3,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_making_probe::Probe::default())
+    mtx_kit::run(mtx_bot_making_probe::Probe)
 }
 
 // The component is the library: a wasm build has no process to run.
