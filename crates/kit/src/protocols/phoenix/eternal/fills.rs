@@ -22,8 +22,9 @@
 //! Fees are Phoenix's, in whole quote lots: the summary's fee split across
 //! its run by quote lots filled, the remainder to the last fill; and each
 //! maker's fee from its own rate on the fill's quote lots, rounded as
-//! Phoenix rounds it (a fee up, a rebate down). An `AdditionalFeeAccrued`
-//! event, an extra fee on a resting order, is not added to the maker's.
+//! Phoenix rounds it (a fee up, a rebate toward zero). An
+//! `AdditionalFeeAccrued` event, an extra fee on a resting order, is not
+//! added to the maker's.
 
 use phoenix_rise::{
     events::{
@@ -284,7 +285,7 @@ impl PerpMarketRecords {
 }
 
 /// What a maker paid on `quote_lots` filled at `rate`, in quote lots, as
-/// Phoenix charges it: a fee rounded up, a rebate (negative) down.
+/// Phoenix charges it: a fee rounded up, a rebate (negative) toward zero.
 fn maker_fee_lots(rate: SignedFeeRateMicro, quote_lots: QuoteLots) -> i64 {
     rate.apply_to_quote_lots(quote_lots)
         .map_or(0, |fee| fee.as_inner())
@@ -337,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn a_makers_fee_rounds_up_and_a_rebate_down() {
+    fn a_makers_fee_rounds_up_and_a_rebate_toward_zero() {
         let fee = |rate, lots| maker_fee_lots(SignedFeeRateMicro::new(rate), QuoteLots::new(lots));
         assert_eq!(fee(250, 1_000_001), 251);
         assert_eq!(fee(250, 1_000_000), 250);

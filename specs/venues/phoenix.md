@@ -59,9 +59,12 @@ cross-margin account.
   not be the header's trader: an instruction can match two other parties (a
   spline that re-centres crosses a stale resting order) and logs that under
   the same header. The header's trader is the taker only for a run no
-  summary closes. A maker's fee is its `maker_fee_rate` applied to the
-  fill's `quote_lots_filled` as Phoenix applies it, a fee rounded up and a
-  rebate down, in whole quote lots.
+  summary closes. The summary's fee is split across its run of fills by
+  `quote_lots_filled`, each share rounded down and the last fill taking the
+  remainder, so the shares add up to it exactly. A maker's fee is its
+  `maker_fee_rate` applied to the fill's `quote_lots_filled` as Phoenix
+  applies it, in whole quote lots: a fee rounds up, a rebate rounds toward
+  zero.
   Positions live in Phoenix's market-wide state, so a maker's trader account
   is in none of the transactions that fill it: an enforcer reads every
   transaction that names the market's order book (its `marketPubkey` in the
