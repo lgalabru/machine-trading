@@ -397,6 +397,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         jobs: options.jobs,
         first_bot_user: 0,
         reference_dir: None,
+        informed: None,
         anchor_jobs: 1,
         regimes: None,
         stop_on_disqualify: false,
