@@ -1291,6 +1291,7 @@ impl Account for PerpAccount {
             participation: None,
             net: None,
             start_position: self.start_position,
+            start_funded: self.start_position != 0.0 && scenario.funding.is_some(),
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,

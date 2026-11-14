@@ -212,6 +212,11 @@ pub struct SessionReport {
     /// with in the scenario's market, in base units.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub start_position: f64,
+    /// Whether that start position accrues the funding the scenario sets
+    /// (`venues.perp.funding`): the account's value counts it, and an
+    /// order's drift, which is price only, doesn't take it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_funded: bool,
     /// A perp session with close-outs: what each residual cost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub close_outs: Vec<crate::orders::CloseOutReport>,
