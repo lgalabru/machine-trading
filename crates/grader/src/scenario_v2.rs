@@ -732,10 +732,12 @@ impl ScenarioV2 {
             );
         }
         // Only a perp session prices the account at each measurement.
-        if self.venues.spot.is_some() && self.mandate.checks_samples() {
+        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+            && self.mandate.checks_samples()
+        {
             return Err(
                 "mandate: notional limits and hedges are for perp scenarios; \
-                 a spot session doesn't check them"
+                 a spot or lending session doesn't check them"
                     .into(),
             );
         }

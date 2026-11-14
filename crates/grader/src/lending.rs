@@ -908,6 +908,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let end_slot = base_slot + scenario.duration_slots + warped;
     let mandate = Mandate {
         term: Some(Term {
+            from_slot: None,
             until_slot: end_slot,
         }),
         ..scenario.mandate.clone()
@@ -1693,6 +1694,7 @@ impl Account for LendingAccount {
             liquidatable: end.health.is_some_and(|h| h < 1.0),
             refused_calls: done.refused_calls,
             forced_closes: done.forced_closes,
+            notional_breach: None,
             bot_exit: done.bot_exit,
             late_slots: done.late_slots,
             mandate: done.mandate,
