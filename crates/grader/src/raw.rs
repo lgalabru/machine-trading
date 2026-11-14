@@ -979,6 +979,64 @@ pub(crate) fn view_transactions(
         .collect()
 }
 
+/// The best bid and ask on Phoenix's book, in USD, with every order of
+/// `authority`'s cancelled: one `simulateBundle` of a cancel-all and
+/// Phoenix's view of the best bid and offer. Phoenix's own liquidity (its
+/// splines) counts, and the bot's own orders never do. `None` where the
+/// cancel fails (the bot has nothing resting, or the book can't say).
+pub(crate) async fn touch_without(
+    http: &reqwest::Client,
+    rpc_url: &str,
+    phoenix: &mtx_kit::Phoenix,
+    symbol: &str,
+    authority: &Pubkey,
+) -> Result<Option<crate::taking::Touch>, String> {
+    let trader = mtx_kit::PhoenixTrader::new(
+        phoenix.exchange().clone(),
+        symbol,
+        *authority,
+        rpc_url,
+    )
+    .map_err(|e| e.to_string())?;
+    let plan = trader.plan_cancel_all().map_err(|e| e.to_string())?;
+    let step = plan.steps.first().ok_or("no cancel")?;
+    let mut cancel = vec![compute_limit(step.compute_unit_limit)];
+    cancel.extend(step.instructions.iter().cloned());
+    let mut bbo = vec![compute_limit(VIEW_COMPUTE_UNITS)];
+    bbo.extend(
+        phoenix
+            .tx()
+            .build_hawkeye_view_bbo(symbol)
+            .map_err(|e| format!("Phoenix's views: {e}"))?,
+    );
+    let bundle = [cancel, bbo]
+        .iter()
+        .map(|instructions| {
+            let tx = VersionedTransaction::from(Transaction::new_with_payer(
+                instructions,
+                Some(authority),
+            ));
+            Ok(encode(
+                &wincode::serialize(&tx).map_err(|e| format!("encoding: {e}"))?,
+            ))
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+    let results = simulate_bundle(http, rpc_url, &bundle, &[], 0).await?;
+    if results.first().is_none_or(|r| !r["err"].is_null()) {
+        return Ok(None);
+    }
+    let Some(result) = results.get(1) else {
+        return Ok(None);
+    };
+    let bbo: phoenix_rise::ix::hawkeye::ViewBboReturn = view(result, "view_bbo")?;
+    let config = phoenix.market(symbol).map_err(|e| e.to_string())?;
+    let usd = |ticks| phoenix.ticks_to_usd(config, ticks);
+    Ok(Some(crate::taking::Touch {
+        bid: bbo.best_bid_ticks().map(usd),
+        ask: bbo.best_ask_ticks().map(usd),
+    }))
+}
+
 /// The position in base units, from the result of the asset view.
 pub(crate) fn position_of(
     phoenix: &mtx_kit::Phoenix,
@@ -1229,7 +1287,7 @@ fn usdc_of(owner: &Pubkey, state: &Value) -> i128 {
 /// One Hawkeye view's return data, from a bundle result: its
 /// `returnData`, or, where the node leaves that out of a bundle's results,
 /// the `Program return:` line the runtime logs for it.
-fn view<T: bytemuck::Pod + Copy>(result: &Value, kind: &'static str) -> Result<T, String> {
+pub(crate) fn view<T: bytemuck::Pod + Copy>(result: &Value, kind: &'static str) -> Result<T, String> {
     let fail = |why: &str| format!("couldn't measure the account after it: {kind}: {why}");
     if !result["err"].is_null() {
         return Err(fail(&result["err"].to_string()));

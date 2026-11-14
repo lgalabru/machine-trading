@@ -10,10 +10,11 @@
 #     refused before it goes out, counted, and no breach;
 #   - its crosser build cancels and then sends a plain bid through the
 #     other traders' ask while its own ask rests (a touch that looks like its
-#     own to a check that trusts its resting orders): refused all the same;
+#     own to a check that trusts its resting orders): refused all the same
+#     (a take that reduces the position is allowed);
 #   - the same taker and crosser as process bots (`--trusted`), which have no
 #     sheet: the RPC guard simulates each transaction and refuses one whose
-#     fills would take, so no taker fill reaches the book, and no breach;
+#     fills would take to open or add, and no breach;
 #   - the two-sided probe on the same scenarios without the new fields
 #     reports neither.
 #   bench/checks/making-mandate/run.sh <mtx> <snapshot> <out>
@@ -93,11 +94,21 @@ for s in sessions("taker"):
     assert s["turns"]["refused_takes"] > 0, "nothing refused"
     assert not takes(s), "a refused take went out"
     assert taking not in (s["disqualified"] or ""), "a refusal was taken for a breach"
+def opened(s):
+    """Whether a taker fill left the position further from zero, or past it."""
+    position = s.get("start_position", 0.0)
+    for f in s.get("making_fills", []):
+        after = position + (f["base"] if f["side"] == "buy" else -f["base"])
+        if f["role"] == "taker" and (abs(after) > abs(position) + 1e-9 or after * position < -1e-12):
+            return True
+        position = after
+    return False
 for name in ("crosser", "process-taker", "process-crosser"):
     ss = sessions(name)
     assert any(s["turns"].get("refused_takes") for s in ss), f"{name}: nothing refused"
     for s in ss:
-        assert not takes(s), f"{name} {s['scenario']}: a refused take went out"
+        # A take that reduces is allowed; none may open, add or flip.
+        assert not opened(s), f"{name} {s['scenario']}: a take that opens went out"
         assert taking not in (s["disqualified"] or ""), f"{name} {s['scenario']}: a refusal was taken for a breach"
 for s in sessions("plain"):
     assert "obligations" not in s and "refused_takes" not in s["turns"], "opt-in fields without opting in"

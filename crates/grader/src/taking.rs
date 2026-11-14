@@ -13,12 +13,13 @@
 //! forbids is a breach like any other.
 //!
 //! Whether a limit order crosses is decided against the touch the bot's own
-//! orders don't make ([`Touch`]), read from Phoenix's order book once the
-//! session knows the bot's trader id: a bot resting on both sides is still
-//! refused when it sends a limit through the other traders' touch, and one
-//! that cancels first and then crosses is judged the same. Until the id is
-//! known, a bot with orders resting on a side is trusted on that side (the
-//! touch may be its own), and the audit judges the fills.
+//! orders don't make ([`Touch`]): at each turn's start the session simulates
+//! a cancel of the bot's orders and reads Phoenix's best bid and offer
+//! after it, its own liquidity included. A bot resting on both sides is
+//! still refused when it sends a limit through the other traders' touch, and
+//! one that cancels first and then crosses is judged the same. If the session
+//! can't read that touch, a bot with orders resting on a side is trusted on
+//! that side (the touch may be its own), and the audit judges the fills.
 //!
 //! A process bot has no sheet to check: the RPC guard simulates each
 //! transaction it sends against the paused chain ([`TakeGate`]) and refuses
@@ -35,7 +36,8 @@ use crate::making::MakingFill;
 /// The bot's taker fills among `fills` (every fill of its, in the order
 /// the venue recorded them), each with the position in `instrument` just
 /// before it, counted from `start_position`. A match between the bot's own
-/// orders moves nothing and takes nothing ([`MakingFill::self_match`]).
+/// orders moves nothing and takes nothing ([`MakingFill::self_match`]), and a
+/// forced close (the risk desk's) is no taking of the bot's.
 pub fn takes(
     instrument: &InstrumentRef,
     start_position: f64,
@@ -48,7 +50,7 @@ pub fn takes(
     let mut position = start_position;
     let mut out = Vec::new();
     for fill in fills {
-        if fill.role == "taker" && !fill.self_match {
+        if fill.role == "taker" && !fill.self_match && !fill.forced {
             out.push(ObservedTake {
                 instrument: instrument.clone(),
                 side: fill.side,
@@ -78,8 +80,9 @@ pub struct TakingGuard {
     position: f64,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
-    /// Whether the touch is the other traders' (the bot's trader id is
-    /// known); if not, a side the bot has orders resting on can't be told.
+    /// Whether the touch is the other traders' (the session read it with
+    /// the bot's orders cancelled); if not, a side the bot has orders
+    /// resting on can't be told.
     net: bool,
     /// Whether the bot had orders resting on each side when the turn
     /// started: the touch may then be its own, if it isn't `net`.
@@ -114,7 +117,7 @@ impl TakingGuard {
     }
 
     /// A turn starts: the market as the bot was shown it, with the touch
-    /// the session read for it if it could tell the bot's own orders.
+    /// the session read for it without the bot's own orders, if it could.
     pub fn begin(&mut self, market: &mtx_kit::Market) {
         self.position = market.position.size;
         self.net = self.next.is_some();
