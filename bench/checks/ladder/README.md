@@ -20,6 +20,16 @@ task's rungs, ladder bots and exploit bots live in its folder
 Skill is a rung's total PnL over the reference's on the same set: the
 reference is 1, doing nothing 0, and `hindsight` is the bound.
 
+- **The probe gate** (a task's `probes` section, see `../probes`): with it,
+  every rung is graded with `--scoring v2` against the reference's own run on
+  the same sessions, and the ladder checks where the probe bots land on the v2
+  score: gamblers and naive holds at most 0.02 over doing nothing, a breacher
+  composed into runs of 1, 2 and 3 breach sessions no better than its clipped twin
+  (the run cap and the per-session floor), a crashing bot under the bot it wraps,
+  levered references held to their multiple, honest bots from a measured Sharpe of
+  0.2 over doing nothing. `summary.json`
+  carries each rule's verdict (`pass`, `fail`, `inconclusive`, `no_power`).
+
 ## Flash-crash
 
 | Rung | What it is | Where it should land |
