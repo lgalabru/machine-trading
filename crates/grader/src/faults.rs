@@ -461,6 +461,11 @@ impl FaultState {
         due
     }
 
+    /// Drop every send still held: they never land. Returns how many.
+    pub fn drop_held(&mut self) -> usize {
+        std::mem::take(&mut self.held).len()
+    }
+
     /// A transaction the chain ran, in `step`: its status may read null for a
     /// while.
     pub fn on_landing(&mut self, signature: &str, step: u64) {

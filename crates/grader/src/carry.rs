@@ -524,6 +524,7 @@ impl CarryFamily {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         };
         let shape = Shape {
             informed_share,

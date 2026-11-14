@@ -16,7 +16,7 @@
 //! | `tx`           | the transaction layer: raw sends                             |
 //! | `mandate`      | what the bot may trade and its limits                        |
 //! | `order`        | a quantity the bot has to trade by the end                   |
-//! | `scoring`      | the reference, the bound, charges and net scoring            |
+//! | `scoring`      | the reference, the bound, charges, net scoring, stop-outs    |
 //!
 //! A new capability adds a section (or a field to the one it belongs to)
 //! with its own `validate`; the rules that tie sections together are listed
@@ -44,7 +44,7 @@ use crate::{
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
         Funding, JointDraw, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, MarketScenario, RawSends, Scenario,
-        VENUE, Waypoint, move_slots,
+        StopOut, StopRule, VENUE, Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
 };
@@ -312,6 +312,10 @@ pub struct Scoring {
     /// broker, the order's.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub close_out: BTreeMap<String, CloseOut>,
+    /// The risk desk: a breach of the limits it lists is priced, by
+    /// closing the position through the book, instead of disqualifying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_out: Option<StopOut>,
 }
 
 impl Assets {
@@ -575,6 +579,9 @@ impl Scoring {
         if let Some(net) = &self.net {
             net.validate()?;
         }
+        if let Some(stop_out) = &self.stop_out {
+            stop_out.validate()?;
+        }
         Ok(())
     }
 }
@@ -645,6 +652,7 @@ impl ScenarioV2 {
         self.scoring.validate()?;
         self.mandate_covers_the_market()?;
         self.positions_fit_the_market()?;
+        self.stop_out_has_its_limits()?;
         self.order_fits_the_wallet()
     }
 
@@ -685,6 +693,9 @@ impl ScenarioV2 {
             || self.scoring.net.is_some()
         {
             return Err(LENDING_ALONE.into());
+        }
+        if !self.assets.start_positions.is_empty() || !self.scoring.close_out.is_empty() {
+            return Err("lending: start_positions and close_out are for perp scenarios".into());
         }
         if self.duration_slots == 0 {
             return Err("lending: the session has no slots".into());
@@ -1165,6 +1176,34 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// A stop-out closes a perp position, on a limit the mandate sets.
+    fn stop_out_has_its_limits(&self) -> Result<(), String> {
+        let Some(stop_out) = &self.scoring.stop_out else {
+            return Ok(());
+        };
+        if self.venues.perp.is_none() {
+            return Err("stop_out: only perp sessions close positions yet".into());
+        }
+        if stop_out.covers(StopRule::Drawdown) && self.mandate.limits.max_drawdown_usd.is_none() {
+            return Err(
+                "stop_out: closes on a drawdown, but the mandate sets no drawdown limit".into(),
+            );
+        }
+        // The desk closes to flat: a mandate that forbids flat would
+        // disqualify the bot for the desk's own close.
+        for allowance in &self.mandate.universe {
+            let min = allowance.min_position.unwrap_or(-allowance.max_position);
+            if min > 0.0 || allowance.max_position < 0.0 {
+                return Err(format!(
+                    "stop_out: the desk closes {} to flat, which its mandate range, {min} to {}, \
+                     doesn't allow",
+                    allowance.instrument, allowance.max_position
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// What a scenario's oracle feeds may do beside the rest of it.
     fn validate_oracles(&self, oracles: &crate::oracles::Oracles) -> Result<(), String> {
         use crate::oracles::{Anchor, Source};
@@ -1461,6 +1500,7 @@ impl ScenarioV2 {
             informed_pnl_usd: scoring.informed_pnl_usd,
             fair_path,
             raw_sends: tx.and_then(|tx| tx.raw_sends),
+            stop_out: scoring.stop_out,
             market_model: record,
             oracles,
             lending: venues.lending,
@@ -1605,6 +1645,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
                 close_out: v1.close_out.clone(),
+                stop_out: v1.stop_out.clone(),
             },
         })
     }
@@ -2168,6 +2209,18 @@ mod tests {
         assert_eq!(s.validate(), Ok(()));
         s.oracles = Some(feed("TSLA"));
         assert!(err(s).contains("TSLA's oracle, which isn't one"));
+        // The risk desk closes every market to flat: a floor above flat on
+        // any of them is refused, by name.
+        let mut s = multi();
+        s.scoring.stop_out = Some(StopOut {
+            on: vec![StopRule::Drawdown],
+            close: crate::scenario::CloseMode::Market,
+            slice_base: None,
+        });
+        assert_eq!(s.clone().validate(), Ok(()));
+        s.assets.start_positions.insert("SPCX".into(), 5.0);
+        s.mandate.universe[1].min_position = Some(1.0);
+        assert!(err(s).contains("closes phoenix:perp:SPCX to flat"));
         // Raw sends audit one market: not on several yet.
         let mut s = multi();
         s.tx = Some(Tx {
@@ -2256,6 +2309,8 @@ mod tests {
             slot_seconds: 0.25,
             start_unix: 0,
             regime_vol: vec![1.0],
+            regime_clock: 1.0,
+            regime_set: None,
             regimes: Vec::new(),
             sessions: Vec::new(),
             events: Vec::new(),
@@ -2407,6 +2462,65 @@ mod tests {
             serde_json::from_str::<ScenarioV2>(&text.replace("\"tx\":{}", "\"tx\":{\"x\":1}"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stop_out_lives_in_scoring_and_round_trips_through_v1() {
+        use crate::scenario::{CloseMode, StopOut};
+        let mut s = shock();
+        s.scoring.stop_out = Some(StopOut {
+            on: vec![StopRule::Drawdown],
+            close: CloseMode::Market,
+            slice_base: Some(100.0),
+        });
+        assert_eq!(s.validate(), Ok(()));
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(
+            text.contains(r#""stop_out":{"on":["drawdown"],"close":"market","slice_base":100.0}"#)
+        );
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.stop_out, s.scoring.stop_out);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+
+        let mut empty = s.clone();
+        empty.scoring.stop_out.as_mut().unwrap().on.clear();
+        assert!(empty.validate().unwrap_err().contains("no limit"));
+        let mut twice = s.clone();
+        twice.scoring.stop_out.as_mut().unwrap().on = vec![StopRule::Drawdown; 2];
+        assert!(twice.validate().unwrap_err().contains("repeats"));
+        let mut slice = s.clone();
+        slice.scoring.stop_out.as_mut().unwrap().slice_base = Some(0.0);
+        assert!(slice.validate().unwrap_err().contains("slice_base"));
+        let mut spot_stop = spot();
+        spot_stop.scoring.stop_out = s.scoring.stop_out.clone();
+        assert!(spot_stop.validate().is_err());
+
+        // The desk closes to flat, so the mandate must allow flat: not a
+        // floor above it (a start long the bot must keep some of)...
+        let mut floor = s.clone();
+        let cap = floor.mandate.universe[0].max_position;
+        floor
+            .assets
+            .start_positions
+            .insert("SPCX".into(), cap / 2.0);
+        floor.mandate.universe[0].min_position = Some(cap / 4.0);
+        assert!(
+            floor
+                .validate()
+                .unwrap_err()
+                .contains("closes phoenix:perp:SPCX to flat")
+        );
+        // ...which is fine without the desk, or with a floor at flat.
+        let mut no_desk = floor.clone();
+        no_desk.scoring.stop_out = None;
+        assert_eq!(no_desk.validate(), Ok(()));
+        floor.mandate.universe[0].min_position = Some(0.0);
+        assert_eq!(floor.validate(), Ok(()));
+        // A cap below flat is the mandate's own error already.
+        let mut short_only = s.clone();
+        short_only.mandate.universe[0].max_position = -1.0;
+        short_only.mandate.universe[0].min_position = Some(-2.0);
+        assert!(short_only.validate().unwrap_err().contains("max_position"));
     }
 
     #[test]

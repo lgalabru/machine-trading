@@ -25,7 +25,7 @@ use mtx_core::{
     turns::Step,
 };
 use mtx_kit::{
-    BotEnv,
+    BotEnv, Side,
     chain::RpcChainClient,
     phoenix_rise::{ix::PhoenixInstruction, types::exchange::ExchangeMarketConfig},
     protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
@@ -49,7 +49,8 @@ use crate::{
     making::{TAKER_ACCOUNTS, book_at, level_at},
     orders::{CloseOutReport, OrderReport},
     phoenix::{self, Phoenix},
-    scenario::{MarketScenario, Scenario},
+    risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
+    scenario::{MarketScenario, STOP_OUT_LIMIT_BPS, Scenario},
     session::{
         Account, BOT_USERS, DEPOSIT_USDC, Done, INTERNAL_RPC_TIMEOUT, IxRecord, MarketReport,
         MarketStep, OrderRecord, Prepared, SessionDir, SessionOptions, SessionReport, StepRecord,
@@ -598,6 +599,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         phoenix,
         bot: bot.pubkey(),
         meter,
+        rpc_url: internal.url().to_string(),
         universe,
         markets,
         primary,
@@ -869,6 +871,11 @@ pub struct PerpFillRecord {
     /// Price in USDC per base unit, before fees, and size in base units.
     pub price: f64,
     pub base: f64,
+    /// A fill of the risk desk's forced close (the scenario's `stop_out`),
+    /// sent in the bot's account but not by the bot: it counts toward the
+    /// position and the PnL, and the sides and price rules leave it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forced: bool,
 }
 
 /// The bot's fills and resting sides, read as the session goes.
@@ -879,6 +886,8 @@ struct PerpFills {
     last_scan: u64,
     seen: HashSet<FillId>,
     fills: Vec<PerpFillRecord>,
+    /// Each fill's id, as Phoenix's events give it, in the same order.
+    ids: Vec<FillId>,
     open_orders: Vec<(InstrumentRef, CoreSide)>,
 }
 
@@ -889,6 +898,8 @@ struct PerpAccount {
     phoenix: Phoenix,
     bot: Pubkey,
     meter: PhoenixEternalMeter,
+    /// The grader's own endpoint, for the risk desk's transactions.
+    rpc_url: String,
     universe: Vec<InstrumentId>,
     /// The session's markets, in symbol order, and which is the primary:
     /// the scenario's `symbol`, the one the report's one-market fields and
@@ -1075,6 +1086,58 @@ impl PerpAccount {
             .collect()
     }
 
+    /// Mark the fills of the risk desk's forced closes: each close order's
+    /// transaction, by the signature the desk recorded, read from the chain
+    /// and decoded as the meter decodes fills, on every market of the
+    /// session, so the ids match.
+    async fn mark_forced(&mut self, closes: &[crate::risk::ForcedClose]) -> Result<()> {
+        let Some(read) = self.fills.as_mut() else {
+            return Ok(());
+        };
+        let signatures: Vec<&String> = closes
+            .iter()
+            .flat_map(|close| &close.orders)
+            .filter_map(|order| order.signature.as_ref())
+            .collect();
+        if signatures.is_empty() {
+            return Ok(());
+        }
+        let failed = |reason: String| Error::Transaction {
+            label: "the stop-out's fills".into(),
+            reason,
+        };
+        let chain = RpcChainClient::with_timeout(&self.rpc_url, INTERNAL_RPC_TIMEOUT);
+        // A close's transaction may trade any of the session's markets.
+        let markets = self
+            .markets
+            .iter()
+            .map(|m| self.phoenix.exchange().market(&m.scenario.symbol))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(mtx_kit::Error::from)?;
+        let mut records = mtx_kit::protocols::phoenix::eternal::PerpMarketRecords::default();
+        for signature in signatures {
+            let parsed = signature
+                .parse()
+                .map_err(|e| failed(format!("signature {signature}: {e}")))?;
+            let summary = mtx_kit::chain::ChainClient::get_transaction(&chain, &parsed)
+                .await
+                .map_err(|e| failed(e.to_string()))?
+                .ok_or_else(|| failed(format!("transaction {signature} not found")))?;
+            for market in &markets {
+                records.add_transaction(&summary, market);
+            }
+        }
+        let forced: HashSet<FillId> = records
+            .fills_for(&[self.meter.trader()])
+            .into_iter()
+            .map(|recorded| recorded.fill.id)
+            .collect();
+        for (fill, id) in read.fills.iter_mut().zip(&read.ids) {
+            fill.forced = forced.contains(id);
+        }
+        Ok(())
+    }
+
     /// Read the fills Phoenix recorded for the bot, and the orders it left
     /// resting, since the last read, at `slot`. Nothing where the session
     /// doesn't read them.
@@ -1098,7 +1161,9 @@ impl PerpAccount {
                     side: recorded.fill.side,
                     price: grader_f64(recorded.fill.price),
                     base: grader_f64(recorded.fill.quantity),
+                    forced: false,
                 });
+                read.ids.push(recorded.fill.id);
             }
         }
         for placed in records.placed {
@@ -1361,8 +1426,81 @@ impl Account for PerpAccount {
         decode_instruction(ix, keys, &market.market)
     }
 
+    /// Cancel the bot's orders on every market, then, market by market in
+    /// symbol order, sell a long (buy back a short) with market orders
+    /// through the book, each at most `slice`, limited
+    /// [`STOP_OUT_LIMIT_BPS`] through the best price, reading the position
+    /// back from Phoenix after each: at most
+    /// [`MAX_CLOSE_ORDERS_PER_STEP`] orders in all. The position it reports
+    /// is the largest one left; on several markets, each order names its
+    /// market.
+    async fn force_close(
+        &mut self,
+        bot: &Keypair,
+        rpc_url: &str,
+        slice: Option<f64>,
+        at: u64,
+    ) -> Result<Closing> {
+        let mut seats = Vec::with_capacity(self.markets.len());
+        for market in &self.markets {
+            let seat = market.perp.seat(bot.insecure_clone(), rpc_url).await?;
+            if let Err(error) = seat.cancel_all().await {
+                tracing::warn!(%error, market = market.scenario.symbol, "stop-out: cancelling the bot's orders failed");
+            }
+            seats.push(seat);
+        }
+        let several = self.markets.len() > 1;
+        let mut orders = Vec::new();
+        let mut left = 0.0_f64;
+        for (market, seat) in self.markets.iter().zip(&seats) {
+            let mut position = position_in(&self.measure().await?, &market.id);
+            while !is_flat(position) && orders.len() < MAX_CLOSE_ORDERS_PER_STEP {
+                let (side, name) = if position > 0.0 {
+                    (Side::Ask, "sell")
+                } else {
+                    (Side::Bid, "buy")
+                };
+                let size = slice.map_or(position.abs(), |s| s.min(position.abs()));
+                let (bid, ask) = seat.top().await.map_err(Error::StopOut)?;
+                let through = STOP_OUT_LIMIT_BPS / 10_000.0;
+                let limit_usd = match side {
+                    Side::Ask => bid.unwrap_or(market.start_mark_usd) * (1.0 - through),
+                    Side::Bid => ask.unwrap_or(market.start_mark_usd) * (1.0 + through),
+                };
+                let sent = seat.take(side, size, limit_usd).await;
+                let signature = sent.as_ref().ok().and_then(|()| seat.last_signature());
+                let after = position_in(&self.measure().await?, &market.id);
+                let moved = (after - position).abs() > 0.0;
+                orders.push(CloseOrder {
+                    at,
+                    market: several.then(|| market.instrument.clone()),
+                    side: name.into(),
+                    size,
+                    limit_usd,
+                    position_after: after,
+                    ok: sent.is_ok(),
+                    error: sent.err(),
+                    signature,
+                });
+                position = after;
+                // A book that took nothing won't take more this step.
+                if !moved {
+                    break;
+                }
+            }
+            if position.abs() > left.abs() {
+                left = position;
+            }
+        }
+        Ok(Closing {
+            orders,
+            position: left,
+        })
+    }
+
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         self.scan(done.end_slot).await?;
+        self.mark_forced(&done.forced_closes).await?;
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
         let end_positions = self.positions(&end);
@@ -1490,6 +1628,7 @@ impl Account for PerpAccount {
             perp_open_orders: fills.open_orders,
             lending: None,
             crank_refusals: done.crank_refusals,
+            forced_closes: done.forced_closes,
             oracle_starts,
             markets,
             turns: done.turns,
@@ -1554,7 +1693,7 @@ fn settle(
             .clone();
         let own: Vec<(CoreSide, f64)> = fills
             .iter()
-            .filter(|f| f.instrument == instrument)
+            .filter(|f| f.instrument == instrument && !f.forced)
             .map(|f| (f.side, f.base))
             .collect();
         let at = leg(&instrument.symbol);
@@ -1816,13 +1955,19 @@ mod tests {
             ),
         ]
         .into();
-        // A sell on SPCX is not a sell against the NVDA order.
+        // A sell on SPCX is not a sell against the NVDA order, nor is the
+        // risk desk's forced sell on NVDA.
         let fills = [
             PerpFillRecord {
                 instrument: "phoenix:perp:NVDA".parse().unwrap(),
                 ..fill(CoreSide::Buy, 6.0)
             },
             fill(CoreSide::Sell, 4.0),
+            PerpFillRecord {
+                instrument: "phoenix:perp:NVDA".parse().unwrap(),
+                forced: true,
+                ..fill(CoreSide::Sell, 2.0)
+            },
         ];
         let settled = settle(&scenario, &legs, 70.0, &fills);
         let order = settled.order.unwrap();
@@ -1848,6 +1993,7 @@ mod tests {
             side,
             price: 100.0,
             base,
+            forced: false,
         }
     }
 
@@ -1894,6 +2040,16 @@ mod tests {
                 .unwrap()
                 .contains("sold 1 SPCX")
         );
+        // The risk desk's forced sell isn't the bot's.
+        let desk = [
+            fill(CoreSide::Buy, 6.0),
+            PerpFillRecord {
+                forced: true,
+                ..fill(CoreSide::Sell, 1.0)
+            },
+        ];
+        let closed = settle_one(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &desk);
+        assert_eq!(closed.order.unwrap().breach(), None);
         // A start long sold down: the drift on what it started with is
         // taken off.
         scenario.order = Some(crate::orders::ExecutionOrder {

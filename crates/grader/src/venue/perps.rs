@@ -171,11 +171,17 @@ impl PerpMarket {
 pub struct PerpSeat {
     market: String,
     trader: Arc<Trader>,
+    /// The signature of its last market order that landed.
+    last: std::sync::Mutex<Option<String>>,
 }
 
 impl PerpSeat {
     pub fn new(market: String, trader: Arc<Trader>) -> Self {
-        Self { market, trader }
+        Self {
+            market,
+            trader,
+            last: std::sync::Mutex::default(),
+        }
     }
 }
 
@@ -194,11 +200,18 @@ impl Seat for PerpSeat {
     }
 
     async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
-        self.trader
+        let signature = self
+            .trader
             .place_market(side, size, limit)
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        *self.last.lock().expect("seat lock") = Some(signature.to_string());
+        Ok(())
+    }
+
+    /// The signature of the last market order [`Seat::take`] landed.
+    fn last_signature(&self) -> Option<String> {
+        self.last.lock().expect("seat lock").clone()
     }
 
     async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {

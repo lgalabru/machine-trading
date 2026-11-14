@@ -1277,6 +1277,7 @@ mod tests {
             perp_open_orders: Vec::new(),
             lending: None,
             crank_refusals: Vec::new(),
+            forced_closes: Vec::new(),
             oracle_starts: Default::default(),
             markets: Vec::new(),
             turns: Default::default(),
@@ -1299,6 +1300,7 @@ mod tests {
             side,
             price,
             base: 1.0,
+            forced: false,
         };
         // A buy and a sell inside one step net to nothing; the sell is still
         // a fill.
@@ -1388,6 +1390,7 @@ mod tests {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         }
     }
 
@@ -1818,6 +1821,103 @@ mod tests {
         let mut at_limit = session(100.0);
         at_limit.max_drawdown_usd = 1_000.0;
         assert!(score(vec![(at_limit, &s)]).reward > 0.0);
+    }
+
+    /// A drawdown past the limit is priced when the risk desk closed it,
+    /// and still disqualifies without a close, or for another rule.
+    #[test]
+    fn a_stop_out_prices_the_drawdown_and_nothing_else() {
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let s = scenario(None);
+        let mut stopped = session(-1_150.0);
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            positions_before: Default::default(),
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let report = score(vec![(session(2_000.0), &s), (stopped.clone(), &s)]);
+        assert!(report.scenarios[1].disqualified.is_none());
+        assert_eq!(report.pnl_usd, 850.0, "the close's loss counts");
+        assert!(report.reward > 0.0);
+
+        let mut unclosed = stopped.clone();
+        unclosed.forced_closes.clear();
+        assert_eq!(score(vec![(unclosed, &s)]).reward, 0.0);
+
+        let mut elsewhere = stopped;
+        elsewhere.positions_outside_universe = 1;
+        assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
+    }
+
+    /// The risk desk's forced close trades in the bot's account; a
+    /// buy-only mandate's sides rule leaves its sells out, and still
+    /// catches the bot's own.
+    #[test]
+    fn a_stop_outs_forced_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let s = scenario(None);
+        let mut stopped = session(-1_150.0);
+        stopped.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            positions_before: Default::default(),
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        stopped.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(disqualification(&stopped).is_none());
+        assert!(
+            score(vec![(stopped.clone(), &s)]).scenarios[0]
+                .disqualified
+                .is_none()
+        );
+        // The forced fill still reads back as one.
+        let json = serde_json::to_string(&stopped).unwrap();
+        let back: SessionReport = serde_json::from_str(&json).unwrap();
+        assert!(back.perp_fills[1].forced);
+
+        let mut own = stopped;
+        own.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&own)
+                .unwrap()
+                .contains("a side its mandate")
+        );
     }
 
     #[test]

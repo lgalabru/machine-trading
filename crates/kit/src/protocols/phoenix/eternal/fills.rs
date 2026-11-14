@@ -7,17 +7,31 @@
 //! sequence number, its asset, the acting trader account), then an
 //! `OrderFilled` for each resting order it took from and a `SplineFilled`
 //! for each spline, each naming the maker's trader account and the maker's
-//! side, and an `OrderPlaced` for an order it left resting. The taker is the
-//! header's trader account, on the side opposite the maker's. Positions live
+//! side, and an `OrderPlaced` for an order it left resting. Positions live
 //! in Phoenix's market-wide state, so a maker's account is in none of the
 //! transactions that fill it: an enforcer reads the market's transactions,
 //! and every trade names the market's order book.
+//!
+//! Each run of fills is closed by a `TradeSummary` whose `trader` is the
+//! run's taker, on the side opposite the makers', and which carries the fee
+//! it paid. That need not be the header's trader: an instruction can match
+//! orders between other parties (a spline that re-centres crosses a stale
+//! resting order) and logs that under the same header. Only a run no
+//! summary closes takes the header's trader as its taker.
+//!
+//! Fees are Phoenix's, in whole quote lots: the summary's fee split across
+//! its run by quote lots filled, the remainder to the last fill; and each
+//! maker's fee from its own rate on the fill's quote lots, rounded as
+//! Phoenix rounds it (a fee up, a rebate toward zero). An
+//! `AdditionalFeeAccrued` event, an extra fee on a resting order, is not
+//! added to the maker's.
 
 use phoenix_rise::{
     events::{
         MarketEvent, PhoenixLogInstruction, market_events::MarketEventHeader, parse as parse_events,
     },
     ix::PHOENIX_PROGRAM_ID,
+    math::{QuoteLots, SignedFeeRateMicro},
 };
 use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
@@ -53,13 +67,21 @@ pub struct PerpFill {
     pub quantity: Decimal,
     /// When Phoenix says it happened, in Unix seconds.
     pub unix_timestamp: i64,
+    /// The fee the taker paid on this fill, in USDC: its share of the
+    /// trade summary's fee, by quote lots filled, the last fill of the run
+    /// taking the remainder. Zero where no summary closes the run.
+    pub taker_fee: Decimal,
+    /// The fee the maker paid on this fill, in USDC: its fee rate applied
+    /// to the fill's quote lots as Phoenix applies it. Negative is a rebate.
+    pub maker_fee: Decimal,
 }
 
 impl PerpFill {
     /// The fill as one party traded it, on `side`. Its id comes from the
     /// market's asset and [`PerpFill::sequence`] (the maker's and the
     /// taker's differ by the side), so the same fill read twice has the same
-    /// id, and fills on two markets never share one.
+    /// id, and fills on two markets never share one. Its fees are left at
+    /// zero: [`PerpMarketRecords::fills_for`] sets each party's.
     pub fn recorded(&self, side: Side) -> RecordedFill {
         let (sequence, event) = self.sequence;
         let party = (u64::from(self.asset_id) << 33)
@@ -151,6 +173,10 @@ impl PerpMarketRecords {
         summary: &TransactionSummary,
     ) {
         let mut header: Option<&MarketEventHeader> = None;
+        // The fills since the last trade summary, with their quote lots: its
+        // trader took them.
+        let mut run: Vec<(usize, u64)> = Vec::new();
+        let quote = |lots: i64| Decimal::new(lots, u32::from(market.quote_lot_decimals));
         let mut unix_timestamp = summary.block_time.map_or(0, |t| t.timestamp());
         for (i, event) in events.iter().enumerate() {
             let on_market = header.filter(|h| h.asset_id == market.asset_id);
@@ -167,27 +193,52 @@ impl PerpMarketRecords {
                         price: market.ticks_to_price(ticks),
                         quantity: market.base_lots_to_quantity(lots as i64),
                         unix_timestamp,
+                        taker_fee: Decimal::ZERO,
+                        maker_fee: Decimal::ZERO,
                     }
                 };
             match (event, on_market) {
                 (MarketEvent::SlotContext(context), _) => {
                     unix_timestamp = context.timestamp as i64;
                 }
-                (MarketEvent::Header(next), _) => header = Some(next),
-                (MarketEvent::OrderFilled(f), Some(h)) => self.fills.push(fill(
-                    f.maker,
-                    f.side,
-                    f.price.as_inner(),
-                    f.base_lots_filled.as_inner(),
-                    h,
-                )),
-                (MarketEvent::SplineFilled(f), Some(h)) => self.fills.push(fill(
-                    f.maker,
-                    f.side,
-                    f.price.as_inner(),
-                    f.base_lots_filled.as_inner(),
-                    h,
-                )),
+                (MarketEvent::Header(next), _) => {
+                    header = Some(next);
+                    run.clear();
+                }
+                (MarketEvent::OrderFilled(f), Some(h)) => {
+                    let mut taken = fill(
+                        f.maker,
+                        f.side,
+                        f.price.as_inner(),
+                        f.base_lots_filled.as_inner(),
+                        h,
+                    );
+                    taken.maker_fee = quote(maker_fee_lots(f.maker_fee_rate, f.quote_lots_filled));
+                    run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
+                    self.fills.push(taken);
+                }
+                (MarketEvent::SplineFilled(f), Some(h)) => {
+                    let mut taken = fill(
+                        f.maker,
+                        f.side,
+                        f.price.as_inner(),
+                        f.base_lots_filled.as_inner(),
+                        h,
+                    );
+                    taken.maker_fee = quote(maker_fee_lots(f.maker_fee_rate, f.quote_lots_filled));
+                    run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
+                    self.fills.push(taken);
+                }
+                (MarketEvent::TradeSummary(trade), Some(_)) => {
+                    let taker = Pubkey::new_from_array(trade.trader);
+                    let shares = split(trade.fee_in_quote_lots.as_inner(), &run);
+                    for (&(i, _), share) in run.iter().zip(shares) {
+                        let fill = &mut self.fills[i];
+                        fill.taker = taker;
+                        fill.taker_fee = quote(share);
+                    }
+                    run.clear();
+                }
                 (MarketEvent::OrderPlaced(p), Some(h)) => {
                     let lots = p.quantity.as_inner();
                     self.placed.push(PerpOrderPlaced {
@@ -211,16 +262,21 @@ impl PerpMarketRecords {
         self.placed.sort_by_key(|p| (p.slot, p.sequence));
     }
 
-    /// The fills `accounts` took part in, each as they traded it: a trade
-    /// between two of them counts once for each side.
+    /// The fills `accounts` took part in, each as they traded it, with the
+    /// fee it paid in that role: a trade between two of them counts once
+    /// for each side.
     pub fn fills_for(&self, accounts: &[Pubkey]) -> Vec<RecordedFill> {
         let mut own = Vec::new();
         for fill in &self.fills {
             if accounts.contains(&fill.taker) {
-                own.push(fill.recorded(fill.taker_side));
+                let mut taken = fill.recorded(fill.taker_side);
+                taken.fill.fees = fill.taker_fee;
+                own.push(taken);
             }
             if accounts.contains(&fill.maker) {
-                own.push(fill.recorded(opposite(fill.taker_side)));
+                let mut made = fill.recorded(opposite(fill.taker_side));
+                made.fill.fees = fill.maker_fee;
+                own.push(made);
             }
         }
         own
@@ -236,6 +292,31 @@ impl PerpMarketRecords {
     }
 }
 
+/// What a maker paid on `quote_lots` filled at `rate`, in quote lots, as
+/// Phoenix charges it: a fee rounded up, a rebate (negative) toward zero.
+fn maker_fee_lots(rate: SignedFeeRateMicro, quote_lots: QuoteLots) -> i64 {
+    rate.apply_to_quote_lots(quote_lots)
+        .map_or(0, |fee| fee.as_inner())
+}
+
+/// `fee` quote lots split across a run of fills by their quote lots: each
+/// fill its share rounded down, the last the remainder, so the shares add
+/// up to the fee exactly. A run with no quote lots puts it all on the last.
+fn split(fee: u64, run: &[(usize, u64)]) -> Vec<i64> {
+    let total: u128 = run.iter().map(|&(_, lots)| u128::from(lots)).sum();
+    let mut shares: Vec<i64> = run
+        .iter()
+        .map(|&(_, lots)| match total {
+            0 => 0,
+            _ => (u128::from(fee) * u128::from(lots) / total) as i64,
+        })
+        .collect();
+    if let Some((last, before)) = shares.split_last_mut() {
+        *last = fee as i64 - before.iter().sum::<i64>();
+    }
+    shares
+}
+
 fn side(side: phoenix_rise::math::Side) -> Side {
     match side {
         phoenix_rise::math::Side::Bid => Side::Buy,
@@ -247,6 +328,60 @@ fn opposite(side: Side) -> Side {
     match side {
         Side::Buy => Side::Sell,
         Side::Sell => Side::Buy,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fills_on_two_markets_never_share_an_id() {
+        let fill = |asset_id: u32, symbol: &str| PerpFill {
+            slot: 5,
+            instrument: InstrumentId::new(format!("phoenix:perp:{symbol}")),
+            asset_id,
+            sequence: (77, 2),
+            taker: Pubkey::new_unique(),
+            maker: Pubkey::new_unique(),
+            taker_side: Side::Buy,
+            price: Decimal::ONE,
+            quantity: Decimal::ONE,
+            unix_timestamp: 0,
+            taker_fee: Decimal::ZERO,
+            maker_fee: Decimal::ZERO,
+        };
+        let (a, b) = (fill(3, "NVDA"), fill(4, "SPCX"));
+        assert_ne!(a.recorded(Side::Buy).fill.id, b.recorded(Side::Buy).fill.id);
+        assert_ne!(
+            a.recorded(Side::Buy).fill.id,
+            a.recorded(Side::Sell).fill.id
+        );
+        assert_eq!(a.recorded(Side::Buy).fill.id, a.recorded(Side::Buy).fill.id);
+        assert_eq!(
+            b.recorded(Side::Sell).fill.instrument.to_string(),
+            "phoenix:perp:SPCX"
+        );
+    }
+
+    #[test]
+    fn a_fee_splits_by_quote_lots_and_adds_up() {
+        // 10 over 1 and 2 lots: 3.33 rounds down to 3, the last takes 7.
+        assert_eq!(split(10, &[(0, 1), (1, 2)]), vec![3, 7]);
+        assert_eq!(split(10, &[(0, 1), (1, 1), (2, 1)]), vec![3, 3, 4]);
+        assert_eq!(split(5, &[(0, 0), (1, 0)]), vec![0, 5]);
+        assert_eq!(split(0, &[(0, 4)]), vec![0]);
+        assert!(split(9, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_makers_fee_rounds_up_and_a_rebate_toward_zero() {
+        let fee = |rate, lots| maker_fee_lots(SignedFeeRateMicro::new(rate), QuoteLots::new(lots));
+        assert_eq!(fee(250, 1_000_001), 251);
+        assert_eq!(fee(250, 1_000_000), 250);
+        assert_eq!(fee(-50, 1_000_001), -50);
+        assert_eq!(fee(-50, 999_999), -49);
+        assert_eq!(fee(0, 123), 0);
     }
 }
 
@@ -280,37 +415,5 @@ pub(crate) mod testing {
             log.extend_from_slice(&e);
         }
         [lengths, log]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fills_on_two_markets_never_share_an_id() {
-        let fill = |asset_id: u32, symbol: &str| PerpFill {
-            slot: 5,
-            instrument: InstrumentId::new(format!("phoenix:perp:{symbol}")),
-            asset_id,
-            sequence: (77, 2),
-            taker: Pubkey::new_unique(),
-            maker: Pubkey::new_unique(),
-            taker_side: Side::Buy,
-            price: Decimal::ONE,
-            quantity: Decimal::ONE,
-            unix_timestamp: 0,
-        };
-        let (a, b) = (fill(3, "NVDA"), fill(4, "SPCX"));
-        assert_ne!(a.recorded(Side::Buy).fill.id, b.recorded(Side::Buy).fill.id);
-        assert_ne!(
-            a.recorded(Side::Buy).fill.id,
-            a.recorded(Side::Sell).fill.id
-        );
-        assert_eq!(a.recorded(Side::Buy).fill.id, a.recorded(Side::Buy).fill.id);
-        assert_eq!(
-            b.recorded(Side::Sell).fill.instrument.to_string(),
-            "phoenix:perp:SPCX"
-        );
     }
 }

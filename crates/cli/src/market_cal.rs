@@ -9,7 +9,7 @@ use clap::Subcommand;
 use mtx_grader::{
     generators,
     market::{
-        Calibration, MarketModel, ModelSpec,
+        Calibration, Correlation, MarketModel, ModelSpec, joint,
         realism::{self, Verdict},
     },
     scenario::Scenario,
@@ -67,6 +67,38 @@ pub(crate) enum MarketCalCommand {
         #[command(flatten)]
         model: ModelArgs,
         /// Sessions to draw for `model` or a family.
+        #[arg(long, default_value_t = 300)]
+        count: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+    /// Load and validate a correlation file; print its id, SHA-256, pinned
+    /// calibrations, matrices and limits. With `--calibration`, also draw
+    /// `--count` joint sessions of those assets and print each pair's
+    /// generated median window correlation beside the real one.
+    ShowJoint {
+        correlation: PathBuf,
+        /// The pinned calibration files of the assets to draw together (any
+        /// subset of the file's).
+        #[arg(long)]
+        calibration: Vec<PathBuf>,
+        #[arg(long, default_value_t = 300)]
+        count: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+    /// The joint realism check: sessions of several assets drawn together
+    /// from a correlation file, each pair's median 30-minute-window
+    /// correlation against the real one's band. Prints a report; exits 0 on
+    /// a pass, 2 if a pair fails, and 3 if it wasn't judged.
+    CheckJoint {
+        correlation: PathBuf,
+        /// The pinned calibration files of the assets to draw together (any
+        /// subset of the file's, at least two).
+        #[arg(long, required = true, num_args = 1..)]
+        calibration: Vec<PathBuf>,
+        #[command(flatten)]
+        model: ModelArgs,
         #[arg(long, default_value_t = 300)]
         count: usize,
         #[arg(long, default_value_t = 1)]
@@ -177,6 +209,80 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
             }
             Ok(serde_json::to_string_pretty(&written)?)
         }
+        MarketCalCommand::ShowJoint {
+            correlation,
+            calibration,
+            count,
+            seed,
+        } => {
+            let corr = Correlation::load(&correlation)?;
+            let generated = if calibration.is_empty() {
+                None
+            } else {
+                let report = joint::check_joint(
+                    &corr,
+                    &load_calibrations(&calibration)?,
+                    &ModelSpec::default(),
+                    count,
+                    seed,
+                )
+                .map_err(anyhow::Error::msg)?;
+                Some(
+                    report
+                        .checks
+                        .iter()
+                        .map(|c| (c.name.clone(), c.real, c.generated))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "correlation": corr.meta.correlation_id,
+                "sha256": corr.sha256,
+                "assets": corr.meta.assets,
+                "calibrations": corr.meta.calibrations,
+                "limits": corr.meta.limits,
+                "matrix": corr.correlation.matrix,
+                "realized_target": corr.correlation.realized_target,
+                "real_pooled_1m": corr.correlation.real_pooled_1m,
+                "real_pooled_5m": corr.correlation.real_pooled_5m,
+                "pairs": corr.realism.pairs,
+                "generated_median_window_correlation": generated.map(|g| g.into_iter()
+                    .map(|(name, real, generated)| serde_json::json!({"pair": name, "real": real, "generated": generated}))
+                    .collect::<Vec<_>>()),
+            }))?)
+        }
+        MarketCalCommand::CheckJoint {
+            correlation,
+            calibration,
+            model,
+            count,
+            seed,
+        } => {
+            anyhow::ensure!(
+                calibration.len() >= 2,
+                "check-joint needs at least two --calibration files"
+            );
+            let corr = Correlation::load(&correlation)?;
+            let report = joint::check_joint(
+                &corr,
+                &load_calibrations(&calibration)?,
+                &model.spec()?,
+                count,
+                seed,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let output = serde_json::to_string_pretty(&report)?;
+            let code = match report.verdict {
+                Verdict::Pass => 0,
+                Verdict::Fail => 2,
+                Verdict::NotJudged => 3,
+            };
+            if code != 0 {
+                println!("{output}");
+                std::process::exit(code);
+            }
+            Ok(output)
+        }
         MarketCalCommand::Check {
             target,
             calibration,
@@ -211,6 +317,10 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
             Ok(output)
         }
     }
+}
+
+fn load_calibrations(paths: &[PathBuf]) -> Result<Vec<Calibration>> {
+    paths.iter().map(|p| Ok(Calibration::load(p)?)).collect()
 }
 
 fn load_scenarios(path: &Path) -> Result<Vec<Scenario>> {

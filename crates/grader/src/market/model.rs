@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     calendar::SessionCalendar,
-    calibration::{CalendarModel, Calibration, FairValueModel},
+    calibration::{CalendarModel, Calibration, FairValueModel, Regimes, validate_regimes},
 };
 use crate::scenario::{SLOT_SECONDS, Scenario, SplitMix64, Waypoint, move_slots};
 
@@ -70,6 +70,22 @@ pub struct ModelSpec {
     /// Gaps when a session opens (on by default).
     #[serde(default = "yes")]
     pub gaps: bool,
+    /// Runs the regimes' switching this many times faster than their hourly
+    /// rates: a stated departure, so a session minutes long can see a
+    /// switch. It changes how often the state changes, not what each state
+    /// is. At most the rate at which a block leaves its state half the time.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub regime_clock: f64,
+    /// A stated regime chain in place of the calibration's: its states'
+    /// multipliers, level spreads, shares and hourly transitions, with a
+    /// `source` saying where they come from. For a calibration fitted with
+    /// one state, this is how a family switches between stated ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regimes: Option<Regimes>,
+}
+
+fn is_one(x: &f64) -> bool {
+    *x == 1.0
 }
 
 fn one() -> f64 {
@@ -93,6 +109,8 @@ impl Default for ModelSpec {
             waypoint_slots: default_waypoint_slots(),
             jumps: false,
             gaps: true,
+            regime_clock: 1.0,
+            regimes: None,
         }
     }
 }
@@ -137,6 +155,12 @@ pub struct MarketModelRecord {
     /// Gaps and jumps, with their sizes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
+    /// The spec's regime clock, when it departs from 1.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub regime_clock: f64,
+    /// The spec's stated regime chain, when it replaces the calibration's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regime_set: Option<Regimes>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -246,10 +270,15 @@ pub struct MarketModel {
 }
 
 impl MarketModel {
-    pub fn new(calibration: Calibration, spec: ModelSpec) -> std::result::Result<Self, String> {
+    pub fn new(mut calibration: Calibration, spec: ModelSpec) -> std::result::Result<Self, String> {
         if !(spec.vol_mult.is_finite() && spec.vol_mult > 0.0) {
             return Err(format!("vol_mult {} must be positive", spec.vol_mult));
         }
+        if let Some(regimes) = &spec.regimes {
+            validate_regimes(regimes, "regimes")?;
+            calibration.fair_value.regimes = regimes.clone();
+        }
+        check_regime_clock(&calibration, spec.regime_clock)?;
         if spec.waypoint_slots < 3 {
             return Err("waypoint_slots must be at least 3".into());
         }
@@ -550,7 +579,7 @@ impl<'a> Walker<'a> {
         if model.fixed_regime.is_none() && self.slot < self.duration {
             let row = &fv.regimes.transition_per_hour[self.regime];
             let scale = n as f64 * self.slot_seconds / 3600.0;
-            let stay = 1.0 - (1.0 - row[self.regime]) * scale;
+            let stay = 1.0 - (1.0 - row[self.regime]) * scale * model.spec.regime_clock;
             let u = rng.next_f64();
             if u >= stay {
                 let others: Vec<f64> = row
@@ -585,6 +614,8 @@ impl<'a> Walker<'a> {
                 regimes: self.regimes,
                 sessions: self.sessions,
                 events: self.events,
+                regime_clock: self.model.spec.regime_clock,
+                regime_set: self.model.spec.regimes.clone(),
             },
         }
     }
@@ -734,6 +765,27 @@ fn cholesky(a: &[Vec<f64>]) -> std::result::Result<Vec<Vec<f64>>, String> {
         }
     }
     Ok(l)
+}
+
+/// A regime clock must be positive, and no faster than leaves any state
+/// within one block half the time: a faster clock would switch nearly every
+/// block, and a block's leave chance is linear in it only while small.
+fn check_regime_clock(cal: &Calibration, clock: f64) -> std::result::Result<(), String> {
+    if !(clock.is_finite() && clock > 0.0) {
+        return Err(format!("regime_clock {clock} must be positive"));
+    }
+    let fv = &cal.fair_value;
+    let per_block = fv.block_seconds / 3600.0;
+    let fastest = (0..fv.regimes.names.len())
+        .map(|i| 1.0 - fv.regimes.transition_per_hour[i][i])
+        .fold(0.0, f64::max);
+    if fastest > 0.0 && fastest * per_block * clock > 0.5 {
+        return Err(format!(
+            "regime_clock {clock} leaves a state more than half the time in one block; at most {:.4}",
+            0.5 / (fastest * per_block)
+        ));
+    }
+    Ok(())
 }
 
 fn kind_name(calendar: &SessionCalendar, unix: i64) -> String {
@@ -1015,6 +1067,90 @@ mod tests {
         assert!((50..130).contains(&stressed_start), "{stressed_start}");
     }
 
+    /// Without departures a record says nothing about them, so scenarios
+    /// drawn before the regime clock serialise as they did.
+    #[test]
+    fn a_record_without_departures_names_none() {
+        let model = MarketModel::new(spcx(), ModelSpec::default()).unwrap();
+        let path = model.draw(3, 1_600);
+        assert_eq!(path.record.regime_clock, 1.0);
+        let text = serde_json::to_string(&path.record).unwrap();
+        assert!(!text.contains("regime_clock") && !text.contains("regime_set"));
+    }
+
+    /// The two-state chain card 8 states for SPCX: SPCX's one fitted state
+    /// split into a calm and a stressed one.
+    fn two_states() -> Regimes {
+        Regimes {
+            model: crate::market::calibration::RegimeModel::Markov,
+            names: vec!["calm".into(), "stressed".into()],
+            vol_mult: vec![0.85, 1.7],
+            log_sd_within: vec![0.4, 0.4],
+            share: vec![0.7, 0.3],
+            transition_per_hour: vec![vec![0.9, 0.1], vec![0.25, 0.75]],
+            source: "test".into(),
+        }
+    }
+
+    #[test]
+    fn a_stated_regime_set_replaces_the_calibrations_and_is_recorded() {
+        let spec = ModelSpec {
+            regimes: Some(two_states()),
+            ..ModelSpec::default()
+        };
+        let model = MarketModel::new(spcx(), spec).unwrap();
+        assert_eq!(model.calibration.fair_value.regimes, two_states());
+        let mut names = std::collections::BTreeSet::new();
+        for seed in 0..200 {
+            let rec = model.draw(seed, 1_600).record;
+            assert_eq!(rec.regime_set.as_ref(), Some(&two_states()));
+            assert_eq!(rec.regime_vol.len(), 2);
+            names.extend(rec.regimes.iter().map(|m| m.name.clone()));
+        }
+        assert!(names.contains("calm") && names.contains("stressed"));
+
+        let mut bad = two_states();
+        bad.share = vec![0.5, 0.2];
+        let refused = MarketModel::new(
+            spcx(),
+            ModelSpec {
+                regimes: Some(bad),
+                ..ModelSpec::default()
+            },
+        );
+        assert!(refused.unwrap_err().contains("regimes.share"));
+    }
+
+    /// The clock scales how often a session switches, and refuses a clock
+    /// that would leave a state more than half the blocks.
+    #[test]
+    fn the_regime_clock_scales_switching() {
+        let switches = |clock: f64| -> usize {
+            let spec = ModelSpec {
+                regimes: Some(two_states()),
+                regime_clock: clock,
+                ..ModelSpec::default()
+            };
+            let model = MarketModel::new(spcx(), spec).unwrap();
+            (0..300)
+                .map(|seed| model.draw(seed, 1_600).record.regimes.len() - 1)
+                .sum()
+        };
+        let (slow, fast) = (switches(1.0), switches(12.0));
+        assert!(fast > 5 * slow.max(1), "{slow} switches at 1, {fast} at 12");
+        let spec = ModelSpec {
+            regimes: Some(two_states()),
+            regime_clock: 200.0,
+            ..ModelSpec::default()
+        };
+        let error = MarketModel::new(spcx(), spec).unwrap_err();
+        assert!(error.contains("half the time"), "{error}");
+        let spec = ModelSpec {
+            regime_clock: 0.0,
+            ..ModelSpec::default()
+        };
+        assert!(MarketModel::new(spcx(), spec).is_err());
+    }
     #[test]
     fn waypoints_fit_phoenix_moves() {
         let model = MarketModel::new(sol(), ModelSpec::default()).unwrap();

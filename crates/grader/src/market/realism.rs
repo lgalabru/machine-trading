@@ -482,7 +482,7 @@ pub fn compare(realism: &Realism, windows: &[Vec<f64>]) -> (WindowStats, Vec<Che
 
 /// Judge a gated check; a pass whose band holds a null value (`held`) has
 /// no power.
-fn gate(name: &str, real: f64, generated: f64, band: Band, held: Option<f64>) -> Check {
+pub(super) fn gate(name: &str, real: f64, generated: f64, band: Band, held: Option<f64>) -> Check {
     let mut check = judge(name, real, generated, band);
     if let (Status::Pass, Some(null)) = (check.status, held) {
         check.status = Status::NoPower;

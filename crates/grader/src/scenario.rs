@@ -165,6 +165,81 @@ pub struct Scenario {
     /// came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joint: Option<JointDraw>,
+    /// Opt-in: a drawdown past the mandate's limit is priced instead of
+    /// disqualifying. The grader's risk desk closes the position through the
+    /// book, as market orders signed with the bot's key, and the session
+    /// ends there (see [`crate::session`]). Absent, the breach disqualifies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_out: Option<StopOut>,
+}
+
+/// The grader's risk desk: which mandate limits it enforces by closing the
+/// position instead of disqualifying the session, and how. Opt-in per
+/// scenario; the mandate itself is unchanged (`specs/mandate.md`: what
+/// follows a breach is the enforcer's policy).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StopOut {
+    /// The limits whose breach the desk closes: `drawdown` only, so far.
+    pub on: Vec<StopRule>,
+    /// How it closes: `market`, market orders through the book.
+    pub close: CloseMode,
+    /// The largest single order, in base units: one that crosses much of
+    /// the book can exceed a transaction's compute budget. Absent, one
+    /// order closes the whole position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice_base: Option<f64>,
+}
+
+/// A mandate limit the risk desk can enforce by closing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopRule {
+    /// The account's value fell more than `max_drawdown_usd` below its
+    /// running peak, as the session measures it every step.
+    Drawdown,
+}
+
+/// How the risk desk closes a position.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseMode {
+    /// Cancel the account's orders, then send market orders against the
+    /// position through the book, each at most [`STOP_OUT_LIMIT_BPS`] from
+    /// the best price, until it is flat.
+    Market,
+}
+
+/// How far through the book a stop-out's order may fill, in basis points
+/// from the best price when it is sent: inside Phoenix's 5% oracle band.
+pub const STOP_OUT_LIMIT_BPS: f64 = 400.0;
+
+impl StopOut {
+    /// Whether a breach of `rule` is closed rather than disqualifying.
+    pub fn covers(&self, rule: StopRule) -> bool {
+        self.on.contains(&rule)
+    }
+
+    /// At least one rule, none twice, and a positive slice.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.on.is_empty() {
+            return Err("stop_out: `on` lists no limit: leave stop_out out to turn it off".into());
+        }
+        if self
+            .on
+            .iter()
+            .enumerate()
+            .any(|(i, r)| self.on[..i].contains(r))
+        {
+            return Err("stop_out: `on` repeats a limit".into());
+        }
+        if let Some(slice) = self.slice_base
+            && !(slice.is_finite() && slice > 0.0)
+        {
+            return Err("stop_out: slice_base must be a positive number".into());
+        }
+        Ok(())
+    }
 }
 
 /// One market of a session on several perp markets (see
@@ -1202,6 +1277,7 @@ impl ShockFamily {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         };
         let shape = Shape {
             direction,
@@ -1898,6 +1974,7 @@ mod tests {
                     raw_sends: None,
                     start_positions: Default::default(),
                     close_out: Default::default(),
+                    stop_out: None,
                     ..marked.clone()
                 },
                 plain
@@ -1985,6 +2062,7 @@ mod tests {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -2061,6 +2139,7 @@ mod tests {
             joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         }
     }
 
