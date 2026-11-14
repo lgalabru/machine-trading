@@ -45,12 +45,15 @@ import os
 import re
 import sys
 import urllib.parse
+import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import body_policy  # noqa: E402
+import limits  # noqa: E402
 from models import entry, key_forms, route_token  # noqa: E402
 
 # Each API's one model-call path, under the route.
@@ -71,12 +74,16 @@ HOP = {"connection", "transfer-encoding", "content-length", "keep-alive", "conte
 # holding the proxy's memory.
 MAX_BODY = 16 * 1024 * 1024
 LENGTH = re.compile(r"[0-9]{1,9}")
-# At most this many connections at once (trials run a few at a time; a
-# subagent or two each), and this many from one address (one trial's
-# container), so one container can't take every slot; one more is closed
-# at once.
-MAX_CONNECTIONS = 64
-MAX_PER_CLIENT = 16
+# At most this many connections at once, and this many from one address
+# (one trial's container), so one container can't take every slot: twice
+# the most model calls a Hermes trial can have open at once (limits.py).
+# One more gets a 503 with Retry-After, which the providers' clients
+# retry.
+MAX_CONNECTIONS = limits.MAX_CONNECTIONS
+MAX_PER_CLIENT = limits.MAX_PER_CLIENT
+RETRY_AFTER = 2
+# Over-cap connections are logged once per this many seconds, with a count.
+OVER_CAP_LOG_INTERVAL = 10
 # Seconds a client has to send a request's head (request line and headers):
 # per read, and in all. A connection holds a slot until then, before any
 # token is checked.
@@ -97,12 +104,16 @@ class Refused(Exception):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+    # A burst of a trial's calls queues for accept instead of being dropped.
+    request_queue_size = 256
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lock = threading.Lock()
         self.open = 0
         self.per_client: dict[str, int] = {}
+        self.over_cap: dict[str, int] = {}
+        self.over_cap_logged = 0.0
 
     def process_request(self, request, client_address):
         address = client_address[0]
@@ -112,10 +123,41 @@ class Server(ThreadingHTTPServer):
                 self.open += 1
                 self.per_client[address] = self.per_client.get(address, 0) + 1
         if full:
-            print(f"refused a connection from {address}: too many open", file=sys.stderr, flush=True)
-            self.shutdown_request(request)
+            self.note_over_cap(address)
+            threading.Thread(target=self.busy, args=(request,), daemon=True).start()
             return
         super().process_request(request, client_address)
+
+    def note_over_cap(self, address):
+        now = time.monotonic()
+        with self.lock:
+            self.over_cap[address] = self.over_cap.get(address, 0) + 1
+            if now - self.over_cap_logged < OVER_CAP_LOG_INTERVAL:
+                return
+            self.over_cap_logged = now
+            counts, self.over_cap = self.over_cap, {}
+        summary = ", ".join(f"{n} from {a}" for a, n in sorted(counts.items()))
+        print(f"answered 503 (too many open connections): {summary}", file=sys.stderr, flush=True)
+
+    def busy(self, request):
+        """A 503 the client can retry, then close; the request is never read."""
+        data = b'{"error": {"message": "too many open connections, retry", "type": "proxy_busy"}}'
+        try:
+            request.settimeout(2)
+            request.sendall(
+                b"HTTP/1.0 503 Service Unavailable\r\nRetry-After: %d\r\nContent-Type: application/json\r\n"
+                b"Content-Length: %d\r\nConnection: close\r\n\r\n%s" % (RETRY_AFTER, len(data), data)
+            )
+            request.shutdown(socket.SHUT_WR)
+            # Read what the client sent, briefly, so closing doesn't reset
+            # the connection before it reads the answer.
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and request.recv(65536):
+                pass
+        except OSError:
+            pass
+        finally:
+            request.close()
 
     def process_request_thread(self, request, client_address):
         try:
@@ -234,6 +276,7 @@ class Proxy(BaseHTTPRequestHandler):
         connection_class = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
         connection = connection_class(upstream.netloc, timeout=UPSTREAM_TIMEOUT)
         started = False
+        side = "upstream"
         try:
             connection.request("POST", upstream.path.rstrip("/") + CALL_PATHS[route["api"]], body=body, headers=headers)
             response = connection.getresponse()
@@ -241,24 +284,33 @@ class Proxy(BaseHTTPRequestHandler):
                 data = response.read()
                 for form in route["forms"]:
                     data = data.replace(form, b"<key>")
+                side = "client"
                 self.send_response(response.status, response.reason)
                 self.send_header("Content-Type", response.getheader("Content-Type", "application/json"))
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            side = "client"
             self.send_response(response.status, response.reason)
             for k, v in response.getheaders():
                 if k.lower() not in HOP and k.lower() not in ACCOUNT_HEADERS:
                     self.send_header(k, v)
             self.end_headers()
             started = True
-            while chunk := response.read1(65536):
+            while True:
+                side = "upstream"
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                side = "client"
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except (OSError, http.client.HTTPException) as e:
-            if isinstance(e, TimeoutError):
+            if isinstance(e, TimeoutError) and side == "upstream":
                 print(f"upstream silent for {UPSTREAM_TIMEOUT} s route={name}", file=sys.stderr, flush=True)
+            elif isinstance(e, TimeoutError):
+                print(f"client stopped reading for {self.client_timeout} s route={name}", file=sys.stderr, flush=True)
             if started:
                 # The answer has begun: cut it short, so the client sees a
                 # broken stream rather than a second status inside it.

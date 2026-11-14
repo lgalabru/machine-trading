@@ -11,6 +11,8 @@ and changes what a benchmark needs to compare models:
   installer leaves no dependency environment ("run `hermes pm repair`"),
   and Harbor checks the install with `hermes version`, a subcommand
   v0.23.1 dropped for `hermes --version`.
+- Subagents: delegation.max_concurrent_children pinned to 4 (limits.py),
+  so a trial has at most 4 background batches of 4.
 - Tools: a shell, files, a todo list, subagents and code execution, the
   tools Claude Code and Codex give a model, all listed from the first turn
   (no tool search). No web, browser, vision, memory, skills or session
@@ -36,12 +38,17 @@ bench/harness on PYTHONPATH).
 """
 
 import json
+import sys
+from pathlib import Path
 from typing import Any, override
 
 import yaml
 from harbor.agents.installed.hermes import Hermes as HarborHermes
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+sys.path.insert(0, str(Path(__file__).parent))
+from limits import DELEGATION_CHILDREN  # noqa: E402
 
 # Harbor's adapter writes its config, runs and exports sessions here.
 HERMES_HOME = "/tmp/hermes"
@@ -180,6 +187,14 @@ class Hermes(HarborHermes):
             "memory_enabled": False,
             "user_profile_enabled": False,
             "nudge_interval": 0,
+        }
+        # Subagents bounded and the same for every model: Hermes's default
+        # (10 background batches of 10) would let one trial open ~100 model
+        # calls at once. limits.py sizes the key proxy's caps from this.
+        config["delegation"] = {
+            **config.get("delegation", {}),
+            "max_concurrent_children": DELEGATION_CHILDREN,
+            "max_spawn_depth": 1,
         }
         config["skills"] = {
             "creation_nudge_interval": 0,

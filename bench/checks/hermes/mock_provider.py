@@ -8,7 +8,9 @@ step chosen by how many tool results the conversation already holds:
 2. plant a skill, a memory and probe files, as a trial that tried to leave
    something for the next one would;
 3. write a file and 4. read it back, through Hermes's file tools;
-5. answer, with no tool call.
+5. delegate a batch of 4 subagents, whose calls are held until all 4 are
+   open at once (each child's request names its FANOUT-CHILD goal);
+6. answer, with no tool call, once every child's call is answered.
 
 A request with no tools (a title or a summary) gets a short answer. Every
 request is logged as one JSON line: the tools offered, the reasoning
@@ -24,6 +26,7 @@ import json
 import urllib.parse
 import os
 import secrets
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -65,7 +68,13 @@ SCRIPT = [
     ("terminal", {"command": PLANT}),
     ("write_file", {"path": "/tmp/mock-note.txt", "content": "written by the mock provider\n"}),
     ("read_file", {"path": "/tmp/mock-note.txt"}),
+    # A batch of subagents, all at once: each child's one call is held
+    # until every child is in, so the calls overlap.
+    ("delegate_task", {"tasks": [{"goal": f"FANOUT-CHILD-{i}: answer the word done", "context": "nothing else"}
+                                 for i in range(1, 5)]}),
 ]
+CHILDREN = 4
+CHILD_HOLD_LIMIT = 60
 
 USAGE = {"prompt_tokens": 1000, "completion_tokens": 50, "total_tokens": 1050}
 
@@ -138,6 +147,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_json(404, {"error": {"message": "not found"}})
             return
         done = len(results)
+        whole = json.dumps(body)
+        child = "FANOUT-CHILD" in whole and "INVENTORY-BEGIN" not in whole
         bearer = self.headers.get("Authorization", "")
         auth = bearer[7:] if bearer.startswith("Bearer ") else self.headers.get("x-api-key", "")
         expected = os.environ.get("MOCK_API_KEY", "")
@@ -160,6 +171,7 @@ class Handler(BaseHTTPRequestHandler):
             "system_chars": len(system),
             "system_mentions_leak_probe": "leak-probe" in system or "planted by an earlier trial" in system,
             "last_tool_result": (results[-1] if results else "")[:40000],
+            "child": child,
         }
         with open(self.server.log_path, "a") as log:
             log.write(json.dumps(record) + "\n")
@@ -175,6 +187,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if body.get("model") == "slow-upstream":
             time.sleep(4)
+        if body.get("model") == "hold-1s":
+            time.sleep(1)
+        if body.get("model") == "firehose":
+            # An answer far larger than any socket buffer, for a client that
+            # stops reading.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                for _ in range(128):
+                    self.wfile.write(b"data: " + b"x" * (1 << 20) + b"\n\n")
+            except OSError:
+                pass
+            return
         if body.get("model") == "drop-mid-stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -183,6 +209,15 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.connection.shutdown(2)
             return
+        if child:
+            self.answer_child(api, body, record)
+            return
+        if tools and done == len(SCRIPT):
+            # The parent's turn after the fan-out: wait for the children, so
+            # the trial doesn't end before their calls are answered.
+            deadline = time.time() + CHILD_HOLD_LIMIT
+            while time.time() < deadline and self.server.children_done < CHILDREN:
+                time.sleep(0.2)
         if tools and done < len(SCRIPT):
             call = (f"call_{done}", *SCRIPT[done])
             text = None
@@ -191,6 +226,33 @@ class Handler(BaseHTTPRequestHandler):
             text = "Done: the mock script is complete." if tools else "Mock trial"
         answer = {"chat": self.answer_chat, "responses": self.answer_responses, "anthropic": self.answer_anthropic}
         answer[api](body, done, call, text)
+
+    def answer_child(self, api, body, record):
+        server = self.server
+        with server.lock:
+            server.in_flight += 1
+            server.children_seen += 1
+            in_flight = server.in_flight
+        try:
+            # Held until every child has a call open (or a minute has passed).
+            deadline = time.time() + CHILD_HOLD_LIMIT
+            while time.time() < deadline and server.children_seen < CHILDREN:
+                time.sleep(0.1)
+            time.sleep(1)
+            answer = {"chat": self.answer_chat, "responses": self.answer_responses, "anthropic": self.answer_anthropic}
+            answer[api](body, 0, None, "done")
+            served = True
+        except OSError:
+            served = False
+        finally:
+            with server.lock:
+                server.max_in_flight = max(server.max_in_flight, in_flight, server.in_flight)
+                server.in_flight -= 1
+                if served:
+                    server.children_done += 1
+                peak = server.max_in_flight
+        with open(server.log_path, "a") as log:
+            log.write(json.dumps({"time": time.time(), "child_served": served, "max_in_flight": peak}) + "\n")
 
     def sse(self, events):
         self.send_response(200)
@@ -360,6 +422,8 @@ def main():
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.log_path = args.log
+    server.lock = threading.Lock()
+    server.in_flight = server.max_in_flight = server.children_seen = server.children_done = 0
     server.serve_forever()
 
 

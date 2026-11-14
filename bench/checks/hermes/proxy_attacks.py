@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -28,6 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 HARNESS = HERE.parent.parent / "harness"
 sys.path.insert(0, str(HARNESS))
+import limits  # noqa: E402
 import models  # noqa: E402
 
 REGISTRY = """
@@ -61,6 +63,18 @@ model = "slow-upstream"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
 
+[hold]
+api = "chat"
+model = "hold-1s"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
+[hose]
+api = "chat"
+model = "firehose"
+upstream = "http://127.0.0.1:{port}/v1"
+key = "ATTACK_KEY"
+
 [drop]
 api = "chat"
 model = "drop-mid-stream"
@@ -86,7 +100,7 @@ model = "x"
 upstream = "http://127.0.0.1:{port}/v1"
 key = "ATTACK_KEY"
 """
-ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or", "slow")
+ROUTES = ("a", "b", "anth", "echo", "drop", "o", "or", "slow", "hold", "hose")
 LIMIT = 6
 PER_CLIENT = 4
 
@@ -376,14 +390,18 @@ def main():
         status = conn.getresponse().status
         conn.close()
         check(10, "a 64 MB body is refused before it's read", status == 413, str(status))
-        def tried(port=None):
+        retry_after = {}
+
+        def tried(port=None, route="a", model="m-a"):
             try:
-                conn = http.client.HTTPConnection(url.hostname, port or url.port, timeout=10)
-                data = json.dumps(ok_body("m-a")).encode()
-                conn.request("POST", "/a/chat/completions", body=data, headers=auth("a"))
-                status = conn.getresponse().status
+                conn = http.client.HTTPConnection(url.hostname, port or url.port, timeout=30)
+                data = json.dumps(ok_body(model)).encode()
+                conn.request("POST", f"/{route}/chat/completions", body=data, headers=auth(route))
+                response = conn.getresponse()
+                response.read()
+                retry_after[response.status] = response.getheader("Retry-After")
                 conn.close()
-                return status
+                return response.status
             except (OSError, http.client.HTTPException) as e:
                 return type(e).__name__
 
@@ -394,7 +412,9 @@ def main():
         # gets few, and only for the head's few seconds.
         idle = opened(PER_CLIENT)
         time.sleep(0.3)
-        check(12, f"one address holding {PER_CLIENT} idle connections can't open another", tried() != 200, "served")
+        over = tried()
+        check(12, f"one address holding {PER_CLIENT} idle connections gets a 503 with Retry-After for another",
+              over == 503 and retry_after.get(503) == "2", f"{over} {retry_after.get(503)}")
         if args.container_image:
             # A trial's container has its own address on its own network.
             network = f"proxy-attacks-{secrets.token_hex(4)}"
@@ -460,7 +480,8 @@ def main():
             port = urllib.parse.urlsplit(second.stdout.readline().strip()).port
             held = opened(LIMIT, port)
             time.sleep(0.3)
-            check(12, f"with {LIMIT} open in all, a new connection is closed", tried(port) != 200, "served")
+            over = tried(port)
+            check(12, f"with {LIMIT} open in all, a new connection gets a 503", over == 503, str(over))
             for sock in held:
                 sock.close()
             time.sleep(0.3)
@@ -468,6 +489,58 @@ def main():
         finally:
             second.terminate()
             second.wait()
+
+        # 15. The caps fit the most a Hermes trial calls at once (limits.py):
+        # a proxy at the real caps serves that many from one address.
+        third = subprocess.Popen(
+            [sys.executable, "-I", str(HARNESS / "key_proxy.py"), "--host", args.bind, "--port", "0", "hold"],
+            env={k: v for k, v in env.items() if not k.startswith("MTX_PROXY_") or k == "MTX_PROXY_SECRET"},
+            stdout=subprocess.PIPE, stderr=open(work / "third.log", "w"), text=True)
+        try:
+            port = urllib.parse.urlsplit(third.stdout.readline().strip()).port
+            statuses = []
+            lock = threading.Lock()
+
+            def one():
+                status = tried(port, "hold", "hold-1s")
+                with lock:
+                    statuses.append(status)
+
+            def fan(n):
+                threads = [threading.Thread(target=one) for _ in range(n)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+
+            fan(limits.WORST_CASE_CALLS)
+            check(15, f"{limits.WORST_CASE_CALLS} calls at once from one trial's address are all served",
+                  statuses.count(200) == limits.WORST_CASE_CALLS, str(sorted(set(map(str, statuses)))))
+            statuses.clear()
+            fan(limits.MAX_PER_CLIENT + 8)
+            check(15, f"beyond {limits.MAX_PER_CLIENT} at once, the rest get a 503 the client can retry",
+                  statuses.count(200) >= limits.MAX_PER_CLIENT - 2 and 503 in statuses
+                  and set(statuses) <= {200, 503}, f"{statuses.count(200)} served, {statuses.count(503)} 503")
+        finally:
+            third.terminate()
+            third.wait()
+        third_log = (work / "third.log").read_text()
+        check(15, "the over-cap log is one line per interval, with a count",
+              third_log.count("answered 503") == 1 and "from " in third_log, third_log[-300:])
+
+        # 16. A client that stops reading is logged as that, not as the provider.
+        conn = socket.create_connection((url.hostname, url.port), timeout=10)
+        data = json.dumps(ok_body("firehose")).encode()
+        head = "".join(f"{k}: {v}\r\n" for k, v in auth("hose").items())
+        conn.sendall(f"POST /hose/chat/completions HTTP/1.1\r\nHost: x\r\n{head}Content-Length: {len(data)}\r\n\r\n".encode() + data)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        time.sleep(6)
+        conn.close()
+        time.sleep(0.5)
+        proxy_log = (work / "proxy.log").read_text()
+        check(16, "a client that stops reading is logged as such",
+              "client stopped reading" in proxy_log and "upstream silent" not in proxy_log.split("client stopped reading")[0][-200:],
+              proxy_log[-300:])
 
         # 13. tool_choice, overflowing numbers, bodies that break the checks.
         model_call("o", o(tool_choice="auto"), 200, "responses: tool_choice auto passes")
