@@ -113,6 +113,10 @@ the bot's sessions are the same with or without it. The ladder's informed
 rung is told the same (`"tell_latent": true`). It costs one more bot run
 per session.
 
+Gates grade each task on its own snapshot: `[metadata] snapshot` in its
+`task.toml`, else the `MTX_SNAPSHOT` its verifier image sets, else the
+Justfile's.
+
 ## Adding a check
 
 The replay and calibration checks run only when this build has
