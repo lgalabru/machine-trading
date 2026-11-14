@@ -34,6 +34,7 @@ mod publish;
 mod rescore;
 mod review;
 mod run;
+mod scoring_text;
 mod slim;
 mod store;
 mod studio;
@@ -399,8 +400,9 @@ enum TaskCommand {
     /// Where a task stands: each step to publication, done or not, with what
     /// to do next.
     Status { task: String },
-    /// The procedure for one step (design, family, reference, anchor,
-    /// practice, instruction, readme, registry, lint, verify).
+    /// The procedure for one step (design, family, reference, anchors,
+    /// anchor, practice, instruction, scoring, probes, readme, registry,
+    /// lint, verify).
     Guide { step: String },
     /// The repository's tasks.
     List,

@@ -262,7 +262,7 @@ A task is one folder, `bench/tasks/<name>/`:
 | `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
 | `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
 | `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
-| `checks/` | `ladder.json`, `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates) and `exploits/` (the frozen exploit bots) |
+| `checks/` | `ladder.json` (rungs, order rules, the `anchors` and `probes` a v2 task names), `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates; `bots/informed` is a v2 task's informed bot) and `exploits/` (the frozen exploit bots) |
 | `environment/`, `tests/`, `instruction.md`, `README.md`, `DESIGN.md` | As the [task template](../bench/tasks/README.md#task-readmes) |
 
 A task that draws an existing generator touches no shared file: copy a
@@ -280,6 +280,58 @@ Pick an issue labelled
 and follow the [`trading-task-design`](../skills/trading-task-design/SKILL.md)
 skill, which Claude Code loads in this repo. Write the task's README to
 [the template](../bench/tasks/README.md#task-readmes).
+
+### The new-task checklist
+
+A new task is scored by [scoring v2](../bench/tasks/README.md#scoring-v2)
+from day one. `mtx task new` scaffolds it that way: `headline = "v2"` in
+`[metadata.mtx]`, a verifier that grades with `--scoring v2 --v2-sessions`
+and grades every session, the informed bot's slot, a ladder that names both
+anchors and opts into the probe gate, and the scoring rules in the
+instruction. `mtx task status <name>` says which steps are done;
+`mtx task guide <step>` says how to do one.
+
+1. **Scaffold.** `mtx task new --name <skill>-<instrument> …` (or ask Claude
+   Code), then `cargo update -w` to lock the new crates.
+2. **Design.** Fill in `DESIGN.md`, section by section (`guide design`).
+3. **Family.** Reuse a registered generator or write one; set it in
+   `task.toml`, `tests/test.sh` (`--draw`) and `checks/ladder.json`
+   (`family`) (`guide family`).
+4. **Anchors.** The reference (`reference/`) is the 0.5: a sound, simple
+   strategy that uses its risk budget. The informed bot
+   (`checks/bots/informed/`, a copy of the reference marked
+   `TODO(informed)` until you write it) is the 1: it reads every fact the
+   task's data could tell in principle (the ladder hands it the session's
+   regime, `tell_regime`) and nothing about the session's future
+   randomness. Both stay named in `checks/ladder.json`'s `anchors`. Freeze
+   both, and record their hashes in `DESIGN.md`, before any model run
+   (`guide anchors`).
+5. **Calibrate.** Draw the practice scenarios, then calibrate them with the
+   reference (`just calibrate`) and with the informed bot
+   (`mtx calibrate --informed --v2-sessions`) (`guide practice`).
+6. **Strength band.** `just ladder <name>`: on its sets, the informed bot
+   beats the reference, the reference's loss-weighted PnL is 0.2 to 0.7 of
+   the informed bot's (so it is never `anchor_floored`), and its
+   per-session Sharpe is at least 0.25 (`anchors.band` and
+   `anchors.min_sharpe` adjust them, with a reason in `DESIGN.md`). If the
+   reference misses, change the reference or the market, never the band.
+7. **Instruction.** Write `instruction.md` as a contract. Its Scoring
+   section keeps the `mtx:scoring` markers: `mtx task sync` writes v2's rules
+   between them from the grader's settings and the verifier's flags, and
+   `mtx task check` fails when they're stale (`guide scoring`).
+8. **Probe gate.** The ladder file's `"probes": {}` opts in; add the probe
+   rungs as `bench/checks/probes/README.md` says (`guide probes`).
+9. **README, registry, lint.** Write the README to the template, then
+   `mtx task sync` and `harbor lint` (`guide readme`, `guide lint`).
+10. **Gates.** `mtx gates <name> --fast` while building, then
+    `mtx gates <name>` before a release: it refuses a v2 task without both
+    anchors, with a reference outside the strength band, or with stale
+    scoring rules (see [gates](gates.md)).
+11. **Identity.** The anchors replay byte for byte (`mtx grade --replay 3`,
+    which `mtx gates` runs), and a change to the grader or the CLI leaves
+    the existing tasks' reports identical to `origin/main`'s on the same
+    hidden set, but for wall times and the per-session keypair's
+    signatures.
 
 ## Release
 
