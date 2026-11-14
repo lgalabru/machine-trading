@@ -49,6 +49,8 @@ pub enum Error {
     Transaction { label: String, reason: String },
     #[error("spline collection {account}: {reason}")]
     Splines { account: String, reason: String },
+    #[error("stop-out: {0}")]
+    StopOut(String),
     #[error("timed out waiting for {0}")]
     Timeout(String),
     /// A session failed before its bot started.

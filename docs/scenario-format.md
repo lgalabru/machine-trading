@@ -33,7 +33,7 @@ docs together.
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `bound_usd`, `participation`, `net`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -72,6 +72,34 @@ the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup.
+
+## The risk desk: `scoring.stop_out`
+
+By default a session that breaks its mandate disqualifies the bot. A
+perp scenario can price a breach instead:
+
+```json
+"scoring": { "stop_out": { "on": ["drawdown"], "close": "market", "slice_base": 100 } }
+```
+
+- `on`: the mandate limits whose breach the desk closes instead of
+  disqualifying. Only `drawdown` so far; a later limit (a money market's
+  `min_health`, say) joins the list.
+- `close`: `market`, the only mode: the desk cancels the bot's orders and
+  sends market orders against its position through the book, each at most
+  `slice_base` base units (one order when absent) and filling no worse
+  than 4% from the best price, signed with the bot's key.
+
+The breach is detected on the step measurement the audit reads (peak value
+minus value over `max_drawdown_usd`). The bot is stopped first and gets no
+more turns; the desk sends at most 8 orders a step until the position is
+flat, and the session ends on the step it is flat (or at its last slot).
+The PnL is the account's value then, so the close pays the book's impact
+and the taker fee. The report lists each close in `forced_closes` (reason,
+step, the value before and after, the orders, whether it ended flat), and
+the audit then reads the drawdown as at most the limit: every other rule
+still disqualifies. A component sees `MTX_STOP_OUT=1` in its session vars.
+The code is `crates/grader/src/risk.rs` and the session loop.
 
 ## Example
 

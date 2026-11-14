@@ -600,6 +600,7 @@ impl MakingFamily {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            stop_out: None,
         };
         (scenario, informed, leaks)
     }
