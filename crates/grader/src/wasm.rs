@@ -708,11 +708,13 @@ pub trait StepObserver: Send + Sync {
 }
 
 /// A session's clock, as a component's `start` sees it, and its scenario.
-pub struct Clock<'a> {
+pub struct Clock {
+    /// The seed the strategy's randomness starts from (see
+    /// [`crate::keys::SessionKeyring::strategy_seed`]).
+    pub seed: u64,
     pub steps: u64,
     pub slots_per_step: u64,
     pub start_slot: u64,
-    pub scenario: &'a str,
     /// The task's variables for the session ([`mtx_kit::SESSION_VARS`]).
     pub vars: Vec<(String, String)>,
     /// What the session's steps report beyond prices.
@@ -810,7 +812,7 @@ impl WasmBot {
     pub async fn start(
         path: &Path,
         rpc_url: &str,
-        clock: Clock<'_>,
+        clock: Clock,
         terms: Terms<'_>,
         desk: Desk,
         log: Box<dyn Write + Send>,
@@ -818,10 +820,10 @@ impl WasmBot {
         raw: Option<crate::raw::RawConfig>,
     ) -> crate::Result<Self> {
         let Clock {
+            seed,
             steps,
             slots_per_step,
             start_slot,
-            scenario,
             vars,
             reports,
         } = clock;
@@ -831,7 +833,6 @@ impl WasmBot {
                 (start.price_usd, start.price_usd)
             }
         };
-        let seed = mtx_core::turns::scenario_seed(scenario);
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
         let mut strategy = match WasmStrategy::load(path, rpc_url, log, seed, session_fuel).await {

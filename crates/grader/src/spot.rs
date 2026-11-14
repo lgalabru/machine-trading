@@ -1241,6 +1241,8 @@ mod tests {
             }),
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
         }
     }
 

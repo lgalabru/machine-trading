@@ -1351,6 +1351,19 @@ impl Account for PerpAccount {
         Ok(())
     }
 
+    async fn sample(&mut self, slot: u64) -> Result<()> {
+        let now = self.measure().await?;
+        record(&mut self.observed, &now)?;
+        let positions = self.positions(&now);
+        self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
+        let value_usd = self
+            .value_with_desk(grader_f64(now.value_usd), &positions, slot)
+            .await?;
+        self.peak_value_usd = self.peak_value_usd.max(value_usd);
+        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        Ok(())
+    }
+
     fn wallet(&self) -> Option<&crate::spot::Wallet> {
         None
     }
