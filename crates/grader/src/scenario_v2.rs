@@ -978,6 +978,15 @@ impl ScenarioV2 {
                     .into(),
             );
         }
+        // The keeper liquidates the scenario's market only: an account
+        // liquidatable through another market would be neither liquidated
+        // nor disqualified.
+        if perp.liquidator.is_some() {
+            return Err(
+                "venues.perp: the liquidator liquidates one market; a session on several markets can't have one yet"
+                    .into(),
+            );
+        }
         if perp.markets.len() < 2 {
             return Err(
                 "venues.perp.markets: name at least two markets; a session on one market uses the flat fields"
@@ -2292,6 +2301,11 @@ mod tests {
         s.assets.start_positions.insert("SPCX".into(), 5.0);
         s.mandate.universe[1].min_position = Some(1.0);
         assert!(err(s).contains("closes phoenix:perp:SPCX to flat"));
+        // The keeper liquidates one market: not on several yet.
+        let mut s = multi();
+        s.venues.perp.as_mut().unwrap().liquidator =
+            Some(serde_json::from_value(serde_json::json!({ "reaction_slots": [2, 12] })).unwrap());
+        assert!(err(s).contains("the liquidator liquidates one market"));
         // Raw sends audit one market: not on several yet.
         let mut s = multi();
         s.tx = Some(Tx {
