@@ -1700,6 +1700,7 @@ mod tests {
                 max_rate: 1,
                 mark: None,
             }),
+            liquidator: None,
         });
         assert!(
             funded

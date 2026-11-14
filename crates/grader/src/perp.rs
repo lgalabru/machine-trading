@@ -1709,7 +1709,7 @@ mod tests {
                 ..fill(CoreSide::Sell, 1.0)
             },
         ];
-        let closed = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &desk);
+        let closed = settle(&scenario, 0.0, 5.0, (100.0, 110.0), None, 0.0, &desk);
         assert_eq!(closed.order.unwrap().breach(), None);
         // A start long sold down: the drift on what it started with is
         // taken off.
