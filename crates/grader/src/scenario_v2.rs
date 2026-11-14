@@ -129,6 +129,11 @@ pub struct PerpVenue {
     /// the snapshot's own apply (hourly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub funding: Option<Funding>,
+    /// A competing keeper that liquidates the bot when its account crosses
+    /// maintenance margin (see [`crate::keeper`]). Without it, nothing
+    /// liquidates during the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::Liquidator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -293,6 +298,9 @@ impl Venues {
             return Err(format!(
                 "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
             ));
+        }
+        if let Some(liquidator) = self.perp.as_ref().and_then(|p| p.liquidator.as_ref()) {
+            liquidator.validate()?;
         }
         let Some(spot) = &self.spot else {
             return Ok(());
@@ -543,6 +551,22 @@ impl ScenarioV2 {
                 .map_err(|reason| format!("raw_sends: {reason}"))?;
             if self.venues.perp.is_none() {
                 return Err("raw_sends: only perp sessions take raw sends yet".into());
+            }
+            // A bot that may send Phoenix's own instructions could liquidate
+            // its accounts itself, and collect what the keeper is there to take.
+            if self
+                .venues
+                .perp
+                .as_ref()
+                .is_some_and(|perp| perp.liquidator.is_some())
+                && raw.programs().is_ok_and(|programs| {
+                    programs.contains(&mtx_kit::phoenix_rise::ix::PHOENIX_PROGRAM_ID)
+                })
+            {
+                return Err(
+                    "raw_sends: with a liquidator, raw sends can't allow Phoenix's program: its liquidation instructions are the keeper's"
+                        .into(),
+                );
             }
         }
         if let Some(layer) = self.tx.as_ref().and_then(|tx| tx.layer.as_ref()) {
@@ -968,7 +992,8 @@ impl ScenarioV2 {
             path,
             making,
             offhours,
-            funding: venues.perp.and_then(|p| p.funding),
+            funding: venues.perp.as_ref().and_then(|p| p.funding),
+            liquidator: venues.perp.and_then(|p| p.liquidator),
             tape,
             spot,
             faults,
@@ -1057,6 +1082,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                     Venues {
                         perp: Some(PerpVenue {
                             funding: v1.funding,
+                            liquidator: v1.liquidator,
                         }),
                         spot: None,
                         lending: None,
@@ -1347,6 +1373,7 @@ mod tests {
                 max_rate: 1,
                 mark: None,
             }),
+            liquidator: None,
         });
         assert!(s.venues.validate().unwrap_err().contains("funding"));
 
@@ -1527,6 +1554,70 @@ mod tests {
             .programs
             .clear();
         assert!(s.validate().unwrap_err().starts_with("raw_sends:"));
+    }
+
+    #[test]
+    fn a_liquidator_lives_on_the_perp_venue_and_round_trips_through_v1() {
+        use crate::keeper::Liquidator;
+        let mut s = shock();
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
+            reaction_slots: [2, 12],
+            check_every_steps: 1,
+        });
+        assert_eq!(s.validate(), Ok(()));
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(text.contains(r#""liquidator":{"reaction_slots":[2,12],"check_every_steps":1}"#));
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.liquidator, s.venues.perp.as_ref().unwrap().liquidator);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+
+        // Absent, nothing of it is written: scenarios without a keeper
+        // serialize as they did.
+        assert!(
+            !serde_json::to_string(&shock())
+                .unwrap()
+                .contains("liquidator")
+        );
+
+        let mut backwards = s.clone();
+        backwards.venues.perp.as_mut().unwrap().liquidator = Some(Liquidator {
+            reaction_slots: [12, 2],
+            check_every_steps: 1,
+        });
+        assert!(backwards.validate().unwrap_err().contains("reaction_slots"));
+        let mut spot_keeper = spot();
+        spot_keeper.venues.perp = s.venues.perp.clone();
+        assert!(spot_keeper.validate().is_err());
+    }
+
+    /// A bot that could send Phoenix's own instructions through raw sends
+    /// could liquidate its accounts itself: with a keeper they are refused.
+    #[test]
+    fn raw_sends_cant_allow_phoenix_beside_a_liquidator() {
+        use crate::keeper::Liquidator;
+        let phoenix = "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih";
+        let mut s = shock();
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec![phoenix.into(), "11111111111111111111111111111111".into()],
+            }),
+            layer: None,
+        });
+        s.validate().unwrap();
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
+            reaction_slots: [2, 12],
+            check_every_steps: 1,
+        });
+        assert!(s.validate().unwrap_err().contains("liquidator"));
+        s.tx.as_mut().unwrap().raw_sends.as_mut().unwrap().programs =
+            vec!["11111111111111111111111111111111".into()];
+        assert_eq!(s.validate(), Ok(()));
     }
 
     fn lending(check: &str) -> Scenario {

@@ -247,14 +247,15 @@ impl GradeReport {
                 }
                 // The risk desk's stop-out (the scenario's `stop_out`): its
                 // close is in the session's PnL, and a breach all the same,
-                // though the mandate's audit no longer disqualifies it.
+                // though the mandate's audit no longer disqualifies it. A
+                // keeper's liquidation is priced, not a breach.
                 let stop_out = session
                     .forced_closes
                     .iter()
-                    .map(|close| match close.reason {
-                        crate::risk::ForcedCloseReason::StopOut { rule } => rule,
-                    })
-                    .next();
+                    .find_map(|close| match &close.reason {
+                        crate::risk::ForcedCloseReason::StopOut { rule } => Some(*rule),
+                        crate::risk::ForcedCloseReason::Liquidation { .. } => None,
+                    });
                 Ok(scoring_v2::Session {
                     scenario: session.scenario.clone(),
                     pnl_usd: session.pnl_usd,
@@ -989,7 +990,10 @@ fn disqualification(session: &SessionReport) -> Option<String> {
         Some(breach.to_string())
     } else if let Some(breach) = session.order.as_ref().and_then(|order| order.breach()) {
         Some(breach)
-    } else if session.liquidatable {
+    } else if session.liquidatable && session.liquidator.is_none() {
+        // With a competing keeper (the scenario's `liquidator`) an account
+        // that ends liquidatable was liquidated as far as Phoenix allowed,
+        // and what is left is priced in its value.
         Some("ended the session liquidatable".to_string())
     } else {
         None
@@ -1381,6 +1385,7 @@ mod tests {
             lending: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
+            liquidator: None,
             oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
@@ -1451,6 +1456,7 @@ mod tests {
             raw_sends: None,
             tx_layer: None,
             stop_out: None,
+            liquidator: None,
         }
     }
 
@@ -1641,6 +1647,17 @@ mod tests {
         let mut ruined = session(100.0);
         ruined.liquidatable = true;
         assert_eq!(score(vec![(ruined, &s)]).reward, 0.0);
+
+        // With a competing keeper the liquidation is priced in the value,
+        // and an account left liquidatable is scored as it stands.
+        let mut kept = session(100.0);
+        kept.liquidatable = true;
+        kept.liquidator = Some(crate::keeper::LiquidatorReport {
+            delay_slots: 4,
+            liquidations: 1,
+            cost_usd: 60.0,
+        });
+        assert!(score(vec![(kept, &s)]).reward > 0.0);
 
         let mut big = session(900.0);
         big.peak_position = 119.0;
