@@ -13,7 +13,7 @@
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker, the grader's taker flow, the actor library |
 //! | `faults`       | execution faults on the bot's sends and reads                |
-//! | `tx`           | the transaction layer: raw sends                             |
+//! | `tx`           | the transaction layer: fees and blocks, raw sends            |
 //! | `mandate`      | what the bot may trade and its limits                        |
 //! | `order`        | a quantity the bot has to trade by the end                   |
 //! | `scoring`      | the reference, the bound, charges, net scoring, stop-outs    |
@@ -47,6 +47,7 @@ use crate::{
         Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
+    txlayer::TxLayer,
 };
 
 /// The schema version this module reads and writes.
@@ -134,6 +135,11 @@ pub struct PerpVenue {
     /// the snapshot's own apply (hourly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub funding: Option<Funding>,
+    /// A competing keeper that liquidates the bot when its account crosses
+    /// maintenance margin (see [`crate::keeper`]). Without it, nothing
+    /// liquidates during the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::Liquidator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -220,6 +226,12 @@ pub struct Competitor {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Tx {
+    /// Opt-in: sends land as a seeded block builder orders them, against
+    /// background demand for block space, with fees and Jito tips paid from
+    /// the bot's wallet (see [`crate::txlayer`]). Absent, sends land on
+    /// receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<TxLayer>,
     /// Opt-in: a strategy component may build transactions itself, for what
     /// its sheet can't say, and the grader signs them (see
     /// [`crate::raw`]). Absent, the session refuses every one.
@@ -239,6 +251,12 @@ pub struct Scoring {
     /// Written by `mtx calibrate --informed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub informed_pnl_usd: Option<f64>,
+    /// The reference's and the informed bot's drawdowns, for scoring v2's
+    /// near-breach charge. Written by `mtx calibrate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_max_drawdown_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_max_drawdown_usd: Option<f64>,
     /// A spot session's bound, which the reward divides the PnL by. Without
     /// it the reward is 0 and only `skill` against the reference is reported.
     /// A perp session's bound follows from its path.
@@ -299,6 +317,9 @@ impl Venues {
             return Err(format!(
                 "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
             ));
+        }
+        if let Some(liquidator) = self.perp.as_ref().and_then(|p| p.liquidator.as_ref()) {
+            liquidator.validate()?;
         }
         let Some(spot) = &self.spot else {
             return Ok(());
@@ -552,6 +573,45 @@ impl ScenarioV2 {
                 .map_err(|reason| format!("raw_sends: {reason}"))?;
             if self.venues.perp.is_none() {
                 return Err("raw_sends: only perp sessions take raw sends yet".into());
+            }
+            // A bot that may send Phoenix's own instructions could liquidate
+            // its accounts itself, and collect what the keeper is there to take.
+            if self
+                .venues
+                .perp
+                .as_ref()
+                .is_some_and(|perp| perp.liquidator.is_some())
+                && raw.programs().is_ok_and(|programs| {
+                    programs.contains(&mtx_kit::phoenix_rise::ix::PHOENIX_PROGRAM_ID)
+                })
+            {
+                return Err(
+                    "raw_sends: with a liquidator, raw sends can't allow Phoenix's program: its liquidation instructions are the keeper's"
+                        .into(),
+                );
+            }
+        }
+        if let Some(layer) = self.tx.as_ref().and_then(|tx| tx.layer.as_ref()) {
+            layer
+                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                .map_err(|reason| format!("tx_layer: {reason}"))?;
+            if self.venues.spot.is_some() || self.venues.lending.is_some() {
+                return Err("tx_layer: only perp sessions take the transaction layer yet".into());
+            }
+            // An actor hooked on the bot's sends acts as each arrives, as if
+            // it ran next: under the layer a send only enters the pool, and
+            // lands when a block takes it.
+            let hooked = self
+                .actors
+                .library
+                .as_ref()
+                .map(|library| library.send_hooked())
+                .unwrap_or_default();
+            if !hooked.is_empty() {
+                return Err(format!(
+                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; the two can't run together until pool-aware actors (PR 17b)",
+                    hooked.join(", ")
+                ));
             }
         }
         self.venues_are_one_kind()?;
@@ -1063,7 +1123,8 @@ impl ScenarioV2 {
             path,
             making,
             offhours,
-            funding: venues.perp.and_then(|p| p.funding),
+            funding: venues.perp.as_ref().and_then(|p| p.funding),
+            liquidator: venues.perp.and_then(|p| p.liquidator),
             tape,
             spot,
             faults,
@@ -1075,7 +1136,10 @@ impl ScenarioV2 {
             close_out: scoring.close_out,
             reference_pnl_usd: scoring.reference_pnl_usd,
             informed_pnl_usd: scoring.informed_pnl_usd,
+            reference_max_drawdown_usd: scoring.reference_max_drawdown_usd,
+            informed_max_drawdown_usd: scoring.informed_max_drawdown_usd,
             fair_path,
+            tx_layer: tx.as_ref().and_then(|tx| tx.layer.clone()),
             raw_sends: tx.and_then(|tx| tx.raw_sends),
             stop_out: scoring.stop_out,
             market_model: record,
@@ -1145,6 +1209,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                     Venues {
                         perp: Some(PerpVenue {
                             funding: v1.funding,
+                            liquidator: v1.liquidator,
                         }),
                         spot: None,
                         lending: None,
@@ -1200,14 +1265,17 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 takers_pricing: v1.takers_pricing,
             },
             faults: v1.faults.clone(),
-            tx: v1.raw_sends.clone().map(|raw_sends| Tx {
-                raw_sends: Some(raw_sends),
+            tx: (v1.raw_sends.is_some() || v1.tx_layer.is_some()).then(|| Tx {
+                layer: v1.tx_layer.clone(),
+                raw_sends: v1.raw_sends.clone(),
             }),
             mandate: v1.mandate.clone(),
             order: v1.order.clone(),
             scoring: Scoring {
                 reference_pnl_usd: v1.reference_pnl_usd,
                 informed_pnl_usd: v1.informed_pnl_usd,
+                reference_max_drawdown_usd: v1.reference_max_drawdown_usd,
+                informed_max_drawdown_usd: v1.informed_max_drawdown_usd,
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
@@ -1435,6 +1503,7 @@ mod tests {
                 max_rate: 1,
                 mark: None,
             }),
+            liquidator: None,
         });
         assert!(s.venues.validate().unwrap_err().contains("funding"));
 
@@ -1716,6 +1785,7 @@ mod tests {
     fn raw_sends_live_in_the_tx_section_and_round_trip_through_v1() {
         let mut s = shock();
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),
@@ -1732,6 +1802,70 @@ mod tests {
             .programs
             .clear();
         assert!(s.validate().unwrap_err().starts_with("raw_sends:"));
+    }
+
+    #[test]
+    fn a_liquidator_lives_on_the_perp_venue_and_round_trips_through_v1() {
+        use crate::keeper::Liquidator;
+        let mut s = shock();
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
+            reaction_slots: [2, 12],
+            check_every_steps: 1,
+        });
+        assert_eq!(s.validate(), Ok(()));
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(text.contains(r#""liquidator":{"reaction_slots":[2,12],"check_every_steps":1}"#));
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.liquidator, s.venues.perp.as_ref().unwrap().liquidator);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+
+        // Absent, nothing of it is written: scenarios without a keeper
+        // serialize as they did.
+        assert!(
+            !serde_json::to_string(&shock())
+                .unwrap()
+                .contains("liquidator")
+        );
+
+        let mut backwards = s.clone();
+        backwards.venues.perp.as_mut().unwrap().liquidator = Some(Liquidator {
+            reaction_slots: [12, 2],
+            check_every_steps: 1,
+        });
+        assert!(backwards.validate().unwrap_err().contains("reaction_slots"));
+        let mut spot_keeper = spot();
+        spot_keeper.venues.perp = s.venues.perp.clone();
+        assert!(spot_keeper.validate().is_err());
+    }
+
+    /// A bot that could send Phoenix's own instructions through raw sends
+    /// could liquidate its accounts itself: with a keeper they are refused.
+    #[test]
+    fn raw_sends_cant_allow_phoenix_beside_a_liquidator() {
+        use crate::keeper::Liquidator;
+        let phoenix = "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih";
+        let mut s = shock();
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec![phoenix.into(), "11111111111111111111111111111111".into()],
+            }),
+            layer: None,
+        });
+        s.validate().unwrap();
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
+            reaction_slots: [2, 12],
+            check_every_steps: 1,
+        });
+        assert!(s.validate().unwrap_err().contains("liquidator"));
+        s.tx.as_mut().unwrap().raw_sends.as_mut().unwrap().programs =
+            vec!["11111111111111111111111111111111".into()];
+        assert_eq!(s.validate(), Ok(()));
     }
 
     fn lending(check: &str) -> Scenario {
@@ -1783,6 +1917,7 @@ mod tests {
 
         let mut s = v2(&lending("liquidation"));
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),
@@ -1792,6 +1927,55 @@ mod tests {
         let mut s = shock();
         s.market_model.warps = v2(&lending("interest")).market_model.warps;
         refused(&s, "only lending sessions jump the clock");
+    }
+
+    #[test]
+    fn the_transaction_layer_lives_in_the_tx_section_and_round_trips_through_v1() {
+        let mut s = shock();
+        s.tx = Some(Tx {
+            layer: Some(crate::txlayer::tests::layer()),
+            raw_sends: None,
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.tx_layer, s.tx.as_ref().unwrap().layer);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+        let mut on_spot = spot();
+        on_spot.tx = s.tx.clone();
+        assert!(on_spot.validate().unwrap_err().starts_with("tx_layer:"));
+        let mut on_lending = v2(&lending("interest"));
+        on_lending.tx = s.tx.clone();
+        assert_eq!(
+            on_lending.validate().unwrap_err(),
+            "tx_layer: only perp sessions take the transaction layer yet"
+        );
+        s.tx.as_mut().unwrap().layer.as_mut().unwrap().validators = 0;
+        assert!(s.validate().unwrap_err().starts_with("tx_layer:"));
+    }
+
+    #[test]
+    fn the_transaction_layer_refuses_actors_hooked_on_the_bots_sends() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        let mut s = shock();
+        s.tx = Some(Tx {
+            layer: Some(crate::txlayer::tests::layer()),
+            raw_sends: None,
+        });
+        library.front_runners = vec![crate::actors::library::FrontRunner::default()];
+        s.actors.library = Some(library.clone());
+        let mut v1 = s.clone().into_scenario().unwrap();
+        library.front_runners[0].on_send = true;
+        s.actors.library = Some(library);
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.starts_with("tx_layer: actors.front_runners[0] acts on the bot's sends")
+                && refused.contains("PR 17b"),
+            "{refused}"
+        );
+        // A v1 scenario, the same.
+        v1.actors.as_mut().unwrap().front_runners[0].on_send = true;
+        assert_eq!(v1.validate().unwrap_err(), refused);
     }
 
     #[test]

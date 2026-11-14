@@ -45,6 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use solana_keypair::Keypair;
 use solana_rpc_client::rpc_client::RpcClient;
+use solana_signer::Signer;
 use surfpool_sdk::SimnetCommand;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -125,6 +126,18 @@ pub struct SessionOptions<'a> {
     pub keys: crate::keys::SessionKeyring<'a>,
     /// Watches a component's session step by step (`mtx bot run --debug`).
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    /// Scoring v2's session rules, if the grade runs under them.
+    pub rules: Rules,
+}
+
+/// Scoring v2's session rules (`mtx grade --v2-sessions`). Off by
+/// default, and a session then runs as it always has. (A breach's stop-out
+/// is the scenario's own risk desk, `stop_out`: see [`crate::risk`].)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Rules {
+    /// The account is valued at every slot for its drawdown, not only at
+    /// every step.
+    pub every_slot: bool,
 }
 
 /// A session's outcome, as the grade reports it. It reads back from the
@@ -196,6 +209,15 @@ pub struct SessionReport {
     /// A spot session scored net of the starting holding's drift.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
+    /// A perp session that starts holding a position: what it started
+    /// with in the scenario's market, in base units.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub start_position: f64,
+    /// Whether that start position accrues the funding the scenario sets
+    /// (`venues.perp.funding`): the account's value counts it, and an
+    /// order's drift, which is price only, doesn't take it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_funded: bool,
     /// A perp session with close-outs: what each residual cost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub close_outs: Vec<crate::orders::CloseOutReport>,
@@ -206,6 +228,10 @@ pub struct SessionReport {
     pub perp_fills: Vec<crate::perp::PerpFillRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perp_open_orders: Vec<(InstrumentRef, mtx_core::Side)>,
+    /// The transaction layer: each slot's block in order, what became of
+    /// each of the bot's sends, and what it paid.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::report::TxLayerReport>,
     /// A lending session: the bot's supply and debt, its health, and what
     /// the borrowers and liquidators did.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -214,9 +240,15 @@ pub struct SessionReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     /// Closes the grader made on the bot's behalf: a stop-out, where the
-    /// scenario prices a breach (see [`crate::risk`]).
+    /// scenario prices a breach, or the keeper's liquidations, where it has
+    /// one (see [`crate::risk`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forced_closes: Vec<crate::risk::ForcedClose>,
+    /// A scenario with a competing keeper: what it drew and did (see
+    /// [`crate::keeper`]). Also what lets an account end the session
+    /// liquidatable without disqualifying it: the keeper was there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::LiquidatorReport>,
     /// Each anchored oracle feed's start, against its account's own price.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
@@ -341,8 +373,8 @@ pub struct TurnReport {
     /// didn't load, or it trapped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped: Option<String>,
-    /// A component's lines that carried transaction options, which the
-    /// session accepted and didn't apply (no session does yet).
+    /// A component's lines that carried transaction options: applied under
+    /// a transaction layer, accepted and not applied elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_options: Option<u64>,
 }
@@ -404,13 +436,16 @@ impl SessionReport {
     }
 }
 
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
+}
+
 /// Run one session. An error before the bot starts comes back as
 /// [`Error::Setup`]: the bot hasn't seen anything of the session yet, so
 /// the grader may run it again from scratch.
 pub async fn run(opts: SessionOptions<'_>) -> Result<SessionReport> {
     let mut bot_started = false;
-    let session = run_session(opts, &mut bot_started).await;
-    match session {
+    match run_session(opts, &mut bot_started).await {
         // Already wrapped: a crank's grader failure, after the bot started.
         Err(error @ Error::Setup(_)) => Err(error),
         Err(error) if !bot_started => Err(Error::Setup(Box::new(error))),
@@ -504,13 +539,15 @@ pub(crate) trait Account: Send + Sync {
     fn wallet(&self) -> Option<&crate::spot::Wallet>;
 
     /// The markets a component trades through the grader, its seats signed
-    /// with `bot` through `host_url` (the bot's guard, on its behalf).
+    /// with `bot` through `host_url` (the bot's guard, on its behalf), and
+    /// under the session's transaction layer `tx`, if it has one.
     async fn desk(
         &self,
         host_url: &str,
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<crate::wasm::Desk>;
 
     /// Close the account for the grader's risk desk, `at` slots in: cancel
@@ -535,6 +572,12 @@ pub(crate) trait Account: Send + Sync {
     /// One instruction of a bot's transaction, as the report shows it.
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
 
+    /// Between a step's slots, at `slot`: value the account for its
+    /// drawdown (see [`Rules::every_slot`]). Nothing by default.
+    async fn sample(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
 }
@@ -556,6 +599,7 @@ pub(crate) struct Done {
     pub actors: ActorsReport,
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
     pub forced_closes: Vec<crate::risk::ForcedClose>,
+    pub liquidator: Option<crate::keeper::LiquidatorReport>,
 }
 
 /// The one session loop, for every kind of session: perp, spot, and
@@ -617,6 +661,30 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     let start_slot = base_slot;
     guard.set_faults(scenario.faults.as_ref(), base_slot, SLOTS_PER_STEP);
+    // The transaction layer, if the scenario has one: the bot's sends go to
+    // its pool, and each slot lands what its builder picks.
+    let tx = match &scenario.tx_layer {
+        Some(layer) => {
+            let congestion = scenario
+                .faults
+                .as_ref()
+                .and_then(|faults| crate::faults::FaultPlan::new(faults).congestion());
+            let engine = crate::txlayer::TxEngine::start(
+                layer,
+                internal.url(),
+                base_slot,
+                end_slot,
+                SLOTS_PER_STEP,
+                congestion,
+                bot_key.insecure_clone(),
+            )
+            .await?;
+            guard.set_tx_layer(engine.clone());
+            let wallet = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+            Some((engine, layer.clone(), wallet))
+        }
+        None => None,
+    };
     let hooks = cast.send_hooks();
     if !hooks.is_empty() {
         guard.set_send_hook(std::sync::Arc::new(crate::actors::Hooks(hooks)));
@@ -656,17 +724,23 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             None => None,
         };
         let desk = account
-            .desk(&guard.host_url(), &bot_key, &env, &mandate)
+            .desk(
+                &guard.host_url(),
+                &bot_key,
+                &env,
+                &mandate,
+                tx.as_ref().map(|(engine, ..)| engine.clone()),
+            )
             .await?;
         wasm_bot = Some(
             crate::wasm::WasmBot::start(
                 &component,
                 &env.rpc_url,
                 crate::wasm::Clock {
+                    seed: opts.keys.strategy_seed(&scenario.name),
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    scenario: &scenario.name,
                     vars: told
                         .iter()
                         .cloned()
@@ -735,7 +809,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot,
             end_slot,
             turn_wall_ms: walls.announced().as_millis() as u64,
-            seed: Some(turns::scenario_seed(&scenario.name)),
+            seed: Some(opts.keys.strategy_seed(&scenario.name)),
             reports,
         };
         legacy = !(send(&mut writer, &Message::Hello(hello)).await
@@ -780,8 +854,23 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
         while slot < target {
+            // Under the transaction layer, the slot's block: what its
+            // builder picks, committed in order before the slot closes.
+            // Once the risk desk has the account, it lands nothing.
+            if let Some((engine, ..)) = tx.as_ref().filter(|_| closing.is_none()) {
+                let picks = engine.plan(slot + 1);
+                for signature in engine.commit(slot + 1, picks).await {
+                    guard.landed(&signature, k);
+                }
+            }
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
+            if let Some((engine, ..)) = &tx {
+                engine.produced(slot).await?;
+            }
+            if opts.rules.every_slot && slot < target {
+                account.sample(slot).await?;
+            }
         }
         let at = slot - base_slot;
         // The bot's held sends land in this step's blocks, unless the risk
@@ -801,7 +890,17 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             )
             .await?;
         cast.after_blocks(account.moment(at)).await;
-        let measured = account.step(k, slot, at).await?;
+        let mut measured = account.step(k, slot, at).await?;
+        // Under the transaction layer, what the wallet paid in SOL counts
+        // in the step's value, so the risk desk measures it too.
+        if let Some((engine, layer, start)) = &tx
+            && let Some(sol_usd) = layer.sol_usd.filter(|_| layer.fees_in_pnl)
+        {
+            let paid = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?
+                .value_change_usd(start, engine.route_fees(), sol_usd);
+            measured.value_usd += paid;
+            measured.pnl_usd += paid;
+        }
         peak_usd = peak_usd.max(measured.value_usd);
         if closing.is_none()
             && scenario
@@ -829,6 +928,15 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             if dropped > 0 {
                 info!(dropped, "the risk desk dropped the bot's held sends");
             }
+            // The same for what the transaction layer still pools for the
+            // bot (retries, rebroadcasts, bundles): it fails unpaid, and the
+            // layer takes nothing more.
+            if let Some((engine, ..)) = &tx {
+                let dropped = engine.stop_out();
+                if dropped > 0 {
+                    info!(dropped, "the risk desk dropped the bot's pooled sends");
+                }
+            }
             closing = Some(crate::risk::ForcedClose {
                 reason: crate::risk::ForcedCloseReason::StopOut {
                     rule: crate::scenario::StopRule::Drawdown,
@@ -846,9 +954,21 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         steps_seen.push(measured);
         if let Some(close) = closing.as_mut() {
             let slice = scenario.stop_out.as_ref().and_then(|stop| stop.slice_base);
+            // The close goes through the grader's own endpoint, past the
+            // layer, and lands at once; its fees leave the bot's wallet, so
+            // the layer's ledger books them.
+            let before = match &tx {
+                Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
+                None => None,
+            };
             let done = account
                 .force_close(&bot_key, internal.url(), slice, at)
                 .await?;
+            if let (Some((engine, ..)), Some(before)) = (&tx, before) {
+                let after = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+                let (change, closable) = after.change_since(&before);
+                engine.forced_close_paid((-(change + closable)).max(0) as u64);
+            }
             close.orders.extend(done.orders);
             if crate::risk::is_flat(done.position) {
                 close.flat = true;
@@ -875,6 +995,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
 
         // The bot's turn.
         guard.set_step(k);
+        if let Some((engine, ..)) = &tx {
+            engine.set_step(k);
+        }
         guard.set_turn(true);
         let mut step = Step::new(k, slot, k + 1 == steps);
         if let Some(bot) = wasm_bot.as_mut() {
@@ -957,9 +1080,22 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     {
         turns.stopped = Some(format!("stopped out at step {}", close.step));
     }
-    // The bot's last turn landed in the session's last slot, which no step
-    // moved past: a session that reads fills steps one slot more, so they
-    // are listed and audited like every other turn's.
+    // The keeper's last turn, with the bot stopped and before the account
+    // is measured a last time.
+    cranks
+        .settle(
+            &rpc,
+            &crate::crank::CrankStep {
+                k: steps.saturating_sub(1),
+                slot,
+                at: slot - base_slot,
+                last: true,
+            },
+        )
+        .await?;
+    // The bot's last turn, and the keeper's, landed in the session's last
+    // slot, which no step moved past: a session that reads fills steps one
+    // slot more, so they are listed and audited like every other turn's.
     if account.reads_fills() {
         crate::chain::next_slot(surfnet, &rpc).await?;
     }
@@ -970,7 +1106,20 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         account.decode(ix, keys)
     });
     let actors = cast.report().await;
-    let report = account
+    let cranked = cranks.into_report();
+    let mut forced_closes: Vec<crate::risk::ForcedClose> = cranked.closes;
+    // A liquidation's running peak is the account's at the step it fired.
+    let start_value_usd = account.start_value_usd();
+    for close in &mut forced_closes {
+        close.peak_usd = steps_seen
+            .iter()
+            .take(close.step as usize)
+            .map(|s| s.value_usd)
+            .fold(start_value_usd, f64::max)
+            .max(close.value_before_usd);
+    }
+    forced_closes.extend(closing);
+    let mut report = account
         .finish(Done {
             began,
             start_slot,
@@ -985,15 +1134,29 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             transactions,
             calls,
             actors,
-            crank_refusals: cranks.into_refusals(),
-            forced_closes: closing.into_iter().collect(),
+            crank_refusals: cranked.refusals,
+            forced_closes,
+            liquidator: cranked.liquidator,
         })
         .await?;
-    let mut report = report;
+    if let Some((engine, layer, start)) = &tx {
+        let end = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+        report.tx_layer = Some(engine.report(Some(end.change_since(start))));
+        if let Some(sol_usd) = layer.sol_usd.filter(|_| layer.fees_in_pnl) {
+            fees_in_pnl(
+                &mut report,
+                end.value_change_usd(start, engine.route_fees(), sol_usd),
+            );
+        }
+    }
     let (end_value_usd, end_position) = (report.end_value_usd, report.end_position);
+    // A stop-out's close settles at the session's end; a liquidation's
+    // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {
-        close.value_after_usd = end_value_usd;
-        close.flat = crate::risk::is_flat(end_position);
+        if matches!(close.reason, crate::risk::ForcedCloseReason::StopOut { .. }) {
+            close.value_after_usd = end_value_usd;
+            close.flat = crate::risk::is_flat(end_position);
+        }
     }
     info!(
         scenario = report.scenario,
@@ -1006,6 +1169,27 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         observer.keep(Box::new(world));
     }
     Ok(report)
+}
+
+/// Count what the bot's wallet paid in SOL, `paid_usd` at the end, in the
+/// session's value: its end value and PnL, and its drawdown over the steps,
+/// whose values already count it.
+fn fees_in_pnl(report: &mut SessionReport, paid_usd: f64) {
+    report.end_value_usd += paid_usd;
+    report.pnl_usd += paid_usd;
+    let mut peak = report.start_value_usd;
+    let mut drawdown: f64 = 0.0;
+    for value in report
+        .timeline
+        .steps
+        .iter()
+        .map(|s| s.value_usd)
+        .chain(std::iter::once(report.end_value_usd))
+    {
+        peak = peak.max(value);
+        drawdown = drawdown.max(peak - value);
+    }
+    report.max_drawdown_usd = report.max_drawdown_usd.max(drawdown);
 }
 
 /// One instruction of a bot's transaction.
