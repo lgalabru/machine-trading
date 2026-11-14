@@ -644,31 +644,7 @@ impl Calibration {
                 c.alpha, c.beta
             ));
         }
-        let r = &fv.regimes;
-        let n = r.names.len();
-        if n == 0
-            || r.vol_mult.len() != n
-            || r.log_sd_within.len() != n
-            || r.share.len() != n
-            || r.transition_per_hour.len() != n
-            || r.transition_per_hour.iter().any(|row| row.len() != n)
-        {
-            return Err("fair_value.regimes: every field needs one entry per state".into());
-        }
-        for i in 0..n {
-            positive("fair_value.regimes.vol_mult", r.vol_mult[i])?;
-            non_negative("fair_value.regimes.log_sd_within", r.log_sd_within[i])?;
-            non_negative("fair_value.regimes.share", r.share[i])?;
-            let row: f64 = r.transition_per_hour[i].iter().sum();
-            if (row - 1.0).abs() > 1e-3 || r.transition_per_hour[i].iter().any(|p| *p < 0.0) {
-                return Err(format!(
-                    "fair_value.regimes.transition_per_hour row {i} must be probabilities summing to 1"
-                ));
-            }
-        }
-        if (r.share.iter().sum::<f64>() - 1.0).abs() > 1e-3 {
-            return Err("fair_value.regimes.share must sum to 1".into());
-        }
+        validate_regimes(&fv.regimes, "fair_value.regimes")?;
         if let Some(mark) = &fv.mark {
             positive("fair_value.mark.half_life_seconds", mark.half_life_seconds)?;
             positive("fair_value.mark.update_seconds", mark.update_seconds)?;
@@ -854,6 +830,37 @@ fn non_negative(name: &str, value: f64) -> std::result::Result<(), String> {
     } else {
         Err(format!("{name} must be non-negative, not {value}"))
     }
+}
+
+/// A regime chain's states: one entry per state in every field, positive
+/// multipliers, transition rows and shares that are probabilities summing
+/// to 1. `at` names it in errors.
+pub(crate) fn validate_regimes(r: &Regimes, at: &str) -> std::result::Result<(), String> {
+    let n = r.names.len();
+    if n == 0
+        || r.vol_mult.len() != n
+        || r.log_sd_within.len() != n
+        || r.share.len() != n
+        || r.transition_per_hour.len() != n
+        || r.transition_per_hour.iter().any(|row| row.len() != n)
+    {
+        return Err(format!("{at}: every field needs one entry per state"));
+    }
+    for i in 0..n {
+        positive(&format!("{at}.vol_mult"), r.vol_mult[i])?;
+        non_negative(&format!("{at}.log_sd_within"), r.log_sd_within[i])?;
+        non_negative(&format!("{at}.share"), r.share[i])?;
+        let row: f64 = r.transition_per_hour[i].iter().sum();
+        if (row - 1.0).abs() > 1e-3 || r.transition_per_hour[i].iter().any(|p| *p < 0.0) {
+            return Err(format!(
+                "{at}.transition_per_hour row {i} must be probabilities summing to 1"
+            ));
+        }
+    }
+    if (r.share.iter().sum::<f64>() - 1.0).abs() > 1e-3 {
+        return Err(format!("{at}.share must sum to 1"));
+    }
+    Ok(())
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
