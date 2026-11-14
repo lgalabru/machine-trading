@@ -28,7 +28,11 @@
 //! as several rungs (`MTX_RUNG`): `reference` (the default); `g0`, the first
 //! generation's reference (the structural model alone, the gap only);
 //! `told`, whose forecaster also knows which accounts are the informed
-//! trader and the worker (`MTX_REGIME`); `path-oracle`, told the perp's
+//! trader and the worker (`MTX_REGIME`), and where SPCX opens;
+//! `informed`, the task's informed bot (scoring v2's 1): the told rung
+//! knowing only what a perfect reader could, who is who, the half-life and
+//! whether there is an informed trader, and reading where SPCX opens from
+//! that trader's orders as they land; `path-oracle`, told the perp's
 //! whole path, which plans its positions by dynamic programming after costs
 //! (`oracle.rs`); `follow`, the cap with the perp's move from the last
 //! external price; `fade`, the cap against it; `basis`, which takes the
@@ -88,6 +92,7 @@ enum Rung {
     Reference,
     G0,
     Told,
+    Informed,
     PathOracle,
     Follow,
     Fade,
@@ -111,6 +116,8 @@ struct Setup {
     worker_slots: HashSet<u64>,
     half_life: f64,
     open: f64,
+    /// Whether the session has an informed trader (the informed rung).
+    has_informed: bool,
     signed: Vec<usize>,
     forest: Forest,
 }
@@ -155,6 +162,7 @@ impl Strategy for Weekend {
         let rung = match session.var("MTX_RUNG") {
             Some("g0") => Rung::G0,
             Some("told") => Rung::Told,
+            Some("informed") => Rung::Informed,
             Some("path-oracle") => Rung::PathOracle,
             Some("follow") => Rung::Follow,
             Some("fade") => Rung::Fade,
@@ -181,7 +189,15 @@ impl Strategy for Weekend {
             .as_ref()
             .and_then(|r| r["open_pct"].as_f64())
             .unwrap_or(0.0);
-        let signed: Vec<usize> = if rung == Rung::Told {
+        let told = matches!(rung, Rung::Told | Rung::Informed);
+        // The informed bot knows whether the session has an informed
+        // trader, not where it takes SPCX: it reads that from the trader's
+        // own orders (see `Tape::informed_open`).
+        let has_informed = regime
+            .as_ref()
+            .and_then(|r| r["informed"].as_bool())
+            .unwrap_or(false);
+        let signed: Vec<usize> = if told {
             features::SIGNED
                 .iter()
                 .chain(features::SIGNED_TOLD_EXTRA.iter())
@@ -190,12 +206,8 @@ impl Strategy for Weekend {
         } else {
             features::SIGNED.to_vec()
         };
-        let forest = Forest::parse(if rung == Rung::Told {
-            FORECAST_TOLD
-        } else {
-            FORECAST
-        })
-        .ok_or("the forecaster")?;
+        let forest =
+            Forest::parse(if told { FORECAST_TOLD } else { FORECAST }).ok_or("the forecaster")?;
         let venue = PhoenixVenue::from_json(&session.venue)?;
         let market = venue.market(&session.symbol)?.clone();
         self.setup = Some(Setup {
@@ -212,6 +224,7 @@ impl Strategy for Weekend {
             worker_slots,
             half_life,
             open,
+            has_informed,
             signed,
             forest,
         });
@@ -308,9 +321,22 @@ impl Strategy for Weekend {
             self.hold
         } else {
             match rung {
-                Rung::Reference | Rung::Told => {
+                Rung::Reference | Rung::Told | Rung::Informed => {
                     if at >= 16 && at.is_multiple_of(8) {
-                        let x = if rung == Rung::Told {
+                        // Where SPCX opens: told outright, or as the
+                        // informed bot reads it from the informed trader's
+                        // orders.
+                        let open = if rung == Rung::Informed {
+                            self.tape.informed_open(
+                                &params,
+                                at,
+                                self.informed_id,
+                                setup.has_informed,
+                            )
+                        } else {
+                            setup.open
+                        };
+                        let x = if rung != Rung::Reference {
                             self.tape.features_told(
                                 &params,
                                 at,
@@ -319,7 +345,7 @@ impl Strategy for Weekend {
                                     informed: self.informed_id,
                                     worker: self.worker_id,
                                     half_life: setup.half_life,
-                                    open: setup.open,
+                                    open,
                                 },
                             )
                         } else {
@@ -344,12 +370,11 @@ impl Strategy for Weekend {
                             .abs();
                             target = target.clamp(-room, room);
                         }
-                        // Told where SPCX opens, it holds the gap into the
-                        // reopen outright.
-                        let gap_window = rung == Rung::Told && at + 64 >= reopen;
+                        // Told where SPCX opens, or reading it, it holds the
+                        // gap into the reopen outright.
+                        let gap_window = rung != Rung::Reference && at + 64 >= reopen;
                         if gap_window {
-                            target =
-                                cap * ((setup.open - level) / FORECAST_SCALE_PCT).clamp(-1.0, 1.0);
+                            target = cap * ((open - level) / FORECAST_SCALE_PCT).clamp(-1.0, 1.0);
                         }
                         if gap_window || (target - self.hold).abs() >= DEAD_BAND {
                             self.hold = target;

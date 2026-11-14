@@ -38,6 +38,10 @@ pub struct Told {
     pub open: f64,
 }
 
+/// The longest the informed trader waits between its orders, in slots: one
+/// and a half times the family's slowest pace. Quiet for longer, it is done.
+const INFORMED_PAUSE_SLOTS: u64 = 32;
+
 /// The told rung's extra features, and which of them flip sign.
 pub const COUNT_TOLD: usize = 49;
 pub const SIGNED_TOLD_EXTRA: [usize; 6] = [41, 42, 43, 46, 47, 48];
@@ -284,6 +288,45 @@ impl Tape {
 
     /// The price change across the turn `t` landed in, split across that
     /// turn's orders by signed size.
+    /// Where SPCX opens, in percent, as the informed bot reads it: knowing
+    /// whether the session has an informed trader and, once it has traded,
+    /// its account. Its impact is permanent and it trades toward where SPCX
+    /// opens until the perp gets there, so once it has stopped, the open is
+    /// where its orders took the perp; while it trades, the open is beyond,
+    /// at the mean of the weekend's (log-uniform) moves past that level; with
+    /// no informed trader, or before it trades, either way alike: no move.
+    pub fn informed_open(
+        &self,
+        params: &Params,
+        now: u64,
+        informed: Option<u16>,
+        has_informed: bool,
+    ) -> f64 {
+        let Some(account) = informed.filter(|_| has_informed) else {
+            return 0.0;
+        };
+        let orders: Vec<&Trade> = self
+            .trades
+            .iter()
+            .filter(|t| t.account == account)
+            .collect();
+        let Some(last) = orders.iter().map(|t| t.seen).max() else {
+            return 0.0;
+        };
+        let permanent: f64 = orders.iter().map(|t| self.jump_share(t)).sum();
+        if now.saturating_sub(last) >= INFORMED_PAUSE_SLOTS {
+            return permanent;
+        }
+        let side = orders.last().map_or(permanent.signum(), |t| t.side);
+        let p = permanent.abs().max(params.weekend_lo);
+        let beyond = if p < params.weekend_hi - 1e-6 {
+            (params.weekend_hi - p) / (params.weekend_hi / p).ln()
+        } else {
+            params.weekend_hi
+        };
+        beyond.copysign(side)
+    }
+
     fn jump_share(&self, t: &Trade) -> f64 {
         let Some(k) = self.obs.iter().position(|o| o.0 == t.seen) else {
             return 0.0;

@@ -26,12 +26,16 @@
 //! `MTX_REGIME` and corrects the reference's own target with it: never
 //! fade an informed premium before the index catches up, follow it with the
 //! cap once the index has started to; fade a crowded one with the cap while
-//! it lasts, never follow it.
+//! it lasts, never follow it. The task's informed bot, scoring v2's 1
+//! (`MTX_RUNG=informed`), is the told rung knowing only what a perfect
+//! reader could: each episode's kind from its start and the session's lag,
+//! not when the episode follows, closes or ends.
 
 //!
 //! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
 //! solution), and a process (`src/main.rs`), the anchor hidden sets are
-//! scored against, which the ladder also runs as its `told` rung.
+//! scored against, which the ladder also runs as its `told` and `informed`
+//! rungs.
 
 use mtx_kit::{
     log,
@@ -236,7 +240,7 @@ impl Strategy for Carry {
         } else {
             0.0
         };
-        if let Some(told) = &self.told {
+        if let Some(told) = &mut self.told {
             target = told.target(
                 step.slot as f64 - self.start_slot as f64,
                 target,
@@ -273,19 +277,52 @@ impl Strategy for Carry {
 }
 
 /// The ladder's told rung: each episode's kind and timing, in slots from the
-/// session's start, from `MTX_REGIME`, for the process only.
+/// session's start, from `MTX_REGIME`, for the process only. As the task's
+/// informed bot (`MTX_RUNG=informed`), only what a perfect reader could
+/// know: each episode's kind once it has started, and how long the
+/// session's index lags the book; when the premium opens and closes it
+/// reads from the market, as the reference does.
 struct Told {
-    /// Informed, start, follow (the slot the index starts to follow), close,
-    /// end, and the premium's side.
-    episodes: Vec<(bool, f64, f64, f64, f64, f64)>,
+    episodes: Vec<Episode>,
+    informed_only: bool,
+    /// How many slots the session's index lags the book in an informed
+    /// episode, before each episode's own jitter.
+    lag: f64,
 }
+
+struct Episode {
+    informed: bool,
+    start: f64,
+    /// When the index starts to follow, when the premium starts to close,
+    /// and when it's closed: the told rung's only.
+    follow: f64,
+    close: f64,
+    end: f64,
+    /// The premium's side.
+    side: f64,
+    /// The informed bot's read of the market: the premium has opened, and
+    /// has since closed.
+    opened: bool,
+    closed: bool,
+}
+
+/// A premium this wide, in the episode's direction, has opened; this narrow,
+/// once it has opened, has closed (shares of the index).
+const OPENED: f64 = 0.001;
+const CLOSED: f64 = 0.0002;
+/// The shortest an episode's lag gets, as a share of the session's.
+const LAG_JITTER_LOW: f64 = 0.7;
 
 impl Told {
     fn from_session(session: &Session) -> BotResult<Option<Self>> {
-        if session.var("MTX_RUNG") != Some("told") {
-            return Ok(None);
-        }
-        let regime = session.var("MTX_REGIME").ok_or("told needs MTX_REGIME")?;
+        let informed_only = match session.var("MTX_RUNG") {
+            Some("told") => false,
+            Some("informed") => true,
+            _ => return Ok(None),
+        };
+        let regime = session
+            .var("MTX_REGIME")
+            .ok_or("told and informed need MTX_REGIME")?;
         let shape: serde_json::Value = serde_json::from_str(regime)?;
         let episodes = shape["episodes"]
             .as_array()
@@ -293,17 +330,23 @@ impl Told {
             .iter()
             .map(|e| {
                 let n = |k: &str| e[k].as_f64();
-                (
-                    e["kind"] == "informed",
-                    n("start").unwrap_or(0.0),
-                    n("follow").unwrap_or(f64::MAX),
-                    n("close").unwrap_or(0.0),
-                    n("end").unwrap_or(0.0),
-                    n("premium_pct").unwrap_or(0.0).signum(),
-                )
+                Episode {
+                    informed: e["kind"] == "informed",
+                    start: n("start").unwrap_or(0.0),
+                    follow: n("follow").unwrap_or(f64::MAX),
+                    close: n("close").unwrap_or(0.0),
+                    end: n("end").unwrap_or(0.0),
+                    side: n("premium_pct").unwrap_or(0.0).signum(),
+                    opened: false,
+                    closed: false,
+                }
             })
             .collect();
-        Ok(Some(Self { episodes }))
+        Ok(Some(Self {
+            episodes,
+            informed_only,
+            lag: shape["lag_slots"].as_f64().unwrap_or(0.0),
+        }))
     }
 
     /// The reference's own target, corrected by what it's told. An informed
@@ -311,20 +354,49 @@ impl Told {
     /// with the cap once the index has started to follow. A crowded one:
     /// fade it with the cap while it's more than 8 bp, never follow it.
     /// Elsewhere, the reference's target.
-    fn target(&self, at: f64, target: f64, cap: f64, gap: f64) -> f64 {
-        for &(informed, start, follow, close, end, side) in &self.episodes {
-            if !(start..end).contains(&at) {
+    fn target(&mut self, at: f64, target: f64, cap: f64, gap: f64) -> f64 {
+        if self.informed_only {
+            return self.informed_target(at, target, cap, gap);
+        }
+        for e in &self.episodes {
+            if !(e.start..e.end).contains(&at) {
                 continue;
             }
-            return match informed {
-                true if at >= follow && at < close => cap * side,
-                true if at < close && target * side < 0.0 => 0.0,
-                false if gap * side > 0.0008 => -cap * side,
-                false if target * side > 0.0 => 0.0,
+            return match e.informed {
+                true if at >= e.follow && at < e.close => cap * e.side,
+                true if at < e.close && target * e.side < 0.0 => 0.0,
+                false if gap * e.side > 0.0008 => -cap * e.side,
+                false if target * e.side > 0.0 => 0.0,
                 _ => target,
             };
         }
         target
+    }
+
+    /// [`Self::target`] knowing only each episode's kind, from its start:
+    /// the latest episode to have started is live until the market shows its
+    /// premium opened and closed again. An informed one is followed with the
+    /// cap from the earliest its index can start to follow; a crowded one is
+    /// faded as the told rung fades it.
+    fn informed_target(&mut self, at: f64, target: f64, cap: f64, gap: f64) -> f64 {
+        let Some(e) = self.episodes.iter_mut().rev().find(|e| e.start <= at) else {
+            return target;
+        };
+        if gap * e.side >= OPENED {
+            e.opened = true;
+        } else if e.opened && gap * e.side < CLOSED {
+            e.closed = true;
+        }
+        if e.closed {
+            return target;
+        }
+        match e.informed {
+            true if at >= e.start + LAG_JITTER_LOW * self.lag => cap * e.side,
+            true if target * e.side < 0.0 => 0.0,
+            false if gap * e.side > 0.0008 => -cap * e.side,
+            false if target * e.side > 0.0 => 0.0,
+            _ => target,
+        }
     }
 }
 
