@@ -130,6 +130,14 @@ pub struct Scenario {
     /// by `mtx calibrate --informed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub informed_pnl_usd: Option<f64>,
+    /// The deepest the reference's and the informed bot's accounts fell
+    /// below their running peaks on this scenario: the anchor of scoring
+    /// v2's near-breach charge. Written by `mtx calibrate` (`--informed`)
+    /// with the PnL; a grade that runs the reference measures its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_max_drawdown_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_max_drawdown_usd: Option<f64>,
     /// Opt-in: the scenario's fair value, as waypoints in the same terms as
     /// [`Scenario::path`]. The session records it at every step, and the
     /// grade reports each session's PnL split by
@@ -997,6 +1005,8 @@ impl ShockFamily {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
                     slot: shock_slot,
@@ -1724,6 +1734,8 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -1799,6 +1811,8 @@ mod tests {
             net: None,
             reference_pnl_usd: None,
             informed_pnl_usd: None,
+            reference_max_drawdown_usd: None,
+            informed_max_drawdown_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
