@@ -1547,6 +1547,21 @@ mod tests {
     }
 
     #[test]
+    fn a_close_out_is_opt_in_and_survives_v2() {
+        let plain = making();
+        let text = serde_json::to_string(&plain).unwrap();
+        assert!(!text.contains("close_out"));
+        let mut v1 = MakingFamily::spcx().sample("m", 3);
+        v1.making.as_mut().unwrap().close_out = true;
+        let closed = v2(&v1);
+        assert!(closed.actors.competitor.unwrap().close_out);
+        let text = serde_json::to_string(&closed).unwrap();
+        assert!(text.contains(r#""close_out":true"#));
+        assert_eq!(parse(&text).unwrap(), v1);
+        assert!(parse(&text).unwrap().making.unwrap().close_out);
+    }
+
+    #[test]
     fn every_kind_round_trips_through_v2_and_json() {
         for v1 in [
             ShockFamily::spcx().sample("s", 3),

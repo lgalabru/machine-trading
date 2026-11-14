@@ -192,6 +192,59 @@ took (`making_fills`, `role` `taker`), so only one, without a
 The code is `crates/grader/src/obligations.rs`, `crates/grader/src/taking.rs`
 and the perp session.
 
+## Market making: the close-out and the decomposition
+
+A market-making scenario can have the grader exit the bot's position after
+its last turn and report what the session's PnL is made of. Opt-in, and
+separate from the mandate terms above:
+
+```json
+"actors": { "competitor": { "competitor_bps": 12, "competition": { "...": "" },
+  "close_out": true } }
+```
+
+(`making.close_out` in v1.) Without it a session is valued at the oracle with
+its inventory open, as before, and reports neither.
+
+**The close-out.** After the bot's last turn (and the keeper's) the grader
+cancels the bot's resting orders and sends market orders from the bot's
+account, signed with its key through the grader's own endpoint, each for the
+whole position, limited 4% through the best price (the risk desk's limit), until
+the account is flat or eight have gone. The order is never larger than the
+position, so it only reduces it. It is a real trade against the live book
+(the competitor and Phoenix's makers), so the session's PnL and end value are
+measured after paying the book's impact and the taker fee; a residue the book
+didn't take is valued at the oracle (the decomposition reports it). It is a
+`forced_closes` entry with `reason.kind` `close_out`, and its fills are marked
+`forced` in `making_fills`, so they are the grader's, not the bot's: they
+never count against the mandate's taking rule, and the cost of exiting is not
+counted in the session's drawdown (the drawdown stays on the oracle
+mark-to-market up to the exit). A session the risk desk stopped out has no
+close-out: it ended flat already.
+
+**The decomposition.** The session's `decomposition`, from the fills' role,
+counterparty and fee (`MakingFill`) and the scenario's level, the oracle the
+account is valued at (all in USD; `L(t)` is the level `t` slots into the
+session, `q`, `p` and `s` a fill's size, price and sign, +1 a buy):
+
+| Field | Meaning |
+|---|---|
+| `spread_capture_usd` | `S`, the sum over passive fills of `q s (L(t) - p)` |
+| `markouts[]` | per horizon (`horizon_slots` 2, 20, 120, and absent for the session's end): `markout_usd` `M_h`, the sum over passive fills of `q s (L(t + h) - L(t))` (negative: adversely selected; a horizon past the end is cut at it), and `realized_spread_usd` `RS_h = S + M_h` |
+| `taking_cost_usd` | `T`, the sum over taking fills of `q s (L(t) - p)` less taker fees, the close-out included |
+| `maker_fees_usd` | what it paid as a maker (a rebate is negative) |
+| `inventory_usd` | `V = pnl_usd - S - T + maker_fees_usd`: the position times the oracle's moves, and so what the fills don't explain |
+| `inventory_jump_usd`, `inventory_walk_usd` | the same inventory counted from the position held just before each move of the level, times the move, split into jumps and the walk (a move more than 4 robust standard deviations from the session's typical move is a jump) |
+| `unexplained_usd` | `inventory_usd` less those two: funding, or a mark that isn't the level. Near zero |
+| `uptime` | the share of steps it quoted both sides within its obligations' band (with `obligations`) |
+| `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, and the `residual_base` left |
+| `passive_fills`, `passive_base`, `passive_notional_usd` | the passive volume the spread is earned on |
+
+`S + T - maker_fees_usd + inventory_usd = pnl_usd` by construction. A match
+between the bot's own accounts moves nothing and is left out of every line but
+the fees. The decomposition is reported, not scored; the code is
+`crates/grader/src/decomposition.rs`.
+
 ## The liquidation keeper: `venues.perp.liquidator`
 
 By default nothing liquidates a perp session, and a bot that ends it

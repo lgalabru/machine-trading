@@ -1196,7 +1196,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // layer, and its fees leave the bot's wallet, so the layer's ledger
     // books them.
     let mut closed_out = None;
-    if closing.is_none() && scenario.making.as_ref().is_some_and(|making| making.close_out) {
+    if closing.is_none()
+        && scenario
+            .making
+            .as_ref()
+            .is_some_and(|making| making.close_out)
+    {
         let before = match &tx {
             Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
             None => None,
@@ -1280,7 +1285,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     for close in &mut report.forced_closes {
         if matches!(
             close.reason,
-            crate::risk::ForcedCloseReason::StopOut { .. } | crate::risk::ForcedCloseReason::CloseOut
+            crate::risk::ForcedCloseReason::StopOut { .. }
+                | crate::risk::ForcedCloseReason::CloseOut
         ) {
             close.value_after_usd = end_value_usd;
             close.flat = crate::risk::is_flat(end_position);
