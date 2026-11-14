@@ -1,0 +1,18 @@
+asset = "nvda"
+kind = "equity"
+symbol = "NVDA"
+# One-off pull: Phoenix 1 m candles from the market's first data day to the end of 2026-11-12.
+pull_from = "2026-06-09"
+pull_to = "2026-11-13"
+# The fit window starts at the first full week (the first days of a listing are not representative).
+fit_from = "2026-06-15"
+venue_from = "2026-10-14"
+# Two volatility states need this many days of history; fewer keeps one.
+regime_min_days = 90
+# Fewer regular sessions than this and the open gap is scaled from gap_fallback's.
+min_sessions = 60
+gap_fallback = "spcx.20261112.d1f48be2"
+# Pins used with --from-archive so a rerun writes the shipped file's bytes.
+fit_date = "20261113"
+fitted_at = "2026-11-13T21:45:00+00:00"
+expected_id = "nvda.20261113.903d1120"
