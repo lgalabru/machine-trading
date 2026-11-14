@@ -53,6 +53,9 @@ pub struct Moment {
     /// Where the scenario puts the book's makers there, in USD: the level,
     /// moved by any premium the book trades at.
     pub book_usd: f64,
+    /// The scenario's fair value there, in USD, when it reports one (see
+    /// [`Scenario::fair_path`](crate::scenario::Scenario::fair_path)).
+    pub fair_usd: Option<f64>,
 }
 
 /// A participant the grader runs.
@@ -241,6 +244,7 @@ mod tests {
             at,
             level_usd: 100.0,
             book_usd: 100.0,
+            fair_usd: None,
         };
         // Nothing happened before the first step.
         cast.before_blocks().await;

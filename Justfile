@@ -12,15 +12,14 @@ image := "machine-trading"
 # Bump on every image change that tasks should pick up.
 tag := "0.12.0"
 tasks := "bench/tasks"
-# The harness versions `just bench` runs, pinned so results compare: each
-# provider's own coding agent, Claude Code for Anthropic models and Codex for
-# OpenAI's.
+# The harness versions `just bench` runs, pinned so results compare. Every
+# model runs in Hermes (NousResearch/hermes-agent): one harness for every
+# provider, so no model is helped or hurt by its harness. `native:<model>`
+# runs a model in its provider's own coding agent instead (Claude Code,
+# Codex), as releases up to 0.11.0 did.
+hermes := "v0.23.1"
 claude_code := "2.1.312"
 codex := "0.166.0"
-# Hermes (NousResearch/hermes-agent), one harness for every provider's
-# models: `hermes:<model>` in `just bench` runs <model> in it, so a harness's
-# bias shows next to the providers' own.
-hermes := "v0.23.1"
 
 default:
     @just --list
@@ -56,6 +55,10 @@ install bin="mtx":
 
 # Build a snapshot from its recipe: fork mainnet, warm up, export.
 # Refuses to replace the committed snapshot: pass `--out DIR`, or `--force`.
+# The ladder script's own tests.
+ladder-test:
+    python3 -I bench/checks/ladder/test_ladder.py
+
 snapshot-build name *flags:
     cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
@@ -111,6 +114,11 @@ spot-smoke:
     grade spot-smoke-rest spot-smoke/rest smoke-rest rested --components-only
     grade spot-smoke-tape spot-smoke smoke-tape takers --components-only
     grade spot-smoke-process spot-smoke/process smoke clean
+
+# The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
+# SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
+actors-markets:
+    cargo test -p mtx-grader --test actors_non_spcx -- --ignored --nocapture
 
 # One actor on two venues: the grader's takers send a funding-carry practice
 # session's tape on the SPCX perp, and the spot smoke's tape on Phoenix v1's
@@ -381,21 +389,20 @@ release-publish:
     [ "$got" = "$want" ] || { echo "the published dataset holds $got tasks, bench/tasks $want"; exit 1; }
     echo "released {{registry}}/{{image}}:{{tag}} and :{{tag}}-runtime; commit the pins and digests"
 
-# Benchmark agents on the published dataset, on an idle machine: other load
-# slows the surfnets' clocks, and the grader fails sessions it can't run on
-# time. Models are `provider/model`, `anthropic/` when there's no provider:
-# Anthropic models run in Claude Code, OpenAI models in Codex. Reads
+# Benchmark agents on the published dataset. Models are `provider/model`,
+# `anthropic/` when there's no provider, and run in Hermes; `native:<model>`
+# runs one in its provider's own harness instead (Claude Code, Codex). Reads
 # ANTHROPIC_API_KEY and OPENAI_API_KEY (for the providers it runs) from .env
 # or ~/.machine-trading.env. Results go to jobs/bench/; read them with
 # `mtx bench review`. Arguments are positional:
-# just bench "claude-opus-5-5 openai/<model> hermes:openai/<model>" 5 3 0.11.0
+# just bench "claude-opus-5-5 openai/<model>" 5 3 0.12.0
 # `together=1` runs the models at once (each with n trials at a time)
 # instead of one after the other: grades don't depend on load.
 #
 # A provider that refuses an agent for quota or credit stops the whole
 # batch at once: its other agents would be cut off too, and a cut-off trial
 # can't be ranked. The batch is marked (.stopped) and gets no report.
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" version="" limit="1" together="0":
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-2" k="5" n="3" version="" limit="1" together="0":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
@@ -403,7 +410,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
     for model in {{models}}; do
-      model="${model#hermes:}"
+      model="${model#native:}"; model="${model#hermes:}"
       case "$model" in
         openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
         */*) [ "${model%%/*}" = anthropic ] || { echo "$model: only anthropic/ and openai/ models have a pinned harness"; exit 1; }
@@ -430,7 +437,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
     # which commit. `mtx bench review` shows trials not started yet as queued.
     python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, hm, commit = sys.argv[1:]
     models = m.split()
-    harness = lambda m: {"agent": "hermes", "version": hm} if m.startswith("hermes:") else {"agent": "codex", "version": cx} if m.startswith("openai/") else {"agent": "claude-code", "version": cc}
+    harness = lambda m: ({"agent": "codex", "version": cx} if m.startswith("native:openai/") else {"agent": "claude-code", "version": cc}) if m.startswith("native:") else {"agent": "hermes", "version": hm}
     json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x),
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
@@ -445,7 +452,21 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
       # Each harness is pinned, so numbers compare across releases, with no
       # web and no memory across trials.
       case "$model" in
-        hermes:*)
+        native:openai/*)
+          model="${model#native:}"
+          harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} \
+            --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
+          ;;
+        native:*)
+          model="${model#native:}"
+          harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
+            --agent-timeout-multiplier {{limit}} \
+            --ak version={{claude_code}} \
+            --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
+            --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+          ;;
+        *)
           # Every provider's model in one harness; a bare name is Anthropic's.
           local target="${model#hermes:}"
           case "$target" in */*) ;; *) target="anthropic/$target" ;; esac
@@ -455,18 +476,6 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1" k="5" n="3" ve
           harbor run -y -d "$dataset" -a mtx_hermes:Hermes -m "$target" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} \
             --ak version={{hermes}} --ak disable_web_search=true
-          ;;
-        openai/*)
-          harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} \
-            --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
-          ;;
-        *)
-          harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} \
-            --ak version={{claude_code}} \
-            --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
-            --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
           ;;
       esac
     }
@@ -656,6 +665,12 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     done
     for bot in {{tasks}}/{{task}}/checks/exploits/*/; do
       [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
+    done
+    # The shared exploit bots the ladder lists (bench/checks/exploits).
+    for bot in $(jq -r '.rungs[].dir' "{{tasks}}/{{task}}/checks/ladder.json" | sort -u); do
+      case "$bot" in bench/checks/exploits/*)
+        [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null ;;
+      esac
     done
     python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
