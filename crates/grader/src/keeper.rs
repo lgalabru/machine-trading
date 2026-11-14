@@ -435,7 +435,7 @@ impl LiquidationKeeper {
         let (value_before, position_before) = self.account().await?;
         // Past the backstop margin the keeper takes the position over; if
         // Phoenix refuses that, or short of it, it closes through the book.
-        let mut outcome = Err(String::new());
+        let mut outcome: std::result::Result<String, String> = Err(String::new());
         let mut transferred = false;
         if backstop {
             let transfer = liquidation_transfer(
@@ -488,7 +488,7 @@ impl LiquidationKeeper {
             position_after,
             ok,
             error: outcome.clone().err(),
-            signature: None,
+            signature: outcome.clone().ok(),
         };
         if ok {
             self.liquidations += 1;
@@ -515,19 +515,19 @@ impl LiquidationKeeper {
             episode.position_after = position_after;
         }
         episode.orders.push(order);
-        Ok(Some(outcome))
+        Ok(Some(outcome.map(|_| ())))
     }
 
-    /// Send one of the keeper's transactions: `Err` inside is Phoenix
-    /// refusing it, which the session goes on from.
+    /// Send one of the keeper's transactions: its signature, or `Err`
+    /// inside for Phoenix refusing it, which the session goes on from.
     fn send(
         &self,
         rpc: &RpcClient,
         instruction: Instruction,
         label: &str,
-    ) -> Result<std::result::Result<(), String>> {
+    ) -> Result<std::result::Result<String, String>> {
         match mtx_kit::send(rpc, &self.wallet, vec![instruction], label) {
-            Ok(_) => Ok(Ok(())),
+            Ok(signature) => Ok(Ok(signature.to_string())),
             Err(mtx_kit::Error::Transaction { reason, .. }) => Ok(Err(reason)),
             Err(error) => Err(error.into()),
         }

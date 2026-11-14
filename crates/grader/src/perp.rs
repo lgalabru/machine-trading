@@ -745,9 +745,10 @@ pub struct PerpFillRecord {
     /// Price in USDC per base unit, before fees, and size in base units.
     pub price: f64,
     pub base: f64,
-    /// A fill of the risk desk's forced close (the scenario's `stop_out`),
-    /// sent in the bot's account but not by the bot: it counts toward the
-    /// position and the PnL, and the sides and price rules leave it out.
+    /// A fill of a forced close (the risk desk's `stop_out`, or the
+    /// liquidation keeper's), made in the bot's account but not by the bot:
+    /// it counts toward the position and the PnL, and the sides and price
+    /// rules leave it out.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forced: bool,
 }
@@ -948,9 +949,10 @@ impl PerpAccount {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
     }
 
-    /// Mark the fills of the risk desk's forced closes: each close order's
-    /// transaction, by the signature the desk recorded, read from the chain
-    /// and decoded as the meter decodes fills, so the ids match.
+    /// Mark the fills of forced closes, the risk desk's and the keeper's:
+    /// each close order's transaction, by the signature it recorded, read
+    /// from the chain and decoded as the meter decodes fills, so the ids
+    /// match.
     async fn mark_forced(&mut self, closes: &[crate::risk::ForcedClose]) -> Result<()> {
         let Some(read) = self.fills.as_mut() else {
             return Ok(());

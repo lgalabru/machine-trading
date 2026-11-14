@@ -2177,6 +2177,50 @@ mod tests {
         assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
     }
 
+    /// The keeper's liquidation sells a buy-only bot's long in its own
+    /// account: the sides rule leaves that sell out.
+    #[test]
+    fn a_keepers_liquidating_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::risk::{ForcedClose, ForcedCloseReason, LiquidatedBy};
+        let mut liquidated = session(-900.0);
+        liquidated.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        liquidated.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::Liquidation {
+                by: LiquidatedBy::Keeper,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 9_300.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 9_100.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(
+            !disqualification(&liquidated)
+                .unwrap_or_default()
+                .contains("a side its mandate")
+        );
+        liquidated.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&liquidated)
+                .unwrap()
+                .contains("a side its mandate")
+        );
+    }
+
     /// The risk desk's forced close trades in the bot's account; a
     /// buy-only mandate's sides rule leaves its sells out, and still
     /// catches the bot's own.
