@@ -29,3 +29,26 @@ python3 model.py <seed> [sessions] ['<family overrides as JSON>']
 ## Result
 
 **Gate 0 fails.** See the task's PR_NOTES for the report.
+
+## Redesign 1: makers peg to the Phoenix oracle (`model_peg.py`)
+
+In this redesign, the competitor and the Phoenix makers centre on the Phoenix oracle, as the house competitor does. A failure of the Phoenix oracle therefore moves the book with it, and only a crowd moves the book away from the oracle. The arbitrage takers and the crowd show on the tape as filled volume, against the bot or the competitor.
+
+New rules that never decide which source is wrong, added to the gate:
+
+| Rule | What it does |
+| --- | --- |
+| `cautious3` | Quotes outside the oracle, the book and Pyth |
+| `book-fader`, `pyth-fader` | Trade toward the oracle, or toward Pyth, whenever they part |
+| `flow-shy` | Pulls whichever side the tape is hitting |
+| `*-fade-both` | `cautious3` or `flow-shy`, plus both fades |
+
+The runs:
+
+- `peg-seed-{11,12,13}.txt`: the card's odds, 600 sessions each.
+- `peg-v2-seed-{21,22,23}.txt`: odds tilted toward oracle failures that hit both feeds (`{"hits":[0.2,0.2,0.6],"p":[0.5,0.9]}`), 600 sessions each.
+
+Gate 0 still fails:
+
+- **With the card's odds**, told is 1.25–1.27 times the best rule that never decides (`flow-shy-fade-both`). The ratio holds at 2× on 0% of bootstrapped sets.
+- **With the tilted odds**, the ratio is 2.03–2.21, but it holds at 2× on only 55–81% of bootstrapped sets, short of the 85% needed. The reference is also at the edge of the strength band (0.21–0.24 of told).

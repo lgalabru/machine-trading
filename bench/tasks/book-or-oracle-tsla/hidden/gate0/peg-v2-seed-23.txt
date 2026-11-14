@@ -1,0 +1,49 @@
+nop              mean     0.00 se   0.00 sharpe  0.00 dd>L 0.000 skill   nan
+oracle-quoter    mean    -2.50 se   0.44 sharpe -0.23 dd>L 0.000 skill   nan
+book-quoter      mean   -16.75 se   0.42 sharpe -1.64 dd>L 0.000 skill   nan
+midpoint-blend   mean     3.69 se   0.51 sharpe  0.30 dd>L 0.000 skill   nan
+cautious         mean     2.87 se   0.40 sharpe  0.30 dd>L 0.000 skill   nan
+oracle-taker     mean     6.83 se   0.65 sharpe  0.43 dd>L 0.000 skill   nan
+reference        mean     8.45 se   0.35 sharpe  0.98 dd>L 0.000 skill  1.00
+reference-lean   mean    21.44 se   0.78 sharpe  1.13 dd>L 0.000 skill  2.54
+told             mean    37.92 se   0.99 sharpe  1.57 dd>L 0.000 skill  4.49
+told-nolean      mean    11.71 se   0.27 sharpe  1.75 dd>L 0.000 skill  1.39
+cautious-fader   mean     9.71 se   0.59 sharpe  0.67 dd>L 0.000 skill  1.15
+cautious3        mean     5.25 se   0.47 sharpe  0.46 dd>L 0.000 skill  0.62
+book-fader       mean     6.83 se   0.65 sharpe  0.43 dd>L 0.000 skill  0.81
+pyth-fader       mean    12.61 se   0.72 sharpe  0.71 dd>L 0.000 skill  1.49
+cautious3-fade-both mean    16.09 se   0.78 sharpe  0.84 dd>L 0.000 skill  1.90
+flow-shy         mean     6.03 se   0.42 sharpe  0.58 dd>L 0.000 skill  0.71
+flow-shy-fade-both mean    17.17 se   0.75 sharpe  0.93 dd>L 0.000 skill  2.03
+skill vs reference: {'nop': np.float64(0.0), 'oracle-quoter': np.float64(-0.3), 'book-quoter': np.float64(-1.98), 'midpoint-blend': np.float64(0.44), 'cautious': np.float64(0.34), 'oracle-taker': np.float64(0.81), 'reference': np.float64(1.0), 'reference-lean': np.float64(2.54), 'told': np.float64(4.49), 'told-nolean': np.float64(1.39), 'cautious-fader': np.float64(1.15), 'cautious3': np.float64(0.62), 'book-fader': np.float64(0.81), 'pyth-fader': np.float64(1.49), 'cautious3-fade-both': np.float64(1.9), 'flow-shy': np.float64(0.71), 'flow-shy-fade-both': np.float64(2.03)}
+GATE0 told/best-non-reading = 22753516210625.00 (told 22754, best 0)
+GATE0-REDESIGN told / best no-decision (flow-shy-fade-both) = 2.21
+  told/cautious = 13.19   told-nolean/cautious = 4.07
+  told/cautious-fader = 3.91   told-nolean/cautious-fader = 1.21
+  told/oracle-taker = 5.55   told-nolean/oracle-taker = 1.71
+  told/cautious3 = 7.22   told-nolean/cautious3 = 2.23
+  told/book-fader = 5.55   told-nolean/book-fader = 1.71
+  told/pyth-fader = 3.01   told-nolean/pyth-fader = 0.93
+  told/cautious3-fade-both = 2.36   told-nolean/cautious3-fade-both = 0.73
+  told/flow-shy = 6.29   told-nolean/flow-shy = 1.94
+  told/flow-shy-fade-both = 2.21   told-nolean/flow-shy-fade-both = 0.68
+  told/midpoint-blend = 10.27   told-nolean/midpoint-blend = 3.17
+bootstrap(100): card order holds 0.000, minimal order holds 1.000, gate0 ratio holds 1.000, told >= 2x best no-decision holds 0.810
+v2 band: reference/informed weighted = 0.21 (0.2-0.7), reference sharpe 0.98 (>= 0.25)
+  v2 raw nop               0.000
+  v2 raw oracle-quoter    -0.318
+  v2 raw book-quoter      -1.550
+  v2 raw midpoint-blend    0.129
+  v2 raw cautious          0.098
+  v2 raw oracle-taker      0.324
+  v2 raw reference         0.500
+  v2 raw reference-lean    0.720
+  v2 raw told              1.000
+  v2 raw told-nolean       0.560
+  v2 raw cautious-fader    0.511
+  v2 raw cautious3         0.250
+  v2 raw book-fader        0.324
+  v2 raw pyth-fader        0.559
+  v2 raw cautious3-fade-both  0.620
+  v2 raw flow-shy          0.316
+  v2 raw flow-shy-fade-both  0.642
