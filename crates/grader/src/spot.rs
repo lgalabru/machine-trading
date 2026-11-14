@@ -175,6 +175,20 @@ pub struct Wallet {
     /// The Pyth SOL/USD price it was valued at, and its value.
     pub price_usd: f64,
     pub value_usd: f64,
+    /// A lending session's reserves, as a component's step shows them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub venues: Vec<VenueReading>,
+}
+
+/// One reserve of a measured account, as a component's step shows it: the
+/// supply and debt there, and the reserve's numbers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct VenueReading {
+    pub id: String,
+    pub supplied: f64,
+    pub borrowed: f64,
+    pub health: Option<f64>,
+    pub stats: Vec<(String, f64)>,
 }
 
 impl Wallet {
@@ -332,6 +346,7 @@ impl Venues {
                 quote: grader_f64(total(quote)),
                 price_usd: grader_f64(price),
                 value_usd: grader_f64(value),
+                venues: Vec::new(),
             },
             open_orders,
         })
@@ -840,6 +855,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -1131,6 +1147,7 @@ impl Account for SpotAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            lending: None,
             crank_refusals: done.crank_refusals,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
@@ -1203,6 +1220,8 @@ mod tests {
             close_out: Default::default(),
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
@@ -1225,6 +1244,7 @@ mod tests {
             quote: 100.0,
             price_usd: 83.0,
             value_usd: 930.0,
+            venues: Vec::new(),
         };
         let sol = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
         let feed = |id: &str, name: &str| Feed {
