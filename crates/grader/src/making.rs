@@ -162,6 +162,12 @@ pub struct Making {
     /// [`crate::obligations`]). Absent, nothing is measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<Obligations>,
+    /// Opt-in: after the bot's last turn the grader closes its position
+    /// with a forced reduce-only IOC, so the session's PnL is measured
+    /// after paying to exit, and the report splits that PnL (see
+    /// [`crate::decomposition`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub close_out: bool,
 }
 
 /// The grader's maker (see [`crate::actors::competitor`]).
@@ -704,6 +710,7 @@ impl MakingFamily {
                 competition,
                 takers,
                 obligations: None,
+                close_out: false,
             }),
             offhours: None,
             funding: None,
@@ -1066,6 +1073,7 @@ mod tests {
                 },
             ],
             obligations: None,
+            close_out: false,
         };
         let path = [Waypoint::at(5, 10.0)];
         // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1

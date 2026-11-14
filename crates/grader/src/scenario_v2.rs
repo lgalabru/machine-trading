@@ -224,6 +224,10 @@ pub struct Competitor {
     /// [`crate::obligations`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<crate::obligations::Obligations>,
+    /// Opt-in: the forced close-out after the bot's last turn, and the
+    /// decomposition of its PnL (see [`crate::decomposition`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub close_out: bool,
 }
 
 /// The transaction layer.
@@ -503,6 +507,7 @@ impl Actors {
                 competition: competitor.competition,
                 takers: self.takers.clone(),
                 obligations: competitor.obligations,
+                close_out: competitor.close_out,
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
@@ -1144,6 +1149,7 @@ impl ScenarioV2 {
                     competition: c.competition,
                     takers,
                     obligations: c.obligations,
+                    close_out: c.close_out,
                 }),
                 None,
                 Vec::new(),
@@ -1273,6 +1279,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                     competitor_bps: making.competitor_bps,
                     competition: making.competition,
                     obligations: making.obligations,
+                    close_out: making.close_out,
                 }),
                 None,
                 making.takers.clone(),

@@ -54,6 +54,10 @@ pub enum ForcedCloseReason {
     /// [`crate::keeper`]). The bot keeps running afterwards, with what is
     /// left.
     Liquidation { by: LiquidatedBy },
+    /// The close-out after a market-making bot's last turn (see
+    /// [`crate::decomposition`]): the grader's way of valuing a session
+    /// after paying to exit, not the bot's own trading.
+    CloseOut,
 }
 
 /// Who liquidated.
