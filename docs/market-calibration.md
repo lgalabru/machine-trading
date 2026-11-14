@@ -132,8 +132,9 @@ calibration:
   fitted tails already hold those moves. A tail move lands in one slot,
   not spread evenly over its block.
 - **Several assets.** `draw_joint` correlates block innovations with a
-  stated correlation matrix on one shared clock. Cross-asset correlation
-  isn't fitted yet, so the matrix is a design parameter.
+  correlation matrix on one shared clock. For the US equity perps the matrix
+  is fitted: see [Correlation files](#correlation-files). For other sets it is
+  a design parameter.
 
 The path compiles to waypoints at most every `waypoint_slots` (default 4),
 spaced so every Phoenix move finishes before the next one starts. These are
@@ -169,6 +170,96 @@ mtx market-cal generate --calibration calibration/market/spcx.20261112.d1f48be2.
 
 `generate` keeps everything in the template (mandate, flow, funding) except
 the path, the fair value and the record.
+
+## Correlation files
+
+A correlation file is the matrix `draw_joint` takes for a set of calibrated
+assets, fitted to the real assets' co-movement. One ships, for the US equity
+perps (`NVDA`, `QQQ`, `SPCX`, `SPY`, `TSLA`):
+
+```
+calibration/correlation/<set>.<date>.<hash>.toml          the correlation
+calibration/correlation/<set>.<date>.<hash>.inputs.json   every input: url, sha256, bytes, fetch time, archive
+```
+
+- **Same rules as a calibration file.** Named by its id, immutable, strict
+  schema (`mtx_grader::market::correlation`, version 1.x), a refit is a new
+  file. The id's hash covers the inputs' SHA-256s, the pinned calibration
+  files' SHA-256s, the fit's parameters and the code of `calibration/fitter/joint/`.
+- **Pinned calibrations.** `[meta].calibrations` names the calibration id each
+  asset was fitted through. `Correlation::joint_matrix` and `Correlation::draw`
+  take any subset of the assets, in any order, and fail if a calibration is not
+  the pinned one: the matrix means nothing for another fit of an asset. A
+  scenario drawn from a file should record its `correlation_id` and SHA-256
+  (`Correlation::sha256`) as it records a calibration's.
+- **Not the correlation of the output.** The matrix is the correlation of the
+  block innovations. The draw gives each asset its own Student-t factor,
+  volatility level and GARCH state, so the generated returns correlate less.
+  `realized_target` is what the draw reproduces; `matrix` is what `draw_joint`
+  is given.
+
+### What the fit does
+
+`python3 -I calibration/fitter/run.py --correlation us-eq --from-archive <a> --from-archive <b>`
+reads the Phoenix 1 m candles of the five assets from the two archives (SPCX's
+is the 2026-11-11 pull, the others the 2026-11-13 one), offline, and writes the
+file and its inputs. `sets/us-eq.toml` holds the parameters and the pins.
+
+1. **Real correlation.** The regular-hours (09:31 to 16:00 New York) 1 m
+   mark-return series of each asset over **one common window**, 2026-09-14 to
+   2026-11-10 (42 sessions, 16,380 minutes): from SPY's and QQQ's first full
+   week to the end of the SPCX pull. A return exists only where both bars do,
+   and no gap is filled forward. For each pair, its statistic is the **median
+   over clock-aligned 30-minute windows of the Pearson correlation of their
+   1 m returns** (546 windows a pair), the one the joint check judges. The
+   pooled 1 m and 5 m correlations are recorded beside it.
+2. **Shrinkage.** The targets are the real medians shrunk 0.1 of the way toward
+   their average off-diagonal (0.4393).
+3. **Simulated moments.** For each pair, the fitter simulates `draw_joint`'s
+   walkers (the two calibrations' GARCH, Student-t factors, regime levels and
+   switching, and mark smoothing, as the default spec draws them) and solves for
+   the matrix entry whose simulated median window correlation equals the
+   target (secant steps, 6,000 sessions of 30 blocks, seeded, common random
+   numbers). The simulated value is in `simulated_realized`; the Rust joint
+   check, which draws with the real model, confirms it.
+4. **Positive definite.** A matrix that is not positive definite (eigenvalue
+   floor 0.02) would be projected to the nearest correlation matrix (Higham). The
+   fitted one was already positive definite, so none was applied.
+
+| Pair | Real median 30 m corr | Target (shrunk) | Matrix entry | Real pooled 1 m | Simulated pooled 1 m | Real pooled 5 m | Co-jumps / expected if independent |
+|---|---|---|---|---|---|---|---|
+| NVDA-QQQ | 0.6071 | 0.5903 | 0.6471 | 0.6360 | 0.4641 | 0.7284 | 13 / 0.18 |
+| NVDA-SPCX | 0.2989 | 0.3129 | 0.3496 | 0.3456 | 0.2329 | 0.3994 | 2 / 0.13 |
+| NVDA-SPY | 0.5463 | 0.5356 | 0.5871 | 0.5685 | 0.4275 | 0.6560 | 12 / 0.17 |
+| NVDA-TSLA | 0.3231 | 0.3347 | 0.3755 | 0.3033 | 0.2627 | 0.3644 | 4 / 0.08 |
+| QQQ-SPCX | 0.3918 | 0.3965 | 0.4372 | 0.4548 | 0.2886 | 0.5464 | 1 / 0.20 |
+| QQQ-SPY | 0.7603 | 0.7282 | 0.7939 | 0.7944 | 0.5717 | 0.8957 | 34 / 0.26 |
+| QQQ-TSLA | 0.4474 | 0.4466 | 0.4940 | 0.4605 | 0.3385 | 0.5273 | 7 / 0.13 |
+| SPCX-SPY | 0.3361 | 0.3464 | 0.3843 | 0.3710 | 0.2602 | 0.4449 | 2 / 0.19 |
+| SPCX-TSLA | 0.2657 | 0.2830 | 0.3162 | 0.2945 | 0.2083 | 0.3846 | 3 / 0.09 |
+| SPY-TSLA | 0.4161 | 0.4184 | 0.4644 | 0.4267 | 0.3232 | 0.4883 | 8 / 0.12 |
+
+### What it can't do
+
+- **The 1 m scale.** Phoenix's mark is the oracle plus the perp's premium, and
+  its 1 m returns carry quote noise the underlyings' don't, so real 1 m
+  correlations read below the underlyings' (the Epps effect): the 5 m ones
+  are higher for every pair (SPY-QQQ 0.90 against 0.79). The model targets 1 m,
+  the scale sessions trade at.
+- **Pooled returns.** The draw can't reproduce the real *pooled* 1 m
+  correlation (SPY-QQQ 0.79 real, 0.57 drawn). Pooled returns weight the
+  large-move windows, where real assets move together and the draw's volatility
+  levels and GARCH states, being independent, do not. A bot that sizes on
+  pooled correlation across a whole session sees less than the real pair
+  shows. Fixing it needs shared volatility levels in `draw_joint`: a model
+  change, not a refit.
+- **Jumps.** The assets' large moves coincide in the data (SPY-QQQ: 34
+  coincident jumps where 0.26 is expected by chance, all in the same
+  direction; the pairs with SPCX have 1 to 3). The
+  draw's background jumps are off by default and independent when on, so
+  co-jumps are reported in the file, not modelled.
+- **One window.** 42 sessions, one market regime; correlations of equities
+  move with it. The bands below are sampling spread, not regime spread.
 
 ## Realism checks
 
@@ -313,6 +404,41 @@ mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file
   scenario files.
 - **Output.** It prints a JSON report and exits 0 on `pass`, 2 on `fail`
   and 3 on `not_judged`. `mtx gates` calls it.
+
+### The joint check
+
+`mtx market-cal check-joint <correlation> --calibration <a> --calibration <b> ...`
+draws `--count` (300) joint sessions of any subset of the file's assets, each
+one 30 minutes from a regular open, and judges each pair: the median over
+sessions of the correlation of the 1 m returns, against the real median in
+`[realism.pairs]`.
+
+- **Band.** As the other checks: `sigmas` standard deviations of the difference
+  of two sampling errors, the real median's (its spread over resamples of the
+  546 real windows, `corr_spread_sd`) and the generated one's (bootstrapped from
+  the generated windows, and at least the real spread at that many windows).
+  `sigmas` is 3.29, a Sidak correction for the file's 10 pairs at 1%
+  family-wise false fails; a subset is judged at the same width, which is
+  conservative.
+- **Power.** The obviously wrong value is the pair's windows with the sessions
+  of one asset shifted by one against the other's (no correlation). A band that
+  also holds it reports `no_power`. A check with fewer than 30 sessions is
+  `skipped`.
+- **Verdict.** As the others: `pass` needs every pair to pass with power;
+  `fail` if any fails; `not_judged` otherwise. Exit code 0, 2 or 3.
+- `mtx market-cal show-joint <correlation> [--calibration ...]` prints the file's
+  matrices and pairs and, with calibrations, each pair's generated median beside
+  the real one.
+
+Measured by the ignored `joint_false_fail_rates` test (release,
+`FFR_SEEDS=300 FFR_OFFSET=500`; the seeds were never used in the fit): 300
+sessions a check, bars at most 2% false fails and at least 95% catches.
+
+| Assets | Calibrated: false fails | Sessions shuffled between assets: caught | Independent draws (identity matrix): caught |
+|---|---|---|---|
+| SPY, QQQ (1 pair) | 0/300 | 300/300 | 300/300 |
+| NVDA, TSLA, SPY, SPCX (6 pairs) | 0/300 | 300/300 | 300/300 |
+| all five (10 pairs) | 0/300 | 300/300 | 300/300 |
 
 **What the shipped files reject.** A sweep of wrong markets ran at 300
 sessions, on seeds 1-3, against both files. The calibrated model passed
