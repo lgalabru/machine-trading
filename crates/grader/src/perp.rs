@@ -38,6 +38,7 @@ use crate::{
     },
     chain,
     guard::Guard,
+    keeper::{KeeperSetup, LiquidationKeeper},
     making::{TAKER_ACCOUNTS, book_at, level_at},
     phoenix::{self, Phoenix},
     risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
@@ -216,6 +217,47 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             Some((library, seats))
         }
         _ => None,
+    };
+    // The competing keeper, if the scenario has one: a wallet and trader
+    // account of its own, onboarded like the other actors, that liquidates
+    // the bot through Phoenix when it crosses maintenance margin.
+    let keeper = match &scenario.liquidator {
+        Some(spec) => {
+            let wallet = opts.keys.keypair("liquidator", 0);
+            phoenix::onboard_traders_stepped(
+                surfnet,
+                &phoenix,
+                &rpc,
+                &[&wallet],
+                ACTOR_DEPOSIT_USDC,
+            )
+            .await?;
+            let meter = PhoenixEternalMeter::new(
+                phoenix.exchange().clone(),
+                internal.url(),
+                Arc::new(RpcChainClient::with_timeout(
+                    internal.url(),
+                    INTERNAL_RPC_TIMEOUT,
+                )),
+                bot.pubkey(),
+                &scenario.symbol,
+            )
+            .map_err(mtx_kit::Error::from)?
+            .with_unsettled_funding(scenario.funding.is_some());
+            Some(LiquidationKeeper::new(KeeperSetup {
+                spec: *spec,
+                seed: opts.keys.seed("liquidator", 0),
+                wallet,
+                exchange: phoenix.exchange().clone(),
+                rpc_url: internal.url().to_string(),
+                market: market.clone(),
+                owner: bot.pubkey(),
+                meter,
+                universe: universe.clone(),
+                market_id: scenario.instrument().id(),
+            })?)
+        }
+        None => None,
     };
     // RFQ fills settle as swaps of the asset's spot token for USDC, between
     // the clients' wallets and the bot's: they hold both, funded here.
@@ -434,7 +476,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .as_ref()
             .map(|off| base_slot + off.reopen_slot),
         cast,
-        cranks: Vec::new(),
+        cranks: keeper
+            .map(|keeper| Box::new(keeper) as Box<dyn crate::crank::VenueCrank>)
+            .into_iter()
+            .collect(),
         account: Box::new(account),
     })
 }
@@ -945,6 +990,7 @@ impl Account for PerpAccount {
             lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
+            liquidator: done.liquidator,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
@@ -974,7 +1020,7 @@ fn record(observed: &mut Observed, measurement: &Measurement) -> Result<()> {
 
 /// The account's position in `instrument`, in base units; flat if the meter
 /// doesn't report it.
-fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
+pub(crate) fn position_in(measurement: &Measurement, instrument: &InstrumentId) -> f64 {
     measurement
         .holding(instrument)
         .map_or(0.0, |holding| grader_f64(holding.position()))

@@ -864,7 +864,10 @@ fn disqualification(session: &SessionReport) -> Option<String> {
         Some(breach.to_string())
     } else if let Some(breach) = session.order.as_ref().and_then(|order| order.breach()) {
         Some(breach)
-    } else if session.liquidatable {
+    } else if session.liquidatable && session.liquidator.is_none() {
+        // With a competing keeper (the scenario's `liquidator`) an account
+        // that ends liquidatable was liquidated as far as Phoenix allowed,
+        // and what is left is priced in its value.
         Some("ended the session liquidatable".to_string())
     } else {
         None
@@ -1245,6 +1248,7 @@ mod tests {
             lending: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
+            liquidator: None,
             oracle_starts: Default::default(),
             turns: Default::default(),
             wall_ms: 0,
@@ -1312,6 +1316,7 @@ mod tests {
             market_model: None,
             raw_sends: None,
             stop_out: None,
+            liquidator: None,
         }
     }
 

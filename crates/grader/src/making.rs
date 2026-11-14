@@ -599,6 +599,7 @@ impl MakingFamily {
             market_model: None,
             raw_sends: None,
             stop_out: None,
+            liquidator: None,
         };
         (scenario, informed, leaks)
     }
