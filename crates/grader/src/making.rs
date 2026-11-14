@@ -606,6 +606,7 @@ impl MakingFamily {
             close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         (scenario, informed, leaks)
     }

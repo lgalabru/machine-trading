@@ -25,7 +25,7 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
-| `venues` | Exactly one of `perp` (with its `funding`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
@@ -182,6 +182,53 @@ forced close records each market's position at the trigger in
 `positions_before` (`position_before` stays the primary's), and `flat`
 holds only once every market is flat. The desk's fills on any market are
 marked `forced`.
+
+## The liquidation keeper: `venues.perp.liquidator`
+
+By default nothing liquidates a perp session, and a bot that ends it
+liquidatable is disqualified. A scenario can add a competing keeper, as
+mainnet has, and price the liquidation instead:
+
+```json
+"venues": { "perp": { "liquidator": { "reaction_slots": [2, 12], "check_every_steps": 1 } } }
+```
+
+- `reaction_slots`: `[min, max]`, the slots between the first step the bot's
+  account reads liquidatable and the keeper's first liquidation. It is drawn
+  once per session from the session's seed (role `liquidator`), reported as
+  `liquidator.delay_slots`, and never in the bot's environment: the bot is
+  told the range.
+- `check_every_steps`: how often the keeper looks. Every step by default.
+
+After each step's blocks land, the keeper reads Phoenix's margin view of
+every trader account the bot holds (the cross-margin account and any
+subaccount, as the meter does). When one reads liquidatable and the reaction
+time has passed, it sends `LiquidateViaMarketOrder` for up to the market's
+maximum liquidation size, or `LiquidationTransfer` once the account reads
+past the backstop margin, and again on each later step while the account
+stays liquidatable. Phoenix decides what a call closes and charges: the
+keeper computes no liquidation. A call Phoenix refuses (the bot traded back
+to health in the same block) is a `crank_refusals` entry, and the session
+goes on. When the account reads healthy again the reaction time starts over
+with the same draw.
+
+The bot keeps running with what the liquidation leaves it. Each stretch of
+liquidations is one entry of `forced_closes` with reason
+`{"kind": "liquidation", "by": "keeper"}`: the first step it fired at, the
+account's value before and after, and the keeper's orders (apart from the
+bot's, so a `sides` rule never sees them). `liquidator` reports the draw,
+the number of liquidations that landed and `cost_usd`, the sum over stretches
+of the value before less the value after: Phoenix's penalty and the fill's
+impact, which are inside the account's value and score. After the last step,
+with the bot stopped, the keeper takes one more turn that doesn't wait for the
+reaction time, and the account is measured after it. An account that still
+ends liquidatable is then valued as it is, not disqualified; the mandate's
+other rules, a drawdown limit included, still apply.
+
+A scenario that lists Phoenix's program in `tx.raw_sends` is refused with a
+liquidator: a bot that could send Phoenix's own instructions could liquidate
+its accounts itself. The code is `crates/grader/src/keeper.rs`, and
+`bench/checks/keeper/run.sh` checks it end to end.
 
 ## Example
 

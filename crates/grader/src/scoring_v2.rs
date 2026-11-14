@@ -17,7 +17,8 @@
 //! distributed session PnL, below a per-session Sharpe (mean over standard
 //! deviation) of about 0.16 at k = 1.5 (0.28 at k = 2), reported with the
 //! score as `break_even_sharpe`. A session that breaks its mandate or order,
-//! or ends liquidatable, counts at least as losing the whole drawdown limit
+//! or ends liquidatable with no liquidation keeper (a keeper's liquidation
+//! is priced, not a breach), counts at least as losing the whole drawdown limit
 //! `k` times, the worst loss the mandate allows, and its real weighted loss
 //! when that is worse: a breach never beats complying, never caps a loss,
 //! and one late breach no longer erases a whole grade. Calling a method the

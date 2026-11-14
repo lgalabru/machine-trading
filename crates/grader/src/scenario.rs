@@ -185,6 +185,13 @@ pub struct Scenario {
     /// ends there (see [`crate::session`]). Absent, the breach disqualifies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_out: Option<StopOut>,
+    /// Opt-in: a competing keeper liquidates the bot on Phoenix when its
+    /// account crosses maintenance margin, and an account that ends the
+    /// session liquidatable is priced instead of disqualifying (see
+    /// [`crate::keeper`]). Absent, nothing liquidates during the session and
+    /// ending liquidatable disqualifies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::Liquidator>,
 }
 
 /// The grader's risk desk: which mandate limits it enforces by closing the
@@ -1295,6 +1302,7 @@ impl ShockFamily {
             close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         let shape = Shape {
             direction,
@@ -1993,6 +2001,7 @@ mod tests {
                     close_out: Default::default(),
                     tx_layer: None,
                     stop_out: None,
+                    liquidator: None,
                     ..marked.clone()
                 },
                 plain
@@ -2084,6 +2093,7 @@ mod tests {
             close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -2164,6 +2174,7 @@ mod tests {
             close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
+            liquidator: None,
         }
     }
 

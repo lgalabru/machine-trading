@@ -7,7 +7,8 @@
 //! bot's key, and the session ends once the account is flat. The close pays
 //! the book's impact and the taker fee like any order. Every such close is a
 //! [`ForcedClose`] in the session's report; a venue's own liquidation, done
-//! by a grader-run keeper, records the same shape.
+//! by a grader-run keeper ([`crate::keeper`]), records the same shape, one
+//! per stretch of liquidations, and the session goes on.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +25,7 @@ pub struct ForcedClose {
     /// Why it closed.
     pub reason: ForcedCloseReason,
     /// The step, and the slot counted from the session's start, whose
-    /// measurement triggered it.
+    /// measurement triggered it (a liquidation: the step it first fired at).
     pub step: u64,
     pub at: u64,
     /// The account's value as the session measured it at the trigger, and
@@ -52,6 +53,19 @@ pub struct ForcedClose {
 pub enum ForcedCloseReason {
     /// The risk desk enforcing a mandate limit the scenario prices.
     StopOut { rule: StopRule },
+    /// The venue's own liquidation of an account that crossed its
+    /// maintenance margin, done by a grader-run keeper (see
+    /// [`crate::keeper`]). The bot keeps running afterwards, with what is
+    /// left.
+    Liquidation { by: LiquidatedBy },
+}
+
+/// Who liquidated.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LiquidatedBy {
+    /// The scenario's competing keeper.
+    Keeper,
 }
 
 /// One of a close's orders.
@@ -126,6 +140,27 @@ mod tests {
         };
         let json = serde_json::to_string(&close).unwrap();
         assert!(json.contains(r#""reason":{"kind":"stop_out","rule":"drawdown"}"#));
+        assert_eq!(serde_json::from_str::<ForcedClose>(&json).unwrap(), close);
+    }
+
+    #[test]
+    fn a_liquidation_names_the_keeper_in_json() {
+        let close = ForcedClose {
+            reason: ForcedCloseReason::Liquidation {
+                by: LiquidatedBy::Keeper,
+            },
+            step: 40,
+            at: 82,
+            value_before_usd: 3_100.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 3_036.0,
+            position_before: 900.0,
+            positions_before: Default::default(),
+            orders: Vec::new(),
+            flat: false,
+        };
+        let json = serde_json::to_string(&close).unwrap();
+        assert!(json.contains(r#""reason":{"kind":"liquidation","by":"keeper"}"#));
         assert_eq!(serde_json::from_str::<ForcedClose>(&json).unwrap(), close);
     }
 

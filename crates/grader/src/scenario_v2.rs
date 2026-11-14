@@ -139,6 +139,11 @@ pub struct PerpVenue {
     /// market, by symbol, with what is set on it. Not with `funding`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub markets: BTreeMap<String, PerpMarketVenue>,
+    /// A competing keeper that liquidates the bot when its account crosses
+    /// maintenance margin (see [`crate::keeper`]). Without it, nothing
+    /// liquidates during the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::Liquidator>,
 }
 
 /// One market of a session on several perp markets.
@@ -369,6 +374,9 @@ impl Venues {
             return Err(format!(
                 "funding: needs an interval, a period at least as long, and a positive cap, not {funding:?}"
             ));
+        }
+        if let Some(liquidator) = self.perp.as_ref().and_then(|p| p.liquidator.as_ref()) {
+            liquidator.validate()?;
         }
         let Some(spot) = &self.spot else {
             return Ok(());
@@ -627,6 +635,22 @@ impl ScenarioV2 {
             if self.is_multi_market() {
                 return Err(
                     "raw_sends: only sessions on one perp market take raw sends yet".into(),
+                );
+            }
+            // A bot that may send Phoenix's own instructions could liquidate
+            // its accounts itself, and collect what the keeper is there to take.
+            if self
+                .venues
+                .perp
+                .as_ref()
+                .is_some_and(|perp| perp.liquidator.is_some())
+                && raw.programs().is_ok_and(|programs| {
+                    programs.contains(&mtx_kit::phoenix_rise::ix::PHOENIX_PROGRAM_ID)
+                })
+            {
+                return Err(
+                    "raw_sends: with a liquidator, raw sends can't allow Phoenix's program: its liquidation instructions are the keeper's"
+                        .into(),
                 );
             }
         }
@@ -1089,6 +1113,7 @@ impl ScenarioV2 {
                 perp: Some(PerpVenue {
                     funding: venue.funding,
                     markets: BTreeMap::new(),
+                    liquidator: None,
                 }),
                 ..Venues::default()
             }
@@ -1456,9 +1481,9 @@ impl ScenarioV2 {
             takers_pricing,
             markets: mut market_actors,
         } = actors;
-        let (funding, perp_markets) = match venues.perp {
-            Some(perp) => (perp.funding, perp.markets),
-            None => (None, BTreeMap::new()),
+        let (funding, perp_markets, liquidator) = match venues.perp {
+            Some(perp) => (perp.funding, perp.markets, perp.liquidator),
+            None => (None, BTreeMap::new(), None),
         };
         let markets = perp_markets
             .into_iter()
@@ -1523,6 +1548,7 @@ impl ScenarioV2 {
             making,
             offhours,
             funding,
+            liquidator,
             tape,
             spot,
             faults,
@@ -1614,6 +1640,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                                 .iter()
                                 .map(|m| (m.symbol.clone(), PerpMarketVenue { funding: m.funding }))
                                 .collect(),
+                            liquidator: v1.liquidator,
                         }),
                         spot: None,
                         lending: None,
@@ -1962,6 +1989,7 @@ mod tests {
                 mark: None,
             }),
             markets: BTreeMap::new(),
+            liquidator: None,
         });
         assert!(s.venues.validate().unwrap_err().contains("funding"));
 
@@ -2106,6 +2134,7 @@ mod tests {
                 ("SPCX".to_string(), PerpMarketVenue::default()),
             ]
             .into(),
+            liquidator: None,
         });
         s.market_model.markets = [
             (
@@ -2587,6 +2616,70 @@ mod tests {
             .programs
             .clear();
         assert!(s.validate().unwrap_err().starts_with("raw_sends:"));
+    }
+
+    #[test]
+    fn a_liquidator_lives_on_the_perp_venue_and_round_trips_through_v1() {
+        use crate::keeper::Liquidator;
+        let mut s = shock();
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
+            reaction_slots: [2, 12],
+            check_every_steps: 1,
+        });
+        assert_eq!(s.validate(), Ok(()));
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(text.contains(r#""liquidator":{"reaction_slots":[2,12],"check_every_steps":1}"#));
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.liquidator, s.venues.perp.as_ref().unwrap().liquidator);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+
+        // Absent, nothing of it is written: scenarios without a keeper
+        // serialize as they did.
+        assert!(
+            !serde_json::to_string(&shock())
+                .unwrap()
+                .contains("liquidator")
+        );
+
+        let mut backwards = s.clone();
+        backwards.venues.perp.as_mut().unwrap().liquidator = Some(Liquidator {
+            reaction_slots: [12, 2],
+            check_every_steps: 1,
+        });
+        assert!(backwards.validate().unwrap_err().contains("reaction_slots"));
+        let mut spot_keeper = spot();
+        spot_keeper.venues.perp = s.venues.perp.clone();
+        assert!(spot_keeper.validate().is_err());
+    }
+
+    /// A bot that could send Phoenix's own instructions through raw sends
+    /// could liquidate its accounts itself: with a keeper they are refused.
+    #[test]
+    fn raw_sends_cant_allow_phoenix_beside_a_liquidator() {
+        use crate::keeper::Liquidator;
+        let phoenix = "EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih";
+        let mut s = shock();
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec![phoenix.into(), "11111111111111111111111111111111".into()],
+            }),
+            layer: None,
+        });
+        s.validate().unwrap();
+        s.venues
+            .perp
+            .get_or_insert_with(Default::default)
+            .liquidator = Some(Liquidator {
+            reaction_slots: [2, 12],
+            check_every_steps: 1,
+        });
+        assert!(s.validate().unwrap_err().contains("liquidator"));
+        s.tx.as_mut().unwrap().raw_sends.as_mut().unwrap().programs =
+            vec!["11111111111111111111111111111111".into()];
+        assert_eq!(s.validate(), Ok(()));
     }
 
     fn lending(check: &str) -> Scenario {
