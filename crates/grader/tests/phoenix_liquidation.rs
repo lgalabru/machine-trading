@@ -22,7 +22,7 @@ use mtx_core::AccountMeter;
 use mtx_grader::{
     chain::{self, Override},
     guard::Guard,
-    keeper::{Keys, liquidate_via_market_order},
+    keeper::{Keys, force_cancel_risk_increasing, liquidate_via_market_order, liquidation_transfer},
     phoenix::{self, Phoenix},
     snapshot,
     venue::{Market, perps::PerpMarket},
@@ -79,6 +79,7 @@ struct Rig {
     keeper: Keypair,
     outsider: Keypair,
     victim_trader: Pubkey,
+    keeper_trader: Pubkey,
     keys: Keys,
 }
 
@@ -96,7 +97,7 @@ impl Rig {
             phoenix::onboard_traders_stepped(&world.surfnet, &phoenix, &rpc, &[&victim], DEPOSIT_USDC)
                 .await
                 .unwrap()[0];
-        phoenix::onboard_traders_stepped(
+        let keeper_trader = phoenix::onboard_traders_stepped(
             &world.surfnet,
             &phoenix,
             &rpc,
@@ -104,7 +105,7 @@ impl Rig {
             KEEPER_DEPOSIT_USDC,
         )
         .await
-        .unwrap();
+        .unwrap()[0];
         // A wallet with SOL for fees and nothing else: no trader account.
         world
             .surfnet
@@ -143,6 +144,7 @@ impl Rig {
             keeper,
             outsider,
             victim_trader,
+            keeper_trader,
             keys,
         }
     }
@@ -402,4 +404,154 @@ async fn liquidation_rules() {
             value_before - value_end,
         ),
     );
+}
+
+/// Past the backstop margin, which instructions Phoenix lets a keeper use:
+/// the market order, and the transfer of the position to the keeper's own
+/// account. Each runs on a world of its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "slow: starts two worlds; run with --ignored"]
+async fn backstop_liquidation() {
+    for transfer in [false, true] {
+        let rig = Rig::new().await;
+        let market = rig.market();
+        let lot = rig.phoenix.lots_to_base_units(&market, 1);
+        let start_ticks = rig.mark_ticks().await;
+        let start_usd = rig.phoenix.ticks_to_usd(&market, start_ticks);
+        rig.perp
+            .trader(rig.victim.insecure_clone(), &rig.url)
+            .unwrap()
+            .place_market(Side::Bid, SHARES, start_usd * 1.03)
+            .await
+            .unwrap();
+        let to = (start_ticks as f64 * (1.0 - 6.0 / 100.0)).round() as u64;
+        let (moves, last) =
+            phoenix::market_move(rig.phoenix.perp_asset_map().unwrap(), SYMBOL, start_ticks, to, 1);
+        chain::register_scenario(&rig.rpc, "move", moves).unwrap();
+        rig.step(last + 4).await;
+        let margin = rig.margin().await;
+        let before = rig.asset().await;
+        let value_before = rig.value().await;
+        let mark = rig.phoenix.ticks_to_usd(&market, rig.mark_ticks().await);
+        let name = if transfer { "backstop transfer" } else { "backstop market order" };
+        table(
+            name,
+            "NOTE",
+            format!(
+                "after -6%: tier {}, effective collateral {:.0} against maintenance {:.0}, backstop {:.0}",
+                margin.risk_tier,
+                margin.effective_collateral_quote_lots as f64 / 1e6,
+                margin.maintenance_margin_quote_lots as f64 / 1e6,
+                margin.backstop_margin_quote_lots as f64 / 1e6,
+            ),
+        );
+        assert!(margin.is_liquidatable != 0, "the move left the account healthy");
+        let sent = if transfer {
+            let ix = liquidation_transfer(
+                &rig.keys,
+                rig.keeper.pubkey(),
+                rig.keeper_trader,
+                rig.victim_trader,
+                u64::from(market.asset_id),
+                before.base_lots.unsigned_abs(),
+            );
+            mtx_kit::send(&rig.rpc, &rig.keeper, vec![ix], "liquidation transfer")
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        } else {
+            rig.liquidate(&rig.keeper, before.base_lots.unsigned_abs(), true).await
+        };
+        let after = rig.asset().await;
+        let value_after = rig.value().await;
+        let moved = before.base_lots - after.base_lots;
+        let keeper_position = rig
+            .phoenix
+            .hawkeye(rig.keeper.pubkey())
+            .view_margin_for_asset_for_trader(rig.keeper_trader, market.asset_id)
+            .await
+            .unwrap()
+            .value
+            .base_lots;
+        table(
+            name,
+            status(sent.is_ok()),
+            format!(
+                "{}: the victim's position {} -> {} lots ({:.0} shares at {mark:.2}), its value fell ${:.2}; the keeper's own position is {keeper_position} lots",
+                sent.as_ref().map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
+                before.base_lots,
+                after.base_lots,
+                moved as f64 * lot,
+                value_before - value_after,
+            ),
+        );
+    }
+}
+
+/// A trader with a risk-increasing order resting can't be liquidated until
+/// the keeper force-cancels it: otherwise resting an order would make an
+/// account unliquidatable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "slow: starts a world; run with --ignored"]
+async fn resting_orders_are_force_cancelled_first() {
+    let rig = Rig::new().await;
+    let market = rig.market();
+    let start_ticks = rig.mark_ticks().await;
+    let start_usd = rig.phoenix.ticks_to_usd(&market, start_ticks);
+    rig.perp
+        .trader(rig.victim.insecure_clone(), &rig.url)
+        .unwrap()
+        .place_market(Side::Bid, SHARES, start_usd * 1.03)
+        .await
+        .unwrap();
+    let seat = rig
+        .perp
+        .seat(rig.victim.insecure_clone(), &rig.url)
+        .await
+        .unwrap();
+    seat.rest(Side::Bid, start_usd * 0.85, 20.0).await.unwrap();
+    let map = rig.phoenix.perp_asset_map().unwrap();
+    let mut from = start_ticks;
+    let mut dropped = 0.0;
+    let mut margin = rig.margin().await;
+    for pct in [3.0, 4.0, 5.0, 5.5, 6.0] {
+        let to = (start_ticks as f64 * (1.0 - pct / 100.0)).round() as u64;
+        let (moves, last) = phoenix::market_move(map, SYMBOL, from, to, 1);
+        chain::register_scenario(&rig.rpc, "move", moves).unwrap();
+        rig.step(last + 4).await;
+        from = to;
+        dropped = pct;
+        margin = rig.margin().await;
+        if margin.is_liquidatable != 0 {
+            break;
+        }
+    }
+    assert!(margin.is_liquidatable != 0, "no move left the account liquidatable");
+    let held = rig.asset().await.base_lots;
+    let blocked = rig.liquidate(&rig.keeper, held.unsigned_abs(), true).await;
+    table(
+        "resting order",
+        status(blocked.is_err()),
+        format!(
+            "after -{dropped}% (tier {}): a liquidation with a bid resting is {}",
+            margin.risk_tier,
+            blocked.as_ref().err().map_or("NOT REFUSED".into(), |e| format!("refused: {}", short(e)))
+        ),
+    );
+    let cancel = force_cancel_risk_increasing(&rig.keys, rig.keeper.pubkey(), rig.victim_trader);
+    let cancelled = mtx_kit::send(&rig.rpc, &rig.keeper, vec![cancel], "force cancel")
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+    let after_cancel = rig.margin().await;
+    let again = rig.liquidate(&rig.keeper, held.unsigned_abs(), true).await;
+    table(
+        "resting order",
+        status(cancelled.is_ok() && again.is_ok()),
+        format!(
+            "the keeper's force cancel: {}; liquidatable after it: {}; then the liquidation: {}",
+            cancelled.as_ref().map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
+            after_cancel.is_liquidatable,
+            again.as_ref().map_or_else(|e| format!("refused ({})", short(e)), |_| "landed".into()),
+        ),
+    );
+    assert!(blocked.is_err() && cancelled.is_ok() && again.is_ok());
 }
