@@ -1164,7 +1164,11 @@ async fn run() -> Result<()> {
                             "{}: {} steps, {} waypoints",
                             scenario.name,
                             scenario.duration_slots.div_ceil(2),
-                            scenario.path.len()
+                            scenario
+                                .market_scenarios()
+                                .iter()
+                                .map(|m| m.path.len())
+                                .sum::<usize>()
                         ),
                     ),
                     Err(error) => {

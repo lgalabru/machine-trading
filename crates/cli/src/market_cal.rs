@@ -172,11 +172,7 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
-                if scenario.markets.is_empty() {
-                    scenario.save(&path)?;
-                } else {
-                    scenario.save_v2(&path)?;
-                }
+                scenario.save_any(&path)?;
                 written.push(path);
             }
             Ok(serde_json::to_string_pretty(&written)?)

@@ -820,7 +820,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     position: now.position,
                     position_change: now.position - before,
                     level_usd: now.level_usd,
-                    valued_at_usd: match scenario.valuation() {
+                    valued_at_usd: match scenario.primary_valuation() {
                         "oracle" => Some(now.level_usd),
                         "book" => now.book_usd,
                         _ => None,

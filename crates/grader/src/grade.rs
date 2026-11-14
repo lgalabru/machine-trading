@@ -740,7 +740,7 @@ pub async fn calibrate(
         // disqualify can't be a baseline.
         if disqualification(session).is_none() {
             scenario.reference_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
-            scenario.save(path)?;
+            scenario.save_any(path)?;
         } else {
             tracing::warn!(
                 scenario = scenario.name,

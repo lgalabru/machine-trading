@@ -580,6 +580,12 @@ impl ScenarioV2 {
             if self.venues.spot.is_some() {
                 return Err("raw_sends: only perp sessions take raw sends yet".into());
             }
+            // A raw send's pre-check audits one market's position and value.
+            if self.is_multi_market() {
+                return Err(
+                    "raw_sends: only sessions on one perp market take raw sends yet".into(),
+                );
+            }
         }
         self.venues_are_one_kind()?;
         self.markets_agree()?;
@@ -1963,6 +1969,14 @@ mod tests {
         assert!(nvda > 0.0 && spcx > 0.0);
         assert_eq!(scenario.markets_bound_usd(&marks), nvda + spcx);
         assert_eq!(scenario.max_position(), 40.0);
+        // The primary's valuation is its own market's: NVDA's funding
+        // values it at the book, though the flat fields say nothing.
+        assert_eq!(scenario.primary_valuation(), "book");
+        assert_eq!(scenario.valuation(), "mark");
+        assert_eq!(
+            shock().into_scenario().unwrap().primary_valuation(),
+            shock().into_scenario().unwrap().valuation()
+        );
         // Two markets take one more market's setup.
         assert_eq!(
             scenario.setup_slots(),
@@ -1974,6 +1988,16 @@ mod tests {
         assert!(scenario.save(&dir.join("v1.json")).is_err());
         scenario.save_v2(&dir.join("v2.json")).unwrap();
         assert_eq!(Scenario::load(&dir.join("v2.json")).unwrap(), scenario);
+        // What `mtx calibrate` writes back: each in the layout it has.
+        scenario.save_any(&dir.join("any.json")).unwrap();
+        let text = std::fs::read_to_string(dir.join("any.json")).unwrap();
+        assert!(text.contains("\"schema\": 2"));
+        assert_eq!(Scenario::load(&dir.join("any.json")).unwrap(), scenario);
+        let one = shock().into_scenario().unwrap();
+        one.save_any(&dir.join("one.json")).unwrap();
+        let text = std::fs::read_to_string(dir.join("one.json")).unwrap();
+        assert!(!text.contains("schema"));
+        assert_eq!(Scenario::load(&dir.join("one.json")).unwrap(), one);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2027,6 +2051,14 @@ mod tests {
         assert_eq!(s.validate(), Ok(()));
         s.oracles = Some(feed("TSLA"));
         assert!(err(s).contains("TSLA's oracle, which isn't one"));
+        // Raw sends audit one market: not on several yet.
+        let mut s = multi();
+        s.tx = Some(Tx {
+            raw_sends: Some(RawSends {
+                programs: vec!["EtrnLzgbS7nMMy5fbD42kXiUzGg8XQzJ972Xtk1cjWih".into()],
+            }),
+        });
+        assert!(err(s).contains("raw_sends: only sessions on one perp market"));
         // A closed period inside markets.
         let mut s = multi();
         s.market_model

@@ -357,6 +357,17 @@ impl Scenario {
         std::fs::write(path, contents).map_err(io_error(path))
     }
 
+    /// Write the scenario in the layout it has one: a v1 file on one market,
+    /// as [`Scenario::save`] writes, and a v2 file on several, which have no
+    /// v1 form.
+    pub fn save_any(&self, path: &Path) -> Result<()> {
+        if self.markets.is_empty() {
+            self.save(path)
+        } else {
+            self.save_v2(path)
+        }
+    }
+
     /// Write the scenario as a v2 file (see [`crate::scenario_v2`]).
     pub fn save_v2(&self, path: &Path) -> Result<()> {
         let v2 = crate::scenario_v2::ScenarioV2::try_from(self).map_err(|reason| {
@@ -733,6 +744,15 @@ impl Scenario {
     /// Phoenix's mark, a blend of the book and the index, is not).
     pub fn valuation(&self) -> &'static str {
         self.flat_market().valuation(self.prices_the_close())
+    }
+
+    /// [`Scenario::valuation`] of the primary market, `symbol`: the flat
+    /// fields' on one market, its own entry's on several.
+    pub fn primary_valuation(&self) -> &'static str {
+        match self.markets.iter().find(|m| m.symbol == self.symbol) {
+            Some(market) => market.valuation(self.prices_the_close()),
+            None => self.valuation(),
+        }
     }
 
     /// Slots the session's setup gets before the bot's first slot: setup
