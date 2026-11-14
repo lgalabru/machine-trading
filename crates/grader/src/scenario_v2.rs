@@ -48,6 +48,10 @@ use crate::{
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
 };
 
+/// How far, in percent of the start mark, a net-scored session's fair path may
+/// end from its level: the drift is taken on one and the value on the other.
+const NET_CLOSE_TOLERANCE_PCT: f64 = 0.01;
+
 /// The schema version this module reads and writes.
 pub const SCHEMA: u32 = 2;
 
@@ -623,6 +627,21 @@ impl ScenarioV2 {
                      which net scoring doesn't have"
                         .into(),
                 );
+            }
+        }
+        if let Some(fair) = &self.market_model.fair_path
+            && self.scoring.net.is_some()
+        {
+            let end = self.duration_slots;
+            let gap = (crate::making::level_at(fair, end)
+                - crate::making::level_at(&self.market_model.path, end))
+            .abs();
+            if gap > NET_CLOSE_TOLERANCE_PCT {
+                return Err(format!(
+                    "net: the fair path ends {gap:.4}% from the level at the close; \
+                     a net-scored session needs them equal (within {NET_CLOSE_TOLERANCE_PCT}%), \
+                     or a bot that holds would not score 0"
+                ));
             }
         }
         if self.scoring.bound_on == BoundOn::FairPath && self.market_model.fair_path.is_none() {
@@ -1468,7 +1487,15 @@ mod tests {
         bound.scoring.bound_on = BoundOn::FairPath;
         assert!(bound.validate().unwrap_err().contains("fair_path"));
         bound.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0), Waypoint::at(20, 0.0)]);
+        // The level ends at 0 on this scenario's path; the fair path may not
+        // end elsewhere.
+        bound.market_model.path = vec![Waypoint::at(10, -6.0), Waypoint::at(20, 0.0)];
         bound.validate().unwrap();
+        let mut apart = bound.clone();
+        apart.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0)]);
+        assert!(apart.validate().unwrap_err().contains("fair path ends"));
+        apart.scoring.net = None;
+        apart.validate().unwrap();
         let on_fair = bound.clone().into_scenario().unwrap();
         let mut on_path = on_fair.clone();
         on_path.bound_on = BoundOn::Path;

@@ -1108,7 +1108,8 @@ impl Account for PerpAccount {
         let close_usd = self
             .moment(done.end_slot.saturating_sub(self.base_slot))
             .level_usd;
-        let fair_close_usd = scenario.fair_value_usd(
+        let fair_close_usd = fair_close_usd(
+            scenario,
             self.start_mark_usd,
             done.end_slot.saturating_sub(self.base_slot),
         );
@@ -1182,6 +1183,14 @@ impl Account for PerpAccount {
             },
         })
     }
+}
+
+/// The fair value at the close, in USD, that a net-scored session takes its
+/// hold baseline at: the scenario's fair path where it has one. Only net
+/// scoring reads it.
+fn fair_close_usd(scenario: &Scenario, start_mark_usd: f64, at: u64) -> Option<f64> {
+    scenario.net.as_ref()?;
+    scenario.fair_value_usd(start_mark_usd, at)
 }
 
 /// What a perp session's PnL comes to, with its order and close-outs.
@@ -1520,6 +1529,25 @@ mod tests {
         );
         assert_eq!(fair.pnl_usd, -50.0);
         assert_eq!(fair.net.unwrap().drift_usd, -50.0);
+    }
+
+    #[test]
+    fn the_hold_baseline_is_taken_at_the_fair_close_only_for_net_scoring() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.fair_path = Some(vec![crate::scenario::Waypoint::at(10, -5.0)]);
+        // Not net-scored: the fair path is not read.
+        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
+        scenario.net = Some(crate::orders::NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        assert_eq!(fair_close_usd(&scenario, 100.0, 50), Some(95.0));
+        // The value finish settles with: a hold at the fair close scores 0.
+        let fair = fair_close_usd(&scenario, 100.0, 50);
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 95.0), fair, -50.0, &[]);
+        assert_eq!(held.pnl_usd, 0.0);
+        scenario.fair_path = None;
+        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
     }
 
     #[test]

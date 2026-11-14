@@ -33,7 +33,7 @@ docs together.
 | `tx` | The transaction layer: `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net`, `bound_on`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
+| `scoring` | `reference_pnl_usd`, `bound_usd`, `participation`, `net`, `bound_on`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position; if the scenario has a `market_model.fair_path`, it must end at the level the path ends at (within 0.01%), or it is refused. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
 
 Optional sections are left out when empty. Unknown fields are errors in
 every section.
