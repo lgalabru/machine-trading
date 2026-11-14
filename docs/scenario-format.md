@@ -76,7 +76,9 @@ the last slot (the index, not Phoenix's mark, which quotes can push), and
 the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
-won't margin fails the session's setup.
+won't margin fails the session's setup. Scoring v2 takes a start position only with
+an order, which scores the session against doing nothing; without one,
+doing nothing moves with the price, and v2 refuses the grade.
 
 ## The risk desk: `scoring.stop_out`
 
