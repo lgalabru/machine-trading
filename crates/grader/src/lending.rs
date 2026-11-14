@@ -988,6 +988,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         env,
         reports: None,
         reopen_slot: None,
+        vars: Vec::new(),
         cast,
         cranks: vec![Box::new(KaminoCrank { books, keeper })],
         account: Box::new(account),
@@ -1626,6 +1627,7 @@ impl Account for LendingAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         let mut seats = Vec::new();
         for instrument in &self.instruments {
@@ -1650,6 +1652,8 @@ impl Account for LendingAccount {
             venue: serde_json::to_string(&self.metadata())?,
             authority: bot.pubkey().to_string(),
             reader: Reader::Lending { start },
+            pool: None,
+            tx: None,
             rfqs: None,
         })
     }
@@ -1712,6 +1716,12 @@ impl Account for LendingAccount {
             order: None,
             participation: None,
             net: None,
+            stake: None,
+            close_outs: Vec::new(),
+            perp_fills: Vec::new(),
+            perp_open_orders: Vec::new(),
+            tx_layer: None,
+            forced_closes: Vec::new(),
             lending: Some(LendingReport {
                 start: start.holdings.clone(),
                 end: end.holdings.clone(),

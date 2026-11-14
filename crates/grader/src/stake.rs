@@ -428,7 +428,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         env,
         reports: None,
         reopen_slot: None,
+        vars: Vec::new(),
         cast: Cast::default(),
+        cranks: Vec::new(),
         account: Box::new(account),
     })
 }
@@ -545,6 +547,7 @@ fn as_wallet(reading: &StakeWallet) -> Wallet {
         quote: reading.sol + reading.sol_waiting,
         price_usd: reading.sol_usd,
         value_usd: reading.value_usd,
+        venues: Vec::new(),
     }
 }
 
@@ -608,6 +611,7 @@ impl Account for StakeAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         let mut seats = Vec::new();
         let mut addresses = Vec::new();
@@ -641,6 +645,8 @@ impl Account for StakeAccount {
             reader: Reader::Wallet {
                 start: as_wallet(&self.start),
             },
+            pool: None,
+            tx: None,
             rfqs: None,
         })
     }
@@ -712,6 +718,12 @@ impl Account for StakeAccount {
             order: None,
             participation: None,
             net: None,
+            lending: None,
+            close_outs: Vec::new(),
+            perp_fills: Vec::new(),
+            perp_open_orders: Vec::new(),
+            tx_layer: None,
+            forced_closes: Vec::new(),
             crank_refusals: done.crank_refusals,
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,

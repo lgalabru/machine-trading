@@ -1971,6 +1971,7 @@ mod tests {
 
         let mut s = v2(&lending("liquidation"));
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),
@@ -2031,6 +2032,7 @@ mod tests {
 
         let mut s = v2(&stake());
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),
