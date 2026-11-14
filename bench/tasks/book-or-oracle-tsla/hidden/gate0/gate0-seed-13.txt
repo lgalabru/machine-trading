@@ -1,0 +1,29 @@
+nop              mean     0.00 se   0.00 sharpe  0.00 dd>L 0.000 skill   nan
+oracle-quoter    mean    -1.98 se   0.56 sharpe -0.15 dd>L 0.000 skill   nan
+book-quoter      mean   -13.05 se   0.38 sharpe -1.42 dd>L 0.000 skill   nan
+midpoint-blend   mean     9.97 se   0.42 sharpe  0.96 dd>L 0.000 skill   nan
+cautious         mean    11.59 se   0.24 sharpe  1.93 dd>L 0.000 skill   nan
+oracle-taker     mean    14.11 se   0.58 sharpe  0.99 dd>L 0.000 skill   nan
+reference        mean     8.74 se   0.29 sharpe  1.24 dd>L 0.000 skill  1.00
+reference-lean   mean    15.02 se   0.48 sharpe  1.27 dd>L 0.000 skill  1.72
+told             mean    19.42 se   0.50 sharpe  1.57 dd>L 0.000 skill  2.22
+told-nolean      mean    13.67 se   0.31 sharpe  1.81 dd>L 0.000 skill  1.56
+cautious-fader   mean    17.49 se   0.56 sharpe  1.27 dd>L 0.000 skill  2.00
+skill vs reference: {'nop': np.float64(0.0), 'oracle-quoter': np.float64(-0.23), 'book-quoter': np.float64(-1.49), 'midpoint-blend': np.float64(1.14), 'cautious': np.float64(1.33), 'oracle-taker': np.float64(1.62), 'reference': np.float64(1.0), 'reference-lean': np.float64(1.72), 'told': np.float64(2.22), 'told-nolean': np.float64(1.56), 'cautious-fader': np.float64(2.0)}
+GATE0 told/best-non-reading = 11653636375049.30 (told 11654, best 0)
+  told/cautious = 1.68   told-nolean/cautious = 1.18
+  told/cautious-fader = 1.11   told-nolean/cautious-fader = 0.78
+  told/oracle-taker = 1.38   told-nolean/oracle-taker = 0.97
+bootstrap(100): card order holds 0.000, minimal order holds 0.055, gate0 ratio holds 1.000, told >= 2x cautious(-fader) holds 0.000
+v2 band: reference/informed weighted = 0.44 (0.2-0.7), reference sharpe 1.24 (>= 0.25)
+  v2 raw nop               0.000
+  v2 raw oracle-quoter    -0.287
+  v2 raw book-quoter      -1.138
+  v2 raw midpoint-blend    0.538
+  v2 raw cautious          0.638
+  v2 raw oracle-taker      0.732
+  v2 raw reference         0.500
+  v2 raw reference-lean    0.793
+  v2 raw told              1.000
+  v2 raw told-nolean       0.734
+  v2 raw cautious-fader    0.903
