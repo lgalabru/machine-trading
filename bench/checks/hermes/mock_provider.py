@@ -1,7 +1,7 @@
 """A stand-in OpenAI-compatible provider for checking the Hermes harness.
 
-It answers /v1/chat/completions and /v1/responses (OpenAI's own models
-run on the latter) with a fixed script of tool calls, the
+It answers /v1/chat/completions, /v1/responses (OpenAI's own models run
+on it) and /v1/messages (Anthropic's) with a fixed script of tool calls, the
 step chosen by how many tool results the conversation already holds:
 
 1. list what Hermes's home holds (memories, skills) and the probes below;
@@ -44,8 +44,16 @@ PLANT = (
     "echo PLANTED"
 )
 
+# Every process environment the agent can read, into the trial's logs,
+# where the check looks for the key (and, as a control, the proxy's token).
+PROC = (
+    "for f in /proc/[0-9]*/environ; do cat \"$f\" 2>/dev/null | tr '\\0' '\\n'; done "
+    "> /logs/agent/proc-environ.txt; echo PROC-READ $(wc -l < /logs/agent/proc-environ.txt)"
+)
+
 SCRIPT = [
     ("terminal", {"command": INVENTORY}),
+    ("terminal", {"command": PROC}),
     ("terminal", {"command": PLANT}),
     ("write_file", {"path": "/tmp/mock-note.txt", "content": "written by the mock provider\n"}),
     ("read_file", {"path": "/tmp/mock-note.txt"}),
@@ -89,6 +97,18 @@ class Handler(BaseHTTPRequestHandler):
             tools = [t.get("function", {}).get("name") for t in body.get("tools") or []]
             results = [text_of(m.get("content")) for m in items if m.get("role") == "tool"]
             system = "\n".join(text_of(m.get("content")) for m in items if m.get("role") == "system")
+        elif path.endswith("/messages"):
+            api = "anthropic"
+            items = body.get("messages", [])
+            tools = [t.get("name") for t in body.get("tools") or []]
+            results = [
+                text_of(block.get("content"))
+                for m in items
+                if m.get("role") == "user" and isinstance(m.get("content"), list)
+                for block in m["content"]
+                if isinstance(block, dict) and block.get("type") == "tool_result"
+            ]
+            system = text_of(body.get("system"))
         elif path.endswith("/responses"):
             api = "responses"
             items = body.get("input") if isinstance(body.get("input"), list) else []
@@ -103,7 +123,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply_json(404, {"error": {"message": "not found"}})
             return
         done = len(results)
-        auth = self.headers.get("Authorization", "")
+        bearer = self.headers.get("Authorization", "")
+        auth = bearer[7:] if bearer.startswith("Bearer ") else self.headers.get("x-api-key", "")
         expected = os.environ.get("MOCK_API_KEY", "")
         record = {
             "time": time.time(),
@@ -112,9 +133,8 @@ class Handler(BaseHTTPRequestHandler):
             "stream": bool(body.get("stream")),
             "tools": sorted(t for t in tools if t),
             "tool_results": done,
-            "reasoning_effort": body.get("reasoning_effort"),
-            "reasoning": body.get("reasoning"),
-            "key_ok": bool(expected) and secrets.compare_digest(auth, f"Bearer {expected}"),
+            "effort": {k: body[k] for k in ("reasoning_effort", "reasoning", "thinking", "output_config") if k in body},
+            "key_ok": bool(expected) and secrets.compare_digest(auth.encode(), expected.encode()),
             "system_chars": len(system),
             "system_mentions_leak_probe": "leak-probe" in system or "planted by an earlier trial" in system,
             "last_tool_result": (results[-1] if results else "")[:4000],
@@ -130,10 +150,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             call = None
             text = "Done: the mock script is complete." if tools else "Mock trial"
-        if api == "chat":
-            self.answer_chat(body, done, call, text)
-        else:
-            self.answer_responses(body, done, call, text)
+        answer = {"chat": self.answer_chat, "responses": self.answer_responses, "anthropic": self.answer_anthropic}
+        answer[api](body, done, call, text)
 
     def sse(self, events):
         self.send_response(200)
@@ -186,6 +204,44 @@ class Handler(BaseHTTPRequestHandler):
         self.sse(events)
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
+
+    def answer_anthropic(self, body, done, call, text):
+        if call:
+            call_id, name, args = call
+            block = {"type": "tool_use", "id": f"toolu_{done}", "name": name, "input": args}
+            stop = "tool_use"
+        else:
+            block = {"type": "text", "text": text}
+            stop = "end_turn"
+        usage = {"input_tokens": USAGE["prompt_tokens"], "output_tokens": USAGE["completion_tokens"]}
+        message = {
+            "id": f"msg_{done}",
+            "type": "message",
+            "role": "assistant",
+            "model": body.get("model"),
+            "content": [block],
+            "stop_reason": stop,
+            "stop_sequence": None,
+            "usage": usage,
+        }
+        if not body.get("stream"):
+            self.reply_json(200, message)
+            return
+        if call:
+            opened = dict(block, input={})
+            delta = {"type": "input_json_delta", "partial_json": json.dumps(block["input"])}
+        else:
+            opened = {"type": "text", "text": ""}
+            delta = {"type": "text_delta", "text": text}
+        events = [
+            ("message_start", {"message": dict(message, content=[], stop_reason=None, usage=dict(usage, output_tokens=1))}),
+            ("content_block_start", {"index": 0, "content_block": opened}),
+            ("content_block_delta", {"index": 0, "delta": delta}),
+            ("content_block_stop", {"index": 0}),
+            ("message_delta", {"delta": {"stop_reason": stop, "stop_sequence": None}, "usage": {"output_tokens": usage["output_tokens"]}}),
+            ("message_stop", {}),
+        ]
+        self.sse([(name, dict(event, type=name)) for name, event in events])
 
     def answer_responses(self, body, done, call, text):
         response_id = f"resp_{done}_{secrets.token_hex(4)}"

@@ -387,18 +387,22 @@ release-publish:
 # no provider), and run in Hermes; `native:<model>` runs one in its
 # provider's own harness instead (Claude Code, Codex). Reads each model's
 # key (ANTHROPIC_API_KEY, OPENAI_API_KEY, or the one models.toml names) from
-# .env or ~/.machine-trading.env, and checks every model with a 1-token
-# request before the first trial (`just preflight`). Every harness runs at
-# `effort`. Results go to jobs/bench/; read them with `mtx bench review`.
-# Arguments are positional:
-# just bench "claude-opus-5-5 openai/<model> kimi-k3" 5 3 0.12.0
+# .env or ~/.machine-trading.env, and checks each Hermes model with a
+# 1-token request before the first trial (`just preflight`). Hermes's
+# trials reach their providers through a key proxy on this machine and
+# never hold a key; a key found in the batch's files quarantines it.
+# `effort`, when given, applies to every harness; left empty, each keeps its
+# own default. Results go to jobs/bench/; read them with `mtx bench review`.
+# Arguments are positional (models, attempts, at a time, version, limit,
+# together, effort):
+# just bench "claude-opus-5-5 openai/<model> kimi-k3" 5 3 0.12.0 1 0 high
 # `together=1` runs the models at once (each with n trials at a time)
 # instead of one after the other: grades don't depend on load.
 #
 # A provider that refuses an agent for quota or credit stops the whole
 # batch at once: its other agents would be cut off too, and a cut-off trial
 # can't be ranked. The batch is marked (.stopped) and gets no report.
-bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-2" k="5" n="3" version="" limit="1" together="0" effort="high":
+bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-2" k="5" n="3" version="" limit="1" together="0" effort="":
     #!/usr/bin/env bash
     set -euo pipefail
     set -a
@@ -415,16 +419,19 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           [ -n "${!key:-}" ] || { echo "$key is not set, for $model"; exit 1; } ;;
       esac
     done
-    # A wrong name or a dead key fails here, not in every trial.
-    preflight=()
+    # Hermes's models: a wrong name or a dead key fails here, not in every
+    # trial.
+    hermes_models=()
     for model in {{models}}; do
-      case "$model" in
-        native:*/*) preflight+=("${model#native:}") ;;
-        native:*) preflight+=("anthropic/${model#native:}") ;;
-        *) preflight+=("$model") ;;
-      esac
+      case "$model" in native:*) ;; *) hermes_models+=("${model#hermes:}") ;; esac
     done
-    python3 -I bench/harness/models.py preflight "${preflight[@]}"
+    if [ "${#hermes_models[@]}" -gt 0 ]; then
+      python3 -I bench/harness/models.py preflight "${hermes_models[@]}"
+    fi
+    # No harness run gets a flag the batch didn't ask for: each keeps its own
+    # default effort unless `effort` is given.
+    effort=()
+    [ -z "{{effort}}" ] || effort=(--effort "{{effort}}")
     version="{{version}}"
     dataset="solana-foundation/machine-trading${version:+@$version}"
     batch="jobs/bench/$(date +%Y%m%d-%H%M%S)-x{{limit}}"
@@ -445,7 +452,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     python3 -I -c 'import json, sys; out, m, k, n, v, x, cc, cx, hm, effort, commit = sys.argv[1:]
     models = m.split()
     harness = lambda m: ({"agent": "codex", "version": cx} if m.startswith("native:openai/") else {"agent": "claude-code", "version": cc}) if m.startswith("native:") else {"agent": "hermes", "version": hm}
-    json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x), "effort": effort,
+    json.dump({"models": models, "attempts": int(k), "concurrent": int(n), "version": v, "timeout_multiplier": float(x), "effort": effort or None,
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
       "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "{{hermes}}" "{{effort}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -462,26 +469,27 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
         native:openai/*)
           model="${model#native:}"
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} --effort {{effort}} \
+            --agent-timeout-multiplier {{limit}} "${effort[@]}" \
             --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
           ;;
         native:*)
           model="${model#native:}"
           harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} --effort {{effort}} \
+            --agent-timeout-multiplier {{limit}} "${effort[@]}" \
             --ak version={{claude_code}} \
             --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
           ;;
         *)
-          # Every provider's model in one harness, routed by models.toml.
-          # bench/harness/mtx_hermes.py: Harbor's adapter, with the bench's
-          # tools, no memory or skills, and the effort applied.
+          # Every provider's model in one harness, routed by models.toml
+          # through the batch's key proxy: Harbor and the trials get the
+          # proxy's token, never a key. bench/harness/mtx_hermes.py:
+          # Harbor's adapter, with the bench's tools and no memory or skills.
           local route
-          mapfile -t route < <(python3 -I bench/harness/models.py args "$model")
-          PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
+          mapfile -t route < <(python3 -I bench/harness/models.py args "${model#hermes:}" "$proxy_url")
+          env "${unset_keys[@]}" PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
           harbor run -y -d "$dataset" -a mtx_hermes:Hermes "${route[@]}" -k {{k}} -n {{n}} -o "$batch" \
-            --agent-timeout-multiplier {{limit}} --effort {{effort}} \
+            --agent-timeout-multiplier {{limit}} "${effort[@]}" \
             --ak version={{hermes}}
           ;;
       esac
@@ -504,6 +512,23 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     ) &
     watcher=$!
     trap 'kill "$watcher" 2> /dev/null || true' EXIT
+    # Hermes's trials reach their providers through a proxy on this machine
+    # that holds the keys (bench/harness/key_proxy.py): a key inside a trial
+    # could be read by the agent from /proc and printed into its trajectory.
+    proxy=""
+    unset_keys=()
+    for key in $(python3 -I bench/harness/models.py keys); do unset_keys+=(-u "$key"); done
+    if [ "${#hermes_models[@]}" -gt 0 ]; then
+      MTX_PROXY_TOKEN="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
+      export MTX_PROXY_TOKEN
+      python3 -I bench/harness/key_proxy.py --host "$(hostname -I | awk '{print $1}')" --port 0 \
+        "${hermes_models[@]}" > "$batch/.proxy" 2> "$batch/proxy.log" &
+      proxy=$!
+      trap 'kill "$watcher" "$proxy" 2> /dev/null || true' EXIT
+      for _ in $(seq 50); do [ -s "$batch/.proxy" ] && break; sleep 0.2; done
+      [ -s "$batch/.proxy" ] || { echo "the key proxy didn't start:"; cat "$batch/proxy.log"; exit 1; }
+      proxy_url="$(cat "$batch/.proxy")"
+    fi
     status=0
     if [ "{{together}}" = 1 ]; then
       pids=()
@@ -519,7 +544,15 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
         run_model "$model" || status=1
       done
     fi
-    kill "$watcher" 2> /dev/null || true
+    kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
+    # No key may reach a trial's files: a hit quarantines the batch.
+    if ! python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
+      mv "$batch/.scan" "$batch/.quarantined"
+      echo "quarantined: a provider key is in the batch's files (paths in $batch/.quarantined);"
+      echo "rotate that key, and don't publish or share the batch"
+      exit 1
+    fi
+    rm -f "$batch/.scan"
     if [ -e "$batch/.stopped" ]; then
       echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"
       cat "$batch/.stopped"
@@ -546,10 +579,17 @@ preflight models:
     python3 -I bench/harness/models.py preflight {{models}}
 
 # The Hermes harness check (bench/checks/hermes), with no model: two trials
-# against a stand-in provider on this machine; the second must see nothing
-# the first planted, and no key may reach the trial files.
-hermes-check task="flash-crash-spcx":
-    bench/checks/hermes/probe.sh {{tasks}}/{{task}} {{hermes}}
+# per route through the key proxy to a stand-in provider on this machine;
+# the second must see nothing the first planted, and the key must reach no
+# trial file, nor anything the agent can read under /proc.
+hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    for route in {{routes}}; do
+      bench/checks/hermes/probe.sh {{tasks}}/{{task}} {{hermes}} "$route" || status=1
+    done
+    exit "$status"
 
 # Browse a bench's results: a batch, a Harbor job, one trial, or a
 # published release by its version (`just review 0.9.0`).
@@ -559,6 +599,7 @@ review path:
 # Publish a finished batch: upload it to the results dataset (needs hf and
 # HF_TOKEN) and write bench/results/<version>/release.json, to commit.
 publish batch version:
+    [ ! -e "{{batch}}/.quarantined" ] || { echo "{{batch}} is quarantined: a provider key is in its files"; exit 1; }
     cargo run --release -q -- bench publish {{batch}} {{version}}
 
 # Compare two releases task by task, as in `just compare 0.9.0...0.8.0`.

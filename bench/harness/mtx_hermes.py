@@ -6,7 +6,8 @@ bundled skill catalog seeded into its home. This class keeps the adapter
 and changes what a benchmark needs to compare models:
 
 - Install: the installer at a fixed commit, checking out the pinned
-  release (`version`), with no browser. hermes-agent v0.23.1's own
+  release (`version`) by its commit (PINNED), with no browser; the
+  checkout is checked against that commit. hermes-agent v0.23.1's own
   installer leaves no dependency environment ("run `hermes pm repair`"),
   and Harbor checks the install with `hermes version`, a subcommand
   v0.23.1 dropped for `hermes --version`.
@@ -23,6 +24,12 @@ and changes what a benchmark needs to compare models:
   `agent.reasoning_effort`, as it does Claude Code's and Codex's.
 - Usage: token counts and cost from the session Hermes keeps, when its
   messages carry none.
+- Keys: none in the trial. Hermes reaches its model through the bench's
+  key proxy (key_proxy.py, on the host) with the batch's token
+  (`--api-key-name MTX_PROXY_TOKEN`); the proxy puts the key on upstream.
+  Any process in the container can read another's environment under
+  /proc, so a key in the container is a key the agent can print. This
+  class refuses to run any other way.
 
 `just bench` runs `hermes:<model>` with this class (`-a mtx_hermes:Hermes`,
 bench/harness on PYTHONPATH).
@@ -45,6 +52,12 @@ INSTALLER = (
     "https://raw.githubusercontent.com/NousResearch/hermes-agent/"
     "882cbc99e44d7837cd3cf0229f0352235effbf25/scripts/install.sh"
 )
+
+# The variable holding the batch's token for the key proxy.
+PROXY_TOKEN = "MTX_PROXY_TOKEN"
+
+# Releases by commit: a tag can move, a commit can't.
+PINNED = {"v0.23.1": "3b421578588243f920886e6fe79a6faa87ea026e"}
 
 TOOLSETS = ["terminal", "file", "todo", "delegation", "code_execution"]
 
@@ -89,6 +102,10 @@ class Hermes(HarborHermes):
     def __init__(self, *args: Any, **kwargs: Any):
         kwargs.setdefault("toolsets", ",".join(TOOLSETS))
         super().__init__(*args, **kwargs)
+        if self._model_api_key_name != PROXY_TOKEN or not self._base_url:
+            raise ValueError(
+                f"Hermes runs only through the key proxy: --base-url <proxy>/<route> --api-key-name {PROXY_TOKEN}"
+            )
 
     @override
     def get_version_command(self) -> str | None:
@@ -117,7 +134,9 @@ class Hermes(HarborHermes):
         await self.ensure_system_dependencies(
             environment, ("curl", "git", "ripgrep", "xz")
         )
-        branch_flag = f" --branch {self._version}" if self._version else ""
+        commit = PINNED.get(self._version or "")
+        if commit is None:
+            raise ValueError(f"Hermes {self._version!r} has no commit in mtx_hermes.PINNED")
         await self.exec_as_agent(
             environment,
             command=(
@@ -126,7 +145,9 @@ class Hermes(HarborHermes):
                 'echo "the image already holds a Hermes home"; exit 1; fi; '
                 f"mkdir -p {HERMES_HOME} && touch {HERMES_HOME}/.no-bundled-skills && "
                 f"curl -fsSL {INSTALLER} | bash -s -- --skip-setup --skip-browser "
-                f"--skip-computer-use --hermes-home {HERMES_HOME}{branch_flag} && "
+                f"--skip-computer-use --hermes-home {HERMES_HOME} --commit {commit} && "
+                f'[ "$(git -C {HERMES_HOME}/hermes-agent rev-parse HEAD)" = {commit} ] && '
+
                 'export PATH="$HOME/.local/bin:$PATH" && '
                 f"export HERMES_HOME={HERMES_HOME} && "
                 # A fresh home has no dependency environment until repaired;

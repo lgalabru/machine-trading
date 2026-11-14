@@ -135,14 +135,19 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      `gpt-6.1-sol · hermes`, apart from 0.11.0 and earlier, which ran in
      each provider's own harness; `native:<model>` still runs one that way.
      Its token counts come from Hermes's session; a cost only when Hermes
-     knows the model's price. Every harness runs at one reasoning effort
-     (`effort`, high by default). Other providers' models (Google, Meta,
-     Kimi, GLM, Inkling, any OpenAI-compatible host) are entries in
+     knows the model's price. `effort` (left empty, each harness keeps its
+     default) sets one reasoning effort for every harness; cross-family
+     runs pass `high`. Other providers' models (Google, Meta, Kimi, GLM,
+     Inkling, any OpenAI-compatible host) are entries in
      `bench/harness/models.toml`; see `bench/harness/README.md`.
    - **Keys:** each model's, from `.env` or `~/.machine-trading.env`:
      `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the one models.toml names.
-     `just preflight <models>` checks names and keys with a 1-token request;
-     `just bench` runs it before the first trial.
+     Hermes's trials never hold a key: a proxy on the bench machine
+     (`bench/harness/key_proxy.py`) holds them and the trials get a token.
+     After the batch, every file is searched for every key's value; a hit
+     quarantines the batch (`.quarantined`; `just publish` refuses it).
+     `just preflight <models>` checks names and keys with a 1-token
+     request; `just bench` runs it for its Hermes models first.
    - **Several machines:** give each the same secret, so every trial sees
      the same hidden set: `MTX_EVAL_SEED="$(cat <batch>/.seed)" just bench
      …`. Then copy each machine's Harbor job directories

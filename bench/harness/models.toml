@@ -1,45 +1,66 @@
 # The models `just bench` runs in Hermes by a short name, one table each:
-#   model       Harbor's `provider/model`: `openai/`, `anthropic/` and
-#               `openrouter/` are Hermes's own clients; any other provider
-#               needs `base_url` and `api_format`
-#   key         the environment variable on the bench machine holding the
-#               provider's key (from .env or ~/.machine-trading.env)
-#   base_url    an OpenAI-compatible endpoint, for providers Hermes has no
-#               client for
-#   api_format  how to talk to `base_url`: openai_chat_completions
+#   api       how Hermes talks to the model: openai (OpenAI's Responses
+#             API), anthropic (Anthropic's Messages API) or chat (OpenAI
+#             chat completions, which OpenRouter, Gemini and most hosts serve)
+#   upstream  the provider's API root, which the bench's key proxy forwards to
+#   model     the provider's name for the model
+#   reasoning "openrouter" for OpenRouter: the proxy turns the effort Hermes
+#             sends into OpenRouter's form
+#   key       the environment variable on the bench machine holding the
+#             provider's key (from .env or ~/.machine-trading.env); only the
+#             proxy reads it, trials get a token
 # A name not listed here runs as before: `openai/<model>`, or Anthropic's
 # for a bare name. Check a name and its key with `just preflight <name>`.
 
 [gpt-6-1-sol]
-model = "openai/gpt-6.1-sol"
+api = "openai"
+upstream = "https://api.openai.com/v1"
+model = "gpt-6.1-sol"
 key = "OPENAI_API_KEY"
 
 [claude-opus-5-5]
-model = "anthropic/claude-opus-5-5"
+api = "anthropic"
+upstream = "https://api.anthropic.com"
+model = "claude-opus-5-5"
 key = "ANTHROPIC_API_KEY"
 
 [gemini-3-1-pro]
-model = "google/gemini-3.1-pro-preview"
+api = "chat"
+upstream = "https://generativelanguage.googleapis.com/v1beta/openai"
+model = "gemini-3.1-pro-preview"
 key = "GEMINI_API_KEY"
-base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-api_format = "openai_chat_completions"
 
 [muse-spark-1-3]
-model = "openrouter/meta/muse-spark-1.3"
+api = "chat"
+upstream = "https://openrouter.ai/api/v1"
+reasoning = "openrouter"
+model = "meta/muse-spark-1.3"
 key = "OPENROUTER_API_KEY"
 
 [kimi-k3]
-model = "openrouter/moonshotai/kimi-k3"
+api = "chat"
+upstream = "https://openrouter.ai/api/v1"
+reasoning = "openrouter"
+model = "moonshotai/kimi-k3"
 key = "OPENROUTER_API_KEY"
 
 [glm-5-3]
-model = "openrouter/z-ai/glm-5.3"
+api = "chat"
+upstream = "https://openrouter.ai/api/v1"
+reasoning = "openrouter"
+model = "z-ai/glm-5.3"
 key = "OPENROUTER_API_KEY"
 
 [nemotron-3-ultra]
-model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b"
+api = "chat"
+upstream = "https://openrouter.ai/api/v1"
+reasoning = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b"
 key = "OPENROUTER_API_KEY"
 
 [inkling]
-model = "openrouter/thinkingmachines/inkling"
+api = "chat"
+upstream = "https://openrouter.ai/api/v1"
+reasoning = "openrouter"
+model = "thinkingmachines/inkling"
 key = "OPENROUTER_API_KEY"
