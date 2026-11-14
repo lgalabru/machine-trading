@@ -1290,6 +1290,7 @@ impl Account for PerpAccount {
             order: settled.order,
             participation: None,
             net: None,
+            start_position: self.start_position,
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,

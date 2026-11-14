@@ -245,6 +245,15 @@ impl GradeReport {
                         session.scenario
                     ));
                 }
+                // A perp start position moves with the price too, unless an
+                // order scores the session against doing nothing.
+                if session.start_position != 0.0 && session.order.is_none() {
+                    return Err(format!(
+                        "{}: a perp session's starting position can move with the price, \
+                         and v2 doesn't run a nop anchor yet",
+                        session.scenario
+                    ));
+                }
                 // The risk desk's stop-out (the scenario's `stop_out`): its
                 // close is in the session's PnL, and a breach all the same,
                 // though the mandate's audit no longer disqualifies it.
@@ -288,7 +297,7 @@ impl GradeReport {
                     informed_max_drawdown_usd: result.informed_max_drawdown_usd,
                     start_value_usd: session.start_value_usd,
                     stopped_out: stop_out.is_some(),
-                    traded: session.peak_position > 0.0,
+                    traded: traded(session),
                     trade_markout_usd: result.trade_markout_usd,
                 })
             })
@@ -979,6 +988,21 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
     }
 }
 
+/// Whether the bot traded in the session: its position in the scenario's
+/// market was ever other than where it started.
+fn traded(session: &SessionReport) -> bool {
+    if session.start_position == 0.0 {
+        return session.peak_position > 0.0;
+    }
+    session
+        .positions
+        .iter()
+        .find(|range| range.instrument == session.instrument)
+        .is_some_and(|range| {
+            range.lowest != session.start_position || range.highest != session.start_position
+        })
+}
+
 fn disqualification(session: &SessionReport) -> Option<String> {
     if !session.refused_calls.is_empty() {
         Some(format!(
@@ -1377,6 +1401,7 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            start_position: 0.0,
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
@@ -1915,6 +1940,41 @@ mod tests {
         let mut report = score(vec![(session(300.0), &s), (stopped_out(-900.0), &s)]);
         report.score_v2(&v2()).unwrap();
         assert_eq!(report.v2.as_ref().unwrap().sessions[1].bot_usd, -1_500.0);
+    }
+
+    /// A perp start position moves with the price, so doing nothing isn't
+    /// 0 and v2 refuses it; with an order, which scores against doing
+    /// nothing, it is, and a bot that held still didn't trade.
+    #[test]
+    fn v2_takes_a_start_position_only_with_an_order() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let mut report = score(vec![(held.clone(), &s)]);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let order = crate::orders::ExecutionOrder {
+            instrument: None,
+            side: mtx_core::Side::Sell,
+            quantity: 20.0,
+            haircut_bps: 30.0,
+            reduce_only: true,
+        };
+        held.order = Some(order.report(20.0, 20.0, 100.0, 98.0, -40.0, &[]));
+        held.pnl_usd = 0.0;
+        assert!(!traded(&held));
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        let mut sold = held;
+        sold.positions[0].lowest = 0.0;
+        assert!(traded(&sold));
     }
 
     /// The reference levered past its limit: it earns more where it holds,
