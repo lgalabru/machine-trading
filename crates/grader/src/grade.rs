@@ -246,10 +246,11 @@ impl GradeReport {
                     ));
                 }
                 // A perp start position moves with the price too, unless an
-                // order scores the session against doing nothing; and it
-                // earns or pays the scenario's funding, which the order's
-                // drift doesn't take out.
-                if session.start_position != 0.0 && session.order.is_none() {
+                // order or net scoring scores the session against doing
+                // nothing (holding the start); and it earns or pays the
+                // scenario's funding, which neither's drift takes out.
+                if session.start_position != 0.0 && session.order.is_none() && session.net.is_none()
+                {
                     return Err(format!(
                         "{}: a perp session's starting position can move with the price, \
                          and v2 doesn't run a nop anchor yet",
@@ -2014,6 +2015,53 @@ mod tests {
         let mut sold = held;
         sold.positions[0].lowest = 0.0;
         assert!(traded(&sold));
+    }
+
+    /// Net scoring scores a perp start position against holding it, so v2
+    /// takes it without an order: a bot that held scores the hold's 0, the
+    /// nop anchor. Funding on the start is still refused, net or not: the
+    /// hold baseline doesn't take it out.
+    #[test]
+    fn v2_takes_a_start_position_under_net_scoring_with_the_hold_as_nop() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let net = crate::orders::NetReport {
+            value_change_usd: -40.0,
+            drift_usd: -40.0,
+            inventory_charge_usd: 0.0,
+            venue_charge_usd: 0.0,
+            venue_net: Vec::new(),
+        };
+        held.pnl_usd = net.pnl_usd();
+        held.net = Some(net);
+        assert_eq!(held.pnl_usd, 0.0);
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        let scored = report.v2.as_ref().unwrap();
+        assert_eq!(scored.sessions[0].nop_usd, 0.0);
+        assert_eq!(scored.sessions[0].bot_usd, 0.0);
+        assert!(scored.raw.abs() < 1e-9, "{}", scored.raw);
+
+        let mut funded = held;
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
     }
 
     /// The reference levered past its limit: it earns more where it holds,

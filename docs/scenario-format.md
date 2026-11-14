@@ -77,9 +77,11 @@ the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup. Scoring v2 takes a start position only with
-an order, which scores the session against doing nothing, and only on a
-market without the scenario's `funding`: otherwise doing nothing moves with
-the price, or earns or pays the funding, and v2 refuses the grade. A v1
+an order or `scoring.net`, which score the session against doing nothing
+(for `net`, holding the start, so a bot that holds scores 0, v2's nop),
+and only on a market without the scenario's `funding`: otherwise doing
+nothing moves with the price, or earns or pays the funding, and v2 refuses
+the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
 
