@@ -1464,14 +1464,16 @@ impl Account for PerpAccount {
         decode_instruction(ix, keys, &market.market)
     }
 
-    /// Cancel the bot's orders on every market, then, market by market in
-    /// symbol order, sell a long (buy back a short) with market orders
-    /// through the book, each at most `slice`, limited
-    /// [`STOP_OUT_LIMIT_BPS`] through the best price, reading the position
-    /// back from Phoenix after each: at most
-    /// [`MAX_CLOSE_ORDERS_PER_STEP`] orders in all. The position it reports
-    /// is the largest one left; on several markets, each order names its
-    /// market.
+    /// Cancel the bot's orders on every market, then sell each long (buy
+    /// back each short) with market orders through the book, each at most
+    /// `slice` base units, limited [`STOP_OUT_LIMIT_BPS`] through the best
+    /// price, reading the position back from Phoenix after each. The step's
+    /// [`MAX_CLOSE_ORDERS_PER_STEP`] orders go round the markets in symbol
+    /// order, one order to each market still open per round, so one market
+    /// can't take every order while another's exposure runs on; a market
+    /// whose book took nothing gets no more this step. The position it
+    /// reports is the largest one left; on several markets, each order names
+    /// its market.
     async fn force_close(
         &mut self,
         bot: &Keypair,
@@ -1488,11 +1490,20 @@ impl Account for PerpAccount {
             seats.push(seat);
         }
         let several = self.markets.len() > 1;
+        let mut positions = self.positions(&self.measure().await?);
+        // Markets whose book took nothing this step.
+        let mut stuck = vec![false; self.markets.len()];
         let mut orders = Vec::new();
-        let mut left = 0.0_f64;
-        for (market, seat) in self.markets.iter().zip(&seats) {
-            let mut position = position_in(&self.measure().await?, &market.id);
-            while !is_flat(position) && orders.len() < MAX_CLOSE_ORDERS_PER_STEP {
+        'rounds: loop {
+            let mut sent_any = false;
+            for (i, (market, seat)) in self.markets.iter().zip(&seats).enumerate() {
+                let position = positions[i];
+                if is_flat(position) || stuck[i] {
+                    continue;
+                }
+                if orders.len() >= MAX_CLOSE_ORDERS_PER_STEP {
+                    break 'rounds;
+                }
                 let (side, name) = if position > 0.0 {
                     (Side::Ask, "sell")
                 } else {
@@ -1508,7 +1519,8 @@ impl Account for PerpAccount {
                 let sent = seat.take(side, size, limit_usd).await;
                 let signature = sent.as_ref().ok().and_then(|()| seat.last_signature());
                 let after = position_in(&self.measure().await?, &market.id);
-                let moved = (after - position).abs() > 0.0;
+                // A book that took nothing won't take more this step.
+                stuck[i] = (after - position).abs() == 0.0;
                 orders.push(CloseOrder {
                     at,
                     market: several.then(|| market.instrument.clone()),
@@ -1520,16 +1532,18 @@ impl Account for PerpAccount {
                     error: sent.err(),
                     signature,
                 });
-                position = after;
-                // A book that took nothing won't take more this step.
-                if !moved {
-                    break;
-                }
+                positions[i] = after;
+                sent_any = true;
             }
-            if position.abs() > left.abs() {
-                left = position;
+            if !sent_any {
+                break;
             }
         }
+        let left =
+            positions.iter().copied().fold(
+                0.0_f64,
+                |left, p| if p.abs() > left.abs() { p } else { left },
+            );
         Ok(Closing {
             orders,
             position: left,
