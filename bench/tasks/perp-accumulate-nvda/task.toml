@@ -28,7 +28,7 @@ emoji = "🧺"
 market = "Phoenix NVDA perp"
 summary = "works a capped NVDA buy order against informed flow and a thin book, and leaves the broker what costs more to buy"
 skill = "reads whether one-sided taker flow is informed, paces its buying to how fast the book recovers from its own takes, and leaves to the broker what is cheaper to leave"
-leak_needles = ["read the taker flow through the grader's maker", "the informed bot, scoring v2's 1"]
+leak_needles = ["flow through the grader's maker, buy ahead of informed buying", "scoring v2's 1: the reference's order handling"]
 headline = "v2"
 
 [verifier]

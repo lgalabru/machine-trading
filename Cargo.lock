@@ -4988,6 +4988,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-perp-accumulate"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-perp-accumulate-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-perp-accumulate",
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-perp-accumulate-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-perp-accumulate",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-printer"
 version = "0.1.0"
 dependencies = [
