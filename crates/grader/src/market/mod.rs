@@ -2,6 +2,8 @@
 //!
 //! - [`calibration`]: the per-asset files fitted to real market data
 //!   (`calibration/market/<asset>.<date>.<hash>.toml`).
+//! - [`correlation`]: the cross-asset correlation file `draw_joint` takes its
+//!   matrix from, and [`joint`], its realism check.
 //! - [`calendar`]: trading calendars (regular hours, extended hours,
 //!   overnight, weekends, holidays).
 //! - [`model`]: the fair-value process a calibration drives, compiled to the
@@ -15,10 +17,13 @@
 
 pub mod calendar;
 pub mod calibration;
+pub mod correlation;
+pub mod joint;
 pub mod model;
 pub mod realism;
 
 pub use calibration::Calibration;
+pub use correlation::Correlation;
 pub use model::{MarketModel, MarketModelRecord, ModelSpec};
 
 #[cfg(test)]
