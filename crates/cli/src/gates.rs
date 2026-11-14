@@ -16,6 +16,11 @@
 //! the full run adds the image checks. A check whose tool isn't in this build
 //! yet (replay, market calibration) reports `not_run`, which never fails the
 //! gate: `mtx gates` grows as those land.
+//!
+//! A task whose headline is scoring v2 (`headline = "v2"`) also needs both
+//! anchors and a reference in the strength band (GRADING_DECISIONS D1): the
+//! task-files checks refuse it without an informed bot, and the ladder's
+//! sets measure the band.
 
 use std::{
     collections::BTreeMap,
@@ -28,11 +33,17 @@ use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Cli, authoring, tasks};
+use crate::{Cli, authoring, scoring_text, tasks};
 
 /// The ladder's extra gate: the best informed policy must make at least this
 /// many times the best one that doesn't read the task's signal.
 const DEFAULT_MIN_RATIO: f64 = 2.0;
+/// The strength band by default: the reference's weighted PnL as a share of
+/// the informed bot's, so there is room above and below 0.5.
+const DEFAULT_BAND: [f64; 2] = [0.2, 0.7];
+/// The least per-session Sharpe the reference may have (t ≈ 2.1 over 72
+/// sessions), by default.
+const DEFAULT_MIN_SHARPE: f64 = 0.25;
 /// Fast mode: one hidden set of this many sessions per rung.
 const FAST_SESSIONS: usize = 12;
 /// A short set can't carry the full run's bootstrap floor; the order must
@@ -248,6 +259,10 @@ pub struct LadderSummary {
     pub rules: Vec<RuleResult>,
     pub exploits: Vec<ExploitResult>,
     pub disqualified: Vec<Disqualified>,
+    /// Per set, each rung's PnL in each session, as graded (absent in older
+    /// summaries).
+    #[serde(default)]
+    pub pnls: Vec<BTreeMap<String, Vec<f64>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +318,209 @@ pub struct SignalGate {
     #[serde(default)]
     pub non_reading: Vec<String>,
     pub min_ratio: Option<f64>,
+}
+
+/// A v2 task's anchors, in its ladder file: the rungs that are its 0.5 and
+/// its 1, and the strength band its reference must clear.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Anchors {
+    pub reference: String,
+    pub informed: String,
+    /// The reference's weighted PnL as a share of the informed bot's:
+    /// `[low, high]` (default 0.2 to 0.7).
+    pub band: Option<[f64; 2]>,
+    /// The reference's least per-session Sharpe (default 0.25).
+    pub min_sharpe: Option<f64>,
+}
+
+/// Each session's PnL of `rung`, over every set, or why there's none.
+fn session_pnls(summary: &LadderSummary, rung: &str) -> Result<Vec<f64>, String> {
+    if summary.pnls.len() != summary.totals.len() || summary.pnls.is_empty() {
+        return Err(
+            "the ladder's summary has no per-session PnL: rerun it with this build's `just ladder`"
+                .into(),
+        );
+    }
+    let mut out = Vec::new();
+    for set in &summary.pnls {
+        out.extend(
+            set.get(rung)
+                .ok_or_else(|| format!("no rung `{rung}` in the ladder"))?,
+        );
+    }
+    Ok(out)
+}
+
+/// The mean over the standard deviation (n − 1); 0 for fewer than two, and
+/// unbounded for a constant positive series.
+fn sharpe(xs: &[f64]) -> f64 {
+    if xs.len() < 2 {
+        return 0.0;
+    }
+    let n = xs.len() as f64;
+    let mean = xs.iter().sum::<f64>() / n;
+    let sd = (xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+    if sd > 0.0 {
+        mean / sd
+    } else if mean > 0.0 {
+        f64::INFINITY
+    } else {
+        0.0
+    }
+}
+
+/// The reference is a fit 0.5 (D1): on the ladder's sets, with losses
+/// weighted as v2 weighs them, the informed bot beats it, its weighted PnL
+/// is within the band of the informed bot's (and so above `φ` of it: never
+/// `anchor_floored`), its per-session Sharpe clears the floor, and neither
+/// anchor broke its mandate. A fast set can't settle the numbers: there a
+/// miss is inconclusive, and the full ladder decides.
+pub fn strength_band(
+    summary: &LadderSummary,
+    anchors: &Anchors,
+    settings: &scoring_text::Settings,
+    fast: bool,
+) -> Check {
+    let (id, title) = (
+        "strength-band",
+        "The reference is a fit 0.5 against the informed bot (strength band)",
+    );
+    let (reference, informed) = match (
+        session_pnls(summary, &anchors.reference),
+        session_pnls(summary, &anchors.informed),
+    ) {
+        (Ok(r), Ok(i)) if r.len() == i.len() => (r, i),
+        (Ok(_), Ok(_)) => {
+            return Check::fail(
+                SOLVABLE,
+                id,
+                title,
+                "the anchors played different numbers of sessions",
+            );
+        }
+        (Err(e), _) | (_, Err(e)) => return Check::fail(SOLVABLE, id, title, e),
+    };
+    let broke: Vec<String> = summary
+        .disqualified
+        .iter()
+        .filter(|d| d.rung == anchors.reference || d.rung == anchors.informed)
+        .map(|d| format!("{} broke its mandate in {}", d.rung, d.scenarios.join(", ")))
+        .collect();
+    if !broke.is_empty() {
+        return Check::fail(SOLVABLE, id, title, broke.join("; "));
+    }
+    let k = settings.loss_weight;
+    let weigh = |xs: &[f64]| -> f64 { xs.iter().map(|&x| if x < 0.0 { k * x } else { x }).sum() };
+    let (e_ref, e_inf) = (weigh(&reference), weigh(&informed));
+    let [low, high] = anchors.band.unwrap_or(DEFAULT_BAND);
+    let min_sharpe = anchors.min_sharpe.unwrap_or(DEFAULT_MIN_SHARPE);
+    let phi = settings.floor();
+    let ratio = if e_inf > 0.0 { e_ref / e_inf } else { f64::NAN };
+    let s = sharpe(&reference);
+    let mut misses = Vec::new();
+    if e_inf <= e_ref {
+        misses.push(format!(
+            "the informed bot (${e_inf:.0}) doesn't beat the reference (${e_ref:.0}): v2 refuses to score"
+        ));
+    } else if e_ref < phi * e_inf {
+        misses.push(format!(
+            "anchor_floored: the reference makes {ratio:.2} of the informed bot, under φ = {phi}"
+        ));
+    }
+    if !(ratio >= low && ratio <= high) && e_inf > e_ref {
+        misses.push(format!(
+            "the reference makes {ratio:.2} of the informed bot, outside [{low}, {high}]"
+        ));
+    }
+    if s < min_sharpe {
+        misses.push(format!(
+            "the reference's per-session Sharpe is {s:.2}, under {min_sharpe}"
+        ));
+    }
+    let measured = format!(
+        "weighted (k = {k}) over {} sessions: reference ${e_ref:.0}, informed ${e_inf:.0}, ratio {ratio:.2} in [{low}, {high}]; reference Sharpe {s:.2} (at least {min_sharpe})",
+        reference.len()
+    );
+    match (misses.is_empty(), fast) {
+        (true, _) => Check::pass(SOLVABLE, id, title, measured),
+        (false, true) => Check::new(
+            SOLVABLE,
+            id,
+            title,
+            Status::Inconclusive,
+            format!(
+                "{}. A fast set can't settle the band; the full ladder decides",
+                misses.join("; ")
+            ),
+        ),
+        (false, false) => Check::fail(SOLVABLE, id, title, format!("{}. {measured}", misses.join("; "))),
+    }
+}
+
+/// The checks only a task scored by v2 has: its strength band, and the
+/// verifier running its informed bot on the hidden set (once `mtx grade`
+/// can). A v1 task reports them not run.
+pub fn v2_checks(
+    headline: tasks::Headline,
+    ladder: &Value,
+    summary: Option<&LadderSummary>,
+    test: &str,
+    fast: bool,
+) -> Vec<Check> {
+    let band = (
+        "strength-band",
+        "The reference is a fit 0.5 against the informed bot (strength band)",
+    );
+    let live = (
+        "informed-on-hidden-sets",
+        "The verifier runs the informed bot on the hidden set",
+    );
+    if headline == tasks::Headline::V1 {
+        let why = "v1 headline: scoring v2 is reported beside it, if at all (D1)";
+        return vec![
+            Check::not_run(SOLVABLE, band.0, band.1, why),
+            Check::not_run(SOLVABLE, live.0, live.1, why),
+        ];
+    }
+    let mut checks = Vec::new();
+    let settings = scoring_text::Settings::of_verifier(test);
+    let anchors = ladder
+        .get("anchors")
+        .map(|a| serde_json::from_value::<Anchors>(a.clone()));
+    checks.push(match (anchors, settings, summary) {
+        (None, _, _) => Check::fail(
+            SOLVABLE,
+            band.0,
+            band.1,
+            "the ladder file names no `anchors`: a v2 task needs its reference and informed bot",
+        ),
+        (Some(Err(e)), _, _) => {
+            Check::fail(SOLVABLE, band.0, band.1, format!("ladder.json's `anchors`: {e}"))
+        }
+        (_, Err(e), _) => Check::fail(SOLVABLE, band.0, band.1, format!("{e:#}")),
+        (_, _, None) => Check::fail(SOLVABLE, band.0, band.1, "the ladder didn't run"),
+        (Some(Ok(anchors)), Ok(settings), Some(summary)) => {
+            strength_band(summary, &anchors, &settings, fast)
+        }
+    });
+    checks.push(if !has_command(&["grade"], Some("informed")) {
+        Check::not_run(
+            SOLVABLE,
+            live.0,
+            live.1,
+            "`mtx grade --informed` isn't in this build yet: until it is, a hidden grade takes v2's 1 from the cost-aware hindsight bound (`ceiling: hindsight`)",
+        )
+    } else {
+        Check::from(
+            SOLVABLE,
+            live.0,
+            live.1,
+            scoring_text::has_flag(test, "--informed"),
+            "tests/test.sh passes `mtx grade --informed`",
+        )
+    });
+    checks
 }
 
 fn total(summary: &LadderSummary, rung: &str) -> Option<f64> {
@@ -1000,7 +1218,8 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     {
         bail!("no task `{task}` in bench/tasks (`mtx task list`)");
     }
-    let family = tasks::load_one(root, task.to_string())?.mtx.generator;
+    let meta = tasks::load_one(root, task.to_string())?.mtx;
+    let (family, headline) = (meta.generator, meta.headline);
     let out = opts
         .out
         .clone()
@@ -1065,23 +1284,41 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             ladder_out.join(task).join("summary.json")
         }
     };
-    match std::fs::read_to_string(&summary_path) {
+    let summary = match std::fs::read_to_string(&summary_path) {
         Ok(text) => match serde_json::from_str::<LadderSummary>(&text) {
-            Ok(summary) => checks.extend(ladder_checks(&summary, &signal, opts.fast)),
-            Err(e) => checks.push(Check::fail(
+            Ok(summary) => {
+                checks.extend(ladder_checks(&summary, &signal, opts.fast));
+                Some(summary)
+            }
+            Err(e) => {
+                checks.push(Check::fail(
+                    SOLVABLE,
+                    "ladder",
+                    "Skill ladder ran",
+                    format!("couldn't read {}: {e}", summary_path.display()),
+                ));
+                None
+            }
+        },
+        Err(e) => {
+            checks.push(Check::fail(
                 SOLVABLE,
                 "ladder",
                 "Skill ladder ran",
-                format!("couldn't read {}: {e}", summary_path.display()),
-            )),
-        },
-        Err(e) => checks.push(Check::fail(
-            SOLVABLE,
-            "ladder",
-            "Skill ladder ran",
-            format!("no {}: {e}", summary_path.display()),
-        )),
-    }
+                format!("no {}: {e}", summary_path.display()),
+            ));
+            None
+        }
+    };
+    let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
+        .unwrap_or_default();
+    checks.extend(v2_checks(
+        headline,
+        &config,
+        summary.as_ref(),
+        &test,
+        opts.fast,
+    ));
 
     // Full mode: the image checks.
     let full_only = |section, id, title| {
@@ -1190,7 +1427,125 @@ mod tests {
             rules: vec![],
             exploits: vec![],
             disqualified: vec![],
+            pnls: vec![],
         }
+    }
+
+    /// A ladder of `sets`, each rung's sessions given.
+    fn sessions(sets: &[&[(&str, &[f64])]]) -> LadderSummary {
+        LadderSummary {
+            pnls: sets
+                .iter()
+                .map(|s| s.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect())
+                .collect(),
+            ..summary(
+                &sets
+                    .iter()
+                    .map(|s| {
+                        s.iter()
+                            .map(|(k, v)| (*k, v.iter().sum::<f64>()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(Vec::as_slice)
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
+    fn anchors() -> Anchors {
+        Anchors {
+            reference: "reference".into(),
+            informed: "informed".into(),
+            band: None,
+            min_sharpe: None,
+        }
+    }
+
+    const REFERENCE: &[f64] = &[40.0, -10.0, 25.0, 60.0, 5.0, 15.0];
+    const INFORMED: &[f64] = &[120.0, 30.0, 80.0, 90.0, -20.0, 60.0];
+
+    #[test]
+    fn a_reference_in_the_band_passes_and_one_outside_fails() {
+        let k = scoring_text::Settings::default();
+        // Weighted at k = 1.5: the reference 130, the informed bot 350.
+        let fit = sessions(&[&[("reference", REFERENCE), ("informed", INFORMED)]]);
+        let check = strength_band(&fit, &anchors(), &k, false);
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        assert!(check.detail.contains("ratio 0.37"), "{}", check.detail);
+
+        // A reference that barely earns is floored: v2 would flag it.
+        let weak = sessions(&[&[
+            ("reference", &[5.0, -2.0, 4.0, 6.0, 1.0, 2.0][..]),
+            ("informed", INFORMED),
+        ]]);
+        let check = strength_band(&weak, &anchors(), &k, false);
+        assert_eq!(check.status, Status::Fail);
+        assert!(check.detail.contains("anchor_floored"), "{}", check.detail);
+        // On a fast set the same miss is inconclusive.
+        let check = strength_band(&weak, &anchors(), &k, true);
+        assert_eq!(check.status, Status::Inconclusive, "{}", check.detail);
+
+        // An informed bot that doesn't beat the reference is broken.
+        let flat = sessions(&[&[("reference", INFORMED), ("informed", REFERENCE)]]);
+        let check = strength_band(&flat, &anchors(), &k, false);
+        assert!(check.detail.contains("doesn't beat"), "{}", check.detail);
+
+        // Too close to the informed bot leaves no room above 0.5.
+        let close: Vec<f64> = INFORMED.iter().map(|x| x * 0.9).collect();
+        let check = strength_band(
+            &sessions(&[&[("reference", &close), ("informed", INFORMED)]]),
+            &anchors(),
+            &k,
+            false,
+        );
+        assert!(check.detail.contains("outside [0.2, 0.7]"), "{}", check.detail);
+
+        // The band and the Sharpe floor are the task's to set.
+        let strict = Anchors {
+            min_sharpe: Some(5.0),
+            ..anchors()
+        };
+        let check = strength_band(&fit, &strict, &k, false);
+        assert!(check.detail.contains("Sharpe"), "{}", check.detail);
+    }
+
+    #[test]
+    fn the_band_needs_per_session_pnl_and_clean_anchors() {
+        let k = scoring_text::Settings::default();
+        let old = summary(&[&[("reference", 120.0), ("informed", 330.0)]]);
+        let check = strength_band(&old, &anchors(), &k, true);
+        assert_eq!(check.status, Status::Fail, "even in fast mode");
+        assert!(check.detail.contains("per-session"), "{}", check.detail);
+        let mut broke = sessions(&[&[("reference", REFERENCE), ("informed", INFORMED)]]);
+        broke.disqualified.push(Disqualified {
+            rung: "informed".into(),
+            scenarios: vec!["s-3".into()],
+        });
+        let check = strength_band(&broke, &anchors(), &k, false);
+        assert_eq!(check.status, Status::Fail);
+        assert!(check.detail.contains("informed broke its mandate"));
+    }
+
+    #[test]
+    fn a_v2_task_without_anchors_is_refused_and_a_v1_task_is_untouched() {
+        let fit = sessions(&[&[("reference", REFERENCE), ("informed", INFORMED)]]);
+        let test = "mtx grade --scoring v2 --v2-sessions";
+        let named = serde_json::json!({ "anchors": { "reference": "reference", "informed": "informed" } });
+        let v2 = v2_checks(tasks::Headline::V2, &named, Some(&fit), test, false);
+        assert_eq!(v2[0].id, "strength-band");
+        assert_eq!(v2[0].status, Status::Pass, "{}", v2[0].detail);
+        // Until `mtx grade --informed` exists, the live check isn't run.
+        assert_eq!(v2[1].status, Status::NotRun);
+        let none = v2_checks(tasks::Headline::V2, &serde_json::json!({}), Some(&fit), test, false);
+        assert_eq!(none[0].status, Status::Fail);
+        assert!(none[0].detail.contains("names no `anchors`"));
+        let typo = serde_json::json!({ "anchors": { "reference": "reference", "informd": "x" } });
+        let typo = v2_checks(tasks::Headline::V2, &typo, Some(&fit), test, false);
+        assert_eq!(typo[0].status, Status::Fail, "{}", typo[0].detail);
+        let v1 = v2_checks(tasks::Headline::V1, &serde_json::json!({}), None, "", false);
+        assert!(v1.iter().all(|c| c.status == Status::NotRun));
     }
 
     fn gate(informed: &[&str], non_reading: &[&str]) -> SignalGate {

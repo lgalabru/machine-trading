@@ -88,7 +88,7 @@ struct TaskParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct GuideParams {
     #[schemars(
-        description = "The step: design, family, reference, anchor, practice, instruction, readme, registry, lint or verify (the ids task_status returns)."
+        description = "The step: design, family, reference, anchors, anchor, practice, instruction, scoring, probes, readme, registry, lint or verify (the ids task_status returns)."
     )]
     step: String,
 }
@@ -227,7 +227,7 @@ impl Server {
     }
 
     #[tool(
-        description = "The procedure for one step of making a task, from the trading-task-design skill, with where it goes deeper. Steps: design, family, reference, anchor, practice, instruction, readme, registry, lint, verify."
+        description = "The procedure for one step of making a task, from the trading-task-design skill, with where it goes deeper. Steps: design, family, reference, anchors, anchor, practice, instruction, scoring, probes, readme, registry, lint, verify."
     )]
     async fn task_guide(
         &self,

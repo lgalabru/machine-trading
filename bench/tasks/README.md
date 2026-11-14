@@ -31,6 +31,28 @@ out of it:
 | **`reward`** | `clamp(Σ PnL / Σ bound, 0, 1)` | The Harbor reward and the RL signal. The bound is a hindsight bound that no bot can reach, so the reward doesn't saturate as bots improve. Each task defines its own bound. |
 | **`skill`** | `Σ PnL / Σ reference PnL` | The headline for comparing bots. The reference runs on the same sessions, so it scores 1 and doing nothing scores 0. The ratio is unclamped. |
 
+### Scoring v2
+
+New tasks are judged by scoring v2 (`headline = "v2"` in their
+`[metadata.mtx]`); the four tasks above report `reward` and `skill` until
+they move in 0.13. v2 puts a bot's PnL on a scale with three anchors measured
+on the same sessions: doing nothing scores 0, the task's **reference** 0.5,
+and its **informed bot** 1. The informed bot knows everything the task's data
+could tell in principle but not the session's future randomness, and trades
+under the same costs and limits, so 1 is reachable. Losses count 1.5 times,
+drawing down far deeper than the anchor costs a near-breach charge, a breach
+scores at least the whole loss limit lost and caps the run (one at 0.5, two
+or more at 0), and a refused call or tampering scores −1. The agent is told
+all of it: `mtx task sync` writes the rules into the task's
+`instruction.md` from the grader's settings (between its `mtx:scoring`
+markers). The grader's side is `crates/grader/src/scoring_v2.rs`.
+
+A task scored by v2 has both anchors, a reference in the strength band (on
+the ladder's sets, its loss-weighted PnL is 0.2 to 0.7 of the informed bot's
+and its per-session Sharpe at least 0.25), and opts into the probe gate;
+`mtx gates` refuses it otherwise. `mtx task new` scaffolds all of it, and the
+[new-task checklist](../../docs/development.md#add-a-task) walks through it.
+
 ### Risk is a set of limits, not a score
 
 Every session carries a [mandate](../../specs/mandate.md). It works like a
@@ -139,6 +161,7 @@ One sentence: what the agent's bot does, on which market.
 | Mandate | position cap, loss limit |
 | Bound | what the reward divides by |
 | Reference | its reward, and what it does in one line |
+| Anchors | scoring v2: the reference (0.5) and what the informed bot (1) knows, one line |
 
 ## The skill
 The thesis ("a good bot profits here because it ___"), what wins, and the

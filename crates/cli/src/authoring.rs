@@ -7,6 +7,13 @@
 //! need the image. This module scaffolds a task from the closest existing one,
 //! and reads a task's files to say which steps are done and what to do next.
 //! Nothing here keeps state of its own: the files are the state.
+//!
+//! A new task is scored by v2 from the start (GRADING_DECISIONS D1): its
+//! `[metadata.mtx]` says `headline = "v2"`, its verifier grades with
+//! `--scoring v2`, its ladder names the two anchors (the reference, 0.5, and
+//! an informed bot, 1, in `checks/bots/informed`) and opts into the probe
+//! gate, and its instruction carries the scoring rules in plain words
+//! ([`crate::scoring_text`]).
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::tasks;
+use crate::{scoring_text, tasks};
 
 /// The task an author starts from: the closest existing one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
@@ -279,7 +286,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     std::fs::write(&toml_path, toml)?;
 
     let test_path = to.join("tests/test.sh");
-    let test = std::fs::read_to_string(&test_path)?;
+    let test = v2_verifier(&std::fs::read_to_string(&test_path)?);
     let test = test.replacen(
         "set -euo pipefail\n",
         &format!(
@@ -301,9 +308,10 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         .find("## The bot contract")
         .map(|i| &contract[i..])
         .unwrap_or("");
+    let settings = scoring_text::Settings::of_verifier(&test)?;
     std::fs::write(
         to.join("instruction.md"),
-        instruction(spec, &canary, contract),
+        instruction(spec, &canary, contract, &settings),
     )?;
     std::fs::write(to.join("README.md"), readme(spec))?;
     std::fs::write(to.join("DESIGN.md"), design(spec))?;
@@ -342,6 +350,46 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         "bench/tasks/{name}/reference (package {new_package}; run `cargo update -w` to lock it)"
     ));
 
+    // The checks: the informed bot's slot, the ladder with both anchors,
+    // and the probe gate.
+    let informed = to.join("checks/bots/informed");
+    copy_dir(&bot_to, &informed, &["bin", "target", "bot.wasm"])?;
+    let informed_package = format!("{new_package}-informed");
+    let informed_bin = format!("{new_bin}-informed");
+    let cargo = std::fs::read_to_string(informed.join("Cargo.toml"))?
+        .replace(
+            &format!("\"{new_package}\""),
+            &format!("\"{informed_package}\""),
+        )
+        .replace(
+            &format!("\"{new_bin}\""),
+            &format!("\"{informed_bin}\""),
+        )
+        // Two levels deeper than reference/.
+        .replace("path = \"../../../../", "path = \"../../../../../../");
+    std::fs::write(informed.join("Cargo.toml"), cargo)?;
+    let justfile = std::fs::read_to_string(informed.join("Justfile"))?.replace(
+        &format!("--bin {new_bin}"),
+        &format!("--bin {informed_bin}"),
+    );
+    std::fs::write(informed.join("Justfile"), justfile)?;
+    let lib = informed.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib)?;
+    std::fs::write(
+        &lib,
+        format!(
+            "//! {INFORMED_TODO}: this is a copy of the reference. Make it the task's informed\n//! bot, scoring v2's 1: it reads every fact the task's data could tell in\n//! principle (`MTX_REGIME`, which the ladder's `tell_regime` hands it)\n//! but not the session's future randomness, and trades under the same\n//! costs, mandate and latency. Then drop this paragraph.\n//!\n{source}"
+        ),
+    )?;
+    let probes = probe_rungs(root, base.task(), name, &family, &base_task.reference.package, &new_package)?;
+    std::fs::write(
+        to.join("checks/ladder.json"),
+        serde_json::to_string_pretty(&ladder(name, base.generator(), &probes, sessions(spec)))? + "\n",
+    )?;
+    written.push(format!(
+        "bench/tasks/{name}/checks: ladder.json (both anchors, the probe gate), the informed bot's slot (package {informed_package})"
+    ));
+
     // Everything that lists the task is written from its task.toml.
     tasks::sync(root)?;
     written.push("the generated lists (mtx task sync)".to_string());
@@ -353,7 +401,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
 /// the author's exists.
 fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
     format!(
-        "generator = {}\nanchor = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\n",
+        "generator = {}\nanchor = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\nheadline = \"v2\"\n",
         toml_string(base.generator()),
         toml_string(family),
         toml_string(&format!(
@@ -363,6 +411,104 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
         toml_string(&spec.thesis),
         toml_string(&spec.thesis),
     )
+}
+
+/// What marks the informed bot's slot until it is written.
+pub const INFORMED_TODO: &str = "TODO(informed)";
+
+/// A verifier script graded by scoring v2: `--scoring v2` and
+/// `--v2-sessions`, and every session graded (no stop at the first breach:
+/// v2 scores each one, D9).
+fn v2_verifier(script: &str) -> String {
+    let v2 = "  --scoring v2 \\\n  --v2-sessions \\\n";
+    if script.contains("  --stop-on-disqualify \\\n") {
+        script.replacen("  --stop-on-disqualify \\\n", v2, 1)
+    } else if scoring_text::has_flag(script, "--scoring") {
+        script.to_string()
+    } else {
+        script.replacen("mtx grade \\\n", &format!("mtx grade \\\n{v2}"), 1)
+    }
+}
+
+/// The base task's probe rungs (the probe gate's, `bench/checks/probes`),
+/// rewritten for the new task, and its `probes` section; the probe crate that
+/// wraps the base's reference is copied too. A base without them gives
+/// none, and an empty `probes`: the task still opts in.
+fn probe_rungs(
+    root: &Path,
+    base: &str,
+    name: &str,
+    family: &str,
+    base_package: &str,
+    new_package: &str,
+) -> Result<(Vec<Value>, Value)> {
+    let ladder: Value = std::fs::read_to_string(root.join("bench/tasks").join(base).join("checks/ladder.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let own = format!("bench/tasks/{base}/checks/rungs/probe");
+    let mut rungs = Vec::new();
+    for rung in ladder["rungs"].as_array().into_iter().flatten() {
+        let dir = rung["dir"].as_str().unwrap_or_default();
+        if dir.starts_with("bench/checks/probes") {
+            rungs.push(rung.clone());
+        } else if dir == own {
+            let mut rung = rung.clone();
+            rung["dir"] = json!(format!("bench/tasks/{name}/checks/rungs/probe"));
+            rungs.push(rung);
+        }
+    }
+    let from = root.join(&own);
+    if from.join("Cargo.toml").is_file() {
+        let to = root.join("bench/tasks").join(name).join("checks/rungs/probe");
+        copy_dir(&from, &to, &["bin", "target"])?;
+        let cargo = replace_line(
+            &std::fs::read_to_string(to.join("Cargo.toml"))?,
+            "name = \"mtx-probe-",
+            &format!("name = \"mtx-probe-{family}\""),
+        )
+        .replace(
+            &format!("{base_package} = {{ path"),
+            &format!("{base_package} = {{ package = \"{new_package}\", path"),
+        );
+        std::fs::write(to.join("Cargo.toml"), cargo)?;
+    }
+    let probes = match &ladder["probes"] {
+        Value::Object(p) if !p.contains_key("exempt") => Value::Object(p.clone()),
+        _ => json!({}),
+    };
+    Ok((rungs, probes))
+}
+
+/// A new task's `checks/ladder.json`: doing nothing, the blind bets, the
+/// reference and the informed bot, the order between them, both anchors,
+/// and the probe gate's rungs and section.
+fn ladder(name: &str, family: &str, probes: &(Vec<Value>, Value), count: u32) -> Value {
+    let mut rungs = vec![
+        json!({ "name": "nop", "dir": "bots/starter" }),
+        json!({ "name": "blind-long", "dir": "bench/checks/ladder/blind-long", "may_breach": true }),
+        json!({ "name": "blind-short", "dir": "bench/checks/ladder/blind-short", "may_breach": true }),
+        json!({ "name": "reference", "dir": format!("bench/tasks/{name}/reference") }),
+        json!({ "name": "informed", "dir": format!("bench/tasks/{name}/checks/bots/informed"), "tell_regime": true }),
+    ];
+    rungs.extend(probes.0.iter().cloned());
+    json!({
+        "family": family,
+        "count": count,
+        "min_rule_odds": 0.85,
+        "rungs": rungs,
+        "anchors": { "reference": "reference", "informed": "informed" },
+        "gates": {
+            "informed": ["informed"],
+            "non_reading": ["nop", "blind-long", "blind-short"]
+        },
+        "rules": [
+            "max(blind-long, blind-short) < reference",
+            "reference < informed < hindsight"
+        ],
+        "exploits": { "bots": [], "max_profitable": 0.75, "below": "informed" },
+        "probes": probes.1,
+    })
 }
 
 /// `text` with the body of the table `header` replaced.
@@ -429,7 +575,27 @@ fn sessions(spec: &TaskSpec) -> u32 {
     spec.hidden_sessions.unwrap_or(72)
 }
 
-fn instruction(spec: &TaskSpec, canary: &str, contract: &str) -> String {
+fn instruction(
+    spec: &TaskSpec,
+    canary: &str,
+    contract: &str,
+    settings: &scoring_text::Settings,
+) -> String {
+    // The base's contract, with a Scoring section of v2's rules in place of
+    // the base's.
+    let scoring = format!(
+        "## Scoring\n\nYour bot is graded on {sessions} hidden scenarios, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Every session is graded, a breached one too. <!-- {TODO}: how the hidden set splits by regime, how the account is valued, and anything else this task's grade adds. -->\n\n{block}\n\nThe report also gives your return on capital, your per-session Sharpe ratio, your drawdowns against the loss limit, the share of sessions that made money and your worst session. These explain the score; they aren't scored.\n\n",
+        sessions = sessions(spec),
+        block = scoring_text::block(settings),
+    );
+    let contract = match contract.find("\n## Scoring\n") {
+        Some(i) => {
+            let rest = &contract[i + 1..];
+            let end = rest[1..].find("\n## ").map_or(rest.len(), |j| j + 2);
+            format!("{}{scoring}{}", &contract[..=i], &rest[end..])
+        }
+        None => format!("{contract}\n{scoring}"),
+    };
     format!(
         "{canary}\n{summary}\n\n**You have an hour** (at the standard time limit). When time is up you're stopped, and whatever is in `/app/bot` is graded as it stands, with the `bin/bot` it last built. Keep a working, built bot there all along, and replace it only with a version you've checked is better: an experiment or a parameter sweep still running when time runs out counts for nothing.\n\n## Where it trades\n\n<!-- {TODO}: the market, the snapshot, and the scenario family the hidden sessions are drawn from: every range and odd the grader uses, as distributions, not structure. Regimes: {regimes} -->\n\n{contract}",
         summary = spec.summary.trim(),
@@ -440,7 +606,7 @@ fn instruction(spec: &TaskSpec, canary: &str, contract: &str) -> String {
 fn readme(spec: &TaskSpec) -> String {
     let name = spec.name.trim();
     format!(
-        "# solana-foundation/{name}\n\n{summary}\n\n| | |\n| --- | --- |\n| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |\n| Sessions | {sessions} hidden per grade; <!-- {TODO}: how they split by regime --> practice |\n| Mandate | {cap} position cap; {limit} loss limit |\n| Bound | <!-- {TODO}: what the reward divides by --> |\n| Reference | <!-- {TODO}: its reward, and what it does in one line --> |\n\nHow every task is scored, and how risk is enforced, is in the\n[dataset README](../README.md#how-a-bot-is-judged).\n\n## The skill\n\nA good bot profits here because it {thesis}\n\n- **Wins:** {wins}\n- **Loses:** {loses}\n\n## The market\n\n<!-- {TODO}: the scenario family: what moves, how often, what the agent can observe. Regimes: {regimes} -->\n\n## Scoring\n\n<!-- {TODO}: only what's specific to this task: the bound, valuation, extra void or disqualifying conditions. -->\n\n## Baselines\n\n<!-- {TODO}: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->\n\n## Realism limits\n\n<!-- {TODO}: what the simulation doesn't model. -->\n\n## More\n\n- [DESIGN.md](DESIGN.md): the design record.\n- [instruction.md](instruction.md): what the agent is told.\n",
+        "# solana-foundation/{name}\n\n{summary}\n\n| | |\n| --- | --- |\n| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |\n| Sessions | {sessions} hidden per grade; <!-- {TODO}: how they split by regime --> practice |\n| Mandate | {cap} position cap; {limit} loss limit |\n| Bound | <!-- {TODO}: what the reward divides by --> |\n| Reference | <!-- {TODO}: its reward, and what it does in one line --> |\n| Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, <!-- {TODO}: what it knows, in one line --> |\n\nHow every task is scored, and how risk is enforced, is in the\n[dataset README](../README.md#how-a-bot-is-judged).\n\n## The skill\n\nA good bot profits here because it {thesis}\n\n- **Wins:** {wins}\n- **Loses:** {loses}\n\n## The market\n\n<!-- {TODO}: the scenario family: what moves, how often, what the agent can observe. Regimes: {regimes} -->\n\n## Scoring\n\n<!-- {TODO}: only what's specific to this task: the bound, valuation, extra void or disqualifying conditions. -->\n\n## Baselines\n\n<!-- {TODO}: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->\n\n## Realism limits\n\n<!-- {TODO}: what the simulation doesn't model. -->\n\n## More\n\n- [DESIGN.md](DESIGN.md): the design record.\n- [instruction.md](instruction.md): what the agent is told.\n",
         summary = spec.summary.trim(),
         sessions = sessions(spec),
         cap = cap(spec),
@@ -666,6 +832,13 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         "Write the reference strategy in reference/ (task_guide step=reference), then `mtx task sync` to copy it into the oracle.".into(),
     ));
 
+    let v2 = meta
+        .as_ref()
+        .is_some_and(|t| t.mtx.headline == tasks::Headline::V2);
+    if v2 {
+        steps.push(anchors_step(root, task));
+    }
+
     let anchored = meta.is_some() && !generated.iter().any(|p| p.ends_with("anchors.txt"));
     steps.push(Step::new(
         "anchor",
@@ -728,6 +901,11 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
             "Write bench/tasks/{task}/instruction.md as a contract (task_guide step=instruction)."
         ),
     ));
+
+    if v2 {
+        steps.push(scoring_step(task, &test, &instr));
+        steps.push(probes_step(root, task));
+    }
 
     let readme = read(&dir.join("README.md"));
     let sections = [
@@ -819,6 +997,180 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
     Ok(steps)
 }
 
+/// A task's `checks/ladder.json`, or null.
+fn ladder_file(root: &Path, task: &str) -> Value {
+    serde_json::from_str(&read(
+        &root.join("bench/tasks").join(task).join("checks/ladder.json"),
+    ))
+    .unwrap_or_default()
+}
+
+/// The directory of the ladder's rung `name`, if it has one.
+fn rung_dir<'a>(ladder: &'a Value, name: &str) -> Option<&'a str> {
+    ladder["rungs"]
+        .as_array()?
+        .iter()
+        .find(|r| r["name"] == name)?["dir"]
+        .as_str()
+}
+
+/// The anchors a v2 task's ladder names (`anchors.reference` and
+/// `anchors.informed`), each a rung whose bot exists; the informed bot no
+/// longer the scaffold's copy of the reference. What's wrong, if anything.
+pub fn anchor_problems(root: &Path, task: &str) -> Vec<String> {
+    let ladder = ladder_file(root, task);
+    if ladder.is_null() {
+        return vec!["checks/ladder.json is missing or isn't JSON".into()];
+    }
+    let mut problems = Vec::new();
+    let mut dirs = Vec::new();
+    for (role, scale) in [("reference", "0.5"), ("informed", "1")] {
+        let Some(name) = ladder["anchors"][role].as_str() else {
+            problems.push(format!(
+                "ladder.json's `anchors.{role}` names no rung (the {scale})"
+            ));
+            continue;
+        };
+        match rung_dir(&ladder, name) {
+            None => problems.push(format!(
+                "`anchors.{role}` is `{name}`, which isn't a rung in ladder.json"
+            )),
+            Some(dir) if !root.join(dir).is_dir() => {
+                problems.push(format!("the {role} anchor's bot, {dir}, doesn't exist"))
+            }
+            Some(dir) => dirs.push((role, dir.to_string())),
+        }
+    }
+    if let [(_, reference), (_, informed)] = dirs.as_slice() {
+        if reference == informed {
+            problems.push("the informed anchor is the reference itself".into());
+        } else {
+            let unwritten = std::fs::read_dir(root.join(informed).join("src"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|e| read(&e.path()).contains(INFORMED_TODO));
+            if unwritten {
+                problems.push(format!(
+                    "{informed} is still the scaffold's copy of the reference ({INFORMED_TODO})"
+                ));
+            }
+        }
+    }
+    problems
+}
+
+fn anchors_step(root: &Path, task: &str) -> Step {
+    let problems = anchor_problems(root, task);
+    Step::new(
+        "anchors",
+        "Scoring v2's anchors: reference (0.5) and informed bot (1)",
+        problems.is_empty(),
+        if problems.is_empty() {
+            "ladder.json names both anchors, and both bots exist".into()
+        } else {
+            problems.join("; ")
+        },
+        format!(
+            "Write the informed bot in bench/tasks/{task}/checks/bots/informed and name both anchors in checks/ladder.json's `anchors` (task_guide step=anchors)."
+        ),
+    )
+}
+
+/// What a v2 task's verifier and instruction lack: the verifier grades with
+/// `--scoring v2` and `--v2-sessions` and every session, and the
+/// instruction carries the current scoring rules.
+pub fn scoring_problems(test: &str, instruction: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    if scoring_text::flag_value(test, "--scoring").as_deref() != Some("v2") {
+        problems.push("tests/test.sh doesn't grade with `--scoring v2`".to_string());
+    }
+    if !scoring_text::has_flag(test, "--v2-sessions") {
+        problems.push("tests/test.sh doesn't pass `--v2-sessions`".to_string());
+    }
+    if scoring_text::has_flag(test, "--stop-on-disqualify") {
+        problems.push(
+            "tests/test.sh stops at the first breach (`--stop-on-disqualify`): v2 grades every session"
+                .to_string(),
+        );
+    }
+    match scoring_text::Settings::of_verifier(test) {
+        Err(e) => problems.push(format!("{e:#}")),
+        Ok(settings) => match scoring_text::with_block(instruction, &settings) {
+            Ok(None) => problems.push("instruction.md has no `mtx:scoring` block".to_string()),
+            Ok(Some(text)) if text != instruction => problems.push(
+                "instruction.md's scoring rules are stale (`mtx task sync` rewrites them)"
+                    .to_string(),
+            ),
+            Ok(Some(_)) => {}
+            Err(e) => problems.push(format!("instruction.md: {e:#}")),
+        },
+    }
+    problems
+}
+
+fn scoring_step(task: &str, test: &str, instruction: &str) -> Step {
+    let problems = scoring_problems(test, instruction);
+    Step::new(
+        "scoring",
+        "Scored by v2, and the agent told how",
+        problems.is_empty(),
+        if problems.is_empty() {
+            "the verifier grades by v2, and instruction.md states its rules".into()
+        } else {
+            problems.join("; ")
+        },
+        format!(
+            "In bench/tasks/{task}: grade with `--scoring v2 --v2-sessions` and without `--stop-on-disqualify` in tests/test.sh; put the `mtx:scoring` markers in instruction.md's Scoring section and run `mtx task sync` (task_guide step=scoring)."
+        ),
+    )
+}
+
+/// The probe gate (bench/checks/probes): a v2 task's ladder declares a
+/// `probes` section, `{}` or `{"exempt": "why"}`; once the gate is in the
+/// repository, a task that doesn't opt out runs its probe rungs.
+pub fn probe_problems(root: &Path, task: &str) -> Vec<String> {
+    let ladder = ladder_file(root, task);
+    let Some(probes) = ladder["probes"].as_object() else {
+        return vec!["ladder.json has no `probes` section".into()];
+    };
+    if let Some(why) = probes.get("exempt") {
+        return if why.as_str().is_some_and(|w| !w.trim().is_empty()) {
+            Vec::new()
+        } else {
+            vec!["ladder.json's `probes.exempt` gives no reason".into()]
+        };
+    }
+    let gate = root.join("bench/checks/probes/Cargo.toml").is_file();
+    let runs = ladder["rungs"].as_array().into_iter().flatten().any(|r| {
+        r["dir"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("bench/checks/probes"))
+    });
+    if gate && !runs {
+        vec!["ladder.json opts into the probe gate but lists none of its rungs (bench/checks/probes/README.md)".into()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn probes_step(root: &Path, task: &str) -> Step {
+    let problems = probe_problems(root, task);
+    Step::new(
+        "probes",
+        "The probe gate",
+        problems.is_empty(),
+        if problems.is_empty() {
+            "ladder.json opts into the probe gate".into()
+        } else {
+            problems.join("; ")
+        },
+        format!(
+            "Add `\"probes\": {{}}` to bench/tasks/{task}/checks/ladder.json, and the probe rungs once bench/checks/probes is in the repository (task_guide step=probes)."
+        ),
+    )
+}
+
 /// The first step not done, if any.
 pub fn next(steps: &[Step]) -> Option<&Step> {
     steps.iter().find(|s| s.state == "todo")
@@ -862,6 +1214,15 @@ pub fn guide(step: &str) -> Option<&'static str> {
         "reference" => {
             "The reference sets the 1.0 line: a reasonable, simple strategy, not an optimum, sized to the cap and inside the loss limit on every session. Avoid mechanical biases (a bid always placed before the ask). It runs on the same hidden sessions in every grade, so hidden sets need no calibration; practice scenarios do. Keep the oracle identical: `just solution`. Then build the ladder: nop, a blind bet, a naive strategy, the reference, a ceiling, as strict inequalities (`just ladder <family>`). Deeper: SKILL.md step 3, references/ladder-and-ceilings.md."
         }
+        "anchors" => {
+            "Scoring v2 has three anchors: doing nothing (0), the reference (0.5) and the informed bot (1). The informed bot is a bot, not a hindsight figure: it knows every fact the task's data could tell in principle (the regime, the informed wallets, the fair-value model, the funding process, the cost curves; the ladder hands it the session's regime as MTX_REGIME through `tell_regime`) but not the session's future randomness, and it trades the same market under the same costs, mandate and latency. The scaffold puts a copy of the reference in checks/bots/informed, marked TODO(informed): rewrite it, drop the marker, and keep both named in checks/ladder.json's `anchors` ({\"reference\": \"reference\", \"informed\": \"informed\"}). Freeze both before any model run. Calibrate the practice scenarios with each: `just calibrate` for the reference, then `mtx calibrate --informed --v2-sessions` for the informed bot. The strength band (`mtx gates`): on the ladder's sets the informed bot beats the reference, the reference's weighted PnL is between 0.2 and 0.7 of the informed bot's (`anchors.band` overrides), so it's never `anchor_floored`, and its per-session Sharpe is at least 0.25 (`anchors.min_sharpe`)."
+        }
+        "scoring" => {
+            "A v2 task's verifier grades with `--scoring v2 --v2-sessions` and grades every session (no `--stop-on-disqualify`); `--loss-weight`, `--risk-weight` and `--anchor-floor` only if the task needs other settings than the grader's. The agent is told the rules (D5): instruction.md's Scoring section holds the `mtx:scoring` markers, and `mtx task sync` writes the rules between them from the grader's settings and test.sh's flags. `mtx task check` fails when they're stale. Write only what's specific to the task around them: the hidden set's size and split, the valuation."
+        }
+        "probes" => {
+            "The probe gate (bench/checks/probes, D7) grades bots with no skill or a known small amount (gamblers, naive holds, a martingale, levered references, an occasional breacher, honest-but-noisy bots) and fails the task if v2 pays any of them more than it should. A new task opts in: `\"probes\": {}` in checks/ladder.json, which the scaffold writes. Once the gate is in the repository, add its rungs (the scaffold copies them from the base task when it has them; otherwise follow bench/checks/probes/README.md, \"A task opts in\"). A task that can't run them says why: `\"probes\": {\"exempt\": \"why\"}`."
+        }
         "anchor" => {
             "The verifier grades the reference itself on each hidden set, from /opt/mtx/anchors/<family> in the runtime image. `mtx task sync` lists the task's reference in bench/image/anchors.txt, which the image build reads. Rebuild with `just image`."
         }
@@ -891,9 +1252,12 @@ pub const STEPS: &[&str] = &[
     "design",
     "family",
     "reference",
+    "anchors",
     "anchor",
     "practice",
     "instruction",
+    "scoring",
+    "probes",
     "readme",
     "registry",
     "lint",
@@ -936,8 +1300,9 @@ mod tests {
         assert!(spec().problems(&root).is_empty());
     }
 
-    #[test]
-    fn a_scaffold_is_a_task_whose_status_points_at_the_family() {
+    /// A scratch repository holding flash-crash-spcx (without its checks)
+    /// and the files the task lists are written into.
+    fn scratch_repo() -> PathBuf {
         let real = repo_root();
         let root =
             std::env::temp_dir().join(format!("mtx-author-{}", uuid::Uuid::new_v4().simple()));
@@ -956,6 +1321,20 @@ mod tests {
             std::fs::copy(real.join(file), root.join(file)).unwrap();
         }
         std::fs::create_dir_all(root.join("bench/image")).unwrap();
+        root
+    }
+
+    fn state_of(steps: &[Step], id: &str) -> (&'static str, String) {
+        let step = steps
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("no step {id}"));
+        (step.state, step.detail.clone())
+    }
+
+    #[test]
+    fn a_scaffold_is_a_task_whose_status_points_at_the_family() {
+        let root = scratch_repo();
         let out = scaffold(&root, &spec()).unwrap();
         let task = root.join("bench/tasks/funding-squeeze-spcx");
         assert!(
@@ -1006,6 +1385,137 @@ mod tests {
         let family = steps.iter().find(|s| s.id == "family").unwrap();
         assert_eq!(family.state, "done", "{}", family.detail);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The template end to end: a dummy task scaffolded, checked step by
+    /// step and gated, so the scaffold can't rot.
+    #[test]
+    fn a_new_task_is_scaffolded_ready_for_scoring_v2() {
+        let root = scratch_repo();
+        scaffold(&root, &spec()).unwrap();
+        let name = "funding-squeeze-spcx";
+        let task = root.join("bench/tasks").join(name);
+
+        // v2 is its headline, and its verifier grades by v2, every session.
+        let meta = tasks::load_one(&root, name.into()).unwrap();
+        assert_eq!(meta.mtx.headline, tasks::Headline::V2);
+        let test = read(&task.join("tests/test.sh"));
+        assert!(test.contains("  --scoring v2 \\\n  --v2-sessions \\\n"), "{test}");
+        assert!(!test.contains("--stop-on-disqualify"));
+
+        // The instruction states v2's rules, as the grader's settings write
+        // them, in place of the base's v1 Scoring section.
+        let instruction = read(&task.join("instruction.md"));
+        let settings = scoring_text::Settings::of_verifier(&test).unwrap();
+        assert!(scoring_text::is_current(&instruction, &settings));
+        assert!(instruction.contains("## Scoring\n\nYour bot is graded on 72 hidden scenarios"));
+        assert!(instruction.contains("**Losses count 1.5 times.**"));
+        assert!(!instruction.contains("sum of the hindsight bounds"), "v1's text is gone");
+        assert_eq!(instruction.matches("## Scoring").count(), 1);
+        assert!(instruction.contains("## What's in your environment"));
+        assert!(read(&task.join("README.md")).contains("| Anchors | Scoring v2"));
+
+        // Both anchors' slots, and the ladder naming them.
+        let informed = task.join("checks/bots/informed");
+        let cargo = read(&informed.join("Cargo.toml"));
+        assert!(cargo.contains("name = \"mtx-bot-funding-squeeze-informed\""), "{cargo}");
+        assert!(cargo.contains("name = \"mtx-funding-squeeze-informed\""), "{cargo}");
+        assert!(cargo.contains("path = \"../../../../../../crates/kit\""), "{cargo}");
+        assert!(read(&informed.join("Justfile")).contains("--bin mtx-funding-squeeze-informed"));
+        assert_eq!(
+            meta.check_bots,
+            vec![format!("bench/tasks/{name}/checks/bots/informed")]
+        );
+        let ladder: Value = serde_json::from_str(&read(&task.join("checks/ladder.json"))).unwrap();
+        assert_eq!(ladder["family"], "flash-crash");
+        assert_eq!(ladder["anchors"], json!({ "reference": "reference", "informed": "informed" }));
+        assert_eq!(ladder["probes"], json!({}));
+        let names: Vec<&str> = ladder["rungs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["nop", "blind-long", "blind-short", "reference", "informed"]);
+        let gate: crate::gates::SignalGate =
+            serde_json::from_value(ladder["gates"].clone()).unwrap();
+        assert_eq!(gate.informed, ["informed"]);
+
+        // Everything generated is current, the scoring rules included.
+        assert!(tasks::stale(&root).unwrap().is_empty());
+
+        // Status: the informed bot is still the reference's copy.
+        let steps = status(&root, name).unwrap();
+        let (anchors, detail) = state_of(&steps, "anchors");
+        assert_eq!(anchors, "todo");
+        assert!(detail.contains(INFORMED_TODO), "{detail}");
+        assert_eq!(state_of(&steps, "scoring").0, "done", "{}", state_of(&steps, "scoring").1);
+        assert_eq!(state_of(&steps, "probes").0, "done");
+
+        // Written, it is an anchor.
+        let lib = informed.join("src/lib.rs");
+        let source = read(&lib);
+        let body = source.split_once("//!\n").unwrap().1;
+        std::fs::write(&lib, body).unwrap();
+        assert!(anchor_problems(&root, name).is_empty());
+        let steps = status(&root, name).unwrap();
+        assert_eq!(state_of(&steps, "anchors").0, "done", "{}", state_of(&steps, "anchors").1);
+
+        // A verifier setting changed: the rules are stale until synced.
+        std::fs::write(
+            task.join("tests/test.sh"),
+            test.replace("  --v2-sessions \\\n", "  --v2-sessions \\\n  --loss-weight 2 \\\n"),
+        )
+        .unwrap();
+        let stale = tasks::stale(&root).unwrap();
+        assert_eq!(stale, [PathBuf::from(format!("bench/tasks/{name}/instruction.md"))]);
+        let (scoring, detail) = state_of(&status(&root, name).unwrap(), "scoring");
+        assert_eq!(scoring, "todo");
+        assert!(detail.contains("stale"), "{detail}");
+        tasks::sync(&root).unwrap();
+        assert!(read(&task.join("instruction.md")).contains("**Losses count 2 times.**"));
+        assert_eq!(state_of(&status(&root, name).unwrap(), "scoring").0, "done");
+
+        // The gates: a reference in the band passes; v1's untouched.
+        let summary: crate::gates::LadderSummary = serde_json::from_value(json!({
+            "sessions": 4,
+            "totals": [{ "reference": 75.0, "informed": 190.0 }],
+            "pnls": [{ "reference": [40.0, -10.0, 25.0, 20.0], "informed": [90.0, 30.0, -20.0, 90.0] }],
+            "rules": [], "exploits": [], "disqualified": []
+        }))
+        .unwrap();
+        let checks = crate::gates::v2_checks(
+            meta.mtx.headline,
+            &ladder,
+            Some(&summary),
+            &read(&task.join("tests/test.sh")),
+            false,
+        );
+        assert_eq!(checks[0].id, "strength-band");
+        assert_eq!(
+            checks[0].status,
+            crate::gates::Status::Pass,
+            "{}",
+            checks[0].detail
+        );
+
+        // Opting out of the probe gate takes a reason.
+        let mut out = ladder.clone();
+        out["probes"] = json!({ "exempt": "" });
+        std::fs::write(task.join("checks/ladder.json"), out.to_string()).unwrap();
+        assert_eq!(probe_problems(&root, name).len(), 1);
+        out["probes"] = json!({ "exempt": "no probe crate for spot yet" });
+        std::fs::write(task.join("checks/ladder.json"), out.to_string()).unwrap();
+        assert!(probe_problems(&root, name).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_v1_task_has_no_v2_steps() {
+        let steps = status(&repo_root(), "flash-crash-spcx").unwrap();
+        for id in ["anchors", "scoring", "probes"] {
+            assert!(steps.iter().all(|s| s.id != id), "{id}");
+        }
     }
 
     #[test]
