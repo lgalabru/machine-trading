@@ -19,8 +19,11 @@ a percent-encoding or a query), call another model (a body whose `model`
 isn't the route's is refused), pick an account or organisation (only an
 allowlist of headers is forwarded), or reach the proxy from outside the
 machine (it listens on the docker bridge the trials reach the host by). It takes
-at most MAX_CONNECTIONS connections and MAX_BODY bytes a request, and
-drops a client that stalls for CLIENT_TIMEOUT seconds.
+at most MAX_CONNECTIONS connections (MAX_PER_CLIENT from one address) and
+MAX_BODY bytes a request, drops a client that hasn't sent its request
+head within HEAD_DEADLINE seconds or stalls for CLIENT_TIMEOUT seconds,
+logs a provider silent for UPSTREAM_TIMEOUT seconds, and keeps headers
+naming the account (organisation, project, cookies) out of answers.
 
 Routes come from models.toml, for the models named on the command line.
 The batch's secret is read from MTX_PROXY_SECRET; the address it listens
@@ -42,12 +45,15 @@ import os
 import re
 import sys
 import urllib.parse
+import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import body_policy  # noqa: E402
+import limits  # noqa: E402
 from models import entry, key_forms, route_token  # noqa: E402
 
 # Each API's one model-call path, under the route.
@@ -68,13 +74,27 @@ HOP = {"connection", "transfer-encoding", "content-length", "keep-alive", "conte
 # holding the proxy's memory.
 MAX_BODY = 16 * 1024 * 1024
 LENGTH = re.compile(r"[0-9]{1,9}")
-# At most this many connections at once (trials run a few at a time; a
-# subagent or two each); one more is closed at once.
-MAX_CONNECTIONS = 64
-# Seconds a client may stall while sending a request or reading an answer,
+# At most this many connections at once, and this many from one address
+# (one trial's container), so one container can't take every slot: twice
+# the most model calls a Hermes trial can have open at once (limits.py).
+# One more gets a 503 with Retry-After, which the providers' clients
+# retry.
+MAX_CONNECTIONS = limits.MAX_CONNECTIONS
+MAX_PER_CLIENT = limits.MAX_PER_CLIENT
+RETRY_AFTER = 2
+# Over-cap connections are logged once per this many seconds, with a count.
+OVER_CAP_LOG_INTERVAL = 10
+# Seconds a client has to send a request's head (request line and headers):
+# per read, and in all. A connection holds a slot until then, before any
+# token is checked.
+HEAD_TIMEOUT = 5
+HEAD_DEADLINE = 10
+# Seconds a client may stall while sending a body or reading an answer,
 # and the provider between bytes of one.
 CLIENT_TIMEOUT = 120
 UPSTREAM_TIMEOUT = 600
+# Response headers that name the account behind the key, kept from the agent.
+ACCOUNT_HEADERS = {"openai-organization", "openai-project", "anthropic-organization-id", "set-cookie"}
 
 class Refused(Exception):
     def __init__(self, status, reason, route="-"):
@@ -84,33 +104,106 @@ class Refused(Exception):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+    # A burst of a trial's calls queues for accept instead of being dropped.
+    request_queue_size = 256
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        self.lock = threading.Lock()
+        self.open = 0
+        self.per_client: dict[str, int] = {}
+        self.over_cap: dict[str, int] = {}
+        self.over_cap_logged = 0.0
 
     def process_request(self, request, client_address):
-        if not self.slots.acquire(blocking=False):
-            print("refused a connection: too many open", file=sys.stderr, flush=True)
-            self.shutdown_request(request)
+        address = client_address[0]
+        with self.lock:
+            full = self.open >= MAX_CONNECTIONS or self.per_client.get(address, 0) >= MAX_PER_CLIENT
+            if not full:
+                self.open += 1
+                self.per_client[address] = self.per_client.get(address, 0) + 1
+        if full:
+            self.note_over_cap(address)
+            threading.Thread(target=self.busy, args=(request,), daemon=True).start()
             return
         super().process_request(request, client_address)
+
+    def note_over_cap(self, address):
+        now = time.monotonic()
+        with self.lock:
+            self.over_cap[address] = self.over_cap.get(address, 0) + 1
+            if now - self.over_cap_logged < OVER_CAP_LOG_INTERVAL:
+                return
+            self.over_cap_logged = now
+            counts, self.over_cap = self.over_cap, {}
+        summary = ", ".join(f"{n} from {a}" for a, n in sorted(counts.items()))
+        print(f"answered 503 (too many open connections): {summary}", file=sys.stderr, flush=True)
+
+    def busy(self, request):
+        """A 503 the client can retry, then close; the request is never read."""
+        data = b'{"error": {"message": "too many open connections, retry", "type": "proxy_busy"}}'
+        try:
+            request.settimeout(2)
+            request.sendall(
+                b"HTTP/1.0 503 Service Unavailable\r\nRetry-After: %d\r\nContent-Type: application/json\r\n"
+                b"Content-Length: %d\r\nConnection: close\r\n\r\n%s" % (RETRY_AFTER, len(data), data)
+            )
+            request.shutdown(socket.SHUT_WR)
+            # Read what the client sent, briefly, so closing doesn't reset
+            # the connection before it reads the answer.
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and request.recv(65536):
+                pass
+        except OSError:
+            pass
+        finally:
+            request.close()
 
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self.slots.release()
+            address = client_address[0]
+            with self.lock:
+                self.open -= 1
+                self.per_client[address] -= 1
+                if not self.per_client[address]:
+                    del self.per_client[address]
 
 
 class Proxy(BaseHTTPRequestHandler):
     # Close-delimited answers: a stream is relayed as it comes.
     protocol_version = "HTTP/1.0"
     server_version = "mtx-key-proxy"
-    timeout = CLIENT_TIMEOUT
+    # Until the head is in; then CLIENT_TIMEOUT.
+    timeout = HEAD_TIMEOUT
+    head_deadline = HEAD_DEADLINE
+    client_timeout = CLIENT_TIMEOUT
 
     def log_message(self, *args):
         pass
+
+    def setup(self):
+        super().setup()
+        # A head trickled in a byte at a time still ends at the deadline.
+        self.head_timer = threading.Timer(self.head_deadline, self.head_overdue)
+        self.head_timer.daemon = True
+        self.head_timer.start()
+
+    def head_overdue(self):
+        print(f"dropped {self.client_address[0]}: no request head within {self.head_deadline} s", file=sys.stderr, flush=True)
+        try:
+            self.connection.shutdown(2)
+        except OSError:
+            pass
+
+    def head_in(self):
+        self.head_timer.cancel()
+        self.connection.settimeout(self.client_timeout)
+
+    def finish(self):
+        self.head_timer.cancel()
+        super().finish()
 
     def refuse(self, refused):
         path = self.path[:120].encode("ascii", "backslashreplace").decode()
@@ -148,14 +241,19 @@ class Proxy(BaseHTTPRequestHandler):
             payload = body_policy.parse(body)
         except body_policy.BodyRefused as e:
             raise Refused(400, str(e), name) from None
+        except (TypeError, ValueError, RecursionError) as e:
+            raise Refused(400, f"the body can't be read: {type(e).__name__}", name) from None
         try:
             # Re-serialised: what the provider gets is what was checked.
             body = body_policy.apply(route["api"], payload, route["model"], route["openrouter"])
         except body_policy.BodyRefused as e:
             raise Refused(403, str(e), name) from None
+        except (TypeError, ValueError, RecursionError, AttributeError) as e:
+            raise Refused(403, f"the body doesn't fit a model call: {type(e).__name__}", name) from None
         return name, route, body
 
     def do_POST(self):
+        self.head_in()
         try:
             name, route, body = self.checked()
         except Refused as refused:
@@ -178,6 +276,7 @@ class Proxy(BaseHTTPRequestHandler):
         connection_class = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
         connection = connection_class(upstream.netloc, timeout=UPSTREAM_TIMEOUT)
         started = False
+        side = "upstream"
         try:
             connection.request("POST", upstream.path.rstrip("/") + CALL_PATHS[route["api"]], body=body, headers=headers)
             response = connection.getresponse()
@@ -185,22 +284,33 @@ class Proxy(BaseHTTPRequestHandler):
                 data = response.read()
                 for form in route["forms"]:
                     data = data.replace(form, b"<key>")
+                side = "client"
                 self.send_response(response.status, response.reason)
                 self.send_header("Content-Type", response.getheader("Content-Type", "application/json"))
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            side = "client"
             self.send_response(response.status, response.reason)
             for k, v in response.getheaders():
-                if k.lower() not in HOP:
+                if k.lower() not in HOP and k.lower() not in ACCOUNT_HEADERS:
                     self.send_header(k, v)
             self.end_headers()
             started = True
-            while chunk := response.read1(65536):
+            while True:
+                side = "upstream"
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                side = "client"
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except (OSError, http.client.HTTPException) as e:
+            if isinstance(e, TimeoutError) and side == "upstream":
+                print(f"upstream silent for {UPSTREAM_TIMEOUT} s route={name}", file=sys.stderr, flush=True)
+            elif isinstance(e, TimeoutError):
+                print(f"client stopped reading for {self.client_timeout} s route={name}", file=sys.stderr, flush=True)
             if started:
                 # The answer has begun: cut it short, so the client sees a
                 # broken stream rather than a second status inside it.
@@ -212,6 +322,7 @@ class Proxy(BaseHTTPRequestHandler):
             connection.close()
 
     def do_GET(self):
+        self.head_in()
         self.refuse(Refused(404, "only the route's model call is allowed"))
 
     do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = do_GET
@@ -246,9 +357,13 @@ def main():
     parser.add_argument("models", nargs="+")
     args = parser.parse_args()
     # The attack checks shrink the limits to test them quickly.
-    global MAX_CONNECTIONS
+    global MAX_CONNECTIONS, MAX_PER_CLIENT, UPSTREAM_TIMEOUT
     MAX_CONNECTIONS = int(os.environ.get("MTX_PROXY_MAX_CONNECTIONS", MAX_CONNECTIONS))
-    Proxy.timeout = int(os.environ.get("MTX_PROXY_CLIENT_TIMEOUT", CLIENT_TIMEOUT))
+    MAX_PER_CLIENT = int(os.environ.get("MTX_PROXY_MAX_PER_CLIENT", MAX_PER_CLIENT))
+    UPSTREAM_TIMEOUT = float(os.environ.get("MTX_PROXY_UPSTREAM_TIMEOUT", UPSTREAM_TIMEOUT))
+    Proxy.timeout = float(os.environ.get("MTX_PROXY_HEAD_TIMEOUT", HEAD_TIMEOUT))
+    Proxy.head_deadline = float(os.environ.get("MTX_PROXY_HEAD_DEADLINE", HEAD_DEADLINE))
+    Proxy.client_timeout = float(os.environ.get("MTX_PROXY_CLIENT_TIMEOUT", CLIENT_TIMEOUT))
     server = Server((args.host, args.port), Proxy)
     server.routes = routes_for(args.models)
     print(f"http://{args.host}:{server.server_address[1]}", flush=True)

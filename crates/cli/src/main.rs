@@ -749,7 +749,18 @@ async fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            // Help and version exit 0; a usage error exits 64, so it is never
+            // mistaken for a failed check (2).
+            if e.use_stderr() {
+                eprint!("{e}");
+                std::process::exit(64);
+            }
+            e.exit()
+        }
+    };
     // `scenario new` and `play` show progress lines instead of logs, unless
     // asked for logs.
     let interactive = match &cli.command {
@@ -1570,5 +1581,33 @@ fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
             Err(e).with_context(|| path.display().to_string())
         }
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Cli;
+
+    #[test]
+    fn check_joint_takes_the_calibration_flag_repeated_or_with_several_files() {
+        let base = ["mtx", "market-cal", "check-joint", "c.toml"];
+        for tail in [
+            vec!["--calibration", "a.toml", "--calibration", "b.toml"],
+            vec!["--calibration", "a.toml", "b.toml"],
+        ] {
+            let args: Vec<&str> = base.iter().copied().chain(tail).collect();
+            let cli = Cli::try_parse_from(args).unwrap();
+            let super::Command::MarketCal(super::market_cal::MarketCalCommand::CheckJoint {
+                calibration,
+                ..
+            }) = cli.command
+            else {
+                panic!("not check-joint");
+            };
+            assert_eq!(calibration.len(), 2);
+        }
+        assert!(Cli::try_parse_from(base).is_err());
     }
 }

@@ -23,7 +23,8 @@ ALLOWED = {
     "delegate_task",
     "execute_code",
 }
-CALLS = ["terminal", "terminal", "terminal", "write_file", "read_file"]
+CALLS = ["terminal", "terminal", "terminal", "write_file", "read_file", "delegate_task"]
+CHILDREN = 2
 
 
 def effort_ok(route: str, fields: dict) -> bool:
@@ -43,7 +44,9 @@ def main():
     key = os.environ["MOCK_API_KEY"]
     token = os.environ["MTX_PROXY_TOKEN"]
     logged = [json.loads(line) for line in (jobs / "requests.jsonl").read_text().splitlines()]
-    requests = [r for r in logged if "unsupported_path" not in r]
+    requests = [r for r in logged if "unsupported_path" not in r and "child_served" not in r and not r.get("child")]
+    children = [r for r in logged if r.get("child")]
+    served = [r for r in logged if "child_served" in r]
     # Hermes asks a custom host about the model (Ollama's /api/show) and
     # carries on without an answer; the agent's own turns must be answered.
     other = sorted({r["unsupported_path"] for r in logged if "unsupported_path" in r})
@@ -59,6 +62,18 @@ def main():
     efforts = sorted({json.dumps(r["effort"], sort_keys=True) for r in agent_turns})
     if not all(effort_ok(route, r["effort"]) for r in agent_turns):
         fails.append(f"effort not sent as {route} takes it: {efforts}")
+    # The fan-out: every subagent's call reached the provider through the
+    # proxy, all at once, and was answered; the proxy turned none away.
+    peak = max((r["max_in_flight"] for r in served), default=0)
+    if len(children) < CHILDREN * 2 or not all(r["key_ok"] for r in children):
+        fails.append(f"{len(children)} subagent calls reached the provider, not {CHILDREN} per trial")
+    if len(served) < CHILDREN * 2 or not all(r["child_served"] for r in served):
+        fails.append(f"subagent calls answered: {sum(r['child_served'] for r in served)} of {len(served)}")
+    if peak < CHILDREN:
+        fails.append(f"at most {peak} subagent calls were open at once, not {CHILDREN}")
+    proxy_log = jobs / "proxy.log"
+    if proxy_log.exists() and "503" in proxy_log.read_text():
+        fails.append("the proxy turned a connection away (503)")
     if any(r["system_mentions_leak_probe"] for r in requests):
         fails.append("a system prompt mentions what a trial planted")
     inventories = [r["last_tool_result"] for r in agent_turns if r["tool_results"] == 1]
@@ -120,6 +135,7 @@ def main():
         f"hermes probe ({route}): pass, 2 trials, {len(requests)} provider requests, tools {sorted(offered)}, "
         f"effort {efforts}, nothing carried from trial 1 to trial 2, the agent's /proc read holds the token "
         "but not the key, and no trial file holds the key"
+        + f", {len(children)} subagent calls served, {peak} at once"
         + (f", other requests {other}" if other else "")
     )
 
