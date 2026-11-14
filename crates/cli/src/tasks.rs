@@ -361,10 +361,10 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
             files.insert(to, std::fs::read(root.join(from))?);
         }
         let folder = PathBuf::from("bench/tasks").join(&task.dir);
-        let instruction = std::fs::read_to_string(root.join(folder.join("instruction.md")))
-            .unwrap_or_default();
-        let script = std::fs::read_to_string(root.join(folder.join("tests/test.sh")))
-            .unwrap_or_default();
+        let instruction =
+            std::fs::read_to_string(root.join(folder.join("instruction.md"))).unwrap_or_default();
+        let script =
+            std::fs::read_to_string(root.join(folder.join("tests/test.sh"))).unwrap_or_default();
         let settings = scoring_text::Settings::of_verifier(&script)
             .with_context(|| format!("bench/tasks/{}", task.dir))?;
         if let Some(text) = scoring_text::with_block(&instruction, &settings)

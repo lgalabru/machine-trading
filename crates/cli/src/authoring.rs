@@ -295,7 +295,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         ),
         1,
     );
-    std::fs::write(&test_path, test)?;
+    std::fs::write(&test_path, &test)?;
 
     let canary = std::fs::read_to_string(from.join("instruction.md"))?
         .lines()
@@ -361,10 +361,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
             &format!("\"{new_package}\""),
             &format!("\"{informed_package}\""),
         )
-        .replace(
-            &format!("\"{new_bin}\""),
-            &format!("\"{informed_bin}\""),
-        )
+        .replace(&format!("\"{new_bin}\""), &format!("\"{informed_bin}\""))
         // Two levels deeper than reference/.
         .replace("path = \"../../../../", "path = \"../../../../../../");
     std::fs::write(informed.join("Cargo.toml"), cargo)?;
@@ -381,10 +378,18 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
             "//! {INFORMED_TODO}: this is a copy of the reference. Make it the task's informed\n//! bot, scoring v2's 1: it reads every fact the task's data could tell in\n//! principle (`MTX_REGIME`, which the ladder's `tell_regime` hands it)\n//! but not the session's future randomness, and trades under the same\n//! costs, mandate and latency. Then drop this paragraph.\n//!\n{source}"
         ),
     )?;
-    let probes = probe_rungs(root, base.task(), name, &family, &base_task.reference.package, &new_package)?;
+    let probes = probe_rungs(
+        root,
+        base.task(),
+        name,
+        &family,
+        &base_task.reference.package,
+        &new_package,
+    )?;
     std::fs::write(
         to.join("checks/ladder.json"),
-        serde_json::to_string_pretty(&ladder(name, base.generator(), &probes, sessions(spec)))? + "\n",
+        serde_json::to_string_pretty(&ladder(name, base.generator(), &probes, sessions(spec)))?
+            + "\n",
     )?;
     written.push(format!(
         "bench/tasks/{name}/checks: ladder.json (both anchors, the probe gate), the informed bot's slot (package {informed_package})"
@@ -442,10 +447,14 @@ fn probe_rungs(
     base_package: &str,
     new_package: &str,
 ) -> Result<(Vec<Value>, Value)> {
-    let ladder: Value = std::fs::read_to_string(root.join("bench/tasks").join(base).join("checks/ladder.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
+    let ladder: Value = std::fs::read_to_string(
+        root.join("bench/tasks")
+            .join(base)
+            .join("checks/ladder.json"),
+    )
+    .ok()
+    .and_then(|t| serde_json::from_str(&t).ok())
+    .unwrap_or_default();
     let own = format!("bench/tasks/{base}/checks/rungs/probe");
     let mut rungs = Vec::new();
     for rung in ladder["rungs"].as_array().into_iter().flatten() {
@@ -460,7 +469,10 @@ fn probe_rungs(
     }
     let from = root.join(&own);
     if from.join("Cargo.toml").is_file() {
-        let to = root.join("bench/tasks").join(name).join("checks/rungs/probe");
+        let to = root
+            .join("bench/tasks")
+            .join(name)
+            .join("checks/rungs/probe");
         copy_dir(&from, &to, &["bin", "target"])?;
         let cargo = replace_line(
             &std::fs::read_to_string(to.join("Cargo.toml"))?,
@@ -1000,7 +1012,10 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
 /// A task's `checks/ladder.json`, or null.
 fn ladder_file(root: &Path, task: &str) -> Value {
     serde_json::from_str(&read(
-        &root.join("bench/tasks").join(task).join("checks/ladder.json"),
+        &root
+            .join("bench/tasks")
+            .join(task)
+            .join("checks/ladder.json"),
     ))
     .unwrap_or_default()
 }
@@ -1400,7 +1415,10 @@ mod tests {
         let meta = tasks::load_one(&root, name.into()).unwrap();
         assert_eq!(meta.mtx.headline, tasks::Headline::V2);
         let test = read(&task.join("tests/test.sh"));
-        assert!(test.contains("  --scoring v2 \\\n  --v2-sessions \\\n"), "{test}");
+        assert!(
+            test.contains("  --scoring v2 \\\n  --v2-sessions \\\n"),
+            "{test}"
+        );
         assert!(!test.contains("--stop-on-disqualify"));
 
         // The instruction states v2's rules, as the grader's settings write
@@ -1410,7 +1428,10 @@ mod tests {
         assert!(scoring_text::is_current(&instruction, &settings));
         assert!(instruction.contains("## Scoring\n\nYour bot is graded on 72 hidden scenarios"));
         assert!(instruction.contains("**Losses count 1.5 times.**"));
-        assert!(!instruction.contains("sum of the hindsight bounds"), "v1's text is gone");
+        assert!(
+            !instruction.contains("sum of the hindsight bounds"),
+            "v1's text is gone"
+        );
         assert_eq!(instruction.matches("## Scoring").count(), 1);
         assert!(instruction.contains("## What's in your environment"));
         assert!(read(&task.join("README.md")).contains("| Anchors | Scoring v2"));
@@ -1418,9 +1439,18 @@ mod tests {
         // Both anchors' slots, and the ladder naming them.
         let informed = task.join("checks/bots/informed");
         let cargo = read(&informed.join("Cargo.toml"));
-        assert!(cargo.contains("name = \"mtx-bot-funding-squeeze-informed\""), "{cargo}");
-        assert!(cargo.contains("name = \"mtx-funding-squeeze-informed\""), "{cargo}");
-        assert!(cargo.contains("path = \"../../../../../../crates/kit\""), "{cargo}");
+        assert!(
+            cargo.contains("name = \"mtx-bot-funding-squeeze-informed\""),
+            "{cargo}"
+        );
+        assert!(
+            cargo.contains("name = \"mtx-funding-squeeze-informed\""),
+            "{cargo}"
+        );
+        assert!(
+            cargo.contains("path = \"../../../../../../crates/kit\""),
+            "{cargo}"
+        );
         assert!(read(&informed.join("Justfile")).contains("--bin mtx-funding-squeeze-informed"));
         assert_eq!(
             meta.check_bots,
@@ -1428,7 +1458,10 @@ mod tests {
         );
         let ladder: Value = serde_json::from_str(&read(&task.join("checks/ladder.json"))).unwrap();
         assert_eq!(ladder["family"], "flash-crash");
-        assert_eq!(ladder["anchors"], json!({ "reference": "reference", "informed": "informed" }));
+        assert_eq!(
+            ladder["anchors"],
+            json!({ "reference": "reference", "informed": "informed" })
+        );
         assert_eq!(ladder["probes"], json!({}));
         let names: Vec<&str> = ladder["rungs"]
             .as_array()
@@ -1436,7 +1469,10 @@ mod tests {
             .iter()
             .map(|r| r["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["nop", "blind-long", "blind-short", "reference", "informed"]);
+        assert_eq!(
+            names,
+            ["nop", "blind-long", "blind-short", "reference", "informed"]
+        );
         let gate: crate::gates::SignalGate =
             serde_json::from_value(ladder["gates"].clone()).unwrap();
         assert_eq!(gate.informed, ["informed"]);
@@ -1449,7 +1485,12 @@ mod tests {
         let (anchors, detail) = state_of(&steps, "anchors");
         assert_eq!(anchors, "todo");
         assert!(detail.contains(INFORMED_TODO), "{detail}");
-        assert_eq!(state_of(&steps, "scoring").0, "done", "{}", state_of(&steps, "scoring").1);
+        assert_eq!(
+            state_of(&steps, "scoring").0,
+            "done",
+            "{}",
+            state_of(&steps, "scoring").1
+        );
         assert_eq!(state_of(&steps, "probes").0, "done");
 
         // Written, it is an anchor.
@@ -1459,16 +1500,27 @@ mod tests {
         std::fs::write(&lib, body).unwrap();
         assert!(anchor_problems(&root, name).is_empty());
         let steps = status(&root, name).unwrap();
-        assert_eq!(state_of(&steps, "anchors").0, "done", "{}", state_of(&steps, "anchors").1);
+        assert_eq!(
+            state_of(&steps, "anchors").0,
+            "done",
+            "{}",
+            state_of(&steps, "anchors").1
+        );
 
         // A verifier setting changed: the rules are stale until synced.
         std::fs::write(
             task.join("tests/test.sh"),
-            test.replace("  --v2-sessions \\\n", "  --v2-sessions \\\n  --loss-weight 2 \\\n"),
+            test.replace(
+                "  --v2-sessions \\\n",
+                "  --v2-sessions \\\n  --loss-weight 2 \\\n",
+            ),
         )
         .unwrap();
         let stale = tasks::stale(&root).unwrap();
-        assert_eq!(stale, [PathBuf::from(format!("bench/tasks/{name}/instruction.md"))]);
+        assert_eq!(
+            stale,
+            [PathBuf::from(format!("bench/tasks/{name}/instruction.md"))]
+        );
         let (scoring, detail) = state_of(&status(&root, name).unwrap(), "scoring");
         assert_eq!(scoring, "todo");
         assert!(detail.contains("stale"), "{detail}");

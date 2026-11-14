@@ -155,6 +155,7 @@ pub fn with_block(text: &str, s: &Settings) -> Result<Option<String>> {
 }
 
 /// Whether `text` carries the scoring block, as current as `s` writes it.
+#[cfg(test)]
 pub fn is_current(text: &str, s: &Settings) -> bool {
     matches!(with_block(text, s), Ok(Some(t)) if t == text)
 }
@@ -193,9 +194,15 @@ mod tests {
     fn the_settings_are_the_verifiers() {
         let script = "mtx grade \\\n  --scoring v2 \\\n  --loss-weight 2 \\\n  --risk-weight=\"0.5\" \\\n  --bot /app/bot\n# --anchor-floor 0.3\n";
         let s = Settings::of_verifier(script).unwrap();
-        assert_eq!((s.loss_weight, s.risk_weight, s.anchor_floor), (2.0, 0.5, None));
+        assert_eq!(
+            (s.loss_weight, s.risk_weight, s.anchor_floor),
+            (2.0, 0.5, None)
+        );
         assert_eq!(s.floor(), scoring_v2::ANCHOR_FLOOR);
-        assert_eq!(Settings::of_verifier("mtx grade").unwrap(), Settings::default());
+        assert_eq!(
+            Settings::of_verifier("mtx grade").unwrap(),
+            Settings::default()
+        );
         assert!(Settings::of_verifier("--loss-weight much").is_err());
         assert!(has_flag(script, "--scoring") && !has_flag(script, "--anchor-floor"));
         assert_eq!(flag_value(script, "--scoring").as_deref(), Some("v2"));
@@ -204,7 +211,8 @@ mod tests {
     #[test]
     fn the_block_is_rewritten_in_place_and_a_stale_one_is_caught() {
         let s = Settings::default();
-        let text = format!("# Task\n\n## Scoring\n\nIntro.\n\n{BEGIN}\nold rules\n{END}\n\n## Next\n");
+        let text =
+            format!("# Task\n\n## Scoring\n\nIntro.\n\n{BEGIN}\nold rules\n{END}\n\n## Next\n");
         assert!(!is_current(&text, &s));
         let current = with_block(&text, &s).unwrap().unwrap();
         assert!(is_current(&current, &s));
@@ -215,7 +223,10 @@ mod tests {
             loss_weight: 2.0,
             ..s
         };
-        assert!(!is_current(&current, &k2), "a changed setting makes it stale");
+        assert!(
+            !is_current(&current, &k2),
+            "a changed setting makes it stale"
+        );
         assert_eq!(with_block("no markers", &s).unwrap(), None);
         assert!(!is_current("no markers", &s));
         assert!(with_block(&format!("{BEGIN}\nunterminated"), &s).is_err());

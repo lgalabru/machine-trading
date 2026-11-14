@@ -454,7 +454,12 @@ pub fn strength_band(
                 misses.join("; ")
             ),
         ),
-        (false, false) => Check::fail(SOLVABLE, id, title, format!("{}. {measured}", misses.join("; "))),
+        (false, false) => Check::fail(
+            SOLVABLE,
+            id,
+            title,
+            format!("{}. {measured}", misses.join("; ")),
+        ),
     }
 }
 
@@ -495,9 +500,12 @@ pub fn v2_checks(
             band.1,
             "the ladder file names no `anchors`: a v2 task needs its reference and informed bot",
         ),
-        (Some(Err(e)), _, _) => {
-            Check::fail(SOLVABLE, band.0, band.1, format!("ladder.json's `anchors`: {e}"))
-        }
+        (Some(Err(e)), _, _) => Check::fail(
+            SOLVABLE,
+            band.0,
+            band.1,
+            format!("ladder.json's `anchors`: {e}"),
+        ),
         (_, Err(e), _) => Check::fail(SOLVABLE, band.0, band.1, format!("{e:#}")),
         (_, _, None) => Check::fail(SOLVABLE, band.0, band.1, "the ladder didn't run"),
         (Some(Ok(anchors)), Ok(settings), Some(summary)) => {
@@ -1500,7 +1508,11 @@ mod tests {
             &k,
             false,
         );
-        assert!(check.detail.contains("outside [0.2, 0.7]"), "{}", check.detail);
+        assert!(
+            check.detail.contains("outside [0.2, 0.7]"),
+            "{}",
+            check.detail
+        );
 
         // The band and the Sharpe floor are the task's to set.
         let strict = Anchors {
@@ -1532,13 +1544,20 @@ mod tests {
     fn a_v2_task_without_anchors_is_refused_and_a_v1_task_is_untouched() {
         let fit = sessions(&[&[("reference", REFERENCE), ("informed", INFORMED)]]);
         let test = "mtx grade --scoring v2 --v2-sessions";
-        let named = serde_json::json!({ "anchors": { "reference": "reference", "informed": "informed" } });
+        let named =
+            serde_json::json!({ "anchors": { "reference": "reference", "informed": "informed" } });
         let v2 = v2_checks(tasks::Headline::V2, &named, Some(&fit), test, false);
         assert_eq!(v2[0].id, "strength-band");
         assert_eq!(v2[0].status, Status::Pass, "{}", v2[0].detail);
         // Until `mtx grade --informed` exists, the live check isn't run.
         assert_eq!(v2[1].status, Status::NotRun);
-        let none = v2_checks(tasks::Headline::V2, &serde_json::json!({}), Some(&fit), test, false);
+        let none = v2_checks(
+            tasks::Headline::V2,
+            &serde_json::json!({}),
+            Some(&fit),
+            test,
+            false,
+        );
         assert_eq!(none[0].status, Status::Fail);
         assert!(none[0].detail.contains("names no `anchors`"));
         let typo = serde_json::json!({ "anchors": { "reference": "reference", "informd": "x" } });
