@@ -74,18 +74,14 @@ impl PhoenixEternalMeter {
         symbols: &[&str],
     ) -> Result<Self, PhoenixError> {
         if symbols.is_empty() {
-            return Err(PhoenixError::UnknownMarket(
-                "no market to measure".to_string(),
-            ));
+            return Err(PhoenixError::NoMarkets);
         }
         if let Some(twice) = symbols
             .iter()
             .enumerate()
             .find_map(|(i, symbol)| symbols[..i].contains(symbol).then_some(symbol))
         {
-            return Err(PhoenixError::UnknownMarket(format!(
-                "{twice} is listed twice"
-            )));
+            return Err(PhoenixError::DuplicateMarket(twice.to_string()));
         }
         Ok(Self {
             markets: symbols
@@ -615,10 +611,10 @@ mod tests {
         let ids: Vec<String> = two.instruments().map(ToString::to_string).collect();
         assert_eq!(ids, ["phoenix:perp:SPCX", "phoenix:perp:NVDA"]);
         assert_eq!(two.instrument().to_string(), "phoenix:perp:SPCX");
-        assert!(
-            PhoenixEternalMeter::for_markets(exchange.clone(), url, chain.clone(), owner, &[])
-                .is_err()
-        );
+        assert!(matches!(
+            PhoenixEternalMeter::for_markets(exchange.clone(), url, chain.clone(), owner, &[]),
+            Err(PhoenixError::NoMarkets)
+        ));
         assert!(
             PhoenixEternalMeter::for_markets(
                 exchange.clone(),
@@ -630,16 +626,10 @@ mod tests {
             .is_err()
         );
         // A market measured twice would count its position twice.
-        assert!(
-            PhoenixEternalMeter::for_markets(
-                exchange,
-                url,
-                chain,
-                owner,
-                &["NVDA", "SPCX", "NVDA"]
-            )
-            .is_err()
-        );
+        assert!(matches!(
+            PhoenixEternalMeter::for_markets(exchange, url, chain, owner, &["NVDA", "SPCX", "NVDA"]),
+            Err(PhoenixError::DuplicateMarket(symbol)) if symbol == "NVDA"
+        ));
     }
 
     /// A transaction at `slot` whose instruction logged `events`.
