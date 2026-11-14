@@ -134,7 +134,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.25"
+        "MTX_PROBE_BLEND": "0.34"
       },
       "may_breach": true
     },
@@ -143,7 +143,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.4"
+        "MTX_PROBE_BLEND": "0.48"
       },
       "may_breach": true
     },
@@ -152,7 +152,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.55"
+        "MTX_PROBE_BLEND": "0.61"
       },
       "may_breach": true
     },
@@ -161,17 +161,26 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.8"
+        "MTX_PROBE_BLEND": "0.84"
       },
       "may_breach": true
     },
     {
-      "name": "crash-exit",
+      "name": "crash-coin",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip",
+        "MTX_PROBE_CRASH_BELOW": "0.1"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-honest",
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.4",
-        "MTX_PROBE_CRASH_BELOW": "0.3"
+        "MTX_PROBE_BLEND": "0.48",
+        "MTX_PROBE_CRASH_BELOW": "0.1"
       },
       "may_breach": true
     },
@@ -180,8 +189,8 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.4",
-        "MTX_PROBE_CRASH_BELOW": "0.3",
+        "MTX_PROBE_BLEND": "0.48",
+        "MTX_PROBE_CRASH_BELOW": "0.1",
         "MTX_PROBE_CRASH": "fatal"
       },
       "may_breach": true
@@ -234,7 +243,11 @@
         "reference"
       ],
       [
-        "crash-exit",
+        "crash-coin",
+        "coin-flip-full"
+      ],
+      [
+        "crash-honest",
         "honest-0.2"
       ],
       [
@@ -280,6 +293,11 @@
         "sharpe": 0.5
       }
     ],
-    "pays_from": 0.2
+    "pays_from": 0.2,
+    "must_differ": [
+      "crash-coin",
+      "crash-honest",
+      "crash-fatal"
+    ]
   }
 }

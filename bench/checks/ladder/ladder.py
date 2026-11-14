@@ -37,7 +37,7 @@ probe that is meant to breach and never did is `no_power`.
 
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
-       [--min-rule-odds P] [--public-seed LABEL]
+       [--min-rule-odds P] [--public-seed LABEL] [--config FILE]
 
 `--public-seed LABEL` draws each set from a secret derived from the label
 instead of a fresh one: a fixed, public set that gives the same sessions on
@@ -334,7 +334,8 @@ def probe_checks(probes, sets, count):
     - `pairs`: `[lower, higher]`: the first scores under the second (an
       occasional breacher under its compliant twin, a crashing bot under the
       bot it wraps). `breaches` lists the rungs that must have breached a
-      session, or the pair is `no_power`.
+      session, and `must_differ` those that must score something other than
+      what they wrap (a crash that never came), or the pair is `no_power`.
     - `levered`: `{rung, m, base}`: the rung's weighted PnL is at most `m`
       times the base's (plus `tolerance` of the base's reference anchor), and
       when it breached anywhere it scores under the base: leverage that
@@ -397,6 +398,7 @@ def probe_checks(probes, sets, count):
         add(f"zero_edge:{name}", "zero_edge", [name], v,
             f"raw {base_raw[name]:+.3f}, limit {tol:+.2f}", raw=base_raw[name])
     breach_rungs = set(probes.get("breaches", []))
+    differ_rungs = set(probes.get("must_differ", []))
     for lower, higher in probes.get("pairs", []):
         v = verdict(lambda raw, usd, a=lower, b=higher: raw[a] >= raw[b],
                     base_raw[lower] >= base_raw[higher])
@@ -406,6 +408,9 @@ def probe_checks(probes, sets, count):
             if breached[lower] == 0:
                 v = {"verdict": "no_power", "violation_odds": v["violation_odds"]}
                 detail += ": it never breached"
+        if lower in differ_rungs and abs(base_raw[lower] - base_raw[higher]) < 1e-9:
+            v = {"verdict": "no_power", "violation_odds": v["violation_odds"]}
+            detail += ": it scored exactly what it wraps, so its trigger never fired"
         add(f"pair:{lower}<{higher}", "pair", [lower, higher], v, detail,
             raw=base_raw[lower], other_raw=base_raw[higher], breached_sessions=breached[lower])
     for spec in probes.get("levered", []):
@@ -457,6 +462,7 @@ def main():
     parser.add_argument("--parallel", type=int, default=1, help="rungs graded at once")
     parser.add_argument("--min-rule-odds", type=float, help="override the task's bootstrap floor")
     parser.add_argument("--out", default=os.path.join(ROOT, "target", "ladder"))
+    parser.add_argument("--config", help="a ladder file to use instead of the task's own")
     parser.add_argument("--public-seed", help="draw fixed, public sets from this label")
     args = parser.parse_args()
     if args.parallel < 1 or args.parallel * args.jobs > BOT_USERS:
@@ -465,7 +471,7 @@ def main():
     users = queue.Queue()
     for k in range(args.parallel):
         users.put(k * args.jobs)
-    with open(os.path.join(ROOT, "bench/tasks", args.task, "checks/ladder.json")) as f:
+    with open(args.config or os.path.join(ROOT, "bench/tasks", args.task, "checks/ladder.json")) as f:
         config = json.load(f)
     count = args.count or config["count"]
     out = os.path.join(args.out, args.task)

@@ -210,6 +210,15 @@ class ProbeGate(unittest.TestCase):
         got = ladder.probe_checks(probes, self.ladder(breacher=better), self.N)
         self.assertEqual(got[0]["verdict"], "fail")
 
+    def test_a_crash_that_never_came_has_no_power(self):
+        probes = {"pairs": [["crash", "honest"]], "must_differ": ["crash"]}
+        same = [4.0] * self.N
+        got = ladder.probe_checks(probes, self.ladder(crash=same, honest=same), self.N)
+        self.assertEqual(got[0]["verdict"], "no_power")
+        worse = ladder.probe_checks(
+            probes, self.ladder(crash=[-9.0] * self.N, honest=same), self.N)
+        self.assertEqual(worse[0]["verdict"], "pass")
+
     def test_leverage_is_held_to_m_times_the_base_and_never_pays_for_a_breach(self):
         probes = {"levered": [{"rung": "x2", "m": 2, "base": "reference"}]}
         ok = ladder.probe_checks(probes, self.ladder(x2=[18.0] * self.N), self.N)
