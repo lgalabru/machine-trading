@@ -1,9 +1,10 @@
-//! Execution orders and the participation charge: what a spot scenario can
-//! ask of the bot beyond making money, and what it costs to break.
+//! Execution orders, close-outs and the participation charge: what a
+//! scenario can ask of the bot beyond making money, and what it costs to
+//! break.
 //!
 //! An [`ExecutionOrder`] is a quantity the bot has to trade by the end of
 //! the session, one way: sell it (a treasury working a position off), or buy
-//! it (a treasury building one). Whatever it hasn't traded by then, a broker
+//! it (a treasury building one), from a spot wallet or in a perp market. Whatever it hasn't traded by then, a broker
 //! trades for it at the session's closing price, worse by the order's
 //! haircut. The session's PnL is the bot's against doing nothing, so a bot
 //! that never trades scores 0 even when the price moves, and each unit it
@@ -14,16 +15,26 @@
 //! any fill that grows the position. Neither is in the mandate, which has no
 //! "sell by the end": the order belongs to the scenario's scoring.
 //!
+//! A [`CloseOut`] has a broker take whatever position is left in a perp
+//! market at the close, with no quantity to reach: the residual is valued at
+//! the broker's price instead of the close, and the difference comes off the
+//! PnL.
+//!
 //! [`Participation`] prices taking too much of a venue's volume. It is a
 //! charge in the PnL, not a rule: a bot that trades big pays for it.
 
-use mtx_core::Side;
+use mtx_core::{Side, mandate::InstrumentRef};
 use serde::{Deserialize, Serialize};
 
 /// A quantity to trade by the end of the session.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionOrder {
+    /// The market the order is in, for a perp session (the scenario's
+    /// market when absent). A spot order is in the wallet's base asset,
+    /// wherever it trades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrument: Option<InstrumentRef>,
     /// `sell` to get rid of the quantity, `buy` to acquire it.
     pub side: Side,
     /// Base units the bot is to trade by the end.
@@ -33,8 +44,8 @@ pub struct ExecutionOrder {
     pub haircut_bps: f64,
     /// Whether any fill that grows the position is a breach. On a spot
     /// wallet, which can't go short, a sell order already breaks on any buy,
-    /// so this adds nothing there; it is for families on markets where the
-    /// position can flip.
+    /// so this adds nothing there; it is for markets where the position can
+    /// flip, such as a perp, where a reduce-only buy closes a short.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reduce_only: bool,
 }
@@ -52,9 +63,6 @@ impl ExecutionOrder {
                 "order: haircut_bps {} must be at least 0",
                 self.haircut_bps
             ));
-        }
-        if self.reduce_only && self.side == Side::Buy {
-            return Err("order: a buy order can't be reduce-only on a spot wallet".into());
         }
         Ok(())
     }
@@ -100,6 +108,7 @@ impl ExecutionOrder {
             held = after;
         }
         OrderReport {
+            instrument: self.instrument.clone(),
             side: self.side,
             quantity: self.quantity,
             done: moved.clamp(0.0, self.quantity),
@@ -118,6 +127,9 @@ impl ExecutionOrder {
 /// against doing nothing, which the broker would have done at its price.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OrderReport {
+    /// The order's market, for a perp session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrument: Option<InstrumentRef>,
     pub side: Side,
     pub quantity: f64,
     /// Base units traded toward the order by the end, at most the quantity.
@@ -152,13 +164,17 @@ impl OrderReport {
     /// Why the session breaks the order's rules, if it does.
     pub fn breach(&self) -> Option<String> {
         let round = |x: f64| (x * 1000.0).round() / 1000.0;
+        let unit = self
+            .instrument
+            .as_ref()
+            .map_or("SOL", |i| i.symbol.as_str());
         if self.against > 1e-6 {
             let (did, only) = match self.side {
                 Side::Sell => ("bought", "sells"),
                 Side::Buy => ("sold", "buys"),
             };
             Some(format!(
-                "{did} {} SOL: an order to {} only {only}",
+                "{did} {} {unit}: an order to {} only {only}",
                 round(self.against),
                 match self.side {
                     Side::Sell => "sell",
@@ -167,13 +183,64 @@ impl OrderReport {
             ))
         } else if self.grown > 1e-6 {
             Some(format!(
-                "grew the position by {} SOL: the order is reduce-only",
+                "grew the position by {} {unit}: the order is reduce-only",
                 round(self.grown)
             ))
         } else {
             None
         }
     }
+}
+
+/// A broker taking a perp market's residual position at the close.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CloseOut {
+    /// What the broker's price is worse than the close by, in basis points:
+    /// lower for a long it sells, higher for a short it buys back.
+    pub haircut_bps: f64,
+}
+
+impl CloseOut {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if !(self.haircut_bps.is_finite() && self.haircut_bps >= 0.0) {
+            return Err(format!(
+                "close_out: haircut_bps {} must be at least 0",
+                self.haircut_bps
+            ));
+        }
+        Ok(())
+    }
+
+    /// The broker's account of `residual` base units of `symbol` left at
+    /// the close, `close_usd`.
+    pub fn report(&self, symbol: &str, residual: f64, close_usd: f64) -> CloseOutReport {
+        let haircut = self.haircut_bps / 10_000.0;
+        let broker_usd = if residual < 0.0 {
+            close_usd * (1.0 + haircut)
+        } else {
+            close_usd * (1.0 - haircut)
+        };
+        CloseOutReport {
+            symbol: symbol.to_string(),
+            residual,
+            close_usd,
+            broker_usd,
+            charge_usd: residual.abs() * (broker_usd - close_usd).abs(),
+        }
+    }
+}
+
+/// What a close-out cost: the residual position, in base units, the close
+/// and the broker's price for it, and the difference, which the PnL is net
+/// of.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloseOutReport {
+    pub symbol: String,
+    pub residual: f64,
+    pub close_usd: f64,
+    pub broker_usd: f64,
+    pub charge_usd: f64,
 }
 
 /// A limit on the bot's share of a venue's traded volume, priced: base units
@@ -424,6 +491,7 @@ mod tests {
 
     fn order(side: Side) -> ExecutionOrder {
         ExecutionOrder {
+            instrument: None,
             side,
             quantity: 10.0,
             haircut_bps: 100.0,
@@ -530,9 +598,31 @@ mod tests {
         // Not asked for: not reported.
         let plain = order(Side::Sell).report(2.0, -3.0, 100.0, 100.0, 0.0, &[(Side::Sell, 5.0)]);
         assert_eq!(plain.grown, 0.0);
+        // On a perp, a reduce-only buy closes a short; buying past flat
+        // grows the long it opens.
         let mut buy = order(Side::Buy);
         buy.reduce_only = true;
-        assert!(buy.validate().is_err());
+        buy.instrument = Some("phoenix:perp:NVDA".parse().unwrap());
+        assert_eq!(buy.validate(), Ok(()));
+        let covered = buy.report(-2.0, 3.0, 100.0, 100.0, 0.0, &[(Side::Buy, 5.0)]);
+        assert_eq!(covered.grown, 1.0);
+        assert_eq!(
+            covered.breach().unwrap(),
+            "grew the position by 1 NVDA: the order is reduce-only"
+        );
+    }
+
+    #[test]
+    fn a_close_out_charges_the_haircut_on_the_residual_either_way() {
+        let close_out = CloseOut { haircut_bps: 50.0 };
+        let long = close_out.report("SPY", 10.0, 200.0);
+        assert!((long.broker_usd - 199.0).abs() < 1e-9);
+        assert!((long.charge_usd - 10.0).abs() < 1e-9);
+        let short = close_out.report("SPY", -4.0, 200.0);
+        assert!((short.broker_usd - 201.0).abs() < 1e-9);
+        assert!((short.charge_usd - 4.0).abs() < 1e-9);
+        assert_eq!(close_out.report("SPY", 0.0, 200.0).charge_usd, 0.0);
+        assert!(CloseOut { haircut_bps: -1.0 }.validate().is_err());
     }
 
     #[test]

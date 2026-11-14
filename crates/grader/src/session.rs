@@ -37,7 +37,7 @@ use std::{
 use async_trait::async_trait;
 use mtx_core::{
     Decimal,
-    mandate::{InstrumentRef, Mandate, Observed, PositionRange},
+    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange},
     turns::{self, Hello, Message, Step},
 };
 use mtx_kit::BotEnv;
@@ -200,7 +200,7 @@ pub struct SessionReport {
     /// Execution faults: the plan, and what fired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub faults: Option<crate::faults::FaultsReport>,
-    /// A spot session with an execution order: how the bot did against it.
+    /// A session with an execution order: how the bot did against it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<crate::orders::OrderReport>,
     /// A spot session that prices participation: what the charge came to.
@@ -209,6 +209,25 @@ pub struct SessionReport {
     /// A spot session scored net of the starting holding's drift.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net: Option<crate::orders::NetReport>,
+    /// A perp session that starts holding a position: what it started
+    /// with in the scenario's market, in base units.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub start_position: f64,
+    /// Whether that start position accrues the funding the scenario sets
+    /// (`venues.perp.funding`): the account's value counts it, and an
+    /// order's drift, which is price only, doesn't take it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_funded: bool,
+    /// A perp session with close-outs: what each residual cost.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub close_outs: Vec<crate::orders::CloseOutReport>,
+    /// A perp session that reads fills (its mandate has a sides or price
+    /// rule, or it has an order): every fill Phoenix recorded for the bot,
+    /// and each side it was seen leaving an order resting on, per market.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub perp_fills: Vec<crate::perp::PerpFillRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub perp_open_orders: Vec<(InstrumentRef, mtx_core::Side)>,
     /// The transaction layer: each slot's block in order, what became of
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,12 +390,27 @@ impl SessionReport {
                 .spot
                 .as_ref()
                 .map(|spot| spot.observed_fills())
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .chain(
+                    self.perp_fills
+                        .iter()
+                        .filter(|fill| !fill.forced)
+                        .map(|fill| ObservedFill {
+                            instrument: fill.instrument.clone(),
+                            side: fill.side,
+                            price: fill.price,
+                        }),
+                )
+                .collect(),
             open_orders: self
                 .spot
                 .as_ref()
                 .map(|spot| spot.open_orders.clone())
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .chain(self.perp_open_orders.iter().cloned())
+                .collect(),
         }
     }
 }
@@ -400,6 +434,10 @@ impl SessionReport {
             _ => self.max_drawdown_usd,
         }
     }
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 /// Run one session. An error before the bot starts comes back as
@@ -456,6 +494,9 @@ pub(crate) struct Prepared {
     pub reports: Option<turns::Reports>,
     /// Off hours: the slot the external market reopens at.
     pub reopen_slot: Option<u64>,
+    /// What else the scenario tells the bot, as session variables: a perp
+    /// session's starting positions and order (see [`crate::perp`]).
+    pub vars: Vec<(String, String)>,
     pub cast: Cast,
     /// Upkeep the session's venues need, beyond the options' (see
     /// [`crate::crank`]).
@@ -473,6 +514,13 @@ pub(crate) trait Account: Send + Sync {
 
     /// The account's value when the session starts.
     fn start_value_usd(&self) -> f64;
+
+    /// Whether the account's report reads the bot's fills from the venues'
+    /// transaction lists, which list a slot's transactions once the world
+    /// has moved past it.
+    fn reads_fills(&self) -> bool {
+        false
+    }
 
     /// Once the bot has started, before the first step.
     async fn begin(&mut self) -> Result<()> {
@@ -596,6 +644,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         env,
         reports,
         reopen_slot,
+        vars,
         mut cast,
         cranks: kind_cranks,
         mut account,
@@ -646,6 +695,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
     let walls = Walls::new(opts.trusted, steps);
     let user = opts.slot.map(|slot| BOT_USERS[slot]);
+    // The task's variables (`mtx_kit::SESSION_VARS`): the regime, an off-hours
+    // reopen, and what the session's kind adds.
+    let told: Vec<(String, String)> = opts
+        .regime
+        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+        .into_iter()
+        .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
+        .collect();
     let mut turns = TurnReport {
         steps,
         ..TurnReport::default()
@@ -684,11 +741,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    vars: opts
-                        .regime
-                        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
-                        .into_iter()
-                        .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
+                    vars: told
+                        .iter()
+                        .cloned()
                         // The risk desk closes on a breach instead of
                         // disqualifying (the scenario's `stop_out`).
                         .chain(
@@ -702,6 +757,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                                 programs.iter().map(ToString::to_string).collect();
                             ("MTX_RAW_PROGRAMS".to_string(), programs.join(","))
                         }))
+                        .chain(vars.iter().cloned())
                         .collect(),
                     reports: reports.into(),
                 },
@@ -735,15 +791,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             return Err(Error::NoBotUser);
         }
         let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
-        let child = spawn_bot(
-            opts.bot_dir,
-            &env,
-            &workdir,
-            opts.bot_log,
-            theirs,
-            opts.regime,
-            reopen_slot,
-        )?;
+        let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
+        let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
         ours.set_nonblocking(true)
             .map_err(io_error("turn socket"))?;
         let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
@@ -1044,6 +1093,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             },
         )
         .await?;
+    // The bot's last turn, and the keeper's, landed in the session's last
+    // slot, which no step moved past: a session that reads fills steps one
+    // slot more, so they are listed and audited like every other turn's.
+    if account.reads_fills() {
+        crate::chain::next_slot(surfnet, &rpc).await?;
+    }
     turns.late_sends = guard.late_sends();
     let late_slots = surfnet.coalesced_slots() - late_before;
     let calls = guard.call_log();
@@ -1589,15 +1644,15 @@ fn entry_point(bot_dir: &Path) -> Result<Command> {
     Ok(command)
 }
 
-/// Start the bot, with `turns` as its file descriptor [`turns::TURN_FD`].
+/// Start the bot, with `turns` as its file descriptor [`turns::TURN_FD`],
+/// and the task's variables, `vars`, in its environment.
 pub(crate) fn spawn_bot(
     bot_dir: &Path,
     env: &BotEnv,
     workdir: &SessionDir,
     log: &Path,
     turns: StdUnixStream,
-    regime: Option<&str>,
-    reopen_slot: Option<u64>,
+    vars: &[(String, String)],
 ) -> Result<Child> {
     // The bot runs from its own directory, so a relative path would resolve twice.
     let bot_dir = bot_dir
@@ -1629,12 +1684,7 @@ pub(crate) fn spawn_bot(
     if let Some((uid, gid)) = workdir.bot_user {
         command.uid(uid).gid(gid);
     }
-    if let Some(regime) = regime {
-        command.env("MTX_REGIME", regime);
-    }
-    if let Some(reopen_slot) = reopen_slot {
-        command.env("MTX_REOPEN_SLOT", reopen_slot.to_string());
-    }
+    command.envs(vars.iter().map(|(name, value)| (name, value)));
     let fd = turns.as_raw_fd();
     // SAFETY: between fork and exec, dup2 is async-signal-safe. The copy at
     // TURN_FD has no close-on-exec flag, so it survives into the bot; the
