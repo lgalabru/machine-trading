@@ -88,6 +88,7 @@ impl PerpMarket {
                 max_position: f64::MAX,
                 max_drawdown_usd: f64::MAX,
                 mandate_path: None,
+                markets: Vec::new(),
             },
             signer,
         )?)

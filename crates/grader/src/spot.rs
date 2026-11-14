@@ -804,6 +804,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .max_drawdown_usd
             .unwrap_or(start.wallet.value_usd),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
+        markets: Vec::new(),
     };
     // What the steps carry beyond the clock, for either kind of bot.
     let reports = scenario.turn_data.as_ref().map(|data| turns::Reports {
@@ -965,6 +966,7 @@ impl Account for SpotAccount {
             turn_ms: None,
             answered: None,
             fair_usd: None,
+            markets: Vec::new(),
         };
         self.last = Some(now);
         Ok(record)
@@ -1158,6 +1160,7 @@ impl Account for SpotAccount {
             forced_closes: done.forced_closes,
             liquidator: done.liquidator,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
+            markets: Vec::new(),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1169,6 +1172,7 @@ impl Account for SpotAccount {
                 transactions: done.transactions,
                 calls: done.calls,
                 taker_orders: done.actors.taker_orders,
+                market_taker_orders: Default::default(),
             },
         })
     }
@@ -1224,6 +1228,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,

@@ -33,7 +33,7 @@ pub mod flow;
 pub mod library;
 pub mod takers;
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 pub use competitor::{CompeteReport, Competitor};
@@ -108,6 +108,66 @@ pub struct ActorsReport {
     pub competitor: Option<CompeteReport>,
     /// The scenario's library actors'.
     pub library: Option<LibraryReport>,
+    /// In a session on several markets, what each market's actors did,
+    /// by symbol, for every market but the primary, whose actors report
+    /// above (see [`OnMarket`]).
+    pub markets: BTreeMap<String, ActorsReport>,
+}
+
+/// An actor on one market of a session on several: the session's moments
+/// are its primary market's, so it acts at its own market's moment of the
+/// same slot, and it reports under its market's symbol.
+pub struct OnMarket {
+    symbol: String,
+    actor: Box<dyn Actor>,
+    moment: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
+}
+
+impl OnMarket {
+    /// `actor`, on `symbol`, whose moment at each slot is `moment`'s.
+    pub fn new(
+        symbol: String,
+        actor: Box<dyn Actor>,
+        moment: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
+    ) -> Self {
+        Self {
+            symbol,
+            actor,
+            moment,
+        }
+    }
+}
+
+#[async_trait]
+impl Actor for OnMarket {
+    async fn before_blocks(&mut self, last: &Moment) {
+        self.actor.before_blocks(&(self.moment)(last.at)).await;
+    }
+
+    async fn after_blocks(&mut self, now: &Moment) {
+        self.actor.after_blocks(&(self.moment)(now.at)).await;
+    }
+
+    async fn end(&mut self, last: &Moment) {
+        self.actor.end(&(self.moment)(last.at)).await;
+    }
+
+    fn send_hook(&self) -> Option<Arc<dyn SendHook>> {
+        self.actor.send_hook()
+    }
+
+    async fn report(&mut self, report: &mut ActorsReport) {
+        let mut own = ActorsReport::default();
+        self.actor.report(&mut own).await;
+        let mine = report.markets.entry(self.symbol.clone()).or_default();
+        if own.flow.is_some() {
+            mine.flow = own.flow;
+            mine.taker_orders = own.taker_orders;
+        }
+        if own.competitor.is_some() {
+            mine.competitor = own.competitor;
+        }
+    }
 }
 
 /// Every actor's [`SendHook`], run in the cast's order.
@@ -232,6 +292,51 @@ mod tests {
                 .push(format!("{} end {}", self.0, last.at));
         }
         async fn report(&mut self, _: &mut ActorsReport) {}
+    }
+
+    #[tokio::test]
+    async fn an_actor_on_another_market_acts_at_that_markets_moments() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut cast = Cast::default();
+        cast.add(Box::new(Noting("primary", log.clone())));
+        let other = Arc::new(|at| Moment {
+            at,
+            level_usd: 50.0 + at as f64,
+            book_usd: 50.0,
+            fair_usd: None,
+        });
+        struct Levels(Arc<Mutex<Vec<String>>>);
+        #[async_trait]
+        impl Actor for Levels {
+            async fn after_blocks(&mut self, now: &Moment) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("other at {} level {}", now.at, now.level_usd));
+            }
+            async fn report(&mut self, report: &mut ActorsReport) {
+                report.competitor = Some(CompeteReport::default());
+            }
+        }
+        cast.add(Box::new(OnMarket::new(
+            "SPY".into(),
+            Box::new(Levels(log.clone())),
+            other,
+        )));
+        cast.after_blocks(Moment {
+            at: 4,
+            level_usd: 100.0,
+            book_usd: 100.0,
+            fair_usd: None,
+        })
+        .await;
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["primary after 4", "other at 4 level 54"]
+        );
+        let report = cast.report().await;
+        assert!(report.competitor.is_none());
+        assert!(report.markets["SPY"].competitor.is_some());
     }
 
     #[tokio::test]

@@ -211,6 +211,20 @@ impl GradeReport {
             .iter()
             .map(|result| {
                 let session = &result.session;
+                // Its ceiling and its trade markout read one market's marks
+                // and cap.
+                if !session.markets.is_empty() {
+                    return Err(format!(
+                        "{}: scoring v2 scores sessions on one market; this one trades {}",
+                        session.scenario,
+                        session
+                            .markets
+                            .iter()
+                            .map(|m| m.symbol.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 // The cost-aware hindsight ceiling, on the reference's marks
                 // only: the bot's own marks move with its trades, so a bot
                 // could lower its own ceiling. Without a reference session
@@ -550,7 +564,7 @@ fn write_details(
             scenario,
             annotation: annotations.and_then(|a| a.get(index)),
             disqualified: disqualification(report),
-            bound_pnl_usd: scenario.bound_usd(report.start_mark_usd),
+            bound_pnl_usd: bound_of(scenario, report),
             report,
             timeline: &report.timeline,
         };
@@ -787,7 +801,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         .into_iter()
         .map(|(session, scenario)| ScenarioResult {
             disqualified: disqualification(&session),
-            bound_pnl_usd: scenario.bound_usd(session.start_mark_usd),
+            bound_pnl_usd: bound_of(scenario, &session),
             reference_pnl_usd: scenario.reference_pnl_usd,
             informed_pnl_usd: scenario.informed_pnl_usd,
             trade_markout_usd: trade_markout(&session, scenario),
@@ -829,10 +843,21 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     }
 }
 
+/// What a session's PnL is divided by: its scenario's bound at the session's
+/// start mark, or, on several markets, each market's at its own.
+fn bound_of(scenario: &Scenario, session: &SessionReport) -> f64 {
+    if scenario.markets.is_empty() {
+        scenario.bound_usd(session.start_mark_usd)
+    } else {
+        scenario.markets_bound_usd(&session.start_marks_usd())
+    }
+}
+
 /// A session's PnL split against its scenario's fair value, if the scenario
 /// reports one at every step. The position is valued as the session valued
 /// it: at the mark, the scenario's oracle level (market making) or its book
-/// level.
+/// level. A session on several markets has none: its account's value is
+/// one, and the split is a one-market split.
 fn markout(session: &SessionReport, scenario: &Scenario) -> Option<Decomposition> {
     decompose(session, scenario, true)
 }
@@ -856,6 +881,11 @@ fn decompose(
     scenario: &Scenario,
     against_fair: bool,
 ) -> Option<Decomposition> {
+    // The split is one market's: a session on several has none, and its
+    // flat fields describe no market.
+    if !scenario.markets.is_empty() {
+        return None;
+    }
     let fair_or = |fair: Option<f64>, price: f64| if against_fair { fair } else { Some(price) };
     let timeline = &session.timeline;
     let start = fair_or(
@@ -1082,7 +1112,7 @@ pub async fn calibrate(
                 scenario.reference_pnl_usd = pnl_usd;
                 scenario.reference_max_drawdown_usd = drawdown_usd;
             }
-            scenario.save(path)?;
+            scenario.save_any(path)?;
         } else {
             tracing::warn!(
                 scenario = scenario.name,
@@ -1425,6 +1455,7 @@ mod tests {
             forced_closes: Vec::new(),
             liquidator: None,
             oracle_starts: Default::default(),
+            markets: Vec::new(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -1533,6 +1564,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
@@ -1575,6 +1608,7 @@ mod tests {
             pnl_usd: value - 10_100.0,
             turn_ms: None,
             answered: None,
+            markets: Vec::new(),
         };
         let mut report = session(0.0);
         // Bought 10 at 99.60 (fair 100), held while fair rose to 101, sold
@@ -1822,6 +1856,37 @@ mod tests {
     }
 
     #[test]
+    fn v2_refuses_a_session_on_several_markets() {
+        let s = scenario(Some(100.0));
+        let mut multi = session(30.0);
+        multi.markets = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| session::MarketReport {
+                symbol: symbol.into(),
+                start_mark_usd: 100.0,
+                end_mark_usd: 100.0,
+                start_position: 0.0,
+                end_position: 0.0,
+                valuation: "mark",
+                flow: None,
+                competitor: None,
+            })
+            .collect();
+        let mut report = score(vec![(multi, &s)]);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(
+            refused
+                .contains("scoring v2 scores sessions on one market; this one trades NVDA, SPCX"),
+            "{refused}"
+        );
+        assert!(report.v2.is_none());
+        // One market is scored as before.
+        let mut one = score(vec![(session(30.0), &s)]);
+        one.score_v2(&v2()).unwrap();
+        assert!(one.v2.is_some());
+    }
+
+    #[test]
     fn v2s_ceiling_is_the_informed_bot_when_every_scenario_has_one() {
         let mut s = scenario(Some(100.0));
         let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
@@ -1939,6 +2004,7 @@ mod tests {
             peak_usd: 10_100.0,
             value_after_usd: 10_100.0 + pnl_usd,
             position_before: 50.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2160,6 +2226,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 8_650.0,
             position_before: 70.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2196,6 +2263,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 9_100.0,
             position_before: 70.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2246,6 +2314,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 8_650.0,
             position_before: 70.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];

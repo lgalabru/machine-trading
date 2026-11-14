@@ -69,7 +69,7 @@ BOT_USERS = 4
 GRADER_VARS = {
     "MTX_RPC_URL", "MTX_KEYPAIR", "MTX_EXCHANGE", "MTX_SYMBOL", "MTX_END_SLOT",
     "MTX_MAX_POSITION", "MTX_MAX_DRAWDOWN", "MTX_MANDATE", "MTX_REGIME",
-    "MTX_REOPEN_SLOT", "MTX_TURN_FD", "PATH", "HOME", "RUST_LOG",
+    "MTX_REOPEN_SLOT", "MTX_MARKETS", "MTX_TURN_FD", "PATH", "HOME", "RUST_LOG",
 }
 # An exploit bot that moves the mark less than this, in bp over the index on
 # average, moved nothing.
@@ -194,10 +194,16 @@ def read_details(set_dir, name):
     return out
 
 
+def step_gaps(step):
+    """A step's gaps: each market's, on a session on several markets (the
+    step's `markets`), else the session's one."""
+    return [gap_bp(m) for m in step.get("markets") or [step]]
+
+
 def mean_gap(detail, push):
-    """The session's mean gap, pushing `push` (1: up, -1: down; 0: either way:
-    the gap's size)."""
-    gaps = [gap_bp(s) for s in detail["timeline"]["steps"]]
+    """The session's mean gap over its steps and markets, pushing `push`
+    (1: up, -1: down; 0: either way: the gap's size)."""
+    gaps = [g for s in detail["timeline"]["steps"] for g in step_gaps(s)]
     if not gaps:
         return 0.0
     if push == 0:
@@ -207,9 +213,10 @@ def mean_gap(detail, push):
 
 def premium_bp(detail):
     """The sizes of the session's premium episodes, in bp: the nonzero
-    premiums of its waypoints."""
-    path = detail["scenario"].get("path", [])
-    return [abs(w["premium_pct"]) * 100 for w in path if w.get("premium_pct")]
+    premiums of its waypoints, every market's on a session on several."""
+    scenario = detail["scenario"]
+    paths = [scenario.get("path", [])] + [m.get("path", []) for m in scenario.get("markets", [])]
+    return [abs(w["premium_pct"]) * 100 for path in paths for w in path if w.get("premium_pct")]
 
 
 def displacement(set_dirs, name, push, baseline="nop"):

@@ -49,8 +49,9 @@ use crate::{
 pub struct PerpFill {
     /// The slot it landed in.
     pub slot: u64,
-    /// The market, as the mandate names it.
+    /// The market, as the mandate names it, and Phoenix's id for its asset.
     pub instrument: InstrumentId,
+    pub asset_id: u32,
     /// The market's sequence number for the instruction that logged it, and
     /// the event's place among that instruction's events: never the same
     /// twice on one market.
@@ -76,13 +77,16 @@ pub struct PerpFill {
 }
 
 impl PerpFill {
-    /// The fill as one party traded it, on `side`. Its id comes from
-    /// [`PerpFill::sequence`] (the maker's and the taker's differ by the
-    /// side), so the same fill read twice has the same id. Its fees are
-    /// left at zero: [`PerpMarketRecords::fills_for`] sets each party's.
+    /// The fill as one party traded it, on `side`. Its id comes from the
+    /// market's asset and [`PerpFill::sequence`] (the maker's and the
+    /// taker's differ by the side), so the same fill read twice has the same
+    /// id, and fills on two markets never share one. Its fees are left at
+    /// zero: [`PerpMarketRecords::fills_for`] sets each party's.
     pub fn recorded(&self, side: Side) -> RecordedFill {
         let (sequence, event) = self.sequence;
-        let party = (u64::from(event) << 1) | u64::from(side == Side::Sell);
+        let party = (u64::from(self.asset_id) << 33)
+            | (u64::from(event) << 1)
+            | u64::from(side == Side::Sell);
         RecordedFill {
             slot: self.slot,
             fill: Fill {
@@ -108,6 +112,8 @@ impl PerpFill {
 pub struct PerpOrderPlaced {
     /// The slot it landed in.
     pub slot: u64,
+    /// The market, as the mandate names it.
+    pub instrument: InstrumentId,
     /// The market's sequence number for the instruction that placed it, and
     /// the event's place among that instruction's events.
     pub sequence: (u64, u32),
@@ -179,6 +185,7 @@ impl PerpMarketRecords {
                     PerpFill {
                         slot: summary.slot,
                         instrument: market.id().clone(),
+                        asset_id: market.asset_id,
                         sequence: (h.sequence_number, i as u32),
                         taker: Pubkey::new_from_array(h.trader_account),
                         maker: Pubkey::new_from_array(maker),
@@ -236,6 +243,7 @@ impl PerpMarketRecords {
                     let lots = p.quantity.as_inner();
                     self.placed.push(PerpOrderPlaced {
                         slot: summary.slot,
+                        instrument: market.id().clone(),
                         sequence: (h.sequence_number, i as u32),
                         trader: Pubkey::new_from_array(h.trader_account),
                         side: if lots < 0 { Side::Sell } else { Side::Buy },
@@ -326,6 +334,35 @@ fn opposite(side: Side) -> Side {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fills_on_two_markets_never_share_an_id() {
+        let fill = |asset_id: u32, symbol: &str| PerpFill {
+            slot: 5,
+            instrument: InstrumentId::new(format!("phoenix:perp:{symbol}")),
+            asset_id,
+            sequence: (77, 2),
+            taker: Pubkey::new_unique(),
+            maker: Pubkey::new_unique(),
+            taker_side: Side::Buy,
+            price: Decimal::ONE,
+            quantity: Decimal::ONE,
+            unix_timestamp: 0,
+            taker_fee: Decimal::ZERO,
+            maker_fee: Decimal::ZERO,
+        };
+        let (a, b) = (fill(3, "NVDA"), fill(4, "SPCX"));
+        assert_ne!(a.recorded(Side::Buy).fill.id, b.recorded(Side::Buy).fill.id);
+        assert_ne!(
+            a.recorded(Side::Buy).fill.id,
+            a.recorded(Side::Sell).fill.id
+        );
+        assert_eq!(a.recorded(Side::Buy).fill.id, a.recorded(Side::Buy).fill.id);
+        assert_eq!(
+            b.recorded(Side::Sell).fill.instrument.to_string(),
+            "phoenix:perp:SPCX"
+        );
+    }
 
     #[test]
     fn a_fee_splits_by_quote_lots_and_adds_up() {
