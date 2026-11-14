@@ -68,8 +68,11 @@ refused call or ending liquidatable zero the grade.
 Gate 0, on the calibration model (`hidden/gate0/`, USD per session, 600
 held-out sessions, three seeds): max-lever -98 to -156, fixed 3× -106 to
 -124, prem-scaled 78-87, reference 180-195, told 402-444, path oracle
-472-509. Told makes 4.6-5.7× the best non-reading rung. The engine ladder
-(`checks/ladder.json`) and the Harbor checks are in the gates report.
+472-509. Told makes 4.6-5.7× the best non-reading rung. On the engine (full gates, 2 sets of 50 fresh hidden sessions, USD):
+reference +4,861 / +574, told +13,718 / +13,702, max-lever -16,697 / -13,753,
+fixed -10,514 / -8,289, prem-scaled -7,423 / -3,223. Under Harbor the oracle
+scores skill 1.0000 (reward 0.024: reference +$15,247 over 100 sessions); nop
+and the cheaters score 0.
 
 ## Realism limits
 
