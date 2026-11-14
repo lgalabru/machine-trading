@@ -143,6 +143,8 @@ pub struct AccumulateFamily {
     pub quantity: (u64, u64),
     pub cap_pct: (f64, f64),
     pub haircut_bps: (f64, f64),
+    /// The mandate's loss limit, as a share of the order's notional.
+    pub drawdown_share: f64,
 }
 
 impl AccumulateFamily {
@@ -177,6 +179,7 @@ impl AccumulateFamily {
             quantity: (20, 45),
             cap_pct: (0.8, 2.0),
             haircut_bps: (10.0, 30.0),
+            drawdown_share: 0.05,
         }
     }
 
@@ -293,8 +296,11 @@ impl AccumulateFamily {
         let quantity = rng.range_u64(self.quantity) as f64;
         let cap_pct = round2(rng.range_f64(self.cap_pct));
         let haircut_bps = round2(rng.range_f64(self.haircut_bps));
-        let mut mandate = Mandate::perp(VENUE, &self.symbol, quantity, 0.0);
-        mandate.limits.max_drawdown_usd = None;
+        // A perp mandate has a loss limit; this one is out of reach of any
+        // move the family makes, so it never decides a session: a buy
+        // program's value moves with the market whatever the desk does.
+        let max_drawdown = (quantity * self.arrival_usd * self.drawdown_share).round();
+        let mut mandate = Mandate::perp(VENUE, &self.symbol, quantity, max_drawdown);
         let allowance = &mut mandate.universe[0];
         allowance.min_position = Some(0.0);
         allowance.sides = Some(vec![Side::Buy]);
@@ -471,7 +477,8 @@ mod tests {
             assert_eq!(scenario, family.sample("s", seed));
             let order = scenario.order.as_ref().unwrap();
             assert_eq!(scenario.mandate.universe[0].max_position, order.quantity);
-            assert_eq!(scenario.mandate.limits.max_drawdown_usd, None);
+            let limit = scenario.mandate.limits.max_drawdown_usd.unwrap();
+            assert!(limit > order.quantity * 159.92 * 0.04, "{limit}");
             assert_eq!(shape.regime == "calm", shape.onset.is_none());
         }
     }
