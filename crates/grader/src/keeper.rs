@@ -432,28 +432,42 @@ impl LiquidationKeeper {
         let through = (mark as f64 * LIQUIDATION_BAND) as u64;
         let limit_ticks = if long { mark - through } else { mark + through };
         let backstop = tier >= BACKSTOP_TIER;
-        let instruction = if backstop {
-            liquidation_transfer(
+        let (value_before, position_before) = self.account().await?;
+        // Past the backstop margin the keeper takes the position over; if
+        // Phoenix refuses that, or short of it, it closes through the book.
+        let mut outcome = Err(String::new());
+        let mut transferred = false;
+        if backstop {
+            let transfer = liquidation_transfer(
                 &self.keys,
                 self.wallet.pubkey(),
                 self.wallet_trader,
                 trader,
                 u64::from(self.market.asset_id),
                 size,
-            )
-        } else {
-            liquidate_via_market_order(&self.keys, self.wallet.pubkey(), trader, size, limit_ticks)
-        };
-        let (value_before, position_before) = self.account().await?;
-        let mut outcome = self.send(rpc, instruction.clone(), "liquidate")?;
-        // Phoenix refuses to liquidate a trader with risk-increasing orders
-        // resting: a keeper force-cancels them first, which Phoenix allows
-        // any signer while the trader is liquidatable. Without it, resting
-        // an order would make an account unliquidatable.
-        if outcome.is_err() && !backstop {
-            let cancel = force_cancel_risk_increasing(&self.keys, self.wallet.pubkey(), trader);
-            if self.send(rpc, cancel, "force cancel")?.is_ok() {
-                outcome = self.send(rpc, instruction, "liquidate")?;
+            );
+            outcome = self.send(rpc, transfer, "liquidation transfer")?;
+            transferred = outcome.is_ok();
+        }
+        if outcome.is_err() {
+            let order = liquidate_via_market_order(
+                &self.keys,
+                self.wallet.pubkey(),
+                trader,
+                size,
+                limit_ticks,
+            );
+            outcome = self.send(rpc, order.clone(), "liquidate")?;
+            // Phoenix refuses to liquidate a trader with risk-increasing
+            // orders resting: a keeper force-cancels them first, which
+            // Phoenix allows any signer while the trader is liquidatable.
+            // Without it, resting an order would make an account
+            // unliquidatable.
+            if outcome.is_err() {
+                let cancel = force_cancel_risk_increasing(&self.keys, self.wallet.pubkey(), trader);
+                if self.send(rpc, cancel, "force cancel")?.is_ok() {
+                    outcome = self.send(rpc, order, "liquidate")?;
+                }
             }
         }
         let ok = outcome.is_ok();
@@ -467,7 +481,10 @@ impl LiquidationKeeper {
             at: step.at,
             side: if long { "sell" } else { "buy" }.into(),
             size: units(size),
-            limit_usd: mtx_kit::venue::ticks_to_usd(&self.market, limit_ticks),
+            limit_usd: mtx_kit::venue::ticks_to_usd(
+                &self.market,
+                if transferred { mark } else { limit_ticks },
+            ),
             position_after,
             ok,
             error: outcome.clone().err(),
@@ -477,7 +494,7 @@ impl LiquidationKeeper {
             info!(
                 step = step.k,
                 trader = %trader,
-                backstop,
+                transferred,
                 position_before,
                 position_after,
                 "the keeper liquidated"
@@ -522,7 +539,7 @@ impl LiquidationKeeper {
         step: &CrankStep,
         settling: bool,
     ) -> Result<CrankOutcome> {
-        if !settling && step.k % self.spec.check_every_steps != 0 {
+        if !settling && !step.k.is_multiple_of(self.spec.check_every_steps) {
             return Ok(CrankOutcome::Done);
         }
         let mut breached: Vec<(Pubkey, u8)> = Vec::new();
@@ -547,12 +564,9 @@ impl LiquidationKeeper {
         }
         let mut refused = None;
         for (trader, tier) in breached {
-            match self.liquidate(rpc, step, trader, tier).await? {
-                Some(Err(reason)) => {
-                    warn!(%trader, %reason, "Phoenix refused the keeper's liquidation");
-                    refused = Some(reason);
-                }
-                Some(Ok(())) | None => {}
+            if let Some(Err(reason)) = self.liquidate(rpc, step, trader, tier).await? {
+                warn!(%trader, %reason, "Phoenix refused the keeper's liquidation");
+                refused = Some(reason);
             }
         }
         Ok(refused.map_or(CrankOutcome::Done, CrankOutcome::Refused))
