@@ -13,7 +13,7 @@
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker, the grader's taker flow, the actor library |
 //! | `faults`       | execution faults on the bot's sends and reads                |
-//! | `tx`           | the transaction layer: raw sends                             |
+//! | `tx`           | the transaction layer: fees and blocks, raw sends            |
 //! | `mandate`      | what the bot may trade and its limits                        |
 //! | `order`        | a quantity the bot has to trade by the end                   |
 //! | `scoring`      | the reference, the bound, charges, net scoring, stop-outs    |
@@ -47,6 +47,7 @@ use crate::{
         Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
+    txlayer::TxLayer,
 };
 
 /// The schema version this module reads and writes.
@@ -220,6 +221,12 @@ pub struct Competitor {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Tx {
+    /// Opt-in: sends land as a seeded block builder orders them, against
+    /// background demand for block space, with fees and Jito tips paid from
+    /// the bot's wallet (see [`crate::txlayer`]). Absent, sends land on
+    /// receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<TxLayer>,
     /// Opt-in: a strategy component may build transactions itself, for what
     /// its sheet can't say, and the grader signs them (see
     /// [`crate::raw`]). Absent, the session refuses every one.
@@ -558,6 +565,29 @@ impl ScenarioV2 {
                 .map_err(|reason| format!("raw_sends: {reason}"))?;
             if self.venues.perp.is_none() {
                 return Err("raw_sends: only perp sessions take raw sends yet".into());
+            }
+        }
+        if let Some(layer) = self.tx.as_ref().and_then(|tx| tx.layer.as_ref()) {
+            layer
+                .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
+                .map_err(|reason| format!("tx_layer: {reason}"))?;
+            if self.venues.spot.is_some() || self.venues.lending.is_some() {
+                return Err("tx_layer: only perp sessions take the transaction layer yet".into());
+            }
+            // An actor hooked on the bot's sends acts as each arrives, as if
+            // it ran next: under the layer a send only enters the pool, and
+            // lands when a block takes it.
+            let hooked = self
+                .actors
+                .library
+                .as_ref()
+                .map(|library| library.send_hooked())
+                .unwrap_or_default();
+            if !hooked.is_empty() {
+                return Err(format!(
+                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; the two can't run together until pool-aware actors (PR 17b)",
+                    hooked.join(", ")
+                ));
             }
         }
         self.venues_are_one_kind()?;
@@ -1084,6 +1114,7 @@ impl ScenarioV2 {
             reference_max_drawdown_usd: scoring.reference_max_drawdown_usd,
             informed_max_drawdown_usd: scoring.informed_max_drawdown_usd,
             fair_path,
+            tx_layer: tx.as_ref().and_then(|tx| tx.layer.clone()),
             raw_sends: tx.and_then(|tx| tx.raw_sends),
             stop_out: scoring.stop_out,
             market_model: record,
@@ -1208,8 +1239,9 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 takers_pricing: v1.takers_pricing,
             },
             faults: v1.faults.clone(),
-            tx: v1.raw_sends.clone().map(|raw_sends| Tx {
-                raw_sends: Some(raw_sends),
+            tx: (v1.raw_sends.is_some() || v1.tx_layer.is_some()).then(|| Tx {
+                layer: v1.tx_layer.clone(),
+                raw_sends: v1.raw_sends.clone(),
             }),
             mandate: v1.mandate.clone(),
             order: v1.order.clone(),
@@ -1726,6 +1758,7 @@ mod tests {
     fn raw_sends_live_in_the_tx_section_and_round_trip_through_v1() {
         let mut s = shock();
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),
@@ -1793,6 +1826,7 @@ mod tests {
 
         let mut s = v2(&lending("liquidation"));
         s.tx = Some(Tx {
+            layer: None,
             raw_sends: Some(RawSends {
                 programs: vec!["11111111111111111111111111111111".into()],
             }),
@@ -1802,6 +1836,55 @@ mod tests {
         let mut s = shock();
         s.market_model.warps = v2(&lending("interest")).market_model.warps;
         refused(&s, "only lending sessions jump the clock");
+    }
+
+    #[test]
+    fn the_transaction_layer_lives_in_the_tx_section_and_round_trips_through_v1() {
+        let mut s = shock();
+        s.tx = Some(Tx {
+            layer: Some(crate::txlayer::tests::layer()),
+            raw_sends: None,
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.tx_layer, s.tx.as_ref().unwrap().layer);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+        let mut on_spot = spot();
+        on_spot.tx = s.tx.clone();
+        assert!(on_spot.validate().unwrap_err().starts_with("tx_layer:"));
+        let mut on_lending = v2(&lending("interest"));
+        on_lending.tx = s.tx.clone();
+        assert_eq!(
+            on_lending.validate().unwrap_err(),
+            "tx_layer: only perp sessions take the transaction layer yet"
+        );
+        s.tx.as_mut().unwrap().layer.as_mut().unwrap().validators = 0;
+        assert!(s.validate().unwrap_err().starts_with("tx_layer:"));
+    }
+
+    #[test]
+    fn the_transaction_layer_refuses_actors_hooked_on_the_bots_sends() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        let mut s = shock();
+        s.tx = Some(Tx {
+            layer: Some(crate::txlayer::tests::layer()),
+            raw_sends: None,
+        });
+        library.front_runners = vec![crate::actors::library::FrontRunner::default()];
+        s.actors.library = Some(library.clone());
+        let mut v1 = s.clone().into_scenario().unwrap();
+        library.front_runners[0].on_send = true;
+        s.actors.library = Some(library);
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.starts_with("tx_layer: actors.front_runners[0] acts on the bot's sends")
+                && refused.contains("PR 17b"),
+            "{refused}"
+        );
+        // A v1 scenario, the same.
+        v1.actors.as_mut().unwrap().front_runners[0].on_send = true;
+        assert_eq!(v1.validate().unwrap_err(), refused);
     }
 
     #[test]

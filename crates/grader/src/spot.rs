@@ -1007,6 +1007,7 @@ impl Account for SpotAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
+        _tx: Option<Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
         // The bot's seats, the scenario's first venue's first, trading
         // through the guard's host side: their sends are the bot's, their
@@ -1043,6 +1044,8 @@ impl Account for SpotAccount {
             reader: Reader::Wallet {
                 start: self.start.wallet.clone(),
             },
+            pool: None,
+            tx: None,
         })
     }
 
@@ -1149,6 +1152,7 @@ impl Account for SpotAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
@@ -1221,6 +1225,7 @@ mod tests {
             raw_sends: None,
             start_positions: Default::default(),
             close_out: Default::default(),
+            tx_layer: None,
             stop_out: None,
             turn_data: None,
             oracles: None,
