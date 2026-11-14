@@ -128,6 +128,26 @@ mod tests {
     }
 
     #[test]
+    fn a_liquidation_names_the_keeper_in_json() {
+        let close = ForcedClose {
+            reason: ForcedCloseReason::Liquidation {
+                by: LiquidatedBy::Keeper,
+            },
+            step: 40,
+            at: 82,
+            value_before_usd: 3_100.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 3_036.0,
+            position_before: 900.0,
+            orders: Vec::new(),
+            flat: false,
+        };
+        let json = serde_json::to_string(&close).unwrap();
+        assert!(json.contains(r#""reason":{"kind":"liquidation","by":"keeper"}"#));
+        assert_eq!(serde_json::from_str::<ForcedClose>(&json).unwrap(), close);
+    }
+
+    #[test]
     fn flat_is_below_a_base_lot() {
         assert!(is_flat(0.0));
         assert!(is_flat(-0.0004));

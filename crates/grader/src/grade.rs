@@ -1508,6 +1508,17 @@ mod tests {
         ruined.liquidatable = true;
         assert_eq!(score(vec![(ruined, &s)]).reward, 0.0);
 
+        // With a competing keeper the liquidation is priced in the value,
+        // and an account left liquidatable is scored as it stands.
+        let mut kept = session(100.0);
+        kept.liquidatable = true;
+        kept.liquidator = Some(crate::keeper::LiquidatorReport {
+            delay_slots: 4,
+            liquidations: 1,
+            cost_usd: 60.0,
+        });
+        assert!(score(vec![(kept, &s)]).reward > 0.0);
+
         let mut big = session(900.0);
         big.peak_position = 119.0;
         big.positions = vec![PositionRange {
