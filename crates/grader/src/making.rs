@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
 use crate::{
+    obligations::Obligations,
     scenario::{Scenario, SplitMix64, VENUE, Waypoint, move_slots},
     session::{StaticName, static_name},
 };
@@ -140,6 +141,10 @@ pub struct Making {
     pub competition: Competition,
     /// The taker orders the grader sends, in slot order.
     pub takers: Vec<TakerOrder>,
+    /// Opt-in: the bot's quoting obligations, measured and reported (see
+    /// [`crate::obligations`]). Absent, nothing is measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<Obligations>,
 }
 
 /// The grader's maker (see [`crate::actors::competitor`]).
@@ -273,6 +278,9 @@ impl Making {
         }
         if let Some(reactive) = &c.reactive {
             reactive.validate()?;
+        }
+        if let Some(obligations) = &self.obligations {
+            obligations.validate()?;
         }
         let mut last = 0;
         for (i, order) in self.takers.iter().enumerate() {
@@ -678,6 +686,7 @@ impl MakingFamily {
                 competitor_bps,
                 competition,
                 takers,
+                obligations: None,
             }),
             offhours: None,
             funding: None,
@@ -1039,6 +1048,7 @@ mod tests {
                     account: 1,
                 },
             ],
+            obligations: None,
         };
         let path = [Waypoint::at(5, 10.0)];
         // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1

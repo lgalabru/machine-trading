@@ -425,6 +425,7 @@ mod tests {
                 reactive: None,
             },
             takers: Vec::new(),
+            obligations: None,
         };
         let seat = Box::new(NotingSeat {
             market: "x".into(),
@@ -559,6 +560,7 @@ mod tests {
                 reactive,
             },
             takers: Vec::new(),
+            obligations: None,
         }
     }
 

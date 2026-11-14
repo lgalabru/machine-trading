@@ -811,6 +811,9 @@ pub struct WasmBot {
     observer: Option<std::sync::Arc<dyn StepObserver>>,
     /// The account the session measured for the coming turn.
     account: Option<Account>,
+    /// Where the mandate allows taking on the bot's market only to reduce:
+    /// the check its orders there pass before they go out.
+    taking: Option<crate::taking::TakingGuard>,
 }
 
 impl WasmBot {
@@ -915,6 +918,12 @@ impl WasmBot {
         } else if let (Some(observer), Some(reason)) = (&observer, &stopped) {
             tokio::task::block_in_place(|| observer.started(&session, &[], Some(reason)));
         }
+        let taking = desk
+            .markets
+            .first()
+            .and_then(|market| market.id.parse().ok())
+            .and_then(|instrument| terms.mandate.allowance(&instrument))
+            .and_then(crate::taking::TakingGuard::new);
         Ok(Self {
             strategy,
             desk,
@@ -931,7 +940,13 @@ impl WasmBot {
             stopped,
             observer,
             account: None,
+            taking,
         })
+    }
+
+    /// The orders the taking check refused, where the mandate has one.
+    pub fn refused_takes(&self) -> Option<u64> {
+        self.taking.as_ref().map(|guard| guard.refused)
     }
 
     /// The market at `step`, as the desk reads it: `None` if it couldn't.
@@ -1227,6 +1242,9 @@ impl WasmBot {
             trace.notes = notes.clone();
         }
         self.notes = notes;
+        if let Some(guard) = self.taking.as_mut() {
+            guard.begin(&market);
+        }
         self.last = Some(market);
         let own = self.session.venues[0].id.clone();
         // The orders that reached the chain, the one that failed included:
@@ -1235,8 +1253,16 @@ impl WasmBot {
         let mut failed = false;
         let planned_count = planned.len();
         for planned in planned {
+            let on_own = planned.venue.as_ref().is_none_or(|venue| *venue == own);
+            let refused = match self.taking.as_mut().filter(|_| on_own && !failed) {
+                Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
+                None => None,
+            };
             let state = if failed {
                 SendState::NotSent("an earlier order of the step failed".into())
+            } else if let Some(reason) = refused {
+                tracing::info!(step = k, action = ?planned.action, "{reason}");
+                SendState::NotSent(reason)
             } else if let Some(seat) = self.seat(planned.venue.as_deref()) {
                 if let Some(pool) = &self.desk.pool {
                     pool.set_options(planned.tx);
