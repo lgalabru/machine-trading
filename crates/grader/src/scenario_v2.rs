@@ -124,8 +124,8 @@ pub struct PerpVenue {
 #[serde(deny_unknown_fields)]
 pub struct SpotVenues {
     /// The venues whose market of the symbol the bot may trade: books
-    /// (`phoenix`, `openbook`) for SOL-USDC, pools (`raydium`, `meteora`)
-    /// for SPCX-USDC.
+    /// (`phoenix`, `openbook`) for SOL-USDC, pools (`raydium`, `meteora`,
+    /// `orca`) for SPCX-USDC.
     pub markets: Vec<String>,
     /// The pool venues among `markets` where the bot may provide liquidity:
     /// each adds its amm instrument to the universe.
@@ -1130,19 +1130,21 @@ mod tests {
 
     #[test]
     fn a_pools_scenario_keeps_its_liquidity_and_arbitrageur() {
-        let path = format!(
-            "{}/../../bench/checks/pools/smoke.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let v1 = parse(&std::fs::read_to_string(path).unwrap()).unwrap();
-        let as_v2 = v2(&v1);
-        assert_eq!(as_v2.validate(), Ok(()));
-        let listed = as_v2.venues.spot.as_ref().unwrap();
-        assert_eq!(listed.liquidity.len(), 2);
-        assert!(as_v2.actors.arbitrage.is_some());
-        assert_eq!(as_v2.clone().into_scenario().unwrap(), v1);
-        let text = serde_json::to_string_pretty(&as_v2).unwrap();
-        assert_eq!(parse(&text).unwrap(), v1);
+        for check in ["smoke", "sell-only"] {
+            let path = format!(
+                "{}/../../bench/checks/pools/{check}.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let v1 = parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+            let as_v2 = v2(&v1);
+            assert_eq!(as_v2.validate(), Ok(()), "{check}");
+            let listed = as_v2.venues.spot.as_ref().unwrap();
+            assert_eq!(listed.liquidity.len(), 3, "{check}");
+            assert!(as_v2.actors.arbitrage.is_some(), "{check}");
+            assert_eq!(as_v2.clone().into_scenario().unwrap(), v1, "{check}");
+            let text = serde_json::to_string_pretty(&as_v2).unwrap();
+            assert_eq!(parse(&text).unwrap(), v1, "{check}");
+        }
         let mut pools = v2(&parse(
             &std::fs::read_to_string(format!(
                 "{}/../../bench/checks/pools/smoke.json",

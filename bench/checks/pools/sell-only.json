@@ -1,0 +1,109 @@
+{
+  "name": "pools-sell-only",
+  "description": "The pool smoke under a mandate that lets the account sell on its pool liquidity but not buy: the bot's deposits would take base into the pools, which counts as a buy, so each is refused with the reason and no position opens; its swaps are unrestricted",
+  "symbol": "SPCX-USDC",
+  "duration_slots": 24,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "raydium:spot:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "meteora:spot:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "orca:spot:SPCX-USDC",
+        "max_position": 1000.0
+      },
+      {
+        "instrument": "raydium:amm:SPCX-USDC",
+        "max_position": 1000.0,
+        "sides": [
+          "sell"
+        ]
+      },
+      {
+        "instrument": "meteora:amm:SPCX-USDC",
+        "max_position": 1000.0,
+        "sides": [
+          "sell"
+        ]
+      },
+      {
+        "instrument": "orca:amm:SPCX-USDC",
+        "max_position": 1000.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "limits": {}
+  },
+  "path": [],
+  "tape": [
+    {
+      "slot": 2,
+      "side": "buy",
+      "size": 2.0,
+      "limit_bps": 1000.0,
+      "account": 0
+    },
+    {
+      "slot": 6,
+      "side": "sell",
+      "size": 3.0,
+      "limit_bps": 1000.0,
+      "account": 3
+    },
+    {
+      "slot": 10,
+      "side": "buy",
+      "size": 1.5,
+      "limit_bps": 1000.0,
+      "account": 5
+    },
+    {
+      "slot": 14,
+      "side": "sell",
+      "size": 2.0,
+      "limit_bps": 1000.0,
+      "account": 1
+    },
+    {
+      "slot": 18,
+      "side": "buy",
+      "size": 1.0,
+      "limit_bps": 1000.0,
+      "account": 7
+    }
+  ],
+  "spot": {
+    "venues": [
+      "raydium",
+      "meteora",
+      "orca"
+    ],
+    "liquidity": [
+      "raydium",
+      "meteora",
+      "orca"
+    ],
+    "arbitrage": {
+      "band_bps": 30.0,
+      "clip": 2.0,
+      "base": 100.0,
+      "quote": 20000.0
+    },
+    "base": 10.0,
+    "quote": 3000.0
+  },
+  "turn_data": {
+    "tape": true,
+    "depth_levels": 0,
+    "timestamps": true,
+    "parties": true
+  }
+}

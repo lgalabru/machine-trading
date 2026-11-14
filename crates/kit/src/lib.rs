@@ -66,6 +66,7 @@
 //! | `openbook-v2-venue` | OpenBook v2's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `raydium-clmm` | `protocols::raydium::clmm`: Raydium CLMM pools' decoding, math and instructions, for `wasm32-wasip2` too |
 //! | `meteora-dlmm` | `protocols::meteora::dlmm`: Meteora DLMM pools' decoding, math and instructions, for `wasm32-wasip2` too |
+//! | `orca-whirlpool` | `protocols::orca::whirlpool`: Orca Whirlpool pools' decoding, math and instructions, for `wasm32-wasip2` too |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 

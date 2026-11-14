@@ -281,6 +281,8 @@ mod tests {
                     data,
                 },
             ],
+            signers: 1,
+            instructions: Vec::new(),
         }
     }
 

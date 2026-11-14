@@ -1,12 +1,12 @@
 {
-  "created_at_unix": 1794546206,
+  "created_at_unix": 1794555667,
   "fork_host": "api.mainnet-beta.solana.com",
-  "fork_slot": 468802374,
-  "accounts": 316,
+  "fork_slot": 468846327,
+  "accounts": 353,
   "symbol": "SPCX-USDC",
   "mark_price_usd": 148.965,
   "kind": "spot",
-  "recipe_sha256": "1b72d171200ad1c8637131921c7f0ad88b66295aea85d9b8f93133b47036c6ea",
+  "recipe_sha256": "b69d0afc7c866b19418f31311ec81e19ef60124cf13232bbe2f92747d7fdd1ca",
   "sources": [
     {
       "role": "program",
@@ -27,6 +27,14 @@
       "pinned_from": "spcx-pools-2026-11-13"
     },
     {
+      "role": "program",
+      "name": "orca-whirlpool",
+      "address": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      "programdata": "CtXfPzz36dH5Ws4UYKZvrQ1Xqzn42ecDW6y8NKuiN8nD",
+      "deploy_slot": 457152296,
+      "code_sha256": "c422b22f3eefe86dd55878a4f505b9c68c26e241dc96af1573ca032b24b8ee3f"
+    },
+    {
       "role": "pool",
       "name": "raydium-clmm SPCX/USDC",
       "address": "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza"
@@ -35,6 +43,11 @@
       "role": "pool",
       "name": "meteora-dlmm SPCX/USDC",
       "address": "7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool SPCX/USDC",
+      "address": "FgjxPHeYsq1axH29fnGKZi6UyRWi4tMPHgu1gc3ezA9U"
     },
     {
       "role": "mint",

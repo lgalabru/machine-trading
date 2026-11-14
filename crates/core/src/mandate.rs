@@ -275,8 +275,18 @@ impl Mandate {
         self.universe.iter().find(|a| &a.instrument == instrument)
     }
 
+    /// Whether `instrument`'s allowance lets the account trade `side`: an
+    /// instrument outside the universe has no sides to check.
+    pub fn allows_side(&self, instrument: &InstrumentRef, side: Side) -> bool {
+        self.allowance(instrument)
+            .is_none_or(|a| a.sides.as_ref().is_none_or(|sides| sides.contains(&side)))
+    }
+
     /// The first rule the observed session broke, if any.
     pub fn audit(&self, observed: &Observed) -> Option<Breach> {
+        if let Some(what) = observed.unsupported.first() {
+            return Some(Breach::Unsupported { what: what.clone() });
+        }
         if observed.positions_outside_universe > 0 {
             return Some(Breach::OutsideUniverse {
                 positions: observed.positions_outside_universe,
@@ -303,11 +313,9 @@ impl Mandate {
             .iter()
             .map(|fill| (&fill.instrument, fill.side))
             .chain(observed.open_orders.iter().map(|(i, side)| (i, *side)))
+            .chain(observed.liquidity.iter().map(|(i, side)| (i, *side)))
         {
-            let allowed = self
-                .allowance(instrument)
-                .is_none_or(|a| a.sides.as_ref().is_none_or(|sides| sides.contains(&side)));
-            if !allowed {
+            if !self.allows_side(instrument, side) {
                 return Some(Breach::Side {
                     instrument: instrument.clone(),
                     side,
@@ -364,6 +372,13 @@ pub struct Observed {
     /// Each side the account was seen with an order resting on, per
     /// instrument.
     pub open_orders: Vec<(InstrumentRef, Side)>,
+    /// Each side the account's liquidity deposits and withdrawals moved base
+    /// on, per `amm` instrument: a deposit that takes base in is a buy, a
+    /// withdrawal that returns base a sell. Only the sides rule reads them.
+    pub liquidity: Vec<(InstrumentRef, Side)>,
+    /// What the account ran on a venue's program that a bot may not (a
+    /// pool's limit order, say), each as the breach it is.
+    pub unsupported: Vec<String>,
 }
 
 /// A fill as the audit reads it: where, which way for the account, and at
@@ -406,6 +421,18 @@ impl Observed {
             lowest: position,
             highest: position,
         });
+    }
+
+    /// Counts a deposit or withdrawal that moved base on `side` of the `amm`
+    /// instrument.
+    pub fn record_liquidity(&mut self, instrument: &InstrumentRef, side: Side) {
+        if !self
+            .liquidity
+            .iter()
+            .any(|(i, s)| i == instrument && *s == side)
+        {
+            self.liquidity.push((instrument.clone(), side));
+        }
     }
 
     /// Counts an order seen resting on `side` of `instrument`.
@@ -476,6 +503,12 @@ pub enum Breach {
         price: f64,
         limit: f64,
     },
+    /// An instruction a bot may not run on its venue, said as what the
+    /// account did: "ran meteora PlaceLimitOrder, which this benchmark
+    /// doesn't support".
+    Unsupported {
+        what: String,
+    },
 }
 
 impl fmt::Display for Breach {
@@ -533,6 +566,7 @@ impl fmt::Display for Breach {
                 f,
                 "bought {instrument} at {price:.4}, over the maximum buy price of {limit}"
             ),
+            Self::Unsupported { what } => f.write_str(what),
         }
     }
 }
@@ -922,6 +956,51 @@ mod tests {
             ..Observed::default()
         };
         assert_eq!(mandate.audit(&deep), None);
+    }
+
+    #[test]
+    fn liquidity_moves_count_as_trades_for_the_sides_rule() {
+        let pool: InstrumentRef = "orca:amm:SPCX-USDC".parse().unwrap();
+        let mut mandate = Mandate::spot(&["orca"], "SPCX-USDC", 10.0);
+        mandate.universe.push(Allowance {
+            instrument: pool.clone(),
+            max_position: 10.0,
+            min_position: None,
+            sides: Some(vec![Side::Sell]),
+            min_sell_price: None,
+            max_buy_price: None,
+        });
+        let mut observed = Observed::default();
+        observed.record_liquidity(&pool, Side::Sell);
+        observed.record_liquidity(&pool, Side::Sell);
+        assert_eq!(observed.liquidity.len(), 1);
+        // A withdrawal returning base is a sell: a sell-only mandate allows it.
+        assert_eq!(mandate.audit(&observed), None);
+        assert!(mandate.allows_side(&pool, Side::Sell) && !mandate.allows_side(&pool, Side::Buy));
+        // A deposit taking base in is a buy.
+        observed.record_liquidity(&pool, Side::Buy);
+        assert_eq!(
+            mandate.audit(&observed),
+            Some(Breach::Side {
+                instrument: pool.clone(),
+                side: Side::Buy
+            })
+        );
+        // Outside the universe, nothing to check.
+        let other: InstrumentRef = "raydium:amm:SPCX-USDC".parse().unwrap();
+        assert!(mandate.allows_side(&other, Side::Buy));
+    }
+
+    #[test]
+    fn an_unsupported_instruction_is_a_breach_whatever_else_holds() {
+        let mandate = Mandate::spot(&["meteora"], "SPCX-USDC", 10.0);
+        let mut observed = Observed::default();
+        assert_eq!(mandate.audit(&observed), None);
+        let what = "ran meteora PlaceLimitOrder, which this benchmark doesn't support";
+        observed.unsupported.push(what.into());
+        let breach = mandate.audit(&observed).unwrap();
+        assert_eq!(breach, Breach::Unsupported { what: what.into() });
+        assert_eq!(breach.to_string(), what);
     }
 
     #[test]

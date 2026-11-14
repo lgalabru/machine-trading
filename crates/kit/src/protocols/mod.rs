@@ -8,6 +8,7 @@
 //! | [`openbook`] | [`openbook::v2`] | `OpenBookV2Driver` | `SpotBalances` | `OpenBookV2Meter` |
 //! | `raydium` | `raydium::clmm` | the grader's pool seats | `SpotBalances`, liquidity positions | the grader |
 //! | `meteora` | `meteora::dlmm` | the grader's pool seats | `SpotBalances`, liquidity positions | the grader |
+//! | `orca` | `orca::whirlpool` | the grader's pool seats | `SpotBalances`, liquidity positions | the grader |
 //!
 //! An adapter maps its program onto the [`core`](crate::core) model, as
 //! `docs/rfd/0001-instrument-traits.md` lays out: its markets become
@@ -24,6 +25,8 @@
 pub mod meteora;
 #[cfg(feature = "openbook-v2-venue")]
 pub mod openbook;
+#[cfg(feature = "orca-whirlpool")]
+pub mod orca;
 #[cfg(any(feature = "phoenix", feature = "phoenix-v1-venue"))]
 pub mod phoenix;
 #[cfg(feature = "pyth")]
@@ -54,13 +57,21 @@ impl DecodeError {
 
 /// An Anchor account's fields, read at fixed offsets: its 8-byte
 /// discriminator checked, and each read bounds-checked.
-#[cfg(any(feature = "raydium-clmm", feature = "meteora-dlmm"))]
+#[cfg(any(
+    feature = "raydium-clmm",
+    feature = "meteora-dlmm",
+    feature = "orca-whirlpool"
+))]
 pub(crate) struct Fields<'a> {
     what: &'static str,
     data: &'a [u8],
 }
 
-#[cfg(any(feature = "raydium-clmm", feature = "meteora-dlmm"))]
+#[cfg(any(
+    feature = "raydium-clmm",
+    feature = "meteora-dlmm",
+    feature = "orca-whirlpool"
+))]
 impl<'a> Fields<'a> {
     /// `data`, if it starts with `discriminator` and holds at least `len`
     /// bytes.
@@ -98,6 +109,7 @@ impl<'a> Fields<'a> {
     pub(crate) fn i32(&self, at: usize) -> Result<i32, DecodeError> {
         self.bytes(at).map(i32::from_le_bytes)
     }
+    #[cfg(any(feature = "raydium-clmm", feature = "meteora-dlmm"))]
     pub(crate) fn u32(&self, at: usize) -> Result<u32, DecodeError> {
         self.bytes(at).map(u32::from_le_bytes)
     }
@@ -111,7 +123,7 @@ impl<'a> Fields<'a> {
     pub(crate) fn u128(&self, at: usize) -> Result<u128, DecodeError> {
         self.bytes(at).map(u128::from_le_bytes)
     }
-    #[cfg(feature = "raydium-clmm")]
+    #[cfg(any(feature = "raydium-clmm", feature = "orca-whirlpool"))]
     pub(crate) fn i128(&self, at: usize) -> Result<i128, DecodeError> {
         self.bytes(at).map(i128::from_le_bytes)
     }
@@ -189,7 +201,7 @@ pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
 
 /// SPCX's mint (Backpack Securities' tokenized SpaceX share, Token-2022):
-/// the base of the pools the Raydium and Meteora profiles name.
+/// the base of the pools the Raydium, Meteora and Orca profiles name.
 pub const SPCX_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb");
 

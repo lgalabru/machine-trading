@@ -197,7 +197,10 @@ pub struct PositionBin {
     pub fee_y_pending: u64,
 }
 
-/// A liquidity position over a range of bins.
+/// A liquidity position over a range of bins: up to 70 in the account's
+/// fixed part, and up to [`Position::MAX_BINS`] once
+/// `increase_position_length` has grown the account, each bin past the 70th
+/// appended after the fixed part.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Position {
     pub address: Pubkey,
@@ -210,30 +213,46 @@ pub struct Position {
 }
 
 impl Position {
-    /// The account's size.
+    /// The account's size without extension bins, which holds 70 bins.
     pub const LEN: usize = 8120;
+    /// The account's discriminator, for filtering a program's accounts.
+    pub const DISCRIMINATOR: [u8; 8] = POSITION_V2;
     /// Where the pair and the owner sit, for filtering a program's accounts.
     pub const PAIR_OFFSET: usize = 8;
     pub const OWNER_OFFSET: usize = 40;
+    /// The most bins a position spans, extension included (the program's
+    /// `POSITION_MAX_LENGTH`).
+    pub const MAX_BINS: usize = 1400;
+    /// One extension bin: its shares, its rewards, then its fees
+    /// (`PositionBinData`).
+    const EXTENSION_BIN_LEN: usize = 112;
 
     pub fn decode(address: Pubkey, data: &[u8]) -> Result<Self, DecodeError> {
         let f = Fields::new("meteora dlmm position", data, POSITION_V2, Self::LEN)?;
         let lower_bin_id = f.i32(7912)?;
         let upper_bin_id = f.i32(7916)?;
-        let width = usize::try_from(upper_bin_id - lower_bin_id + 1)
+        let width = usize::try_from(i64::from(upper_bin_id) - i64::from(lower_bin_id) + 1)
             .ok()
-            .filter(|w| *w <= BINS_PER_ARRAY as usize)
+            .filter(|w| (1..=Self::MAX_BINS).contains(w))
             .ok_or_else(|| {
                 DecodeError::new(
                     "meteora dlmm position",
                     format!("bins {lower_bin_id} to {upper_bin_id}"),
                 )
             })?;
+        let fixed = BINS_PER_ARRAY as usize;
         let bins = (0..width)
             .map(|i| {
-                let fee = 4552 + i * 48;
+                // The first 70 bins' shares and fees sit in the fixed part's
+                // arrays; each later bin's, in its extension entry.
+                let (shares, fee) = if i < fixed {
+                    (72 + i * 16, 4552 + i * 48)
+                } else {
+                    let at = Self::LEN + (i - fixed) * Self::EXTENSION_BIN_LEN;
+                    (at, at + 64)
+                };
                 Ok(PositionBin {
-                    shares: f.u128(72 + i * 16)?,
+                    shares: f.u128(shares)?,
                     fee_x_per_token_complete: f.u128(fee)?,
                     fee_y_per_token_complete: f.u128(fee + 16)?,
                     fee_x_pending: f.u64(fee + 32)?,
@@ -251,10 +270,13 @@ impl Position {
         })
     }
 
-    /// The bin arrays its instructions name: the one holding its lowest bin
-    /// and the next, which between them hold any position's range.
+    /// The bin arrays its instructions name: from the one holding its
+    /// lowest bin through the one holding its highest, and at least two, as
+    /// for a new position.
     pub fn bin_arrays(&self) -> Vec<i64> {
-        super::position_bin_arrays(self.lower_bin_id)
+        let lower = super::bin_array_index(self.lower_bin_id);
+        let upper = super::bin_array_index(self.upper_bin_id).max(lower + 1);
+        (lower..=upper).collect()
     }
 }
 
@@ -307,13 +329,20 @@ pub(crate) mod testing {
         lower: i32,
         bins: &[PositionBin],
     ) -> Vec<u8> {
-        let mut data = vec![0u8; Position::LEN];
+        let fixed = BINS_PER_ARRAY as usize;
+        let extension = bins.len().saturating_sub(fixed) * Position::EXTENSION_BIN_LEN;
+        let mut data = vec![0u8; Position::LEN + extension];
         data[..8].copy_from_slice(&POSITION_V2);
         data[8..40].copy_from_slice(pair.as_ref());
         data[40..72].copy_from_slice(owner.as_ref());
         for (i, bin) in bins.iter().enumerate() {
-            data[72 + i * 16..88 + i * 16].copy_from_slice(&bin.shares.to_le_bytes());
-            let fee = 4552 + i * 48;
+            let (shares, fee) = if i < fixed {
+                (72 + i * 16, 4552 + i * 48)
+            } else {
+                let at = Position::LEN + (i - fixed) * Position::EXTENSION_BIN_LEN;
+                (at, at + 64)
+            };
+            data[shares..shares + 16].copy_from_slice(&bin.shares.to_le_bytes());
             data[fee..fee + 16].copy_from_slice(&bin.fee_x_per_token_complete.to_le_bytes());
             data[fee + 16..fee + 32].copy_from_slice(&bin.fee_y_per_token_complete.to_le_bytes());
             data[fee + 32..fee + 40].copy_from_slice(&bin.fee_x_pending.to_le_bytes());
@@ -362,5 +391,31 @@ mod tests {
         assert_eq!(position.bins[2].fee_y_pending, 7);
         assert_eq!(position.owner, owner);
         assert_eq!(position.bin_arrays(), [9, 10]);
+    }
+
+    #[test]
+    fn a_grown_position_decodes_its_extension_bins() {
+        let (pair, owner) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let bins: Vec<PositionBin> = (0..109u64)
+            .map(|i| PositionBin {
+                shares: u128::from(i + 1) << 64,
+                fee_x_per_token_complete: u128::from(i),
+                fee_y_pending: i,
+                ..PositionBin::default()
+            })
+            .collect();
+        let data = position_bytes(pair, owner, 660, &bins);
+        assert_eq!(data.len(), 8120 + 39 * 112);
+        let position = Position::decode(Pubkey::new_unique(), &data).unwrap();
+        assert_eq!((position.lower_bin_id, position.upper_bin_id), (660, 768));
+        assert_eq!(position.bins, bins);
+        assert_eq!(position.bin_arrays(), [9, 10]);
+        let wider = Position {
+            upper_bin_id: 840,
+            ..position
+        };
+        assert_eq!(wider.bin_arrays(), [9, 10, 11, 12]);
+        // An account cut short of the bins its range names doesn't decode.
+        assert!(Position::decode(Pubkey::new_unique(), &data[..data.len() - 1]).is_err());
     }
 }

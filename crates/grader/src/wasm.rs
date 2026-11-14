@@ -719,6 +719,46 @@ pub struct Clock<'a> {
     pub reports: mtx_kit::Reports,
 }
 
+/// Why `mandate` refuses `action` on `seat`'s market, if it is a liquidity
+/// deposit or withdrawal that moves base on a side the allowance's `sides`
+/// doesn't list: they count as trades ([`crate::venue::Seat::base_moved`]).
+/// Where the market's sides are restricted and the seat can't tell what the
+/// order would move, it is refused too. The audit checks the same from the
+/// chain, so a bot that sends the transaction itself is caught too.
+async fn refused_liquidity(
+    mandate: &mtx_core::Mandate,
+    seat: &dyn crate::venue::Seat,
+    action: &mtx_kit::Action,
+) -> Option<String> {
+    let instrument: mtx_core::mandate::InstrumentRef = seat.market().parse().ok()?;
+    let allows = |side| mandate.allows_side(&instrument, side);
+    if allows(mtx_core::Side::Buy) && allows(mtx_core::Side::Sell) {
+        return None;
+    }
+    let sides = match seat.base_moved(action).await {
+        Ok(sides) => sides,
+        Err(reason) => {
+            return Some(format!(
+                "refused: the mandate restricts the sides on {instrument}, and what this order would move can't be told: {reason}"
+            ));
+        }
+    };
+    let side = sides.into_iter().find(|side| !allows(*side))?;
+    let (what, trade) = match side {
+        mtx_core::Side::Buy => (
+            "a deposit that takes base into the pool, or rests to buy it",
+            "buy",
+        ),
+        mtx_core::Side::Sell => (
+            "a withdrawal that returns base from the pool, or a deposit that rests to sell it",
+            "sell",
+        ),
+    };
+    Some(format!(
+        "refused: {what} counts as a {trade}, and the mandate's sides for {instrument} don't list {trade}"
+    ))
+}
+
 /// The mandate a component's session runs under, as its `start` sees it.
 pub struct Terms<'a> {
     pub end_slot: u64,
@@ -1146,15 +1186,22 @@ impl WasmBot {
             let state = if failed {
                 SendState::NotSent("an earlier order of the step failed".into())
             } else if let Some(seat) = self.seat(planned.venue.as_deref()) {
-                let sent = seat.send(&planned).await;
-                if sent.sent {
-                    tried.push(planned.action.clone());
-                    if let SendState::Failed { reason, .. } = &sent.state {
-                        tracing::warn!(step = k, action = ?planned.action, error = %reason, "order failed; the step's other orders aren't sent");
-                        failed = true;
+                if let Some(refused) =
+                    refused_liquidity(&self.session.mandate, seat, &planned.action).await
+                {
+                    tracing::warn!(step = k, action = ?planned.action, "{refused}");
+                    SendState::NotSent(refused)
+                } else {
+                    let sent = seat.send(&planned).await;
+                    if sent.sent {
+                        tried.push(planned.action.clone());
+                        if let SendState::Failed { reason, .. } = &sent.state {
+                            tracing::warn!(step = k, action = ?planned.action, error = %reason, "order failed; the step's other orders aren't sent");
+                            failed = true;
+                        }
                     }
+                    sent.state
                 }
-                sent.state
             } else {
                 SendState::NotSent(format!(
                     "{} isn't traded in this session",
@@ -2388,5 +2435,116 @@ mod tests {
             Outcome::Done(())
         ));
         assert!(log.text().contains("end 0"));
+    }
+    /// A pool seat that says which sides of the base an action would move,
+    /// or that it can't tell.
+    struct Moves(Result<Vec<mtx_core::Side>, String>);
+
+    #[async_trait::async_trait]
+    impl crate::venue::Seat for Moves {
+        fn market(&self) -> &str {
+            "orca:amm:SPCX-USDC"
+        }
+        fn executes(&self, _: &Action) -> bool {
+            true
+        }
+        async fn send(&self, _: &Planned) -> mtx_kit::Sent {
+            unreachable!("the refusal reads, it doesn't send")
+        }
+        async fn position(&self) -> crate::venue::SeatResult<f64> {
+            Ok(0.0)
+        }
+        async fn base_moved(&self, _: &Action) -> crate::venue::SeatResult<Vec<mtx_core::Side>> {
+            self.0.clone()
+        }
+    }
+
+    fn pool_mandate(sides: Option<Vec<mtx_core::Side>>) -> mtx_core::Mandate {
+        let mut mandate = mtx_core::Mandate::spot(&["orca"], "SPCX-USDC", 10.0);
+        mandate.universe.push(mtx_core::mandate::Allowance {
+            instrument: "orca:amm:SPCX-USDC".parse().unwrap(),
+            max_position: 10.0,
+            min_position: None,
+            sides,
+            min_sell_price: None,
+            max_buy_price: None,
+        });
+        mandate
+    }
+
+    #[tokio::test]
+    async fn a_sell_only_mandate_refuses_a_deposit_of_base_but_not_the_withdrawal() {
+        use mtx_core::Side::{Buy, Sell};
+        let deposit = Action::AddLiquidity {
+            base: 1.0,
+            quote: 140.0,
+            range: Some(PriceRange {
+                lower: 130.0,
+                upper: 150.0,
+            }),
+            position: None,
+            shape: None,
+        };
+        let withdrawal = Action::RemoveLiquidity {
+            position: None,
+            share: 1.0,
+            min_base: None,
+            min_quote: None,
+        };
+        let moves = |sides: &[mtx_core::Side]| Moves(Ok(sides.to_vec()));
+        let sell_only = pool_mandate(Some(vec![Sell]));
+        let refusal = refused_liquidity(&sell_only, &moves(&[Buy]), &deposit)
+            .await
+            .expect("a deposit that adds base is a buy");
+        assert!(
+            refusal.contains("counts as a buy") && refusal.contains("orca:amm:SPCX-USDC"),
+            "{refusal}"
+        );
+        // Taking base out is a sell: closing a position is still allowed.
+        assert_eq!(
+            refused_liquidity(&sell_only, &moves(&[Sell]), &withdrawal).await,
+            None
+        );
+        // A deposit that moves no base on either side is let through; one of
+        // base in is a buy and a sell, refused here.
+        assert_eq!(
+            refused_liquidity(&sell_only, &moves(&[]), &deposit).await,
+            None
+        );
+        assert!(
+            refused_liquidity(&sell_only, &moves(&[Buy, Sell]), &deposit)
+                .await
+                .is_some()
+        );
+        // An order whose move can't be told is refused where the sides are
+        // restricted, and let through where they aren't.
+        let unknown = Moves(Err("no position in this pool".into()));
+        assert!(
+            refused_liquidity(&sell_only, &unknown, &withdrawal)
+                .await
+                .is_some_and(|why| why.contains("can't be told"))
+        );
+        // A mandate listing both sides, or none, refuses nothing.
+        for sides in [None, Some(vec![Buy, Sell])] {
+            let open = pool_mandate(sides);
+            assert_eq!(
+                refused_liquidity(&open, &moves(&[Buy]), &deposit).await,
+                None
+            );
+            assert_eq!(refused_liquidity(&open, &unknown, &deposit).await, None);
+        }
+        let buy_only = pool_mandate(Some(vec![Buy]));
+        // A deposit across the price buys and rests to sell: a buy-only
+        // mandate refuses it too.
+        assert!(
+            refused_liquidity(&buy_only, &moves(&[Buy, Sell]), &deposit)
+                .await
+                .is_some_and(|why| why.contains("counts as a sell"))
+        );
+        assert!(
+            refused_liquidity(&buy_only, &moves(&[Sell]), &withdrawal)
+                .await
+                .is_some_and(|why| why.contains("counts as a sell"))
+        );
     }
 }

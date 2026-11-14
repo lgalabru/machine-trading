@@ -14,6 +14,11 @@ expect_code_sha256 = "d296c6771cec945601027613ca637c1be6721044c5859009d41c453477
 pin_from = "."
 address = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
 
+[[program]]
+name = "orca-whirlpool"
+expect_code_sha256 = "c422b22f3eefe86dd55878a4f505b9c68c26e241dc96af1573ca032b24b8ee3f"
+address = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+
 [[account]]
 name = "raydium-clmm SPCX/USDC"
 kind = "pool"
@@ -23,6 +28,11 @@ address = "FjuBy7jjf9DXj9d3R7cHpvcnoFW2iQxf7F7P3vqx4Jza"
 name = "meteora-dlmm SPCX/USDC"
 kind = "pool"
 address = "7nVQtYQipN564E9oBi6yZFGox4WL6CR4zsLyYipqgTWu"
+
+[[account]]
+name = "orca-whirlpool SPCX/USDC"
+kind = "pool"
+address = "FgjxPHeYsq1axH29fnGKZi6UyRWi4tMPHgu1gc3ezA9U"
 
 [[account]]
 name = "SPCX"

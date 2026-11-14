@@ -30,8 +30,8 @@ pub mod token;
 pub mod tx;
 
 pub use client::{
-    ChainClient, InnerInstruction, RpcChainClient, SimulationOutcome, TokenBalanceChange,
-    TransactionSummary,
+    ChainClient, ExecutedInstruction, InnerInstruction, RpcChainClient, SimulationOutcome,
+    TokenBalanceChange, TransactionSummary,
 };
 pub use error::{ChainError, PlanError, SignerError};
 pub use signer::{TransactionSigner, is_fully_signed, read_keypair_file};
