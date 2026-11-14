@@ -123,8 +123,8 @@ impl FeeLedger {
     /// `closable` the lamports moved into accounts it can close.
     pub fn reconcile(&mut self, change: i64, closable: i64) {
         self.wallet_change = Some(change);
-        let paid =
-            (self.base + self.priority + self.tips + self.failed_tx_fees + self.forced_close) as i64;
+        let paid = (self.base + self.priority + self.tips + self.failed_tx_fees + self.forced_close)
+            as i64;
         self.unexplained = Some(change + paid + closable);
     }
 }

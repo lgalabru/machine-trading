@@ -1205,7 +1205,11 @@ async fn a_stop_out_drops_the_bots_pooled_sends_and_lands_nothing_more() {
     w.slots(2).await;
     let start = w.balance(&w.bot.pubkey());
     let me = w.bot.pubkey();
-    let (q, r, b) = (Pubkey::new_unique(), Pubkey::new_unique(), Pubkey::new_unique());
+    let (q, r, b) = (
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+    );
     let tip_to: Pubkey = jito::TIP_ACCOUNTS[0].parse().unwrap();
     let h = w.blockhash();
     // A plain send, one the grader retries and signs again, and a bundle.
@@ -1213,31 +1217,46 @@ async fn a_stop_out_drops_the_bots_pooled_sends_and_lands_nothing_more() {
     let (retried, retried_sig) = custom(&w.bot, &[cu_limit(10_000), pay(&me, r, SOL / 100)], h);
     let (bundle, bundle_sig) = custom(
         &w.bot,
-        &[cu_limit(10_000), pay(&me, b, SOL / 100), pay(&me, tip_to, jito::MIN_TIP)],
+        &[
+            cu_limit(10_000),
+            pay(&me, b, SOL / 100),
+            pay(&me, tip_to, jito::MIN_TIP),
+        ],
         h,
     );
     send(w.guard.url(), &plain, json!({ "encoding": "base64" })).await;
     let retry = json!({ "encoding": "base64", "mtx": { "route": "rpc", "retryUntilSlot": w.slot + 300, "resign": true } });
     send(&w.guard.host_url(), &retried, retry).await;
-    jito(&w, "sendBundle", json!([[b64(&bundle)], { "encoding": "base64" }])).await;
+    jito(
+        &w,
+        "sendBundle",
+        json!([[b64(&bundle)], { "encoding": "base64" }]),
+    )
+    .await;
     w.slots(4).await;
     // The risk desk takes the account over.
     assert_eq!(w.engine.stop_out(), 3);
     let (late, _) = custom(&w.bot, &[pay(&me, q, SOL / 100)], w.blockhash());
     let refused = send(w.guard.url(), &late, json!({ "encoding": "base64" })).await;
-    assert!(refused["error"]["message"].as_str().is_some_and(|m| m.contains("risk desk")), "{refused}");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("risk desk")),
+        "{refused}"
+    );
     // Long past the floor, nothing of the bot's landed.
     w.slots(90).await;
     for signature in [&plain_sig, &retried_sig, &bundle_sig] {
-        assert!(!w.landed(signature), "{signature} landed after the stop-out");
+        assert!(
+            !w.landed(signature),
+            "{signature} landed after the stop-out"
+        );
     }
     assert_eq!((w.balance(&q), w.balance(&r), w.balance(&b)), (0, 0, 0));
     let report = reconciled(&w, start, &[]);
     assert!(
-        report
-            .sends
-            .iter()
-            .all(|s| s.state == "failed" && s.reason.as_deref() == Some("the risk desk closed the account")),
+        report.sends.iter().all(|s| s.state == "failed"
+            && s.reason.as_deref() == Some("the risk desk closed the account")),
         "{:?}",
         report.sends
     );
