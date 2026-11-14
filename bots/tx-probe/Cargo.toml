@@ -1,0 +1,16 @@
+# A check, not a strategy: a component that sends with each kind of
+# transaction option and logs what became of each, in a session with the
+# transaction layer on (`just tx-probe`; the grader's tests).
+[package]
+name = "mtx-bot-tx-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }

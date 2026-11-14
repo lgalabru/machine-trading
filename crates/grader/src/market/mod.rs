@@ -77,6 +77,7 @@ pub(crate) mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
             oracles: None,
             lending: None,

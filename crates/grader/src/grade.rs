@@ -1377,6 +1377,7 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
@@ -1448,6 +1449,7 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
         }
     }
