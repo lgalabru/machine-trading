@@ -197,6 +197,13 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
 - **`native_sol`.** Replaces the session's usual SOL grant.
 - **`fees_in_pnl`.** Values the wallet's SOL at `sol_usd`. Rent moved into
   token accounts the bot can close counts as the bot's, not as a cost.
+- **Stop-outs.** When the risk desk takes the account over (`stop_out`,
+  see `crate::risk`), every send of the bot's the layer still pools
+  (retries, rebroadcasts, bundles) fails unpaid, "the risk desk closed the
+  account", and the layer takes and lands nothing more, as the held sends
+  of the execution faults are dropped. The close itself goes through the
+  grader's own endpoint, past the layer, and lands at once; its fees leave
+  the bot's wallet and are booked in the ledger's `forced_close`.
 - **Session kinds.** Only perp sessions take the layer for now: a spot or
   lending session with one is refused. Their seats join when they can send
   through the pool.
@@ -260,8 +267,9 @@ The session report gains a `tx_layer` section:
   again.
 - **`fees`:** the ledger. It splits what the bot paid into base, priority,
   tips, failed transactions' fees, and route fees. It is checked against the
-  wallet's SOL change, and `unexplained` is 0 when they agree. Fees and tips
-  of the bot's transactions that another key pays (a process bot can sign
+  wallet's SOL change, and `unexplained` is 0 when they agree. The risk
+  desk's close, which lands past the layer, is in `forced_close`. Fees and
+  tips of the bot's transactions that another key pays (a process bot can sign
   with a key of its own) are in `paid_by_others`, outside that check. SOL
   the bot moves out of its wallet itself (a transfer to another key) shows
   in `unexplained`: the ledger explains fees, not trades.

@@ -63,6 +63,9 @@ pub struct Refusal {
     pub message: String,
 }
 
+/// Why a stopped-out session's pooled sends failed.
+const STOPPED_OUT: &str = "the risk desk closed the account";
+
 /// A rate-limited node's code.
 pub const TOO_MANY_REQUESTS: i64 = -32429;
 const INVALID_PARAMS: i64 = -32602;
@@ -118,6 +121,9 @@ struct State {
     blocks: Vec<BlockRecord>,
     /// Errors of landed transactions, by signature.
     errors: BTreeMap<String, String>,
+    /// The risk desk took the account over: nothing more is pooled or
+    /// lands.
+    closed: bool,
 }
 
 impl TxEngine {
@@ -166,6 +172,7 @@ impl TxEngine {
                 ledger: FeeLedger::default(),
                 blocks: Vec::new(),
                 errors: BTreeMap::new(),
+                closed: false,
             }),
         });
         engine.observe(base_slot).await?;
@@ -333,6 +340,9 @@ impl TxEngine {
     /// return what to commit, in order.
     pub fn plan(&self, slot: u64) -> Vec<(u64, bool, Vec<Vec<u8>>)> {
         let mut state = self.state();
+        if state.closed {
+            return Vec::new();
+        }
         state.advance(slot);
         // A send holding a transaction that landed in another lets it go: a
         // signature runs, and is charged, once.
@@ -775,6 +785,33 @@ impl TxEngine {
         self.state().layer.routes.staked.is_some()
     }
 
+    /// The risk desk took the account over (see [`crate::risk`]): every
+    /// send of the bot's still pooled fails unpaid, and the layer takes and
+    /// lands nothing more, so none of them can reopen the position during
+    /// the close. Returns how many it dropped.
+    pub fn stop_out(&self) -> usize {
+        let mut state = self.state();
+        state.closed = true;
+        let slot = state.slot;
+        let mut dropped = 0;
+        for entry in &mut state.pool.entries {
+            if entry.sender == BOT && entry.is_pending() {
+                entry.state = EntryState::Failed {
+                    slot,
+                    reason: STOPPED_OUT.into(),
+                };
+                dropped += 1;
+            }
+        }
+        dropped
+    }
+
+    /// Lamports the risk desk's close took from the bot's wallet in fees:
+    /// it lands past the layer, so the ledger books it here.
+    pub fn forced_close_paid(&self, lamports: u64) {
+        self.state().ledger.forced_close += lamports;
+    }
+
     /// The SOL a route charges per send, counted in the ledger.
     pub fn charge_route(&self, lamports: u64) {
         self.state().ledger.route_fees += lamports;
@@ -882,6 +919,12 @@ impl State {
     }
 
     fn submit(&mut self, submission: Submission, txs: Vec<PooledTx>) -> Result<Accepted, Refusal> {
+        if self.closed {
+            return Err(Refusal {
+                code: INVALID_PARAMS,
+                message: STOPPED_OUT.into(),
+            });
+        }
         let signatures: Vec<String> = txs.iter().map(|t| t.signature.clone()).collect();
         let key = if submission.bundle {
             jito::bundle_id(&signatures)

@@ -782,7 +782,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         while slot < target {
             // Under the transaction layer, the slot's block: what its
             // builder picks, committed in order before the slot closes.
-            if let Some((engine, ..)) = &tx {
+            // Once the risk desk has the account, it lands nothing.
+            if let Some((engine, ..)) = tx.as_ref().filter(|_| closing.is_none()) {
                 let picks = engine.plan(slot + 1);
                 for signature in engine.commit(slot + 1, picks).await {
                     guard.landed(&signature, k);
@@ -850,6 +851,15 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             if dropped > 0 {
                 info!(dropped, "the risk desk dropped the bot's held sends");
             }
+            // The same for what the transaction layer still pools for the
+            // bot (retries, rebroadcasts, bundles): it fails unpaid, and the
+            // layer takes nothing more.
+            if let Some((engine, ..)) = &tx {
+                let dropped = engine.stop_out();
+                if dropped > 0 {
+                    info!(dropped, "the risk desk dropped the bot's pooled sends");
+                }
+            }
             closing = Some(crate::risk::ForcedClose {
                 reason: crate::risk::ForcedCloseReason::StopOut {
                     rule: crate::scenario::StopRule::Drawdown,
@@ -867,9 +877,21 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         steps_seen.push(measured);
         if let Some(close) = closing.as_mut() {
             let slice = scenario.stop_out.as_ref().and_then(|stop| stop.slice_base);
+            // The close goes through the grader's own endpoint, past the
+            // layer, and lands at once; its fees leave the bot's wallet, so
+            // the layer's ledger books them.
+            let before = match &tx {
+                Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
+                None => None,
+            };
             let done = account
                 .force_close(&bot_key, internal.url(), slice, at)
                 .await?;
+            if let (Some((engine, ..)), Some(before)) = (&tx, before) {
+                let after = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+                let (change, closable) = after.change_since(&before);
+                engine.forced_close_paid((-(change + closable)).max(0) as u64);
+            }
             close.orders.extend(done.orders);
             if crate::risk::is_flat(done.position) {
                 close.flat = true;

@@ -74,6 +74,10 @@ pub struct FeeLedger {
     pub route_fees: u64,
     /// Transactions that landed.
     pub transactions: u64,
+    /// Fees the risk desk's close paid from the wallet: it lands past the
+    /// layer (see [`crate::risk`]).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub forced_close: u64,
     /// Fees and tips of the bot's transactions that another key paid for:
     /// not from the wallet, so outside the reconciliation.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -107,14 +111,20 @@ impl FeeLedger {
 
     /// Everything paid, on chain and off.
     pub fn total(&self) -> u64 {
-        self.base + self.priority + self.tips + self.failed_tx_fees + self.route_fees
+        self.base
+            + self.priority
+            + self.tips
+            + self.failed_tx_fees
+            + self.route_fees
+            + self.forced_close
     }
 
     /// Check the ledger against the wallet: `change` is its SOL change and
     /// `closable` the lamports moved into accounts it can close.
     pub fn reconcile(&mut self, change: i64, closable: i64) {
         self.wallet_change = Some(change);
-        let paid = (self.base + self.priority + self.tips + self.failed_tx_fees) as i64;
+        let paid =
+            (self.base + self.priority + self.tips + self.failed_tx_fees + self.forced_close) as i64;
         self.unexplained = Some(change + paid + closable);
     }
 }
