@@ -140,7 +140,7 @@ trading key's public key (`authority`), the task's variables
 | `fills` | Your own trades since the last step, from the venues' tapes: empty where the scenario reports no tape, as SPCX's sessions don't. |
 | `tape`, `depth`, `unix_timestamp` | The step's trades and books on every venue, and the world's clock, when the scenario reports them. |
 | `rfqs` | Requests for quotes open at this step, one-sided or two-way: none in today's tasks. |
-| `fees` | The fee market (recent priority fees, the tip floor, the next leaders), where a session models one: none does yet. |
+| `fees` | The fee market (recent priority fees on the session's hot accounts, the tip floor, the next leaders), in a session with a transaction layer. |
 
 And three helpers: `room_to_buy()` and `room_to_sell()`, how much more you
 can trade each way before the cap if your resting orders all fill, and
@@ -191,7 +191,7 @@ the line added last:
 | `.participation(share)` | A target trades at most `share` of the venue's volume since the last step. The volume is the venue's tape's: in a session without one, there is none to take a share of, and the target doesn't trade. |
 | `.at(venue)` | The line is for another of `Session::venues` (`openbook:spot:SOL-USDC`). A session trades only its own market for now: a line for another comes back `NotSent`. |
 | `.client_id(id)` | Your own id for the line's orders: in their `sends`, and what `cancel(id)` names. |
-| `.tx(TxOptions { … })` | A priority fee, a tip, a compute limit, a bundle id, a route, retries until a slot. Accepted and counted, and changes nothing: no session applies them yet (`Session::applies_tx_options`). |
+| `.tx(TxOptions { … })` | A priority fee, a tip, a compute limit, a bundle id, a route, retries until a slot. Applied in a session with a transaction layer (`Session::applies_tx_options`), where a send is `delayed` until it lands, fails or expires; accepted and ignored elsewhere. See `docs/tx-layer.md`. |
 
 `orders.bid(99.0, 5.0).post_only()` rests a post-only bid;
 `orders.sell(70.0, 98.0).reduce_only()` sells what you hold, and no more.

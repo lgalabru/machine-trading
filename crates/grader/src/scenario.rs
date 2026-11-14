@@ -152,12 +152,25 @@ pub struct Scenario {
     /// [`crate::raw`]). Absent, the session refuses every one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_sends: Option<RawSends>,
+    /// Opt-in: the transaction layer (see [`crate::txlayer`]). The bot's
+    /// sends go into a pool and land as a seeded block builder orders them,
+    /// against background demand for block space, with fees and Jito tips
+    /// paid from the bot's wallet. Absent, sends land on receipt, as ever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_layer: Option<crate::txlayer::TxLayer>,
     /// Opt-in: a drawdown past the mandate's limit is priced instead of
     /// disqualifying. The grader's risk desk closes the position through the
     /// book, as market orders signed with the bot's key, and the session
     /// ends there (see [`crate::session`]). Absent, the breach disqualifies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_out: Option<StopOut>,
+    /// Opt-in: a competing keeper liquidates the bot on Phoenix when its
+    /// account crosses maintenance margin, and an account that ends the
+    /// session liquidatable is priced instead of disqualifying (see
+    /// [`crate::keeper`]). Absent, nothing liquidates during the session and
+    /// ending liquidatable disqualifies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidator: Option<crate::keeper::Liquidator>,
 }
 
 /// The grader's risk desk: which mandate limits it enforces by closing the
@@ -992,7 +1005,9 @@ impl ShockFamily {
             }),
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         let shape = Shape {
             direction,
@@ -1625,7 +1640,9 @@ mod tests {
                 Scenario {
                     fair_path: None,
                     raw_sends: None,
+                    tx_layer: None,
                     stop_out: None,
+                    liquidator: None,
                     ..marked.clone()
                 },
                 plain
@@ -1711,7 +1728,9 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1786,7 +1805,9 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         }
     }
 

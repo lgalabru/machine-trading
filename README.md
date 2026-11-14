@@ -141,8 +141,9 @@ bots/       🤖 starter, reference and baseline bots
 snapshots/  📸 pinned mainnet state
 specs/      📜 the mandate: what an agent may trade, and its limits
 skills/     🧠 agent skills, starting with how to design trading tasks
-docs/       📐 development guide and decision records
+docs/       📐 development guide, grading explainer and decision records
 ```
 
 To build, grade, review a bench or add a task, see
-[docs/development.md](docs/development.md).
+[docs/development.md](docs/development.md). How scores are worked out is in
+[docs/grading.md](docs/grading.md).

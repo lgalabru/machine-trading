@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use solana_rpc_client::rpc_client::RpcClient;
 
-use crate::Result;
+use crate::{Result, keeper::LiquidatorReport, risk::ForcedClose};
 
 /// Where in the session a crank is called.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,14 @@ pub struct CrankRefusal {
     pub reason: String,
 }
 
+/// What a session's cranks did, once it is over.
+#[derive(Debug, Default)]
+pub struct CrankReport {
+    pub refusals: Vec<CrankRefusal>,
+    pub closes: Vec<ForcedClose>,
+    pub liquidator: Option<LiquidatorReport>,
+}
+
 /// Upkeep for one venue.
 #[async_trait]
 pub trait VenueCrank: Send {
@@ -66,6 +74,24 @@ pub trait VenueCrank: Send {
     /// Called once a step, after its blocks have landed. `Err` is for the
     /// grader's own failures only; see the module docs.
     async fn crank(&mut self, rpc: &RpcClient, step: &CrankStep) -> Result<CrankOutcome>;
+
+    /// Called once after the session's last step, with the bot stopped and
+    /// before the account is measured a last time: a crank that acts on the
+    /// account (a keeper) gets a final turn. Upkeep has none.
+    async fn settle(&mut self, _rpc: &RpcClient, _step: &CrankStep) -> Result<CrankOutcome> {
+        Ok(CrankOutcome::Done)
+    }
+
+    /// Closes the crank made on the bot's account, for the session's report
+    /// (see [`crate::risk`]). Upkeep makes none.
+    fn forced_closes(&mut self) -> Vec<ForcedClose> {
+        Vec::new()
+    }
+
+    /// What a keeper did, for the session's report.
+    fn liquidator_report(&self) -> Option<LiquidatorReport> {
+        None
+    }
 }
 
 /// Makes a session's cranks. A session builds its own, so a rerun starts
@@ -116,9 +142,44 @@ impl Cranks {
         Ok(())
     }
 
-    /// The refusals so far, for the session's report.
-    pub fn into_refusals(self) -> Vec<CrankRefusal> {
-        self.refusals
+    /// Every crank's final turn, after the session's last step (see
+    /// [`VenueCrank::settle`]). Refusals are recorded like any other.
+    pub async fn settle(&mut self, rpc: &RpcClient, step: &CrankStep) -> Result<()> {
+        for crank in &mut self.cranks {
+            match crank
+                .settle(rpc, step)
+                .await
+                .map_err(|e| crate::Error::Setup(Box::new(e)))?
+            {
+                CrankOutcome::Done => {}
+                CrankOutcome::Refused(reason) => self.refusals.push(CrankRefusal {
+                    crank: crank.name().to_string(),
+                    step: step.k,
+                    reason,
+                }),
+            }
+        }
+        Ok(())
+    }
+
+    /// What the cranks did, for the session's report: their refusals, the
+    /// closes they made on the bot's account, and a keeper's account of
+    /// itself.
+    pub fn into_report(mut self) -> CrankReport {
+        let closes = self
+            .cranks
+            .iter_mut()
+            .flat_map(|crank| crank.forced_closes())
+            .collect();
+        let liquidator = self
+            .cranks
+            .iter()
+            .find_map(|crank| crank.liquidator_report());
+        CrankReport {
+            refusals: self.refusals,
+            closes,
+            liquidator,
+        }
     }
 }
 
@@ -213,7 +274,7 @@ mod tests {
         }
         assert_eq!(names(&calls), ["a", "b", "a", "b", "a", "b"]);
         assert_eq!(calls.lock().unwrap()[5].1, step(2));
-        assert!(cranks.into_refusals().is_empty());
+        assert!(cranks.into_report().refusals.is_empty());
     }
 
     #[tokio::test]
@@ -237,7 +298,7 @@ mod tests {
             6,
             "b ran after a was refused, and a ran again"
         );
-        let refusals = cranks.into_refusals();
+        let refusals = cranks.into_report().refusals;
         assert_eq!(refusals.len(), 1);
         assert_eq!((refusals[0].crank.as_str(), refusals[0].step), ("a", 1));
         assert!(refusals[0].reason.contains("0x11"));

@@ -600,7 +600,9 @@ impl MakingFamily {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            tx_layer: None,
             stop_out: None,
+            liquidator: None,
         };
         (scenario, informed, leaks)
     }
