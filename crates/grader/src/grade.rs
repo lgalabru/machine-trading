@@ -277,7 +277,8 @@ impl GradeReport {
                     .iter()
                     .find_map(|close| match &close.reason {
                         crate::risk::ForcedCloseReason::StopOut { rule } => Some(*rule),
-                        crate::risk::ForcedCloseReason::Liquidation { .. } => None,
+                        crate::risk::ForcedCloseReason::Liquidation { .. }
+                        | crate::risk::ForcedCloseReason::CloseOut => None,
                     });
                 Ok(scoring_v2::Session {
                     scenario: session.scenario.clone(),
@@ -1592,6 +1593,7 @@ mod tests {
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
             obligations: None,
+            decomposition: None,
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),

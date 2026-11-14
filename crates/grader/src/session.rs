@@ -244,6 +244,10 @@ pub struct SessionReport {
     /// them (see [`crate::obligations`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<crate::obligations::ObligationReport>,
+    /// A market-making session with a close-out: what its PnL is made of
+    /// (see [`crate::decomposition`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decomposition: Option<crate::decomposition::Decomposition>,
     /// The transaction layer: each slot's block in order, what became of
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -610,6 +614,27 @@ pub(crate) trait Account: Send + Sync {
     /// [`crate::obligations`]). Nothing by default.
     async fn sample_quotes(&mut self, _slot: u64) -> Result<()> {
         Ok(())
+    }
+
+    /// After the bot's last turn, `at` slots in (`slot` on the chain, at
+    /// step `step`): cancel its orders and close its position with a
+    /// reduce-only immediate-or-cancel order, signed with `bot` through
+    /// `rpc_url` (the grader's own), so the account is measured after paying
+    /// to exit. The close is a [`ForcedClose`](crate::risk::ForcedClose)
+    /// like the risk desk's: its fills are the grader's, not the bot's.
+    /// Only a market-making session takes it.
+    async fn close_out(
+        &mut self,
+        _bot: &Keypair,
+        _rpc_url: &str,
+        _step: u64,
+        _slot: u64,
+        _at: u64,
+    ) -> Result<crate::risk::ForcedClose> {
+        Err(Error::InvalidScenario {
+            path: "making.close_out".into(),
+            reason: "this kind of session can't close its account".into(),
+        })
     }
 
     /// Under a mandate that allows taking only to reduce, in a market-making
@@ -1164,6 +1189,34 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             },
         )
         .await?;
+    // A market-making session with a close-out: the bot's last turn, and
+    // the keeper's, are done, and the grader exits the position through the
+    // book, so the account is measured after paying to. Like the risk
+    // desk's close, it goes through the grader's own endpoint, past the
+    // layer, and its fees leave the bot's wallet, so the layer's ledger
+    // books them.
+    let mut closed_out = None;
+    if closing.is_none() && scenario.making.as_ref().is_some_and(|making| making.close_out) {
+        let before = match &tx {
+            Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
+            None => None,
+        };
+        let close = account
+            .close_out(
+                &bot_key,
+                internal.url(),
+                steps.saturating_sub(1),
+                slot,
+                slot - base_slot,
+            )
+            .await?;
+        if let (Some((engine, ..)), Some(before)) = (&tx, before) {
+            let after = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
+            let (change, closable) = after.change_since(&before);
+            engine.forced_close_paid((-(change + closable)).max(0) as u64);
+        }
+        closed_out = Some(close);
+    }
     // The bot's last turn, and the keeper's, landed in the session's last
     // slot, which no step moved past: a session that reads fills steps one
     // slot more, so they are listed and audited like every other turn's.
@@ -1190,6 +1243,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             .max(close.value_before_usd);
     }
     forced_closes.extend(closing);
+    forced_closes.extend(closed_out);
     let mut report = account
         .finish(Done {
             began,
@@ -1224,7 +1278,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // A stop-out's close settles at the session's end; a liquidation's
     // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {
-        if matches!(close.reason, crate::risk::ForcedCloseReason::StopOut { .. }) {
+        if matches!(
+            close.reason,
+            crate::risk::ForcedCloseReason::StopOut { .. } | crate::risk::ForcedCloseReason::CloseOut
+        ) {
             close.value_after_usd = end_value_usd;
             close.flat = crate::risk::is_flat(end_position);
         }

@@ -168,6 +168,12 @@ pub struct Making {
     /// further out behind it. At least `competitor_bps`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub makers_bps: Option<f64>,
+    /// Opt-in: after the bot's last turn the grader closes its position
+    /// with a forced reduce-only IOC, so the session's PnL is measured
+    /// after paying to exit, and the report splits that PnL (see
+    /// [`crate::decomposition`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub close_out: bool,
 }
 
 /// The grader's maker (see [`crate::actors::competitor`]).
@@ -724,6 +730,7 @@ impl MakingFamily {
                 takers,
                 obligations: None,
                 makers_bps: None,
+                close_out: false,
             }),
             offhours: None,
             funding: None,
@@ -1088,6 +1095,7 @@ mod tests {
             ],
             obligations: None,
             makers_bps: None,
+            close_out: false,
         };
         let path = [Waypoint::at(5, 10.0)];
         // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1

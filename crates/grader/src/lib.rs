@@ -4,6 +4,7 @@ pub mod actors;
 pub mod carry;
 pub mod chain;
 pub mod crank;
+pub mod decomposition;
 mod error;
 pub mod faults;
 pub mod generators;

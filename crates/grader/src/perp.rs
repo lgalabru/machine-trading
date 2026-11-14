@@ -56,7 +56,9 @@ use crate::{
     obligations::{ObligationReport, Obligations, Quoting},
     orders::{CloseOutReport, NetReport, OrderReport},
     phoenix::{self, Phoenix},
-    risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
+    risk::{
+        CloseOrder, Closing, ForcedClose, ForcedCloseReason, MAX_CLOSE_ORDERS_PER_STEP, is_flat,
+    },
     scenario::{STOP_OUT_LIMIT_BPS, Scenario},
     session::{
         Account, BOT_USERS, DEPOSIT_USDC, Done, INTERNAL_RPC_TIMEOUT, IxRecord, OrderRecord,
@@ -534,6 +536,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             None => None,
         },
         oracle_starts,
+        closed_out: false,
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
@@ -1045,6 +1048,9 @@ struct PerpAccount {
     making_fills: Option<MakingFills>,
     /// What it quotes, where the session has quoting obligations.
     quotes: Option<QuoteSampler>,
+    /// Whether the grader closed the position out after the bot's last
+    /// turn: the cost of exiting then is the grader's, not a drawdown.
+    closed_out: bool,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
@@ -1695,6 +1701,40 @@ impl Account for PerpAccount {
         Ok(Closing { orders, position })
     }
 
+    async fn close_out(
+        &mut self,
+        bot: &Keypair,
+        rpc_url: &str,
+        step: u64,
+        slot: u64,
+        at: u64,
+    ) -> Result<ForcedClose> {
+        // The drawdown the bot ran up is what it was before the exit: what
+        // the exit costs is not its risk.
+        let now = self.measure().await?;
+        let position_before = position_in(&now, &self.market_id);
+        let value_before_usd = self
+            .value_with_desk(grader_f64(now.value_usd), position_before, slot)
+            .await?;
+        self.peak_value_usd = self.peak_value_usd.max(value_before_usd);
+        self.max_drawdown_usd = self
+            .max_drawdown_usd
+            .max(self.peak_value_usd - value_before_usd);
+        self.closed_out = true;
+        let closing = self.force_close(bot, rpc_url, None, at).await?;
+        Ok(ForcedClose {
+            reason: ForcedCloseReason::CloseOut,
+            step,
+            at,
+            value_before_usd,
+            peak_usd: self.peak_value_usd,
+            value_after_usd: value_before_usd,
+            position_before,
+            orders: closing.orders,
+            flat: is_flat(closing.position),
+        })
+    }
+
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         self.scan(done.end_slot).await?;
         self.mark_forced(&done.forced_closes).await?;
@@ -1745,6 +1785,28 @@ impl Account for PerpAccount {
             end_value_usd - self.start_value_usd,
             &fills.fills,
         );
+        let decomposition = scenario
+            .making
+            .as_ref()
+            .filter(|making| making.close_out)
+            .map(|_| {
+                let close_out_at = done
+                    .forced_closes
+                    .iter()
+                    .find(|close| close.reason == ForcedCloseReason::CloseOut)
+                    .map_or(u64::MAX, |close| close.at);
+                crate::decomposition::decompose(&crate::decomposition::Session {
+                    fills: &making_fills,
+                    start_position: self.start_position,
+                    end_position,
+                    pnl_usd: settled.pnl_usd,
+                    path: &scenario.path,
+                    start_mark_usd: self.start_mark_usd,
+                    end_at: done.end_slot.saturating_sub(self.base_slot),
+                    uptime: obligations.as_ref().map(|report| report.uptime),
+                    close_out_at,
+                })
+            });
         Ok(SessionReport {
             scenario: scenario.name.clone(),
             start_mark_usd: self.start_mark_usd,
@@ -1762,9 +1824,12 @@ impl Account for PerpAccount {
             instrument,
             positions: observed.positions,
             positions_outside_universe,
-            max_drawdown_usd: self
-                .max_drawdown_usd
-                .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            max_drawdown_usd: if self.closed_out {
+                self.max_drawdown_usd
+            } else {
+                self.max_drawdown_usd
+                    .max(self.peak_value_usd.max(end_value_usd) - end_value_usd)
+            },
             samples: observed.samples,
             term_start: observed.term_start,
             valuation: scenario.valuation(),
@@ -1796,6 +1861,7 @@ impl Account for PerpAccount {
             perp_open_orders: fills.open_orders,
             making_fills,
             obligations,
+            decomposition,
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
