@@ -25,7 +25,7 @@ and changes what a benchmark needs to compare models:
 - Usage: token counts and cost from the session Hermes keeps, when its
   messages carry none.
 - Keys: none in the trial. Hermes reaches its model through the bench's
-  key proxy (key_proxy.py, on the host) with the batch's token
+  key proxy (key_proxy.py, on the host) with its route's token
   (`--api-key-name MTX_PROXY_TOKEN`); the proxy puts the key on upstream.
   Any process in the container can read another's environment under
   /proc, so a key in the container is a key the agent can print. This
@@ -53,7 +53,7 @@ INSTALLER = (
     "882cbc99e44d7837cd3cf0229f0352235effbf25/scripts/install.sh"
 )
 
-# The variable holding the batch's token for the key proxy.
+# The variable holding the route's token for the key proxy.
 PROXY_TOKEN = "MTX_PROXY_TOKEN"
 
 # Releases by commit: a tag can move, a commit can't.
@@ -147,7 +147,6 @@ class Hermes(HarborHermes):
                 f"curl -fsSL {INSTALLER} | bash -s -- --skip-setup --skip-browser "
                 f"--skip-computer-use --hermes-home {HERMES_HOME} --commit {commit} && "
                 f'[ "$(git -C {HERMES_HOME}/hermes-agent rev-parse HEAD)" = {commit} ] && '
-
                 'export PATH="$HOME/.local/bin:$PATH" && '
                 f"export HERMES_HOME={HERMES_HOME} && "
                 # A fresh home has no dependency environment until repaired;

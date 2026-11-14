@@ -40,21 +40,24 @@ esac
 # The stand-in provider, on loopback: only the proxy talks to it.
 port="$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
 MOCK_API_KEY="mock-$(python3 -I -c 'import secrets; print(secrets.token_hex(24))')"
-MTX_PROXY_TOKEN="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
-export MOCK_API_KEY MTX_PROXY_TOKEN
+MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
+export MOCK_API_KEY MTX_PROXY_SECRET
 registry="$jobs/models.toml"
 printf '[probe]\n%s\nkey = "MOCK_API_KEY"\n' "${entry//PORT/$port}" > "$registry"
 python3 -I "$here/mock_provider.py" --host 127.0.0.1 --port "$port" --log "$jobs/requests.jsonl" &
 mock=$!
-# The proxy, on the address the trials reach the host by.
-host="$(hostname -I | awk '{print $1}')"
-MTX_MODELS="$registry" python3 -I "$harness/key_proxy.py" --host "$host" --port 0 probe > "$jobs/proxy.url" &
+# The proxy, on the docker bridge the trials reach the host by, as
+# `just bench` runs it.
+host="$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)"
+MTX_MODELS="$registry" python3 -I "$harness/key_proxy.py" --host "$host" --port 0 probe > "$jobs/proxy.url" 2> "$jobs/proxy.log" &
 proxy=$!
 trap 'kill "$mock" "$proxy" 2> /dev/null || true' EXIT
 for _ in $(seq 50); do [ -s "$jobs/proxy.url" ] && break; sleep 0.2; done
 mapfile -t args < <(MTX_MODELS="$registry" python3 -I "$harness/models.py" args probe "$(cat "$jobs/proxy.url")")
-# Harbor never holds the key, only the token.
-env -u MOCK_API_KEY PYTHONPATH="$harness${PYTHONPATH:+:$PYTHONPATH}" \
+MTX_PROXY_TOKEN="$(MTX_MODELS="$registry" python3 -I "$harness/models.py" token probe)"
+export MTX_PROXY_TOKEN
+# Harbor never holds the key or the batch's secret, only the route's token.
+env -u MOCK_API_KEY -u MTX_PROXY_SECRET PYTHONPATH="$harness${PYTHONPATH:+:$PYTHONPATH}" \
   harbor run -y -p "$task" -o "$jobs" -a mtx_hermes:Hermes "${args[@]}" \
   --effort high --ak "version=$version" -k 2 -n 1 --disable-verification > "$jobs/harbor.log" 2>&1 \
   || { tail -20 "$jobs/harbor.log" >&2; exit 2; }
@@ -64,4 +67,6 @@ if grep -rlF -f <(printf '%s\n' "$MOCK_API_KEY") "$jobs"; then
   echo "hermes probe: FAIL, the provider's key is in the files above"; fails=1
 fi
 python3 -I "$here/read.py" "$jobs" "$route" || fails=1
+# What Hermes asked the proxy for beyond its model calls, all refused.
+if [ -s "$jobs/proxy.log" ]; then echo "proxy refused:"; sort "$jobs/proxy.log" | uniq -c; fi
 exit "$fails"

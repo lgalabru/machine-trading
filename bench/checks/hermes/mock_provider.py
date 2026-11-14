@@ -19,7 +19,9 @@ check can read what the agent saw. The key itself is never logged.
 """
 
 import argparse
+import base64
 import json
+import urllib.parse
 import os
 import secrets
 import time
@@ -135,6 +137,9 @@ class Handler(BaseHTTPRequestHandler):
         record = {
             "time": time.time(),
             "api": api,
+            "path": self.path,
+            "headers": sorted(k.lower() for k in self.headers.keys()),
+            "anthropic_beta": self.headers.get("anthropic-beta"),
             "model": body.get("model"),
             "stream": bool(body.get("stream")),
             "tools": sorted(t for t in tools if t),
@@ -149,6 +154,21 @@ class Handler(BaseHTTPRequestHandler):
             log.write(json.dumps(record) + "\n")
         if not record["key_ok"]:
             self.reply_json(401, {"error": {"message": "invalid api key", "type": "invalid_request_error"}})
+            return
+        # Two models for the proxy's attack checks: one whose errors repeat
+        # the key in every form, one whose stream breaks off.
+        if body.get("model") == "echo-key":
+            forms = [expected, base64.b64encode(expected.encode()).decode(),
+                     base64.b64encode(b"x" + expected.encode()).decode(), urllib.parse.quote(expected, safe="")]
+            self.reply_json(400, {"error": {"message": "bad key " + " | ".join(forms)}})
+            return
+        if body.get("model") == "drop-mid-stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b'data: {"partial": true}\n\n')
+            self.wfile.flush()
+            self.connection.shutdown(2)
             return
         if tools and done < len(SCRIPT):
             call = (f"call_{done}", *SCRIPT[done])

@@ -22,15 +22,28 @@ Put the provider's key on the bench machine, in `~/.machine-trading.env`
 | Any OpenAI-compatible host (Together, Fireworks, a lab's own API) | any name, e.g. `TOGETHER_API_KEY` | `chat` | the host's API root |
 
 The keys never enter a trial. `just bench` starts a proxy on the bench
-machine for the batch (`key_proxy.py`) that holds them; Hermes, in the
-trial's container, talks to the proxy with a token drawn for the batch,
-and the proxy puts the key on each request it forwards. Any process in a
-container can read the others' environments under `/proc`, so a key in
-the container would be a key the agent could print into its trajectory.
-Harbor itself runs without the keys in its environment. After the
-batch, `just bench` searches every file of the batch for every key's
-value; a hit quarantines the batch (`.quarantined` lists the files,
-`just publish` refuses it): rotate the key and don't share the batch.
+machine for the batch (`key_proxy.py`) that holds them, listening on the
+docker bridge only. Any process in a container can read the others'
+environments under `/proc`, so a key in the container would be a key the
+agent could print into its trajectory. Instead each model (route) gets
+its own token, and Hermes, in the trial's container, calls the proxy with
+it; the proxy puts the key on the request it forwards. Harbor runs with
+neither the keys nor the batch's secret in its environment.
+
+A token is readable by the agent, so it is limited to what the agent may
+do anyway: it opens its own route only, for the one model-call path
+(`/responses`, `/v1/messages` or `/chat/completions`) and the route's own
+model (any other `model` is refused), with only content-type, accept,
+anthropic-version and feature `anthropic-beta` headers forwarded. It can
+spend on that model while the batch runs; it can't reach another model,
+another endpoint (files, batches, fine-tuning, admin, listings), another
+account or project, or the proxy from outside the machine.
+
+After the batch, however it ends, `just bench` searches every file of the
+batch for every key, raw, URL-encoded and base64: a clean search writes
+`.scan-passed`, which `just publish` requires; a hit, or a file it can't
+read, quarantines the batch (`.quarantined` lists them): rotate the key
+and don't share the batch.
 
 Models in their native harness (`native:<model>`, Claude Code and Codex)
 still take their key inside the container, as before; the search covers
@@ -91,9 +104,10 @@ started and ended (`hermes-home-start.txt`, empty, and
 To run one task outside a batch, start the proxy yourself:
 
 ```sh
-export MTX_PROXY_TOKEN="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
-python3 -I bench/harness/key_proxy.py --host "$(hostname -I | awk '{print $1}')" kimi-k3 > /tmp/proxy.url &
-env -u OPENROUTER_API_KEY PYTHONPATH=bench/harness harbor run -p bench/tasks/flash-crash-spcx -a mtx_hermes:Hermes \
+export MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
+python3 -I bench/harness/key_proxy.py --host "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" kimi-k3 > /tmp/proxy.url &
+MTX_PROXY_TOKEN="$(python3 -I bench/harness/models.py token kimi-k3)" \
+env -u OPENROUTER_API_KEY -u MTX_PROXY_SECRET PYTHONPATH=bench/harness harbor run -p bench/tasks/flash-crash-spcx -a mtx_hermes:Hermes \
   $(python3 -I bench/harness/models.py args kimi-k3 "$(cat /tmp/proxy.url)") --effort high --ak version=v0.23.1 -k 1 -n 1
 ```
 
@@ -106,7 +120,12 @@ The adapter refuses to run without the proxy (`--base-url` and
 just hermes-check flash-crash-spcx          # every route; or: just hermes-check flash-crash-spcx openai
 ```
 
-Two trials per route (`openai`, `anthropic`, `openrouter`, `chat`), one
+First the proxy under attack (`proxy_attacks.py`): another route's
+token, every other path (files, batches, fine-tuning, admin, traversal,
+encodings, queries), another model, account headers, the machine's
+network address, a key in an error body, the scan's encodings and
+unreadable files, a stream cut mid-answer and a chunked body. Then two
+trials per route (`openai`, `anthropic`, `openrouter`, `chat`), one
 after the other, through the key proxy to a stand-in provider on the
 machine (`bench/checks/hermes`), with no model and no real key: it checks
 the install, the route, the tools offered, the effort as each API takes
@@ -114,4 +133,5 @@ it, the trajectory and token counts, that the second trial starts with
 nothing the first planted (a skill, a memory, files), and that the
 provider's key is in no trial file, including a copy of every process
 environment the agent could read under `/proc` (which does hold the
-proxy's token, as a control). Run it after bumping `hermes` or Harbor.
+route's token, as a control). It lists what Hermes asked the proxy for
+beyond its model calls (all refused). Run it after bumping `hermes` or Harbor.

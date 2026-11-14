@@ -6,18 +6,24 @@ one's key and name before a batch spends anything.
     python3 -I models.py route <name>              the model's route on the key proxy
     python3 -I models.py preflight <name>...       one 1-token request per model
     python3 -I models.py keys                      every variable that may hold a key
-    python3 -I models.py scan <dir>                files under <dir> holding a key's value
+    python3 -I models.py token <name>              the model's token on the key proxy
+    python3 -I models.py scan <dir>                files under <dir> holding a key, in any form
 
 MTX_MODELS names another registry (the harness check's). A name that
 isn't in it is `openai/<model>` as given, or
 Anthropic's for a bare name, as `just bench` has always read it. Hermes
-reaches every model through key_proxy.py, with the batch's token
-(MTX_PROXY_TOKEN) in place of a key. Keys are read from the environment
-and never printed.
+reaches every model through key_proxy.py, with its route's token
+(MTX_PROXY_TOKEN when Harbor runs it) in place of a key: an HMAC of the
+route's name under the batch's secret (MTX_PROXY_SECRET), so a token opens
+one route only. Keys are read from the environment and never printed.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
+import urllib.parse
 import re
 import sys
 import tomllib
@@ -105,25 +111,57 @@ def key_names() -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def route_token(route: str) -> str:
+    """The token that opens one route of the batch's key proxy."""
+    secret = os.environ.get("MTX_PROXY_SECRET", "")
+    if len(secret) < 32:
+        sys.exit("MTX_PROXY_SECRET must hold a random secret of 32 characters or more")
+    return hmac.new(secret.encode(), route.encode(), hashlib.sha256).hexdigest()
+
+
+def key_forms(key: str) -> set[bytes]:
+    """A key as it may be written: as is, URL-encoded, and base64 (standard
+    and URL-safe) at each of the three alignments it can take inside a longer
+    encoded run, cut to the characters the key alone decides."""
+    raw = key.encode()
+    forms = {raw, urllib.parse.quote(key, safe="").encode(), urllib.parse.quote_plus(key).encode()}
+    for offset, start in ((0, 0), (1, 2), (2, 3)):
+        end = ((offset + len(raw)) * 8) // 6
+        for encode in (base64.b64encode, base64.urlsafe_b64encode):
+            forms.add(encode(b"\0" * offset + raw)[start:end])
+    return {f for f in forms if len(f) >= 12}
+
+
 def scan(root: Path) -> int:
-    """Print every file under root that holds the value of a key set in the
-    environment; the values themselves never leave this process."""
-    values = {v.encode() for v in (os.environ.get(n, "") for n in key_names()) if len(v) >= 8}
-    if not values:
+    """Print every file under root that holds a key set in the environment,
+    in any of its forms; the keys themselves never leave this process. A file
+    that can't be read fails the scan too: nothing says it is clean."""
+    forms = set()
+    for value in (os.environ.get(n, "") for n in key_names()):
+        if len(value) >= 8:
+            forms |= key_forms(value)
+    if not forms:
         return 0
-    hits = []
+    hits, unreadable = [], []
     for path in sorted(root.rglob("*")):
-        if path.is_file() and not path.is_symlink():
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
             data = path.read_bytes()
-            if any(v in data for v in values):
-                hits.append(path)
+        except OSError as e:
+            unreadable.append(f"{path}: {e.strerror}")
+            continue
+        if any(f in data for f in forms):
+            hits.append(path)
     for path in hits:
-        print(path)
-    return 1 if hits else 0
+        print(f"key: {path}")
+    for line in unreadable:
+        print(f"unreadable, so not checked: {line}")
+    return 1 if hits or unreadable else 0
 
 
 def main():
-    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2}
+    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2}
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) < 1 + commands[sys.argv[1]]:
         sys.exit(__doc__)
     command, names = sys.argv[1], sys.argv[2:]
@@ -135,6 +173,8 @@ def main():
         print(entry(names[0])["route"])
     elif command == "keys":
         print("\n".join(key_names()))
+    elif command == "token":
+        print(route_token(entry(names[0])["route"]))
     elif command == "scan":
         sys.exit(scan(Path(names[0])))
     else:

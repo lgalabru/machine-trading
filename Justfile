@@ -487,6 +487,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           # Harbor's adapter, with the bench's tools and no memory or skills.
           local route
           mapfile -t route < <(python3 -I bench/harness/models.py args "${model#hermes:}" "$proxy_url")
+          MTX_PROXY_TOKEN="$(python3 -I bench/harness/models.py token "${model#hermes:}")" \
           env "${unset_keys[@]}" PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
           harbor run -y -d "$dataset" -a mtx_hermes:Hermes "${route[@]}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
@@ -511,20 +512,40 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
       done
     ) &
     watcher=$!
-    trap 'kill "$watcher" 2> /dev/null || true' EXIT
+    # No key may reach a trial's files, however the batch ends: a hit
+    # quarantines the batch; a clean scan writes .scan-passed, which
+    # `just publish` requires.
+    scanned=""
+    scan_batch() {
+      [ -z "$scanned" ] || return 0
+      scanned=1
+      kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
+      if python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
+        mv "$batch/.scan" "$batch/.scan-passed"
+      else
+        mv "$batch/.scan" "$batch/.quarantined"
+        echo "quarantined: a provider key is in the batch's files, or a file couldn't be checked ($batch/.quarantined);"
+        echo "rotate any key named there, and don't publish or share the batch"
+        return 1
+      fi
+    }
+    trap 'scan_batch || true' EXIT
     # Hermes's trials reach their providers through a proxy on this machine
     # that holds the keys (bench/harness/key_proxy.py): a key inside a trial
     # could be read by the agent from /proc and printed into its trajectory.
+    # Each route (model) has its own token; the proxy listens on the docker
+    # bridge, so only this machine's containers reach it.
     proxy=""
-    unset_keys=()
+    unset_keys=(-u MTX_PROXY_SECRET)
     for key in $(python3 -I bench/harness/models.py keys); do unset_keys+=(-u "$key"); done
     if [ "${#hermes_models[@]}" -gt 0 ]; then
-      MTX_PROXY_TOKEN="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
-      export MTX_PROXY_TOKEN
-      python3 -I bench/harness/key_proxy.py --host "$(hostname -I | awk '{print $1}')" --port 0 \
+      MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
+      export MTX_PROXY_SECRET
+      bridge="$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)"
+      [ -n "$bridge" ] || { echo "no docker0 address for the key proxy"; exit 1; }
+      python3 -I bench/harness/key_proxy.py --host "$bridge" --port 0 \
         "${hermes_models[@]}" > "$batch/.proxy" 2> "$batch/proxy.log" &
       proxy=$!
-      trap 'kill "$watcher" "$proxy" 2> /dev/null || true' EXIT
       for _ in $(seq 50); do [ -s "$batch/.proxy" ] && break; sleep 0.2; done
       [ -s "$batch/.proxy" ] || { echo "the key proxy didn't start:"; cat "$batch/proxy.log"; exit 1; }
       proxy_url="$(cat "$batch/.proxy")"
@@ -544,15 +565,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
         run_model "$model" || status=1
       done
     fi
-    kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
-    # No key may reach a trial's files: a hit quarantines the batch.
-    if ! python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
-      mv "$batch/.scan" "$batch/.quarantined"
-      echo "quarantined: a provider key is in the batch's files (paths in $batch/.quarantined);"
-      echo "rotate that key, and don't publish or share the batch"
-      exit 1
-    fi
-    rm -f "$batch/.scan"
+    scan_batch || exit 1
     if [ -e "$batch/.stopped" ]; then
       echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"
       cat "$batch/.stopped"
@@ -586,6 +599,11 @@ hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
+    # The key proxy under attack first: tokens, paths, models, headers,
+    # binding, error bodies, the scan, broken streams.
+    python3 -I bench/checks/hermes/proxy_attacks.py \
+      --bind "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" \
+      --other "$(hostname -I | awk '{print $1}')" || status=1
     for route in {{routes}}; do
       bench/checks/hermes/probe.sh {{tasks}}/{{task}} {{hermes}} "$route" || status=1
     done
@@ -600,6 +618,7 @@ review path:
 # HF_TOKEN) and write bench/results/<version>/release.json, to commit.
 publish batch version:
     [ ! -e "{{batch}}/.quarantined" ] || { echo "{{batch}} is quarantined: a provider key is in its files"; exit 1; }
+    [ -e "{{batch}}/.scan-passed" ] || { echo "{{batch}} has no clean key scan (.scan-passed); run: python3 -I bench/harness/models.py scan {{batch}}"; exit 1; }
     cargo run --release -q -- bench publish {{batch}} {{version}}
 
 # Compare two releases task by task, as in `just compare 0.9.0...0.8.0`.

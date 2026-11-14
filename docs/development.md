@@ -142,10 +142,12 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      `bench/harness/models.toml`; see `bench/harness/README.md`.
    - **Keys:** each model's, from `.env` or `~/.machine-trading.env`:
      `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the one models.toml names.
-     Hermes's trials never hold a key: a proxy on the bench machine
-     (`bench/harness/key_proxy.py`) holds them and the trials get a token.
-     After the batch, every file is searched for every key's value; a hit
-     quarantines the batch (`.quarantined`; `just publish` refuses it).
+     Hermes's trials never hold a key: a proxy on the bench machine's
+     docker bridge (`bench/harness/key_proxy.py`) holds them, and each
+     model's trials get a token that opens only that model's model call.
+     After the batch, however it ends, every file is searched for every
+     key (raw, URL-encoded, base64): clean writes `.scan-passed`, which
+     `just publish` requires; a hit quarantines the batch (`.quarantined`).
      `just preflight <models>` checks names and keys with a 1-token
      request; `just bench` runs it for its Hermes models first.
    - **Several machines:** give each the same secret, so every trial sees
