@@ -234,6 +234,54 @@ impl Seat for PerpSeat {
         Ok((usd(bbo.best_bid_ticks()), usd(bbo.best_ask_ticks())))
     }
 
+    /// The best resting limit orders of at least `min_size` at their price,
+    /// read from the orderbook account. The splines the snapshot's makers
+    /// quote through aren't in it, and are never odd lots.
+    async fn top_sized(&self, min_size: f64) -> SeatResult<(Option<f64>, Option<f64>)> {
+        let inner = &self.trader.inner;
+        let market = inner.market();
+        let key = inner
+            .exchange()
+            .metadata()
+            .get_market(market.symbol())
+            .and_then(|m| m.market_pubkey.parse::<Pubkey>().ok())
+            .ok_or_else(|| format!("no orderbook account for {}", market.symbol()))?;
+        let account = patiently("the orderbook account", || inner.chain().get_account(&key))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "the orderbook account is missing".to_string())?;
+        let book = phoenix_rise::accounts::owned::Orderbook::try_from_account_bytes(&account.data)
+            .map_err(|e| e.to_string())?;
+        let sized = |entries: &[phoenix_rise::accounts::owned::OrderbookEntry],
+                     best: fn(u64, u64) -> u64| {
+            let mut levels: std::collections::BTreeMap<u64, u64> = Default::default();
+            for entry in entries {
+                *levels
+                    .entry(entry.order_id.price_in_ticks.as_inner())
+                    .or_default() += entry.order.num_base_lots_remaining;
+            }
+            levels
+                .into_iter()
+                .filter(|(_, lots)| {
+                    market
+                        .base_lots_to_quantity(*lots as i64)
+                        .to_string()
+                        .parse::<f64>()
+                        .is_ok_and(|size| size >= min_size)
+                })
+                .map(|(ticks, _)| ticks)
+                .reduce(best)
+                .map(|ticks| {
+                    market
+                        .ticks_to_price(ticks)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap_or(0.0)
+                })
+        };
+        Ok((sized(&book.bids, u64::max), sized(&book.asks, u64::min)))
+    }
+
     /// Phoenix's index price.
     async fn index(&self) -> SeatResult<Option<f64>> {
         let trader = &self.trader;
@@ -374,6 +422,10 @@ impl Seat for UniquePerpSeat {
 
     async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
         self.seat.top().await
+    }
+
+    async fn top_sized(&self, min_size: f64) -> SeatResult<(Option<f64>, Option<f64>)> {
+        self.seat.top_sized(min_size).await
     }
 
     async fn position(&self) -> SeatResult<f64> {

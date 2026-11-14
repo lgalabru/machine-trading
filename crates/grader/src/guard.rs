@@ -348,6 +348,16 @@ impl Guard {
         }
     }
 
+    /// Drop the bot's sends still held by the faults, so none lands later:
+    /// the session calls it when the risk desk takes the account over.
+    /// Returns how many it dropped.
+    pub fn drop_held(&self) -> usize {
+        self.state
+            .faults()
+            .as_mut()
+            .map_or(0, FaultState::drop_held)
+    }
+
     /// What the faults did, if the bot ran under any.
     pub fn faults_report(&self) -> Option<FaultsReport> {
         self.state.faults().as_ref().map(FaultState::report)
@@ -1355,6 +1365,36 @@ mod tests {
         assert_eq!(sends.len(), 3);
         assert_eq!(sends[2].signature.as_deref(), Some(signature.as_str()));
         assert!(sends.iter().all(|s| s.step == Some(0)));
+    }
+
+    /// A send held by the faults never lands once the risk desk drops it.
+    #[tokio::test]
+    async fn dropped_held_sends_never_land() {
+        use crate::faults::Latency;
+        let (url, seen) = upstream().await;
+        let guard = Guard::start(url).await.unwrap();
+        guard.set_faults(
+            Some(&faults(|f| {
+                f.latency = Some(Latency {
+                    slots: (3, 3),
+                    spike: None,
+                });
+            })),
+            100,
+            2,
+        );
+        guard.set_step(0);
+        let (_, held) = call(&guard, crate::faults::tests::transaction(None, 1)).await;
+        assert!(held["result"].is_string());
+        assert_eq!(guard.drop_held(), 1);
+        guard.release(2).await;
+        guard.release(3).await;
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a dropped send never lands"
+        );
+        assert_eq!(guard.faults_report().unwrap().held_at_end, 0);
+        assert_eq!(guard.drop_held(), 0);
     }
 
     #[tokio::test]

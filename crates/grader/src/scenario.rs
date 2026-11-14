@@ -103,10 +103,25 @@ pub struct Scenario {
     /// how they fail (see [`crate::oracles`]). Without it, none are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oracles: Option<crate::oracles::Oracles>,
+    /// A lending session's reserves, wallet, borrowers and liquidators
+    /// (see [`crate::lending`]). With it, the session runs on Kamino.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lending: Option<crate::lending::Lending>,
+    /// Jumps of the session's clock, for interest over days (see
+    /// [`crate::lending::Warp`]). Lending sessions only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warps: Vec<crate::lending::Warp>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// PnL the task's informed bot makes on this scenario: scoring v2's 1
+    /// (see [`crate::scoring_v2`]). It knows everything the task's data could
+    /// tell (the informed takers, the regime, the fair-value model, the
+    /// funding process, the costs) but not the session's randomness. Written
+    /// by `mtx calibrate --informed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_pnl_usd: Option<f64>,
     /// Opt-in: the scenario's fair value, as waypoints in the same terms as
     /// [`Scenario::path`]. The session records it at every step, and the
     /// grade reports each session's PnL split by
@@ -129,6 +144,81 @@ pub struct Scenario {
     /// [`crate::raw`]). Absent, the session refuses every one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_sends: Option<RawSends>,
+    /// Opt-in: a drawdown past the mandate's limit is priced instead of
+    /// disqualifying. The grader's risk desk closes the position through the
+    /// book, as market orders signed with the bot's key, and the session
+    /// ends there (see [`crate::session`]). Absent, the breach disqualifies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_out: Option<StopOut>,
+}
+
+/// The grader's risk desk: which mandate limits it enforces by closing the
+/// position instead of disqualifying the session, and how. Opt-in per
+/// scenario; the mandate itself is unchanged (`specs/mandate.md`: what
+/// follows a breach is the enforcer's policy).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StopOut {
+    /// The limits whose breach the desk closes: `drawdown` only, so far.
+    pub on: Vec<StopRule>,
+    /// How it closes: `market`, market orders through the book.
+    pub close: CloseMode,
+    /// The largest single order, in base units: one that crosses much of
+    /// the book can exceed a transaction's compute budget. Absent, one
+    /// order closes the whole position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice_base: Option<f64>,
+}
+
+/// A mandate limit the risk desk can enforce by closing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopRule {
+    /// The account's value fell more than `max_drawdown_usd` below its
+    /// running peak, as the session measures it every step.
+    Drawdown,
+}
+
+/// How the risk desk closes a position.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseMode {
+    /// Cancel the account's orders, then send market orders against the
+    /// position through the book, each at most [`STOP_OUT_LIMIT_BPS`] from
+    /// the best price, until it is flat.
+    Market,
+}
+
+/// How far through the book a stop-out's order may fill, in basis points
+/// from the best price when it is sent: inside Phoenix's 5% oracle band.
+pub const STOP_OUT_LIMIT_BPS: f64 = 400.0;
+
+impl StopOut {
+    /// Whether a breach of `rule` is closed rather than disqualifying.
+    pub fn covers(&self, rule: StopRule) -> bool {
+        self.on.contains(&rule)
+    }
+
+    /// At least one rule, none twice, and a positive slice.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.on.is_empty() {
+            return Err("stop_out: `on` lists no limit: leave stop_out out to turn it off".into());
+        }
+        if self
+            .on
+            .iter()
+            .enumerate()
+            .any(|(i, r)| self.on[..i].contains(r))
+        {
+            return Err("stop_out: `on` repeats a limit".into());
+        }
+        if let Some(slice) = self.slice_base
+            && !(slice.is_finite() && slice > 0.0)
+        {
+            return Err("stop_out: slice_base must be a positive number".into());
+        }
+        Ok(())
+    }
 }
 
 /// What a scenario's raw sends may do.
@@ -307,9 +397,9 @@ impl Scenario {
 
     /// The mandate's position cap on the scenario's market. In a spot
     /// session, the largest of the spot markets' caps: they all bound the
-    /// same base asset.
+    /// same base asset. In a lending session, the largest reserve's.
     pub fn max_position(&self) -> f64 {
-        if self.spot.is_some() {
+        if self.spot.is_some() || self.lending.is_some() {
             return self
                 .mandate
                 .universe
@@ -367,6 +457,9 @@ impl Scenario {
     pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
         if let Some(spot) = &self.spot {
             return spot.bound_usd.unwrap_or(0.0);
+        }
+        if let Some(lending) = &self.lending {
+            return lending.bound_usd.unwrap_or(0.0);
         }
         let spread = self.making.as_ref().map_or(0.0, |making| {
             making.spread_bound_usd(&self.path, start_mark_usd)
@@ -873,10 +966,13 @@ impl ShockFamily {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
                     slot: shock_slot,
@@ -886,6 +982,7 @@ impl ShockFamily {
             }),
             market_model: None,
             raw_sends: None,
+            stop_out: None,
         };
         let shape = Shape {
             direction,
@@ -1518,6 +1615,7 @@ mod tests {
                 Scenario {
                     fair_path: None,
                     raw_sends: None,
+                    stop_out: None,
                     ..marked.clone()
                 },
                 plain
@@ -1591,13 +1689,17 @@ mod tests {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -1660,13 +1762,17 @@ mod tests {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            stop_out: None,
         }
     }
 

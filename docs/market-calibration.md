@@ -27,13 +27,24 @@ calibration/market/<asset>.<date>.<hash>.inputs.json   every input: url, sha256,
   (`mtx_grader::market::calibration`). Unknown fields and unknown models
   fail to load.
 
-Two files ship. Both were written by the fitter in `calibration/fitter`
-from keyless public data pulled on 2026-11-11 and 2026-11-12.
+Six files ship. All were written by the fitter in `calibration/fitter` from
+keyless public data pulled on 2026-11-11, 2026-11-12 and 2026-11-13.
 
 | File | Fair value from | Main limits |
 |---|---|---|
 | `sol-usd.20261112.0dbc6cdf` | Binance SOLUSDT 1 s bars (5 days) and 1 m bars (6 months); Phoenix perp candles and `/exchange`; Jupiter quotes | A CEX proxy, not Pyth. The regimes come from 6 calm-ish months (1.5× apart). Depth and impact come from one Jupiter snapshot. |
 | `spcx.20261112.d1f48be2` | Phoenix SPCX perp mark, 1 m, 2026-06-15 to 2026-11-11 (since the IPO week) | The mark is the oracle plus the perp's premium. Only regular hours vs closed hours is fitted. The open gap rests on 107 opens. Venue numbers come from 30 days. Book and impact are defaults. |
+| `nvda.20261113.903d1120` | Phoenix NVDA perp mark, 1 m, 2026-06-15 to 2026-11-12 (109 regular sessions) | As SPCX, plus two volatility states (the lower and upper halves of the days, not separate clusters). The open gap rests on 109 opens. |
+| `tsla.20261113.8b7bca8e` | Phoenix TSLA perp mark, 1 m, 2026-06-22 to 2026-11-12 (104 regular sessions) | As NVDA, with 104 opens. GARCH persistence sits at the top of its search (weakly identified). |
+| `spy.20261113.2b088307` | Phoenix SPY perp mark, 1 m, 2026-09-14 to 2026-11-12 (44 regular sessions) | One state (60 days). The open gap is SPCX's scaled by the volatility ratio, not fitted. The mark is effectively unsmoothed, and its closed-hours volatility is 1.08 of the regular-hours one. |
+| `qqq.20261113.60ee1c12` | Phoenix QQQ perp mark, 1 m, 2026-09-14 to 2026-11-12 (44 regular sessions) | One state (60 days). The open gap is SPCX's scaled by the volatility ratio, not fitted. |
+
+NVDA, TSLA, SPY and QQQ share SPCX's limits: the mark is the oracle plus the
+perp's premium, Pyth's history is not keyless and so not used, and the book and
+impact are defaults (a Phoenix book and signed fills have not been recorded;
+the candles hold 122,000 to 427,000 trades per market, not signed fills).
+Every US equity file has `block_seconds = 60`, so `draw_joint` accepts any set
+of them together.
 
 Each file lists its sources and limits under `[meta]`.
 
@@ -45,14 +56,18 @@ SHA-256), and a rerun from it is offline and deterministic:
 
 ```sh
 python3 -I calibration/fitter/run.py --from-archive calibration-raw-2026-11-11.tar.gz --out /tmp/cal
+python3 -I calibration/fitter/run.py --from-archive calibration-raw-tickers-2026-11-13.tar.gz --out /tmp/cal
 ```
 
-This writes `sol-usd.20261112.0dbc6cdf` and `spcx.20261112.d1f48be2`, with
-their inputs files, byte for byte as shipped. The run checks every archived
+The first writes `sol-usd.20261112.0dbc6cdf` and `spcx.20261112.d1f48be2`; the
+second (`archive-tickers.json`) the four equity files; each with its inputs
+file, byte for byte as shipped. A run writes the assets whose inputs the
+archive holds. The run checks every archived
 file against the archive's manifest first and refuses to touch the network.
 `--fetch` downloads fresh sources instead and stamps the files with today's
-date and time. The id's hash covers `calibration/fitter/calib/*.py`, so any
-change to the fitter makes a new id.
+date and time. The id's hash covers the fitter's code, so any change to it
+makes a new id: `calib/*.py` for SOL and SPCX, and `calib/*.py` with
+`tickers/*.py` for the equity files. `calib/` is frozen for that reason.
 
 ### Sections
 
@@ -136,6 +151,7 @@ A spec states every departure from the calibration (TOML, all optional):
 ```toml
 vol_mult = 1.0                 # stress beyond the calibration, stated
 regime = "stressed"            # hold one regime; default: drawn, switching
+regime_clock = 1.0             # switch this many times faster than the hourly rates
 waypoint_slots = 4
 jumps = false                  # background jumps on top of the fitted tails
 gaps = true
@@ -143,6 +159,38 @@ gaps = true
 mode = "before"                # draw | session | before | at
 kind = "regular"
 lead_seconds = 60
+```
+
+
+**Regimes at session timescale.** Calibrations switch regimes at hourly
+rates, so a task minutes long almost never sees a switch. Two stated
+departures change that, and the record keeps both (`regime_clock`, and the
+whole chain as `regime_set`); a record without them serialises as before:
+
+- `regime_clock` multiplies every state's leave rate. It changes how often
+  the state changes, not what each state is: GARCH, the tails, the level
+  draw and the calendar are untouched. Switches are drawn at block ends, as
+  always. A clock at which some state would leave within one block more
+  than half the time is refused, with the largest allowed value.
+- `[regimes]` replaces the calibration's regime chain with a stated one,
+  in the calibration's own form (`model = "markov"`, `names`, `vol_mult`,
+  `log_sd_within`, `share`, `transition_per_hour`, and a `source` saying
+  where the numbers come from), checked by the same rules. The median
+  session is normalised over the stated chain, so it still runs at
+  `per_second_sd`. This is how a family switches states on a calibration
+  fitted with one (SPCX's): ground the states in the fitted level spread
+  and say so in `source`.
+
+```toml
+regime_clock = 51.0
+[regimes]
+model = "markov"
+names = ["calm", "stressed"]
+vol_mult = [0.85, 1.7]
+log_sd_within = [0.4, 0.4]
+share = [0.7, 0.3]
+transition_per_hour = [[0.9, 0.1], [0.25, 0.75]]
+source = "SPCX's fitted level spread (log-sd 0.54) split into two states"
 ```
 
 ```sh
@@ -174,7 +222,8 @@ Each file's `[realism]` section names the bars each statistic reads:
   and `cluster_bars`.
 - **The real windows.** SOL uses 120 s windows from 2 held-out days (1,438
   windows). SPCX uses 30-minute windows of regular-hours 1 m returns from
-  2026-06-15 to 2026-11-11 (1,284 windows).
+  2026-06-15 to 2026-11-11 (1,284 windows); NVDA, TSLA, SPY and QQQ the same
+  from their own first full weeks (1,308, 1,248, 528 and 528 windows).
 - **SOL's long windows.** SOL also has `[realism.long]`: 1 h windows of 1 m
   closes over 6 months (4,415 windows). Its 120 s windows are too short
   for volatility clustering within a session to show. `check_model`
@@ -207,7 +256,7 @@ deviations of the difference:
 fair generator fails any of a file's gated return checks at most 1% of
 the time:
 - SOL has 10 gated checks, so 3.29;
-- SPCX has 8, so 3.23.
+- SPCX, NVDA, TSLA, SPY and QQQ have 8 each, so 3.23.
 
 At 3 standard deviations per check, ten checks alone would give a fair
 model a 2–3% chance of failing somewhere.
@@ -222,6 +271,14 @@ never used in fitting.
 | SOL | 1000 | 0/300 | 300/300 | 300/300 |
 | SPCX | 300 | 0/300 | 300/300 | 289/300 (96.3%; not required) |
 | SPCX | 1000 | 1/300 (0.3%) | 300/300 | 300/300 |
+| NVDA | 300 | 1/300 (0.3%) | 300/300 | 175/300 (58%; not required) |
+| NVDA | 1000 | 3/300 (1.0%) | 300/300 | 298/300 (99.3%) |
+| TSLA | 300 | 2/300 (0.7%) | 243/300 (81%; not required) | 299/300 |
+| TSLA | 1000 | 0/300 | 299/300 (99.7%) | 300/300 |
+| SPY | 300 | 0/300 | 300/300 | 94/300 (31%; not required) |
+| SPY | 1000 | 0/300 | 300/300 | 261/300 (87%; not required) |
+| QQQ | 300 | 4/300 (1.3%) | 300/300 | 145/300 (48%; not required) |
+| QQQ | 1000 | 2/300 (0.7%) | 300/300 | 288/300 (96%) |
 
 The test asserts at most 2% false fails and at least 95% catches, with one
 exception. At 300 sessions, SPCX can't reliably tell no GARCH from its
@@ -230,6 +287,17 @@ minutes), and 300 sessions of 30 minutes catch its absence only 90-98% of
 the time, depending on the seeds. That detection is therefore required
 only at 1000 sessions, where it is 100%. To judge SPCX's volatility
 clustering, check at least 1000 sessions.
+
+The four equity files were measured the same way (`FFR_ASSETS=nvda,tsla,spy,qqq
+FFR_SEEDS=300 FFR_OFFSET=500`). Like SPCX, they have 30-minute windows, so no
+GARCH is required only at 1000 sessions. Two cells stay below 95% even so, and the
+test exempts exactly these two:
+- **TSLA, no regimes, 300 sessions (81%).** TSLA's two states move the session
+  level so little beyond what GARCH and sampling already give that 300 sessions
+  catch their removal four times in five. 1000 sessions catch it 299 times in 300.
+- **SPY, no GARCH, 1000 sessions (87%).** SPY's clustering is weak and
+  short-lived (persistence 0.52), so its absence is hard to see in 30-minute
+  windows.
 
 Only the gap check, resting on about a hundred opens, keeps a stated band.
 
@@ -303,7 +371,7 @@ not that the model generalizes.
 | File | Fitted (in-sample) | Out of fit |
 |---|---|---|
 | SOL | `vol_level`, `vol_of_vol`, `kurtosis_within`, `predictability` (on the 2 held-out days); `long_clustering_lag_1` and `_5` (on the 6 months) | `tail_ratio`, `clustering_lag_1` to `_3`, `round_trips` |
-| SPCX | `vol_level`, `vol_of_vol`, `kurtosis_within`, `predictability`, `clustering_lag_1` and `_5`, `gap_size_median` and `_p90` | `tail_ratio`, `clustering_lag_10`, `round_trips` |
+| SPCX, NVDA, TSLA, SPY, QQQ | `vol_level`, `vol_of_vol`, `kurtosis_within`, `predictability`, `clustering_lag_1` and `_5`, `gap_size_median` and `_p90` (SPY and QQQ: the gap sizes are SPCX's, scaled) | `tail_ratio`, `clustering_lag_10`, `round_trips` |
 
 SOL's `long_clustering_lag_15` is reported, not gated. Real 1 m
 clustering decays more slowly (long memory) than one GARCH(1,1) with
