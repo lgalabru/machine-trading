@@ -7,23 +7,30 @@
 //! sequence number, its asset, the acting trader account), then an
 //! `OrderFilled` for each resting order it took from and a `SplineFilled`
 //! for each spline, each naming the maker's trader account and the maker's
-//! side, and an `OrderPlaced` for an order it left resting. The taker is the
-//! header's trader account, on the side opposite the maker's. Positions live
+//! side, and an `OrderPlaced` for an order it left resting. Positions live
 //! in Phoenix's market-wide state, so a maker's account is in none of the
 //! transactions that fill it: an enforcer reads the market's transactions,
 //! and every trade names the market's order book.
 //!
-//! An instruction can also match orders between other parties: a spline
-//! that re-centres crosses a stale resting order, and Phoenix logs that
-//! under the same header. Each run of fills is closed by a `TradeSummary`
-//! naming the trade's real taker and its fee, so a fill's taker is the
-//! summary's trader, not the header's.
+//! Each run of fills is closed by a `TradeSummary` whose `trader` is the
+//! run's taker, on the side opposite the makers', and which carries the fee
+//! it paid. That need not be the header's trader: an instruction can match
+//! orders between other parties (a spline that re-centres crosses a stale
+//! resting order) and logs that under the same header. Only a run no
+//! summary closes takes the header's trader as its taker.
+//!
+//! Fees are Phoenix's, in whole quote lots: the summary's fee split across
+//! its run by quote lots filled, the remainder to the last fill; and each
+//! maker's fee from its own rate on the fill's quote lots, rounded as
+//! Phoenix rounds it (a fee up, a rebate down). An `AdditionalFeeAccrued`
+//! event, an extra fee on a resting order, is not added to the maker's.
 
 use phoenix_rise::{
     events::{
         MarketEvent, PhoenixLogInstruction, market_events::MarketEventHeader, parse as parse_events,
     },
     ix::PHOENIX_PROGRAM_ID,
+    math::{QuoteLots, SignedFeeRateMicro},
 };
 use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
@@ -59,10 +66,11 @@ pub struct PerpFill {
     /// When Phoenix says it happened, in Unix seconds.
     pub unix_timestamp: i64,
     /// The fee the taker paid on this fill, in USDC: its share of the
-    /// trade's fee, by notional. Zero where the log has no trade summary.
+    /// trade summary's fee, by quote lots filled, the last fill of the run
+    /// taking the remainder. Zero where no summary closes the run.
     pub taker_fee: Decimal,
-    /// The fee the maker paid on this fill, in USDC, at its fee rate;
-    /// negative is a rebate.
+    /// The fee the maker paid on this fill, in USDC: its fee rate applied
+    /// to the fill's quote lots as Phoenix applies it. Negative is a rebate.
     pub maker_fee: Decimal,
 }
 
@@ -158,8 +166,10 @@ impl PerpMarketRecords {
         summary: &TransactionSummary,
     ) {
         let mut header: Option<&MarketEventHeader> = None;
-        // The fills since the last trade summary: its trader took them.
-        let mut run: Vec<usize> = Vec::new();
+        // The fills since the last trade summary, with their quote lots: its
+        // trader took them.
+        let mut run: Vec<(usize, u64)> = Vec::new();
+        let quote = |lots: i64| Decimal::new(lots, u32::from(market.quote_lot_decimals));
         let mut unix_timestamp = summary.block_time.map_or(0, |t| t.timestamp());
         for (i, event) in events.iter().enumerate() {
             let on_market = header.filter(|h| h.asset_id == market.asset_id);
@@ -195,8 +205,8 @@ impl PerpMarketRecords {
                         f.base_lots_filled.as_inner(),
                         h,
                     );
-                    taken.maker_fee = maker_fee(&taken, i64::from(f.maker_fee_rate.as_inner()));
-                    run.push(self.fills.len());
+                    taken.maker_fee = quote(maker_fee_lots(f.maker_fee_rate, f.quote_lots_filled));
+                    run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
                     self.fills.push(taken);
                 }
                 (MarketEvent::SplineFilled(f), Some(h)) => {
@@ -207,25 +217,17 @@ impl PerpMarketRecords {
                         f.base_lots_filled.as_inner(),
                         h,
                     );
-                    taken.maker_fee = maker_fee(&taken, i64::from(f.maker_fee_rate.as_inner()));
-                    run.push(self.fills.len());
+                    taken.maker_fee = quote(maker_fee_lots(f.maker_fee_rate, f.quote_lots_filled));
+                    run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
                     self.fills.push(taken);
                 }
                 (MarketEvent::TradeSummary(trade), Some(_)) => {
                     let taker = Pubkey::new_from_array(trade.trader);
-                    let fee = Decimal::from(trade.fee_in_quote_lots.as_inner())
-                        * Decimal::new(1, u32::from(market.quote_lot_decimals));
-                    let notional: Decimal = run
-                        .iter()
-                        .map(|&i| self.fills[i].price * self.fills[i].quantity)
-                        .sum();
-                    for &i in &run {
+                    let shares = split(trade.fee_in_quote_lots.as_inner(), &run);
+                    for (&(i, _), share) in run.iter().zip(shares) {
                         let fill = &mut self.fills[i];
                         fill.taker = taker;
-                        if !notional.is_zero() {
-                            fill.taker_fee =
-                                (fee * fill.price * fill.quantity / notional).round_dp(8);
-                        }
+                        fill.taker_fee = quote(share);
                     }
                     run.clear();
                 }
@@ -281,10 +283,29 @@ impl PerpMarketRecords {
     }
 }
 
-/// What a maker paid on `fill`, at its fee rate in millionths of the
-/// notional (negative for a rebate).
-fn maker_fee(fill: &PerpFill, rate_micro: i64) -> Decimal {
-    (fill.price * fill.quantity * Decimal::new(rate_micro, 6)).round_dp(8)
+/// What a maker paid on `quote_lots` filled at `rate`, in quote lots, as
+/// Phoenix charges it: a fee rounded up, a rebate (negative) down.
+fn maker_fee_lots(rate: SignedFeeRateMicro, quote_lots: QuoteLots) -> i64 {
+    rate.apply_to_quote_lots(quote_lots)
+        .map_or(0, |fee| fee.as_inner())
+}
+
+/// `fee` quote lots split across a run of fills by their quote lots: each
+/// fill its share rounded down, the last the remainder, so the shares add
+/// up to the fee exactly. A run with no quote lots puts it all on the last.
+fn split(fee: u64, run: &[(usize, u64)]) -> Vec<i64> {
+    let total: u128 = run.iter().map(|&(_, lots)| u128::from(lots)).sum();
+    let mut shares: Vec<i64> = run
+        .iter()
+        .map(|&(_, lots)| match total {
+            0 => 0,
+            _ => (u128::from(fee) * u128::from(lots) / total) as i64,
+        })
+        .collect();
+    if let Some((last, before)) = shares.split_last_mut() {
+        *last = fee as i64 - before.iter().sum::<i64>();
+    }
+    shares
 }
 
 fn side(side: phoenix_rise::math::Side) -> Side {
@@ -298,6 +319,31 @@ fn opposite(side: Side) -> Side {
     match side {
         Side::Buy => Side::Sell,
         Side::Sell => Side::Buy,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fee_splits_by_quote_lots_and_adds_up() {
+        // 10 over 1 and 2 lots: 3.33 rounds down to 3, the last takes 7.
+        assert_eq!(split(10, &[(0, 1), (1, 2)]), vec![3, 7]);
+        assert_eq!(split(10, &[(0, 1), (1, 1), (2, 1)]), vec![3, 3, 4]);
+        assert_eq!(split(5, &[(0, 0), (1, 0)]), vec![0, 5]);
+        assert_eq!(split(0, &[(0, 4)]), vec![0]);
+        assert!(split(9, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_makers_fee_rounds_up_and_a_rebate_down() {
+        let fee = |rate, lots| maker_fee_lots(SignedFeeRateMicro::new(rate), QuoteLots::new(lots));
+        assert_eq!(fee(250, 1_000_001), 251);
+        assert_eq!(fee(250, 1_000_000), 250);
+        assert_eq!(fee(-50, 1_000_001), -50);
+        assert_eq!(fee(-50, 999_999), -49);
+        assert_eq!(fee(0, 123), 0);
     }
 }
 

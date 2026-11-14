@@ -675,6 +675,22 @@ mod tests {
         assert_eq!(sides, vec![Side::Sell, Side::Sell, Side::Sell]);
     }
 
+    /// `event`, a fill, for `quote_lots` at the maker's `rate` (millionths).
+    fn priced(mut event: MarketEvent, quote_lots: u64, rate: i32) -> MarketEvent {
+        match &mut event {
+            MarketEvent::OrderFilled(f) => {
+                f.quote_lots_filled = QuoteLots::new(quote_lots);
+                f.maker_fee_rate = SignedFeeRateMicro::new(rate);
+            }
+            MarketEvent::SplineFilled(f) => {
+                f.quote_lots_filled = QuoteLots::new(quote_lots);
+                f.maker_fee_rate = SignedFeeRateMicro::new(rate);
+            }
+            _ => unreachable!("a fill"),
+        }
+        event
+    }
+
     /// The run of fills a trade summary closes was taken by its trader.
     fn summary_of(taker: Pubkey, taker_side: MathSide, lots: u64, fee_lots: u64) -> MarketEvent {
         MarketEvent::TradeSummary(TradeSummaryEvent {
@@ -723,14 +739,27 @@ mod tests {
         // The owner's instruction (a cancel, then an order): first a
         // re-centred spline crosses another trader's stale bid, which
         // Phoenix logs under the owner's header and closes with a summary
-        // naming that trader; then the owner buys from a resting ask and
-        // pays 4,200 quote lots of fee, split by notional.
+        // naming that trader; then the owner buys from a resting ask (its
+        // maker pays 250 millionths) and a spline (a 50 millionths rebate),
+        // and pays 4,200 quote lots of fee, split by quote lots.
         let events = [
             header(&spcx, 20, main),
-            spline_filled(spline, MathSide::Ask, 14_000, 300),
+            priced(
+                spline_filled(spline, MathSide::Ask, 14_000, 300),
+                4_200_000,
+                0,
+            ),
             summary_of(stale, MathSide::Bid, 300, 1_000),
-            order_filled(maker, MathSide::Ask, 15_000, 100),
-            spline_filled(spline, MathSide::Ask, 15_000, 200),
+            priced(
+                order_filled(maker, MathSide::Ask, 15_000, 100),
+                1_500_000,
+                250,
+            ),
+            priced(
+                spline_filled(spline, MathSide::Ask, 15_000, 200),
+                3_000_001,
+                -50,
+            ),
             summary_of(main, MathSide::Bid, 300, 4_200),
         ];
         chain.record_transaction(logged(40, 9, &events, false), &[book]);
@@ -740,8 +769,18 @@ mod tests {
         assert_eq!(takers, vec![stale, main, main]);
         let fee = |lots: i64| Decimal::new(lots, u32::from(spcx.quote_lot_decimals));
         assert_eq!(all.fills[0].taker_fee, fee(1_000));
-        assert_eq!(all.fills[1].taker_fee, fee(1_400));
-        assert_eq!(all.fills[2].taker_fee, fee(2_800));
+        // 4,200 x 1,500,000 / 4,500,001 rounds down to 1,399; the last
+        // fill takes the remainder.
+        assert_eq!(all.fills[1].taker_fee, fee(1_399));
+        assert_eq!(all.fills[2].taker_fee, fee(2_801));
+        // A maker's fee at its rate, and a rebate rounded down (-150.00005
+        // lots), as Phoenix charges them.
+        assert_eq!(all.fills[1].maker_fee, fee(375));
+        assert_eq!(all.fills[2].maker_fee, fee(-150));
+        assert_eq!(all.fills[0].maker_fee, Decimal::ZERO);
+        let makers = all.fills_for(&[maker]);
+        assert_eq!(makers.len(), 1);
+        assert_eq!(makers[0].fill.fees, fee(375));
 
         // The owner's fills are its own buys, with its fees; the cross-match
         // isn't one, and its position change is what they add up to.
