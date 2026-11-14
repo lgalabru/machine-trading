@@ -42,8 +42,8 @@
 //!   the run loop would have cut them to, and keeps trading its strategy
 //!   after the breach: the same lever as its clipped twin, breaching on
 //!   purpose in a few sessions.
-//! - `MTX_PROBE_CRASH_BELOW=f`: the bot exits once its PnL is `f` of the
-//!   drawdown limit under water. `MTX_PROBE_CRASH=fatal` first makes a call
+//! - `MTX_PROBE_CRASH_BELOW=f`: the bot closes its position and exits once
+//!   its PnL is `f` of the drawdown limit under water. `MTX_PROBE_CRASH=fatal` first makes a call
 //!   the RPC guard refuses (`getHealth`), so the grade is a fatal one.
 //!
 //! `MTX_PROBE_SALT` changes the coins without changing the rest.
@@ -589,20 +589,45 @@ pub fn behind(pnl: f64, limit: f64, fraction: f64) -> bool {
     limit > 0.0 && pnl <= -fraction * limit
 }
 
+impl Crasher {
+    /// Closes the position at the venue: a bot that dies holding it would
+    /// leave the loss running, and the probe is about what dying pays.
+    fn flatten(trader: &Trader, held: f64, mark: f64) {
+        let handle = tokio::runtime::Handle::current();
+        let mut missing = -held;
+        while missing.abs() >= 1.0 {
+            let size = missing.abs().floor().min(SLICE);
+            let (side, limit) = if missing > 0.0 {
+                (Side::Bid, mark * 1.02)
+            } else {
+                (Side::Ask, mark * 0.98)
+            };
+            let sent = tokio::task::block_in_place(|| {
+                handle.block_on(trader.place_market(side, size, (limit * 100.0).round() / 100.0))
+            });
+            if sent.is_err() {
+                break;
+            }
+            missing -= size.copysign(missing);
+        }
+    }
+}
+
 impl Strategy for Crasher {
     fn start(&mut self, session: &Session) -> BotResult {
-        if self.mode == Crash::Fatal {
-            self.trader = Some(Trader::connect(&BotEnv::from_env()?)?);
-        }
+        self.trader = Some(Trader::connect(&BotEnv::from_env()?)?);
         self.inner.start(session)
     }
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         if behind(market.pnl, market.max_drawdown, self.below) {
-            mtx_kit::log("behind: crashing on purpose");
+            mtx_kit::log("behind: closing out and crashing on purpose");
             if let Some(trader) = &self.trader {
-                // A method the guard refuses: the grade is fatal.
-                let _ = trader.rpc.request_airdrop(&trader.authority(), 1);
+                Self::flatten(trader, market.position.size, market.mark);
+                if self.mode == Crash::Fatal {
+                    // A method the guard refuses: the grade is fatal.
+                    let _ = trader.rpc.request_airdrop(&trader.authority(), 1);
+                }
             }
             std::process::exit(1);
         }

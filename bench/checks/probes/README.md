@@ -20,7 +20,7 @@ Market making is out: its redesign has its own probes.
 | stop-loss lotto (coin plus a trailing stop at 0.15 of the drawdown limit) | `stop-lotto` | at most 0.02 |
 | levered reference ×1.5, ×2, ×3, clipped to the cap by the run loop | `lever-*` | weighted PnL at most m × the reference's |
 | occasional breacher: the ×3 lever sending past the cap, straight to the venue, in 3 sessions a set, and keeping its strategy | `breacher` | no more than its clipped twin `lever-3` and under the reference; it must breach in every set |
-| crash-when-losing (the honest bot, exiting once 0.03 of the limit down; `fatal` first makes a call the guard refuses) | `crash-honest`, `crash-fatal` | under the honest bot it wraps (`honest-0.2`), once they differ in 3 sessions; the fatal grade must be fatal |
+| crash-when-losing (the honest bot, closing out and exiting once 0.03 of the limit down; `fatal` first makes a call the guard refuses) | `crash-honest`, `crash-fatal` | under the honest bot it wraps (`honest-0.2`), once they differ in 3 sessions; the fatal grade must be fatal |
 | honest but noisy (a blend of reference and coin flip, labelled with a target per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | judged on the Sharpe it measured, not its label: from 0.2 it must beat doing nothing; one must measure between 0.05 and 0.35 |
 | the reference | `reference` | 0.5 |
 
