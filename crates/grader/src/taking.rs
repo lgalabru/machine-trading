@@ -76,7 +76,9 @@ pub struct Touch {
 pub struct TakingGuard {
     allowance: Allowance,
     /// The position as the turn's orders go out: the one the bot was shown,
-    /// moved by the orders the guard let take.
+    /// moved by the orders the guard let take, each counted as filled in
+    /// full (a crossing limit may fill less, which only makes the next
+    /// check stricter).
     position: f64,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
@@ -132,8 +134,8 @@ impl TakingGuard {
     /// why, if it would take to open, add to or flip the position. An order
     /// flagged reduce-only goes: the venue applies the flag at execution.
     pub fn check(&mut self, action: &Action, reduce_only: bool) -> Result<(), String> {
-        let (side, size, sure) = match *action {
-            Action::Market { side, size, .. } => (side, size, true),
+        let (side, size) = match *action {
+            Action::Market { side, size, .. } => (side, size),
             Action::Limit { side, price, size } => {
                 let (crosses, own) = match side {
                     mtx_kit::Side::Bid => {
@@ -146,7 +148,7 @@ impl TakingGuard {
                 if !crosses || (own && !self.net) {
                     return Ok(());
                 }
-                (side, size, false)
+                (side, size)
             }
             _ => return Ok(()),
         };
@@ -159,9 +161,7 @@ impl TakingGuard {
             Side::Sell => (position - size).max(0.0).min(position),
         };
         if reduce_only {
-            if sure {
-                self.position = toward_zero(self.position);
-            }
+            self.position = toward_zero(self.position);
             return Ok(());
         }
         if !self.allowance.may_take(self.position, side, size) {
@@ -177,9 +177,7 @@ impl TakingGuard {
                 self.position,
             ));
         }
-        if sure {
-            self.position = toward_zero(self.position);
-        }
+        self.position = toward_zero(self.position);
         Ok(())
     }
 }
@@ -285,7 +283,7 @@ impl TakeGate {
 /// Whether a transaction that moved the position from `before` to `after`
 /// took as `allowance` allows: it moved it only as a taker (the bot's own
 /// resting orders fill later, by other traders' orders).
-fn judge(allowance: &Allowance, before: f64, after: f64) -> Result<(), String> {
+pub(crate) fn judge(allowance: &Allowance, before: f64, after: f64) -> Result<(), String> {
     let moved = after - before;
     if moved.abs() < 1e-9 {
         return Ok(());
@@ -508,6 +506,22 @@ mod tests {
         assert_eq!(judge(&allowance, -3.0, 0.0), Ok(()));
         assert_eq!(judge(&allowance, 2.0, 2.0), Ok(()));
         assert_eq!(judge(&allowance, 0.0, 0.0), Ok(()));
+    }
+
+    #[test]
+    fn two_crossing_reduces_that_together_flip_are_caught() {
+        use mtx_kit::Side::Ask;
+        let sell = |size| Action::Limit {
+            side: Ask,
+            price: 99.0,
+            size,
+        };
+        let mut g = guard(3.0);
+        // Each is a reduce from where the bot stood; together they flip.
+        assert_eq!(g.check(&sell(2.0), false), Ok(()));
+        assert!(g.check(&sell(2.0), false).is_err());
+        assert_eq!(g.refused, 1);
+        assert_eq!(g.check(&sell(1.0), false), Ok(()));
     }
 
     #[test]

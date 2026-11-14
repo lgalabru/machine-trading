@@ -102,13 +102,15 @@ impl Parties {
 }
 
 impl MakingFill {
-    /// `fill` as the bot's trader account `bot` traded it, if it did.
-    pub fn of(fill: &PerpFill, bot: &Pubkey, parties: &Parties, base_slot: u64) -> Vec<Self> {
+    /// `fill` as the bot's trader accounts `bots` (its cross-margin account
+    /// and any subaccount) traded it, if they did.
+    pub fn of(fill: &PerpFill, bots: &[Pubkey], parties: &Parties, base_slot: u64) -> Vec<Self> {
+        let (taker_is_bot, maker_is_bot) = (bots.contains(&fill.taker), bots.contains(&fill.maker));
         let price = crate::session::grader_f64(fill.price);
         let base = crate::session::grader_f64(fill.quantity);
         let at = fill.slot.saturating_sub(base_slot);
         let mut out = Vec::new();
-        let self_match = fill.taker == *bot && fill.maker == *bot;
+        let self_match = taker_is_bot && maker_is_bot;
         let mut push = |side, role, other: &Pubkey, fee| {
             out.push(Self {
                 at,
@@ -122,7 +124,7 @@ impl MakingFill {
                 self_match,
             });
         };
-        if fill.taker == *bot {
+        if taker_is_bot {
             push(
                 fill.taker_side,
                 "taker",
@@ -130,7 +132,7 @@ impl MakingFill {
                 crate::session::grader_f64(fill.taker_fee),
             );
         }
-        if fill.maker == *bot {
+        if maker_is_bot {
             let side = match fill.taker_side {
                 Side::Buy => Side::Sell,
                 Side::Sell => Side::Buy,
@@ -1186,7 +1188,12 @@ mod tests {
     fn a_resting_bot_hit_by_a_taker_records_a_maker_fill_with_its_fee() {
         let bot = account(1);
         // A taker buys: the bot, resting, sold.
-        let fills = MakingFill::of(&fill(account(11), bot, Side::Buy), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(account(11), bot, Side::Buy),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(
             fills,
             [MakingFill {
@@ -1202,7 +1209,12 @@ mod tests {
             }]
         );
         // A taker sells: the bot bought.
-        let fills = MakingFill::of(&fill(account(10), bot, Side::Sell), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(account(10), bot, Side::Sell),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(fills[0].side, Side::Buy);
         assert_eq!(fills[0].role, "maker");
     }
@@ -1211,13 +1223,23 @@ mod tests {
     fn a_crossing_bot_records_a_taker_fill_with_its_share_of_the_trade_fee() {
         let bot = account(1);
         // Against the competitor's quote, then Phoenix's own makers.
-        let fills = MakingFill::of(&fill(bot, account(20), Side::Buy), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(bot, account(20), Side::Buy),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].side, Side::Buy);
         assert_eq!(fills[0].role, "taker");
         assert_eq!(fills[0].counterparty, COMPETITOR);
         assert_eq!(fills[0].fee_usd, 0.108);
-        let fills = MakingFill::of(&fill(bot, account(99), Side::Sell), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(bot, account(99), Side::Sell),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(fills[0].side, Side::Sell);
         assert_eq!(fills[0].counterparty, BOOK);
     }
@@ -1226,19 +1248,42 @@ mod tests {
     fn other_accounts_fills_are_not_the_bots() {
         let bot = account(1);
         let others = fill(account(10), account(20), Side::Buy);
-        assert!(MakingFill::of(&others, &bot, &parties(), 0).is_empty());
+        assert!(MakingFill::of(&others, &[bot], &parties(), 0).is_empty());
     }
 
     #[test]
     fn a_fill_between_the_bots_own_accounts_counts_once_each_way() {
         let bot = account(1);
-        let fills = MakingFill::of(&fill(bot, bot, Side::Buy), &bot, &parties(), 0);
+        let fills = MakingFill::of(&fill(bot, bot, Side::Buy), &[bot], &parties(), 0);
         let roles: Vec<_> = fills.iter().map(|f| (f.role, f.side)).collect();
         assert_eq!(roles, [("taker", Side::Buy), ("maker", Side::Sell)]);
         assert!(fills.iter().all(|f| f.self_match));
         // A match against anyone else is no self-match.
-        let other = MakingFill::of(&fill(bot, account(20), Side::Buy), &bot, &parties(), 0);
+        let other = MakingFill::of(&fill(bot, account(20), Side::Buy), &[bot], &parties(), 0);
         assert!(other.iter().all(|f| !f.self_match));
+    }
+
+    #[test]
+    fn a_subaccounts_fills_are_the_bots() {
+        let (main, sub) = (account(1), account(2));
+        let bots = [main, sub];
+        // The subaccount takes against the competitor: a taker fill.
+        let taken = MakingFill::of(&fill(sub, account(20), Side::Buy), &bots, &parties(), 0);
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].role, "taker");
+        assert!(!taken[0].self_match);
+        // Resting in it, it is hit: a maker fill.
+        let hit = MakingFill::of(&fill(account(10), sub, Side::Sell), &bots, &parties(), 0);
+        assert_eq!(hit[0].role, "maker");
+        // Seen from the cross-margin account alone, neither is the bot's.
+        assert!(
+            MakingFill::of(&fill(sub, account(20), Side::Buy), &[main], &parties(), 0).is_empty()
+        );
+        // A match between its two accounts moves nothing: both records are
+        // self-matches.
+        let between = MakingFill::of(&fill(main, sub, Side::Buy), &bots, &parties(), 0);
+        assert_eq!(between.len(), 2);
+        assert!(between.iter().all(|f| f.self_match));
     }
 
     #[test]

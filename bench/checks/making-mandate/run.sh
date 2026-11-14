@@ -15,16 +15,22 @@
 #   - the same taker and crosser as process bots (`--trusted`), which have no
 #     sheet: the RPC guard simulates each transaction and refuses one whose
 #     fills would take to open or add, and no breach;
+#   - bots/subaccount-probe's one-unit build, a process bot that registers an
+#     isolated Phoenix subaccount, funds it and buys there: the fills of
+#     every trader account the bot holds count, so each session ends in a
+#     `taking` breach (untrusted and `--trusted`);
 #   - the two-sided probe on the same scenarios without the new fields
 #     reports neither.
 #   bench/checks/making-mandate/run.sh <mtx> <snapshot> <out>
 # The probes must be built: `just build`, `just build one-sided`,
 # `just build taker` and `just build crosser` in bots/making-probe, and
-# `just process taker` and `just process crosser` for the process bots.
+# `just process taker` and `just process crosser` for the process bots, and
+# `just one-unit` in bots/subaccount-probe.
 set -euo pipefail
 mtx=$1 snapshot=$2 out=$3
 here="$(cd "$(dirname "$0")" && pwd)"
 probe="$here/../../../bots/making-probe"
+subprobe="$here/../../../bots/subaccount-probe/one-unit"
 rm -rf "$out"
 mkdir -p "$out/plain" "$out/obliged"
 "$mtx" scenario generate --family market-making-v2 --prefix mm --count 3 --seed 43 --out "$out/plain" >/dev/null
@@ -63,6 +69,13 @@ grade_process() { # name bot-dir
 }
 grade_process process-taker "$probe/taker-process"
 grade_process process-crosser "$probe/crosser-process"
+mkdir -p "$out/subaccount-trusted" "$out/subaccount-untrusted"
+"$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$subprobe" --logs "$out/subaccount-trusted/logs" \
+  --report "$out/subaccount-trusted/report.json" "$out"/obliged/*.json \
+  >"$out/subaccount-trusted/stdout.log" 2>"$out/subaccount-trusted/stderr.log" || { echo "subaccount-trusted: the grade failed"; tail -20 "$out/subaccount-trusted/stderr.log"; exit 1; }
+"$mtx" grade --jobs 3 --snapshot "$snapshot" --bot "$subprobe" --logs "$out/subaccount-untrusted/logs" \
+  --report "$out/subaccount-untrusted/report.json" "$out"/obliged/*.json \
+  >"$out/subaccount-untrusted/stdout.log" 2>"$out/subaccount-untrusted/stderr.log" || { echo "subaccount-untrusted: the grade failed"; tail -20 "$out/subaccount-untrusted/stderr.log"; exit 1; }
 grade plain "$probe" plain
 python3 -I - "$out" <<'PY'
 import json, sys
@@ -72,7 +85,7 @@ def sessions(name):
             for s in json.load(open(f"{out}/{name}/report.json"))["scenarios"]]
 def takes(s):
     return [f for f in s.get("making_fills", []) if f["role"] == "taker"]
-for name in ("maker", "one-sided", "taker", "crosser", "process-taker", "process-crosser", "plain"):
+for name in ("maker", "one-sided", "taker", "crosser", "process-taker", "process-crosser", "subaccount-trusted", "subaccount-untrusted", "plain"):
     for s in sessions(name):
         o = s.get("obligations") or {}
         print(f"{name} {s['scenario']}: uptime {o.get('uptime')} met {o.get('met')} "
@@ -110,6 +123,11 @@ for name in ("crosser", "process-taker", "process-crosser"):
         # A take that reduces is allowed; none may open, add or flip.
         assert not opened(s), f"{name} {s['scenario']}: a take that opens went out"
         assert taking not in (s["disqualified"] or ""), f"{name} {s['scenario']}: a refusal was taken for a breach"
+for name in ("subaccount-trusted", "subaccount-untrusted"):
+    for s in sessions(name):
+        # The trade landed in the subaccount, and its fill is the bot's: a taker fill that opens.
+        assert opened(s), f"{name} {s['scenario']}: the subaccount's take was not seen"
+        assert taking in (s["disqualified"] or ""), f"{name} {s['scenario']}: a take from a subaccount went unpunished"
 for s in sessions("plain"):
     assert "obligations" not in s and "refused_takes" not in s["turns"], "opt-in fields without opting in"
 print("MAKING_MANDATE_SMOKE_OK")

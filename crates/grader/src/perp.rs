@@ -515,6 +515,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }),
         making_fills: scenario.making.is_some().then(|| MakingFills {
             bot: bot_trader,
+            traders: vec![bot_trader],
             parties,
             last_scan: base_slot,
             seen: HashSet::new(),
@@ -807,7 +808,13 @@ struct PerpFills {
 
 /// A market-making session's record of the bot's fills.
 struct MakingFills {
+    /// The bot's cross-margin trader account, whose orders the quoting
+    /// samples follow.
     bot: Pubkey,
+    /// Every trader account the bot's authority holds (its cross-margin one
+    /// first, then any subaccount it registered): a fill of any is the
+    /// bot's, so a position opened in a subaccount is judged like any other.
+    traders: Vec<Pubkey>,
     parties: Parties,
     /// The slot fills were last read at, read the way [`PerpFills`] reads.
     last_scan: u64,
@@ -1218,14 +1225,18 @@ impl PerpAccount {
             }
         }
         if let Some(read) = self.making_fills.as_mut() {
-            let bot = read.bot;
+            let traders = &read.traders;
             let forced: HashSet<((u64, u32), bool)> = records
                 .fills
                 .iter()
                 .flat_map(|fill| {
                     [
-                        (fill.taker == bot).then_some((fill.sequence, true)),
-                        (fill.maker == bot).then_some((fill.sequence, false)),
+                        traders
+                            .contains(&fill.taker)
+                            .then_some((fill.sequence, true)),
+                        traders
+                            .contains(&fill.maker)
+                            .then_some((fill.sequence, false)),
                     ]
                 })
                 .flatten()
@@ -1279,8 +1290,9 @@ impl PerpAccount {
         };
         let after = read.last_scan.saturating_sub(1);
         let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
+        read.traders = patiently("the trader accounts", || self.meter.trader_accounts()).await?;
         for fill in &records.fills {
-            for record in MakingFill::of(fill, &read.bot, &read.parties, self.base_slot) {
+            for record in MakingFill::of(fill, &read.traders, &read.parties, self.base_slot) {
                 // A trade between the bot's own accounts is two records.
                 let key = (fill.sequence, record.role == "taker");
                 if read.seen.insert(key) {

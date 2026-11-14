@@ -658,6 +658,19 @@ impl RawSender {
         // The held sends go first, as if they had landed: a held one that
         // fails now would change nothing, so it is left out.
         let mut held: Vec<&Held> = self.held.iter().collect();
+        // Under a taking rule, the position as the held sends leave it is
+        // read just before the new transaction, to judge what it takes.
+        let taking = self
+            .mandate
+            .allowance(&self.instrument)
+            .filter(|allowance| allowance.taking.is_some());
+        let before_view = match taking {
+            Some(_) => view_transactions(&self.phoenix, &self.symbol, &self.authority, false)?
+                .into_iter()
+                .next(),
+            None => None,
+        };
+        let pre = usize::from(before_view.is_some());
         let (results, ahead) = loop {
             let mut keys: Vec<Pubkey> = Vec::new();
             for key in held.iter().flat_map(|h| &h.writable).chain(&writable) {
@@ -667,9 +680,12 @@ impl RawSender {
             }
             let watch = self.worth_watching(&keys).await?;
             let mut bundle: Vec<String> = held.iter().map(|h| h.wire.clone()).collect();
+            bundle.extend(before_view.clone());
             bundle.push(encode(&wire));
             bundle.extend(self.views()?);
-            let results = self.simulate_bundle(&bundle, &watch, held.len()).await?;
+            let results = self
+                .simulate_bundle(&bundle, &watch, held.len() + pre)
+                .await?;
             match results
                 .iter()
                 .take(held.len())
@@ -681,8 +697,9 @@ impl RawSender {
                 None => break (results, watch),
             }
         };
+        let at = held.len() + pre;
         let result = results
-            .get(held.len())
+            .get(at)
             .ok_or("the simulation returned nothing for the transaction")?;
         let logs: Vec<String> = result["logs"]
             .as_array()
@@ -711,12 +728,18 @@ impl RawSender {
         }
         let delta = wallet_change(&self.authority, &ahead, before, after_tx)?;
         let wallet_after = u64::try_from(i128::from(wallet) + delta).unwrap_or(0);
-        let after = self.measured(&results[held.len() + 1..], wallet_after)?;
+        let after = self.measured(&results[at + 1..], wallet_after)?;
         let drawdown = self.account.map_or(0.0, |a| a.drawdown_usd);
-        match audit(&self.mandate, &self.instrument, drawdown, start, &after) {
-            Some(breach) => Err(format!("it would breach the mandate: {breach}")),
-            None => Ok(()),
+        if let Some(breach) = audit(&self.mandate, &self.instrument, drawdown, start, &after) {
+            return Err(format!("it would breach the mandate: {breach}"));
         }
+        // A send's resting orders fill later, by others' trades, so what
+        // moves the position in the simulation is what it takes.
+        if let Some(allowance) = taking {
+            let before = position_of(&self.phoenix, &self.symbol, &results[held.len()])?;
+            crate::taking::judge(allowance, before, after.position)?;
+        }
+        Ok(())
     }
 
     /// Of `keys`, a send's writable accounts, the ones the audit reads
@@ -2186,6 +2209,56 @@ mod tests {
             );
         }
         assert_eq!(gate.refused(), 4);
+    }
+
+    /// A component's raw send under a taking rule: one whose simulated
+    /// fills would open, add to or flip the position is refused (not sent),
+    /// one that reduces goes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_raw_send_that_takes_to_open_is_refused_under_a_taking_rule() {
+        let world = world().await;
+        let plain = Mandate::perp("phoenix", SPCX, 5.0, 50.0);
+        let mut reduce_only = plain.clone();
+        reduce_only.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        let program = world.market_order(&world.bot, 1).await.instructions[1]
+            .program
+            .parse::<Pubkey>()
+            .unwrap();
+        let programs = vec![program, SYSTEM, TOKEN, ASSOCIATED_TOKEN];
+        let taking = |reason: String| reason.contains("allows taking only to reduce");
+        // Flat: buying would open.
+        let mut sender = world.sender(programs.clone(), reduce_only.clone());
+        sender.begin(0, None).await;
+        let refused = sender
+            .take(world.market_order(&world.bot, 2).await)
+            .await
+            .unwrap_err();
+        assert!(taking(refused.clone()), "{refused}");
+        // The same send without the rule lands.
+        let mut sender = world.sender(programs.clone(), plain);
+        sender.begin(0, None).await;
+        sender
+            .take(world.market_order(&world.bot, 2).await)
+            .await
+            .unwrap();
+        let statuses = sender.flush(&world.bot).await;
+        assert!(
+            matches!(statuses[0].state, SendState::Landed(_)),
+            "{statuses:?}"
+        );
+        assert!((world.position().await - 2.0).abs() < 1e-9);
+        // Long 2: selling to reduce goes, adding or flipping doesn't.
+        for (units, goes) in [(-1, true), (1, false), (-3, false)] {
+            let mut sender = world.sender(programs.clone(), reduce_only.clone());
+            sender.begin(0, None).await;
+            let sent = sender
+                .take(world.market_order(&world.bot, units).await)
+                .await;
+            assert_eq!(sent.is_ok(), goes, "{units}: {sent:?}");
+            if let Err(reason) = sent {
+                assert!(taking(reason.clone()), "{reason}");
+            }
+        }
     }
 
     /// Programs off the list are refused, at the top level or run by a
