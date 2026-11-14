@@ -140,7 +140,11 @@ impl RouterSpec {
         router::DEFAULT_SLIPPAGE_BPS
     }
 
-    pub(crate) fn validate(&self, venues: &[String], symbol: &str) -> std::result::Result<(), String> {
+    pub(crate) fn validate(
+        &self,
+        venues: &[String],
+        symbol: &str,
+    ) -> std::result::Result<(), String> {
         if !(1..=router::MAX_HOPS).contains(&self.max_hops) {
             return Err(format!(
                 "spot: router max_hops is 1 to {}",
