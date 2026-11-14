@@ -89,6 +89,13 @@ impl BotEnv {
         })
     }
 
+    /// This environment on several perp markets: `markets`, the first
+    /// `symbol`'s, as `MTX_MARKETS` lists them.
+    pub fn with_markets(mut self, markets: Vec<String>) -> Self {
+        self.markets = markets;
+        self
+    }
+
     /// The variables to set on a bot process for this environment.
     pub fn vars(&self) -> Vec<(&'static str, String)> {
         let mut vars = vec![
@@ -222,10 +229,9 @@ mod tests {
         );
         assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MANDATE));
         assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MARKETS));
-        let several = BotEnv {
-            markets: vec!["NVDA".into(), "SPCX".into()],
-            ..env.clone()
-        };
+        let several = env
+            .clone()
+            .with_markets(vec!["NVDA".into(), "SPCX".into()]);
         assert!(
             several
                 .vars()
