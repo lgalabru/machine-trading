@@ -33,7 +33,8 @@ score of the probes lands where the grading decisions say it must (see
 `probe_checks`). A rule fails only when a bootstrap over the sessions shows it
 broken with `confidence` (default 0.95); a point estimate that breaks it
 without that confidence is `inconclusive`, and one that holds is `pass`. A
-probe that is meant to breach and never did is `no_power`.
+probe that never traded, went fatal without being meant to, or (the breacher)
+never breached is `no_power`.
 
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
@@ -284,9 +285,11 @@ PAYS_FROM = 0.2
 # At least one honest probe must measure inside this band (from the pay line
 # up), so it is judged, or the pay line isn't tested.
 NEAR_LINE = (0.2, 0.40)
-# A paired rule needs this many sessions where the two bots differ before it
-# can pass or fail.
+# A paired rule (the crash) needs this many sessions where the two bots differ
+# before it can pass or fail.
 MIN_DIFFERING = 3
+# The breacher is composed with exactly this many breach sessions a run.
+BREACH_COUNTS = (1, 2, 3)
 ZERO_EDGE = ["blind-long", "blind-short", "coin-flip-half", "coin-flip-full",
              "martingale", "limit-hugger"]
 # The stop-lotto has a real, weak edge on trending paths (TUNE2 section 3): gated
@@ -412,6 +415,100 @@ def session_sharpe(pnl):
     return statistics.fmean(pnl) / sd if sd > 0 else 0.0
 
 
+def breach_run(breach_terms, twin_terms, b):
+    """Two runs with exactly `b` breach sessions, or None when the set has
+    fewer than `b` sessions where the breacher breached. The breach sessions
+    are `b` of them, spread over them, the same on every call. Sessions are
+    isolated and `sums_score` is a pure function of the rows, so these are the
+    runs a bot that breached in exactly those sessions would have had:
+
+    - `full`: the breacher's own rows, except that it breached only in those
+      (the others take the twin's row): a bot that levers everywhere and
+      breaches in `b` sessions;
+    - `swap`: the twin's rows, with the breacher's in those `b`: it isolates
+      what one breach session costs.
+    """
+    twin, bot = twin_terms["sessions"], breach_terms["sessions"]
+    breaching = [i for i, row in enumerate(bot) if row["breach"]]
+    if len(breaching) < b:
+        return None
+    chosen = {breaching[j * len(breaching) // b] for j in range(b)}
+    full = [bot[i] if i in chosen or i not in breaching else twin[i] for i in range(len(bot))]
+    swap = [bot[i] if i in chosen else twin[i] for i in range(len(bot))]
+    return full, swap, sorted(chosen)
+
+
+def add_breacher_checks(add, terms, breacher, twin):
+    """The breacher's two gates at b = 1, 2 and 3 breach sessions a run:
+
+    - the run cap: a bot that levers everywhere and breaches in b sessions
+      (`full`), capped as the grader caps it, scores at most its twin (1
+      breach holds it to 0.5, 2 or more to 0);
+    - the per-session floor: the twin's run with b of its sessions replaced by
+      breach sessions (`swap`), scored without the cap, is at most the twin's,
+      wherever the twin's replaced session is above the floor
+      (-k times the limit), as policy expects. A regression of the floor shows
+      here; so does a breach that pays.
+
+    Each is deterministic: composed from the graded rows, not resampled. No
+    power if the breacher went fatal, never breached, or no set has b
+    breaching sessions."""
+    for b in BREACH_COUNTS:
+        runs = []
+        for t in terms:
+            if t[breacher]["fatal"]:
+                continue
+            run = breach_run(t[breacher], t[twin], b)
+            if run:
+                runs.append((t, *run))
+        names = {"cap": f"breacher:b{b}:run_cap", "floor": f"breacher:b{b}:floor"}
+        why = None
+        if any(t[breacher]["fatal"] for t in terms):
+            why = "the breacher's grade was fatal"
+        elif not runs:
+            breached = [sum(r["breach"] for r in t[breacher]["sessions"]) for t in terms]
+            why = (f"no set has {b} breaching sessions (it breached {breached} per set): "
+                   f"{'it never breached' if not any(breached) else 'too few to compose'}")
+        if why:
+            for kind in ("cap", "floor"):
+                add(names[kind], "breacher", [breacher, twin],
+                    {"verdict": "no_power", "violation_odds": None, "point_violated": True},
+                    why)
+            continue
+        capped = statistics.fmean(sums_score(full, t[breacher]) for t, full, _, _ in runs)
+        twin_capped = statistics.fmean(sums_score(t[twin]["sessions"], t[twin]) for t, _, _, _ in runs)
+        twin_plain = statistics.fmean(
+            sums_score(t[twin]["sessions"], t[twin], capped=False) for t, _, _, _ in runs)
+        cap_ok = capped <= twin_capped + 1e-9
+        add(names["cap"], "breacher", [breacher, twin],
+            {"verdict": "pass" if cap_ok else "fail", "violation_odds": None,
+             "point_violated": not cap_ok},
+            f"{b} breach session(s) a run, over {len(runs)} sets: capped raw {capped:+.3f} "
+            f"against {twin}'s {twin_capped:+.3f}",
+            raw=capped, other_raw=twin_capped, breach_sessions=b, sets=len(runs))
+        # Where policy expects the floor to bind: the twin's session is above it.
+        expected = [(t, swap, idx) for t, _, swap, idx in runs
+                    if all(t[twin]["sessions"][i]["bot"] >= -t[twin]["k"] * t[twin]["sessions"][i]["limit"]
+                           for i in idx)]
+        if not expected:
+            add(names["floor"], "breacher", [breacher, twin],
+                {"verdict": "no_power", "violation_odds": None, "point_violated": True},
+                f"{b} breach session(s) a run: the twin's replaced sessions are all under the "
+                f"floor, which then can't be tested")
+            continue
+        plain = statistics.fmean(sums_score(swap, t[breacher], capped=False)
+                                 for t, swap, _ in expected)
+        twin_plain = statistics.fmean(
+            sums_score(t[twin]["sessions"], t[twin], capped=False) for t, _, _ in expected)
+        floor_ok = plain <= twin_plain + 1e-9
+        add(names["floor"], "breacher", [breacher, twin],
+            {"verdict": "pass" if floor_ok else "fail", "violation_odds": None,
+             "point_violated": not floor_ok},
+            f"{b} breach session(s) a run, over {len(expected)} sets: raw without the cap "
+            f"{plain:+.3f} against {twin}'s {twin_plain:+.3f}",
+            raw_without_cap=plain, other_raw=twin_plain, breach_sessions=b, sets=len(expected))
+
+
 def probe_checks(config, sets, count):
     """The probe rules over the sets' v2 grades. Each check is
     `{id, kind, rungs, verdict, point_violated, ...}`; verdict is `pass`,
@@ -419,16 +516,26 @@ def probe_checks(config, sets, count):
     grader's own; the bootstrap over sessions scores each draw as the grader
     does. Rules (all fixed above):
 
+    A probe that never traded (every session's bot_usd 0, or no spread in its
+    PnL) or whose grade was fatal where that isn't the expected outcome is
+    `no_power` on every rule that would otherwise pass it vacuously.
+
     - `zero_edge`: no-edge bots score at most `PROBE_TOLERANCE` over doing
       nothing.
     - `luck5` (TUNE2's C2), for those only: the headline of a
-      5-run model, over 5-run sets that made money, is at most `LUCK5_LIMIT`.
+      5-run model (the mean of 5 per-set, i.e. per-run, resampled raws), over
+      5-run sets that made money, is at most `LUCK5_LIMIT`.
     - `stop_lotto`, and each lever: pays no more than its Sharpe: if it
       measured under v2's break-even Sharpe, it scores at most
       `PROBE_TOLERANCE`.
-    - `breacher`: the lever that sends past the cap in a few sessions scores
-      no more than its clipped twin (and under the reference: breaching never
-      beats complying), and breached in every set, or it has no power.
+    - `breacher`: the lever that sends past the cap in every session it can
+      (sessions are isolated and `sums_score` is a pure function of the
+      per-session rows), composed with its clipped twin into runs with exactly
+      b = 1, 2 and 3 breach sessions each, scored deterministically. Two
+      gates per b: the run cap (the capped run scores at most its twin) and
+      the per-session floor (the run without the cap scores at most its twin,
+      where the twin's session is above the floor, as policy expects). No
+      power if it never breached, was fatal, or no set has b breach sessions.
     - `levered`: the lever's weighted PnL is at most m times the reference's.
     - `honest`: from a measured Sharpe of `PAYS_FROM`, beats doing nothing;
       one probe must measure near that line.
@@ -456,9 +563,18 @@ def probe_checks(config, sets, count):
     base_usd = {n: sum(sum(r["bot"] for r in t[n]["sessions"]) for t in terms) for n in needed}
     breached = {n: [t[n]["breached"] for t in terms] for n in needed}
     fatal = {n: all(t[n]["fatal"] for t in terms) for n in needed}
-    # What the breach cap and the charge change on this set: reported.
-    plain_raw = {n: statistics.fmean(sums_score(t[n]["sessions"], t[n], capped=False)
-                                     for t in terms) for n in needed}
+
+    def broken(n):
+        """Why `n`'s grade proves nothing, or None: it went fatal (where that
+        isn't what the probe is for), or it never traded. A silently broken
+        probe binary looks like exactly this."""
+        if any(t[n]["fatal"] for t in terms):
+            return "its grade was fatal"
+        if all(abs(r["bot"]) < 1e-9 for t in terms for r in t[n]["sessions"]):
+            return "it never traded (every session's weighted PnL is 0)"
+        if statistics.pstdev(pnl[n]) == 0:
+            return "its PnL never varied: it never traded"
+        return None
 
     def differing(a, b):
         return sum(abs(x["bot"] - y["bot"]) > 0.005 for t in terms
@@ -471,18 +587,20 @@ def probe_checks(config, sets, count):
     for _ in range(BOOTSTRAP_DRAWS):
         picks = [[rng.randrange(len(t["reference"]["sessions"])) for _ in t["reference"]["sessions"]]
                  for t in terms]
-        raw = {n: statistics.fmean(sums_score([t[n]["sessions"][i] for i in idx], t[n])
-                                   for t, idx in zip(terms, picks)) for n in needed}
+        per_run = {n: [sums_score([t[n]["sessions"][i] for i in idx], t[n])
+                       for t, idx in zip(terms, picks)] for n in needed}
+        raw = {n: statistics.fmean(per_run[n]) for n in needed}
         usd = {n: sum(sum(t[n]["sessions"][i]["bot"] for i in idx) for t, idx in zip(terms, picks))
                for n in needed}
-        net = {n: sum(sum(pnls(reports[n])[i] for i in idx) for reports, idx in zip(sets, picks))
+        # Per set, i.e. per run: a run is one set's score.
+        net = {n: [sum(pnls(reports[n])[i] for i in idx) for reports, idx in zip(sets, picks)]
                for n in luck_rungs}
         shp = {n: session_sharpe([pnls(reports[n])[i] for reports, idx in zip(sets, picks)
                                   for i in idx]) for n in sharpe_rungs}
-        draws.append((raw, usd, net, shp))
+        draws.append((raw, usd, net, shp, per_run))
 
     def verdict(violated, point_violated):
-        odds = sum(violated(raw, usd) for raw, usd, _, _ in draws) / len(draws)
+        odds = sum(violated(raw, usd) for raw, usd, _, _, _ in draws) / len(draws)
         v = "pass"
         if point_violated:
             v = "fail" if odds >= confidence else "inconclusive"
@@ -499,26 +617,34 @@ def probe_checks(config, sets, count):
 
     for n in ZERO_EDGE:
         v = verdict(lambda raw, usd, n=n: raw[n] > tol, base_raw[n] > tol)
-        add(f"zero_edge:{n}", "zero_edge", [n], v, f"raw {base_raw[n]:+.3f}, limit {tol:+.2f}",
-            raw=base_raw[n])
+        detail = f"raw {base_raw[n]:+.3f}, limit {tol:+.2f}"
+        if broken(n):
+            v, detail = {**v, "verdict": "no_power"}, f"{detail}; {broken(n)}"
+        add(f"zero_edge:{n}", "zero_edge", [n], v, detail, raw=base_raw[n])
 
     # TUNE2's C2: a 5-run model's headline, over the 5-run sets that made money.
-    groups = len(draws) // 5
+    # A run is one set's score, so the blocks of 5 are built from the per-set
+    # resampled raws, not from the draws' means over all sets (which would
+    # average 5 x the sets runs and understate luck).
     for n in luck_rungs:
+        runs = [(d[4][n][s], d[2][n][s]) for d in draws for s in range(len(sets))]
+        groups = len(runs) // 5
         heads = []
         for g in range(groups):
-            block = draws[g * 5:(g + 1) * 5]
-            if sum(d[2][n] for d in block) > 0:
-                heads.append(min(max(statistics.fmean(d[0][n] for d in block), 0.0), 1.0))
+            block = runs[g * 5:(g + 1) * 5]
+            if sum(net for _, net in block) > 0:
+                heads.append(min(max(statistics.fmean(raw for raw, _ in block), 0.0), 1.0))
         luck = statistics.fmean(heads) if heads else 0.0
         # On a short set the headline is the sample's own mean: it can't tell
         # luck from edge, so a break is inconclusive there.
         v = {"verdict": "pass" if luck <= LUCK5_LIMIT else
              ("inconclusive" if count < LUCK5_MIN_SESSIONS else "fail"),
              "violation_odds": None, "point_violated": luck > LUCK5_LIMIT}
-        add(f"luck5:{n}", "luck5", [n], v,
-            f"lucky 5-run headline {luck:.3f} over {len(heads)} winning sets of {groups}, "
-            f"limit {LUCK5_LIMIT}", luck5=luck)
+        detail = (f"lucky 5-run headline {luck:.3f} over {len(heads)} winning sets of {groups}, "
+                  f"limit {LUCK5_LIMIT}")
+        if broken(n):
+            v, detail = {**v, "verdict": "no_power"}, f"{detail}; {broken(n)}"
+        add(f"luck5:{n}", "luck5", [n], v, detail, luck5=luck)
 
     # Pays no more than its Sharpe: under the break-even it scores at most the tolerance.
     be = {n: terms[0][n]["break_even"] for n in sharpe_rungs}
@@ -530,13 +656,16 @@ def probe_checks(config, sets, count):
         odds = sum((d[3][n] is not None and d[3][n] < be[n]) and d[0][n] > tol for d in draws) / len(draws)
         # Break-even depends on the P&L's shape (0.07-0.20, SCORECARD #8), so a
         # point estimate near the line proves nothing: only confidence fails.
-        v = "pass"
-        if point:
-            v = "fail" if odds >= confidence else "inconclusive"
+        # The point violation is recorded as it is; an unconfirmed one passes.
+        v = "fail" if point and odds >= confidence else "pass"
         detail = (f"raw {base_raw[n]:+.3f}, measured Sharpe {sharpe:.2f} against the break-even "
                   f"{be[n]:.2f}" + ("" if under else ": over it, so it may score above nothing"))
+        if point and v == "pass":
+            detail += f"; point estimate over {tol:+.2f}, not confirmed (odds {odds:.2f})"
+        if broken(n):
+            v, detail = "no_power", f"{detail}; {broken(n)}"
         add(f"pays_its_sharpe:{n}", "pays_its_sharpe", [n],
-            {"verdict": v, "violation_odds": odds, "point_violated": False}, detail,
+            {"verdict": v, "violation_odds": odds, "point_violated": bool(point)}, detail,
             raw=base_raw[n], sharpe=sharpe)
 
     def paired(lower, higher, extra_violation=None):
@@ -558,23 +687,8 @@ def probe_checks(config, sets, count):
             v = {**v, "verdict": "inconclusive"}
         return v, detail, diff
 
-    # The breacher.
-    v, detail, diff = paired(BREACHER, TWIN)
-    beats_complying = base_raw[BREACHER] > base_raw["reference"] + 1e-9
-    if beats_complying:
-        v = {**v, "verdict": "fail", "point_violated": True}
-        detail += f"; and over the reference's {base_raw['reference']:+.3f}"
-    # A bot sees one session, so the breaching ones are a seeded share, not an
-    # exact count: no power only when a whole run never breached.
-    if sum(breached[BREACHER]) == 0:
-        v = {**v, "verdict": "no_power"}
-        detail += f"; breached {breached[BREACHER]} sessions per set: it never breached"
-    else:
-        detail += f"; breached {breached[BREACHER]} sessions per set"
-    detail += f"; without the breach cap {plain_raw[BREACHER]:+.3f} (twin {plain_raw[TWIN]:+.3f})"
-    add(f"breacher:{BREACHER}<={TWIN}", "breacher", [BREACHER, TWIN], v, detail,
-        raw=base_raw[BREACHER], other_raw=base_raw[TWIN], breached_sessions=breached[BREACHER],
-        differing_sessions=diff, raw_without_cap=plain_raw[BREACHER])
+    # The breacher: composed runs with exactly b breach sessions.
+    add_breacher_checks(add, terms, BREACHER, TWIN)
 
     # Levered references: weighted PnL at most m times the reference's.
     slack = tol * abs(base_usd["reference"])
@@ -582,9 +696,12 @@ def probe_checks(config, sets, count):
         def too_much(usd, n=n, m=m):
             return usd[n] > m * max(usd["reference"], 0.0) + slack
         v = verdict(lambda raw, usd: too_much(usd), too_much(base_usd))
-        add(f"levered:{n}", "levered", [n, "reference"], v,
-            f"weighted PnL ${base_usd[n]:.0f} against {m}x ${base_usd['reference']:.0f}, "
-            f"raw {base_raw[n]:+.3f}", raw=base_raw[n], breached_sessions=breached[n])
+        detail = (f"weighted PnL ${base_usd[n]:.0f} against {m}x ${base_usd['reference']:.0f}, "
+                  f"raw {base_raw[n]:+.3f}")
+        if broken(n):
+            v, detail = {**v, "verdict": "no_power"}, f"{detail}; {broken(n)}"
+        add(f"levered:{n}", "levered", [n, "reference"], v, detail, raw=base_raw[n],
+            breached_sessions=breached[n])
 
     # Honest bots, on the Sharpe they measured.
     measured = {n: session_sharpe(pnl[n]) for n in HONEST}

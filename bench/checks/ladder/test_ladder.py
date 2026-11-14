@@ -216,29 +216,12 @@ class ProbeGate(unittest.TestCase):
         self.assertEqual(got["zero_edge:coin-flip-full"]["verdict"], "inconclusive")
         self.assertTrue(got["zero_edge:coin-flip-full"]["point_violated"])
 
-    def test_a_breacher_must_score_under_its_twin_and_must_have_breached(self):
-        twin = [10.0] * self.N
-        breach = [True] * 4 + [False] * (self.N - 4)
-        worse = {"bot": [-5.0] * 4 + [10.0] * (self.N - 4), "breach": breach}
-        got = self.checks(**{TWIN: twin, "breacher": worse})
-        self.assertEqual(got[f"breacher:breacher<={TWIN}"]["verdict"], "pass")
-        # One that never breached is the twin and proves nothing.
-        got = self.checks(**{TWIN: twin, "breacher": twin})
-        self.assertEqual(got[f"breacher:breacher<={TWIN}"]["verdict"], "no_power")
-        # One that breached and still beats its twin fails.
-        # One that breaches once is held to 0.5 by the cap: that is no help
-        # against a twin that scores less than the reference.
-        weak = [5.0] * self.N
-        once = {"bot": [30.0] * self.N, "breach": [True] + [False] * (self.N - 1)}
-        got = self.checks(**{TWIN: weak, "breacher": once})
-        # The point estimate breaks the rule; a resample that draws the breach
-        # twice is held to 0, so the sample can't confirm it: the full gate fails it.
-        self.assertTrue(got[f"breacher:breacher<={TWIN}"]["point_violated"])
-        self.assertIn(got[f"breacher:breacher<={TWIN}"]["verdict"], ("fail", "inconclusive"))
-
     def test_leverage_is_held_to_m_times_the_reference(self):
-        self.assertEqual(self.checks(**{"lever-2": [18.0] * self.N})["levered:lever-2"]["verdict"], "pass")
-        self.assertEqual(self.checks(**{"lever-2": [25.0] * self.N})["levered:lever-2"]["verdict"], "fail")
+        wobble = [1.0, -1.0] * (self.N // 2)
+        mild = [18.0 + w for w in wobble]
+        wild = [25.0 + w for w in wobble]
+        self.assertEqual(self.checks(**{"lever-2": mild})["levered:lever-2"]["verdict"], "pass")
+        self.assertEqual(self.checks(**{"lever-2": wild})["levered:lever-2"]["verdict"], "fail")
 
     def test_an_honest_bot_is_held_to_the_sharpe_it_measured_not_its_label(self):
         # Label 0.3, but it measured under the pay line: reported only.
@@ -291,9 +274,11 @@ class ProbeGate(unittest.TestCase):
         c = got["pays_its_sharpe:stop-lotto"]
         self.assertLess(ladder.session_sharpe(bot), 0.16)
         self.assertGreater(c["raw"], ladder.PROBE_TOLERANCE)
-        self.assertIn(c["verdict"], ("fail", "inconclusive"))
-        # Whatever it is, a point estimate near the line never fails the full gate.
-        self.assertFalse(c["point_violated"])
+        # The point violation is recorded as it is; only confidence fails.
+        self.assertTrue(c["point_violated"])
+        self.assertEqual(c["verdict"], "fail" if c["violation_odds"] >= 0.95 else "pass")
+        if c["verdict"] == "pass":
+            self.assertIn("not confirmed", c["detail"])
         # A steady winner measures far over the break-even: allowed above nothing.
         got = self.checks(**{"stop-lotto": [6.0, 4.0] * (self.N // 2)})
         self.assertEqual(got["pays_its_sharpe:stop-lotto"]["verdict"], "pass")
@@ -305,7 +290,7 @@ class ProbeGate(unittest.TestCase):
     def test_a_lucky_five_run_headline_fails_c2(self):
         got = self.checks(**{"coin-flip-full": [12.0, -1.0] * (self.N // 2)})
         self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "fail")
-        got = self.checks(**{"coin-flip-full": [-3.0] * self.N})
+        got = self.checks(**{"coin-flip-full": [-3.0, -1.0] * (self.N // 2)})
         self.assertEqual(got["luck5:coin-flip-full"]["verdict"], "pass")
 
     def test_c2_is_inconclusive_on_a_short_set(self):
@@ -321,13 +306,112 @@ class ProbeGate(unittest.TestCase):
         got = {c["id"]: c for c in ladder.probe_checks({}, sets, self.N)}
         self.assertEqual(got["reference"]["verdict"], "no_power")
 
-    def test_a_breacher_that_breached_in_some_set_has_power(self):
-        twin = [10.0] * self.N
-        breach = [True] * 3 + [False] * (self.N - 3)
-        worse = {"bot": [-5.0] * 3 + [10.0] * (self.N - 3), "breach": breach}
-        sets = self.ladder(**{TWIN: twin, "breacher": worse}) + self.ladder(**{TWIN: twin, "breacher": twin})
+    # A probe whose binary is broken (bad env, a bail on startup, a missing
+    # binary) trades nothing or goes fatal: it must not pass the gate.
+    VACUOUS = ["zero_edge:coin-flip-full", "luck5:coin-flip-full", "pays_its_sharpe:stop-lotto",
+               "levered:lever-2"]
+
+    def test_a_probe_that_never_traded_has_no_power(self):
+        broken = {"coin-flip-full": [0.0] * self.N, "stop-lotto": [0.0] * self.N,
+                  "lever-2": [0.0] * self.N}
+        got = self.checks(**broken)
+        for check in self.VACUOUS:
+            self.assertEqual(got[check]["verdict"], "no_power", check)
+            self.assertIn("never", got[check]["detail"])
+        # A flat PnL with weighted PnL elsewhere is no trading either.
+        flat = {"bot": [1.0, 2.0] * (self.N // 2), "pnl": [0.0] * self.N}
+        self.assertEqual(self.checks(**{"coin-flip-full": flat})["zero_edge:coin-flip-full"]["verdict"],
+                         "no_power")
+
+    def test_a_probe_whose_grade_is_fatal_has_no_power(self):
+        bots = {n: {"bot": [-1.0] * self.N, "fatal": True}
+                for n in ("coin-flip-full", "stop-lotto", "lever-2")}
+        got = self.checks(**bots)
+        for check in self.VACUOUS:
+            self.assertEqual(got[check]["verdict"], "no_power", check)
+            self.assertIn("fatal", got[check]["detail"])
+
+    def test_a_probe_that_trades_still_passes(self):
+        wobble = [-3.0, 1.0] * (self.N // 2)
+        got = self.checks(**{"coin-flip-full": wobble, "stop-lotto": wobble, "lever-2": wobble})
+        for check in self.VACUOUS:
+            self.assertEqual(got[check]["verdict"], "pass", check)
+
+    def test_luck5_is_a_five_run_headline_whatever_the_set_count(self):
+        """Each set is a run: five of them make the headline, so the same
+        gambler's luck must not shrink as sets are added."""
+        lucky = [12.0, -1.0, -3.0, 9.0, -4.0] * 8
+        luck = {}
+        for sets in (1, 4):
+            ladders = []
+            for _ in range(sets):
+                ladders += self.ladder(**{"coin-flip-full": lucky})
+            got = {c["id"]: c for c in ladder.probe_checks({}, ladders, self.N)}
+            luck[sets] = got["luck5:coin-flip-full"]["luck5"]
+        self.assertGreater(luck[1], 0.0)
+        self.assertAlmostEqual(luck[4], luck[1], delta=0.1 * luck[1])
+
+    # The breacher: composed runs with exactly b breach sessions.
+    def breach_ladder(self, floor=True, bot_gain=10.0, breaches=6, twin=None):
+        """Twin (the clipped lever) makes 10 a session; the breacher breaches
+        in `breaches` sessions, scoring -k * limit there when the grader
+        floors it (`floor`) and a gain when it doesn't, and `bot_gain` in the
+        rest. Built through `grade`, so it is scored as the ladder scores."""
+        breach = [True] * breaches + [False] * (self.N - breaches)
+        floored = -1.5 * 600.0 if floor else 300.0
+        bot = [floored] * breaches + [bot_gain] * (self.N - breaches)
+        return self.ladder(**{TWIN: twin or [10.0] * self.N,
+                              "breacher": {"bot": bot, "breach": breach}})
+
+    def breacher(self, sets):
         got = {c["id"]: c for c in ladder.probe_checks({}, sets, self.N)}
-        self.assertNotEqual(got[f"breacher:breacher<={TWIN}"]["verdict"], "no_power")
+        return {k: v for k, v in got.items() if k.startswith("breacher:")}
+
+    def test_a_breacher_that_loses_its_floor_passes_both_gates_at_every_b(self):
+        got = self.breacher(self.breach_ladder())
+        self.assertEqual(sorted(got), sorted(
+            f"breacher:b{b}:{g}" for b in (1, 2, 3) for g in ("run_cap", "floor")))
+        for check, c in got.items():
+            self.assertEqual(c["verdict"], "pass", (check, c["detail"]))
+        # b = 1 is a test: one breach session is composed, not two.
+        self.assertEqual(got["breacher:b1:floor"]["breach_sessions"], 1)
+
+    def test_a_breacher_that_never_breached_or_is_fatal_has_no_power(self):
+        got = self.breacher(self.breach_ladder(breaches=0))
+        self.assertTrue(got and all(c["verdict"] == "no_power" for c in got.values()))
+        # Fewer breach sessions than b: b = 3 can't be composed.
+        got = self.breacher(self.breach_ladder(breaches=2))
+        self.assertEqual(got["breacher:b2:floor"]["verdict"], "pass")
+        self.assertEqual(got["breacher:b3:floor"]["verdict"], "no_power")
+        sets = self.breach_ladder()
+        sets[0]["breacher"]["v2"]["fatal"] = "refused"
+        got = self.breacher(sets)
+        self.assertTrue(all(c["verdict"] == "no_power" for c in got.values()))
+
+    def test_removing_the_per_session_floor_fails_the_gate(self):
+        """The grader that no longer floors a breach session at -k * limit
+        scores it as the session made: the swap run beats its twin."""
+        got = self.breacher(self.breach_ladder(floor=False))
+        for b in (1, 2, 3):
+            self.assertEqual(got[f"breacher:b{b}:floor"]["verdict"], "fail", b)
+
+    def test_removing_the_run_cap_fails_the_gate(self):
+        """A bot that levers everywhere (a hundred a session against its
+        twin's ten) and breaches in only b sessions: the cap holds it to its
+        twin's 0.5 (b = 1) or 0 (b >= 2). A scorer without the cap lets its
+        gains through."""
+        sets = self.breach_ladder(bot_gain=100.0)
+        got = self.breacher(sets)
+        for b in (1, 2, 3):
+            self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "pass", b)
+        original = ladder.sums_score
+        ladder.sums_score = lambda rows, terms, capped=True: original(rows, terms, capped=False)
+        try:
+            got = self.breacher(self.breach_ladder(bot_gain=100.0))
+        finally:
+            ladder.sums_score = original
+        for b in (1, 2, 3):
+            self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "fail", b)
 
     def test_the_matched_sharpe_vol_pair_scores_long_vol_ahead(self):
         """TUNE2 section 3: at equal mean and spread, long-vol (rare big wins,

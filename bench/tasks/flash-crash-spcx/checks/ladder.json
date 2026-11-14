@@ -126,7 +126,7 @@
       "env": {
         "MTX_PROBE": "reference",
         "MTX_PROBE_LEVER": "3",
-        "MTX_PROBE_BREACHES": "4"
+        "MTX_PROBE_BREACHES": "1000000"
       },
       "may_breach": true
     },
