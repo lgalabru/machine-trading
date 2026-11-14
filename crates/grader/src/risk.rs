@@ -157,6 +157,24 @@ mod tests {
     }
 
     #[test]
+    fn a_close_out_names_itself_in_json() {
+        let close = ForcedClose {
+            reason: ForcedCloseReason::CloseOut,
+            step: 799,
+            at: 3200,
+            value_before_usd: 10_012.0,
+            peak_usd: 10_030.0,
+            value_after_usd: 10_011.5,
+            position_before: -3.0,
+            orders: Vec::new(),
+            flat: true,
+        };
+        let json = serde_json::to_string(&close).unwrap();
+        assert!(json.contains(r#""reason":{"kind":"close_out"}"#));
+        assert_eq!(serde_json::from_str::<ForcedClose>(&json).unwrap(), close);
+    }
+
+    #[test]
     fn flat_is_below_a_base_lot() {
         assert!(is_flat(0.0));
         assert!(is_flat(-0.0004));

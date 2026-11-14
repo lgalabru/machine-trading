@@ -20,7 +20,13 @@
 #     every trader account the bot holds count, so each session ends in a
 #     `taking` breach (untrusted and `--trusted`);
 #   - the two-sided probe on the same scenarios without the new fields
-#     reports neither.
+#     reports neither;
+#   - with `close_out` on the same scenarios, the grader closes the bot's
+#     position after its last turn (a forced reduce-only IOC whose fills are
+#     the grader's, never a taking breach): the session ends flat, the
+#     decomposition's parts add up to the PnL, the PnL is the same session's
+#     without the close-out less what the close cost, and a process taker
+#     and the subaccount bot are closed out the same way.
 #   bench/checks/making-mandate/run.sh <mtx> <snapshot> <out>
 # The probes must be built: `just build`, `just build one-sided`,
 # `just build taker` and `just build crosser` in bots/making-probe, and
@@ -32,7 +38,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 probe="$here/../../../bots/making-probe"
 subprobe="$here/../../../bots/subaccount-probe/one-unit"
 rm -rf "$out"
-mkdir -p "$out/plain" "$out/obliged"
+mkdir -p "$out/plain" "$out/obliged" "$out/closed"
 "$mtx" scenario generate --family market-making-v2 --prefix mm --count 3 --seed 43 --out "$out/plain" >/dev/null
 python3 -I - "$out" <<'PY'
 import glob, json, os, sys
@@ -48,6 +54,8 @@ for path in sorted(glob.glob(f"{out}/plain/*.json")):
     s["mandate"]["version"] = "v0.1"
     s["mandate"]["universe"][0]["taking"] = "reduce_only"
     json.dump(s, open(f"{out}/obliged/{os.path.basename(path)}", "w"), indent=2)
+    making["close_out"] = True
+    json.dump(s, open(f"{out}/closed/{os.path.basename(path)}", "w"), indent=2)
 PY
 grade() { # name wasm-dir scenarios
   local name=$1 bot=$2 set=$3
@@ -77,6 +85,16 @@ mkdir -p "$out/subaccount-trusted" "$out/subaccount-untrusted"
   --report "$out/subaccount-untrusted/report.json" "$out"/obliged/*.json \
   >"$out/subaccount-untrusted/stdout.log" 2>"$out/subaccount-untrusted/stderr.log" || { echo "subaccount-untrusted: the grade failed"; tail -20 "$out/subaccount-untrusted/stderr.log"; exit 1; }
 grade plain "$probe" plain
+grade closed-maker "$probe" closed
+grade closed-taker "$probe/taker" closed
+mkdir -p "$out/closed-process-taker"
+"$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$probe/taker-process" --logs "$out/closed-process-taker/logs" \
+  --report "$out/closed-process-taker/report.json" "$out"/closed/*.json \
+  >"$out/closed-process-taker/stdout.log" 2>"$out/closed-process-taker/stderr.log" || { echo "closed-process-taker: the grade failed"; tail -20 "$out/closed-process-taker/stderr.log"; exit 1; }
+mkdir -p "$out/closed-subaccount"
+"$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$subprobe" --logs "$out/closed-subaccount/logs" \
+  --report "$out/closed-subaccount/report.json" "$out"/closed/*.json \
+  >"$out/closed-subaccount/stdout.log" 2>"$out/closed-subaccount/stderr.log" || { echo "closed-subaccount: the grade failed"; tail -20 "$out/closed-subaccount/stderr.log"; exit 1; }
 python3 -I - "$out" <<'PY'
 import json, sys
 out = sys.argv[1]
@@ -130,5 +148,57 @@ for name in ("subaccount-trusted", "subaccount-untrusted"):
         assert taking in (s["disqualified"] or ""), f"{name} {s['scenario']}: a take from a subaccount went unpunished"
 for s in sessions("plain"):
     assert "obligations" not in s and "refused_takes" not in s["turns"], "opt-in fields without opting in"
+# The close-out and the decomposition.
+FLAT = 5e-4
+def by_name(name):
+    return {s["scenario"]: s for s in sessions(name)}
+def check_closed(name, against):
+    # A closed-out session ends flat with its close-out fills forced, and its
+    # decomposition adds up to the PnL it reports.
+    base = by_name(against)
+    saw_close = False
+    for s in sessions(name):
+        tag = f"{name} {s['scenario']}"
+        d = s["decomposition"]
+        closes = [c for c in s.get("forced_closes", []) if c["reason"]["kind"] == "close_out"]
+        assert len(closes) == 1, f"{tag}: expected one close-out, got {len(closes)}"
+        close = closes[0]
+        assert abs(s["end_position"]) < FLAT, f"{tag}: not flat after the close-out ({s['end_position']})"
+        assert close["flat"], f"{tag}: the close-out says it left the account open"
+        forced = [f for f in s["making_fills"] if f["forced"]]
+        assert all(f["role"] == "taker" for f in forced), f"{tag}: a forced fill that rested"
+        assert d["close_out"]["fills"] == len(forced), f"{tag}: close-out fills {d['close_out']['fills']} vs forced {len(forced)}"
+        assert abs(d["close_out"]["residual_base"]) < FLAT
+        saw_close |= bool(forced)
+        assert taking not in (s["disqualified"] or ""), f"{tag}: the close-out was taken for a breach"
+        total = d["spread_capture_usd"] + d["taking_cost_usd"] - d["maker_fees_usd"] + d["inventory_usd"]
+        assert abs(total - s["pnl_usd"]) < 1e-6, f"{tag}: parts {total} vs pnl {s['pnl_usd']}"
+        assert abs(d["pnl_usd"] - s["pnl_usd"]) < 1e-9
+        assert abs(d["unexplained_usd"]) < 0.01 + 1e-4 * abs(s["pnl_usd"]), f"{tag}: unexplained {d['unexplained_usd']}"
+        assert [m.get("horizon_slots") for m in d["markouts"]] == [2, 20, 120, None], f"{tag}: markout horizons"
+        for m in d["markouts"]:
+            assert abs(m["realized_spread_usd"] - (d["spread_capture_usd"] + m["markout_usd"])) < 1e-9
+        assert d["uptime"] is not None and abs(d["uptime"] - s["obligations"]["uptime"]) < 1e-12
+        other = base[s["scenario"]]
+        cost = d["close_out"]["cost_usd"]
+        residual = s["pnl_usd"] - (other["pnl_usd"] - cost)
+        print(f"{tag}: pnl {s['pnl_usd']:.4f} (without the close-out {other['pnl_usd']:.4f}); close-out {d['close_out']['fills']} fills "
+              f"{d['close_out']['base']:.3f} base, cost {cost:.4f} (slippage {d['close_out']['slippage_usd']:.4f} fees {d['close_out']['fees_usd']:.4f}); "
+              f"S {d['spread_capture_usd']:.4f} M {[round(m['markout_usd'], 4) for m in d['markouts']]} T {d['taking_cost_usd']:.4f} "
+              f"V {d['inventory_usd']:.4f} (jump {d['inventory_jump_usd']:.4f} walk {d['inventory_walk_usd']:.4f}) unexplained {d['unexplained_usd']:.5f} "
+              f"uptime {d['uptime']:.3f}; pnl less (without - cost) {residual:.5f}")
+        assert abs(residual) < 0.05, f"{tag}: the close-out changed more than its cost ({residual})"
+        assert "decomposition" not in other and not [c for c in other.get("forced_closes", []) if c["reason"]["kind"] == "close_out"], f"{tag}: opt-in leaked"
+    return saw_close
+assert check_closed("closed-maker", "maker"), "no maker session had anything to close out"
+check_closed("closed-taker", "taker")
+check_closed("closed-process-taker", "process-taker")
+for s in sessions("closed-subaccount"):
+    # The close-out can't hide a subaccount's take: the audit still finds it.
+    assert taking in (s["disqualified"] or ""), f"closed-subaccount {s['scenario']}: a take from a subaccount went unpunished"
+    assert "decomposition" in s
+for name in ("maker", "plain"):
+    for s in sessions(name):
+        assert "decomposition" not in s and not s.get("forced_closes"), f"{name}: close-out fields without opting in"
 print("MAKING_MANDATE_SMOKE_OK")
 PY

@@ -27,10 +27,10 @@
 //!
 //! Reported, not scored.
 
+use mtx_core::Side;
 use serde::{Deserialize, Serialize};
 
 use crate::{making::MakingFill, scenario::Waypoint};
-use mtx_core::Side;
 
 /// The markout horizons, in slots; `None` is the session's end.
 pub const HORIZONS: [Option<u64>; 4] = [Some(2), Some(20), Some(120), None];
@@ -246,7 +246,12 @@ fn held_through_moves(session: &Session) -> (f64, f64) {
         })
         .collect();
     let center = median(&mut changes.clone());
-    let spread = median(&mut changes.iter().map(|c| (c - center).abs()).collect::<Vec<_>>());
+    let spread = median(
+        &mut changes
+            .iter()
+            .map(|c| (c - center).abs())
+            .collect::<Vec<_>>(),
+    );
     let scale = (1.4826 * spread).max(MIN_MOVE_SCALE_PCT);
     let mut ordered: Vec<&MakingFill> = session.fills.iter().collect();
     ordered.sort_by_key(|f| f.at.min(session.end_at));
@@ -316,13 +321,13 @@ mod tests {
     }
 
     /// The PnL a set of fills leaves from `start_position`, valued at the
-    /// level at the session's end, slot 100.
+    /// level at the session's end, slot 100, from a start mark of 100.
     fn pnl(fills: &[MakingFill], path: &[Waypoint], start_position: f64) -> f64 {
         fills
             .iter()
             .map(|f| sign(f.side) * f.base * (level(path, 100) - f.price) - f.fee_usd)
             .sum::<f64>()
-            + start_position * (level(path, 100) - level(path, 0))
+            + start_position * (level(path, 100) - 100.0)
     }
 
     fn session<'a>(fills: &'a [MakingFill], path: &'a [Waypoint], pnl_usd: f64) -> Session<'a> {
