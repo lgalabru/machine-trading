@@ -103,10 +103,25 @@ pub struct Scenario {
     /// how they fail (see [`crate::oracles`]). Without it, none are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oracles: Option<crate::oracles::Oracles>,
+    /// A lending session's reserves, wallet, borrowers and liquidators
+    /// (see [`crate::lending`]). With it, the session runs on Kamino.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lending: Option<crate::lending::Lending>,
+    /// Jumps of the session's clock, for interest over days (see
+    /// [`crate::lending::Warp`]). Lending sessions only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warps: Vec<crate::lending::Warp>,
     /// PnL the reference bot makes on this scenario; a score of 1 matches it.
     /// Written by `mtx calibrate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_pnl_usd: Option<f64>,
+    /// PnL the task's informed bot makes on this scenario: scoring v2's 1
+    /// (see [`crate::scoring_v2`]). It knows everything the task's data could
+    /// tell (the informed takers, the regime, the fair-value model, the
+    /// funding process, the costs) but not the session's randomness. Written
+    /// by `mtx calibrate --informed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub informed_pnl_usd: Option<f64>,
     /// Opt-in: the scenario's fair value, as waypoints in the same terms as
     /// [`Scenario::path`]. The session records it at every step, and the
     /// grade reports each session's PnL split by
@@ -313,9 +328,9 @@ impl Scenario {
 
     /// The mandate's position cap on the scenario's market. In a spot
     /// session, the largest of the spot markets' caps: they all bound the
-    /// same base asset.
+    /// same base asset. In a lending session, the largest reserve's.
     pub fn max_position(&self) -> f64 {
-        if self.spot.is_some() {
+        if self.spot.is_some() || self.lending.is_some() {
             return self
                 .mandate
                 .universe
@@ -373,6 +388,9 @@ impl Scenario {
     pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
         if let Some(spot) = &self.spot {
             return spot.bound_usd.unwrap_or(0.0);
+        }
+        if let Some(lending) = &self.lending {
+            return lending.bound_usd.unwrap_or(0.0);
         }
         let spread = self.making.as_ref().map_or(0.0, |making| {
             making.spread_bound_usd(&self.path, start_mark_usd)
@@ -879,10 +897,13 @@ impl ShockFamily {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: marked.then(|| {
                 vec![Waypoint {
                     slot: shock_slot,
@@ -1599,10 +1620,13 @@ mod tests {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,
@@ -1669,10 +1693,13 @@ mod tests {
             takers_pricing: None,
             turn_data: None,
             oracles: None,
+            lending: None,
+            warps: Vec::new(),
             order: None,
             participation: None,
             net: None,
             reference_pnl_usd: None,
+            informed_pnl_usd: None,
             fair_path: None,
             market_model: None,
             raw_sends: None,

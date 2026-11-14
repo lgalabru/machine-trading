@@ -11,8 +11,9 @@ python3 -I calibration/fitter/run.py --from-archive <raw dir | calibration-raw-2
 python3 -I calibration/fitter/run.py --fetch --out <dir>
 ```
 
-`--asset sol-usd|spcx` limits a run to one file; the default is every
-`assets/*.toml`.
+`--asset sol-usd|spcx|nvda|tsla|spy|qqq` limits a run to one file, and
+`--asset equity` to the equity perps; the default is every `assets/*.toml`
+whose inputs the archive holds. `--cache <dir>` sets where `--fetch` downloads.
 
 ## From the archive
 
@@ -24,7 +25,8 @@ with an error if the id differs. The shipped files are reproduced byte for
 byte.
 
 The archive is a deterministic `.tar.gz` of the raw folder, named by SHA-256 in
-`archive.json`. It is kept outside git, as the raw data rule requires. Build one
+`archive.json` (SOL and SPCX, pulled 2026-11-11) or `archive-tickers.json` (NVDA,
+TSLA, SPY and QQQ, pulled 2026-11-13). `run.py` finds the entry by the tarball's file name. It is kept outside git, as the raw data rule requires. Build one
 from a raw folder with `python3 -I calibration/fitter/pack.py <raw dir> <out.tar.gz>`.
 
 ## Layout
@@ -42,9 +44,27 @@ from a raw folder with `python3 -I calibration/fitter/pack.py <raw dir> <out.tar
 | `calib/export_v1.py` | Stage 2: fits the model to the realism windows and writes the 1.x file |
 | `calib/facts.py`, `calib/generate.py` | The stylized-fact comparison helpers |
 | `calib/toml_out.py` | A small TOML writer |
+| `tickers/equity.py` | The equity perps: the SPCX fit driven by `assets/<asset>.toml`, with fitted regimes and a gap fallback |
+| `archive-tickers.json` | The archived ticker pull |
+
+## Equity perps
+
+An asset config with `kind = "equity"` is fitted by `tickers/equity.py` from
+Phoenix's 1 m mark candles and `/exchange` alone (Pyth history is not keyless).
+Its keys: the pull window (`pull_from`, `pull_to`), the fit window (`fit_from`),
+the venue-stats start (`venue_from`), `regime_min_days` (two volatility states
+at or above it, one below), `min_sessions` (the open gap is fitted at or above
+it, and else scaled from `gap_fallback`'s) and, for a reproducible rerun, the
+pins (`fit_date`, `fitted_at`, `expected_id`).
+
+To refit after a new pull: `run.py --fetch --asset equity --cache <dir>`, pack
+`<dir>/raw` with `pack.py`, record the tarball in an `archive*.json`, set the pins
+from the fetch run and check that `--from-archive` reproduces it.
 
 ## Ids
 
 A file's id is `<asset>.<date>.<hash>`; the hash covers the inputs' SHA-256s and
-`calibration/fitter/calib/*.py`. Changing the fitter's code makes a new id on
-the next fit, by design, so keep changes to `calib/` for a refit.
+the fitter's code: `calibration/fitter/calib/*.py` for SOL and SPCX, and for the
+equity perps `calib/*.py` and `tickers/*.py` together. Changing the fitter's code
+makes a new id on the next fit, by design, so `calib/` stays as it is: it holds the
+code the shipped SOL and SPCX ids were made with.
