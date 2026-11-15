@@ -692,44 +692,62 @@ impl Seed<'_> {
 }
 
 /// What the scenario tells a perp session's bot beyond the runtime
-/// contract, as session variables: `MTX_START_POSITIONS`, its starting
-/// positions (`{symbol: base units}`); `MTX_ORDER`, its order without the
-/// haircut, with `MTX_BROKER_HAIRCUT_BPS`; and `MTX_CLOSE_OUT`, each
-/// close-out's haircut (`{symbol: bps}`). Each only when the scenario has
-/// it.
+/// contract, as session variables, each written as the kit's bot-facing
+/// type writes it: its starting positions ([`mtx_kit::StartPositions`]),
+/// its order ([`mtx_kit::SessionOrder`]) with the broker's haircut
+/// ([`mtx_kit::BrokerHaircut`]), and the markets a broker closes out
+/// ([`mtx_kit::CloseOuts`]), each market named as the mandate names it.
+/// Each only when the scenario has it.
 fn session_vars(scenario: &Scenario) -> Result<Vec<(String, String)>> {
+    // The scenario keys its start positions and close-outs by the perp's
+    // symbol on its own venue.
+    let perp = |symbol: &String| InstrumentRef {
+        venue: crate::scenario::VENUE.into(),
+        kind: mtx_core::mandate::Kind::Perp,
+        symbol: symbol.clone(),
+    };
     let mut vars = Vec::new();
     if !scenario.start_positions.is_empty() {
+        let positions = mtx_kit::StartPositions(
+            scenario
+                .start_positions
+                .iter()
+                .map(|(symbol, &quantity)| (perp(symbol), quantity))
+                .collect(),
+        );
         vars.push((
-            "MTX_START_POSITIONS".to_string(),
-            serde_json::to_string(&scenario.start_positions)?,
+            mtx_kit::StartPositions::VAR.to_string(),
+            positions.to_var()?,
         ));
     }
     if let Some(order) = &scenario.order {
-        let mut order = order.clone();
-        order
-            .instrument
-            .get_or_insert_with(|| scenario.instrument());
-        let mut told = serde_json::to_value(&order)?;
-        if let Some(fields) = told.as_object_mut() {
-            fields.remove("haircut_bps");
-        }
-        vars.push(("MTX_ORDER".to_string(), told.to_string()));
+        let told = mtx_kit::SessionOrder {
+            instrument: order
+                .instrument
+                .clone()
+                .unwrap_or_else(|| scenario.instrument()),
+            side: match order.side {
+                CoreSide::Buy => mtx_kit::Side::Bid,
+                CoreSide::Sell => mtx_kit::Side::Ask,
+            },
+            quantity: order.quantity,
+            reduce_only: order.reduce_only,
+        };
+        vars.push((mtx_kit::SessionOrder::VAR.to_string(), told.to_var()?));
         vars.push((
-            "MTX_BROKER_HAIRCUT_BPS".to_string(),
-            order.haircut_bps.to_string(),
+            mtx_kit::BrokerHaircut::VAR.to_string(),
+            mtx_kit::BrokerHaircut(order.haircut_bps).to_var()?,
         ));
     }
     if !scenario.close_out.is_empty() {
-        let haircuts: std::collections::BTreeMap<&String, f64> = scenario
-            .close_out
-            .iter()
-            .map(|(symbol, close_out)| (symbol, close_out.haircut_bps))
-            .collect();
-        vars.push((
-            "MTX_CLOSE_OUT".to_string(),
-            serde_json::to_string(&haircuts)?,
-        ));
+        let close_outs = mtx_kit::CloseOuts(
+            scenario
+                .close_out
+                .iter()
+                .map(|(symbol, close_out)| (perp(symbol), close_out.haircut_bps))
+                .collect(),
+        );
+        vars.push((mtx_kit::CloseOuts::VAR.to_string(), close_outs.to_var()?));
     }
     Ok(vars)
 }
@@ -984,10 +1002,13 @@ impl PerpAccount {
                 .await
                 .map_err(|e| failed(e.to_string()))?
                 .ok_or_else(|| failed(format!("transaction {signature} not found")))?;
-            records.add_transaction(&summary, &market);
+            records
+                .add_transaction(&summary, &market)
+                .map_err(|e| failed(e.to_string()))?;
         }
         let forced: HashSet<FillId> = records
-            .fills_for(&[self.meter.trader()])
+            .for_traders(&[self.meter.trader()])
+            .fills
             .into_iter()
             .map(|recorded| recorded.fill.id)
             .collect();
@@ -1717,7 +1738,7 @@ mod tests {
         });
         let vars: std::collections::BTreeMap<String, String> =
             session_vars(&scenario).unwrap().into_iter().collect();
-        assert_eq!(vars["MTX_START_POSITIONS"], r#"{"SPCX":-2.5}"#);
+        assert_eq!(vars["MTX_START_POSITIONS"], r#"{"phoenix:perp:SPCX":-2.5}"#);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&vars["MTX_ORDER"]).unwrap(),
             serde_json::json!({
@@ -1734,7 +1755,7 @@ mod tests {
             .insert("SPCX".into(), crate::orders::CloseOut { haircut_bps: 12.5 });
         let vars: std::collections::BTreeMap<String, String> =
             session_vars(&scenario).unwrap().into_iter().collect();
-        assert_eq!(vars["MTX_CLOSE_OUT"], r#"{"SPCX":12.5}"#);
+        assert_eq!(vars["MTX_CLOSE_OUT"], r#"{"phoenix:perp:SPCX":12.5}"#);
     }
 
     #[tokio::test]
