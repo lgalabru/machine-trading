@@ -64,7 +64,9 @@ impl Strategy for Naive {
                     // A tick inside the maker's bid as it first stood: its
                     // own resting bid may be the best one now.
                     let half = *self.half.get_or_insert_with(|| {
-                        market.best_ask.map_or(5.0, |ask| (ask / market.oracle - 1.0) * 10_000.0)
+                        market
+                            .best_ask
+                            .map_or(5.0, |ask| (ask / market.oracle - 1.0) * 10_000.0)
                     });
                     let bid = market.oracle * (1.0 - half / 10_000.0);
                     let price = round_down_cents((bid + 0.01).min(cap));

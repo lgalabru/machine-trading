@@ -376,7 +376,13 @@ impl AccumulateFamily {
 
     /// A taker order: size, limit and account drawn alike for noise, bursts
     /// and fake-outs.
-    fn order(&self, rng: &mut SplitMix64, slot: u64, side: TakerSide, maker_bps: f64) -> TakerOrder {
+    fn order(
+        &self,
+        rng: &mut SplitMix64,
+        slot: u64,
+        side: TakerSide,
+        maker_bps: f64,
+    ) -> TakerOrder {
         let (lo, hi) = self.size_clamp;
         let size = (self.size_median * (self.size_sigma * rng.normal()).exp()).clamp(lo, hi);
         let (llo, lhi) = self.limit_clamp;
@@ -448,7 +454,11 @@ fn lay_move(path: &mut ModelPath, onset: u64, ramp: u64, size_pct: f64, steps: &
             continue;
         }
         let done = ((slot - onset) * n / ramp.max(1)).min(n);
-        let share = if done == 0 { 0.0 } else { steps[done as usize - 1] };
+        let share = if done == 0 {
+            0.0
+        } else {
+            steps[done as usize - 1]
+        };
         *level += lift * share;
     }
 }

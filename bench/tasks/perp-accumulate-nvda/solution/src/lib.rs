@@ -211,9 +211,7 @@ impl Strategy for Accumulator {
         let caught = (delta - bought).max(0.0);
         self.held = held;
         self.sent = 0.0;
-        let ask_bps = market
-            .best_ask
-            .map(|ask| (ask / oracle - 1.0) * 10_000.0);
+        let ask_bps = market.best_ask.map(|ask| (ask / oracle - 1.0) * 10_000.0);
         self.flow.update(slot, ask_bps, bought, caught);
         let (z, lean) = self.flow.z();
 
