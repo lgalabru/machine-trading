@@ -172,15 +172,40 @@ fn shaped<S: serde::Serialize>(
     })
 }
 
-/// A shock's kind: which way, in how many legs, and whether its aftermath
-/// reverts, stalls or extends. Not how far a leg goes, when it comes or
-/// where the aftermath ends.
-fn shock_latent(shape: &Shape) -> Value {
-    json!({
-        "direction": shape.direction,
-        "aftermath": shape.aftermath,
-        "legs": shape.legs,
-    })
+/// Why a field of a session's latent state is knowable in principle
+/// (WAVE2_11 Part B, change 8), and so may be told to the informed bot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Knowable {
+    /// Who the actors are: whether an informed trader or a one-sided worker
+    /// is seated, and from which of the grader's accounts.
+    Identity,
+    /// The process the session's randomness is drawn from: the funding
+    /// process, the informed share and lags, the impact and noise curves.
+    Process,
+}
+
+/// Every field a family's latent state holds, and why it is knowable. A
+/// session's realised draws (where a shock goes, which way flow trades, when
+/// an episode or an order comes) are its future, and never here.
+pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
+    ("funding-carry", "informed_share", Knowable::Process),
+    ("funding-carry", "lag_slots", Knowable::Process),
+    ("funding-carry", "hold_slots", Knowable::Process),
+    ("funding-carry", "funding", Knowable::Process),
+    ("funding-carry", "cap_pct", Knowable::Process),
+    ("funding-carry", "noise_pct", Knowable::Process),
+    ("weekend-gap", "informed", Knowable::Identity),
+    ("weekend-gap", "informed_account", Knowable::Identity),
+    ("weekend-gap", "worker", Knowable::Identity),
+    ("weekend-gap", "worker_account", Knowable::Identity),
+    ("weekend-gap", "impact_pct", Knowable::Process),
+    ("weekend-gap", "half_life_slots", Knowable::Process),
+];
+
+/// Nothing: a session's shock (its direction, legs and aftermath) is the
+/// one draw that makes it, so all of it is the session's future.
+fn shock_latent(_: &Shape) -> Value {
+    json!({})
 }
 
 /// The session's funding process and how its episodes behave: the informed
@@ -198,16 +223,16 @@ fn carry_latent(shape: &CarryShape) -> Value {
     })
 }
 
-/// Who is who: whether an informed trader and a one-sided worker trade,
-/// from which accounts and (the worker) which way, and the impact curve.
-/// Not where the weekend took the market, when anyone trades, or the path.
+/// Who is who: whether an informed trader and a one-sided worker are
+/// seated, from which accounts, and the impact curve. Not which way the
+/// worker trades, where the weekend took the market, when anyone trades, or
+/// the path.
 fn weekend_latent(shape: &WeekendShape) -> Value {
     json!({
         "informed": shape.informed,
         "informed_account": shape.informed_account,
         "worker": shape.worker,
         "worker_account": shape.worker_account,
-        "worker_side": shape.worker_side,
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
     })
@@ -259,89 +284,86 @@ mod tests {
     }
 
     /// The informed bot is told the session's latent state and nothing of
-    /// its future: each family's latent fields are exactly these, and every
-    /// field it leaves out is one that says where the session goes.
+    /// its future. Every latent field is either classified as knowable in
+    /// principle ([`LATENT_FIELDS`]) or a family constant, the same in every
+    /// session: a field that changes from session to session and isn't an
+    /// actor's identity or the process is one of the session's draws.
     #[test]
     fn the_latent_state_is_the_regime_and_never_the_future() {
-        let fields = |name: &str| -> (Vec<String>, Vec<String>) {
-            let hidden = (generator(name).unwrap().hidden)(6, 11, true).unwrap();
-            let keys = |text: &str| -> Vec<String> {
-                let mut keys: Vec<String> =
-                    serde_json::from_str::<serde_json::Map<String, Value>>(text)
-                        .unwrap()
-                        .keys()
-                        .cloned()
-                        .collect();
-                keys.sort();
-                keys
-            };
-            let latent = keys(&hidden.latent[0]);
-            for other in &hidden.latent {
-                assert_eq!(keys(other), latent, "{name}");
+        for g in GENERATORS {
+            let hidden = (g.hidden)(64, 11, true).unwrap();
+            let latent: Vec<serde_json::Map<String, Value>> = hidden
+                .latent
+                .iter()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            let classified: Vec<&str> = LATENT_FIELDS
+                .iter()
+                .filter(|(family, ..)| *family == g.name)
+                .map(|(_, field, _)| *field)
+                .collect();
+            for session in &latent {
+                for (field, value) in session {
+                    let constant = latent.iter().all(|other| other.get(field) == Some(value));
+                    assert!(
+                        classified.contains(&field.as_str()) || constant,
+                        "{}: `{field}` is a draw of the session, not knowable in principle",
+                        g.name
+                    );
+                }
             }
-            let regime = keys(&hidden.regimes.unwrap()[0]);
-            let withheld = regime.into_iter().filter(|k| !latent.contains(k)).collect();
-            (latent, withheld)
-        };
-        let sorted = |keys: &[&str]| -> Vec<String> {
-            let mut keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
-            keys.sort();
-            keys
-        };
-        assert_eq!(
-            fields("flash-crash"),
-            (
-                sorted(&["aftermath", "direction", "legs"]),
-                sorted(&[
-                    "cut",
-                    "end_pct",
-                    "extreme_pct",
-                    "first_leg_pct",
-                    "tail_slots"
-                ])
-            )
-        );
-        assert_eq!(
-            fields("funding-carry"),
-            (
-                sorted(&[
-                    "cap_pct",
-                    "funding",
-                    "hold_slots",
-                    "informed_share",
-                    "lag_slots",
-                    "noise_pct"
-                ]),
-                sorted(&["episodes"])
-            )
-        );
-        assert_eq!(
-            fields("weekend-gap"),
-            (
-                sorted(&[
-                    "half_life_slots",
-                    "impact_pct",
-                    "informed",
-                    "informed_account",
-                    "worker",
-                    "worker_account",
-                    "worker_side"
-                ]),
-                sorted(&[
-                    "informed_slots",
-                    "open_pct",
-                    "path",
-                    "permanent_pct",
-                    "weekend_pct",
-                    "worker_slots"
-                ])
-            )
-        );
-        // Market making's regime is the informed orders, each its own draw:
-        // nothing of it is latent.
-        for name in ["market-making", "market-making-v2"] {
-            let hidden = (generator(name).unwrap().hidden)(6, 11, false).unwrap();
-            assert!(hidden.latent.iter().all(|l| l == "{}"), "{name}");
+            // Each classified field is in the latent state, and none of the
+            // regime's other fields (the oracles' tell) is.
+            // (Market making's regime is a list of orders: no fields.)
+            let regime: serde_json::Map<String, Value> = hidden
+                .regimes
+                .as_ref()
+                .and_then(|r| serde_json::from_str(&r[0]).ok())
+                .unwrap_or_default();
+            for field in &classified {
+                assert!(latent[0].contains_key(*field), "{}: {field}", g.name);
+            }
+            for field in regime.keys() {
+                assert!(
+                    classified.contains(&field.as_str()) || !latent[0].contains_key(field),
+                    "{}: {field}",
+                    g.name
+                );
+            }
         }
+        // The draws themselves are withheld: a shock's direction, legs and
+        // aftermath, and which way weekend-gap's worker trades.
+        let latent = |name: &str| {
+            (generator(name).unwrap().hidden)(8, 3, false)
+                .unwrap()
+                .latent
+        };
+        assert!(latent("flash-crash").iter().all(|l| l == "{}"));
+        assert!(
+            latent("weekend-gap")
+                .iter()
+                .all(|l| !l.contains("worker_side"))
+        );
+        for name in ["market-making", "market-making-v2"] {
+            assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
+        }
+    }
+
+    /// The check above would catch a draw handed over: a shock's direction
+    /// varies from session to session and is classified as nothing.
+    #[test]
+    fn a_shock_s_direction_is_a_draw() {
+        let drawn = ShockFamily::spcx().draw_set("hidden", 64, 11);
+        let first = serde_json::to_value(drawn[0].1.direction).unwrap();
+        assert!(
+            drawn
+                .iter()
+                .any(|(_, shape)| serde_json::to_value(shape.direction).unwrap() != first)
+        );
+        assert!(
+            !LATENT_FIELDS
+                .iter()
+                .any(|(family, ..)| *family == "flash-crash")
+        );
     }
 }
