@@ -12,6 +12,9 @@
 //! named by the venue's symbol (`NVDA`), quantities are in base units and
 //! haircuts in basis points.
 //!
+//! The helpers are `#[inline]`, so they are compiled only into a bot that
+//! calls them: a bot that doesn't builds as it did before they existed.
+//!
 //! [`SESSION_VARS`]: crate::SESSION_VARS
 
 use std::collections::BTreeMap;
@@ -31,6 +34,7 @@ pub struct SessionVarError {
 }
 
 impl SessionVarError {
+    #[inline]
     fn new(var: &'static str, detail: impl Into<String>) -> Self {
         Self {
             var,
@@ -51,6 +55,7 @@ impl StartPositions {
     pub const VAR: &'static str = "MTX_START_POSITIONS";
 
     /// Reads the variable's text: every quantity finite.
+    #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let positions: Self = from_json(Self::VAR, text)?;
         for (symbol, quantity) in &positions.0 {
@@ -65,11 +70,13 @@ impl StartPositions {
     }
 
     /// The variable's text.
+    #[inline]
     pub fn to_var(&self) -> String {
         to_json(self)
     }
 
     /// The starting position in `symbol`, in base units: 0 if not named.
+    #[inline]
     pub fn get(&self, symbol: &str) -> f64 {
         self.0.get(symbol).copied().unwrap_or(0.0)
     }
@@ -100,6 +107,7 @@ impl SessionOrder {
     pub const VAR: &'static str = "MTX_ORDER";
 
     /// Reads the variable's text: a positive, finite quantity.
+    #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let order: Self = from_json(Self::VAR, text)?;
         if !(order.quantity.is_finite() && order.quantity > 0.0) {
@@ -112,6 +120,7 @@ impl SessionOrder {
     }
 
     /// The variable's text.
+    #[inline]
     pub fn to_var(&self) -> String {
         to_json(self)
     }
@@ -130,6 +139,7 @@ impl BrokerHaircut {
 
     /// Reads the variable's text: a finite number of basis points, at
     /// least 0.
+    #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let bps: f64 = text
             .trim()
@@ -145,11 +155,13 @@ impl BrokerHaircut {
     }
 
     /// The variable's text.
+    #[inline]
     pub fn to_var(&self) -> String {
         self.0.to_string()
     }
 
     /// The haircut as a fraction: 30 bps is 0.003.
+    #[inline]
     pub fn fraction(&self) -> f64 {
         self.0 / 10_000.0
     }
@@ -167,6 +179,7 @@ impl CloseOuts {
     pub const VAR: &'static str = "MTX_CLOSE_OUT";
 
     /// Reads the variable's text: every haircut finite and at least 0.
+    #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let close_outs: Self = from_json(Self::VAR, text)?;
         for (symbol, bps) in &close_outs.0 {
@@ -181,11 +194,13 @@ impl CloseOuts {
     }
 
     /// The variable's text.
+    #[inline]
     pub fn to_var(&self) -> String {
         to_json(self)
     }
 
     /// The haircut a broker closes `symbol` out at, if it does.
+    #[inline]
     pub fn haircut(&self, symbol: &str) -> Option<BrokerHaircut> {
         self.0.get(symbol).copied().map(BrokerHaircut)
     }
@@ -194,12 +209,14 @@ impl CloseOuts {
 impl Session {
     /// The positions the session starts the account with: none if the
     /// task sets none.
+    #[inline]
     pub fn start_positions(&self) -> Result<StartPositions, SessionVarError> {
         self.var(StartPositions::VAR)
             .map_or(Ok(StartPositions::default()), StartPositions::parse)
     }
 
     /// The order the session asks the bot to work, if any.
+    #[inline]
     pub fn order(&self) -> Result<Option<SessionOrder>, SessionVarError> {
         self.var(SessionOrder::VAR)
             .map(SessionOrder::parse)
@@ -208,6 +225,7 @@ impl Session {
 
     /// The broker's haircut on what the order leaves undone, if the
     /// session has an order.
+    #[inline]
     pub fn broker_haircut(&self) -> Result<Option<BrokerHaircut>, SessionVarError> {
         self.var(BrokerHaircut::VAR)
             .map(BrokerHaircut::parse)
@@ -216,6 +234,7 @@ impl Session {
 
     /// The markets a broker closes out at the end: none if the task sets
     /// none.
+    #[inline]
     pub fn close_outs(&self) -> Result<CloseOuts, SessionVarError> {
         self.var(CloseOuts::VAR)
             .map_or(Ok(CloseOuts::default()), CloseOuts::parse)
