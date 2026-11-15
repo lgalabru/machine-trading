@@ -7,5 +7,8 @@ ENV MTX_SNAPSHOT=/opt/mtx/snapshots/phoenix-perps-2026-11-13
 # otherwise identical, and BuildKit building two at once has put one task's
 # files into the other's image (2026-11-11). test.sh checks it.
 ENV MTX_TASK=perp-accumulate-nvda
+# mtx-practice grades practice with the verifier's scoring (tests/test.sh),
+# written by `mtx task sync`.
+ENV MTX_PRACTICE_SCORING="--scoring v2-headline --v2-sessions"
 COPY practice/ /opt/mtx/practice/
 WORKDIR /app
