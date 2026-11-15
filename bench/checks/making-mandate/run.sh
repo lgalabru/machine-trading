@@ -165,7 +165,7 @@ def check_closed(name, against):
         close = closes[0]
         assert abs(s["end_position"]) < FLAT, f"{tag}: not flat after the close-out ({s['end_position']})"
         assert close["flat"], f"{tag}: the close-out says it left the account open"
-        forced = [f for f in s["making_fills"] if f["forced"]]
+        forced = [f for f in s["making_fills"] if f.get("forced")]
         assert all(f["role"] == "taker" for f in forced), f"{tag}: a forced fill that rested"
         assert d["close_out"]["fills"] == len(forced), f"{tag}: close-out fills {d['close_out']['fills']} vs forced {len(forced)}"
         assert abs(d["close_out"]["residual_base"]) < FLAT
