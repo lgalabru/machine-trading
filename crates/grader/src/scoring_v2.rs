@@ -2179,7 +2179,7 @@ mod tests {
         assert!(none.metrics.raw_negative);
         assert_eq!((none.metrics.sessions, none.metrics.usd_lost), (0, 0.0));
 
-        let mut sessions = set(&[120.0, -30.0, 50.0, -10.0, 20.0, 0.0], &REFERENCE);
+        let mut sessions = set(&[300.0, -30.0, 250.0, -10.0, 220.0, 0.0], &REFERENCE);
         sessions[1].breach = Some("drew down past its limit".into());
         let honest = score(&sessions, &informed(), None, None).unwrap();
         assert!(!honest.metrics.raw_negative);
@@ -2248,7 +2248,8 @@ mod tests {
             &REFERENCE_DD,
         );
         sessions[1].breach = Some("drew down past its limit".into());
-        let m = score(&sessions, &informed(), None, None).unwrap().metrics;
+        let graded = score(&sessions, &informed(), None, None).unwrap();
+        let m = graded.metrics.clone();
         assert_eq!(m.sessions, 6);
         // 130 over six sessions of 10,000.
         assert!((m.return_on_capital - 130.0 / 6.0 / 10_000.0).abs() < 1e-15);
@@ -2268,7 +2269,10 @@ mod tests {
         assert_eq!(m.losing_sessions, 2);
         assert_eq!(m.usd_lost, 40.0);
         assert!((m.breaches_per_100_sessions - 100.0 / 6.0).abs() < 1e-12);
-        assert!(!m.raw_negative);
+        // The breach penalty (one in six sessions) takes this set below doing
+        // nothing.
+        assert!(graded.raw + graded.breach_penalty >= 0.0);
+        assert!(graded.raw < 0.0 && m.raw_negative);
         // One session, or all alike: no Sharpe.
         let flat = score(&set(&[10.0; 6], &REFERENCE), &informed(), None, None).unwrap();
         assert_eq!(flat.metrics.sharpe, None);

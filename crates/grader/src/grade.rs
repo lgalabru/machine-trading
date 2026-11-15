@@ -1965,8 +1965,8 @@ mod tests {
     }
 
     /// The reference levered past its limit: it earns more where it holds,
-    /// and the risk desk stops it out now and then. Under v2 it never beats
-    /// the same strategy sized to comply.
+    /// and the risk desk stops it out now and then. The breach penalty
+    /// prices breaches by their rate; it doesn't cap the run.
     #[test]
     fn an_occasional_breacher_stopped_out_scores_below_its_compliant_twin() {
         let s = scenario(Some(20.0));
@@ -1979,27 +1979,35 @@ mod tests {
         };
         let mut compliant = score(twin());
         compliant.score_v2(&v2()).unwrap();
-        for stops in [1, 2] {
-            let mut levered: Vec<(SessionReport, &Scenario)> =
-                twin_pnl.iter().map(|p| (session(p * 3.0), &s)).collect();
-            for (session, _) in levered.iter_mut().skip(2).take(stops) {
+        let c = compliant.v2.as_ref().unwrap().clone();
+        let levered = |lever: f64, stops: usize| {
+            let mut sessions: Vec<(SessionReport, &Scenario)> =
+                twin_pnl.iter().map(|p| (session(p * lever), &s)).collect();
+            for (session, _) in sessions.iter_mut().skip(2).take(stops) {
                 *session = stopped_out(-1_050.0);
             }
-            let mut breacher = score(levered);
+            let mut breacher = score(sessions);
             breacher.score_v2(&v2()).unwrap();
-            let (b, c) = (
-                breacher.v2.as_ref().unwrap(),
-                compliant.v2.as_ref().unwrap(),
-            );
+            breacher.v2.unwrap()
+        };
+        for stops in [1, 2] {
+            let b = levered(2.5, stops);
             assert!(b.raw < c.raw, "{stops} stop-outs: {} vs {}", b.raw, c.raw);
             let rate = stops as f64 / 6.0;
             assert!((b.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT * rate).abs() < 1e-15);
             if stops == 1 {
-                // Levering paid in USD (5,400 − 1,575 against 2,000): the
+                // Levering paid in USD (4,500 − 1,575 against 2,000): the
                 // breach penalty is what keeps it below its twin.
                 assert!(b.bot_usd > c.bot_usd);
+                assert!(b.raw + b.breach_penalty > c.raw);
             }
         }
+        // The limit, stated: tripling every session's PnL and breaching in
+        // one session of six earns more than the penalty takes. On the
+        // tasks' own paths, levering that far breaches far more often; the
+        // probe gate checks that the breacher stays below its twin there.
+        let tripled = levered(3.0, 1);
+        assert!(tripled.raw > c.raw);
     }
 
     #[test]
