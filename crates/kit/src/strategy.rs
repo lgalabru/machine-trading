@@ -183,6 +183,7 @@ impl VenueInfo {
     /// A perp session's venues: its own market, `symbol`'s perp in the
     /// mandate's universe (`phoenix:perp:<symbol>` if it names none), at
     /// `address`, which is the one it trades; and the universe's others.
+    /// [`VenueInfo::of_perp_markets`] on that one market.
     pub fn of_perp_session(
         mandate: &Mandate,
         symbol: &str,
@@ -200,47 +201,54 @@ impl VenueInfo {
                 kind: Kind::Perp,
                 symbol: symbol.into(),
             });
-        let mut venues = Self::of_mandate(mandate, &own, |instrument| *instrument == own);
-        venues[0].address = address;
-        venues
+        Self::of_perp_markets(mandate, [(own, address)])
     }
 
-    /// A session on several perp markets of one account: its primary
-    /// market, `primary`'s perp, first, then the rest of the mandate's
-    /// universe. Every Phoenix perp in the universe is tradable, at its
-    /// address in `addresses` (by symbol); anything else is listed and not
-    /// tradable. On one market, the same as
-    /// [`VenueInfo::of_perp_session`].
+    /// A session on one or more perp markets of one account: the markets
+    /// it trades, in the order given (its own first), each at its address,
+    /// then the rest of the mandate's universe, which it can't trade. The
+    /// session's own market is tradable, as its trader sends a line that
+    /// names no venue there whether or not the address is known; another
+    /// market given without an address is listed and not tradable, as the
+    /// session has nowhere to send its orders. A market given twice is
+    /// listed once, at its first address.
     pub fn of_perp_markets(
         mandate: &Mandate,
-        primary: &str,
-        addresses: &std::collections::BTreeMap<String, String>,
+        markets: impl IntoIterator<Item = (mtx_core::mandate::InstrumentRef, Option<String>)>,
     ) -> Vec<VenueInfo> {
-        use mtx_core::mandate::{InstrumentRef, Kind};
-        let perp = |instrument: &InstrumentRef| {
-            instrument.venue == "phoenix" && instrument.kind == Kind::Perp
-        };
-        let own = mandate
-            .universe
-            .iter()
-            .map(|allowance| &allowance.instrument)
-            .find(|i| perp(i) && i.symbol == primary)
-            .cloned()
-            .unwrap_or_else(|| InstrumentRef {
-                venue: "phoenix".into(),
-                kind: Kind::Perp,
-                symbol: primary.into(),
-            });
-        let mut venues = Self::of_mandate(mandate, &own, |instrument| {
-            *instrument == own || perp(instrument)
-        });
-        for venue in &mut venues {
-            if venue.tradable {
-                let symbol = venue.id.rsplit(':').next().unwrap_or_default();
-                venue.address = addresses.get(symbol).cloned();
+        let mut traded: Vec<(mtx_core::mandate::InstrumentRef, Option<String>)> = Vec::new();
+        for (instrument, address) in markets {
+            if !traded.iter().any(|(i, _)| *i == instrument) {
+                traded.push((instrument, address));
             }
         }
-        venues
+        let Some((first, _)) = traded.first() else {
+            return Self::of_mandate_universe(mandate);
+        };
+        let mut venues = Self::of_mandate(mandate, first, |_| false);
+        // The traded markets first, in the order given; the universe's
+        // others after them, in its order.
+        let mut listed: Vec<VenueInfo> = traded
+            .iter()
+            .enumerate()
+            .map(|(i, (instrument, address))| VenueInfo {
+                id: instrument.to_string(),
+                kind: instrument.kind.into(),
+                address: address.clone(),
+                tradable: i == 0 || address.is_some(),
+            })
+            .collect();
+        venues.retain(|v| !listed.iter().any(|l| l.id == v.id));
+        listed.append(&mut venues);
+        listed
+    }
+
+    /// The mandate's universe, once each, none tradable.
+    fn of_mandate_universe(mandate: &Mandate) -> Vec<VenueInfo> {
+        match mandate.universe.first() {
+            Some(first) => Self::of_mandate(mandate, &first.instrument.clone(), |_| false),
+            None => Vec::new(),
+        }
     }
 
     /// The mandate's universe, once each, with `first` (the session's own
@@ -285,19 +293,21 @@ pub fn phoenix_market_address(exchange: &str, symbol: &str) -> Option<String> {
 /// rung a reference plays, which only the benchmark's ladder hands a
 /// process bot; for a component in a session that enables raw sends, the
 /// programs they may run, base58, comma-separated; and a perp session's
-/// starting positions (JSON, `{symbol: base units}`), its execution order
-/// (JSON, without the haircut) and the order's broker haircut in basis
-/// points, and the haircut of each market a broker closes out (JSON,
-/// `{symbol: bps}`).
+/// markets, when it trades several ([`Session::perp_markets`]), its
+/// starting positions, the order it asks the bot to work and the broker's
+/// haircut on what is left of it, and the markets a broker closes out,
+/// which [`Session::start_positions`], [`Session::order`],
+/// [`Session::broker_haircut`] and [`Session::close_outs`] read as types.
 pub const SESSION_VARS: &[&str] = &[
     "MTX_REOPEN_SLOT",
     "MTX_REGIME",
     "MTX_RUNG",
     "MTX_RAW_PROGRAMS",
-    "MTX_START_POSITIONS",
-    "MTX_ORDER",
-    "MTX_BROKER_HAIRCUT_BPS",
-    "MTX_CLOSE_OUT",
+    crate::PerpMarkets::VAR,
+    crate::StartPositions::VAR,
+    crate::SessionOrder::VAR,
+    crate::BrokerHaircut::VAR,
+    crate::CloseOuts::VAR,
 ];
 
 impl Session {
@@ -310,12 +320,16 @@ impl Session {
     }
 }
 
-/// An order's side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// An order's side. In JSON, such as a session's order
+/// ([`SessionOrder`](crate::SessionOrder)), it is written `"buy"` or
+/// `"sell"`, as the mandate's `sides` and the scenario files write it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Side {
     /// Buy.
+    #[serde(rename = "buy")]
     Bid,
     /// Sell.
+    #[serde(rename = "sell")]
     Ask,
 }
 
@@ -1399,6 +1413,7 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
     let (planned, notes) = plan_lines(
         intents.iter().map(|i| (i, &DEFAULT_OPTIONS)),
         market,
+        &|_| None,
         &|_, _| true,
     );
     (planned.into_iter().map(|p| p.action).collect(), notes)
@@ -1407,7 +1422,8 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
 /// [`plan`], for a sheet's lines and their options. Each venue keeps its own
 /// count of position and resting orders: the session's own market starts
 /// from the market's, another from its [`VenueView`]'s position, with
-/// nothing resting. The cap is the mandate's on every venue.
+/// nothing resting. The cap is [`Market::cap`] on every venue:
+/// [`plan_sheet_under`] cuts each venue to its own cap in the mandate.
 ///
 /// - A reduce-only line is cut so that no fill can take the position past
 ///   zero, whatever else fills: the sheet's earlier orders that shrink the
@@ -1430,7 +1446,7 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
 ///   pacing, an amount or a price that isn't a number) is dropped, with a
 ///   note.
 pub fn plan_sheet(orders: &Orders, market: &Market) -> (Vec<Planned>, Vec<String>) {
-    plan_lines(orders.lines(), market, &|_, _| true)
+    plan_lines(orders.lines(), market, &|_| None, &|_, _| true)
 }
 
 /// [`plan_sheet`], for a session that executes only some of what a sheet
@@ -1443,13 +1459,40 @@ pub fn plan_sheet_with(
     market: &Market,
     executes: impl Fn(Option<&str>, &Action) -> bool,
 ) -> (Vec<Planned>, Vec<String>) {
-    plan_lines(orders.lines(), market, &executes)
+    plan_lines(orders.lines(), market, &|_| None, &executes)
+}
+
+/// [`plan_sheet_with`], with each venue's lines cut to that venue's own cap
+/// in `mandate`, as the mandate's audit holds each instrument to its own:
+/// the session's own market to [`Market::cap`], another venue the
+/// mandate's universe lists to its allowance's `max_position`, and one it
+/// doesn't list to [`Market::cap`]. A session on several markets, each with
+/// its own cap, plans with this.
+pub fn plan_sheet_under(
+    orders: &Orders,
+    market: &Market,
+    mandate: &Mandate,
+    executes: impl Fn(Option<&str>, &Action) -> bool,
+) -> (Vec<Planned>, Vec<String>) {
+    let cap = |venue: &str| {
+        // `@<address>` tells two markets of one instrument apart; the
+        // mandate names the instrument.
+        let instrument = venue.split('@').next().unwrap_or(venue);
+        mandate
+            .universe
+            .iter()
+            .find(|allowance| allowance.instrument.to_string() == instrument)
+            .map(|allowance| allowance.max_position)
+    };
+    plan_lines(orders.lines(), market, &cap, &executes)
 }
 
 /// One venue's count, as the planner goes down the sheet.
 #[derive(Clone)]
 struct Ledger {
     venue: Option<String>,
+    /// The venue's position cap, in base units.
+    cap: f64,
     /// The position if every order so far fills, and what rests each way.
     position: f64,
     bids: f64,
@@ -1462,9 +1505,11 @@ struct Ledger {
 }
 
 impl Ledger {
-    fn new(venue: Option<String>, position: f64, bids: f64, asks: f64) -> Self {
+    fn new(venue: Option<String>, cap: f64, position: f64, bids: f64, asks: f64) -> Self {
         Ledger {
             venue,
+            // A cap that isn't a number allows nothing.
+            cap: if cap >= 0.0 { cap } else { 0.0 },
             position,
             bids,
             asks,
@@ -1498,13 +1543,13 @@ impl Ledger {
 fn plan_lines<'a>(
     lines: impl IntoIterator<Item = (&'a Intent, &'a LineOptions)>,
     market: &Market,
+    caps: &dyn Fn(&str) -> Option<f64>,
     executes: &dyn Fn(Option<&str>, &Action) -> bool,
 ) -> (Vec<Planned>, Vec<String>) {
-    // A cap that isn't a number allows nothing.
-    let cap = if market.cap >= 0.0 { market.cap } else { 0.0 };
     let own = market.venues.first().map(|v| v.id.as_str());
     let mut ledgers = vec![Ledger::new(
         None,
+        market.cap,
         market.position.size,
         market.resting_bids,
         market.resting_asks,
@@ -1512,7 +1557,7 @@ fn plan_lines<'a>(
     let mut planned = Vec::new();
     let mut notes = Vec::new();
     let room = |l: &Ledger, side: Side| {
-        let (buy, sell) = mtx_core::mandate::position_room(cap, l.position, l.bids, l.asks);
+        let (buy, sell) = mtx_core::mandate::position_room(l.cap, l.position, l.bids, l.asks);
         match side {
             Side::Bid => buy,
             Side::Ask => sell,
@@ -1531,7 +1576,8 @@ fn plan_lines<'a>(
             Some(index) => index,
             None => {
                 let position = view.and_then(|v| v.position).map_or(0.0, |p| p.size);
-                ledgers.push(Ledger::new(venue.clone(), position, 0.0, 0.0));
+                let cap = venue.as_deref().and_then(caps).unwrap_or(market.cap);
+                ledgers.push(Ledger::new(venue.clone(), cap, position, 0.0, 0.0));
                 ledgers.len() - 1
             }
         };
@@ -1577,6 +1623,7 @@ fn plan_lines<'a>(
                         notes.push("a target needs a position: not trading".into());
                         break 'line;
                     }
+                    let cap = l.cap;
                     let wanted = target.clamp(-cap, cap);
                     if wanted != target {
                         notes.push(format!(
@@ -2590,20 +2637,28 @@ mod tests {
     }
 
     #[test]
-    fn every_perp_of_a_multi_market_session_is_tradable_at_its_address() {
+    fn a_session_on_several_perp_markets_lists_each_at_its_address() {
+        use mtx_core::mandate::InstrumentRef;
+        let perp = |name: &str| name.parse::<InstrumentRef>().unwrap();
         let mut mandate = Mandate::perp("phoenix", "NVDA", 40.0, 1_000.0);
-        mandate
-            .universe
-            .extend(Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0).universe);
-        mandate
-            .universe
-            .extend(Mandate::spot(&["phoenix"], "SOL-USDC", 70.0).universe);
-        let addresses: std::collections::BTreeMap<String, String> = [
-            ("NVDA".to_string(), "nvda-market".to_string()),
-            ("SPCX".to_string(), "spcx-market".to_string()),
-        ]
-        .into();
-        let venues = VenueInfo::of_perp_markets(&mandate, "SPCX", &addresses);
+        for more in [
+            Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0),
+            Mandate::perp("drift", "SOL", 5.0, 1_000.0),
+            Mandate::spot(&["phoenix"], "SOL-USDC", 70.0),
+        ] {
+            mandate.universe.extend(more.universe);
+        }
+        let venues = VenueInfo::of_perp_markets(
+            &mandate,
+            [
+                (perp("phoenix:perp:SPCX"), Some("spcx-market".to_string())),
+                (perp("phoenix:perp:NVDA"), Some("nvda-market".to_string())),
+                // Any venue's perp, and one with nowhere to send: listed,
+                // not tradable.
+                (perp("drift:perp:SOL"), None),
+                (perp("phoenix:perp:SPCX"), Some("again".to_string())),
+            ],
+        );
         let listed: Vec<(&str, Option<&str>, bool)> = venues
             .iter()
             .map(|v| (v.id.as_str(), v.address.as_deref(), v.tradable))
@@ -2613,15 +2668,67 @@ mod tests {
             [
                 ("phoenix:perp:SPCX", Some("spcx-market"), true),
                 ("phoenix:perp:NVDA", Some("nvda-market"), true),
+                ("drift:perp:SOL", None, false),
                 ("phoenix:spot:SOL-USDC", None, false),
             ]
         );
-        // One market: the one-market session's list.
+        // One market: the one-market session's list, from the same code.
         let one = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
         assert_eq!(
-            VenueInfo::of_perp_markets(&one, "SPCX", &addresses),
+            VenueInfo::of_perp_markets(
+                &one,
+                [(perp("phoenix:perp:SPCX"), Some("spcx-market".into()))]
+            ),
             VenueInfo::of_perp_session(&one, "SPCX", Some("spcx-market".into()))
         );
+        assert!(VenueInfo::of_perp_session(&one, "SPCX", None)[0].tradable);
+    }
+
+    #[test]
+    fn each_venue_is_cut_to_its_own_cap_in_the_mandate() {
+        let mut mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        let views = |ids: &[&str]| -> Vec<VenueView> {
+            ids.iter()
+                .map(|id| VenueView {
+                    id: id.to_string(),
+                    ..VenueView::default()
+                })
+                .collect()
+        };
+        let market = Market {
+            venues: views(&["phoenix:perp:SPCX", "phoenix:perp:NVDA"]),
+            ..market(0.0)
+        };
+        let bought = |mandate: &Mandate, size: f64| {
+            let mut orders = Orders::new();
+            orders.buy(size, 200.0).at("phoenix:perp:NVDA");
+            orders.buy(size, 200.0);
+            let (planned, _) = plan_sheet_under(&orders, &market, mandate, |_, _| true);
+            planned
+                .iter()
+                .map(|p| match p.action {
+                    Action::Market { size, .. } => size,
+                    ref other => panic!("{other:?}"),
+                })
+                .collect::<Vec<f64>>()
+        };
+        // NVDA capped at 40: a buy of 60 there is cut to 40, while SPCX
+        // keeps its own 70.
+        mandate
+            .universe
+            .extend(Mandate::perp("phoenix", "NVDA", 40.0, 1_000.0).universe);
+        assert_eq!(bought(&mandate, 60.0), [40.0, 60.0]);
+        // NVDA capped at 100: 90 goes through, not cut to SPCX's 70.
+        mandate.universe[1].max_position = 100.0;
+        assert_eq!(bought(&mandate, 90.0), [90.0, 70.0]);
+        // A venue the mandate doesn't list keeps the session's cap, as
+        // `plan_sheet` cuts every venue.
+        let one = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        assert_eq!(bought(&one, 90.0), [70.0, 70.0]);
+        let mut orders = Orders::new();
+        orders.buy(90.0, 200.0).at("phoenix:perp:NVDA");
+        let (planned, _) = plan_sheet(&orders, &market);
+        assert!(matches!(planned[0].action, Action::Market { size, .. } if size == 70.0));
     }
 
     #[test]

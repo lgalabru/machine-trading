@@ -256,7 +256,7 @@
   .ov-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 8px; }
   .ov-judge { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   .ov-judge .card p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; line-height: 1.5; }
-  @media (max-width: 1100px) { .ov-judge { grid-template-columns: 1fr; } .hero-inner { grid-template-columns: 1fr; } }
+  @media (max-width: 1100px) { .ov-judge { grid-template-columns: 1fr; } }
   .lb td.cell { cursor: pointer; }
   .hero-right { min-width: 0; display: flex; flex-direction: column; }
   .seg { display: flex; gap: 2px; padding: 2px; background: #1c1c1e; border-radius: 9px; width: fit-content; }
@@ -471,34 +471,53 @@
   .md h3.md-h { font-size: 16px; }
   .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
   .md li { margin: 3px 0; }
-  /* Tablets: the tasks become a strip of tiles across the top, and every
-     side-by-side layout stacks. */
-  @media (max-width: 1024px) {
+  /* Narrow desktops, tablets and unfolded phones (761–1100 px): the desktop
+     layout, with narrower side columns. The tasks stay a bar on the left,
+     the scenarios a list beside their chart, the models beside the task's
+     chart. */
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 210px minmax(0, 1fr); }
+    nav.tiles { padding: 12px; gap: 10px; }
+    nav.tiles .tile { height: auto; min-height: 74px; padding: 10px 12px; }
+    nav.tiles .tile .desc { display: none; }
+    .hero-inner { grid-template-columns: minmax(0, 1fr) 270px; gap: 14px 20px; padding: 20px 20px 22px; }
+    .watch .row { grid-template-columns: minmax(0, 1fr) 64px 58px; gap: 8px; padding: 9px 10px; }
+    .g-row { grid-template-columns: minmax(130px, 170px) 50px 68px 44px 48px minmax(0, 1fr); gap: 0 8px; }
+    .watch .chip { width: 58px; padding: 4px 6px; font-size: 12px; }
+    main { padding: 20px 20px 64px; }
+    .scn { grid-template-columns: 200px minmax(0, 1fr); gap: 16px; }
+    .files { grid-template-columns: 200px minmax(0, 1fr); gap: 16px; }
+    .insights { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .cmp-card { overflow-x: auto; }
+    .tabs { overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs a { white-space: nowrap; }
+    .tip { max-width: min(420px, 92vw); }
+  }
+  /* Touch screens: tap targets a finger can hit. */
+  @media (max-width: 1100px) and (hover: none), (max-width: 760px) {
+    .crumb { height: 36px; }
+    a.gh-badge { padding: 0 8px; } a.gh-badge span { display: none; }
+    .evb { width: 34px; height: 32px; }
+    .peek-x { width: 36px; height: 34px; }
+  }
+  /* Portrait tablets and smaller: the tasks become a strip of tiles across
+     the top, and every side-by-side layout stacks. */
+  @media (max-width: 760px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
     nav.tiles { flex-direction: row; position: static; height: auto; overflow-x: auto; overflow-y: hidden; padding: 14px 16px; gap: 12px; border-right: 0; border-bottom: 1px solid var(--line); scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     nav.tiles::-webkit-scrollbar { display: none; }
     nav.tiles .tile { width: 280px; height: 100px; scroll-snap-align: start; }
-    main { padding: 20px 20px 64px; }
-    .hero-inner { padding: 20px 20px 22px; }
+    nav.tiles .tile .desc { display: block; }
+    .hero-inner { grid-template-columns: minmax(0, 1fr); }
     .peek { left: 0; min-width: 0; border-left: 0; box-shadow: none; }
     .peek-backdrop { display: none; }
     .files, .scn { grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .files .list, .scn-list { position: static; max-height: 300px; }
     .files .fview pre.code { height: auto; max-height: 70vh; }
-    .insights { grid-template-columns: minmax(0, 1fr); gap: 4px; }
     .cmp-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .g-row { grid-template-columns: minmax(140px, 190px) 52px 70px 46px 50px minmax(0, 1fr); gap: 0 10px; }
-    .cmp-card { overflow-x: auto; }
-    .tabs { overflow-x: auto; scrollbar-width: none; }
-    .tabs::-webkit-scrollbar { display: none; }
-    .tabs a { white-space: nowrap; }
     .peek-head .tabs { justify-content: flex-start; }
-    .tip { max-width: min(420px, 92vw); }
-    /* Touch: tap targets a finger can hit. */
-    .crumb { height: 36px; }
-    a.gh-badge { padding: 0 8px; } a.gh-badge span { display: none; }
-    .evb { width: 34px; height: 32px; }
-    .peek-x { width: 36px; height: 34px; }
   }
   /* Phones: one column, compact tiles, the run grid down to name, skill and
      scenarios, and type sized for a hand. */

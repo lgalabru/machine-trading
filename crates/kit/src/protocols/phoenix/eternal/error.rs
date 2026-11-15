@@ -42,6 +42,10 @@ pub enum PhoenixError {
     /// position twice.
     #[error("market {0} is listed twice")]
     DuplicateMarket(String),
+    /// A meter was asked to measure markets whose quote lots differ, so no
+    /// one scale values the account's collateral.
+    #[error("markets {first} and {other} count quote lots differently")]
+    MixedQuoteLots { first: String, other: String },
     /// The exchange metadata carries a malformed address.
     #[error("invalid pubkey in exchange metadata: {0}")]
     InvalidExchangeKey(String),

@@ -957,7 +957,6 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .max_drawdown_usd
             .unwrap_or(account.start_value_usd),
         mandate_path: Some(workdir.write_mandate(&mandate)?),
-        markets: Vec::new(),
     };
     let mut cast = Cast::default();
     if !borrowers.is_empty() || !liquidators.is_empty() {

@@ -70,9 +70,22 @@ cross-margin account.
   transaction that names the market's order book (its `marketPubkey` in the
   `/exchange` metadata) and counts each fill where one of the account's
   traders is the taker or the maker. It MUST NOT infer fills from the
-  position.
+  position. A fill between two of the account's traders counts once on each
+  side. A fill's identity is its market, the header's sequence number and
+  the event's place after it, and the side, so a fill read twice counts
+  once. An event that doesn't decode is an error, never skipped: a skipped
+  `Header` would put the fills after it on the market before it.
+- **Position changes without a fill.** `LiquidationTransfer` (a keeper
+  takes part of a liquidatee's position, `base_lots_transferred`, into its
+  own trader account) and `CloseMatchedPositions` (auto-deleveraging closes
+  `base_lots_closed` of a long against a short) move positions with no
+  fill, and name the trader accounts rather than the order book, so an
+  enforcer also reads the transactions of the account's traders. Phoenix
+  logs them under no `Header`: each event names its own `asset_id`. The
+  fills and these changes together sum to the change in position.
 - **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
-  order it left on the book, its side the sign of its `quantity`.
+  order it placed to rest on the book, its side the sign of its
+  `quantity`; it may since have filled or been cancelled.
 
 ### Several markets
 
@@ -85,7 +98,15 @@ account holds outside the universe are its `position_count` less the
 universe markets it holds a position or orders in. Each fill names its
 market by the `Header` event's `asset_id`; a market's sequence numbers are
 its own, so an enforcer tells two markets' fills apart by the market as
-well as the sequence number.
+well as the sequence number: the kit's fill id comes from the instrument,
+the sequence and the side. One transaction can trade several markets, so
+the kit's meter reads the union of the markets' transactions, fetches and
+decodes each once, and routes each event to the market its `asset_id`
+names. Fills come in the order they landed: by slot, then each market's
+own sequence, with two markets' fills in one slot in the order the
+transaction lists saw them. The markets an account is measured on must
+count quote lots alike, as its collateral is one number; the kit's meter
+refuses others.
 
 ### Liquidation
 
@@ -185,8 +206,9 @@ such as the authority's USDC, are counted once, as the
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
 - A session on several perpetual markets measures the one account on each
-  of them, and lists them in `MTX_MARKETS`; a component gets a seat on
-  each, every one tradable at its market address.
+  of them, and lists them in `MTX_MARKETS` (`["phoenix:perp:NVDA", ...]`,
+  the session's own market first); a component gets a seat on each, every
+  one tradable at its market address.
 
 It audits spot sessions on the spot market this profile names, alone or
 with OpenBook's:

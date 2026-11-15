@@ -37,11 +37,6 @@ pub struct BotEnv {
     /// instruments the bot may hold and its limits. The variables above
     /// repeat its values. Optional, for graders that predate it.
     pub mandate_path: Option<PathBuf>,
-    /// `MTX_MARKETS`: the perp markets the session can trade, comma
-    /// separated, `MTX_SYMBOL`'s first; the mandate's universe repeats them,
-    /// with each one's cap. `MTX_SYMBOL` and `MTX_MAX_POSITION` stay the
-    /// first market's. Empty, and unset, for a session on one market.
-    pub markets: Vec<String>,
 }
 
 impl BotEnv {
@@ -53,7 +48,6 @@ impl BotEnv {
     pub const MAX_POSITION: &str = "MTX_MAX_POSITION";
     pub const MAX_DRAWDOWN: &str = "MTX_MAX_DRAWDOWN";
     pub const MANDATE: &str = "MTX_MANDATE";
-    pub const MARKETS: &str = "MTX_MARKETS";
 
     pub fn from_env() -> Result<Self> {
         let end_slot = var(Self::END_SLOT)?;
@@ -77,23 +71,7 @@ impl BotEnv {
                 reason: format!("not a number: {max_drawdown}"),
             })?,
             mandate_path: std::env::var_os(Self::MANDATE).map(PathBuf::from),
-            markets: std::env::var(Self::MARKETS)
-                .map(|list| {
-                    list.split(',')
-                        .map(str::trim)
-                        .filter(|symbol| !symbol.is_empty())
-                        .map(String::from)
-                        .collect()
-                })
-                .unwrap_or_default(),
         })
-    }
-
-    /// This environment on several perp markets: `markets`, the first
-    /// `symbol`'s, as `MTX_MARKETS` lists them.
-    pub fn with_markets(mut self, markets: Vec<String>) -> Self {
-        self.markets = markets;
-        self
     }
 
     /// The variables to set on a bot process for this environment.
@@ -109,9 +87,6 @@ impl BotEnv {
         ];
         if let Some(path) = &self.mandate_path {
             vars.push((Self::MANDATE, path.display().to_string()));
-        }
-        if !self.markets.is_empty() {
-            vars.push((Self::MARKETS, self.markets.join(",")));
         }
         vars
     }
@@ -188,7 +163,6 @@ mod tests {
             max_position: 50.5,
             max_drawdown_usd: 500.0,
             mandate_path: None,
-            markets: Vec::new(),
         };
         let limits = env.risk_limits().unwrap();
         assert_eq!(limits.max_position_quantity, Some(Decimal::new(505, 1)));
@@ -219,7 +193,6 @@ mod tests {
             max_position: 70.0,
             max_drawdown_usd: 1_000.0,
             mandate_path: None,
-            markets: Vec::new(),
         };
         let mandate = env.mandate().unwrap();
         assert_eq!(mandate.term, Some(Term { until_slot: 480 }));
@@ -228,13 +201,6 @@ mod tests {
             "phoenix:perp:SPCX"
         );
         assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MANDATE));
-        assert!(!env.vars().iter().any(|(name, _)| *name == BotEnv::MARKETS));
-        let several = env.clone().with_markets(vec!["NVDA".into(), "SPCX".into()]);
-        assert!(
-            several
-                .vars()
-                .contains(&(BotEnv::MARKETS, "NVDA,SPCX".to_string()))
-        );
 
         let dir = std::env::temp_dir().join(format!("mtx-mandate-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
