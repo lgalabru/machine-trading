@@ -390,6 +390,10 @@ impl GradeReport {
                 ("score_v2_raw".to_string(), v2.raw),
                 ("score_v2_raw_unfloored".to_string(), v2.raw_unfloored),
                 ("score_v2_edge".to_string(), v2.edge),
+                (
+                    "score_v2_raw_before_charge".to_string(),
+                    v2.raw_before_charge.unwrap_or(v2.raw),
+                ),
                 ("score_v2_ci_lo".to_string(), v2.ci_lo),
                 ("score_v2_ci_hi".to_string(), v2.ci_hi),
                 (
