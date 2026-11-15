@@ -565,27 +565,38 @@ impl Drop for PrivateDir {
     }
 }
 
-/// Move the files under `from` into `to`, which may be on another file
-/// system, replacing what `to` held.
-fn move_dir(from: &Path, to: &Path) -> Result<()> {
+/// Every file under `dir`, by its path relative to `dir`, read into
+/// memory.
+fn read_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).map_err(io_error(&at))? {
+            let path = entry.map_err(io_error(&at))?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = std::fs::read(&path).map_err(io_error(&path))?;
+                let relative = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+                files.push((relative, bytes));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Write `files` (see [`read_files`]) under `to`, replacing what it held.
+fn write_files(to: &Path, files: &[(std::path::PathBuf, Vec<u8>)]) -> Result<()> {
     if to.exists() {
         std::fs::remove_dir_all(to).map_err(io_error(to))?;
     }
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent).map_err(io_error(parent))?;
-    }
-    if std::fs::rename(from, to).is_ok() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(to).map_err(io_error(to))?;
-    for entry in std::fs::read_dir(from).map_err(io_error(from))? {
-        let entry = entry.map_err(io_error(from))?;
-        let (source, target) = (entry.path(), to.join(entry.file_name()));
-        if entry.file_type().map_err(io_error(&source))?.is_dir() {
-            move_dir(&source, &target)?;
-        } else {
-            std::fs::copy(&source, &target).map_err(io_error(&source))?;
+    for (relative, bytes) in files {
+        let path = to.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io_error(parent))?;
         }
+        std::fs::write(&path, bytes).map_err(io_error(&path))?;
     }
     Ok(())
 }
@@ -670,13 +681,12 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         anchored = anchors;
     }
     let mut informed_sessions = Vec::new();
-    // The informed bot's logs may say what it was told: they stay where no
-    // bot can read them until every bot has stopped.
-    let informed_logs = match &opts.informed {
-        Some(_) => Some(PrivateDir::create("mtx-informed-logs")?),
-        None => None,
-    };
-    if let (Some(informed), Some(logs)) = (&opts.informed, &informed_logs) {
+    // The informed bot's logs may say what it was told: written where only
+    // the grader can enter, then held in memory, with nothing of them on
+    // disk, while the bot runs.
+    let mut informed_logs = None;
+    if let Some(informed) = &opts.informed {
+        let logs = PrivateDir::create("mtx-informed-logs")?;
         let sessions = run_sessions(
             opts.snapshot_dir,
             informed.dir,
@@ -706,6 +716,8 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "informed bot graded"
         );
         informed_sessions = sessions;
+        informed_logs = Some(read_files(&logs.0)?);
+        drop(logs);
     }
     let sessions = run_sessions(
         opts.snapshot_dir,
@@ -727,7 +739,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     // Every bot has stopped: the informed bot's logs join the others, and
     // the scenarios can be written out.
     if let Some(logs) = &informed_logs {
-        move_dir(&logs.0, &opts.log_dir.join("informed"))?;
+        write_files(&opts.log_dir.join("informed"), logs)?;
     }
     if let Some(dir) = opts.detail_dir {
         // Whatever a bot left there goes first, links included: the
