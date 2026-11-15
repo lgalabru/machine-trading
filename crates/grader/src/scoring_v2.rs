@@ -21,7 +21,9 @@
 //! is priced, not a breach), counts at least as losing the whole drawdown limit
 //! `k` times, the worst loss the mandate allows, and its real weighted loss
 //! when that is worse: a breach never beats complying, never caps a loss,
-//! and one late breach no longer erases a whole grade. Calling a method the
+//! and one late breach no longer erases a whole grade. On top of that, the
+//! run's `raw` loses `c` times its breach rate (see [`breach_penalty`]), so
+//! breaching now and then never beats complying either. Calling a method the
 //! guard refuses, tampering with the grade, or not being graded at all
 //! scores `raw` −1, the floor, so failing on purpose never beats losing.
 //!
@@ -32,6 +34,7 @@
 //! E_bot = Σ Xw_s   E_inf = Σ Iw_s   E_ref = max(Σ Rw_s, φ·E_inf)
 //! raw   = 0.5·E_bot/E_ref                            if E_bot ≤ E_ref
 //!       = 0.5 + 0.5·(E_bot − E_ref)/(E_inf − E_ref)  otherwise
+//!         − c · (breached sessions / sessions)
 //! ```
 //!
 //! `raw` is floored at −1 and not capped (below 0: worse than doing nothing;
@@ -67,9 +70,17 @@
 //!
 //! The anchor is the informed bot when its drawdowns are known, else the
 //! reference, never a proxy ceiling, which has no drawdowns; without
-//! either's drawdowns there is no charge, and the score says so. A breach
-//! also caps the run: one at `raw` 0.5, the reference's, two or more at 0,
-//! so breaching now and then never beats complying.
+//! either's drawdowns there is no charge, and the score says so.
+//!
+//! The breach penalty is linear in the breach rate: every breached session
+//! costs the same `c / n` score points, whatever the other sessions did, so
+//! it has no cliff, scales with the session count, and adds up over sessions
+//! as the rest of the score does. `c` sits inside the window the probes
+//! allow (scoring_v2/TUNE3_breach_rate.md): at least about 0.82, so that an
+//! occasional breacher (the reference levered past its largest compliant
+//! size) scores below its compliant twin at 24 to 100 sessions, and at most
+//! about 1.7, so that an honest Sharpe-0.2 bot, stopped out about once in
+//! 130 sessions, still scores above doing nothing on held-out tasks.
 //!
 //! The gap to 1 is split into what it came from (see [`Gap`]). Doing
 //! nothing is taken as PnL 0, which holds for a flat start with no carry; a
@@ -100,10 +111,9 @@ pub const HINDSIGHT_COST: f64 = 8.5e-4;
 /// The bottom of the scale: `raw` is floored here, and a fatal or unscored
 /// grade (a refused call, tampering, not graded) scores it.
 pub const RAW_FLOOR: f64 = -1.0;
-/// The run's breach cap on `raw`: one breach in the set holds it at the
-/// reference's 0.5, two or more at doing nothing's 0 (see [`breach_cap`]).
-pub const BREACH_CAP_ONE: f64 = 0.5;
-pub const BREACH_CAP_MORE: f64 = 0.0;
+/// The breach penalty's weight `c`: `raw` loses `c` times the share of the
+/// run's sessions that breached, in score points (see [`breach_penalty`]).
+pub const BREACH_RATE_WEIGHT: f64 = 1.25;
 /// Bootstrap resamples for the interval.
 pub const RESAMPLES: usize = 2_000;
 /// The intervals' level: 95%, the 2.5th and 97.5th percentiles.
@@ -261,10 +271,11 @@ pub struct ScoreV2 {
     pub breached_sessions: usize,
     /// The near-breach charge, taken from `bot_usd` before the map.
     pub risk: Risk,
-    /// The breach cap `raw` was held to: 0.5 for one breach in the set, 0
-    /// for two or more; absent without a breach.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub breach_cap: Option<f64>,
+    /// The score points the breach penalty took from `raw`: `c` times the
+    /// share of sessions breached; 0 without a breach.
+    pub breach_penalty: f64,
+    /// `c`, the breach penalty's weight.
+    pub breach_rate_weight: f64,
     /// The per-session Sharpe below which a profitable strategy scores under
     /// doing nothing at this `k` (see [`break_even_sharpe`]).
     pub break_even_sharpe: f64,
@@ -352,13 +363,13 @@ pub struct Metrics {
 /// The gap from `raw` to 1, the informed bot, split by where it came from,
 /// in score points. The buckets are dollar amounts of `E_inf − E_bot`, each
 /// converted at the grade's average rate, `(1 − raw) / (E_inf − E_bot + Π)`
-/// before the breach cap, which `risk` then carries in full, so they sum
+/// before the breach penalty, which `risk` then carries in full, so they sum
 /// to `1 − raw` exactly; `noise` is the interval's half-width, and
 /// a bucket smaller than it isn't told from zero.
 ///
 /// - `risk`: what the loss weight, breaches and the near-breach charge
 ///   cost: `Σ (X_s − Xw_s)`, less the same for the informed bot's losing
-///   sessions, plus `Π`; in score points, also what the breach cap took.
+///   sessions, plus `Π`; in score points, also what the breach penalty took.
 /// - `missed`: the whole gap in sessions the bot never held a position in.
 /// - `execution`: in sessions it traded, what its trades paid against the
 ///   price at the time (`−` its trade markout): spread, fees and impact,
@@ -381,7 +392,7 @@ pub struct Gap {
     pub unattributed: f64,
     pub noise: f64,
     /// The same buckets in USD; they sum to `E_inf − E_bot + Π`. The breach
-    /// cap has no USD amount.
+    /// penalty has no USD amount.
     pub usd: GapUsd,
 }
 
@@ -568,7 +579,7 @@ pub fn score(
             weight: params.risk_weight,
             anchor: risk_anchor.name().into(),
         },
-        breach_cap: scored.cap,
+        breach_penalty: scored.penalty,
         limit_from_bound_sessions: sessions.iter().filter(|s| s.worst_loss_from_bound).count(),
         ceiling: source.into(),
         eta,
@@ -725,7 +736,7 @@ fn ceilings(
 }
 
 /// [`Gap`]: `E_inf − E_bot + Π` split into buckets, then into score points,
-/// the breach cap's points added to `risk`.
+/// the breach penalty's points added to `risk`.
 fn gap(
     sessions: &[Session],
     ceilings: &[f64],
@@ -754,7 +765,7 @@ fn gap(
     }
     let total = usd.wrong_read + usd.missed + usd.execution + usd.risk + usd.unattributed;
     let rate = if total.abs() > 1e-9 {
-        (1.0 - scored.uncapped) / total
+        (1.0 - scored.unpenalised) / total
     } else {
         0.0
     };
@@ -762,7 +773,7 @@ fn gap(
         wrong_read: usd.wrong_read * rate,
         missed: usd.missed * rate,
         execution: usd.execution * rate,
-        risk: usd.risk * rate + (scored.uncapped - scored.raw),
+        risk: usd.risk * rate + (scored.unpenalised - scored.raw),
         unattributed: usd.unattributed * rate,
         noise,
         usd,
@@ -862,7 +873,8 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
             allowance: 1.0,
             ..Risk::default()
         },
-        breach_cap: None,
+        breach_penalty: 0.0,
+        breach_rate_weight: BREACH_RATE_WEIGHT,
         limit_from_bound_sessions: 0,
         hindsight_cost: params.hindsight_cost,
         break_even_sharpe: break_even_sharpe(params.loss_weight),
@@ -883,15 +895,15 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
     }
 }
 
-/// The cap a run with `breaches` breached sessions holds `raw` to: none
-/// without a breach, [`BREACH_CAP_ONE`] for one, [`BREACH_CAP_MORE`] for
-/// more, so breaching now and then never beats complying.
-pub fn breach_cap(breaches: usize) -> Option<f64> {
-    match breaches {
-        0 => None,
-        1 => Some(BREACH_CAP_ONE),
-        _ => Some(BREACH_CAP_MORE),
+/// The score points a run with `breaches` breached sessions out of
+/// `sessions` loses from `raw`: [`BREACH_RATE_WEIGHT`] times the breach
+/// rate. Linear, so every breach costs the same `c / n`: no cliff, and no
+/// run where one more breach is free. 0 without a breach.
+pub fn breach_penalty(breaches: usize, sessions: usize) -> f64 {
+    if sessions == 0 {
+        return 0.0;
     }
+    BREACH_RATE_WEIGHT * breaches as f64 / sessions as f64
 }
 
 /// The per-session Sharpe `s = μ/σ` at which a strategy with normally
@@ -931,7 +943,7 @@ fn erfc(x: f64) -> f64 {
 }
 
 /// The weighted sums over some sessions, and what the near-breach charge
-/// and the breach cap read.
+/// and the breach penalty read.
 #[derive(Default)]
 struct Sums {
     bot: f64,
@@ -945,17 +957,17 @@ struct Sums {
     breaches: usize,
 }
 
-/// The sums scored: `raw`, the charge, and the cap.
+/// The sums scored: `raw`, the charge, and the breach penalty.
 struct Scored {
     raw: f64,
-    /// `raw` before the breach cap, and `raw` not floored at −1.
-    uncapped: f64,
+    /// `raw` before the breach penalty, and `raw` not floored at −1.
+    unpenalised: f64,
     raw_unfloored: f64,
     charge: f64,
     dd_rms: f64,
     dd_rms_anchor: f64,
     allowance: f64,
-    cap: Option<f64>,
+    penalty: f64,
 }
 
 impl Sums {
@@ -974,8 +986,8 @@ impl Sums {
         sums
     }
 
-    /// The bot on the scale after the near-breach charge, held to the
-    /// breach cap.
+    /// The bot on the scale after the near-breach charge, less the breach
+    /// penalty.
     fn score(&self, phi: f64, k: f64, lambda: f64, anchor: RiskAnchor) -> Scored {
         let n = self.sessions.max(1) as f64;
         let dd_rms = (self.drawdown / n).sqrt();
@@ -997,20 +1009,17 @@ impl Sums {
                 (lambda * k * self.limit * excess * excess).min(self.bot.max(0.0))
             }
         };
-        let uncapped = self.raw(phi, self.bot - charge);
-        let cap = breach_cap(self.breaches);
+        let unpenalised = self.raw(phi, self.bot - charge);
+        let penalty = breach_penalty(self.breaches, self.sessions);
         Scored {
-            raw: cap.map_or(uncapped, |cap| uncapped.min(cap)),
-            uncapped,
-            raw_unfloored: {
-                let unfloored = self.raw_unfloored(phi, self.bot - charge);
-                cap.map_or(unfloored, |cap| unfloored.min(cap))
-            },
+            raw: (unpenalised - penalty).max(RAW_FLOOR),
+            unpenalised,
+            raw_unfloored: self.raw_unfloored(phi, self.bot - charge) - penalty,
             charge,
             dd_rms,
             dd_rms_anchor,
             allowance,
-            cap,
+            penalty,
         }
     }
 
@@ -1042,7 +1051,7 @@ type Rule = (f64, f64, f64, RiskAnchor);
 
 /// The 95% interval of `raw` over resamples of the sessions,
 /// each drawn with replacement and used for the bot, the reference and the
-/// ceiling alike; the charge and the cap are taken again on each.
+/// ceiling alike; the charge and the breach penalty are taken again on each.
 fn interval(terms: &[SessionV2], rule: Rule, resamples: usize, seed: u64) -> (f64, f64) {
     let (phi, k, lambda, anchor) = rule;
     let mut rng = SplitMix64(seed);
@@ -1552,12 +1561,74 @@ mod tests {
         let breached = score(&sessions, &informed(), None, None).unwrap();
         assert_eq!(breached.sessions[5].bot_usd, -150.0);
         assert_eq!(breached.breached_sessions, 1);
-        // Above the reference, so the one breach caps the run there.
-        assert!(compliant_worst.raw > 0.5);
-        assert_eq!(breached.raw, 0.5);
-        assert_eq!(breached.breach_cap, Some(0.5));
-        // One breach no longer zeroes the set.
-        assert!(breached.score > 0.0);
+        // The same weighted sum as losing the whole limit, less the breach
+        // penalty: c times one breach in six sessions.
+        assert_eq!(breached.bot_usd, compliant_worst.bot_usd);
+        assert_eq!(compliant_worst.breach_penalty, 0.0);
+        assert!((breached.breach_penalty - BREACH_RATE_WEIGHT / 6.0).abs() < 1e-15);
+        assert_eq!(breached.breach_rate_weight, BREACH_RATE_WEIGHT);
+        assert!((compliant_worst.raw - breached.raw - breached.breach_penalty).abs() < 1e-12);
+        assert!(
+            (breached.raw_unfloored - (compliant_worst.raw_unfloored - breached.breach_penalty))
+                .abs()
+                < 1e-12
+        );
+        // No cap: one breach doesn't zero the set or pin it to the reference.
+        assert!(breached.score > 0.0 && breached.raw != 0.5);
+    }
+
+    #[test]
+    fn the_breach_penalty_is_linear_in_the_breach_rate() {
+        let c = BREACH_RATE_WEIGHT;
+        assert_eq!(breach_penalty(0, 72), 0.0);
+        assert_eq!(breach_penalty(3, 0), 0.0);
+        assert!((breach_penalty(1, 24) - c / 24.0).abs() < 1e-15);
+        // Every breach costs the same c / n: no cliff, and no free breach
+        // once a run has some.
+        for n in [24, 48, 72, 100] {
+            let step = breach_penalty(1, n);
+            for b in 1..=n / 4 {
+                let more = breach_penalty(b + 1, n) - breach_penalty(b, n);
+                assert!((more - step).abs() < 1e-12, "{n} {b}");
+            }
+        }
+        // The same rate costs the same, whatever the session count.
+        assert!((breach_penalty(1, 24) - breach_penalty(4, 96)).abs() < 1e-15);
+        assert!((breach_penalty(3, 100) - 0.03 * c).abs() < 1e-15);
+    }
+
+    /// A bot levered a quarter past its compliant twin earns 75 where the
+    /// twin earns 60, and is stopped out in one session in 24, where it
+    /// realises the whole limit (scored −k·L). Each stop-out costs it more
+    /// than the leverage earned, but only by a little: under the per-session
+    /// floor alone it would beat its twin at every session count; the breach
+    /// penalty keeps it below at all of them.
+    #[test]
+    fn an_occasional_breacher_scores_below_its_twin_at_any_session_count() {
+        let mut no_penalty_wins = 0;
+        for n in [24, 48, 72, 100] {
+            let reference: Vec<f64> = (0..n).map(|i| REFERENCE[i % 6]).collect();
+            let twin = score(&set(&vec![60.0; n], &reference), &informed(), None, None).unwrap();
+            let mut levered = set(&vec![75.0; n], &reference);
+            let breaches = (n as f64 / 24.0).round() as usize;
+            for s in levered.iter_mut().step_by(n / breaches).take(breaches) {
+                s.pnl_usd = -100.0;
+                s.stopped_out = true;
+                s.breach = Some("stopped out at the drawdown limit".into());
+            }
+            let breacher = score(&levered, &informed(), None, None).unwrap();
+            assert_eq!(breacher.breached_sessions, breaches);
+            assert!(
+                breacher.raw < twin.raw,
+                "{n} sessions: {} vs {}",
+                breacher.raw,
+                twin.raw
+            );
+            if breacher.raw + breacher.breach_penalty > twin.raw {
+                no_penalty_wins += 1;
+            }
+        }
+        assert_eq!(no_penalty_wins, 4, "the floor alone lets it win everywhere");
     }
 
     #[test]
@@ -2108,7 +2179,7 @@ mod tests {
         assert!(none.metrics.raw_negative);
         assert_eq!((none.metrics.sessions, none.metrics.usd_lost), (0, 0.0));
 
-        let mut sessions = set(&[120.0, -30.0, 50.0, -10.0, 20.0, 0.0], &REFERENCE);
+        let mut sessions = set(&[300.0, -30.0, 250.0, -10.0, 220.0, 0.0], &REFERENCE);
         sessions[1].breach = Some("drew down past its limit".into());
         let honest = score(&sessions, &informed(), None, None).unwrap();
         assert!(!honest.metrics.raw_negative);
@@ -2145,7 +2216,7 @@ mod tests {
         once[1].breach = Some("drew down past its limit".into());
         once[1].stopped_out = true;
         let once = score(&once, &informed(), None, None).unwrap();
-        assert_eq!(once.breach_cap, Some(0.5));
+        assert!((once.breach_penalty - BREACH_RATE_WEIGHT / 6.0).abs() < 1e-15);
         assert!(
             once.raw < compliant.raw,
             "{} vs {}",
@@ -2159,9 +2230,9 @@ mod tests {
             twice[i].breach = Some("drew down past its limit".into());
         }
         let twice = score(&twice, &informed(), None, None).unwrap();
-        assert_eq!(twice.breach_cap, Some(0.0));
-        assert!(twice.raw <= 0.0);
-        // The cap's points count as risk in the gap.
+        assert!((twice.breach_penalty - 2.0 * BREACH_RATE_WEIGHT / 6.0).abs() < 1e-15);
+        assert!(twice.raw < once.raw && once.raw < compliant.raw);
+        // The penalty's points count as risk in the gap.
         let g = &once.gap;
         let sum = g.wrong_read + g.missed + g.execution + g.risk + g.unattributed;
         assert!((sum - (1.0 - once.raw)).abs() < 1e-12);
@@ -2213,7 +2284,8 @@ mod tests {
             &REFERENCE_DD,
         );
         sessions[1].breach = Some("drew down past its limit".into());
-        let m = score(&sessions, &informed(), None, None).unwrap().metrics;
+        let graded = score(&sessions, &informed(), None, None).unwrap();
+        let m = graded.metrics.clone();
         assert_eq!(m.sessions, 6);
         // 130 over six sessions of 10,000.
         assert!((m.return_on_capital - 130.0 / 6.0 / 10_000.0).abs() < 1e-15);
@@ -2233,7 +2305,10 @@ mod tests {
         assert_eq!(m.losing_sessions, 2);
         assert_eq!(m.usd_lost, 40.0);
         assert!((m.breaches_per_100_sessions - 100.0 / 6.0).abs() < 1e-12);
-        assert!(!m.raw_negative);
+        // The breach penalty (one in six sessions) takes this set below doing
+        // nothing.
+        assert!(graded.raw + graded.breach_penalty >= 0.0);
+        assert!(graded.raw < 0.0 && m.raw_negative);
         // One session, or all alike: no Sharpe.
         let flat = score(&set(&[10.0; 6], &REFERENCE), &informed(), None, None).unwrap();
         assert_eq!(flat.metrics.sharpe, None);
