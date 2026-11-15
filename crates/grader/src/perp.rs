@@ -21,7 +21,7 @@ use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use mtx_core::{
     AccountMeter, FillId, InstrumentId, Measurement, MeterError, Side as CoreSide,
-    mandate::{InstrumentRef, Mandate, Observed, PositionRange, PricedPosition, Sample, Term},
+    mandate::{InstrumentRef, Mandate, Observed, PositionRange, PricedPosition, Sample},
     turns::Step,
 };
 use mtx_kit::{
