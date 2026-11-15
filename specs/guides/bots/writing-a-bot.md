@@ -398,17 +398,19 @@ order to work, says so:
 
 | Variable | Meaning |
 | --- | --- |
-| `MTX_START_POSITIONS` | The positions the account starts with, in base units by market: `{"NVDA": -480.0}`. |
+| `MTX_START_POSITIONS` | The positions the account starts with, in base units by market: `{"phoenix:perp:NVDA": -480.0}`. |
 | `MTX_ORDER` | A quantity to trade by the end: `{"instrument": "phoenix:perp:NVDA", "side": "buy", "quantity": 62.0}`, and `"reduce_only": true` when no fill may grow the position. |
 | `MTX_BROKER_HAIRCUT_BPS` | What a broker charges, in basis points off the scenario's closing price, to trade whatever the order leaves undone. |
-| `MTX_CLOSE_OUT` | Markets whose leftover position a broker closes at the end, and its haircut in basis points: `{"SPY": 10.0}`. |
+| `MTX_CLOSE_OUT` | Markets whose leftover position a broker closes at the end, and its haircut in basis points: `{"phoenix:perp:SPY": 10.0}`. |
 
 A bot reads them as types: `session.start_positions()?`, `session.order()?`
 (a `SessionOrder` whose `side` is the kit's `Side::Bid` or `Side::Ask`;
 JSON writes them `"buy"` and `"sell"`, as the mandate's `sides` does),
 `session.broker_haircut()?` and `session.close_outs()?`. Each is empty or
 `None` when the session doesn't set it, and an error if the variable doesn't
-read as its type.
+read as its type. Markets are named as the mandate names them
+(`<venue>:<kind>:<symbol>`, as in `MTX_ORDER`), so a perp and a spot
+market of one symbol stay apart, and a market named twice is an error.
 
 What the account holds at the start is the task's: on `flash-crash-spcx`,
 SOL for fees and 10,000 USDC of collateral.

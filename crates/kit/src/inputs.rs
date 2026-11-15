@@ -9,17 +9,25 @@
 //! a `to_var` that writes it: the grader writes them with `to_var`, and a
 //! bot reads them with [`Session::start_positions`], [`Session::order`],
 //! [`Session::broker_haircut`] and [`Session::close_outs`]. Markets are
-//! named by the venue's symbol (`NVDA`), quantities are in base units and
-//! haircuts in basis points.
+//! named as the mandate names them, by [`InstrumentRef`]
+//! (`phoenix:perp:NVDA`), so two venues' markets of one symbol stay apart;
+//! quantities are in base units and haircuts in basis points. Reading
+//! refuses a market given twice, and writing refuses a value that isn't a
+//! finite number, so neither side can lose or garble an entry.
 //!
-//! The helpers are `#[inline]`, so they are compiled only into a bot that
-//! calls them: a bot that doesn't builds as it did before they existed.
+//! The helpers are `#[inline]`. That keeps them out of the kit's own
+//! compiled code, so their `serde_json` code doesn't change how the
+//! compiler optimises a bot's mandate parse when the bot doesn't call them
+//! (code a bot never calls is dropped at link time either way).
 //!
 //! [`SESSION_VARS`]: crate::SESSION_VARS
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{Error as _, MapAccess, Visitor},
+};
 
 use crate::{Session, Side, mandate::InstrumentRef};
 
@@ -44,41 +52,55 @@ impl SessionVarError {
 }
 
 /// The positions the bot's account starts the session with, in base units
-/// by market symbol, positive long: `MTX_START_POSITIONS`, written
-/// `{"NVDA": -480.0}`. A market it doesn't name starts flat.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// by market, positive long: `MTX_START_POSITIONS`, written
+/// `{"phoenix:perp:NVDA": -480.0}`. A market it doesn't name starts flat.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct StartPositions(pub BTreeMap<String, f64>);
+pub struct StartPositions(pub BTreeMap<InstrumentRef, f64>);
+
+impl<'de> Deserialize<'de> for StartPositions {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(ByInstrument).map(Self)
+    }
+}
 
 impl StartPositions {
     /// The variable it travels in.
     pub const VAR: &'static str = "MTX_START_POSITIONS";
 
-    /// Reads the variable's text: every quantity finite.
+    /// Reads the variable's text: each market once, every quantity finite.
     #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let positions: Self = from_json(Self::VAR, text)?;
-        for (symbol, quantity) in &positions.0 {
-            if !quantity.is_finite() {
-                return Err(SessionVarError::new(
-                    Self::VAR,
-                    format!("{symbol}: {quantity} is not a quantity"),
-                ));
-            }
-        }
+        positions.check()?;
         Ok(positions)
     }
 
-    /// The variable's text.
+    /// The variable's text: an error if a quantity isn't finite.
     #[inline]
-    pub fn to_var(&self) -> String {
-        to_json(self)
+    pub fn to_var(&self) -> Result<String, SessionVarError> {
+        self.check()?;
+        Ok(to_json(self))
     }
 
-    /// The starting position in `symbol`, in base units: 0 if not named.
+    /// The starting position in `instrument`, in base units: 0 if not
+    /// named.
     #[inline]
-    pub fn get(&self, symbol: &str) -> f64 {
-        self.0.get(symbol).copied().unwrap_or(0.0)
+    pub fn get(&self, instrument: &InstrumentRef) -> f64 {
+        self.0.get(instrument).copied().unwrap_or(0.0)
+    }
+
+    #[inline]
+    fn check(&self) -> Result<(), SessionVarError> {
+        for (instrument, quantity) in &self.0 {
+            if !quantity.is_finite() {
+                return Err(SessionVarError::new(
+                    Self::VAR,
+                    format!("{instrument}: {quantity} is not a quantity"),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -106,23 +128,33 @@ impl SessionOrder {
     /// The variable it travels in.
     pub const VAR: &'static str = "MTX_ORDER";
 
-    /// Reads the variable's text: a positive, finite quantity.
+    /// Reads the variable's text: a positive, finite quantity. A field
+    /// given twice, or one it doesn't know, is an error.
     #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let order: Self = from_json(Self::VAR, text)?;
-        if !(order.quantity.is_finite() && order.quantity > 0.0) {
-            return Err(SessionVarError::new(
-                Self::VAR,
-                format!("quantity {} must be positive", order.quantity),
-            ));
-        }
+        order.check()?;
         Ok(order)
     }
 
-    /// The variable's text.
+    /// The variable's text: an error if the quantity isn't positive and
+    /// finite.
     #[inline]
-    pub fn to_var(&self) -> String {
-        to_json(self)
+    pub fn to_var(&self) -> Result<String, SessionVarError> {
+        self.check()?;
+        Ok(to_json(self))
+    }
+
+    #[inline]
+    fn check(&self) -> Result<(), SessionVarError> {
+        if self.quantity.is_finite() && self.quantity > 0.0 {
+            Ok(())
+        } else {
+            Err(SessionVarError::new(
+                Self::VAR,
+                format!("quantity {} must be positive", self.quantity),
+            ))
+        }
     }
 }
 
@@ -145,19 +177,29 @@ impl BrokerHaircut {
             .trim()
             .parse()
             .map_err(|e| SessionVarError::new(Self::VAR, format!("{text:?}: {e}")))?;
-        if !(bps.is_finite() && bps >= 0.0) {
-            return Err(SessionVarError::new(
-                Self::VAR,
-                format!("{bps} bps must be at least 0"),
-            ));
-        }
-        Ok(Self(bps))
+        let haircut = Self(bps);
+        haircut.check(Self::VAR, "")?;
+        Ok(haircut)
     }
 
-    /// The variable's text.
+    /// The variable's text: an error if the haircut isn't finite and at
+    /// least 0.
     #[inline]
-    pub fn to_var(&self) -> String {
-        self.0.to_string()
+    pub fn to_var(&self) -> Result<String, SessionVarError> {
+        self.check(Self::VAR, "")?;
+        Ok(self.0.to_string())
+    }
+
+    #[inline]
+    fn check(&self, var: &'static str, of: &str) -> Result<(), SessionVarError> {
+        if self.0.is_finite() && self.0 >= 0.0 {
+            Ok(())
+        } else {
+            Err(SessionVarError::new(
+                var,
+                format!("{of}{} bps must be at least 0", self.0),
+            ))
+        }
     }
 
     /// The haircut as a fraction: 30 bps is 0.003.
@@ -168,41 +210,78 @@ impl BrokerHaircut {
 }
 
 /// The markets whose leftover position a broker closes at the end of the
-/// session, each with its haircut in basis points, by market symbol:
-/// `MTX_CLOSE_OUT`, written `{"SPY": 10.0}`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// session, each with its haircut in basis points: `MTX_CLOSE_OUT`, written
+/// `{"phoenix:perp:SPY": 10.0}`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct CloseOuts(pub BTreeMap<String, f64>);
+pub struct CloseOuts(pub BTreeMap<InstrumentRef, f64>);
+
+impl<'de> Deserialize<'de> for CloseOuts {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(ByInstrument).map(Self)
+    }
+}
 
 impl CloseOuts {
     /// The variable it travels in.
     pub const VAR: &'static str = "MTX_CLOSE_OUT";
 
-    /// Reads the variable's text: every haircut finite and at least 0.
+    /// Reads the variable's text: each market once, every haircut finite
+    /// and at least 0.
     #[inline]
     pub fn parse(text: &str) -> Result<Self, SessionVarError> {
         let close_outs: Self = from_json(Self::VAR, text)?;
-        for (symbol, bps) in &close_outs.0 {
-            if !(bps.is_finite() && *bps >= 0.0) {
-                return Err(SessionVarError::new(
-                    Self::VAR,
-                    format!("{symbol}: {bps} bps must be at least 0"),
-                ));
-            }
-        }
+        close_outs.check()?;
         Ok(close_outs)
     }
 
-    /// The variable's text.
+    /// The variable's text: an error if a haircut isn't finite and at
+    /// least 0.
     #[inline]
-    pub fn to_var(&self) -> String {
-        to_json(self)
+    pub fn to_var(&self) -> Result<String, SessionVarError> {
+        self.check()?;
+        Ok(to_json(self))
     }
 
-    /// The haircut a broker closes `symbol` out at, if it does.
+    /// The haircut a broker closes `instrument` out at, if it does.
     #[inline]
-    pub fn haircut(&self, symbol: &str) -> Option<BrokerHaircut> {
-        self.0.get(symbol).copied().map(BrokerHaircut)
+    pub fn haircut(&self, instrument: &InstrumentRef) -> Option<BrokerHaircut> {
+        self.0.get(instrument).copied().map(BrokerHaircut)
+    }
+
+    #[inline]
+    fn check(&self) -> Result<(), SessionVarError> {
+        for (instrument, &bps) in &self.0 {
+            BrokerHaircut(bps).check(Self::VAR, &format!("{instrument}: "))?;
+        }
+        Ok(())
+    }
+}
+
+/// Reads a JSON object of `instrument: number` entries, refusing a key that
+/// isn't an instrument (the empty one included) and a market given twice,
+/// which a plain map would let the last one win.
+struct ByInstrument;
+
+impl<'de> Visitor<'de> for ByInstrument {
+    type Value = BTreeMap<InstrumentRef, f64>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an object of numbers keyed by <venue>:<kind>:<symbol>")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut entries = BTreeMap::new();
+        while let Some((key, value)) = map.next_entry::<String, f64>()? {
+            if key.is_empty() {
+                return Err(A::Error::custom("a market with no name"));
+            }
+            let instrument: InstrumentRef = key.parse().map_err(A::Error::custom)?;
+            if entries.insert(instrument, value).is_some() {
+                return Err(A::Error::custom(format!("{key} is given twice")));
+            }
+        }
+        Ok(entries)
     }
 }
 
@@ -281,35 +360,52 @@ mod tests {
         }
     }
 
+    fn market(name: &str) -> InstrumentRef {
+        name.parse().unwrap()
+    }
+
     #[test]
     fn each_input_reads_back_what_was_written() {
-        let positions = StartPositions([("NVDA".to_string(), -480.0)].into());
+        // A perp and a spot market of one symbol stay apart.
+        let positions = StartPositions(
+            [
+                (market("phoenix:perp:NVDA"), -480.0),
+                (market("phoenix:spot:NVDA"), 3.0),
+            ]
+            .into(),
+        );
         let order = SessionOrder {
-            instrument: "phoenix:perp:NVDA".parse().unwrap(),
+            instrument: market("phoenix:perp:NVDA"),
             side: Side::Bid,
             quantity: 62.0,
             reduce_only: true,
         };
         let haircut = BrokerHaircut(30.0);
-        let close_outs = CloseOuts([("SPY".to_string(), 10.0)].into());
+        let close_outs = CloseOuts([(market("phoenix:perp:SPY"), 10.0)].into());
         assert_eq!(
-            order.to_var(),
+            order.to_var().unwrap(),
             r#"{"instrument":"phoenix:perp:NVDA","side":"buy","quantity":62.0,"reduce_only":true}"#
         );
+        assert_eq!(
+            positions.to_var().unwrap(),
+            r#"{"phoenix:perp:NVDA":-480.0,"phoenix:spot:NVDA":3.0}"#
+        );
         let s = session(&[
-            (StartPositions::VAR, &positions.to_var()),
-            (SessionOrder::VAR, &order.to_var()),
-            (BrokerHaircut::VAR, &haircut.to_var()),
-            (CloseOuts::VAR, &close_outs.to_var()),
+            (StartPositions::VAR, &positions.to_var().unwrap()),
+            (SessionOrder::VAR, &order.to_var().unwrap()),
+            (BrokerHaircut::VAR, &haircut.to_var().unwrap()),
+            (CloseOuts::VAR, &close_outs.to_var().unwrap()),
         ]);
-        assert_eq!(s.start_positions().unwrap(), positions);
-        assert_eq!(s.start_positions().unwrap().get("NVDA"), -480.0);
-        assert_eq!(s.start_positions().unwrap().get("SPY"), 0.0);
+        let read = s.start_positions().unwrap();
+        assert_eq!(read, positions);
+        assert_eq!(read.get(&market("phoenix:perp:NVDA")), -480.0);
+        assert_eq!(read.get(&market("phoenix:spot:NVDA")), 3.0);
+        assert_eq!(read.get(&market("phoenix:perp:SPY")), 0.0);
         assert_eq!(s.order().unwrap(), Some(order));
         assert_eq!(s.broker_haircut().unwrap(), Some(haircut));
         assert_eq!(haircut.fraction(), 0.003);
         assert_eq!(
-            s.close_outs().unwrap().haircut("SPY"),
+            s.close_outs().unwrap().haircut(&market("phoenix:perp:SPY")),
             Some(BrokerHaircut(10.0))
         );
     }
@@ -329,6 +425,7 @@ mod tests {
             r#"{"instrument":"phoenix:perp:NVDA","side":"buy","quantity":0}"#,
             r#"{"instrument":"phoenix:perp:NVDA","side":"buy","quantity":1,"haircut_bps":3}"#,
             r#"{"instrument":"NVDA","side":"buy","quantity":1}"#,
+            r#"{"instrument":"phoenix:perp:NVDA","side":"buy","quantity":1,"quantity":2}"#,
         ] {
             let error = SessionOrder::parse(bad).unwrap_err();
             assert_eq!(error.var, "MTX_ORDER", "{bad}");
@@ -336,9 +433,50 @@ mod tests {
         assert!(BrokerHaircut::parse("-1").is_err());
         assert!(BrokerHaircut::parse("thirty").is_err());
         assert_eq!(BrokerHaircut::parse(" 12.5 ").unwrap(), BrokerHaircut(12.5));
-        assert!(CloseOuts::parse(r#"{"SPY":-1}"#).is_err());
-        assert!(StartPositions::parse(r#"{"NVDA":"long"}"#).is_err());
+        assert!(CloseOuts::parse(r#"{"phoenix:perp:SPY":-1}"#).is_err());
+        // A market given twice, the empty name, a bare symbol, a value that
+        // isn't a number: errors, never the last one winning.
+        for bad in [
+            r#"{"phoenix:perp:NVDA":1,"phoenix:perp:NVDA":2}"#,
+            r#"{"":1}"#,
+            r#"{"NVDA":1}"#,
+            r#"{"phoenix:perp:NVDA":"long"}"#,
+        ] {
+            assert_eq!(
+                StartPositions::parse(bad).unwrap_err().var,
+                StartPositions::VAR,
+                "{bad}"
+            );
+            assert_eq!(
+                CloseOuts::parse(bad).unwrap_err().var,
+                CloseOuts::VAR,
+                "{bad}"
+            );
+        }
         let s = session(&[(SessionOrder::VAR, "{")]);
         assert!(s.order().is_err());
+    }
+
+    #[test]
+    fn writing_refuses_what_json_cant_carry() {
+        let nvda = market("phoenix:perp:NVDA");
+        for bad in [f64::NAN, f64::INFINITY] {
+            assert!(
+                StartPositions([(nvda.clone(), bad)].into())
+                    .to_var()
+                    .is_err()
+            );
+            assert!(CloseOuts([(nvda.clone(), bad)].into()).to_var().is_err());
+            assert!(BrokerHaircut(bad).to_var().is_err());
+            let order = SessionOrder {
+                instrument: nvda.clone(),
+                side: Side::Ask,
+                quantity: bad,
+                reduce_only: false,
+            };
+            assert!(order.to_var().is_err());
+        }
+        assert!(CloseOuts([(nvda, -1.0)].into()).to_var().is_err());
+        assert!(BrokerHaircut(-1.0).to_var().is_err());
     }
 }
