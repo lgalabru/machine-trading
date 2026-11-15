@@ -3,7 +3,7 @@
 # (MTX_EVAL_SEED, passed by Harbor from the host; the task never holds it).
 # The grader runs the reference on the same sessions first, starts an
 # offline surfnet per session, runs the bot as mtx-bot behind an RPC guard,
-# and writes the reward.
+# and writes the reward: scoring v2's clamped score, every session graded.
 set -euo pipefail
 
 # Hidden from the bot, readable by the bot's own user.
@@ -42,7 +42,8 @@ mtx grade \
   --reference /opt/mtx/anchors/levered-carry \
   --anchor-jobs 4 \
   --jobs 4 \
-  --stop-on-disqualify \
+  --scoring v2-headline \
+  --v2-sessions \
   --components-only \
   --snapshot "$MTX_SNAPSHOT" \
   --bot /app/bot \

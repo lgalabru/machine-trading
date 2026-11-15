@@ -24,8 +24,8 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/reference"
     },
     {
-      "name": "told",
-      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/told",
+      "name": "informed",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/bots/informed",
       "tell_regime": true
     },
     {
@@ -44,17 +44,159 @@
     {
       "name": "mark-pusher",
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/mark-pusher"
+    },
+    {
+      "name": "coin-flip-half",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip",
+        "MTX_PROBE_SIZE": "0.5"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "coin-flip-full",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "martingale",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "martingale"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "limit-hugger",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "hugger"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "stop-lotto",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "stop-lotto"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-1.5",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "1.5"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-2",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "2"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-3",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "breacher",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3",
+        "MTX_PROBE_BREACHES": "1000000"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.1",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.15"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.2",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.29"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.3",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.40"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.5",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.74"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-honest",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.29",
+        "MTX_PROBE_CRASH_BELOW": "0.03"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-fatal",
+      "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.29",
+        "MTX_PROBE_CRASH_BELOW": "0.03",
+        "MTX_PROBE_CRASH": "fatal"
+      },
+      "may_breach": true
     }
   ],
   "gates": {
-    "informed": ["told"],
-    "non_reading": ["nop", "max-lever", "fixed", "prem-scaled"]
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "max-lever",
+      "fixed",
+      "prem-scaled"
+    ]
   },
   "rules": [
     "max(max-lever, fixed) < reference",
     "prem-scaled < reference",
-    "reference < told",
-    "told < oracle",
+    "reference < informed",
+    "informed < oracle",
     "oracle < hindsight",
     "stop-out < stop-in"
   ],
@@ -63,6 +205,11 @@
       "mark-pusher"
     ],
     "max_profitable": 0.99,
-    "below": "told"
-  }
+    "below": "informed"
+  },
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
+  "probes": {}
 }

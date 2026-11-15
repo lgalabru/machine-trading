@@ -30,6 +30,9 @@ summary = "sizes a levered SPCX funding carry to the index's volatility state an
 skill = "reads the index's volatility state live, turns the carry's yield over its variance and the stop-out distance into leverage, and cuts before the crowd flushes"
 # Lines only the answers hold, for `just leak-audit`.
 leak_needles = ["by the carry's yield over the book's variance"]
+# Scored by scoring v2 alone: the reference is its 0.5, the informed bot
+# (checks/bots/informed) its 1.
+headline = "v2"
 
 [verifier]
 # A hundred hidden sessions drawn from the batch's secret, plus the
@@ -37,8 +40,8 @@ leak_needles = ["by the carry's yield over the book's variance"]
 # and of the bot's as many as the memory holds (two in 6 GB). Each
 # session onboards the tape's takers first (a few seconds), then the world
 # moves only between the bot's turns, so a session takes as long as the
-# bot thinks: about a minute and a half for most bots. A disqualified bot
-# stops at its first breach; a stopped-out session ends when it is flat.
+# bot thinks: about a minute and a half for most bots. Every session is
+# graded; a stopped-out session ends when it is flat.
 timeout_sec = 25200.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and

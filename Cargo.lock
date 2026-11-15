@@ -4989,6 +4989,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-levcarry-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-levcarry",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
