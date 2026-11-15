@@ -645,11 +645,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         }
     }
     report.anchors = anchored;
+    // The scores are the caller's to log: the grade may yet be scored by
+    // v2 alone, and then v1's are never shown.
     info!(
-        reward = report.reward,
         pnl_usd = report.pnl_usd,
         bound_pnl_usd = report.bound_pnl_usd,
-        reference_ratio = report.reference_ratio,
         "graded"
     );
     Ok(report)

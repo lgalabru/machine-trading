@@ -1435,6 +1435,16 @@ async fn run() -> Result<()> {
             if let Some(error) = v2_failed {
                 return Err(anyhow::Error::from(error).context("--scoring v2"));
             }
+            match (&graded.headline, &graded.v2) {
+                (Some(_), Some(v2)) => {
+                    tracing::info!(reward = graded.reward, raw = v2.raw, "scored by v2")
+                }
+                _ => tracing::info!(
+                    reward = graded.reward,
+                    reference_ratio = graded.reference_ratio,
+                    "scored"
+                ),
+            }
             if let Some(check) = graded.replay.as_ref().filter(|check| !check.identical) {
                 let first = check.differences.first().map(ToString::to_string);
                 return Err(mtx_grader::Error::Replay(format!(
