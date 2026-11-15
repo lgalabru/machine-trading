@@ -21,7 +21,8 @@
 //! The check that `V` is what it says counts the same inventory from the
 //! other side: the position held across each move of the level
 //! (`inventory_jump_usd` and `inventory_walk_usd`). `unexplained_usd` is
-//! what is left between the two (funding, a mark that isn't the level). A
+//! what is left between the two: whatever the fills' logged prices and fees
+//! and the level don't account for in the account's value. A
 //! move is a jump if it sits [`JUMP_SIGMAS`] robust standard deviations from
 //! the session's typical move; the rest is the walk.
 //!
@@ -69,7 +70,8 @@ pub struct Decomposition {
     /// into the jumps and the walk.
     pub inventory_jump_usd: f64,
     pub inventory_walk_usd: f64,
-    /// `inventory_usd` less those two.
+    /// `inventory_usd` less those two: what the fills' logged prices and
+    /// fees and the level don't account for.
     pub unexplained_usd: f64,
     /// The share of steps the bot quoted both sides within its obligations'
     /// band, when the scenario has obligations.

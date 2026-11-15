@@ -233,7 +233,7 @@ session, `q`, `p` and `s` a fill's size, price and sign, +1 a buy):
 | `maker_fees_usd` | what it paid as a maker (a rebate is negative) |
 | `inventory_usd` | `V = pnl_usd - S - T + maker_fees_usd`: the position times the oracle's moves, and so what the fills don't explain |
 | `inventory_jump_usd`, `inventory_walk_usd` | the same inventory counted from the position held just before each move of the level, times the move, split into jumps and the walk (a move more than 4 robust standard deviations from the session's typical move is a jump) |
-| `unexplained_usd` | `inventory_usd` less those two: funding, or a mark that isn't the level. Near zero |
+| `unexplained_usd` | `inventory_usd` less those two: what the fills' logged prices and fees and the level don't account for in the account's value. Zero to the cent where the exit is small; a few hundredths of a percent of what the exit traded when it went through Phoenix's book |
 | `uptime` | the share of steps it quoted both sides within its obligations' band (with `obligations`) |
 | `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, and the `residual_base` left |
 | `passive_fills`, `passive_base`, `passive_notional_usd` | the passive volume the spread is earned on |
