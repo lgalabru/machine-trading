@@ -358,6 +358,8 @@ impl LeveredCarryFamily {
             fair_path: None,
             market_model: Some(record),
             raw_sends: None,
+            tx_layer: None,
+            liquidator: None,
             stop_out: Some(StopOut {
                 on: vec![StopRule::Drawdown],
                 close: CloseMode::Market,
