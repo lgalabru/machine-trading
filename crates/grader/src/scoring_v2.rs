@@ -139,8 +139,8 @@ pub struct Params {
     pub resamples: usize,
     /// v2 is the grade's one score (GRADING_DECISIONS, "one reported
     /// score"): `reward` becomes its clamped score, the v1 scores leave the
-    /// report, and the 1 must be the task's informed bot (or given): a
-    /// grade that would fall back to the hindsight ceiling fails instead.
+    /// report, and the 1 must be the task's informed bot: a grade that would
+    /// take a hindsight, proxy or given ceiling fails instead.
     pub headline: bool,
 }
 
