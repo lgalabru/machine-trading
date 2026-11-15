@@ -76,8 +76,9 @@ def request_for(found: dict, key: str) -> urllib.request.Request:
         url = f"{upstream}/chat/completions"
         tokens = "max_completion_tokens" if found["api"] == "openai" else "max_tokens"
         # A reasoning model can't answer in one token: OpenAI's then refuse
-        # the request ("max_tokens or model output limit was reached").
-        body = {"model": found["model"], "messages": prompt, tokens: 1 if found["api"] != "openai" else 64}
+        # the request ("max_tokens or model output limit was reached"), and
+        # behind a router ask for at least 16.
+        body = {"model": found["model"], "messages": prompt, tokens: 64}
         headers = {"Authorization": f"Bearer {key}"}
     return urllib.request.Request(
         url, data=json.dumps(body).encode(), headers={**headers, "Content-Type": "application/json"}, method="POST"
