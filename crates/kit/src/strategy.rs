@@ -245,13 +245,21 @@ pub fn phoenix_market_address(exchange: &str, symbol: &str) -> Option<String> {
 /// The variables a task may set for a session, beyond the bot's contract:
 /// the slot an off-hours market reopens at; the session's regime and the
 /// rung a reference plays, which only the benchmark's ladder hands a
-/// process bot; and, for a component in a session that enables raw sends,
-/// the programs they may run, base58, comma-separated.
+/// process bot; for a component in a session that enables raw sends, the
+/// programs they may run, base58, comma-separated; and a perp session's
+/// starting positions, the order it asks the bot to work and the broker's
+/// haircut on what is left of it, and the markets a broker closes out,
+/// which [`Session::start_positions`], [`Session::order`],
+/// [`Session::broker_haircut`] and [`Session::close_outs`] read as types.
 pub const SESSION_VARS: &[&str] = &[
     "MTX_REOPEN_SLOT",
     "MTX_REGIME",
     "MTX_RUNG",
     "MTX_RAW_PROGRAMS",
+    crate::StartPositions::VAR,
+    crate::SessionOrder::VAR,
+    crate::BrokerHaircut::VAR,
+    crate::CloseOuts::VAR,
 ];
 
 impl Session {
@@ -264,12 +272,16 @@ impl Session {
     }
 }
 
-/// An order's side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// An order's side. In JSON, such as a session's order
+/// ([`SessionOrder`](crate::SessionOrder)), it is written `"buy"` or
+/// `"sell"`, as the mandate's `sides` and the scenario files write it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Side {
     /// Buy.
+    #[serde(rename = "buy")]
     Bid,
     /// Sell.
+    #[serde(rename = "sell")]
     Ask,
 }
 

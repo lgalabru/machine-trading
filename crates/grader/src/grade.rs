@@ -245,6 +245,24 @@ impl GradeReport {
                         session.scenario
                     ));
                 }
+                // A perp start position moves with the price too, unless an
+                // order scores the session against doing nothing; and it
+                // earns or pays the scenario's funding, which the order's
+                // drift doesn't take out.
+                if session.start_position != 0.0 && session.order.is_none() {
+                    return Err(format!(
+                        "{}: a perp session's starting position can move with the price, \
+                         and v2 doesn't run a nop anchor yet",
+                        session.scenario
+                    ));
+                }
+                if session.start_funded {
+                    return Err(format!(
+                        "{}: a perp session's starting position accrues the scenario's \
+                         funding, and v2 doesn't run a nop anchor yet",
+                        session.scenario
+                    ));
+                }
                 // The risk desk's stop-out (the scenario's `stop_out`): its
                 // close is in the session's PnL, and a breach all the same,
                 // though the mandate's audit no longer disqualifies it. A
@@ -289,7 +307,7 @@ impl GradeReport {
                     informed_max_drawdown_usd: result.informed_max_drawdown_usd,
                     start_value_usd: session.start_value_usd,
                     stopped_out: stop_out.is_some(),
-                    traded: session.peak_position > 0.0,
+                    traded: traded(session),
                     trade_markout_usd: result.trade_markout_usd,
                 })
             })
@@ -980,6 +998,21 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
     }
 }
 
+/// Whether the bot traded in the session: its position in the scenario's
+/// market was ever other than where it started.
+fn traded(session: &SessionReport) -> bool {
+    if session.start_position == 0.0 {
+        return session.peak_position > 0.0;
+    }
+    session
+        .positions
+        .iter()
+        .find(|range| range.instrument == session.instrument)
+        .is_some_and(|range| {
+            range.lowest != session.start_position || range.highest != session.start_position
+        })
+}
+
 fn disqualification(session: &SessionReport) -> Option<String> {
     if !session.refused_calls.is_empty() {
         Some(format!(
@@ -1381,6 +1414,11 @@ mod tests {
             order: None,
             participation: None,
             net: None,
+            start_position: 0.0,
+            start_funded: false,
+            close_outs: Vec::new(),
+            perp_fills: Vec::new(),
+            perp_open_orders: Vec::new(),
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
@@ -1391,6 +1429,47 @@ mod tests {
             wall_ms: 0,
             timeline: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_perp_sessions_fills_and_resting_sides_are_audited() {
+        use mtx_core::Side;
+        let mut buy_only = session(5.0);
+        let allowance = &mut buy_only.mandate.universe[0];
+        allowance.sides = Some(vec![Side::Buy]);
+        allowance.max_buy_price = Some(101.0);
+        assert_eq!(disqualification(&buy_only), None);
+        let fill = |side, price| crate::perp::PerpFillRecord {
+            at: 4,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price,
+            base: 1.0,
+            forced: false,
+        };
+        // A buy and a sell inside one step net to nothing; the sell is still
+        // a fill.
+        let mut sold = buy_only.clone();
+        sold.perp_fills = vec![fill(Side::Buy, 100.0), fill(Side::Sell, 100.5)];
+        assert_eq!(sold.observed().fills.len(), 2);
+        assert!(
+            disqualification(&sold)
+                .unwrap()
+                .contains("a side its mandate")
+        );
+        let mut over = buy_only.clone();
+        over.perp_fills = vec![fill(Side::Buy, 102.0)];
+        assert!(disqualification(&over).is_some());
+        let mut resting = buy_only.clone();
+        resting.perp_open_orders = vec![("phoenix:perp:SPCX".parse().unwrap(), Side::Sell)];
+        assert!(disqualification(&resting).is_some());
+        // They round-trip through the report, and a session without them
+        // writes neither.
+        let json = serde_json::to_string(&sold).unwrap();
+        let back: SessionReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.perp_fills, sold.perp_fills);
+        let plain = serde_json::to_string(&buy_only).unwrap();
+        assert!(!plain.contains("perp_fills") && !plain.contains("close_outs"));
     }
 
     #[test]
@@ -1454,6 +1533,8 @@ mod tests {
             fair_path: None,
             market_model: None,
             raw_sends: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
             liquidator: None,
@@ -1890,6 +1971,50 @@ mod tests {
         assert_eq!(report.v2.as_ref().unwrap().sessions[1].bot_usd, -1_500.0);
     }
 
+    /// A perp start position moves with the price, so doing nothing isn't
+    /// 0 and v2 refuses it; with an order, which scores against doing
+    /// nothing, it is, and a bot that held still didn't trade.
+    #[test]
+    fn v2_takes_a_start_position_only_with_an_order() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let mut report = score(vec![(held.clone(), &s)]);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let order = crate::orders::ExecutionOrder {
+            instrument: None,
+            side: mtx_core::Side::Sell,
+            quantity: 20.0,
+            haircut_bps: 30.0,
+            reduce_only: true,
+        };
+        held.order = Some(order.report(20.0, 20.0, 100.0, 98.0, -40.0, &[]));
+        held.pnl_usd = 0.0;
+        assert!(!traded(&held));
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        // With funding on the market, the start earns or pays it whatever
+        // the order: refused.
+        let mut funded = held.clone();
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
+        let mut sold = held;
+        sold.positions[0].lowest = 0.0;
+        assert!(traded(&sold));
+    }
+
     /// The reference levered past its limit: it earns more where it holds,
     /// and the risk desk stops it out now and then. Under v2 it never beats
     /// the same strategy sized to comply.
@@ -2050,6 +2175,107 @@ mod tests {
         let mut elsewhere = stopped;
         elsewhere.positions_outside_universe = 1;
         assert_eq!(score(vec![(elsewhere, &s)]).reward, 0.0);
+    }
+
+    /// The keeper's liquidation sells a buy-only bot's long in its own
+    /// account: the sides rule leaves that sell out.
+    #[test]
+    fn a_keepers_liquidating_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::risk::{ForcedClose, ForcedCloseReason, LiquidatedBy};
+        let mut liquidated = session(-900.0);
+        liquidated.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        liquidated.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::Liquidation {
+                by: LiquidatedBy::Keeper,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 9_300.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 9_100.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(
+            !disqualification(&liquidated)
+                .unwrap_or_default()
+                .contains("a side its mandate")
+        );
+        liquidated.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&liquidated)
+                .unwrap()
+                .contains("a side its mandate")
+        );
+    }
+
+    /// The risk desk's forced close trades in the bot's account; a
+    /// buy-only mandate's sides rule leaves its sells out, and still
+    /// catches the bot's own.
+    #[test]
+    fn a_stop_outs_forced_sell_isnt_the_bots() {
+        use mtx_core::Side;
+
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let s = scenario(None);
+        let mut stopped = session(-1_150.0);
+        stopped.mandate.universe[0].sides = Some(vec![Side::Buy]);
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: "phoenix:perp:SPCX".parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 70.0,
+            forced,
+        };
+        stopped.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
+        assert!(disqualification(&stopped).is_none());
+        assert!(
+            score(vec![(stopped.clone(), &s)]).scenarios[0]
+                .disqualified
+                .is_none()
+        );
+        // The forced fill still reads back as one.
+        let json = serde_json::to_string(&stopped).unwrap();
+        let back: SessionReport = serde_json::from_str(&json).unwrap();
+        assert!(back.perp_fills[1].forced);
+
+        let mut own = stopped;
+        own.perp_fills.push(fill(Side::Sell, false));
+        assert!(
+            disqualification(&own)
+                .unwrap()
+                .contains("a side its mandate")
+        );
     }
 
     #[test]

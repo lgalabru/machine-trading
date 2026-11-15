@@ -50,7 +50,7 @@ impl Default for FillId {
 /// Fills are the source of truth for portfolio state and PnL. Every fill
 /// updates the position, adjusts available capital, and feeds into the
 /// monitoring layer's metrics (fill quality, strategy performance, etc.).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fill {
     /// Unique fill identifier.
     pub id: FillId,
