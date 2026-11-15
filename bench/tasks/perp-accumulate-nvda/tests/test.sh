@@ -40,6 +40,7 @@ mtx grade \
   --draw perp-accumulate \
   --count 72 \
   --reference /opt/mtx/anchors/perp-accumulate \
+  --informed /opt/mtx/anchors/perp-accumulate-informed \
   --anchor-jobs 4 \
   --jobs 4 \
   --scoring v2-headline \

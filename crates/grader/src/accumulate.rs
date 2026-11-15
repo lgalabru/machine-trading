@@ -54,11 +54,8 @@ pub struct Shape {
     pub regime: String,
     /// The move's start and its last step, in slots, and its size in percent
     /// (signed), in an informed session.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub onset: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub move_pct: Option<f64>,
     /// The first slot of each burst, informed first, and whether it is.
     pub bursts: Vec<(u64, bool)>,

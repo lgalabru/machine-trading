@@ -49,7 +49,7 @@
     {
       "name": "informed",
       "dir": "bench/tasks/perp-accumulate-nvda/checks/bots/informed",
-      "tell_regime": true
+      "tell_latent": true
     },
     {
       "name": "cap-blind",

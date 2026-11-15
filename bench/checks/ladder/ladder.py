@@ -151,6 +151,10 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
                     "--anchor-jobs", str(jobs)]
         if "eta" in v2:
             command += ["--eta", str(v2["eta"])]
+    # A v2 task's informed rung: told each session's latent state, as the
+    # verifier tells its informed bot (`mtx grade --informed`).
+    if rung.get("tell_latent"):
+        command.append("--tell-latent")
     # The steps of the rungs whose mark displacement is read, and of nop's,
     # the baseline.
     if "push" in rung or rung["name"] == "nop":

@@ -118,11 +118,16 @@ the README.
   through the grader's maker's lean, buys ahead of a confirmed rise, stands
   aside ahead of a sell burst, and leaves the broker what costs more to
   buy. It doesn't parse the tape and doesn't size anything to the move.
-- **The informed bot (1)** is told the session's shape as the generator
-  drew it (`MTX_REGIME`: the regime, the move's onset, end and size, the
-  maker's half-spread, size and look delay, and the backstop), and
-  nothing of the walk, the noise flow or the fake-outs. It trades through
-  the same order sheet under the same mandate, costs and latency.
+- **The informed bot (1)** is told the session's latent state, as the
+  verifier's `mtx grade --informed` hands it (`MTX_REGIME`): the session's
+  kind (calm, up or down) and its book (the grader's maker's half-spread,
+  quote size and look delay, and the backstop). It is not told when the
+  move starts or lands, how far it goes, or where the bursts and fake-outs
+  fall: in an up session it front-loads the order in the first tenth of
+  the session, in a down one it waits until the oracle has fallen 0.35%
+  from the high and stopped falling, in a calm one it works passively. It
+  trades through the same order sheet under the same mandate, costs and
+  latency.
 
 ## Failure modes, priced
 
@@ -141,8 +146,10 @@ from informed bursts.
 ## Generations
 
 - **v1 (this build).** Gate 0 on the engine's measured book; built on PR #76
-  (orders, the per-fill audit), #36 (the probe gate) and #44 (the v2
-  template).
+  (orders, the per-fill audit), #36 (the probe gate), #44 (the v2
+  template) and #47 (the informed bot on hidden sets). Gate 0's told rung
+  knew the onset; the built informed bot knows only the latent state
+  (#47's rule), so it is weaker than Gate 0's told.
 
 ## Departures from the card
 

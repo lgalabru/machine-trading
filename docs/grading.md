@@ -231,6 +231,7 @@ Two honest limits. First, k is a choice, and it makes some profitable but noisy 
 - The anchor map, k = 1.5, the anchor floor, and the fatal floor at −1.
 - The near-breach charge (λ = 1), stop-out breaches and the run cap.
 - The cost-aware hindsight fallback and the informed-bot ceiling.
+- The informed bot run on the hidden set it anchors (`mtx grade --informed`): told each session's latent state (the regime, who is who, the funding process), never its future, with nothing of it reaching the bot. One more bot run per session.
 - The single-run interval, and the paired hierarchical comparison with tie groups.
 - Raw metrics and the gap report (`wrong_read`, `missed`, `execution`, `risk`, `noise`).
 - The break-even Sharpe, reported with every score.
