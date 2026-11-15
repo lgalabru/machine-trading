@@ -238,6 +238,83 @@ other 150 (`tune.py`); the crowd read is what makes it profitable.
 The same family with switches allowed every second (an earlier design,
 before the infra kept switches at block ends) gave 3.36, 3.50 and 8.37.
 
+## Scoring v2's anchors (g1)
+
+The task is scored by v2 alone: doing nothing is 0, the reference 0.5 and
+the informed bot 1, on the same hidden sessions (`checks/ladder.json`'s
+`anchors`). Both were tuned on generated practice sets only
+(`hidden/gate0/anchors.py`: seeds 777001 to tune, 777002 to check), never on
+hidden draws, and checked on the engine.
+
+### Why the g0 reference failed the strength band
+
+In the T8 pilot (100 hidden sessions, the same set for four model runs) the
+g0 reference made +$10,706 raw but +$2,420 weighted as v2 weighs losses
+(1.5x), a per-session Sharpe of 0.03, with 3 stop-outs (hidden-6, -15, -93)
+and 36 losing sessions: `anchor_floored` against the hindsight ceiling. Its
+sessions' reports show three causes:
+
+- **No gap in its stop distance.** Two sigmas of a minute's diffusion is
+  about 0.25% of the book, so the cap fit inside the loss limit in any calm
+  reading; a flush is a 1-3% gap, $1,000-3,000 at the cap. Each stop-out
+  held 368-700 shares into a flush: one in a calm session (hidden-6), one a
+  minute after a switch to stress (hidden-93), one in a session stressed
+  from the start that its churn read missed (hidden-15).
+- **Execution churn.** It traded four 50-share slices a turn and flipped
+  between flat and the cap as the churn reading toggled. The book's impact
+  grows with a turn's size, so a 700-share round trip cost about $200
+  (20 bp), minutes of the cap's carry: hidden-38, calm with no flush, lost
+  $792 holding 157 shares on average.
+- **No use of the flush's once-only rule.** After the flush, the session
+  is safe from gaps; the g0 reference sized as before, and its calm-read
+  churn misfired on the rebuild.
+
+Model bots in the pilot made $16,176-22,922 weighted (3-5 stop-outs each):
+they priced the yield, read the crowd with a two-state filter on the
+discount's changes, detected the flush and re-entered after the rebuild.
+The anchors below are built to place them fairly between the 0.5 and the 1.
+
+### The reference (0.5)
+
+The g0 desk (yield over variance, two sigmas of a minute inside the room
+left, the crowd read), with three changes a careful desk would make from
+the instruction alone:
+
+- **The gap stop distance.** Until the session's flush has come, the long is
+  also capped so that a 2% fall of the book stays inside the room left
+  under the loss limit, less the $200 buffer: about 280 shares from a fresh
+  peak. The flush is a jump; sigmas don't cover it.
+- **The flush, once.** A discount under 0.1% of the index means the flush
+  has come (the discount closes as the book falls). The desk holds nothing
+  for 60 seconds while the discount rebuilds, then drops the gap from its
+  sizing.
+- **Slow, steady execution.** 50 shares a turn, and the stress reading held
+  for 30 seconds after the churn settles, so it doesn't flip in and out.
+
+### The informed bot (1)
+
+`checks/bots/informed` runs the same desk told the session's latent state
+through the ladder's `tell_regime` (the state at each slot, each state's
+level, the flush), and uses only the present and the past of it:
+
+- before the flush: the cap in calm (inside two sigmas of a minute at the
+  state's told level), flat in stress, where the flush is 120 times likelier;
+- the flush: it acts only once the book has fallen (the told end), then
+  waits the rebuild's stated longest, 90 seconds;
+- after it: the cap in either state (no gap can come).
+
+It waits the same 15 seconds as the reference for the book to reach its
+discount, trades 50 shares a turn, and has the same costs, mandate and
+turns. It doesn't know when the state will switch or when the flush will
+come, so it is stopped out when a calm-state flush hits at the cap (about
+3% of sessions on the practice sets). That is the risk the 1 takes for the
+calm carry: on the scale it maximises v2's weighted PnL, not its breach
+count.
+
+### Numbers
+
+ANCHOR_NUMBERS
+
 ## The practice family
 
 The same family as the hidden sessions: the answer in each session is its

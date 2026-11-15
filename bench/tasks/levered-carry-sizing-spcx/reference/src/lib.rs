@@ -39,8 +39,8 @@
 //!   told the session's latent state (`MTX_REGIME`) and nothing of its
 //!   future: the cap in calm, flat in stress until the flush has come (it
 //!   acts on the flush only once the book has fallen), flat for the
-//!   rebuild's longest 90 seconds, then the cap in calm and half of it in
-//!   stress;
+//!   rebuild's longest 90 seconds, then the cap in either state; it waits
+//!   15 seconds, as the reference does, for the book to reach its discount;
 //! - `oracle`: the informed bot, told the flush's timing too: flat around
 //!   the flush;
 //! - `stop-in` and `stop-out`, the penalty twins: the cap, flattening
@@ -433,12 +433,11 @@ impl Strategy for LevCarry {
                 let (stressed, level) = told.state(at);
                 let sigma = MEDIAN_SIGMA * level;
                 let stop = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
-                let want = if rebuilt {
-                    if stressed { 0.5 } else { 1.0 }
-                } else if ended || stressed {
-                    0.0
-                } else {
+                // After the flush no gap can come: the cap in either state.
+                let want = if rebuilt || !(ended || stressed) {
                     1.0
+                } else {
+                    0.0
                 };
                 if self.rung == Rung::Oracle && told.near_flush(at) {
                     0.0

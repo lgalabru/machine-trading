@@ -10,14 +10,17 @@ volatility state and to the risk desk's stop-out.
 | Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |
 | Sessions | 100 hidden per grade; 6 practice |
 | Mandate | Long only, 700 SPCX cap (about 10× collateral); $1,000 loss limit, enforced by a priced stop-out |
-| Bound | Hindsight on the book, plus the funding a position against every premium would collect |
-| Reference | Sizes the long by the carry's yield over an online estimate of the book's variance, inside a stop distance, and goes flat when the discount's churn reads as stress. Hidden from the agent: it isn't described in the instruction and practice doesn't run it |
+| Score | Scoring v2 alone: 0 is doing nothing, 0.5 the reference, 1 the informed bot |
+| Reference | Sizes the long by the carry's yield over an online estimate of the book's variance, inside a stop distance that also holds the flush's 2% gap until the session's one flush has come, goes flat when the discount's churn reads as stress, and trades 50 shares a turn. Hidden from the agent: it isn't described in the instruction and practice doesn't run it |
+| Informed bot | Told the session's volatility state and each state's level (`checks/bots/informed`), nothing of its future: the cap in calm, flat in stress until the flush, then the cap again, in either state, once the discount has rebuilt |
 
 How every task is scored, and how risk is enforced, is in the
-[dataset README](../README.md#how-a-bot-is-judged). This task departs from
-it in one way: a drawdown past the limit doesn't disqualify. The grader's
-risk desk closes the position at the market and the session ends there
-(`scoring.stop_out`, see `docs/scenario-format.md`).
+[dataset README](../README.md#how-a-bot-is-judged). This task is scored by
+[scoring v2](../README.md#scoring-v2) alone, and departs from the dataset in
+one way: a drawdown past the limit doesn't disqualify. The grader's risk
+desk closes the position at the market and the session ends there
+(`scoring.stop_out`, see `docs/scenario-format.md`); v2 counts that
+stop-out as a breach.
 
 ## The skill
 
@@ -59,9 +62,11 @@ holds the discount flushes the book.
 Valued at the scenario's book level plus unsettled funding, as in
 `funding-carry-spcx`. A session whose value falls more than $1,000 below
 its peak is closed by the risk desk (market orders of up to 100 SPCX, at
-most 8 a step, through the book) and ends once flat; it is scored at what
-the account is worth then. Going short, over 700, another market, a
-refused call or ending liquidatable zero the grade.
+most 8 a step, through the book) and ends once flat; it is valued at what
+the account is worth then, and v2 counts it as a breach. Going short, over
+700 or another market are breaches too; a refused call scores −1. The
+reward is v2's clamped score against the reference (0.5) and the informed
+bot (1) on the same sessions.
 
 ## Baselines
 
