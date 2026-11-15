@@ -396,7 +396,9 @@ impl Strategy for LevCarry {
         let full = setup.cap * r.book;
         let room = (setup.max_drawdown - drawdown - STOP_BUFFER_USD).max(0.0);
         let stop_share = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
-        let mut reference = (K * yield_per_second / self.variance).min(1.0).min(stop_share);
+        let mut reference = (K * yield_per_second / self.variance)
+            .min(1.0)
+            .min(stop_share);
         if !flushed {
             reference = reference.min(room / (full * GAP));
         }
@@ -418,7 +420,10 @@ impl Strategy for LevCarry {
             Rung::Fixed => 0.3,
             Rung::PremScaled => (0.25 * yield_per_second / 1.2e-5).min(1.0),
             Rung::Informed | Rung::Oracle => {
-                let told = self.told.as_ref().ok_or("the informed bot needs MTX_REGIME")?;
+                let told = self
+                    .told
+                    .as_ref()
+                    .ok_or("the informed bot needs MTX_REGIME")?;
                 // Only what has happened: the flush once the book has
                 // fallen, and the rebuild's stated longest wait after it.
                 let ended = told.flush.is_some_and(|f| at >= f.end);
@@ -445,11 +450,16 @@ impl Strategy for LevCarry {
         if gap_usd <= 0.0 || self.done {
             share = 0.0;
         }
-        let warm = self.steps > WARMUP_STEPS || matches!(self.rung, Rung::MaxLever | Rung::StopIn | Rung::StopOut);
+        let warm = self.steps > WARMUP_STEPS
+            || matches!(self.rung, Rung::MaxLever | Rung::StopIn | Rung::StopOut);
         let informed = matches!(self.rung, Rung::Informed | Rung::Oracle);
         let mut target = if warm { share * setup.cap } else { 0.0 };
         let held = r.position;
-        let hysteresis = if informed { INFORMED_HYSTERESIS } else { HYSTERESIS };
+        let hysteresis = if informed {
+            INFORMED_HYSTERESIS
+        } else {
+            HYSTERESIS
+        };
         if (target - held).abs() < hysteresis * setup.cap && target > 0.0 {
             target = held;
         }
@@ -483,7 +493,11 @@ impl Strategy for LevCarry {
             } else {
                 // The mark-pusher's last ask may fill before this sale lands
                 // (the tape trades first): keep its size back.
-                let keep = if self.rung == Rung::MarkPusher { 0.5 } else { 0.0 };
+                let keep = if self.rung == Rung::MarkPusher {
+                    0.5
+                } else {
+                    0.0
+                };
                 let qty = qty.min(pos - keep);
                 if qty <= 0.0 {
                     break;
