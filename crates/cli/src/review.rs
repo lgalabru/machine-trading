@@ -541,6 +541,16 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
             .unwrap_or_else(|| rewards[key].clone())
     };
     let skill = pick("skill");
+    // The trial's one score: v2's reward when v2 is its headline, else skill.
+    let headline = report
+        .as_ref()
+        .map(|r| r["headline"].clone())
+        .filter(|h| !h.is_null());
+    let score = if headline.as_ref().is_some_and(|h| h == "v2") {
+        pick("reward")
+    } else {
+        skill.clone()
+    };
     let agent = &result["agent_result"];
     let graded = report.is_some() || rewards.is_object();
     let finished = !result["finished_at"].is_null();
@@ -630,6 +640,8 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         "reference_pnls": reference_pnls,
         "reward": pick("reward"),
         "skill": skill,
+        "headline": headline,
+        "score": score,
         "pnl_usd": pick("pnl_usd"),
         "reference_pnl_usd": pick("reference_pnl_usd"),
         "bound_pnl_usd": pick("bound_pnl_usd"),
@@ -887,6 +899,7 @@ fn scores(root: &Root, trials: &[Value]) -> Value {
                     json!({
                         "trials": ts.len(),
                         "graded": graded.len(),
+                        "score": pick("score"),
                         "skill": pick("skill"),
                         "skills": graded.iter().map(|t| t["skill"].clone()).collect::<Vec<_>>(),
                         "reward": pick("reward"),
@@ -905,9 +918,16 @@ fn scores(root: &Root, trials: &[Value]) -> Value {
             .map(|toml| task_table(&toml)["version"].clone())
             .unwrap_or(Value::Null);
         let short = name.rsplit('/').next().unwrap_or(name);
+        // A task is ranked on one score: v2's reward when its trials are
+        // headlined by v2, else skill.
+        let headline = if mine.iter().any(|t| t["headline"] == json!("v2")) {
+            "v2"
+        } else {
+            "v1"
+        };
         tasks.insert(
             skill_of(short),
-            json!({ "name": name, "short": short, "version": version, "models": per_model }),
+            json!({ "name": name, "short": short, "version": version, "headline": headline, "models": per_model }),
         );
     }
     json!({
