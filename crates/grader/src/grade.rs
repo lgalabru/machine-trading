@@ -335,11 +335,11 @@ impl GradeReport {
     }
 
     /// Keep `v2` in the report; when it is the headline, it is the grade's
-    /// one score, on real anchors: no fallback to the hindsight ceiling, and
-    /// no v1 score beside it.
+    /// one score, on real anchors: its 1 is the task's informed bot (no
+    /// hindsight, proxy or given ceiling), and no v1 score is beside it.
     fn set_v2(&mut self, v2: ScoreV2, params: &scoring_v2::Params) -> Result<()> {
         if params.headline {
-            if v2.fatal.is_none() && !matches!(v2.ceiling.as_str(), "informed" | "given") {
+            if v2.fatal.is_none() && v2.ceiling != "informed" {
                 return Err(Error::ScoringV2(format!(
                     "v2 is this grade's headline, but its 1 is `{}`: every session needs the \
                      task's informed bot's PnL",
@@ -663,11 +663,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         }
     }
     report.anchors = anchored;
+    // The scores are the caller's to log: the grade may yet be scored by
+    // v2 alone, and then v1's are never shown.
     info!(
-        reward = report.reward,
         pnl_usd = report.pnl_usd,
         bound_pnl_usd = report.bound_pnl_usd,
-        reference_ratio = report.reference_ratio,
         "graded"
     );
     Ok(report)
@@ -1884,6 +1884,11 @@ mod tests {
             .to_string();
         assert!(refused.contains("informed bot"), "{refused}");
         assert!(proxied.v2.is_none() && proxied.skill.is_some());
+        // Nor a ceiling given outright: the 1 is the informed bot's.
+        let given = scoring_v2::Ceiling::Given([("s".to_string(), 400.0)].into_iter().collect());
+        let mut handed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let refused = handed.score_v2(&headline(given)).unwrap_err().to_string();
+        assert!(refused.contains("`given`"), "{refused}");
 
         s.informed_pnl_usd = Some(400.0);
         let mut graded = score(vec![(session(300.0), &s), (session(50.0), &s)]);
