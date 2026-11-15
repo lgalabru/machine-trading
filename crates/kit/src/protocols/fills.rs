@@ -11,10 +11,12 @@
 //! - **Ids from the venue's own numbering.** A fill's [`FillId`] comes from
 //!   its market, its sequence and the side, so the same fill read twice has
 //!   the same id, and the same sequence on two markets doesn't.
-//! - **Fees as the venue records them.** Each side carries the fee its role
-//!   paid, where the venue's records give a per-fill fee (Phoenix Eternal);
-//!   zero where they don't (Phoenix v1 and OpenBook v2 settle fees per
-//!   order, not per fill).
+//! - **Fees where the reader decodes them.** Each side carries the fee its
+//!   role paid where the venue's reader decodes a per-fill fee (Phoenix
+//!   Eternal), and zero elsewhere: Phoenix v1's `Fill` event carries none,
+//!   and OpenBook v2's reader doesn't decode the maker and taker fees its
+//!   `FillLog` carries yet (its event-heap fills, the other source it
+//!   reads, carry none).
 
 use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
@@ -50,10 +52,10 @@ pub struct MarketFill {
     /// When the venue says it happened, in Unix seconds.
     pub unix_timestamp: i64,
     /// The fee the taker paid on this fill, in quote units: zero where the
-    /// venue doesn't record a fee per fill.
+    /// venue's reader doesn't decode one (see the module).
     pub taker_fee: Decimal,
     /// The fee the maker paid on this fill, in quote units, negative for a
-    /// rebate: zero where the venue doesn't record a fee per fill.
+    /// rebate: zero where the venue's reader doesn't decode one.
     pub maker_fee: Decimal,
     /// The maker's resting order, as the venue numbers it on the market,
     /// where its records name it: the maker's side of the fill takes its
