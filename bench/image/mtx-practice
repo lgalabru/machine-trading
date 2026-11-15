@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Grade /app/bot on the task's practice scenarios, exactly as the verifier
-# grades it on the hidden ones. Pass scenario files to run others.
+# Grade /app/bot on the task's practice scenarios by the rules the verifier
+# grades the hidden ones by. Pass scenario files to run others.
 set -euo pipefail
 if [ "$#" -eq 0 ]; then
   set -- /opt/mtx/practice/*.json
 fi
+# A task scored by v2 sets the verifier's scoring flags in its image
+# (MTX_PRACTICE_SCORING, which `mtx task sync` writes from its tests/test.sh),
+# so practice reports the same score the hidden sessions get, and only it.
+read -ra scoring <<< "${MTX_PRACTICE_SCORING:-}"
 # Three sessions at a time (MTX_JOBS to change): the world waits for the bot
 # each step, so a session grades the same however many run beside it, and
 # a sweep of practice grades fits in an agent's hour. One CPU stays free.
-exec mtx grade --jobs "${MTX_JOBS:-3}" --snapshot "$MTX_SNAPSHOT" --bot "${MTX_BOT:-/app/bot}" --components-only --logs /tmp/mtx-practice-logs "$@"
+exec mtx grade --jobs "${MTX_JOBS:-3}" --snapshot "$MTX_SNAPSHOT" --bot "${MTX_BOT:-/app/bot}" --components-only --logs /tmp/mtx-practice-logs ${scoring[@]+"${scoring[@]}"} "$@"

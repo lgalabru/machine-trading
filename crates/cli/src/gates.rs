@@ -1076,8 +1076,12 @@ fn clear_dir(dir: &Path) -> Result<()> {
 }
 
 /// What a Harbor check run should have scored, read from its `reward.json`.
-/// The oracle is the reference: skill 1 under v1, and under v2, the task's
-/// one score, a `reward` of 0.5 that is v2's (no `skill` beside it).
+/// The oracle is the reference: skill 1 under v1. Under v2, the task's one
+/// score: `reward` is v2's (no `skill` beside it), and the reference before
+/// the near-breach charge and any breach penalty is 0.5 (the report's
+/// `score_v2_raw_before_charge`). The charge itself, anchored on the
+/// informed bot's drawdowns, may take a deeper-drawing reference under 0.5
+/// by design: it is reported beside, not checked.
 fn harbor_checks(jobs: &Path, ran: bool, detail: &str, headline: tasks::Headline) -> Vec<Check> {
     let title_oracle = match headline {
         tasks::Headline::V1 => "Oracle scores the reference's 1.0",
@@ -1118,23 +1122,33 @@ fn harbor_checks(jobs: &Path, ran: bool, detail: &str, headline: tasks::Headline
             )
         }
         tasks::Headline::V2 => {
-            let (reward, v2, skill) = (
+            let (reward, v2, before, charge, skill) = (
                 get("oracle", "reward"),
                 get("oracle", "score_v2"),
+                get("oracle", "score_v2_raw_before_charge"),
+                get("oracle", "score_v2_risk_charge_usd"),
                 get("oracle", "skill"),
             );
-            let ok = reward.is_some_and(|r| (0.499..=0.501).contains(&r))
+            let ok = before.is_some_and(|r| (0.499..=0.501).contains(&r))
+                && reward.is_some()
                 && v2 == reward
                 && skill.is_none();
+            let num = |x: Option<f64>| x.map_or("missing".into(), |s| format!("{s:.4}"));
             Check::from(
                 SOLVABLE,
                 "oracle",
                 title_oracle,
                 ok,
                 format!(
-                    "oracle reward {}, score_v2 {}{}",
-                    reward.map_or("missing".into(), |s| format!("{s:.4}")),
-                    v2.map_or("missing".into(), |s| format!("{s:.4}")),
+                    "oracle before the charge {}; reward {} after a near-breach charge of ${} (information){}{}",
+                    num(before),
+                    num(reward),
+                    charge.map_or("?".into(), |c| format!("{c:.2}")),
+                    if v2 != reward {
+                        "; reward isn't v2's score"
+                    } else {
+                        ""
+                    },
                     if skill.is_some() {
                         "; a v1 skill is reported beside it"
                     } else {
@@ -1882,6 +1896,16 @@ mod tests {
             assert_eq!(checks[0].status, Status::Fail, "{flag}");
             assert!(checks[0].detail.contains(says), "{}", checks[0].detail);
         }
+        // Nor one whose breaches the ladder would leave out of its clean runs.
+        let mut breaching = named.clone();
+        breaching["rungs"][1]["may_breach"] = serde_json::json!(true);
+        let breaching = v2(&breaching, Some(&fit), test);
+        assert_eq!(breaching[0].status, Status::Fail);
+        assert!(
+            breaching[0].detail.contains("`may_breach`"),
+            "{}",
+            breaching[0].detail
+        );
         let v1 = v2_checks(
             &root,
             "t-spcx",
@@ -2202,26 +2226,45 @@ mod tests {
             checks.iter().all(|c| c.status == Status::Pass),
             "{checks:?}"
         );
-        // Under v2 the oracle's skill 1 isn't the bar: its reward is v2's 0.5.
+        // Under v2 the oracle's skill 1 isn't the bar: before the charge,
+        // its v2 score is 0.5.
         let v2 = |dir: &Path| harbor_checks(dir, true, "", tasks::Headline::V2)[0].status;
         assert_eq!(v2(&dir), Status::Fail, "a v1 reward of 1.0");
-        put("oracle", r#"{"reward": 0.5, "score_v2": 0.5}"#);
+        put(
+            "oracle",
+            r#"{"reward": 0.5, "score_v2": 0.5, "score_v2_raw_before_charge": 0.5}"#,
+        );
         assert_eq!(v2(&dir), Status::Pass);
         assert_eq!(
             harbor_checks(&dir, true, "", tasks::Headline::V1)[0].status,
             Status::Fail,
             "no skill"
         );
+        // A reference charged by a calmer informed bot scores under 0.5 by
+        // design; before the charge it is the 0.5, and it passes.
         put(
             "oracle",
-            r#"{"reward": 0.5, "score_v2": 0.5, "skill": 1.0}"#,
+            r#"{"reward": 0.41, "score_v2": 0.41, "score_v2_raw_before_charge": 0.5, "score_v2_risk_charge_usd": 37.5}"#,
+        );
+        assert_eq!(v2(&dir), Status::Pass);
+        let detail = &harbor_checks(&dir, true, "", tasks::Headline::V2)[0].detail;
+        assert!(detail.contains("$37.50"), "{detail}");
+        // Without the pre-charge value it can't pass.
+        put("oracle", r#"{"reward": 0.5, "score_v2": 0.5}"#);
+        assert_eq!(v2(&dir), Status::Fail);
+        put(
+            "oracle",
+            r#"{"reward": 0.5, "score_v2": 0.5, "score_v2_raw_before_charge": 0.5, "skill": 1.0}"#,
         );
         assert_eq!(v2(&dir), Status::Fail, "a v1 score beside it");
-        put("oracle", r#"{"reward": 0.62, "score_v2": 0.62}"#);
+        put(
+            "oracle",
+            r#"{"reward": 0.31, "score_v2": 0.31, "score_v2_raw_before_charge": 0.31}"#,
+        );
         assert_eq!(
             v2(&dir),
             Status::Fail,
-            "a floored reference scores above 0.5"
+            "floored: under 0.5 before any charge"
         );
         put("oracle", r#"{"reward": 1.0, "skill": 1.0}"#);
         put("sneaky", r#"{"reward": 0.4, "not_graded": 0.0}"#);

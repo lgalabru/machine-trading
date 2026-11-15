@@ -804,8 +804,11 @@ pub fn split_range(range: &str) -> Result<(String, String)> {
     Ok((a.to_string(), b.to_string()))
 }
 
-/// Each task's models on both sides: mean skill, and the change from `b`
-/// to `a`.
+/// Each task's models on both sides: the mean of the task's one score (v2's
+/// reward for a task headlined by v2, else skill), and the change from `b`
+/// to `a`. A task whose score differs between the sides (it moved to v2)
+/// has no change: the two aren't on one scale. `skill_delta` is only ever
+/// a v1 task's.
 pub fn compare(a: &Root, b: &Root) -> Value {
     let (sa, sb) = (review::scores_of(a), review::scores_of(b));
     let mut tasks: Vec<String> = Vec::new();
@@ -820,6 +823,10 @@ pub fn compare(a: &Root, b: &Root) -> Value {
         .iter()
         .map(|task| {
             let (ta, tb) = (&sa["tasks"][task], &sb["tasks"][task]);
+            let headline = |t: &Value| t["headline"].as_str().unwrap_or("v1").to_string();
+            let (ha, hb) = (headline(ta), headline(tb));
+            let one = (ta.is_null() || tb.is_null() || ha == hb)
+                .then(|| if ta.is_null() { hb.clone() } else { ha.clone() });
             let mut models: Vec<String> = Vec::new();
             for t in [ta, tb] {
                 if let Some(m) = t["models"].as_object() {
@@ -832,16 +839,22 @@ pub fn compare(a: &Root, b: &Root) -> Value {
                 .iter()
                 .map(|model| {
                     let (ma, mb) = (&ta["models"][model], &tb["models"][model]);
-                    let delta = match (ma["skill"].as_f64(), mb["skill"].as_f64()) {
-                        (Some(x), Some(y)) => json!(x - y),
+                    let score = |m: &Value| m["score"].as_f64().or(m["skill"].as_f64());
+                    let delta = match (&one, score(ma), score(mb)) {
+                        (Some(_), Some(x), Some(y)) => json!(x - y),
                         _ => Value::Null,
                     };
-                    json!({ "model": model, "a": ma, "b": mb, "skill_delta": delta })
+                    let mut row = json!({ "model": model, "a": ma, "b": mb, "score_delta": delta });
+                    if one.as_deref() == Some("v1") {
+                        row["skill_delta"] = delta;
+                    }
+                    row
                 })
                 .collect();
             json!({
                 "task": task,
                 "versions": { "a": ta["version"], "b": tb["version"] },
+                "headline": { "a": ha, "b": hb },
                 "models": models,
             })
         })
@@ -851,9 +864,17 @@ pub fn compare(a: &Root, b: &Root) -> Value {
 
 /// The comparison as a table on stderr.
 pub fn print_compare(cmp: &Value) {
-    let skill = |v: &Value| {
+    // Skill is a multiple of the reference (1×); v2 is a score (0.5 the
+    // reference).
+    let show = |v: &Value, v2: bool| {
         v.as_f64()
-            .map(|x| format!("{x:.2}×"))
+            .map(|x| {
+                if v2 {
+                    format!("{x:.2}")
+                } else {
+                    format!("{x:.2}×")
+                }
+            })
             .unwrap_or_else(|| "–".to_string())
     };
     let (a, b) = (
@@ -861,21 +882,31 @@ pub fn print_compare(cmp: &Value) {
         cmp["b"].as_str().unwrap_or("b"),
     );
     for task in cmp["tasks"].as_array().into_iter().flatten() {
+        let (va, vb) = (task["headline"]["a"] == "v2", task["headline"]["b"] == "v2");
         eprintln!(
             "\n{}  {}",
             crate::ui::bold(task["task"].as_str().unwrap_or("?")),
             crate::ui::dim(format!(
-                "task {} vs {}",
+                "task {} vs {}{}",
                 task["versions"]["a"].as_str().unwrap_or("–"),
-                task["versions"]["b"].as_str().unwrap_or("–")
+                task["versions"]["b"].as_str().unwrap_or("–"),
+                match (va, vb) {
+                    (true, true) => " · scoring v2",
+                    (false, false) => "",
+                    _ => " · scored differently: no change shown",
+                }
             ))
         );
         eprintln!("  {:<22} {:>10} {:>10} {:>9}", "model", a, b, "change");
         for m in task["models"].as_array().into_iter().flatten() {
-            let delta = m["skill_delta"]
+            let delta = m["score_delta"]
                 .as_f64()
                 .map(|d| {
-                    let text = format!("{d:+.2}×");
+                    let text = if va {
+                        format!("{d:+.2}")
+                    } else {
+                        format!("{d:+.2}×")
+                    };
                     if d >= 0.0 {
                         crate::ui::accent(text)
                     } else {
@@ -883,14 +914,21 @@ pub fn print_compare(cmp: &Value) {
                     }
                 })
                 .unwrap_or_else(|| "–".to_string());
+            let score = |side: &Value| {
+                if side["score"].is_null() {
+                    side["skill"].clone()
+                } else {
+                    side["score"].clone()
+                }
+            };
             eprintln!(
                 "  {:<22} {:>10} {:>10} {:>9}",
                 m["model"]
                     .as_str()
                     .unwrap_or("?")
                     .trim_start_matches("claude-"),
-                skill(&m["a"]["skill"]),
-                skill(&m["b"]["skill"]),
+                show(&score(&m["a"]), va),
+                show(&score(&m["b"]), vb),
                 delta
             );
         }
@@ -901,6 +939,54 @@ pub fn print_compare(cmp: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A root with one finished trial of `task` by `model`, its report given.
+    fn root_with(report: &str) -> Root {
+        let dir = std::env::temp_dir().join(format!("mtx-cmp-{}", uuid::Uuid::new_v4().simple()));
+        let trial = dir.join("job/t-1");
+        std::fs::create_dir_all(trial.join("verifier")).unwrap();
+        std::fs::write(
+            trial.join("result.json"),
+            r#"{"trial_name": "t-1", "task_name": "solana-foundation/new-thing-spcx", "finished_at": "x", "agent_info": {"model_info": {"name": "m"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(trial.join("verifier/report.json"), report).unwrap();
+        Root {
+            label: dir.file_name().unwrap().to_string_lossy().into_owned(),
+            path: dir,
+            published: false,
+        }
+    }
+
+    #[test]
+    fn a_v2_task_is_compared_on_its_reward_never_on_skill() {
+        let a = root_with(r#"{"headline": "v2", "reward": 0.6, "scenarios": []}"#);
+        let b = root_with(r#"{"headline": "v2", "reward": 0.4, "scenarios": []}"#);
+        let v1 = root_with(r#"{"reward": 0.1, "skill": 1.2, "scenarios": []}"#);
+        let cmp = compare(&a, &b);
+        let row = &cmp["tasks"][0]["models"][0];
+        assert!(
+            (row["score_delta"].as_f64().unwrap() - 0.2).abs() < 1e-12,
+            "{row}"
+        );
+        assert!(row.get("skill_delta").is_none());
+        assert_eq!(cmp["tasks"][0]["headline"]["a"], "v2");
+        // A task that moved to v2 isn't compared across the switch.
+        let moved = compare(&a, &v1);
+        assert!(moved["tasks"][0]["models"][0]["score_delta"].is_null());
+        // A v1 task keeps its skill comparison.
+        let both_v1 = compare(&v1, &v1);
+        assert_eq!(both_v1["tasks"][0]["models"][0]["skill_delta"], 0.0);
+        // The leaderboard's scores rank a v2 task on reward.
+        let scores = review::scores_of(&a);
+        let task = &scores["tasks"]["new-thing"];
+        assert_eq!(task["headline"], "v2");
+        assert_eq!(task["models"]["m"]["score"], 0.6);
+        assert!(task["models"]["m"]["skill"].is_null());
+        for r in [a, b, v1] {
+            std::fs::remove_dir_all(&r.path).unwrap();
+        }
+    }
 
     #[test]
     fn versions_sort_numerically() {
