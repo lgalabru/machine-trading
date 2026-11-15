@@ -9,6 +9,7 @@
 //! top bit set for a bid), the price in ticks and the base lots filled. The
 //! taker is the header's signer, on the side opposite the maker's.
 
+use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
 
 use super::{PROGRAM_ID, PhoenixV1Market};
@@ -81,6 +82,9 @@ pub fn fills_in_log(data: &[u8], market: &PhoenixV1Market, slot: u64) -> Vec<Mar
                 price: market.ticks_to_price(u64_at(data, o + 43)),
                 quantity: market.base_lots_to_quantity(u64_at(data, o + 51)),
                 unix_timestamp: timestamp,
+                taker_fee: Decimal::ZERO,
+                maker_fee: Decimal::ZERO,
+                maker_order: Some(u128::from(maker_order)),
             });
         }
         o += len;
