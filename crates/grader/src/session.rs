@@ -390,37 +390,35 @@ pub struct TurnReport {
 impl SessionReport {
     /// What the session measured, in the terms [`Mandate::audit`] checks.
     pub fn observed(&self) -> Observed {
-        let mut observed = Observed {
-            positions: self.positions.clone(),
-            positions_outside_universe: self.positions_outside_universe,
-            max_drawdown_usd: self.audited_drawdown_usd(),
-            fills: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.observed_fills())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(
-                    self.perp_fills
-                        .iter()
-                        .filter(|fill| !fill.forced)
-                        .map(|fill| ObservedFill {
-                            instrument: fill.instrument.clone(),
-                            side: fill.side,
-                            price: fill.price,
-                        }),
-                )
-                .collect(),
-            open_orders: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.open_orders.clone())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(self.perp_open_orders.iter().cloned())
-                .collect(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.positions = self.positions.clone();
+        observed.positions_outside_universe = self.positions_outside_universe;
+        observed.max_drawdown_usd = self.audited_drawdown_usd();
+        observed.fills = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.observed_fills())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(
+                self.perp_fills
+                    .iter()
+                    .filter(|fill| !fill.forced)
+                    .map(|fill| ObservedFill {
+                        instrument: fill.instrument.clone(),
+                        side: fill.side,
+                        price: fill.price,
+                    }),
+            )
+            .collect();
+        observed.open_orders = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.open_orders.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(self.perp_open_orders.iter().cloned())
+            .collect();
         observed.samples = self.samples.clone();
         observed.term_start = self.term_start.clone();
         observed
