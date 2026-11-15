@@ -1178,6 +1178,10 @@ async fn wallet_holds(
     Ok(atoms as f64 / 10f64.powi(token.decimals as i32))
 }
 
+/// How many times the close-out cancels the bot's orders and tries to flatten
+/// it, each of up to [`MAX_CLOSE_ORDERS_PER_STEP`] orders.
+const CLOSE_OUT_ATTEMPTS: usize = 3;
+
 impl PerpAccount {
     async fn measure(&self) -> Result<Measurement> {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
@@ -1680,7 +1684,21 @@ impl Account for PerpAccount {
             .max_drawdown_usd
             .max(self.peak_value_usd - value_before_usd);
         self.closed_out = true;
-        let closing = self.force_close(bot, rpc_url, None, at).await?;
+        let mut orders = Vec::new();
+        let mut position = position_before;
+        for attempt in 0..CLOSE_OUT_ATTEMPTS {
+            let closing = self.force_close(bot, rpc_url, None, at).await?;
+            for order in &closing.orders {
+                if let Some(error) = &order.error {
+                    tracing::info!(attempt, %error, "close-out: an order failed");
+                }
+            }
+            orders.extend(closing.orders);
+            position = closing.position;
+            if is_flat(position) {
+                break;
+            }
+        }
         Ok(ForcedClose {
             reason: ForcedCloseReason::CloseOut,
             step,
@@ -1689,8 +1707,8 @@ impl Account for PerpAccount {
             peak_usd: self.peak_value_usd,
             value_after_usd: value_before_usd,
             position_before,
-            orders: closing.orders,
-            flat: is_flat(closing.position),
+            orders,
+            flat: is_flat(position),
         })
     }
 
