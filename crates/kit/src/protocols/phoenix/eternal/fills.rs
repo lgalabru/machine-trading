@@ -65,6 +65,8 @@ use crate::{
 pub struct PerpOrderPlaced {
     /// The slot it landed in.
     pub slot: u64,
+    /// The market, as the mandate names it.
+    pub instrument: InstrumentId,
     /// The market's sequence number for the instruction that placed it,
     /// shifted up 32 bits, plus the event's place among the instruction's
     /// events, as a fill's [`MarketFill::sequence`].
@@ -318,6 +320,7 @@ impl PerpMarketRecords {
                     let lots = p.quantity.as_inner();
                     self.placed.push(PerpOrderPlaced {
                         slot: summary.slot,
+                        instrument: market.id().clone(),
                         sequence,
                         trader: Pubkey::new_from_array(h.trader_account),
                         side: if lots < 0 { Side::Sell } else { Side::Buy },
