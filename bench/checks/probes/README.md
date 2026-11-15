@@ -42,6 +42,28 @@ fast `mtx gates` tolerates it, the full one fails it. A probe that proved
 nothing (a breacher that never breached, a probe that never traded or went fatal, a fatal crash that never came, a fatal probe
 whose grade wasn't fatal) is `no_power` and fails.
 
+## One-sided mandates
+
+A probe's random component stays inside the mandate. The probe reads the
+session's own instrument allowance (its `sides`, `min_position` and
+`max_position`) and derives which sides the account may hold: both, long only
+(a client order to buy: `min_position` 0 or `sides: [buy]`) or short only.
+Nothing is configured per task. On a two-sided mandate the coin flip, the
+honest mixture's coin and the crash probes' coin are unchanged (-1 or +1 of the
+cap). On a one-sided one:
+
+- `coin-flip` (and so the honest blend's random sessions and `crash-*`) holds a
+  random size, drawn evenly from nothing to the cap, on the allowed side: a
+  random buy schedule with random timing and size, no edge;
+- `martingale` and `stop-lotto` bet on the allowed side or sit out a block (a
+  coin for timing);
+- `hugger` rests only the allowed side of the book.
+
+Without this a buy-only task's probes shorted half the time, every short was a
+breach, and every honest probe scored -1 without ever testing the pay line.
+The shared `blind-short` rung of the ladder is outside this: a buy-only task
+supplies its own (see the task's ladder file).
+
 ## What the wrappers do
 
 - **Lever** shows the reference a market with its position divided by `m` and
