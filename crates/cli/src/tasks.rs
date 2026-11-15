@@ -373,8 +373,67 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         {
             files.insert(folder.join("instruction.md"), text.into_bytes());
         }
+        if task.mtx.headline == Headline::V2 {
+            let dockerfile = folder.join("environment/Dockerfile");
+            let text = std::fs::read_to_string(root.join(&dockerfile))
+                .with_context(|| dockerfile.display().to_string())?;
+            files.insert(
+                dockerfile,
+                with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
+            );
+        }
     }
     Ok(files)
+}
+
+/// The variable `mtx-practice` reads its scoring flags from.
+pub const PRACTICE_SCORING: &str = "MTX_PRACTICE_SCORING";
+
+/// The scoring flags a verifier script grades with, for `mtx-practice` to
+/// grade practice the same way: `--scoring` and v2's settings, none of the
+/// hidden set's own (the draw, its size, the reference anchor).
+pub fn practice_scoring(script: &str) -> String {
+    let mut flags = Vec::new();
+    for flag in [
+        "--scoring",
+        "--loss-weight",
+        "--risk-weight",
+        "--anchor-floor",
+        "--ceiling-cost-bps",
+    ] {
+        if let Some(value) = scoring_text::flag_value(script, flag) {
+            flags.push(format!("{flag} {value}"));
+        }
+    }
+    if scoring_text::has_flag(script, "--v2-sessions") {
+        flags.push("--v2-sessions".to_string());
+    }
+    flags.join(" ")
+}
+
+/// A task's environment Dockerfile with its `MTX_PRACTICE_SCORING` line set
+/// to `flags`: replaced in place, else added after `ENV MTX_TASK=`, else at
+/// the end.
+fn with_practice_scoring(dockerfile: &str, flags: &str) -> String {
+    let line = format!("ENV {PRACTICE_SCORING}=\"{flags}\"");
+    let prefix = format!("ENV {PRACTICE_SCORING}=");
+    let mut lines: Vec<String> = dockerfile.lines().map(str::to_string).collect();
+    if let Some(i) = lines.iter().position(|l| l.starts_with(&prefix)) {
+        lines[i] = line;
+    } else {
+        let block = [
+            "# mtx-practice grades practice with the verifier's scoring (tests/test.sh),"
+                .to_string(),
+            "# written by `mtx task sync`.".to_string(),
+            line,
+        ];
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("ENV MTX_TASK="))
+            .map_or(lines.len(), |i| i + 1);
+        lines.splice(at..at, block);
+    }
+    lines.join("\n") + "\n"
 }
 
 /// What the task's `solution/` holds of its reference, as `(from, to)`: its
@@ -581,6 +640,30 @@ mod tests {
         let err = load(&dir).unwrap_err().to_string();
         assert!(err.contains("both anchor"), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn practice_grades_with_the_verifiers_scoring() {
+        let script = "mtx grade \\\n  --draw x --count 72 --reference /opt/mtx/anchors/x \\\n  --scoring v2-headline \\\n  --v2-sessions \\\n  --loss-weight 2 \\\n  --bot /app/bot\n";
+        let flags = practice_scoring(script);
+        assert_eq!(flags, "--scoring v2-headline --loss-weight 2 --v2-sessions");
+        let docker = "FROM base\nENV MTX_TASK=t-spcx\nCOPY practice/ /opt/mtx/practice/\n";
+        let once = with_practice_scoring(docker, &flags);
+        assert!(once.contains("ENV MTX_TASK=t-spcx\n# mtx-practice grades practice"));
+        assert!(once.contains(&format!("ENV {PRACTICE_SCORING}=\"{flags}\"\nCOPY")));
+        assert_eq!(with_practice_scoring(&once, &flags), once);
+        let changed = with_practice_scoring(&once, "--scoring v2-headline");
+        assert!(
+            changed.contains("=\"--scoring v2-headline\"\n")
+                && changed.matches(PRACTICE_SCORING).count() == 1
+        );
+        // The image's mtx-practice passes them to the grade.
+        let root = crate::authoring::repo_root();
+        let practice = std::fs::read_to_string(root.join("bench/image/mtx-practice")).unwrap();
+        assert!(
+            practice.contains(&format!("${{{PRACTICE_SCORING}:-}}")),
+            "{practice}"
+        );
     }
 
     #[test]
