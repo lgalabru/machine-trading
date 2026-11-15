@@ -524,6 +524,39 @@ pub fn v2_checks(
     checks
 }
 
+/// No task's verifier tells the graded bot anything about its sessions:
+/// `--tell-latent` and `--tell-regime` are the ladder's, for its informed
+/// rung and its oracles. In a verifier they would hand the agent's bot what
+/// only the informed bot may know, or the session's future.
+pub fn bot_told_nothing(test: &str) -> Check {
+    let (id, title) = (
+        "bot-told-nothing",
+        "The verifier tells the graded bot nothing",
+    );
+    let told: Vec<&str> = ["--tell-latent", "--tell-regime"]
+        .into_iter()
+        .filter(|flag| scoring_text::has_flag(test, flag))
+        .collect();
+    if told.is_empty() {
+        Check::pass(
+            GRADED,
+            id,
+            title,
+            "tests/test.sh passes neither `--tell-latent` nor `--tell-regime`",
+        )
+    } else {
+        Check::fail(
+            GRADED,
+            id,
+            title,
+            format!(
+                "tests/test.sh passes {}: the graded bot would be told what only the ladder's rungs may know",
+                told.join(" and ")
+            ),
+        )
+    }
+}
+
 const INFORMED_LIVE: (&str, &str) = (
     "informed-on-hidden-sets",
     "The verifier runs the informed bot on the hidden set",
@@ -1479,6 +1512,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     };
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
+    checks.push(bot_told_nothing(&test));
     checks.extend(v2_checks(
         root,
         task,
@@ -2110,6 +2144,34 @@ mod tests {
         assert_eq!(
             realism_summary(&report),
             "60 sessions; pass spread; fail gaps; skipped returns"
+        );
+    }
+
+    #[test]
+    fn no_verifier_tells_the_graded_bot_anything() {
+        let root = authoring::repo_root();
+        for task in tasks::load(&root).unwrap() {
+            let test = std::fs::read_to_string(
+                root.join("bench/tasks")
+                    .join(&task.dir)
+                    .join("tests/test.sh"),
+            )
+            .unwrap();
+            let check = bot_told_nothing(&test);
+            assert_eq!(check.status, Status::Pass, "{}: {}", task.dir, check.detail);
+        }
+        let verifier = "mtx grade \\\n  --draw flash-crash \\\n  --bot /app/bot\n";
+        assert_eq!(bot_told_nothing(verifier).status, Status::Pass);
+        for flag in ["--tell-latent", "--tell-regime"] {
+            let told = verifier.replace("--bot", &format!("{flag} \\\n  --bot"));
+            let check = bot_told_nothing(&told);
+            assert_eq!(check.status, Status::Fail, "{told}");
+            assert!(check.detail.contains(flag), "{}", check.detail);
+        }
+        // A comment that names a flag doesn't count.
+        assert_eq!(
+            bot_told_nothing(&format!("# never --tell-latent here\n{verifier}")).status,
+            Status::Pass
         );
     }
 
