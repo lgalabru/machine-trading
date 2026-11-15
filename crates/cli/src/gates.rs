@@ -1491,12 +1491,18 @@ mod tests {
         assert_eq!(held.status, Status::Pass);
         assert!(held.detail.contains("2 probe rules"));
         let idle = check(
-            Some(vec![probe("a", "pass"), probe("b:run_cap", "not_exercised")]),
+            Some(vec![
+                probe("a", "pass"),
+                probe("b:run_cap", "not_exercised"),
+            ]),
             false,
         );
         assert_eq!(idle.status, Status::Pass);
         assert!(idle.detail.contains("1 probe rules hold"));
-        assert!(idle.detail.contains("not exercised on this task: b:run_cap"));
+        assert!(
+            idle.detail
+                .contains("not exercised on this task: b:run_cap")
+        );
         let unsure = vec![probe("a", "pass"), probe("b", "inconclusive")];
         assert_eq!(check(Some(unsure), true).status, Status::Inconclusive);
         let broken = vec![probe("zero_edge:coin", "fail"), probe("b", "pass")];
