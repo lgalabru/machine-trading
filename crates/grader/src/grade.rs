@@ -425,8 +425,8 @@ impl GradeReport {
                 ("score_v2_risk_allowance".to_string(), v2.risk.allowance),
                 ("score_v2_risk_weight".to_string(), v2.risk.weight),
             ]);
-            if let Some(cap) = v2.breach_cap {
-                rewards.insert("score_v2_breach_cap".to_string(), cap);
+            if v2.breached_sessions > 0 {
+                rewards.insert("score_v2_breach_penalty".to_string(), v2.breach_penalty);
             }
             if let Some(anchor) = v2.risk.dd_rms_anchor {
                 rewards.insert("score_v2_dd_rms_anchor".to_string(), anchor);
@@ -1893,7 +1893,7 @@ mod tests {
         assert_eq!(rewards["score_v2_risk_weight"], 1.0);
         assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
         assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
-        assert!(!rewards.contains_key("score_v2_breach_cap"));
+        assert!(!rewards.contains_key("score_v2_breach_penalty"));
     }
 
     #[test]
@@ -1952,7 +1952,11 @@ mod tests {
                 .contains("stopped out")
         );
         assert_eq!(graded.breached_sessions, 1);
-        assert_eq!(graded.breach_cap, Some(0.5));
+        assert!((graded.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT / 2.0).abs() < 1e-15);
+        assert_eq!(
+            report.rewards()["score_v2_breach_penalty"],
+            graded.breach_penalty
+        );
         assert_eq!(graded.metrics.stopped_out_sessions, 1);
         // A stop-out that lost less than the limit still counts k·L.
         let mut report = score(vec![(session(300.0), &s), (stopped_out(-900.0), &s)]);
@@ -1988,10 +1992,11 @@ mod tests {
                 compliant.v2.as_ref().unwrap(),
             );
             assert!(b.raw < c.raw, "{stops} stop-outs: {} vs {}", b.raw, c.raw);
-            assert_eq!(b.breach_cap, Some(if stops == 1 { 0.5 } else { 0.0 }));
+            let rate = stops as f64 / 6.0;
+            assert!((b.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT * rate).abs() < 1e-15);
             if stops == 1 {
                 // Levering paid in USD (5,400 − 1,575 against 2,000): the
-                // cap is what keeps it below its twin.
+                // breach penalty is what keeps it below its twin.
                 assert!(b.bot_usd > c.bot_usd);
             }
         }
