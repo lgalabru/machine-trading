@@ -62,8 +62,9 @@ whose grade wasn't fatal) is `no_power` and fails.
   Each check runs only where it can fail. The run cap check needs a run that
   beats its twin without the cap; the floor check needs the swapped run to beat
   the twin with the breach sessions unfloored (their PnL over nop's, weighted).
-  Where it doesn't, the check is `no_power`, never a pass. **On flash-crash both
-  are `no_power` by construction**: the breacher breaches in nearly every
+  Where it doesn't, the check is `not_exercised` (reported, never a pass, and it doesn't fail the gate:
+  `no_power` is for a breacher that never breached or was fatal). **On flash-crash the
+  run cap has no power by construction**: the breacher breaches in nearly every
   session (11 of 12 on the fast set), the one clean session is flat, and a
   breach there already scores at most the limit lost times `k`, below its twin
   (GRADING_DECISIONS, "Breacher on flash-crash"). The run cap is covered by the

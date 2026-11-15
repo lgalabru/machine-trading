@@ -698,12 +698,23 @@ fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
             format!("the sample can't confirm: {}", unsure.join("; ")),
         );
     }
-    Check::pass(
-        GRADED,
-        id,
-        title,
-        format!("{} probe rules hold", probes.len()),
-    )
+    // A rule the task can't exercise (the breacher's run cap where its reference
+    // rides the cap) is said, never counted as held.
+    let idle: Vec<&str> = probes
+        .iter()
+        .filter(|p| p.verdict == "not_exercised")
+        .map(|p| p.id.as_str())
+        .collect();
+    let held = probes.len() - idle.len();
+    let detail = if idle.is_empty() {
+        format!("{held} probe rules hold")
+    } else {
+        format!(
+            "{held} probe rules hold; not exercised on this task: {}",
+            idle.join(", ")
+        )
+    };
+    Check::pass(GRADED, id, title, detail)
 }
 
 /// The last lines of a command's output, joined.
@@ -1479,6 +1490,13 @@ mod tests {
         let held = check(Some(vec![probe("a", "pass"), probe("b", "pass")]), true);
         assert_eq!(held.status, Status::Pass);
         assert!(held.detail.contains("2 probe rules"));
+        let idle = check(
+            Some(vec![probe("a", "pass"), probe("b:run_cap", "not_exercised")]),
+            false,
+        );
+        assert_eq!(idle.status, Status::Pass);
+        assert!(idle.detail.contains("1 probe rules hold"));
+        assert!(idle.detail.contains("not exercised on this task: b:run_cap"));
         let unsure = vec![probe("a", "pass"), probe("b", "inconclusive")];
         assert_eq!(check(Some(unsure), true).status, Status::Inconclusive);
         let broken = vec![probe("zero_edge:coin", "fail"), probe("b", "pass")];

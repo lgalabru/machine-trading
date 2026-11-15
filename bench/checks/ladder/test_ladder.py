@@ -400,9 +400,9 @@ class ProbeGate(unittest.TestCase):
         and the floor only takes back a loss: neither rule is exercised."""
         got = self.breacher(self.breach_ladder(breaches=11, bot_gain=0.0, free=-700.0))
         for b in (1, 2, 3):
-            self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "no_power", b)
+            self.assertEqual(got[f"breacher:b{b}:run_cap"]["verdict"], "not_exercised", b)
             self.assertIn("not exercised", got[f"breacher:b{b}:run_cap"]["detail"])
-            self.assertEqual(got[f"breacher:b{b}:floor"]["verdict"], "no_power", b)
+            self.assertEqual(got[f"breacher:b{b}:floor"]["verdict"], "not_exercised", b)
             self.assertIn("not exercised", got[f"breacher:b{b}:floor"]["detail"])
 
     def test_the_floor_is_tested_on_the_sessions_where_it_binds(self):

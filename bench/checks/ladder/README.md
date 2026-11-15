@@ -28,7 +28,7 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
   (the run cap and the per-session floor), a crashing bot under the bot it wraps,
   levered references held to their multiple, honest bots from a measured Sharpe of
   0.2 over doing nothing. `summary.json`
-  carries each rule's verdict (`pass`, `fail`, `inconclusive`, `no_power`).
+  carries each rule's verdict (`pass`, `fail`, `inconclusive`, `no_power`, `not_exercised`).
 
 ## Flash-crash
 

@@ -464,24 +464,27 @@ def add_breacher_checks(add, terms, breacher, twin):
     - the run cap: a bot that levers everywhere and breaches in b sessions
       (`full`), capped as the grader caps it, scores at most its twin (1
       breach holds it to 0.5, 2 or more to 0). Tested only where the cap binds
-      (the run uncapped beats the twin); otherwise `no_power`, never a pass;
+      (the run uncapped beats the twin); otherwise `not_exercised`, never a pass;
     - the per-session floor: the twin's run with b of its sessions replaced by
       breach sessions (`swap`), scored without the cap, is at most the twin's,
       wherever the twin's replaced session is above the floor (-k times the
       limit). Tested only where the floor binds: the same run with those
       sessions at their unfloored value (`free`, their PnL over nop's, weighted)
-      beats the twin; otherwise `no_power`.
+      beats the twin; otherwise `not_exercised`.
 
     Each is deterministic: composed from the graded rows, not resampled. No
-    power either if the breacher went fatal, never breached, or no set has b
-    breaching sessions. On a task whose breacher breaches in nearly every
-    session and whose reference rides the cap, neither binds: both are
-    `no_power` by construction, and the grader's own tests (scoring_v2.rs,
+    power either (`no_power`, which fails the gate) if the breacher went fatal,
+    never breached, or no set has b breaching sessions. `not_exercised` is a
+    verdict of its own: it says the rule could not be tested on this task, and
+    doesn't fail the gate. On a task whose breacher breaches in nearly every
+    session and whose reference rides the cap, the run cap is `not_exercised`
+    by construction, and the grader's own tests (scoring_v2.rs,
     `the_run_cap_holds_a_bot_that_levers_everywhere`) cover the run cap."""
 
-    def nopower(kind, b, why):
+    def nopower(kind, b, why, verdict="no_power"):
         add(f"breacher:b{b}:{kind}", "breacher", [breacher, twin],
-            {"verdict": "no_power", "violation_odds": None, "point_violated": True}, why)
+            {"verdict": verdict, "violation_odds": None,
+             "point_violated": verdict == "no_power"}, why)
 
     for b in BREACH_COUNTS:
         runs = []
@@ -510,7 +513,8 @@ def add_breacher_checks(add, terms, breacher, twin):
         if full_free <= twin_capped + 1e-9:
             nopower("run_cap", b,
                     f"{head}: the run cap is not exercised: even uncapped the run scores "
-                    f"{full_free:+.3f}, at most {twin}'s {twin_capped:+.3f}")
+                    f"{full_free:+.3f}, at most {twin}'s {twin_capped:+.3f}",
+                    "not_exercised")
         else:
             ok = full_capped <= twin_capped + 1e-9
             add(f"breacher:b{b}:run_cap", "breacher", [breacher, twin],
@@ -525,7 +529,8 @@ def add_breacher_checks(add, terms, breacher, twin):
                     if all(t[twin]["sessions"][i]["bot"] >= -t[twin]["k"] * t[twin]["sessions"][i]["limit"]
                            for i in idx)]
         if not expected:
-            nopower("floor", b, f"{head}: the twin's replaced sessions are all under the floor")
+            nopower("floor", b, f"{head}: the floor is not exercised: the twin's replaced "
+                    f"sessions are all under it", "not_exercised")
             continue
         swapped = mean(sums_score(swap, t[breacher], capped=False) for t, swap, _ in expected)
         unfloored = mean(
@@ -536,7 +541,8 @@ def add_breacher_checks(add, terms, breacher, twin):
         if unfloored <= twin_free + 1e-9:
             nopower("floor", b,
                     f"{head}: the floor is not exercised: even unfloored the swapped run "
-                    f"scores {unfloored:+.3f}, at most {twin}'s {twin_free:+.3f}")
+                    f"scores {unfloored:+.3f}, at most {twin}'s {twin_free:+.3f}",
+                    "not_exercised")
             continue
         ok = swapped <= twin_free + 1e-9
         add(f"breacher:b{b}:floor", "breacher", [breacher, twin],
@@ -1002,7 +1008,7 @@ def main():
         summary["probes"] = probe_checks(config, sets, count)
         for check in summary["probes"]:
             label = {"pass": "ok  ", "fail": "FAIL", "inconclusive": "?   ", "no_power": "NOPW",
-                     "reported": "info"}[
+                     "reported": "info", "not_exercised": "idle"}[
                 check["verdict"]]
             print(f"  {label} {check['id']}: {check['detail']}"
                   + (f" [odds {check['violation_odds']:.2f}]"
