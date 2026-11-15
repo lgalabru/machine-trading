@@ -106,6 +106,11 @@ impl Order {
         (slot.saturating_sub(self.start_slot) as f64 / span).min(1.0)
     }
 
+    /// The session's steps, of two slots each.
+    pub fn span_steps(&self) -> f64 {
+        (self.end_slot.saturating_sub(self.start_slot) as f64 / 2.0).max(1.0)
+    }
+
     /// The highest price worth paying now: the broker's price less the
     /// fee, plus `edge_bps`, and never over the cap.
     pub fn worth_usd(&self, oracle: f64, edge_bps: f64) -> f64 {
