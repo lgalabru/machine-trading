@@ -1206,6 +1206,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
             None => None,
         };
+        // A cancel sent in the slot an order was placed in leaves it
+        // resting, and the exit would match the bot's own last quotes, so
+        // the close-out goes a slot on.
+        let slot = crate::chain::next_slot(surfnet, &rpc).await?;
         let close = account
             .close_out(
                 &bot_key,

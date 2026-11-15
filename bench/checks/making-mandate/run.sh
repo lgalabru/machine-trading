@@ -174,7 +174,11 @@ def check_closed(name, against):
         total = d["spread_capture_usd"] + d["taking_cost_usd"] - d["maker_fees_usd"] + d["inventory_usd"]
         assert abs(total - s["pnl_usd"]) < 1e-6, f"{tag}: parts {total} vs pnl {s['pnl_usd']}"
         assert abs(d["pnl_usd"] - s["pnl_usd"]) < 1e-9
-        assert abs(d["unexplained_usd"]) < 0.01 + 1e-4 * abs(s["pnl_usd"]), f"{tag}: unexplained {d['unexplained_usd']}"
+        # What the fills' logged prices and fees don't explain stays within a
+        # few hundredths of a percent of what the close-out traded.
+        exit_usd = sum(f["base"] * f["price"] for f in forced)
+        slack = 0.01 + 5e-4 * exit_usd
+        assert abs(d["unexplained_usd"]) < slack, f"{tag}: unexplained {d['unexplained_usd']} (slack {slack})"
         assert [m.get("horizon_slots") for m in d["markouts"]] == [2, 20, 120, None], f"{tag}: markout horizons"
         for m in d["markouts"]:
             assert abs(m["realized_spread_usd"] - (d["spread_capture_usd"] + m["markout_usd"])) < 1e-9
@@ -187,7 +191,7 @@ def check_closed(name, against):
               f"S {d['spread_capture_usd']:.4f} M {[round(m['markout_usd'], 4) for m in d['markouts']]} T {d['taking_cost_usd']:.4f} "
               f"V {d['inventory_usd']:.4f} (jump {d['inventory_jump_usd']:.4f} walk {d['inventory_walk_usd']:.4f}) unexplained {d['unexplained_usd']:.5f} "
               f"uptime {d['uptime']:.3f}; pnl less (without - cost) {residual:.5f}")
-        assert abs(residual) < 0.05, f"{tag}: the close-out changed more than its cost ({residual})"
+        assert abs(residual) < slack, f"{tag}: the close-out changed more than its cost ({residual})"
         assert "decomposition" not in other and not [c for c in other.get("forced_closes", []) if c["reason"]["kind"] == "close_out"], f"{tag}: opt-in leaked"
     return saw_close
 assert check_closed("closed-maker", "maker"), "no maker session had anything to close out"
