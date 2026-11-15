@@ -11,24 +11,38 @@
 //! rule (the gap over the period, capped per interval). It holds
 //! `min(1, K * yield / variance)` of its cap, and no more than keeps two
 //! sigmas of a minute's move inside what is left of its loss limit, less a
-//! $200 buffer. It waits 15 seconds to measure before its first trade,
-//! re-sizes only when its target moves by more than 12% of the cap, and
-//! goes flat when the book is not below the index.
+//! $200 buffer. Until the session's flush has come it also keeps a 2% gap
+//! of the book inside that room: the flush is a jump, and a stop distance
+//! in sigmas doesn't cover it. It waits 15 seconds to measure before its
+//! first trade, re-sizes only when its target moves by more than 12% of the
+//! cap, trades 50 shares a turn (the book's impact grows with the turn's
+//! size), and goes flat when the book is not below the index.
 //!
 //! It also watches the crowd: the discount's churn, each change squared
 //! over the time it took and the discount's own level, averaged over about
 //! eight changes. When that runs above (3.5% a root-second)^2, between the
 //! calm churn and the stressed one, it reads the market as stressed and
-//! holds nothing until the churn has settled below 80% of that line.
+//! holds nothing until the churn has settled below 80% of that line, and
+//! for 30 seconds after.
+//!
+//! And it watches for the flush: the discount closes as the book falls, so
+//! a discount under 0.1% of the index means the session's one flush has
+//! come. It holds nothing for a minute while the discount rebuilds, then
+//! drops the gap from its sizing: no second flush can come.
 //!
 //! The ladder runs the same desk as its rungs (`MTX_RUNG`):
 //! - `max-lever`: the cap from the start (naive full-size carry);
 //! - `fixed`: 30% of the cap, a constant 3x of collateral (careful, unaware
 //!   of the volatility);
 //! - `prem-scaled`: sized by the yield alone, ignoring the volatility;
-//! - `told`: told the volatility state (`MTX_REGIME`): the cap in calm, flat
-//!   in stress;
-//! - `oracle`: told the state and the flush too: flat around the flush;
+//! - `informed`: the informed bot (`checks/bots/informed`, scoring v2's 1),
+//!   told the session's latent state (`MTX_REGIME`) and nothing of its
+//!   future: the cap in calm, flat in stress until the flush has come (it
+//!   acts on the flush only once the book has fallen), flat for the
+//!   rebuild's longest 90 seconds, then the cap in calm and half of it in
+//!   stress;
+//! - `oracle`: the informed bot, told the flush's timing too: flat around
+//!   the flush;
 //! - `stop-in` and `stop-out`, the penalty twins: the cap, flattening
 //!   itself at once (in orders as large as the desk's) at $800 of
 //!   drawdown, or letting the risk desk close it at the limit;
@@ -79,7 +93,22 @@ const CHURN_WEIGHT: f64 = 0.12;
 const HYSTERESIS: f64 = 0.12;
 /// The largest order, in shares, and the most orders a turn.
 const SLICE: f64 = 50.0;
-const SLICES_PER_TURN: usize = 4;
+const SLICES_PER_TURN: usize = 1;
+/// The flush's gap kept inside the room until it has come, as a share of
+/// the book.
+const GAP: f64 = 0.02;
+/// Steps the stressed reading is held after the churn has settled.
+const STRESS_HOLD_STEPS: u64 = 60;
+/// The discount, as a share of the index, under which the flush has come,
+/// and the steps held flat after it while the discount rebuilds.
+const FLUSH_DISCOUNT: f64 = 0.001;
+const REBUILD_STEPS: u64 = 120;
+/// The informed bot: its smallest change of target, and the slots it waits
+/// after the flush for the discount to rebuild (the stated longest, 90 s).
+const INFORMED_HYSTERESIS: f64 = 0.05;
+const INFORMED_REBUILD_SLOTS: u64 = 360;
+/// SPCX's calibrated median session: 1.55e-4 a second.
+const MEDIAN_SIGMA: f64 = 1.553e-4;
 
 /// What `start` reads of the session.
 struct Setup {
@@ -99,7 +128,7 @@ enum Rung {
     MaxLever,
     Fixed,
     PremScaled,
-    Told,
+    Informed,
     Oracle,
     StopIn,
     StopOut,
@@ -107,13 +136,13 @@ enum Rung {
 }
 
 impl Rung {
-    fn of(session: &Session) -> BotResult<Self> {
+    fn of(session: &Session, default: Self) -> BotResult<Self> {
         Ok(match session.var("MTX_RUNG") {
-            None => Self::Reference,
+            None => default,
             Some("max-lever") => Self::MaxLever,
             Some("fixed") => Self::Fixed,
             Some("prem-scaled") => Self::PremScaled,
-            Some("told") => Self::Told,
+            Some("informed") => Self::Informed,
             Some("oracle") => Self::Oracle,
             Some("stop-in") => Self::StopIn,
             Some("stop-out") => Self::StopOut,
@@ -125,6 +154,12 @@ impl Rung {
 
 /// The carry desk, as a [`Strategy`].
 pub struct LevCarry {
+    /// The rung the desk runs as when the session names none.
+    default_rung: Rung,
+    /// The last step the crowd read as stressed, and the step the flush
+    /// was seen at.
+    last_stressed: Option<u64>,
+    flush_at: Option<u64>,
     setup: Option<Setup>,
     rung: Rung,
     told: Option<Told>,
@@ -149,16 +184,29 @@ struct Crowd {
     stressed: bool,
 }
 
+impl LevCarry {
+    /// The informed bot: told the session's latent state (the ladder's
+    /// `tell_regime`), as `checks/bots/informed` runs it.
+    pub fn informed() -> Self {
+        Self {
+            default_rung: Rung::Informed,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for LevCarry {
     fn default() -> Self {
         Self {
+            default_rung: Rung::Reference,
+            last_stressed: None,
+            flush_at: None,
             setup: None,
             rung: Rung::Reference,
             told: None,
             start_slot: 0,
             last_book: None,
-            // SPCX's calibrated median session: 1.55e-4 a second.
-            variance: 1.553e-4 * 1.553e-4,
+            variance: MEDIAN_SIGMA * MEDIAN_SIGMA,
             steps: 0,
             peak: f64::MIN,
             done: false,
@@ -284,9 +332,9 @@ impl Strategy for LevCarry {
             market.spline_pubkey.clone(),
             venue.trader_account(&authority).to_string(),
         ];
-        self.rung = Rung::of(session)?;
+        self.rung = Rung::of(session, self.default_rung)?;
         self.told = match self.rung {
-            Rung::Told | Rung::Oracle => Some(Told::from_session(session)?),
+            Rung::Informed | Rung::Oracle => Some(Told::from_session(session)?),
             _ => None,
         };
         self.start_slot = session.start_slot;
@@ -326,7 +374,19 @@ impl Strategy for LevCarry {
         self.peak = self.peak.max(r.equity);
         let drawdown = self.peak - r.equity;
         let at = step.slot.saturating_sub(self.start_slot);
-        self.crowd.watch(1.0 - r.book / r.index, step.k);
+        let discount = 1.0 - r.book / r.index;
+        self.crowd.watch(discount, step.k);
+        if self.crowd.stressed {
+            self.last_stressed = Some(step.k);
+        }
+        if self.flush_at.is_none() && self.steps > WARMUP_STEPS && discount < FLUSH_DISCOUNT {
+            self.flush_at = Some(step.k);
+        }
+        let flushed = self.flush_at.is_some_and(|k| step.k > k + REBUILD_STEPS);
+        let rebuilding = self.flush_at.is_some() && !flushed;
+        let stressed = self
+            .last_stressed
+            .is_some_and(|k| step.k <= k + STRESS_HOLD_STEPS);
 
         // The carry's yield a second, as a share of the price: the discount
         // over the period, at most the cap per interval.
@@ -336,10 +396,13 @@ impl Strategy for LevCarry {
         let full = setup.cap * r.book;
         let room = (setup.max_drawdown - drawdown - STOP_BUFFER_USD).max(0.0);
         let stop_share = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
-        let reference = (K * yield_per_second / self.variance).min(1.0).min(stop_share);
+        let mut reference = (K * yield_per_second / self.variance).min(1.0).min(stop_share);
+        if !flushed {
+            reference = reference.min(room / (full * GAP));
+        }
         let mut share = match self.rung {
             Rung::Reference | Rung::MarkPusher => {
-                if self.crowd.stressed {
+                if stressed || rebuilding {
                     0.0
                 } else {
                     reference
@@ -354,14 +417,28 @@ impl Strategy for LevCarry {
             }
             Rung::Fixed => 0.3,
             Rung::PremScaled => (0.25 * yield_per_second / 1.2e-5).min(1.0),
-            Rung::Told | Rung::Oracle => {
-                let told = self.told.as_ref().ok_or("told needs MTX_REGIME")?;
-                if told.stressed(at) {
-                    0.0
-                } else if self.rung == Rung::Oracle && told.near_flush(at) {
+            Rung::Informed | Rung::Oracle => {
+                let told = self.told.as_ref().ok_or("the informed bot needs MTX_REGIME")?;
+                // Only what has happened: the flush once the book has
+                // fallen, and the rebuild's stated longest wait after it.
+                let ended = told.flush.is_some_and(|f| at >= f.end);
+                let rebuilt = told
+                    .flush
+                    .is_some_and(|f| at >= f.end + INFORMED_REBUILD_SLOTS);
+                let (stressed, level) = told.state(at);
+                let sigma = MEDIAN_SIGMA * level;
+                let stop = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
+                let want = if rebuilt {
+                    if stressed { 0.5 } else { 1.0 }
+                } else if ended || stressed {
                     0.0
                 } else {
-                    stop_share.min(1.0)
+                    1.0
+                };
+                if self.rung == Rung::Oracle && told.near_flush(at) {
+                    0.0
+                } else {
+                    stop.min(want)
                 }
             }
         };
@@ -369,9 +446,11 @@ impl Strategy for LevCarry {
             share = 0.0;
         }
         let warm = self.steps > WARMUP_STEPS || matches!(self.rung, Rung::MaxLever | Rung::StopIn | Rung::StopOut);
+        let informed = matches!(self.rung, Rung::Informed | Rung::Oracle);
         let mut target = if warm { share * setup.cap } else { 0.0 };
         let held = r.position;
-        if (target - held).abs() < HYSTERESIS * setup.cap && target > 0.0 {
+        let hysteresis = if informed { INFORMED_HYSTERESIS } else { HYSTERESIS };
+        if (target - held).abs() < hysteresis * setup.cap && target > 0.0 {
             target = held;
         }
         log(&format!(
@@ -460,13 +539,25 @@ impl Crowd {
     }
 }
 
-/// The ladder's told rungs: the session's volatility states and its flush,
-/// in slots from the session's start, from `MTX_REGIME`.
+/// What the informed rungs are told: the session's volatility states, each
+/// state's level and its flush, in slots from the session's start, from
+/// `MTX_REGIME`. The informed bot reads only the present and the past of it.
 struct Told {
     /// The slot each state starts at, and whether it is the stressed one.
     states: Vec<(u64, bool)>,
-    /// The flush's start and the slot its discount is rebuilt.
-    flush: Option<(u64, u64)>,
+    /// Each state's level, a multiple of the calibration's median session:
+    /// calm, then stressed.
+    levels: [f64; 2],
+    flush: Option<Flush>,
+}
+
+/// The flush's start, the slot the book has fallen by, and the slot its
+/// discount is rebuilt.
+#[derive(Clone, Copy)]
+struct Flush {
+    start: u64,
+    end: u64,
+    rebuilt: u64,
 }
 
 impl Told {
@@ -479,24 +570,36 @@ impl Told {
             .iter()
             .map(|m| (m[0].as_u64().unwrap_or(0), m[1] == "stressed"))
             .collect();
-        let flush = shape["flush"]
-            .as_object()
-            .and_then(|f| Some((f.get("start")?.as_u64()?, f.get("rebuilt")?.as_u64()?)));
-        Ok(Self { states, flush })
+        let level = |i: usize| shape["regime_vol"][i].as_f64().unwrap_or(1.0);
+        let flush = shape["flush"].as_object().and_then(|f| {
+            Some(Flush {
+                start: f.get("start")?.as_u64()?,
+                end: f.get("end")?.as_u64()?,
+                rebuilt: f.get("rebuilt")?.as_u64()?,
+            })
+        });
+        Ok(Self {
+            states,
+            levels: [level(0), level(1)],
+            flush,
+        })
     }
 
-    fn stressed(&self, at: u64) -> bool {
-        self.states
+    /// Whether the state at `at` is the stressed one, and its level.
+    fn state(&self, at: u64) -> (bool, f64) {
+        let stressed = self
+            .states
             .iter()
             .rev()
             .find(|(slot, _)| *slot <= at)
-            .is_some_and(|(_, stressed)| *stressed)
+            .is_some_and(|(_, stressed)| *stressed);
+        (stressed, self.levels[usize::from(stressed)])
     }
 
     /// From 4 seconds before the flush to the end of its rebuild.
     fn near_flush(&self, at: u64) -> bool {
         self.flush
-            .is_some_and(|(start, rebuilt)| at + 16 >= start && at <= rebuilt)
+            .is_some_and(|f| at + 16 >= f.start && at <= f.rebuilt)
     }
 }
 

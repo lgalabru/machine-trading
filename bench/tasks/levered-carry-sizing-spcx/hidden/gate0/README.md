@@ -15,3 +15,7 @@ python3 model.py 31 '{"period":[150,600],"lam":[0.0001,0.012],"mult":[0.85,1.7],
 
 `gate0-perslot-switch-seed-*.txt` are the same family with switches allowed every second (the design before the
 infra settled on block-end switching). Each run fits the tuned rungs on 300 sessions and scores them on 600 others.
+
+`anchors.py` is the replay used to tune g1's anchors (the reference's flush gap, its post-flush sizing and its slower
+execution; the informed bot's policy) on generated practice sets (seeds 777001 for tuning, 777002 for validation),
+never on hidden draws. DESIGN.md's "Scoring v2's anchors (g1)" has its numbers and the engine's.

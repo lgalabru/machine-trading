@@ -447,7 +447,6 @@ impl Strategy for LevCarry {
         }
         let warm = self.steps > WARMUP_STEPS || matches!(self.rung, Rung::MaxLever | Rung::StopIn | Rung::StopOut);
         let informed = matches!(self.rung, Rung::Informed | Rung::Oracle);
-        let warm = warm || informed;
         let mut target = if warm { share * setup.cap } else { 0.0 };
         let held = r.position;
         let hysteresis = if informed { INFORMED_HYSTERESIS } else { HYSTERESIS };

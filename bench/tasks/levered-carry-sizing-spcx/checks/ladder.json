@@ -46,6 +46,16 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/mark-pusher"
     },
     {
+      "name": "blind-long",
+      "dir": "bench/checks/ladder/blind-long",
+      "may_breach": true
+    },
+    {
+      "name": "blind-short",
+      "dir": "bench/checks/ladder/blind-short",
+      "may_breach": true
+    },
+    {
       "name": "coin-flip-half",
       "dir": "bench/checks/probes",
       "env": {
@@ -128,7 +138,7 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.15"
+        "MTX_PROBE_BLEND": "0.77"
       },
       "may_breach": true
     },
@@ -137,7 +147,7 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.29"
+        "MTX_PROBE_BLEND": "0.88"
       },
       "may_breach": true
     },
@@ -146,7 +156,7 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.40"
+        "MTX_PROBE_BLEND": "0.94"
       },
       "may_breach": true
     },
@@ -155,7 +165,7 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.74"
+        "MTX_PROBE_BLEND": "0.98"
       },
       "may_breach": true
     },
@@ -164,7 +174,7 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.29",
+        "MTX_PROBE_BLEND": "0.88",
         "MTX_PROBE_CRASH_BELOW": "0.03"
       },
       "may_breach": true
@@ -174,7 +184,7 @@
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.29",
+        "MTX_PROBE_BLEND": "0.88",
         "MTX_PROBE_CRASH_BELOW": "0.03",
         "MTX_PROBE_CRASH": "fatal"
       },
