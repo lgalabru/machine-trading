@@ -20,10 +20,13 @@ finished ladder) adjust a run.
 | Section | Check | Source |
 | --- | --- | --- |
 | Task files | design, family, reference (the oracle is the reference bot's `lib.rs`), anchor, practice, instruction, README, CI and dataset, lint | `mtx task status` |
+| | a v2 task: both anchors named in its ladder file, the informed bot written; the verifier grades with `--scoring v2-headline` (v2 as the one score) and the instruction's scoring rules are current; it opts into the probe gate | `mtx task status` |
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
 | | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
-| | the oracle scores 1.0 and nop 0 under Harbor | full: `just harbor-checks` |
+| | the oracle (the reference) scores skill 1.0, or under scoring v2 a `reward` of 0.5 that is v2's score with no `skill` beside it; nop scores 0 under Harbor | full: `just harbor-checks` |
+| | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
+| | a v2 task's verifier runs its informed bot on the hidden set (fails while `mtx grade --informed` isn't in the build: v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh` |
 | Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
 | | the probe bots land in their scoring v2 bands, and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
@@ -72,6 +75,26 @@ least `min_ratio` (default 2) times the best non-reading rung's, and the
 informed rung makes money. A losing or flat baseline counts as zero. If the
 informed policy can't double a policy that ignores the signal, the task isn't
 testing the signal.
+
+## Scoring v2's anchors
+
+A task whose headline is scoring v2 (`headline = "v2"` in `[metadata.mtx]`)
+names its two anchors in its ladder file, each a rung:
+
+```json
+"anchors": { "reference": "reference", "informed": "informed" }
+```
+
+The task-files checks refuse the task until both bots exist and the informed
+one is no longer the scaffold's copy of the reference. The strength band
+weighs each anchor's sessions as v2 does (losses `k` times, from the
+verifier's flags) over all the ladder's sets, and needs the informed bot
+ahead of the reference, the reference at 0.2 to 0.7 of it (`"band": [low,
+high]` overrides), never under the anchor floor `φ`, and with a per-session
+Sharpe of at least 0.25 (`"min_sharpe"`). A v2 task is released on v2
+alone, so either miss refuses it: there is no fallback to v1 or to the
+hindsight ceiling. A v1 task (the four that move in 0.13) reports both v2
+checks `not run`.
 
 ## Adding a check
 

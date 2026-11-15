@@ -34,6 +34,13 @@ pub enum Scoring {
     /// session and capping the run, and a charge for drawing down far more
     /// than the anchor. Report-only: `reward` and `skill` don't change.
     V2,
+    /// Scoring v2 as the grade's one score, what a released task grades by:
+    /// `reward` is v2's clamped score, `skill` and `reference_ratio` are
+    /// left out, and the 1 must be the task's informed bot: a grade without
+    /// it on every session fails rather than fall back to the hindsight
+    /// ceiling. `--eta` and `--ceiling` are refused.
+    #[value(name = "v2-headline")]
+    V2Headline,
 }
 
 /// How a grade is scored: `mtx grade`, `mtx rescore` and `mtx bench rescore`.
@@ -79,6 +86,10 @@ impl ScoringArgs {
             }
             return Ok(None);
         }
+        let headline = self.scoring == Scoring::V2Headline;
+        if headline && (!self.eta.is_empty() || self.ceiling.is_some()) {
+            bail!("--eta and --ceiling replace the 1, and a v2 headline takes the informed bot's");
+        }
         let ceiling = match &self.ceiling {
             Some(path) => Ceiling::Given(
                 serde_json::from_slice::<BTreeMap<String, f64>>(
@@ -96,6 +107,7 @@ impl ScoringArgs {
             hindsight_cost: self.ceiling_cost_bps / 1e4,
             risk_weight: per_task("--risk-weight", &self.risk_weight, task)?
                 .unwrap_or(scoring_v2::RISK_WEIGHT),
+            headline,
             ..Params::new(ceiling)
         }))
     }
@@ -457,7 +469,7 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         "failed": failed,
         "rescored": rows,
     });
-    if scoring.scoring == Scoring::V2 {
+    if scoring.scoring != Scoring::V1 {
         summary["v2_comparison"] = compare_models(&graded, scoring)?;
         for (task, models) in &unscored {
             let entry = &mut summary["v2_comparison"][task];
