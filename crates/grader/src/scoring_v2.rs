@@ -2270,7 +2270,10 @@ mod tests {
                 got.raw,
                 free.raw
             );
-            assert!(got.raw < free.raw, "b = {breaches}: the penalty doesn't bind");
+            assert!(
+                got.raw < free.raw,
+                "b = {breaches}: the penalty doesn't bind"
+            );
         }
     }
 
