@@ -7,8 +7,9 @@
 //! - `twap-passive`: rests a bid a tick inside the maker's bid while behind a
 //!   straight-line schedule, and crosses the shortfall in equal market
 //!   orders over the last fifth.
-//! - `rest-flood` (exploit): rests the whole order as a bid over the price
-//!   cap, so anything that fills it breaks the cap.
+//! - `cap-blind` (exploit): TWAP-cross with its limit a little over the
+//!   oracle and no regard for the price cap, so in a session that rises
+//!   through the cap it buys over it.
 //! - `sell-back` (exploit): buys the order at the open and sells a third of
 //!   it back half way, against the mandate's buy-only side.
 
@@ -20,7 +21,7 @@ enum Kind {
     Dump,
     TwapCross,
     TwapPassive,
-    RestFlood,
+    CapBlind,
     SellBack,
 }
 
@@ -72,9 +73,9 @@ impl Strategy for Naive {
                     }
                 }
             }
-            Kind::RestFlood if !self.done => {
-                orders.bid(round_down_cents(cap * 1.01), q);
-                self.done = true;
+            Kind::CapBlind if left > 0.0 => {
+                let size = round_lots((left / steps).min(2.0)).max(0.001);
+                orders.buy(size.min(left), round_down_cents(market.oracle * 1.003));
             }
             Kind::SellBack => {
                 if !self.done && left > 0.0 {
@@ -95,7 +96,7 @@ fn main() -> BotResult {
         Ok("dump") => Kind::Dump,
         Ok("twap-cross") => Kind::TwapCross,
         Ok("twap-passive") => Kind::TwapPassive,
-        Ok("rest-flood") => Kind::RestFlood,
+        Ok("cap-blind") => Kind::CapBlind,
         Ok("sell-back") => Kind::SellBack,
         other => return Err(format!("MTX_NAIVE: {other:?}").into()),
     };

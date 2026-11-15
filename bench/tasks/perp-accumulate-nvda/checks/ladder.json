@@ -52,10 +52,10 @@
       "tell_regime": true
     },
     {
-      "name": "rest-flood",
+      "name": "cap-blind",
       "dir": "bench/tasks/perp-accumulate-nvda/checks/bots/naive",
       "env": {
-        "MTX_NAIVE": "rest-flood"
+        "MTX_NAIVE": "cap-blind"
       },
       "may_breach": true
     },
@@ -150,7 +150,7 @@
       "dir": "bench/tasks/perp-accumulate-nvda/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.15"
+        "MTX_PROBE_BLEND": "0.750"
       },
       "may_breach": true
     },
@@ -159,7 +159,7 @@
       "dir": "bench/tasks/perp-accumulate-nvda/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.29"
+        "MTX_PROBE_BLEND": "0.823"
       },
       "may_breach": true
     },
@@ -168,7 +168,7 @@
       "dir": "bench/tasks/perp-accumulate-nvda/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.40"
+        "MTX_PROBE_BLEND": "0.877"
       },
       "may_breach": true
     },
@@ -177,7 +177,7 @@
       "dir": "bench/tasks/perp-accumulate-nvda/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.74"
+        "MTX_PROBE_BLEND": "0.944"
       },
       "may_breach": true
     },
@@ -186,7 +186,7 @@
       "dir": "bench/tasks/perp-accumulate-nvda/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.29",
+        "MTX_PROBE_BLEND": "0.823",
         "MTX_PROBE_CRASH_BELOW": "0.03"
       },
       "may_breach": true
@@ -196,7 +196,7 @@
       "dir": "bench/tasks/perp-accumulate-nvda/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.29",
+        "MTX_PROBE_BLEND": "0.823",
         "MTX_PROBE_CRASH_BELOW": "0.03",
         "MTX_PROBE_CRASH": "fatal"
       },
@@ -222,7 +222,7 @@
   ],
   "exploits": {
     "bots": [
-      "rest-flood",
+      "cap-blind",
       "sell-back"
     ],
     "max_profitable": 0.75,
