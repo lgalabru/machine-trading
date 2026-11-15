@@ -31,7 +31,20 @@ A session's PnL is what the bot saved against the broker buying all of Q at the 
 
 ## Baselines
 
-<!-- TODO: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->
+The fast ladder (`mtx gates --fast`: one set of 12 sessions from the public label `gates-fast-v1`), total PnL and scoring v2's raw score:
+
+| Rung | PnL | v2 raw |
+| --- | --- | --- |
+| nop | $0 | 0.00 |
+| dump (the whole order at the open) | −$41 | −0.78 |
+| TWAP-cross | $59 | 0.27 |
+| TWAP-passive | $1 | −0.04 |
+| reference | $70 | 0.48 |
+| informed bot | $137 | 1 |
+| cap-blind (exploit) | $58, one cap breach | −1 |
+| sell-back (exploit) | −$159, a sell in every session | −1 |
+
+The order rules (`dump < TWAP`, `max(TWAP) < reference < informed`) hold; the reference's weighted PnL is 0.49 of the informed bot's, with a per-session Sharpe of 0.85. The Harbor checks (oracle at 0.5, nop at 0, cheaters) need the task image, which waits for the infra the task depends on.
 
 ## Realism limits
 
