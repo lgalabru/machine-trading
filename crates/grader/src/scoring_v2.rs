@@ -2238,39 +2238,39 @@ mod tests {
         assert!((sum - (1.0 - once.raw)).abs() < 1e-12);
     }
 
-    /// The probe gate's run cap, against the real scorer: a bot that levers
-    /// everywhere (ten times the twin's gains) and breaches in exactly `b`
-    /// sessions would beat its twin without the cap; the cap holds it to 0.5
-    /// (one breach) or 0 (two or more). Fails if the cap is removed.
+    /// The probe gate's breach-rate penalty, against the real scorer: a bot
+    /// that gains a little over its twin and breaches in `b` of 24 sessions.
+    /// The same sessions unbreached (the breach sessions at the floor's loss,
+    /// drawn down to the limit) score `free`; the run scores `free` less
+    /// exactly `c * b / n`. Fails if the penalty is removed.
     #[test]
-    fn the_run_cap_holds_a_bot_that_levers_everywhere() {
+    fn the_breach_penalty_holds_a_bot_that_gains_a_little_and_breaches_a_little() {
+        let n = 24usize;
         let twin = [120.0, -60.0, 75.0, 180.0, 0.0, 45.0];
-        let compliant = score(&set(&twin, &REFERENCE), &informed(), None, None).unwrap();
+        let pnls: Vec<f64> = (0..n).map(|i| twin[i % 6] * 1.25).collect();
+        let references: Vec<f64> = (0..n).map(|i| REFERENCE[i % 6]).collect();
         for breaches in [1usize, 2, 3] {
-            let mut sessions = set(&twin.map(|p| p * 10.0 + 400.0), &REFERENCE);
-            for s in sessions.iter_mut().take(breaches) {
+            let mut run = set(&pnls, &references);
+            for s in run.iter_mut().take(breaches) {
                 s.pnl_usd = -100.0;
                 s.breach = Some("drew down past its limit".into());
             }
-            let got = score(&sessions, &informed(), None, None).unwrap();
-            let cap = if breaches == 1 { 0.5 } else { 0.0 };
-            assert_eq!(got.breach_cap, Some(cap), "b = {breaches}");
-            assert!(got.raw <= cap + 1e-12, "b = {breaches}: raw {}", got.raw);
-            assert!(
-                got.raw <= compliant.raw,
-                "b = {breaches}: {} vs {}",
-                got.raw,
-                compliant.raw
-            );
-            // Uncapped, the same sessions would have beaten the twin: the cap binds.
-            for s in &mut sessions {
+            let got = score(&run, &informed(), None, None).unwrap();
+            let mut unbreached = run.clone();
+            for s in unbreached.iter_mut().take(breaches) {
                 s.breach = None;
+                s.max_drawdown_usd = s.worst_loss_usd;
             }
-            let free = score(&sessions, &informed(), None, None).unwrap();
+            let free = score(&unbreached, &informed(), None, None).unwrap();
+            let owed = BREACH_RATE_WEIGHT * breaches as f64 / n as f64;
+            assert!((got.breach_penalty - owed).abs() < 1e-15, "b = {breaches}");
             assert!(
-                free.raw > compliant.raw,
-                "b = {breaches}: the cap doesn't bind"
+                (got.raw - (free.raw - owed).max(-1.0)).abs() < 1e-12,
+                "b = {breaches}: {} vs {} less {owed}",
+                got.raw,
+                free.raw
             );
+            assert!(got.raw < free.raw, "b = {breaches}: the penalty doesn't bind");
         }
     }
 

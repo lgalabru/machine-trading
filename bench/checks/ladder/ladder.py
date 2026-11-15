@@ -362,6 +362,9 @@ def v2_terms(report):
     v2 = report.get("v2")
     if not v2:
         return None
+    if "breach_rate_weight" not in v2:
+        raise SystemExit("a v2 grade without `breach_rate_weight`: the grader is older than "
+                         "the breach-rate penalty this ladder scores")
     return {
         "raw": v2["raw"],
         "fatal": v2.get("fatal") is not None,
@@ -369,6 +372,7 @@ def v2_terms(report):
         "k": v2["loss_weight"],
         "break_even": v2["break_even_sharpe"],
         "lambda": v2["risk"]["weight"],
+        "c": v2["breach_rate_weight"],
         "anchor": v2["risk"]["anchor"],
         "breached": v2.get("breached_sessions", 0),
         "floored": v2.get("anchor_floored", False),
@@ -383,9 +387,9 @@ def v2_terms(report):
     }
 
 
-def sums_score(rows, terms, capped=True):
+def sums_score(rows, terms, penalised=True):
     """v2's `raw` over `rows`, as `Sums::score` in crates/grader/src/scoring_v2.rs
-    computes it: the near-breach charge, the breach cap, the -1 floor. A
+    computes it: the near-breach charge, the breach-rate penalty, the -1 floor. A
     fatal grade is -1. The ladder checks this against the grader's own `raw`
     on every grade it reads, so a change to the grader that this copy misses
     stops the gate instead of drifting."""
@@ -417,8 +421,9 @@ def sums_score(rows, terms, capped=True):
         excess = max(math.sqrt(dd / n) - allowance * math.sqrt(anchor_dd / n), 0.0)
         charge = min(terms["lambda"] * terms["k"] * limit * excess * excess, max(bot, 0.0))
     raw = on_scale(bot - charge)
-    if capped and breaches:
-        raw = min(raw, 0.5 if breaches == 1 else 0.0)
+    raw = max(raw, -1.0)
+    if penalised:
+        raw -= terms["c"] * breaches / n
     return max(raw, -1.0)
 
 
@@ -461,25 +466,23 @@ def breach_run(breach_terms, twin_terms, b):
 def add_breacher_checks(add, terms, breacher, twin):
     """The breacher's two gates at b = 1, 2 and 3 breach sessions a run:
 
-    - the run cap: a bot that levers everywhere and breaches in b sessions
-      (`full`), capped as the grader caps it, scores at most its twin (1
-      breach holds it to 0.5, 2 or more to 0). Tested only where the cap binds
-      (the run uncapped beats the twin); otherwise `not_exercised`, never a pass;
+    - the breach-rate penalty: a bot that levers everywhere and breaches in b
+      sessions (`full`) scores strictly below its twin, and the penalty binds:
+      the run scored without it is higher by exactly c * b / n (to 1e-9; not
+      checked in a set where the -1 floor takes the score);
     - the per-session floor: the twin's run with b of its sessions replaced by
-      breach sessions (`swap`), scored without the cap, is at most the twin's,
-      wherever the twin's replaced session is above the floor (-k times the
-      limit). Tested only where the floor binds: the same run with those
+      breach sessions (`swap`), scored without the penalty, is at most the
+      twin's, wherever the twin's replaced session is above the floor (-k times
+      the limit). Tested only where the floor binds: the same run with those
       sessions at their unfloored value (`free`, their PnL over nop's, weighted)
       beats the twin; otherwise `not_exercised`.
 
     Each is deterministic: composed from the graded rows, not resampled. No
     power either (`no_power`, which fails the gate) if the breacher went fatal,
     never breached, or no set has b breaching sessions. `not_exercised` is a
-    verdict of its own: it says the rule could not be tested on this task, and
-    doesn't fail the gate. On a task whose breacher breaches in nearly every
-    session and whose reference rides the cap, the run cap is `not_exercised`
-    by construction, and the grader's own tests (scoring_v2.rs,
-    `the_run_cap_holds_a_bot_that_levers_everywhere`) cover the run cap."""
+    verdict of its own: the floor could not be tested on this task (the
+    breacher's breach sessions already lost more than the floor); it doesn't
+    fail the gate."""
 
     def nopower(kind, b, why, verdict="no_power"):
         add(f"breacher:b{b}:{kind}", "breacher", [breacher, twin],
@@ -502,28 +505,31 @@ def add_breacher_checks(add, terms, breacher, twin):
             why = (f"no set has {b} breaching sessions (it breached {breached} per set): "
                    f"{'it never breached' if not any(breached) else 'too few to compose'}")
         if why:
-            for kind in ("run_cap", "floor"):
+            for kind in ("rate_penalty", "floor"):
                 nopower(kind, b, why)
             continue
         mean = statistics.fmean
-        full_capped = mean(sums_score(full, t[breacher]) for t, full, _, _ in runs)
-        full_free = mean(sums_score(full, t[breacher], capped=False) for t, full, _, _ in runs)
-        twin_capped = mean(sums_score(t[twin]["sessions"], t[twin]) for t, _, _, _ in runs)
         head = f"{b} breach session(s) a run, over {len(runs)} sets"
-        if full_free <= twin_capped + 1e-9:
-            nopower("run_cap", b,
-                    f"{head}: the run cap is not exercised: even uncapped the run scores "
-                    f"{full_free:+.3f}, at most {twin}'s {twin_capped:+.3f}",
-                    "not_exercised")
-        else:
-            ok = full_capped <= twin_capped + 1e-9
-            add(f"breacher:b{b}:run_cap", "breacher", [breacher, twin],
-                {"verdict": "pass" if ok else "fail", "violation_odds": None,
-                 "point_violated": not ok},
-                f"{head}: capped raw {full_capped:+.3f} (uncapped {full_free:+.3f}) against "
-                f"{twin}'s {twin_capped:+.3f}",
-                raw=full_capped, raw_without_cap=full_free, other_raw=twin_capped,
-                breach_sessions=b, sets=len(runs))
+        full = [(sums_score(f, t[breacher]), sums_score(f, t[breacher], penalised=False),
+                 t[breacher]["c"] * b / len(f)) for t, f, _, _ in runs]
+        twin_raw = mean(sums_score(t[twin]["sessions"], t[twin]) for t, _, _, _ in runs)
+        full_raw = mean(r for r, _, _ in full)
+        # Where the -1 floor takes the score the penalty can't be read off it.
+        binds = all(abs((free - raw) - owed) < 1e-9 for raw, free, owed in full if raw > -1.0)
+        ok = binds and full_raw < twin_raw
+        why = []
+        if not binds:
+            why.append("the penalty did not take exactly c * b / n off the run")
+        if full_raw >= twin_raw:
+            why.append("the breacher is not below its twin")
+        add(f"breacher:b{b}:rate_penalty", "breacher", [breacher, twin],
+            {"verdict": "pass" if ok else "fail", "violation_odds": None,
+             "point_violated": not ok},
+            f"{head}: raw {full_raw:+.3f} (without the penalty "
+            f"{mean(f for _, f, _ in full):+.3f}, owed {mean(o for _, _, o in full):.3f}) "
+            f"against {twin}'s {twin_raw:+.3f}" + (f"; {'; '.join(why)}" if why else ""),
+            raw=full_raw, raw_without_penalty=mean(f for _, f, _ in full), other_raw=twin_raw,
+            breach_sessions=b, sets=len(runs))
         # Where policy expects the floor to bind: the twin's session is above it.
         expected = [(t, swap, idx) for t, _, swap, idx in runs
                     if all(t[twin]["sessions"][i]["bot"] >= -t[twin]["k"] * t[twin]["sessions"][i]["limit"]
@@ -532,11 +538,11 @@ def add_breacher_checks(add, terms, breacher, twin):
             nopower("floor", b, f"{head}: the floor is not exercised: the twin's replaced "
                     f"sessions are all under it", "not_exercised")
             continue
-        swapped = mean(sums_score(swap, t[breacher], capped=False) for t, swap, _ in expected)
+        swapped = mean(sums_score(swap, t[breacher], penalised=False) for t, swap, _ in expected)
         unfloored = mean(
             sums_score([dict(r, bot=r["free"]) if i in idx else r for i, r in enumerate(swap)],
-                       t[breacher], capped=False) for t, swap, idx in expected)
-        twin_free = mean(sums_score(t[twin]["sessions"], t[twin], capped=False)
+                       t[breacher], penalised=False) for t, swap, idx in expected)
+        twin_free = mean(sums_score(t[twin]["sessions"], t[twin], penalised=False)
                          for t, _, _ in expected)
         if unfloored <= twin_free + 1e-9:
             nopower("floor", b,
@@ -548,9 +554,9 @@ def add_breacher_checks(add, terms, breacher, twin):
         add(f"breacher:b{b}:floor", "breacher", [breacher, twin],
             {"verdict": "pass" if ok else "fail", "violation_odds": None,
              "point_violated": not ok},
-            f"{head}: raw without the cap {swapped:+.3f} (unfloored {unfloored:+.3f}) against "
+            f"{head}: raw without the penalty {swapped:+.3f} (unfloored {unfloored:+.3f}) against "
             f"{twin}'s {twin_free:+.3f}",
-            raw_without_cap=swapped, other_raw=twin_free, breach_sessions=b, sets=len(expected))
+            raw_without_penalty=swapped, other_raw=twin_free, breach_sessions=b, sets=len(expected))
 
 
 def probe_checks(config, sets, count):
@@ -576,10 +582,11 @@ def probe_checks(config, sets, count):
       (sessions are isolated and `sums_score` is a pure function of the
       per-session rows), composed with its clipped twin into runs with exactly
       b = 1, 2 and 3 breach sessions each, scored deterministically. Two
-      gates per b: the run cap (the capped run scores at most its twin) and
-      the per-session floor (the run without the cap scores at most its twin,
-      where the twin's session is above the floor, as policy expects). No
-      power if it never breached, was fatal, or no set has b breach sessions.
+      gates per b: the breach-rate penalty (the run scores strictly below its
+      twin and loses exactly c * b / n to the penalty) and the per-session
+      floor (the run without the penalty scores at most its twin, where the
+      twin's session is above the floor, as policy expects). No power if it
+      never breached, was fatal, or no set has b breach sessions.
     - `levered`: the lever's weighted PnL is at most m times the reference's.
     - `honest`: from a measured Sharpe of `PAYS_FROM`, beats doing nothing;
       one probe must measure near that line.
