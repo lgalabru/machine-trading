@@ -79,8 +79,10 @@
 //! allow (scoring_v2/TUNE3_breach_rate.md): at least about 0.82, so that an
 //! occasional breacher (the reference levered past its largest compliant
 //! size) scores below its compliant twin at 24 to 100 sessions, and at most
-//! about 1.7, so that an honest Sharpe-0.2 bot, stopped out about once in
-//! 130 sessions, still scores above doing nothing on held-out tasks.
+//! about 1.5 to 1.7 (seed-dependent), so that an honest Sharpe-0.2 bot,
+//! stopped out about once in 130 sessions, still scores above doing nothing
+//! on held-out tasks. The fit-only pick is 1.0, which also passes held out;
+//! 1.25 was chosen using the upper edge seen on held-out 0.12.
 //!
 //! The gap to 1 is split into what it came from (see [`Gap`]). Doing
 //! nothing is taken as PnL 0, which holds for a flat start with no carry; a
@@ -271,8 +273,9 @@ pub struct ScoreV2 {
     pub breached_sessions: usize,
     /// The near-breach charge, taken from `bot_usd` before the map.
     pub risk: Risk,
-    /// The score points the breach penalty took from `raw`: `c` times the
-    /// share of sessions breached; 0 without a breach.
+    /// The breach penalty in score points: `c` times the share of sessions
+    /// breached (`c × rate`); 0 without a breach. Fewer points come off
+    /// `raw` when its −1 floor binds.
     pub breach_penalty: f64,
     /// `c`, the breach penalty's weight.
     pub breach_rate_weight: f64,
