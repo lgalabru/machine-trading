@@ -2095,6 +2095,30 @@ mod tests {
     }
 
     #[test]
+    fn the_constructors_build_what_the_reader_reads() {
+        let book = book();
+        let mut hedge = Allowance::new(spy().clone(), 30.0);
+        hedge.hedge = Some(Hedge::new(qqq().clone(), 1.2));
+        assert_eq!(book.universe[1], hedge);
+        assert_eq!(
+            book.limits.exposures[0],
+            Exposure::max_abs_fraction_of_start(
+                "deadline",
+                vec![(qqq().clone(), 1.0), (spy().clone(), 1.2)],
+                0.25
+            )
+            .from_slots_after_start(600)
+        );
+        assert_eq!(book.term, Some(Term::between(1_000, 2_000)));
+        // Weights write back in the order read, as an object.
+        let json = serde_json::to_value(&book).unwrap();
+        assert_eq!(
+            json["limits"]["exposures"][0]["weights"],
+            serde_json::json!({ "phoenix:perp:QQQ": 1.0, "phoenix:perp:SPY": 1.2 })
+        );
+    }
+
+    #[test]
     fn v0_1_members_are_validated() {
         let check = |edit: &dyn Fn(&mut Mandate)| {
             let mut mandate = book();
