@@ -48,7 +48,7 @@ use crate::{
     guard::Guard,
     keeper::{KeeperSetup, LiquidationKeeper},
     making::{TAKER_ACCOUNTS, book_at, level_at},
-    orders::{CloseOutReport, NetReport, OrderReport},
+    orders::{CloseOutReport, OrderReport},
     phoenix::{self, Phoenix},
     risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
     scenario::{STOP_OUT_LIMIT_BPS, Scenario},
@@ -692,44 +692,62 @@ impl Seed<'_> {
 }
 
 /// What the scenario tells a perp session's bot beyond the runtime
-/// contract, as session variables: `MTX_START_POSITIONS`, its starting
-/// positions (`{symbol: base units}`); `MTX_ORDER`, its order without the
-/// haircut, with `MTX_BROKER_HAIRCUT_BPS`; and `MTX_CLOSE_OUT`, each
-/// close-out's haircut (`{symbol: bps}`). Each only when the scenario has
-/// it.
+/// contract, as session variables, each written as the kit's bot-facing
+/// type writes it: its starting positions ([`mtx_kit::StartPositions`]),
+/// its order ([`mtx_kit::SessionOrder`]) with the broker's haircut
+/// ([`mtx_kit::BrokerHaircut`]), and the markets a broker closes out
+/// ([`mtx_kit::CloseOuts`]), each market named as the mandate names it.
+/// Each only when the scenario has it.
 fn session_vars(scenario: &Scenario) -> Result<Vec<(String, String)>> {
+    // The scenario keys its start positions and close-outs by the perp's
+    // symbol on its own venue.
+    let perp = |symbol: &String| InstrumentRef {
+        venue: crate::scenario::VENUE.into(),
+        kind: mtx_core::mandate::Kind::Perp,
+        symbol: symbol.clone(),
+    };
     let mut vars = Vec::new();
     if !scenario.start_positions.is_empty() {
+        let positions = mtx_kit::StartPositions(
+            scenario
+                .start_positions
+                .iter()
+                .map(|(symbol, &quantity)| (perp(symbol), quantity))
+                .collect(),
+        );
         vars.push((
-            "MTX_START_POSITIONS".to_string(),
-            serde_json::to_string(&scenario.start_positions)?,
+            mtx_kit::StartPositions::VAR.to_string(),
+            positions.to_var()?,
         ));
     }
     if let Some(order) = &scenario.order {
-        let mut order = order.clone();
-        order
-            .instrument
-            .get_or_insert_with(|| scenario.instrument());
-        let mut told = serde_json::to_value(&order)?;
-        if let Some(fields) = told.as_object_mut() {
-            fields.remove("haircut_bps");
-        }
-        vars.push(("MTX_ORDER".to_string(), told.to_string()));
+        let told = mtx_kit::SessionOrder {
+            instrument: order
+                .instrument
+                .clone()
+                .unwrap_or_else(|| scenario.instrument()),
+            side: match order.side {
+                CoreSide::Buy => mtx_kit::Side::Bid,
+                CoreSide::Sell => mtx_kit::Side::Ask,
+            },
+            quantity: order.quantity,
+            reduce_only: order.reduce_only,
+        };
+        vars.push((mtx_kit::SessionOrder::VAR.to_string(), told.to_var()?));
         vars.push((
-            "MTX_BROKER_HAIRCUT_BPS".to_string(),
-            order.haircut_bps.to_string(),
+            mtx_kit::BrokerHaircut::VAR.to_string(),
+            mtx_kit::BrokerHaircut(order.haircut_bps).to_var()?,
         ));
     }
     if !scenario.close_out.is_empty() {
-        let haircuts: std::collections::BTreeMap<&String, f64> = scenario
-            .close_out
-            .iter()
-            .map(|(symbol, close_out)| (symbol, close_out.haircut_bps))
-            .collect();
-        vars.push((
-            "MTX_CLOSE_OUT".to_string(),
-            serde_json::to_string(&haircuts)?,
-        ));
+        let close_outs = mtx_kit::CloseOuts(
+            scenario
+                .close_out
+                .iter()
+                .map(|(symbol, close_out)| (perp(symbol), close_out.haircut_bps))
+                .collect(),
+        );
+        vars.push((mtx_kit::CloseOuts::VAR.to_string(), close_outs.to_var()?));
     }
     Ok(vars)
 }
@@ -984,10 +1002,13 @@ impl PerpAccount {
                 .await
                 .map_err(|e| failed(e.to_string()))?
                 .ok_or_else(|| failed(format!("transaction {signature} not found")))?;
-            records.add_transaction(&summary, &market);
+            records
+                .add_transaction(&summary, &market)
+                .map_err(|e| failed(e.to_string()))?;
         }
         let forced: HashSet<FillId> = records
-            .fills_for(&[self.meter.trader()])
+            .for_traders(&[self.meter.trader()])
+            .fills
             .into_iter()
             .map(|recorded| recorded.fill.id)
             .collect();
@@ -1308,17 +1329,11 @@ impl Account for PerpAccount {
         let close_usd = self
             .moment(done.end_slot.saturating_sub(self.base_slot))
             .level_usd;
-        let fair_close_usd = fair_close_usd(
-            scenario,
-            self.start_mark_usd,
-            done.end_slot.saturating_sub(self.base_slot),
-        );
         let settled = settle(
             scenario,
             self.start_position,
             end_position,
             (self.start_mark_usd, close_usd),
-            fair_close_usd,
             end_value_usd - self.start_value_usd,
             &fills.fills,
         );
@@ -1363,7 +1378,7 @@ impl Account for PerpAccount {
             faults: done.faults,
             order: settled.order,
             participation: None,
-            net: settled.net,
+            net: None,
             start_position: self.start_position,
             start_funded: self.start_position != 0.0 && scenario.funding.is_some(),
             close_outs: settled.close_outs,
@@ -1391,19 +1406,10 @@ impl Account for PerpAccount {
     }
 }
 
-/// The fair value at the close, in USD, that a net-scored session takes its
-/// hold baseline at: the scenario's fair path where it has one. Only net
-/// scoring reads it.
-fn fair_close_usd(scenario: &Scenario, start_mark_usd: f64, at: u64) -> Option<f64> {
-    scenario.net.as_ref()?;
-    scenario.fair_value_usd(start_mark_usd, at)
-}
-
 /// What a perp session's PnL comes to, with its order and close-outs.
 struct Settled {
     pnl_usd: f64,
     order: Option<OrderReport>,
-    net: Option<NetReport>,
     close_outs: Vec<CloseOutReport>,
 }
 
@@ -1412,17 +1418,12 @@ struct Settled {
 /// at the end, with the account's value changing by `value_change_usd`.
 /// An order is scored against its broker, as on spot (`fills`, the bot's,
 /// say whether it traded the other way); a close-out charges the haircut on
-/// what is left. A net-scored session's PnL is the value change less what
-/// holding the start position gained from the price moving, at the fair
-/// value at the close where the scenario has one (`fair_close_usd`), else at
-/// the level, so a bot that holds scores 0. Without any, the PnL is the
-/// value change.
+/// what is left. Without either, the PnL is the value change.
 fn settle(
     scenario: &Scenario,
     start: f64,
     end: f64,
     (start_usd, close_usd): (f64, f64),
-    fair_close_usd: Option<f64>,
     value_change_usd: f64,
     fills: &[PerpFillRecord],
 ) -> Settled {
@@ -1443,25 +1444,12 @@ fn settle(
         .iter()
         .map(|(symbol, close_out)| close_out.report(symbol, end, close_usd))
         .collect();
-    let net = scenario.net.as_ref().map(|net| {
-        net.report(
-            start,
-            end,
-            (start_usd, fair_close_usd.unwrap_or(close_usd)),
-            value_change_usd,
-            &[],
-            &[],
-        )
-    });
     let pnl_usd = order
         .as_ref()
-        .map(OrderReport::pnl_usd)
-        .or_else(|| net.as_ref().map(NetReport::pnl_usd))
-        .unwrap_or(value_change_usd)
+        .map_or(value_change_usd, OrderReport::pnl_usd)
         - close_outs.iter().map(|c| c.charge_usd).sum::<f64>();
     Settled {
         pnl_usd,
-        net,
         order,
         close_outs,
     }
@@ -1662,21 +1650,13 @@ mod tests {
         };
         scenario.order = Some(order.clone());
         // Doing nothing scores 0 whatever the close.
-        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), None, 0.0, &[]);
+        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), 0.0, &[]);
         assert_eq!(nop.pnl_usd, 0.0);
         // Bought 6 at 101 against a close of 110, 1 of fees: the same PnL
         // as the spot formula, and the order names its market.
         let fills = [fill(CoreSide::Buy, 6.0)];
         let value_change = 6.0 * (110.0 - 101.0) - 1.0;
-        let bought = settle(
-            &scenario,
-            0.0,
-            6.0,
-            (100.0, 110.0),
-            None,
-            value_change,
-            &fills,
-        );
+        let bought = settle(&scenario, 0.0, 6.0, (100.0, 110.0), value_change, &fills);
         let spot = order.report(
             0.0,
             6.0,
@@ -1693,7 +1673,7 @@ mod tests {
         // A sell inside the session is caught from the fills, though the
         // position never went below where it started.
         let both = [fill(CoreSide::Buy, 6.0), fill(CoreSide::Sell, 1.0)];
-        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), None, 0.0, &both);
+        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &both);
         assert!(
             sold.order
                 .unwrap()
@@ -1709,7 +1689,7 @@ mod tests {
                 ..fill(CoreSide::Sell, 1.0)
             },
         ];
-        let closed = settle(&scenario, 0.0, 5.0, (100.0, 110.0), None, 0.0, &desk);
+        let closed = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &desk);
         assert_eq!(closed.order.unwrap().breach(), None);
         // A start long sold down: the drift on what it started with is
         // taken off.
@@ -1718,57 +1698,8 @@ mod tests {
             reduce_only: true,
             ..order
         });
-        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), None, -100.0, &[]);
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), -100.0, &[]);
         assert_eq!(held.pnl_usd, 0.0);
-    }
-
-    #[test]
-    fn a_net_scored_perp_scores_what_it_made_over_holding() {
-        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        scenario.net = Some(crate::orders::NetScoring {
-            inventory_bps: 0.0,
-            venue_position: None,
-        });
-        // Holding 10 through a fall from 100 to 90 loses 100: it scores 0.
-        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), None, -100.0, &[]);
-        assert_eq!(held.pnl_usd, 0.0);
-        // Cutting to 4 at 100 before the fall keeps 60 of it: +60.
-        let cut = settle(&scenario, 10.0, 4.0, (100.0, 90.0), None, -40.0, &[]);
-        assert_eq!(cut.pnl_usd, 60.0);
-        // Adding 5 at 100 before the fall loses 50 more: -50.
-        let added = settle(&scenario, 10.0, 15.0, (100.0, 90.0), None, -150.0, &[]);
-        assert_eq!(added.pnl_usd, -50.0);
-        // The drift is at the fair close where there is one.
-        let fair = settle(
-            &scenario,
-            10.0,
-            10.0,
-            (100.0, 90.0),
-            Some(95.0),
-            -100.0,
-            &[],
-        );
-        assert_eq!(fair.pnl_usd, -50.0);
-        assert_eq!(fair.net.unwrap().drift_usd, -50.0);
-    }
-
-    #[test]
-    fn the_hold_baseline_is_taken_at_the_fair_close_only_for_net_scoring() {
-        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        scenario.fair_path = Some(vec![crate::scenario::Waypoint::at(10, -5.0)]);
-        // Not net-scored: the fair path is not read.
-        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
-        scenario.net = Some(crate::orders::NetScoring {
-            inventory_bps: 0.0,
-            venue_position: None,
-        });
-        assert_eq!(fair_close_usd(&scenario, 100.0, 50), Some(95.0));
-        // The value finish settles with: a hold at the fair close scores 0.
-        let fair = fair_close_usd(&scenario, 100.0, 50);
-        let held = settle(&scenario, 10.0, 10.0, (100.0, 95.0), fair, -50.0, &[]);
-        assert_eq!(held.pnl_usd, 0.0);
-        scenario.fair_path = None;
-        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
     }
 
     #[test]
@@ -1778,17 +1709,17 @@ mod tests {
             "SPCX".into(),
             crate::orders::CloseOut { haircut_bps: 100.0 },
         );
-        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), None, 50.0, &[]);
+        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
         assert!((long.pnl_usd - (50.0 - 4.0 * 2.0)).abs() < 1e-9);
         assert!((long.close_outs[0].broker_usd - 198.0).abs() < 1e-9);
-        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), None, 50.0, &[]);
+        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), 50.0, &[]);
         assert!((short.close_outs[0].broker_usd - 202.0).abs() < 1e-9);
         assert!((short.pnl_usd - (50.0 - 8.0)).abs() < 1e-9);
-        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), None, 50.0, &[]);
+        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), 50.0, &[]);
         assert_eq!(flat.pnl_usd, 50.0);
         // Without an order or a close-out, the PnL is the value change.
         let plain = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), None, 50.0, &[]);
+        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
         assert_eq!(settled.pnl_usd, 50.0);
         assert!(settled.order.is_none() && settled.close_outs.is_empty());
     }
@@ -1807,7 +1738,7 @@ mod tests {
         });
         let vars: std::collections::BTreeMap<String, String> =
             session_vars(&scenario).unwrap().into_iter().collect();
-        assert_eq!(vars["MTX_START_POSITIONS"], r#"{"SPCX":-2.5}"#);
+        assert_eq!(vars["MTX_START_POSITIONS"], r#"{"phoenix:perp:SPCX":-2.5}"#);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&vars["MTX_ORDER"]).unwrap(),
             serde_json::json!({
@@ -1824,7 +1755,7 @@ mod tests {
             .insert("SPCX".into(), crate::orders::CloseOut { haircut_bps: 12.5 });
         let vars: std::collections::BTreeMap<String, String> =
             session_vars(&scenario).unwrap().into_iter().collect();
-        assert_eq!(vars["MTX_CLOSE_OUT"], r#"{"SPCX":12.5}"#);
+        assert_eq!(vars["MTX_CLOSE_OUT"], r#"{"phoenix:perp:SPCX":12.5}"#);
     }
 
     #[tokio::test]

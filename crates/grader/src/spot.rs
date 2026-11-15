@@ -1222,7 +1222,6 @@ mod tests {
             actors: None,
             takers_pricing: None,
             fair_path: None,
-            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),

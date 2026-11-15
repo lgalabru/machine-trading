@@ -150,11 +150,6 @@ pub struct Scenario {
     /// told. It is not shown to the bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_path: Option<Vec<Waypoint>>,
-    /// Which path the hindsight bound is valued on: the scenario's `path`
-    /// (the default), or its `fair_path`, for a scenario whose faults heal
-    /// by the end.
-    #[serde(default, skip_serializing_if = "BoundOn::is_default")]
-    pub bound_on: BoundOn,
     /// Opt-in: the market calibration the path was drawn from, and what was
     /// drawn (see [`crate::market::model`]). The path and fair value above
     /// are what sessions replay; this records where they came from.
@@ -327,32 +322,6 @@ pub struct Waypoint {
     pub premium_pct: f64,
 }
 
-/// The path a scenario's hindsight bound is valued on.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BoundOn {
-    #[default]
-    Path,
-    FairPath,
-}
-
-impl BoundOn {
-    pub(crate) fn is_default(&self) -> bool {
-        *self == Self::Path
-    }
-}
-
-/// Total variation, in percent, of a path of levels from the starting mark.
-fn fair_variation_pct(path: &[Waypoint]) -> f64 {
-    let mut level = 0.0;
-    let mut total = 0.0;
-    for waypoint in path {
-        total += (waypoint.level_pct - level).abs();
-        level = waypoint.level_pct;
-    }
-    total
-}
-
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }
@@ -506,11 +475,7 @@ impl Scenario {
     /// cost. No bot reaches it (fills cost fees and slippage, and the path is
     /// unknown), so a score against it never saturates.
     pub fn hindsight_bound_usd(&self, start_mark_usd: f64) -> f64 {
-        let variation = match (&self.bound_on, &self.fair_path) {
-            (BoundOn::FairPath, Some(fair)) => fair_variation_pct(fair),
-            _ => self.total_variation_pct(),
-        };
-        self.max_position() * start_mark_usd * variation / 100.0
+        self.max_position() * start_mark_usd * self.total_variation_pct() / 100.0
     }
 
     /// What the reward divides PnL by: the hindsight bound, plus, for a
@@ -669,8 +634,7 @@ impl Scenario {
     /// scenario's own level, which no bot can push, and so does the
     /// account's valuation.
     pub fn prices_the_close(&self) -> bool {
-        self.spot.is_none()
-            && (self.order.is_some() || !self.close_out.is_empty() || self.net.is_some())
+        self.spot.is_none() && (self.order.is_some() || !self.close_out.is_empty())
     }
 
     /// An off-hours path: through the closed period, each move of the perp
@@ -1063,7 +1027,6 @@ impl ShockFamily {
                     premium_pct: 0.0,
                 }]
             }),
-            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1702,7 +1665,6 @@ mod tests {
             assert_eq!(
                 Scenario {
                     fair_path: None,
-                    bound_on: Default::default(),
                     raw_sends: None,
                     start_positions: Default::default(),
                     close_out: Default::default(),
@@ -1792,7 +1754,6 @@ mod tests {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
-            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1872,7 +1833,6 @@ mod tests {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
-            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
