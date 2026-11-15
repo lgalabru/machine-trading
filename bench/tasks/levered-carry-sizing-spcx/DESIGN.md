@@ -313,7 +313,14 @@ count.
 
 ### Numbers
 
-ANCHOR_NUMBERS
+Interim (engine, 48 sessions drawn from a public label, weighted as v2
+weighs losses, USD per session): reference +56 (raw +70, Sharpe 0.37, no
+stop-outs); informed bot before its post-flush change +164 (raw +194, Sharpe
+0.52, no stop-outs): a ratio of 0.34. Two pilot model bots on the same
+sessions: +146 and +142 (one stop-out each). On 48 generated practice
+files the reference made +86 (raw +103, Sharpe 0.50, no stop-outs) against
+the g0 reference's +97 (Sharpe 0.32, one stop-out). Every non-reading rung
+loses on the practice sets. The full ladder's numbers are pending.
 
 ## The practice family
 
