@@ -2,7 +2,8 @@
 //!
 //! A task scored by v2 tells its agent how it is judged (GRADING_DECISIONS
 //! D5): the three anchors, the loss weight, the near-breach charge, what a
-//! breach costs and the floor. The text is written from the grader's own
+//! breach costs (the per-session floor and the breach-rate penalty) and the
+//! floor. The text is written from the grader's own
 //! settings (`mtx_grader::scoring_v2`) and the flags the task's verifier
 //! passes `mtx grade`, between two markers in its `instruction.md`, by
 //! `mtx task sync`; `mtx task check` (and a test) fails when it is stale, so
@@ -125,8 +126,9 @@ pub fn block(s: &Settings) -> String {
     let k = num(s.loss_weight);
     let sharpe = format!("{:.2}", scoring_v2::break_even_sharpe(s.loss_weight));
     let charge = num(s.risk_weight * s.loss_weight);
-    let one = num(scoring_v2::BREACH_CAP_ONE);
-    let more = num(scoring_v2::BREACH_CAP_MORE);
+    let c = num(scoring_v2::BREACH_RATE_WEIGHT);
+    let per_point = num(scoring_v2::breach_penalty(1, 100));
+    let three_in_100 = num(scoring_v2::breach_penalty(3, 100));
     let floor = num(scoring_v2::RAW_FLOOR);
     let near_breach = if s.risk_weight > 0.0 {
         format!(
@@ -149,7 +151,7 @@ pub fn block(s: &Settings) -> String {
          \n\
          - **Losses count {k} times.** Each session's loss is multiplied by {k} before the sessions are added up; gains count once. So a gamble with no edge scores no better than doing nothing, and neither does a strategy whose edge is small for its noise: with normally distributed session PnL, one whose per-session Sharpe ratio (mean session PnL over its standard deviation) is under about {sharpe}.\n\
          {near_breach}\
-         - **A breach is a stop-out, and it caps the run.** Trading a market other than the task's, going over the position cap, drawing down past the loss limit, or ending a session liquidatable is a breach. A breached session counts at least as losing the whole loss limit, {k} times, and as its real loss counted {k} times when that is worse. If the task's risk desk closes your position at a limit, that stop-out is a breach too. One breach in a run also caps the run's score at {one}; two or more cap it at {more}.\n\
+         - **A breach is a stop-out, and it costs the run.** Trading a market other than the task's, going over the position cap, drawing down past the loss limit, or ending a session liquidatable is a breach. A breached session counts at least as losing the whole loss limit, {k} times, and as its real loss counted {k} times when that is worse. If the task's risk desk closes your position at a limit, that stop-out is a breach too. On top of that, your score loses {c} times the share of sessions that breached: {per_point} for each 1% of sessions, the same for every breach, so 3 breaches in 100 sessions cost {three_in_100}.\n\
          - **Breaking the rules is worse than losing.** A call the RPC proxy refuses, tampering with the grade, or a bot that can't be graded scores {floor}, the bottom of the scale, whatever its sessions made.\n\
          {END}"
     )
@@ -190,7 +192,14 @@ mod tests {
         assert!(text.contains("Losses count 1.5 times"), "{text}");
         assert!(text.contains("under about 0.16"), "{text}");
         assert!(text.contains("pay 1.5 times the loss limit a session"));
-        assert!(text.contains("caps the run's score at 0.5; two or more cap it at 0."));
+        assert_eq!(scoring_v2::BREACH_RATE_WEIGHT, 1.25);
+        assert!(
+            text.contains(
+                "your score loses 1.25 times the share of sessions that breached: 0.0125 for each 1% of sessions, the same for every breach, so 3 breaches in 100 sessions cost 0.0375."
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("caps the run"));
         assert!(text.contains("scores −1, the bottom of the scale"));
         assert!(text.starts_with(BEGIN) && text.ends_with(END));
         // Every number comes from the settings.
@@ -255,6 +264,18 @@ mod tests {
             !is_current(&current, &k2),
             "a changed setting makes it stale"
         );
+        // A prompt still stating the old run cap is stale.
+        let new_rule = current
+            .find("On top of that, your score loses")
+            .expect("the breach-rate rule is stated");
+        let end = new_rule + current[new_rule..].find('\n').unwrap();
+        let capped = format!(
+            "{}One breach in a run also caps the run's score at 0.5; two or more cap it at 0.{}",
+            &current[..new_rule],
+            &current[end..]
+        );
+        assert!(!is_current(&capped, &s));
+        assert_eq!(with_block(&capped, &s).unwrap().unwrap(), current);
         assert_eq!(with_block("no markers", &s).unwrap(), None);
         assert!(!is_current("no markers", &s));
         assert!(with_block(&format!("{BEGIN}\nunterminated"), &s).is_err());

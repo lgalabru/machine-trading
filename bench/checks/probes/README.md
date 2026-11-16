@@ -19,9 +19,9 @@ Market making is out: its redesign has its own probes.
 | limit-hugger (rests at the best prices) | `limit-hugger` | at most 0.02 |
 | stop-loss lotto (coin plus a trailing stop at 0.15 of the drawdown limit) | `stop-lotto` | pays no more than its Sharpe: if it measured under v2's break-even Sharpe (about 0.16), at most 0.02; it has a real, weak edge on trending paths (TUNE2 §3) |
 | levered reference ×1.5, ×2, ×3, clipped to the cap by the run loop | `lever-*` | weighted PnL at most m × the reference's, and no more than its Sharpe pays |
-| breacher: the ×3 lever sending past the cap, straight to the venue, in every session it can, and keeping its strategy. The ladder composes runs with exactly b = 1, 2 and 3 breach sessions from its graded rows and its clipped twin's | `breacher` | two gates per b: the run cap (a bot levering everywhere that breaches in b sessions, capped, scores at most `lever-3`) and the per-session floor (the twin's run with b sessions swapped for breach sessions, uncapped, scores at most the twin). No power if it never breached, was fatal, or no set has b breach sessions |
+| breacher: the ×3 lever sending past the cap, straight to the venue, in every session it can, and keeping its strategy. The ladder composes runs with exactly b = 1, 2 and 3 breach sessions from its graded rows and its clipped twin's | `breacher` | two gates per b: the breach-rate penalty (the composed run, a bot levering everywhere that breaches in b sessions, scores strictly below `lever-3` and loses exactly c·b/n to the penalty, c = 1.25) and the per-session floor (the twin's run with b sessions swapped for breach sessions, without the penalty, scores at most the twin). No power if it never breached, was fatal, or no set has b breach sessions |
 | crash-when-losing: the honest bot, closing out and exiting once 0.03 of the limit down; `crash-fatal` first makes a call the guard refuses | `crash-honest`, `crash-fatal` | `crash-fatal` (grade must be fatal) under the honest bot it wraps (`honest-0.2`), once they differ in 3 sessions. `crash-honest` is a stop-loss, a risk control a desk rewards: reported, never gated |
-| honest but noisy (a blend of reference and coin flip, labelled with a target per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | judged on the Sharpe it measured, not its label: from 0.2 it must beat doing nothing; one must measure between 0.2 and 0.40, so it is judged: the fast set is a fixed public seed where `honest-0.3` measures 0.35 |
+| honest but noisy (a blend of reference and coin flip, labelled with a target per-session Sharpe 0.1, 0.2, 0.3, 0.5) | `honest-*` | judged on the Sharpe it measured, not its label; a probe that never traded or went fatal, or that played exactly the sessions another honest probe did, is `no_power`; each honest rung has its own `MTX_PROBE_SALT` (on a small set, close blends draw the same sessions): from 0.2 it must beat doing nothing; one must measure between 0.2 and 0.40, so it is judged: the fast set is a fixed public seed where `honest-0.3` measures 0.35 |
 | the reference | `reference` | 0.5 |
 
 The probes, the bands, the 0.02 tolerance, the 95% confidence and the 0.2 pay
@@ -36,11 +36,33 @@ The matched-Sharpe long-vol/short-vol pair is not produced: it is synthetic (equ
 The break-even Sharpe depends on the shape of the P&L (SCORECARD #8: about 0.07 to 0.20), so `pays_its_sharpe` fails only with bootstrap confidence: a point estimate near the line is inconclusive even in a full `mtx gates`. A floored reference anchor makes the reference check `no_power`, not a pass.
 
 A rule fails when a bootstrap over the sessions (scored as the grader does,
-near-breach charge and breach cap included) shows it broken with 95%
+near-breach charge and breach-rate penalty included) shows it broken with 95%
 confidence. A point estimate that breaks it without that is `inconclusive`: a
 fast `mtx gates` tolerates it, the full one fails it. A probe that proved
 nothing (a breacher that never breached, a probe that never traded or went fatal, a fatal crash that never came, a fatal probe
 whose grade wasn't fatal) is `no_power` and fails.
+
+## One-sided mandates
+
+A probe's random component stays inside the mandate. The probe reads the
+session's own instrument allowance (its `sides`, `min_position` and
+`max_position`) and derives which sides the account may hold: both, long only
+(a client order to buy: `min_position` 0 or `sides: [buy]`) or short only.
+Nothing is configured per task. On a two-sided mandate the coin flip, the
+honest mixture's coin and the crash probes' coin are unchanged (-1 or +1 of the
+cap). On a one-sided one:
+
+- `coin-flip` (and so the honest blend's random sessions and `crash-*`) holds a
+  random size, drawn evenly from nothing to the cap, on the allowed side: a
+  random buy schedule with random timing and size, no edge;
+- `martingale` and `stop-lotto` bet on the allowed side or sit out a block (a
+  coin for timing);
+- `hugger` rests only the allowed side of the book.
+
+Without this a buy-only task's probes shorted half the time, every short was a
+breach, and every honest probe scored -1 without ever testing the pay line.
+The shared `blind-short` rung of the ladder is outside this: a buy-only task
+supplies its own (see the task's ladder file).
 
 ## What the wrappers do
 
@@ -54,10 +76,27 @@ whose grade wasn't fatal) is `no_power` and fails.
   session breaches that can. Its twin is the clipped lever. A bot sees one
   session and sessions are isolated, so a run with exactly b breaches is
   composed from the graded rows: the ladder scores it deterministically for
-  b = 1, 2 and 3, once with the run cap (the cap holds a bot that levers
-  everywhere and breaches in b sessions to its twin) and once swapped into the
-  twin's run without it (the per-session floor: a breach session scores at
-  most -k times the limit). A regression of either rule fails the gate.
+  b = 1, 2 and 3, once as the bot that levers everywhere and breaches in b
+  sessions (the breach-rate penalty must hold it below its twin) and once
+  swapped into the twin's run without the penalty (the per-session floor: a
+  breach session scores at most -k times the limit). A regression of either
+  rule fails the gate.
+
+  The penalty check always binds: it reads the scored run against the same run
+  without the penalty and wants exactly c·b/n between them (not where the -1
+  floor takes the score), and the breacher strictly below its twin. The floor
+  check runs only where the floor can fail: the swapped run with the breach
+  sessions unfloored (their PnL over nop's, weighted) must beat the twin;
+  where it doesn't the check is `not_exercised` (reported, never a pass, and
+  it doesn't fail the gate; `no_power` is for a breacher that never breached or
+  was fatal). **On flash-crash the floor has no power by construction**: the
+  breacher breaches in nearly every session (11 of 12 on the fast set), a breach
+  there already lost more than the floor, and the floor only takes back a loss
+  (GRADING_DECISIONS, "Breacher on flash-crash"). The grader's own tests cover
+  the penalty (`the_breach_penalty_holds_a_bot_that_gains_a_little_and_breaches_a_little`
+  in `crates/grader/src/scoring_v2.rs`, which scores composed sessions and
+  fails if the penalty is removed); the ladder's copy of the scoring is checked
+  against the grader on every grade.
 - **Honest** follows the reference in a share `q` of sessions (a seeded draw)
   and holds a full-cap coin flip in the rest: a mixture of a bot with edge and
   one without. Its per-session Sharpe is between the two and depends on the

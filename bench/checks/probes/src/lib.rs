@@ -61,6 +61,8 @@ const FLATTEN_SHARE: f64 = 0.1;
 
 const TAG_COIN: u64 = 1;
 const TAG_BLEND: u64 = 2;
+/// Mixed into a coin's tag for the size drawn on a one-sided mandate.
+const TAG_SIZE: u64 = 0x51_7E;
 const TAG_BREACH: u64 = 3;
 const TAG_HONEST_COIN: u64 = 5;
 
@@ -202,6 +204,53 @@ pub fn block_of(k: u64, steps: u64, blocks: u64) -> u64 {
     (k.saturating_mul(blocks) / steps.max(1)).min(blocks.saturating_sub(1))
 }
 
+/// The sides a mandate lets the account hold, which a probe's random
+/// component stays inside: on a buy-only mandate (a client order to buy) a
+/// short or a sell is a breach, which would score every probe -1 and test
+/// nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Allowed {
+    #[default]
+    Both,
+    LongOnly,
+    ShortOnly,
+}
+
+impl Allowed {
+    /// From an instrument's bounds: its largest position, its smallest (`-max`
+    /// when absent), and whether its `sides` list, when it has one, allows
+    /// buying and selling.
+    pub fn of_bounds(max_position: f64, min_position: Option<f64>, buy: bool, sell: bool) -> Self {
+        let min = min_position.unwrap_or(-max_position);
+        let long = buy && max_position > 0.0;
+        let short = sell && min < 0.0;
+        match (long, short) {
+            (true, false) => Self::LongOnly,
+            (false, true) => Self::ShortOnly,
+            _ => Self::Both,
+        }
+    }
+
+    /// The mandate's allowance for the session's own market (its first
+    /// instrument when none is named so).
+    fn of_session(session: &Session) -> Self {
+        let universe = &session.mandate.universe;
+        let Some(a) = universe
+            .iter()
+            .find(|a| a.instrument.symbol == session.symbol)
+            .or_else(|| universe.first())
+        else {
+            return Self::Both;
+        };
+        let allows = |side: &str| {
+            a.sides
+                .as_ref()
+                .is_none_or(|sides| sides.iter().any(|s| s.to_string() == side))
+        };
+        Self::of_bounds(a.max_position, a.min_position, allows("buy"), allows("sell"))
+    }
+}
+
 /// What the strategies read of the session.
 #[derive(Debug, Clone, Copy, Default)]
 struct Frame {
@@ -210,6 +259,7 @@ struct Frame {
     limit: f64,
     seed: u64,
     salt: u64,
+    allowed: Allowed,
 }
 
 impl Frame {
@@ -220,6 +270,29 @@ impl Frame {
             limit: session.max_drawdown,
             seed: session.seed,
             salt,
+            allowed: Allowed::of_session(session),
+        }
+    }
+
+    /// A coin's direction for a block, in the mandate: -1 or 1 on a two-sided
+    /// one; on a one-sided one, 0 or the allowed side (random timing).
+    fn side(&self, tag: u64, index: u64) -> f64 {
+        let flip = coin(self.seed, self.salt, tag, index);
+        match self.allowed {
+            Allowed::Both => flip,
+            Allowed::LongOnly => f64::from(flip > 0.0),
+            Allowed::ShortOnly => -f64::from(flip > 0.0),
+        }
+    }
+
+    /// A random position for a block, as a share of the cap, in the mandate:
+    /// -1 or 1 on a two-sided one (the full size); on a one-sided one a size
+    /// drawn evenly from 0 to 1 on the allowed side (random timing and size).
+    fn sized(&self, tag: u64, index: u64) -> f64 {
+        match self.allowed {
+            Allowed::Both => coin(self.seed, self.salt, tag, index),
+            Allowed::LongOnly => draw(self.seed, self.salt, tag ^ TAG_SIZE, index),
+            Allowed::ShortOnly => -draw(self.seed, self.salt, tag ^ TAG_SIZE, index),
         }
     }
 }
@@ -235,7 +308,7 @@ struct CoinFlip {
 impl CoinFlip {
     fn target(&self, k: u64) -> f64 {
         let block = block_of(k, self.frame.steps, self.blocks);
-        coin(self.frame.seed, self.frame.salt, self.tag, block) * self.size * self.frame.cap
+        self.frame.sized(self.tag, block) * self.size * self.frame.cap
     }
 }
 
@@ -263,7 +336,7 @@ impl Martingale {
             self.block = Some(block);
             self.block_pnl = market.pnl;
         }
-        coin(self.frame.seed, self.frame.salt, TAG_COIN, block) * self.share * self.frame.cap
+        self.frame.side(TAG_COIN, block) * self.share * self.frame.cap
     }
 }
 
@@ -293,7 +366,7 @@ impl StopLotto {
         if self.stopped {
             0.0
         } else {
-            coin(self.frame.seed, self.frame.salt, TAG_COIN, block) * self.size * self.frame.cap
+            self.frame.side(TAG_COIN, block) * self.size * self.frame.cap
         }
     }
 }
@@ -311,7 +384,13 @@ impl Strategy for Hugger {
             orders.cancel_all();
             orders.target_position(0.0);
         } else if let (Some(bid), Some(ask)) = (market.best_bid, market.best_ask) {
-            orders.quote(bid, ask, self.size * self.frame.cap);
+            let size = self.size * self.frame.cap;
+            match self.frame.allowed {
+                Allowed::Both => orders.quote(bid, ask, size),
+                // One side of the book only: the mandate forbids the other.
+                Allowed::LongOnly => orders.cancel_all().bid(bid, size),
+                Allowed::ShortOnly => orders.cancel_all().ask(ask, size),
+            };
         }
         Ok(())
     }
@@ -746,6 +825,15 @@ mod tests {
             limit: 600.0,
             seed: 11,
             salt: 0,
+            allowed: Allowed::Both,
+        }
+    }
+
+    fn one_sided(allowed: Allowed, seed: u64) -> Frame {
+        Frame {
+            allowed,
+            seed,
+            ..frame(100)
         }
     }
 
@@ -824,6 +912,82 @@ mod tests {
         assert!((0..100).all(|k| coin.target(k) == first));
         let half = CoinFlip { size: 0.5, ..coin };
         assert_eq!(half.target(3).abs(), 35.0);
+    }
+
+    #[test]
+    fn the_allowed_sides_come_from_the_mandate_bounds() {
+        let sides = Allowed::of_bounds;
+        assert_eq!(sides(70.0, None, true, true), Allowed::Both);
+        // A client order to buy: no shorts, or only buys.
+        assert_eq!(sides(70.0, Some(0.0), true, true), Allowed::LongOnly);
+        assert_eq!(sides(70.0, None, true, false), Allowed::LongOnly);
+        assert_eq!(sides(70.0, Some(0.0), true, false), Allowed::LongOnly);
+        assert_eq!(sides(70.0, None, false, true), Allowed::ShortOnly);
+        assert_eq!(sides(70.0, Some(-70.0), false, true), Allowed::ShortOnly);
+        // Nothing allowed to restrict to: both, and the run loop refuses.
+        assert_eq!(sides(70.0, Some(0.0), false, true), Allowed::Both);
+    }
+
+    #[test]
+    fn a_probe_on_a_one_sided_mandate_stays_on_its_side() {
+        for (allowed, sign) in [(Allowed::LongOnly, 1.0), (Allowed::ShortOnly, -1.0)] {
+            let mut sizes = Vec::new();
+            for seed in 0..200 {
+                let coin = CoinFlip {
+                    frame: one_sided(allowed, seed),
+                    tag: TAG_COIN,
+                    size: 1.0,
+                    blocks: 4,
+                };
+                for k in [0, 30, 60, 90] {
+                    let target = coin.target(k);
+                    assert!(target * sign >= 0.0 && target.abs() <= 70.0, "{target}");
+                    sizes.push(target.abs());
+                }
+                let mut m = Martingale {
+                    frame: one_sided(allowed, seed),
+                    start: 0.125,
+                    blocks: 8,
+                    share: 1.0,
+                    block: None,
+                    block_pnl: 0.0,
+                };
+                let mut lotto = StopLotto {
+                    frame: one_sided(allowed, seed),
+                    size: 1.0,
+                    stop: 0.15,
+                    blocks: 4,
+                    block: None,
+                    peak: 0.0,
+                    stopped: false,
+                };
+                for k in [0, 20, 40, 60, 80] {
+                    assert!(m.target(&market(k, -10.0)) * sign >= 0.0);
+                    assert!(lotto.target(&market(k, 0.0)) * sign >= 0.0);
+                }
+            }
+            // Random timing and size: from nothing up to the cap, not one value.
+            assert!(sizes.iter().any(|s| *s < 10.0) && sizes.iter().any(|s| *s > 60.0));
+        }
+    }
+
+    #[test]
+    fn a_two_sided_mandate_keeps_the_two_sided_coin() {
+        let coins = (0..200u64).map(|seed| {
+            CoinFlip {
+                frame: Frame {
+                    seed,
+                    ..frame(100)
+                },
+                tag: TAG_COIN,
+                size: 1.0,
+                blocks: 1,
+            }
+            .target(0)
+        });
+        let targets: Vec<f64> = coins.collect();
+        assert!(targets.iter().all(|t| t.abs() == 70.0));
+        assert!(targets.iter().any(|t| *t > 0.0) && targets.iter().any(|t| *t < 0.0));
     }
 
     #[test]
