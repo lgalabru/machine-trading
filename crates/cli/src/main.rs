@@ -1672,8 +1672,8 @@ fn report_to_write<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "generate")]
     use clap::Parser;
-
     #[cfg(feature = "generate")]
     use super::Cli;
 
