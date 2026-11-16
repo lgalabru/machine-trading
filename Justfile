@@ -460,6 +460,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     [ -f .env ] && . ./.env
     [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
+    # A guarded task's agent can reach only its model's address and the crates
+    # registry; a native harness would need its provider's API open, with its
+    # real key in the agent's environment and the provider's server-side fetch
+    # and search tools behind it. Guarded tasks run through Hermes only.
+    python3 -I bench/harness/models.py native-guard {{tasks}} {{models}}
     for model in {{models}}; do
       case "$model" in
         native:openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
@@ -512,9 +517,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # harnesses and don't stop a batch.
     refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached|credits exhausted|no credits remaining'
     # A guarded task limits its agent's network to an allowlist: the bench adds
-    # the model's address to it (the key proxy's, for Hermes; the provider's
-    # own for the native harnesses, whose hosts a guarded task hasn't run yet).
-    # A task on the public network ignores these flags.
+    # the key proxy's address to it (native harnesses don't run guarded tasks:
+    # see native-guard above). A task on the public network ignores the flag.
     proxy_host() { local h="${proxy_url#*://}"; echo "${h%%:*}"; }
     run_model() {
       local model="$1"
@@ -526,14 +530,12 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           model="${model#native:}"
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
-            --allow-agent-host api.openai.com --allow-agent-host chatgpt.com \
             --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
           ;;
         native:*)
           model="${model#native:}"
           harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
-            --allow-agent-host api.anthropic.com \
             --ak version={{claude_code}} \
             --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
@@ -749,7 +751,8 @@ agent_scenario_commands := "check help new play"
 # a scored scenario. A guarded image (a task whose environment starts from the
 # base's `-agent` image) also fails if its `mtx` can draw scenarios, offers a
 # command outside the allowlist above, or holds a scenario family's code.
-# With a task, audits that task's image (`<tag>-<task>`); with none, the base
+# With a task, audits the image its task.toml's `docker_image` names, which
+# must be `<tag>-<task>` (the one Harbor runs); with none, the base
 # dev image, the base agent image, and the image of every guarded task. Runs
 # on the images `image` built.
 leak-audit task="":
@@ -758,6 +761,24 @@ leak-audit task="":
     IFS='|' read -ra needles <<< "{{leak_needles}}|mtx-ladder-rungs"
     base="{{registry}}/{{image}}:{{tag}}"
     guarded() { grep -q -E '^FROM [^ ]*:[^@ ]*-agent(@| |$)' "{{tasks}}/$1/environment/Dockerfile"; }
+    # The image Harbor runs for a task is the one task.toml's `docker_image`
+    # names, not the Dockerfile's: it must be the task's own (`<tag>-<task>`).
+    # Prints the reference to audit: as written when this machine holds it,
+    # else its tag (a pinned reference not pulled here).
+    task_image() {
+      local want="$base-$1" ref
+      ref="$(python3 -I - "{{tasks}}/$1/task.toml" <<'PY'
+import sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb"))
+print(c.get("environment", {}).get("docker_image", ""))
+PY
+)"
+      if [ "${ref%@*}" != "$want" ]; then
+        echo "LEAK: task.toml's docker_image for $1 is \"${ref:-<none>}\", not $want: Harbor runs that image, not the Dockerfile's" >&2
+        return 1
+      fi
+      if docker image inspect "$ref" > /dev/null 2>&1; then echo "$ref"; else echo "$want"; fi
+    }
     # The command names `mtx <args> --help` lists, one a line.
     listed() {
       docker run --rm --entrypoint mtx "$image" "$@" --help 2>&1 \
@@ -816,13 +837,15 @@ leak-audit task="":
     status=0
     if [ -n "{{task}}" ]; then
       if guarded "{{task}}"; then mode=guarded; else mode=unguarded; fi
-      audit "$base-{{task}}" "$mode" || status=1
+      if image="$(task_image "{{task}}")"; then audit "$image" "$mode" || status=1; else status=1; fi
     else
       audit "$base" unguarded || status=1
       audit "$base-agent" guarded || status=1
       for dir in {{tasks}}/*/; do
         task="$(basename "$dir")"
-        if guarded "$task"; then audit "$base-$task" guarded || status=1; fi
+        if guarded "$task"; then
+          if image="$(task_image "$task")"; then audit "$image" guarded || status=1; else status=1; fi
+        fi
       done
     fi
     exit "$status"

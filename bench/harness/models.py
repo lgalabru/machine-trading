@@ -8,6 +8,7 @@ one's key and name before a batch spends anything.
     python3 -I models.py keys                      every variable that may hold a key
     python3 -I models.py token <name>              the model's token on the key proxy
     python3 -I models.py scan <dir>                files under <dir> holding a key, in any form
+    python3 -I models.py native-guard <tasks> <name>...  refuse `native:` models when a task is guarded
 
 MTX_MODELS names another registry (the harness check's). A name that
 isn't in it is `openai/<model>` as given, or
@@ -169,8 +170,36 @@ def scan(root: Path) -> int:
     return 1 if hits or unreadable else 0
 
 
+def guarded_tasks(tasks: Path) -> list[str]:
+    """The tasks whose environment starts from the base's `-agent` image: their
+    agents run with an allowlisted network, and no generator in their `mtx`."""
+    found = []
+    for dockerfile in sorted(tasks.glob("*/environment/Dockerfile")):
+        if re.search(r"^FROM \S+-agent(@\S+)?\s*$", dockerfile.read_text(), re.M):
+            found.append(dockerfile.parent.parent.name)
+    return found
+
+
+def native_guard(tasks: Path, names: list[str]) -> str | None:
+    """Why `names` can't run on `tasks`, or None. A native harness (Claude Code,
+    Codex) holds its provider's real key in the agent's environment, and its
+    provider's API, which a guarded task would have to allow, offers server-side
+    fetch and search tools: through them the agent could read the generator's
+    source. Guarded tasks run through Hermes's key proxy only (body_policy.py
+    refuses server tools there)."""
+    native = [n for n in names if n.startswith("native:")]
+    guarded = guarded_tasks(tasks)
+    if native and guarded:
+        return (
+            f"{', '.join(native)}: native harnesses can't run guarded tasks ({', '.join(guarded)}): "
+            "their provider API, which the agent's network would have to allow, can fetch "
+            "and search the web for the agent. Run these models in Hermes (without `native:`)."
+        )
+    return None
+
+
 def main():
-    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2}
+    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3}
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) < 1 + commands[sys.argv[1]]:
         sys.exit(__doc__)
     command, names = sys.argv[1], sys.argv[2:]
@@ -184,6 +213,10 @@ def main():
         print("\n".join(key_names()))
     elif command == "token":
         print(route_token(entry(names[0])["route"]))
+    elif command == "native-guard":
+        refusal = native_guard(Path(names[0]), names[1:])
+        if refusal:
+            sys.exit(refusal)
     elif command == "scan":
         sys.exit(scan(Path(names[0])))
     else:

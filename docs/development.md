@@ -133,7 +133,10 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      pinned in the Justfile, `bench/harness/mtx_hermes.py`), so no model is
      helped or hurt by its harness. Its trials are labelled
      `gpt-6.1-sol · hermes`, apart from 0.11.0 and earlier, which ran in
-     each provider's own harness; `native:<model>` still runs one that way.
+     each provider's own harness; `native:<model>` still runs one that way,
+     on tasks with no guarded agent (a guarded task's agent can't reach
+     a provider's API, which would also fetch the web for it: `just bench`
+     refuses `native:` models while a task is guarded).
      Its token counts come from Hermes's session; a cost only when Hermes
      knows the model's price. `effort` (left empty, each harness keeps its
      default) sets one reasoning effort for every harness; cross-family
@@ -304,9 +307,9 @@ instruction. `mtx task status <name>` says which steps are done;
    strategy that uses its risk budget. The informed bot
    (`checks/bots/informed/`, a copy of the reference marked
    `TODO(informed)` until you write it) is the 1: it reads every fact the
-   task's data could tell in principle (the ladder hands it the session's
-   regime, `tell_regime`) and nothing about the session's future
-   randomness. Both stay named in `checks/ladder.json`'s `anchors`. Freeze
+   task's data could tell in principle (the session's latent state, which
+   the verifier hands it with `mtx grade --informed` and the ladder with
+   `tell_latent`) and nothing about the session's future randomness. Both stay named in `checks/ladder.json`'s `anchors`. Freeze
    both, and record their hashes in `DESIGN.md`, before any model run
    (`guide anchors`).
 5. **Calibrate.** Draw the practice scenarios, then calibrate them with the
@@ -336,10 +339,9 @@ instruction. `mtx task status <name>` says which steps are done;
 10. **Gates.** `mtx gates <name> --fast` while building, then
     `mtx gates <name>` before a release: it refuses a v2 task without both
     anchors, with a reference outside the strength band (a floored one
-    included), with stale scoring rules, or whose verifier can't run the
-    informed bot on the hidden set; that last needs `mtx grade --informed`,
-    which isn't built yet, so no v2 task is releasable until it is (see
-    [gates](gates.md)).
+    included), with stale scoring rules, or whose verifier doesn't run the
+    informed bot on the hidden set (`--informed`, from where the image
+    builds it; see [gates](gates.md)).
 11. **Identity.** The anchors replay byte for byte (`mtx grade --replay 3`,
     which `mtx gates` runs), and a change to the grader or the CLI leaves
     the existing tasks' reports identical to `origin/main`'s on the same

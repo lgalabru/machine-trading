@@ -128,6 +128,9 @@ jobs:
         run: |
           cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
           cargo test -p mtx-cli --no-default-features
+      - name: Bench harness
+        # `just bench` refuses a native harness on a guarded task.
+        run: python3 -I bench/harness/test_native_guard.py
       - name: mtx-kit, every feature
         # The workspace builds mtx-kit with the features its users ask for;
         # the rest (adapters no bot uses yet, test-util) only build here.

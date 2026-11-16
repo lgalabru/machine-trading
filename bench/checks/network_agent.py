@@ -2,7 +2,9 @@
 tries, from the agent's container and as the agent user, to reach what a
 guarded task's agent must not (ghcr.io and github.com, which hold the full
 `mtx` and the reference bots, and the rest of the internet) and what it must
-(the crates registry, its model's address, and the task's chain), and writes
+(the crates registry, its model's address, and the task's chain), checks the
+image is the agent image (`mtx scenario generate` fails, no /opt/mtx/anchors),
+and writes
 what answered to network.json in its logs.
 
     MTX_PROBE_MODEL=<host>:<port> PYTHONPATH=bench harbor run -p bench/tasks/<task> \
@@ -41,6 +43,11 @@ say "http:github.com" http github.com 80 github.com
 ip="$(getent hosts ghcr.io | awk '{ print $1; exit }')"
 say "ip-no-sni:ghcr.io" tls "$ip" ""
 say "ip-sni-index.crates.io:ghcr.io" fronted "$ip" index.crates.io
+# The image Harbor ran is the agent image: its mtx runs but can't draw a
+# scenario, and the reference bots aren't in it.
+say "mtx-runs" mtx --help
+say "scenario-generate" mtx scenario generate --out /tmp/net-probe-gen --prefix probe --count 1 --seed 1
+say "anchors-dir" test -e /opt/mtx/anchors
 say "model" http "@MODEL_HOST@" "@MODEL_PORT@" "@MODEL_HOST@"
 # Cargo: the registry answers, and a git dependency on the public repo doesn't.
 tmp="$(mktemp -d)"

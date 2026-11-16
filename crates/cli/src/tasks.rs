@@ -51,6 +51,20 @@ pub struct Task {
     pub reference: Reference,
     /// The ladder bots' crates, `bench/tasks/<dir>/checks/bots/*`.
     pub check_bots: Vec<String>,
+    /// A v2 task's informed bot, which the verifier runs on its hidden sets
+    /// beside the reference: the crate of the ladder's `anchors.informed`
+    /// rung, when it names one with a crate.
+    pub informed: Option<InformedBot>,
+}
+
+/// A v2 task's informed bot crate, as the image builds it into
+/// `/opt/mtx/anchors/<anchor>-informed` ([`Task::informed_anchor`]).
+#[derive(Debug, Clone)]
+pub struct InformedBot {
+    pub package: String,
+    pub bin: String,
+    /// The crate's directory, from the repository's root.
+    pub dir: String,
 }
 
 /// The reference bot's crate, `reference/Cargo.toml`.
@@ -65,6 +79,12 @@ impl Task {
     /// The reference crate's directory, from the repository's root.
     pub fn reference_dir(&self) -> String {
         format!("bench/tasks/{}/reference", self.dir)
+    }
+
+    /// Where the image puts the informed bot for the verifier, under
+    /// `/opt/mtx/anchors`: beside the reference's anchor.
+    pub fn informed_anchor(&self) -> String {
+        format!("{}-informed", self.mtx.anchor())
     }
 }
 
@@ -212,21 +232,22 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
             parsed.task.name
         );
     }
-    let cargo = folder.join("reference/Cargo.toml");
-    let manifest: CargoToml =
-        toml::from_str(&std::fs::read_to_string(&cargo).with_context(|| {
-            format!(
-                "{}: a task's reference bot is its reference/ crate",
-                cargo.display()
-            )
-        })?)
-        .with_context(|| cargo.display().to_string())?;
-    let reference = Reference {
-        bin: manifest
-            .bin
-            .first()
-            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
-        package: manifest.package.name,
+    let reference = crate_of(&folder.join("reference")).with_context(|| {
+        format!(
+            "{}: a task's reference bot is its reference/ crate",
+            folder.join("reference/Cargo.toml").display()
+        )
+    })?;
+    let informed = if mtx.headline == Headline::V2 {
+        informed_dir(root, &dir).and_then(|informed| {
+            crate_of(&root.join(&informed)).ok().map(|bot| InformedBot {
+                package: bot.package,
+                bin: bot.bin,
+                dir: informed,
+            })
+        })
+    } else {
+        None
     };
     let mut check_bots: Vec<String> = std::fs::read_dir(folder.join("checks/bots"))
         .into_iter()
@@ -247,7 +268,40 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
         mtx,
         reference,
         check_bots,
+        informed,
     })
+}
+
+/// A bot crate's package, and the binary it runs as a process.
+fn crate_of(dir: &Path) -> Result<Reference> {
+    let cargo = dir.join("Cargo.toml");
+    let manifest: CargoToml = toml::from_str(&std::fs::read_to_string(&cargo)?)
+        .with_context(|| cargo.display().to_string())?;
+    Ok(Reference {
+        bin: manifest
+            .bin
+            .first()
+            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
+        package: manifest.package.name,
+    })
+}
+
+/// The directory of the bot a task's ladder names as its informed anchor
+/// (`anchors.informed`, a rung's name), from the repository's root.
+pub fn informed_dir(root: &Path, task: &str) -> Option<String> {
+    let path = root
+        .join("bench/tasks")
+        .join(task)
+        .join("checks/ladder.json");
+    let ladder: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let name = ladder["anchors"]["informed"].as_str()?;
+    ladder["rungs"]
+        .as_array()?
+        .iter()
+        .find(|r| r["name"] == name)?["dir"]
+        .as_str()
+        .map(str::to_string)
 }
 
 /// `items` without repeats, in order.
@@ -304,13 +358,25 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         format!(
             "# {GENERATED}\n# <anchor> <package> <binary> <directory>, one per task.\n{}\n",
             join(
-                &|t| format!(
-                    "{} {} {} {}",
-                    t.mtx.anchor(),
-                    t.reference.package,
-                    t.reference.bin,
-                    t.reference_dir()
-                ),
+                &|t| {
+                    let mut lines = format!(
+                        "{} {} {} {}",
+                        t.mtx.anchor(),
+                        t.reference.package,
+                        t.reference.bin,
+                        t.reference_dir()
+                    );
+                    if let Some(informed) = &t.informed {
+                        lines += &format!(
+                            "\n{} {} {} {}",
+                            t.informed_anchor(),
+                            informed.package,
+                            informed.bin,
+                            informed.dir
+                        );
+                    }
+                    lines
+                },
                 "\n"
             )
         )
@@ -404,6 +470,52 @@ pub fn guarded(root: &Path, task: &str) -> bool {
             })
         })
     })
+}
+
+/// What is wrong with the images a task.toml names: Harbor runs
+/// `[environment] docker_image` (not the Dockerfile) for the agent and
+/// `[verifier.environment] docker_image` for the verifier, so each must be the
+/// task's own (`<registry>/<image>:<tag>-<task>`, `-<task>-verifier`), pinned
+/// or not. A task that names another's, such as its base's dev image, would
+/// run its agent in an image that holds the whole grader.
+pub fn image_problems(toml: &str, task: &str) -> Vec<String> {
+    let Ok(value) = toml.parse::<toml::Table>() else {
+        return vec!["task.toml doesn't parse".into()];
+    };
+    let image = |path: &[&str]| {
+        let mut at = Some(&value);
+        let mut table = None;
+        for key in path {
+            table = at.and_then(|t| t.get(*key)).and_then(|v| v.as_table());
+            at = table;
+        }
+        table
+            .and_then(|t| t.get("docker_image"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut problems = Vec::new();
+    for (section, own) in [
+        ("[environment]", (image(&["environment"]), format!("-{task}"))),
+        (
+            "[verifier.environment]",
+            (
+                image(&["verifier", "environment"]),
+                format!("-{task}-verifier"),
+            ),
+        ),
+    ] {
+        let (image, suffix) = own;
+        let name = image.split('@').next().unwrap_or("");
+        let tag = name.rsplit_once(':').map(|(_, tag)| tag).unwrap_or("");
+        if !tag.ends_with(&suffix) || !name.contains("/machine-trading:") {
+            problems.push(format!(
+                "{section} docker_image is {image:?}, not this task's own image (…{suffix}): Harbor would run that image, not the Dockerfile's"
+            ));
+        }
+    }
+    problems
 }
 
 /// The variable `mtx-practice` reads its scoring flags from.
@@ -582,6 +694,22 @@ pub fn stale(root: &Path) -> Result<Vec<PathBuf>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_task_runs_its_own_images_not_another_tasks() {
+        let own = |task: &str, pin: &str| {
+            format!(
+                "[verifier.environment]\ndocker_image = \"ghcr.io/solana-foundation/machine-trading:0.12.0-{task}-verifier{pin}\"\n\n[environment]\ndocker_image = \"ghcr.io/solana-foundation/machine-trading:0.12.0-{task}{pin}\"\n"
+            )
+        };
+        assert!(image_problems(&own("new-spcx", ""), "new-spcx").is_empty());
+        assert!(image_problems(&own("new-spcx", "@sha256:ab12"), "new-spcx").is_empty());
+        // A scaffold that kept its base's images runs the base's unguarded image.
+        let problems = image_problems(&own("flash-crash-spcx", ""), "new-spcx");
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        // Neither section is left out.
+        assert_eq!(image_problems("[environment]\n", "new-spcx").len(), 2);
+    }
+
     fn task(dir: &str) -> Task {
         Task {
             dir: dir.into(),
@@ -601,6 +729,7 @@ mod tests {
                 bin: "mtx-x".into(),
             },
             check_bots: vec![],
+            informed: None,
         }
     }
 
