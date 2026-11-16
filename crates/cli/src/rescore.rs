@@ -371,12 +371,15 @@ fn read_session(
 }
 
 /// A report's parts as the replay check names them: the totals, then each
-/// of the bot's sessions. A replay check's own section isn't compared.
+/// of the bot's sessions. A replay check's own section isn't compared, nor
+/// are the versions: a stamp that appears on a rescore is not a change to
+/// what the grade says.
 fn named(report: &Value) -> Vec<(String, Value)> {
     let mut totals = report.clone();
     if let Value::Object(fields) = &mut totals {
         fields.remove("scenarios");
         fields.remove("replay");
+        fields.remove("versions");
     }
     let mut named = vec![("grade".to_string(), totals)];
     for session in report["scenarios"].as_array().into_iter().flatten() {
@@ -424,7 +427,12 @@ pub fn rescore_trials(
             ))
         })
         .collect();
-    let mixed = crate::versions::mismatches(&stamps);
+    let mut mixed = crate::versions::mismatches(&stamps);
+    // An explicit `--scoring` puts every trial on one scoring spec, which is
+    // what mixed specs need: only the task fingerprints must agree then.
+    if scoring.scoring != Scoring::V1 {
+        mixed.retain(|m| m.field == "task fingerprint");
+    }
     crate::versions::enforce(&format!("{}", root.label), &mixed, allow_version_mismatch)?;
     let mut rows = Vec::new();
     // Each task's v2 grades, by model, for the comparison across runs.
@@ -786,7 +794,51 @@ mod tests {
         assert!(error.contains("scoring spec differs"), "{error}");
         let summary = rescore_trials(&root, &args(Scoring::V1, &[]), true).unwrap();
         assert_eq!(summary["version_mismatch"][0]["field"], "scoring spec");
+        // An explicit --scoring puts them all on one spec: no refusal.
+        let summary = rescore_trials(&root, &args(Scoring::V2, &[]), false).unwrap();
+        assert_eq!(summary["version_mismatch"], json!([]));
         std::fs::remove_dir_all(&root.path).unwrap();
+        // Other task fingerprints are refused whatever the scoring.
+        let root = crate::versions::tests::root_of(&[
+            ("flash-crash-spcx", Some("f1"), Some("s")),
+            ("flash-crash-spcx", Some("f2"), Some("s")),
+        ]);
+        let error = rescore_trials(&root, &args(Scoring::V2, &[]), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("task fingerprint differs"), "{error}");
+        std::fs::remove_dir_all(&root.path).unwrap();
+    }
+
+    #[test]
+    fn rescoring_a_headline_grade_with_its_own_settings_keeps_its_scoring_hash() {
+        let graded = Params {
+            headline: true,
+            ..Params::new(Ceiling::Informed { eta_override: None })
+        };
+        let report = json!({"v2": {
+            "loss_weight": graded.loss_weight,
+            "anchor_floor": scoring_v2::ANCHOR_FLOOR,
+            "risk": {"weight": graded.risk_weight},
+            "hindsight_cost": graded.hindsight_cost,
+            "resamples": graded.resamples,
+        }});
+        let kept = headline_params(&report).unwrap();
+        assert_eq!(scoring_v2::spec_hash(&kept), scoring_v2::spec_hash(&graded));
+        // And a floor that is not the default still moves it.
+        let other = Params {
+            anchor_floor: Some(0.2),
+            ..graded
+        };
+        assert_ne!(scoring_v2::spec_hash(&kept), scoring_v2::spec_hash(&other));
+    }
+
+    #[test]
+    fn the_versions_are_not_part_of_the_replay_check() {
+        let mut a = json!({"reward": 1.0, "scenarios": []});
+        let b = a.clone();
+        a["versions"] = json!({"scoring_hash": "x"});
+        assert_eq!(named(&a), named(&b));
     }
 
     #[test]

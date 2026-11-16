@@ -18,6 +18,8 @@
 //! trader and its meter read the account with the same function.
 //! Transactions go through [`chain`](crate::chain).
 
+#[cfg(any(feature = "openbook-v2", feature = "phoenix-v1", feature = "phoenix"))]
+pub mod fills;
 #[cfg(feature = "openbook-v2-venue")]
 pub mod openbook;
 #[cfg(any(feature = "phoenix", feature = "phoenix-v1-venue"))]

@@ -31,6 +31,10 @@ pub struct Generator {
     pub practice: fn(prefix: &str, count: usize, seed: u64) -> Vec<Scenario>,
     /// `count` hidden scenarios named `hidden-<n>`.
     pub hidden: fn(count: usize, seed: u64, tell_regime: bool) -> Result<Hidden>,
+    /// Every parameter of the families this generator draws from, as text
+    /// (their `Debug`): part of a task's fingerprint, so a parameter no
+    /// drawn scenario shows still moves it.
+    pub params: fn() -> String,
 }
 
 pub const GENERATORS: &[Generator] = &[
@@ -40,22 +44,32 @@ pub const GENERATORS: &[Generator] = &[
         hidden: |count, seed, tell| {
             shaped(ShockFamily::spcx().draw_set("hidden", count, seed), tell)
         },
+        params: || format!("{:?}", ShockFamily::spcx()),
     },
     Generator {
         name: "market-making",
         practice: |prefix, count, seed| MakingFamily::spcx().sample_set(prefix, count, seed),
         hidden: |count, seed, tell| making_hidden(&MakingFamily::spcx(), count, seed, tell),
+        params: || format!("{:?}", MakingFamily::spcx()),
     },
     Generator {
         name: "market-making-v2",
         practice: |prefix, count, seed| MakingFamily::v2().sample_set(prefix, count, seed),
         hidden: |count, seed, tell| making_hidden(&MakingFamily::v2(), count, seed, tell),
+        params: || format!("{:?}", MakingFamily::v2()),
     },
     Generator {
         name: "funding-carry",
         practice: |prefix, count, seed| CarryFamily::practice().sample_set(prefix, count, seed),
         hidden: |count, seed, tell| {
             shaped(CarryFamily::spcx().draw_set("hidden", count, seed), tell)
+        },
+        params: || {
+            format!(
+                "{:?} practice {:?}",
+                CarryFamily::spcx(),
+                CarryFamily::practice()
+            )
         },
     },
     Generator {
@@ -64,6 +78,7 @@ pub const GENERATORS: &[Generator] = &[
         hidden: |count, seed, tell| {
             shaped(WeekendFamily::spcx().draw_set("hidden", count, seed), tell)
         },
+        params: || format!("{:?}", WeekendFamily::spcx()),
     },
 ];
 
@@ -168,6 +183,34 @@ mod tests {
             assert_eq!(hidden.annotations.len(), 4, "{}", g.name);
             assert_eq!(hidden.regimes.as_ref().map(Vec::len), Some(4), "{}", g.name);
             assert!((g.hidden)(4, 7, false).unwrap().regimes.is_none());
+        }
+    }
+
+    #[test]
+    fn a_family_parameter_a_small_draw_never_reaches_still_shows_in_the_params() {
+        let spcx = ShockFamily::spcx();
+        let wider = ShockFamily {
+            extend_pct: (1.0, 9.0),
+            ..ShockFamily::spcx()
+        };
+        let draw = |family: &ShockFamily, count| {
+            serde_json::to_string(
+                &family
+                    .draw_set("hidden", count, 1)
+                    .into_iter()
+                    .map(|d| d.0)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+        };
+        // Six scenarios have no extension in them: the draw alone can't see it.
+        assert_eq!(draw(&spcx, 6), draw(&wider, 6));
+        // The verifier's own 72 do, and the params text always does.
+        assert_ne!(draw(&spcx, 72), draw(&wider, 72));
+        assert_ne!(format!("{spcx:?}"), format!("{wider:?}"));
+        for g in GENERATORS {
+            assert!(!(g.params)().is_empty(), "{}", g.name);
+            assert_eq!((g.params)(), (g.params)(), "{}", g.name);
         }
     }
 }

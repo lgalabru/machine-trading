@@ -152,10 +152,35 @@ pub struct Params {
 /// every default and floor, the clamps, and these settings (`k`, `φ`, `λ`,
 /// the ceiling, the hindsight cost, the resamples, the headline). Written
 /// into every report: two scores are on one scale only when it matches.
+///
+/// It hashes the settings as they take effect: a headline grade's floor is
+/// [`ANCHOR_FLOOR`] when none is given (its ceiling is always the informed
+/// bot's), so a rescore that spells that out keeps the hash. A grade that
+/// keeps v1's `reward` carries v1's spec too ([`crate::grade::v1_spec_hash`]).
+///
+/// `Params` is destructured whole: a field added to it without a line here
+/// is a compile error.
+///
+/// When the breach rate lands (it removes `BREACH_CAP_ONE` and
+/// `BREACH_CAP_MORE`): swap those two keys for `"breach_rate_weight":
+/// BREACH_RATE_WEIGHT`, bump [`CODE_VERSION`] to "2.1", update the pin.
 pub fn spec_hash(params: &Params) -> String {
-    let ceiling = match &params.ceiling {
+    let Params {
+        loss_weight,
+        anchor_floor,
+        risk_weight,
+        ceiling,
+        hindsight_cost,
+        resamples,
+        headline,
+    } = params;
+    let ceiling = match ceiling {
         Ceiling::Informed { eta_override } => serde_json::json!({ "informed": eta_override }),
         Ceiling::Given(given) => serde_json::json!({ "given": given }),
+    };
+    let anchor_floor = match (anchor_floor, headline) {
+        (None, true) => Some(ANCHOR_FLOOR),
+        (floor, _) => *floor,
     };
     let spec = serde_json::json!({
         "code": CODE_VERSION,
@@ -173,14 +198,15 @@ pub fn spec_hash(params: &Params) -> String {
         },
         "score_clamp": [0.0, 1.0],
         "params": {
-            "loss_weight": params.loss_weight,
-            "anchor_floor": params.anchor_floor,
-            "risk_weight": params.risk_weight,
+            "loss_weight": loss_weight,
+            "anchor_floor": anchor_floor,
+            "risk_weight": risk_weight,
             "ceiling": ceiling,
-            "hindsight_cost": params.hindsight_cost,
-            "resamples": params.resamples,
-            "headline": params.headline,
+            "hindsight_cost": hindsight_cost,
+            "resamples": resamples,
+            "headline": headline,
         },
+        "v1": if *headline { None } else { Some(crate::grade::v1_spec_hash()) },
     });
     crate::versions::hash_parts([("scoring-spec", spec.to_string().as_bytes())])
 }
@@ -1458,13 +1484,38 @@ mod tests {
     }
 
     #[test]
+    fn a_headline_grades_default_floor_hashes_as_the_floor_it_resolves_to() {
+        let headline = Params {
+            headline: true,
+            ..Params::new(Ceiling::Informed { eta_override: None })
+        };
+        let spelled = Params {
+            anchor_floor: Some(ANCHOR_FLOOR),
+            ..headline.clone()
+        };
+        assert_eq!(spec_hash(&headline), spec_hash(&spelled));
+        // Not a headline: the floor depends on the ceiling's source, so it stays.
+        let plain = Params {
+            headline: false,
+            ..headline.clone()
+        };
+        let plain_spelled = Params {
+            headline: false,
+            ..spelled
+        };
+        assert_ne!(spec_hash(&plain), spec_hash(&plain_spelled));
+        // v1's reward stays in a grade that keeps it, and is out of a headline.
+        assert_ne!(spec_hash(&plain), spec_hash(&headline));
+    }
+
+    #[test]
     fn the_default_spec_hash_is_pinned() {
         // A change to a scoring constant changes this hash: if it is
         // deliberate, bump CODE_VERSION and update the pin.
         let base = Params::new(Ceiling::Informed { eta_override: None });
         assert_eq!(
             spec_hash(&base),
-            "e9831e46d28292f1ecd332c1e459466741bb6b3ded9d18798bbd8b054b869602"
+            "d2cfacfe76a5e9981a88a1172ff2c9b246043a5d3ffe4a2a9e2ac68c6be447a8"
         );
     }
 

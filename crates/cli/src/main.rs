@@ -511,6 +511,9 @@ enum BenchCommand {
         /// mismatch.
         #[arg(long)]
         allow_version_mismatch: bool,
+        /// Publish trials without an agent trajectory (refused otherwise).
+        #[arg(long)]
+        allow_missing_trajectories: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -1072,6 +1075,7 @@ async fn run() -> Result<()> {
             artifacts,
             local,
             allow_version_mismatch,
+            allow_missing_trajectories,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1084,6 +1088,7 @@ async fn run() -> Result<()> {
                 artifacts.as_deref(),
                 local,
                 allow_version_mismatch,
+                allow_missing_trajectories,
             )?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
@@ -1378,7 +1383,10 @@ async fn run() -> Result<()> {
                     task_fingerprint,
                     std::path::Path::new(versions::VERIFIER_FINGERPRINT),
                 ),
-                scoring_hash: v2.as_ref().map(mtx_grader::scoring_v2::spec_hash),
+                scoring_hash: Some(match &v2 {
+                    Some(params) => mtx_grader::scoring_v2::spec_hash(params),
+                    None => mtx_grader::grade::v1_spec_hash(),
+                }),
             };
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.

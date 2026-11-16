@@ -36,7 +36,30 @@ pub fn recorded_fingerprint(given: Option<String>, file: &Path) -> Option<String
 /// The seed and size of the scenario draw whose bytes stand for the task's
 /// scenario family and its parameters. Public, never a hidden set's.
 const FAMILY_SEED: u64 = 0x7461_736b_6670;
-const FAMILY_COUNT: usize = 6;
+/// The size of the draw when a verifier names none: the hidden sets' own.
+const FAMILY_COUNT: usize = 72;
+
+/// What the engine and the anchors' builds read, beyond the task's folder:
+/// the crates they link (the grader's own, the kit, the core), the lockfile
+/// and the toolchain. Any edit moves every task's fingerprint, and
+/// `mtx task sync` writes the new ones: a change to how a session plays or
+/// an anchor prices a fill can't go unversioned.
+const BUILD_DIRS: &[&str] = &["crates/grader", "crates/kit", "crates/core"];
+const BUILD_FILES: &[&str] = &["Cargo.lock", "rust-toolchain"];
+
+/// The hidden draw's size, from the verifier's `--count`.
+fn draw_count(script: &str) -> usize {
+    let mut words = script.split_whitespace();
+    while let Some(word) = words.next() {
+        if word == "--count"
+            && let Some(n) = words.next().and_then(|n| n.parse().ok())
+            && n > 0
+        {
+            return n;
+        }
+    }
+    FAMILY_COUNT
+}
 
 /// Keys of `task.toml` that only describe the task (or point at a build of
 /// it): they don't change what it measures.
@@ -64,8 +87,10 @@ const COSMETIC_KEYS: &[&str] = &[
 /// `environment/Dockerfile` without digests; `environment/practice/`; the
 /// anchors, `reference/` and `checks/bots/informed/` (sources, not build
 /// output); the scenario family and its parameters, as the bytes of a fixed
-/// public draw of its generator; the snapshot's manifest; the grader's
-/// version. Out: READMEs, DESIGN.md, the checks' ladder and other bots, the
+/// public draw of its generator, as large as the verifier's, and the
+/// generator's parameters; every file of the snapshot; the grader's version
+/// and the source the engine and the anchors build from (see
+/// [`BUILD_DIRS`]). Out: READMEs, DESIGN.md, the checks' ladder and other bots, the
 /// verifier's Dockerfile.
 pub fn fingerprint(
     root: &Path,
@@ -99,26 +124,39 @@ pub fn fingerprint(
         .join("\n");
     parts.push(("environment/Dockerfile".into(), dockerfile.into_bytes()));
     for dir in ["environment/practice", "reference", "checks/bots/informed"] {
-        for rel in files_under(root, &folder.join(dir)) {
+        for rel in files_under(root, &folder.join(dir), &["target", "bin", "node_modules"]) {
             let bytes = read(&rel).unwrap_or_default();
             parts.push((rel.display().to_string(), bytes));
         }
     }
     if let Some(snapshot) = snapshot {
-        let manifest = read(
-            &PathBuf::from("snapshots")
-                .join(&snapshot)
-                .join("manifest.json"),
-        );
-        parts.push((format!("snapshot {snapshot}"), manifest.unwrap_or_default()));
+        let dir = PathBuf::from("snapshots").join(&snapshot);
+        for rel in files_under(root, &dir, &[]) {
+            let bytes = read(&rel).unwrap_or_default();
+            parts.push((rel.display().to_string(), bytes));
+        }
+    }
+    for dir in BUILD_DIRS {
+        for rel in files_under(root, Path::new(dir), &["target"]) {
+            let bytes = read(&rel).unwrap_or_default();
+            parts.push((rel.display().to_string(), bytes));
+        }
+    }
+    for rel in BUILD_FILES {
+        parts.push((rel.to_string(), read(Path::new(rel)).unwrap_or_default()));
     }
     let family = mtx_grader::generators::generator(&generator)
         .with_context(|| format!("{task}: no generator {generator}"))?;
-    let drawn = (family.hidden)(FAMILY_COUNT, FAMILY_SEED, false)
+    let script = String::from_utf8_lossy(&get("tests/test.sh").unwrap_or_default()).to_string();
+    let drawn = (family.hidden)(draw_count(&script), FAMILY_SEED, false)
         .with_context(|| format!("{task}: drawing {generator}"))?;
     parts.push((
         format!("family {generator}"),
         serde_json::to_vec(&json!([drawn.scenarios, drawn.annotations]))?,
+    ));
+    parts.push((
+        format!("family {generator} parameters"),
+        (family.params)().into_bytes(),
     ));
     Ok(hash_parts(
         parts.iter().map(|(l, b)| (l.as_str(), b.as_slice())),
@@ -138,9 +176,9 @@ fn strip(value: &mut toml::Value) {
 }
 
 /// The source files under `dir` (relative to `root`), sorted: those on
-/// disk and none of build output.
-fn files_under(root: &Path, dir: &Path) -> Vec<PathBuf> {
-    fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
+/// disk, without any directory named in `skip` (build output).
+fn files_under(root: &Path, dir: &Path, skip: &[&str]) -> Vec<PathBuf> {
+    fn walk(root: &Path, dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
             return;
         };
@@ -148,8 +186,8 @@ fn files_under(root: &Path, dir: &Path) -> Vec<PathBuf> {
             let name = entry.file_name().to_string_lossy().to_string();
             let rel = dir.join(&name);
             if entry.path().is_dir() {
-                if !matches!(name.as_str(), "target" | "bin" | "node_modules") {
-                    walk(root, &rel, out);
+                if !skip.contains(&name.as_str()) {
+                    walk(root, &rel, skip, out);
                 }
             } else if !matches!(name.as_str(), "bot.wasm" | ".DS_Store") {
                 out.push(rel);
@@ -157,7 +195,7 @@ fn files_under(root: &Path, dir: &Path) -> Vec<PathBuf> {
         }
     }
     let mut out = Vec::new();
-    walk(root, dir, &mut out);
+    walk(root, dir, skip, &mut out);
     out.sort();
     out
 }
@@ -491,6 +529,62 @@ pub(crate) mod tests {
         // Another family under the same folder: only the generator differs.
         let b = with(&root, task, "task.toml", &|t| {
             t.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\"")
+        });
+        assert_ne!(a, b);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_engine_the_anchors_build_from_and_the_whole_snapshot_are_in_the_fingerprint() {
+        let task = "flash-crash-spcx";
+        let root = scratch(task);
+        let base = fingerprint(&root, task, &disk(&root)).unwrap();
+        let toml =
+            std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml")).unwrap();
+        let snapshot = toml::from_str::<toml::Value>(&toml).unwrap()["metadata"]["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut seen = vec![base];
+        for rel in [
+            "crates/grader/src/session.rs",
+            "crates/kit/src/fill.rs",
+            "crates/core/src/lib.rs",
+            "Cargo.lock",
+            "rust-toolchain",
+            &format!("snapshots/{snapshot}/exchange.json"),
+            &format!("snapshots/{snapshot}/surfnet.json.gz"),
+        ] {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "one").unwrap();
+            let one = fingerprint(&root, task, &disk(&root)).unwrap();
+            std::fs::write(&path, "two").unwrap();
+            let two = fingerprint(&root, task, &disk(&root)).unwrap();
+            assert_ne!(one, two, "{rel}");
+            assert!(!seen.contains(&one), "{rel}");
+            seen.push(one);
+            std::fs::remove_file(&path).unwrap();
+        }
+        // Build output is no source.
+        let junk = root.join("crates/kit/target/x");
+        std::fs::create_dir_all(junk.parent().unwrap()).unwrap();
+        let before = fingerprint(&root, task, &disk(&root)).unwrap();
+        std::fs::write(&junk, "x").unwrap();
+        assert_eq!(before, fingerprint(&root, task, &disk(&root)).unwrap());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_draw_is_as_large_as_the_verifiers_and_its_size_is_in_the_fingerprint() {
+        assert_eq!(draw_count("grader \\\n  --count 72 \\\n  --x"), 72);
+        assert_eq!(draw_count("--count 9"), 9);
+        assert_eq!(draw_count("no count here"), FAMILY_COUNT);
+        let task = "flash-crash-spcx";
+        let root = scratch(task);
+        let a = fingerprint(&root, task, &disk(&root)).unwrap();
+        let b = with(&root, task, "tests/test.sh", &|t| {
+            t.replace("--count 72", "--count 73")
         });
         assert_ne!(a, b);
         std::fs::remove_dir_all(&root).unwrap();

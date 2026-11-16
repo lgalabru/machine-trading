@@ -244,6 +244,26 @@ scenarios (`just calibrate bench/tasks/<task>/reference FILES`). Hidden sets nee
 no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
+**Versions.** Every grade report carries `versions`: the task's fingerprint
+(`mtx task fingerprint <task>`) and a hash of the scoring spec (v1's, or v2's
+with its settings). The fingerprint hashes what changes what a task measures:
+`task.toml` without its cosmetic keys, `instruction.md`, `tests/test.sh`, the
+practice scenarios, the anchors' sources, the generator's parameters and a draw
+as large as the verifier's, every file of the snapshot, and the source the
+engine and the anchors build from (`crates/grader`, `crates/kit`,
+`crates/core`, `Cargo.lock`, `rust-toolchain`). `mtx task sync` writes it to
+`tests/task.fingerprint` (the verifier reads it from `/tests`), and `mtx task
+check` and CI fail when it is stale: after editing anything above, run `mtx
+task sync` and commit the file. A change to the engine or the kit moves every
+task's fingerprint, which is the point: its scores aren't on the old scale.
+When a scoring constant changes, bump `CODE_VERSION` (v2) or
+`V1_CODE_VERSION` and re-pin the spec hash test. `bench publish`, `review`,
+`compare` and `rescore` refuse to mix trials of one task with different
+versions, or with none, unless `--allow-version-mismatch` is given (the
+output then lists the mismatch); `bench rescore --scoring ...` puts the
+trials on one scoring spec, so it checks only the fingerprint. Not covered:
+the Surfpool or image build behind the grader beyond what `Cargo.lock` pins.
+
 The scenario file format, v1 and v2, is in [scenario-format.md](scenario-format.md).
 How bots are scored is in [grading.md](grading.md).
 
