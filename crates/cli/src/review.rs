@@ -585,6 +585,16 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
             .unwrap_or_else(|| rewards[key].clone())
     };
     let skill = pick("skill");
+    // The trial's one score: v2's reward when v2 is its headline, else skill.
+    let headline = report
+        .as_ref()
+        .map(|r| r["headline"].clone())
+        .filter(|h| !h.is_null());
+    let score = if headline.as_ref().is_some_and(|h| h == "v2") {
+        pick("reward")
+    } else {
+        skill.clone()
+    };
     let agent = &result["agent_result"];
     let graded = report.is_some() || rewards.is_object();
     let finished = !result["finished_at"].is_null();
@@ -681,6 +691,8 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         "reference_pnls": reference_pnls,
         "reward": pick("reward"),
         "skill": skill,
+        "headline": headline,
+        "score": score,
         "pnl_usd": pick("pnl_usd"),
         "reference_pnl_usd": pick("reference_pnl_usd"),
         "bound_pnl_usd": pick("bound_pnl_usd"),
@@ -952,6 +964,7 @@ fn scores(root: &Root, trials: &[Value]) -> Value {
                     json!({
                         "trials": ts.len(),
                         "graded": graded.len(),
+                        "score": pick("score"),
                         "skill": pick("skill"),
                         "skills": graded.iter().map(|t| t["skill"].clone()).collect::<Vec<_>>(),
                         "reward": pick("reward"),
@@ -970,9 +983,16 @@ fn scores(root: &Root, trials: &[Value]) -> Value {
             .map(|toml| task_table(&toml)["version"].clone())
             .unwrap_or(Value::Null);
         let short = name.rsplit('/').next().unwrap_or(name);
+        // A task is ranked on one score: v2's reward when its trials are
+        // headlined by v2, else skill.
+        let headline = if mine.iter().any(|t| t["headline"] == json!("v2")) {
+            "v2"
+        } else {
+            "v1"
+        };
         tasks.insert(
             skill_of(short),
-            json!({ "name": name, "short": short, "version": version, "models": per_model }),
+            json!({ "name": name, "short": short, "version": version, "headline": headline, "models": per_model }),
         );
     }
     json!({
@@ -1578,6 +1598,44 @@ mod harness_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_trial_whose_v2_headline_grade_failed_is_not_graded() {
+        // `mtx grade --scoring v2-headline` that v2 couldn't score writes
+        // neither report.json nor reward.json: the trial reads as finished
+        // without a grade, with no score from v1 or anything else.
+        let dir =
+            std::env::temp_dir().join(format!("mtx-review-{}", uuid::Uuid::new_v4().simple()));
+        let trial = dir.join("job/trial-1");
+        std::fs::create_dir_all(trial.join("verifier")).unwrap();
+        std::fs::write(
+            trial.join("result.json"),
+            r#"{"trial_name": "trial-1", "finished_at": "2026-11-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            trial.join("verifier/test-stdout.txt"),
+            "--scoring v2: no informed bot",
+        )
+        .unwrap();
+        let root = Root {
+            label: "test".into(),
+            path: dir.clone(),
+            published: false,
+        };
+        let s = summary(&root, 0, &trial);
+        assert_eq!(s["status"], "error");
+        assert_eq!(s["graded"], false);
+        assert!(s["reward"].is_null() && s["skill"].is_null());
+        let (trials, sessions) = crate::tables::tables(&dir, "test");
+        assert!(sessions.is_empty());
+        assert_eq!(trials.len(), 1);
+        for t in &trials {
+            assert_eq!(t["graded"], false);
+            assert!(t["reward"].is_null() && t["skill"].is_null());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn only_trial_files_are_served() {
