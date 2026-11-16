@@ -192,20 +192,24 @@ impl Rig {
             .mark_price_ticks
     }
 
-    async fn value(&self) -> f64 {
-        let meter = PhoenixEternalMeter::new(
+    /// The kit's meter of `owner`'s trader accounts.
+    fn meter(&self, owner: Pubkey) -> PhoenixEternalMeter {
+        PhoenixEternalMeter::new(
             Arc::new(PhoenixExchange::new(self.world.exchange.clone())),
             &self.url,
             Arc::new(RpcChainClient::with_timeout(
                 &self.url,
                 Duration::from_secs(600),
             )),
-            self.victim.pubkey(),
+            owner,
             SYMBOL,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    async fn value(&self) -> f64 {
         let id = self.perp.instrument().id();
-        meter
+        self.meter(self.victim.pubkey())
             .measure(std::slice::from_ref(&id))
             .await
             .unwrap()
@@ -525,6 +529,43 @@ async fn backstop_liquidation() {
                 value_before - value_after,
             ),
         );
+        // The kit's records of each side: its fills and its position
+        // changes without a fill sum to its position.
+        rig.step(1).await;
+        for (who, owner, lots) in [
+            ("victim", rig.victim.pubkey(), after.base_lots),
+            ("keeper", rig.keeper.pubkey(), keeper_position),
+        ] {
+            let records = rig.meter(owner).records(0).await.unwrap();
+            let filled: f64 = records
+                .fills
+                .iter()
+                .map(|f| {
+                    (f.fill.side.sign() * f.fill.quantity)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap()
+                })
+                .sum();
+            let moved: f64 = records
+                .position_changes
+                .iter()
+                .map(|c| c.signed_quantity().to_string().parse::<f64>().unwrap())
+                .sum();
+            let position = lots as f64 * lot;
+            let sums = (filled + moved - position).abs() < 1e-9;
+            table(
+                name,
+                status(sums),
+                format!(
+                    "the {who}'s {} fills ({filled}) and {} position changes ({moved}) sum to its position {position}",
+                    records.fills.len(),
+                    records.position_changes.len(),
+                ),
+            );
+            assert!(sums, "{who}: {records:?}");
+            assert_eq!(records.position_changes.is_empty(), !transfer, "{who}");
+        }
     }
 }
 
