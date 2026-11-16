@@ -165,6 +165,7 @@
   .g-row.run:hover { background: rgba(255,255,255,.035); }
   .g-row.run.picked { background: color-mix(in srgb, var(--mc) 7%, transparent); }
   .g-row.run.queued { opacity: .5; cursor: default; }
+  pre.transcript { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 var(--mono, ui-monospace, monospace); color: var(--text-2); background: var(--panel, #0c0c0e); border: 1px solid var(--line, #222); border-radius: 12px; padding: 16px; max-height: 75vh; overflow: auto; }
   .g-name .run-n { font: 600 12px var(--mono); color: var(--text-2); }
   .g-row.model:hover { background: rgba(255,255,255,.03); }
   .g-row.model.picked { background: color-mix(in srgb, var(--mc) 9%, transparent); }
@@ -256,7 +257,7 @@
   .ov-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 8px; }
   .ov-judge { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   .ov-judge .card p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; line-height: 1.5; }
-  @media (max-width: 1100px) { .ov-judge { grid-template-columns: 1fr; } .hero-inner { grid-template-columns: 1fr; } }
+  @media (max-width: 1100px) { .ov-judge { grid-template-columns: 1fr; } }
   .lb td.cell { cursor: pointer; }
   .hero-right { min-width: 0; display: flex; flex-direction: column; }
   .seg { display: flex; gap: 2px; padding: 2px; background: #1c1c1e; border-radius: 9px; width: fit-content; }
@@ -471,34 +472,53 @@
   .md h3.md-h { font-size: 16px; }
   .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
   .md li { margin: 3px 0; }
-  /* Tablets: the tasks become a strip of tiles across the top, and every
-     side-by-side layout stacks. */
-  @media (max-width: 1024px) {
+  /* Narrow desktops, tablets and unfolded phones (761–1100 px): the desktop
+     layout, with narrower side columns. The tasks stay a bar on the left,
+     the scenarios a list beside their chart, the models beside the task's
+     chart. */
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 210px minmax(0, 1fr); }
+    nav.tiles { padding: 12px; gap: 10px; }
+    nav.tiles .tile { height: auto; min-height: 74px; padding: 10px 12px; }
+    nav.tiles .tile .desc { display: none; }
+    .hero-inner { grid-template-columns: minmax(0, 1fr) 270px; gap: 14px 20px; padding: 20px 20px 22px; }
+    .watch .row { grid-template-columns: minmax(0, 1fr) 64px 58px; gap: 8px; padding: 9px 10px; }
+    .g-row { grid-template-columns: minmax(130px, 170px) 50px 68px 44px 48px minmax(0, 1fr); gap: 0 8px; }
+    .watch .chip { width: 58px; padding: 4px 6px; font-size: 12px; }
+    main { padding: 20px 20px 64px; }
+    .scn { grid-template-columns: 200px minmax(0, 1fr); gap: 16px; }
+    .files { grid-template-columns: 200px minmax(0, 1fr); gap: 16px; }
+    .insights { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .cmp-card { overflow-x: auto; }
+    .tabs { overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs a { white-space: nowrap; }
+    .tip { max-width: min(420px, 92vw); }
+  }
+  /* Touch screens: tap targets a finger can hit. */
+  @media (max-width: 1100px) and (hover: none), (max-width: 760px) {
+    .crumb { height: 36px; }
+    a.gh-badge { padding: 0 8px; } a.gh-badge span { display: none; }
+    .evb { width: 34px; height: 32px; }
+    .peek-x { width: 36px; height: 34px; }
+  }
+  /* Portrait tablets and smaller: the tasks become a strip of tiles across
+     the top, and every side-by-side layout stacks. */
+  @media (max-width: 760px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
     nav.tiles { flex-direction: row; position: static; height: auto; overflow-x: auto; overflow-y: hidden; padding: 14px 16px; gap: 12px; border-right: 0; border-bottom: 1px solid var(--line); scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     nav.tiles::-webkit-scrollbar { display: none; }
     nav.tiles .tile { width: 280px; height: 100px; scroll-snap-align: start; }
-    main { padding: 20px 20px 64px; }
-    .hero-inner { padding: 20px 20px 22px; }
+    nav.tiles .tile .desc { display: block; }
+    .hero-inner { grid-template-columns: minmax(0, 1fr); }
     .peek { left: 0; min-width: 0; border-left: 0; box-shadow: none; }
     .peek-backdrop { display: none; }
     .files, .scn { grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .files .list, .scn-list { position: static; max-height: 300px; }
     .files .fview pre.code { height: auto; max-height: 70vh; }
-    .insights { grid-template-columns: minmax(0, 1fr); gap: 4px; }
     .cmp-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .g-row { grid-template-columns: minmax(140px, 190px) 52px 70px 46px 50px minmax(0, 1fr); gap: 0 10px; }
-    .cmp-card { overflow-x: auto; }
-    .tabs { overflow-x: auto; scrollbar-width: none; }
-    .tabs::-webkit-scrollbar { display: none; }
-    .tabs a { white-space: nowrap; }
     .peek-head .tabs { justify-content: flex-start; }
-    .tip { max-width: min(420px, 92vw); }
-    /* Touch: tap targets a finger can hit. */
-    .crumb { height: 36px; }
-    a.gh-badge { padding: 0 8px; } a.gh-badge span { display: none; }
-    .evb { width: 34px; height: 32px; }
-    .peek-x { width: 36px; height: 34px; }
   }
   /* Phones: one column, compact tiles, the run grid down to name, skill and
      scenarios, and type sized for a hand. */
@@ -680,10 +700,20 @@ const SLOT_MS = 250;
 const clock = (slots) => { const s = Math.round(slots * SLOT_MS / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 const span = (a, b) => { const t = Date.parse(a?.finished_at ?? b) - Date.parse(a?.started_at ?? a); return isNum(t) ? t : null; };
 const dur = (ms) => { if (!isNum(ms)) return "–"; const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : m >= 1 ? `${m}m` : `${Math.round(ms / 1000)}s`; };
-const shortModel = (m) => String(m ?? "?").replace(/^[\w-]+\//, "").replace(/^claude-/, "");
+// The harness every model of the release ran in (` · hermes`), said once in
+// the lede rather than on every model; null when they differ.
+let sharedHarness = null;
+const shortModel = (m) => {
+  let s = String(m ?? "?").replace(/^[\w-]+\//, "").replace(/^claude-/, "");
+  if (sharedHarness && s.endsWith(sharedHarness)) s = s.slice(0, -sharedHarness.length);
+  return s;
+};
 const shortTask = (t) => String(t ?? "?").replace(/^solana-foundation\//, "");
 const ansi = (s) => String(s).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 const mean = (xs) => { const v = xs.filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+// A model's cost a run, only if every one of its runs reports one: a harness
+// that reports cost for some runs (Hermes) would otherwise show a part as all.
+const fullCost = (ts) => ts.length && ts.every((t) => isNum(t.cost_usd)) ? mean(ts.map((t) => t.cost_usd)) : null;
 // A 90% interval for the mean of a model's attempts: a percentile bootstrap
 // over its attempts, seeded so the page reads the same every time. Attempts
 // vary far more than sessions do, so this is the uncertainty that matters;
@@ -1052,6 +1082,8 @@ async function loadIndex(fresh) {
   if (fresh) cache.delete("j:" + url);
   index = await api(url);
   modelOrder = [...new Set([...index.trials.map((t) => t.model), ...(index.batch?.models || [])].filter(Boolean))].sort();
+  const harnesses = new Set(modelOrder.map((m) => (String(m).match(/ · [\w.-]+$/) || [""])[0]));
+  sharedHarness = harnesses.size === 1 && [...harnesses][0] ? [...harnesses][0] : null;
   renderHero();
   renderSide();
   setCrumbs(crumbState);
@@ -1182,7 +1214,7 @@ function equity(taskName) {
       running: all.filter((t) => t.status === "pending").length,
       skill: mean(mine.map((t) => t.skill)),
       ci: ci90(mine.map((t) => t.skill)),
-      cost: mean(all.map((t) => t.cost_usd)),
+      cost: fullCost(all),
       curve: mine.length ? curve(mine, "pnls") : null,
     };
   }).filter((r) => r.trials);
@@ -1415,15 +1447,18 @@ function renderOverview() {
   const trials = index.trials, b = index.batch;
   const dataset = index.dataset || "solana-foundation/machine-trading";
   const cost = sum(trials.map((t) => t.cost_usd));
+  // Some runs report no cost (Hermes doesn't always): the total is a floor.
+  const costed = trials.filter((t) => isNum(t.cost_usd)).length;
   const agentMs = sum(trials.map((t) => span(t.agent_execution)));
   const sessions = Math.max(0, ...trials.map((t) => t.sessions || 0));
   const seeds = [...new Set(trials.map((t) => t.eval_seed_sha256).filter(Boolean))];
   div(`<div class="ov-title"><h1>Machine Trading</h1><span class="ver">${esc(dataset)} ${esc(index.version || "")}</span></div>
-    <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}. Pick a task on the left to see its curves.</p>`);
+    <p class="ov-lede">Agents write trading bots; the bots are graded on hidden market scenarios replayed against an offline copy of Solana mainnet. ${index.published ? `This is release <b>${esc(index.release)}</b>` : `This is the batch <b>${esc(index.name || "")}</b>`}${b ? `: ${b.models.length} models, ${b.attempts} attempt${b.attempts > 1 ? "s" : ""} each, on ${index.tasks.length} task${index.tasks.length > 1 ? "s" : ""}` : ""}${sharedHarness ? `, every model in ${esc(sharedHarness.slice(3))}` : ""}. Pick a task on the left to see its curves.</p>`);
   div([
     card("Runs", int(trials.length), `${index.tasks.length} tasks × ${modelOrder.length} models`),
     card("Hidden scenarios", int(sessions), seeds.length === 1 ? `one set · ${esc(seeds[0].slice(0, 10))}…` : seeds.length ? `${seeds.length} sets` : "per run"),
-    card("Agent cost", usd(cost, 0), `${usd(trials.length ? cost / trials.length : null)} a trial`),
+    card("Agent cost", costed ? `${costed < trials.length ? "≥ " : ""}${usd(cost, 0)}` : "—",
+      costed === trials.length ? `${usd(trials.length ? cost / trials.length : null)} a trial` : costed ? `reported by ${costed} of ${trials.length} runs` : "not reported by the harness"),
     card("Agent time", dur(agentMs), `${dur(trials.length ? agentMs / trials.length : null)} a trial`),
   ].join(""), "ov-stats");
   // The leaderboard: mean skill by model and task.
@@ -1438,14 +1473,24 @@ function renderOverview() {
   app.querySelectorAll("td.cell").forEach((td) => td.addEventListener("click", () => { location.hash = taskHref(td.dataset.task); }));
   // Cost against skill, per task: which models are worth what they cost.
   section("Skill for the money", "each model's mean skill against its mean agent cost per run; the line is the frontier: no model is both cheaper and better");
-  const pareto = div("", "pareto");
-  for (const t of index.tasks) {
-    const pts = modelOrder.map((m) => {
-      const ts = index.trials.filter((x) => x.task === t.name && x.model === m);
-      return { model: m, cost: mean(ts.map((x) => x.cost_usd)), skill: mean(ts.filter((x) => x.graded).map((x) => x.skill)), n: ts.length };
-    }).filter((p) => isNum(p.cost) && isNum(p.skill));
-    const cardEl = div(`<div class="k">${esc(taskTitle(t.short))}</div>`, "ins-card", pareto);
-    paretoChart(cardEl, pts);
+  // A model is drawn only with a cost for every one of its runs; a frontier
+  // needs two of them. Fewer, and the section says why instead.
+  const byTask = index.tasks.map((t) => ({ t, pts: modelOrder.map((m) => {
+    const ts = index.trials.filter((x) => x.task === t.name && x.model === m);
+    return { model: m, cost: fullCost(ts), skill: mean(ts.filter((x) => x.graded).map((x) => x.skill)), n: ts.length };
+  }).filter((p) => isNum(p.skill)) }));
+  const drawable = byTask.some(({ pts }) => pts.filter((p) => isNum(p.cost)).length >= 2);
+  if (!drawable) {
+    div(`<p class="muted">Not drawn: the harness reported a cost for ${int(costed)} of ${int(trials.length)} runs, and a model is drawn only with a cost for every run.</p>`);
+  } else {
+    const pareto = div("", "pareto");
+    for (const { t, pts } of byTask) {
+      const shown = pts.filter((p) => isNum(p.cost));
+      const left = pts.filter((p) => !isNum(p.cost)).map((p) => shortModel(p.model));
+      const cardEl = div(`<div class="k">${esc(taskTitle(t.short))}</div>`, "ins-card", pareto);
+      paretoChart(cardEl, shown);
+      if (left.length) cardEl.insertAdjacentHTML("beforeend", `<div class="muted pareto-note">No cost for every run: ${left.map(esc).join(", ")}</div>`);
+    }
   }
   section("How bots are judged");
   div([
@@ -1458,7 +1503,7 @@ function renderOverview() {
 // Points by cost (x) and skill (y), the frontier stepped through the ones
 // no other point beats on both.
 function paretoChart(host, pts) {
-  if (!pts.length) { host.insertAdjacentHTML("beforeend", `<div class="muted">Nothing graded yet.</div>`); return; }
+  if (!pts.length) { host.insertAdjacentHTML("beforeend", `<div class="muted">No model with a cost for every run.</div>`); return; }
   const W = 420, H = 220, L = 46, R = 16, T = 14, B = 30;
   const xs = pts.map((p) => p.cost), ys = [...pts.map((p) => p.skill), 1, 0];
   let x0 = 0, x1 = Math.max(...xs) * 1.15 || 1, y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -2343,7 +2388,16 @@ function describeAnnotation(a) {
 
 
 async function trialAgent(n, trial) {
-  if (!trial.trajectory) { div(`<div class="empty">No agent trajectory in this trial.</div>`); return; }
+  if (!trial.trajectory) {
+    if (!trial.transcript) { div(`<div class="empty">No agent trajectory in this trial.</div>`); return; }
+    // No step-by-step trajectory (the harness's session export came out
+    // empty): Hermes's own transcript of the run, as it printed it.
+    const host = div(`<div class="loading">Loading the transcript…</div>`);
+    const tx = await api(`/api/transcript/${n}`);
+    host.innerHTML = `<div class="empty" style="text-align:left">No step-by-step trajectory for this run: its harness's session export came out empty. Below is ${esc((tx.harness || "the agent").replace(/^./, (c) => c.toUpperCase()))}'s own transcript of the run, ${int(tx.chars)} characters: its tool calls, edits and final report.</div>
+      <pre class="transcript">${esc(ansi(tx.text || ""))}</pre>`;
+    return;
+  }
   const host = div(`<div class="loading">Loading the trajectory…</div>`);
   const tr = await api(`/api/trajectory/${n}`);
   const fm = tr.final_metrics || {};

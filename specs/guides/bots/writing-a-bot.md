@@ -394,28 +394,39 @@ An off-hours scenario, whose underlying's market is closed, also sets
 `MTX_REOPEN_SLOT`: the slot that market reopens at.
 
 A session on several perp markets also sets `MTX_MARKETS`: the markets
-the session can trade, comma separated, `MTX_SYMBOL`'s first. One
-cross-margin account trades them all. `MTX_SYMBOL` and `MTX_MAX_POSITION`
-stay the first market's; the mandate lists every market with its own cap.
-A strategy component gets each market in `session.venues`, tradable, and
-sends a line to one with `.at("phoenix:perp:<SYMBOL>")`; each step's
-`market.venues` carries its position and top. The sheet's planner cuts
-every line to `market.cap`, the first market's cap: read each market's own
-cap from `session.mandate`. A process bot on `mtx_kit::run` trades only
-`MTX_SYMBOL`'s market; to trade the others, it reads `MTX_MARKETS` and
-sends to them itself.
+the session trades, as the mandate names them, `MTX_SYMBOL`'s first:
+`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`. One cross-margin account
+trades them all. A bot reads it as `session.perp_markets()?`, which gives
+the full list on one market too (the session's own market alone), and
+refuses a list that names a market twice, a market that isn't a perp, or
+one that doesn't start with the session's own market. `MTX_SYMBOL` and
+`MTX_MAX_POSITION` stay the first market's; the mandate lists every market
+with its own cap. A strategy component gets each market in
+`session.venues`, tradable at its address, and sends a line to one with
+`.at("phoenix:perp:<SYMBOL>")`; each step's `market.venues` carries its
+position and top. The grader's planner (`mtx_kit::plan_sheet_under`) cuts
+each market's lines to that market's own cap in the mandate. A process bot
+on `mtx_kit::run` trades only `MTX_SYMBOL`'s market; to trade the others,
+it reads `MTX_MARKETS` and sends to them itself.
 
 A perp scenario that starts the bot holding a position, or gives it an
 order to work, says so:
 
 | Variable | Meaning |
 | --- | --- |
-| `MTX_START_POSITIONS` | The positions the account starts with, in base units by market: `{"NVDA": -480.0}`. |
+| `MTX_START_POSITIONS` | The positions the account starts with, in base units by market: `{"phoenix:perp:NVDA": -480.0}`. |
 | `MTX_ORDER` | A quantity to trade by the end: `{"instrument": "phoenix:perp:NVDA", "side": "buy", "quantity": 62.0}`, and `"reduce_only": true` when no fill may grow the position. |
 | `MTX_BROKER_HAIRCUT_BPS` | What a broker charges, in basis points off the scenario's closing price, to trade whatever the order leaves undone. |
-| `MTX_CLOSE_OUT` | Markets whose leftover position a broker closes at the end, and its haircut in basis points: `{"SPY": 10.0}`. |
+| `MTX_CLOSE_OUT` | Markets whose leftover position a broker closes at the end, and its haircut in basis points: `{"phoenix:perp:SPY": 10.0}`. |
 
-A component reads them with `session.var("MTX_ORDER")`.
+A bot reads them as types: `session.start_positions()?`, `session.order()?`
+(a `SessionOrder` whose `side` is the kit's `Side::Bid` or `Side::Ask`;
+JSON writes them `"buy"` and `"sell"`, as the mandate's `sides` does),
+`session.broker_haircut()?` and `session.close_outs()?`. Each is empty or
+`None` when the session doesn't set it, and an error if the variable doesn't
+read as its type. Markets are named as the mandate names them
+(`<venue>:<kind>:<symbol>`, as in `MTX_ORDER`), so a perp and a spot
+market of one symbol stay apart, and a market named twice is an error.
 
 What the account holds at the start is the task's: on `flash-crash-spcx`,
 SOL for fees and 10,000 USDC of collateral.

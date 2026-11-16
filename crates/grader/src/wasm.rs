@@ -1243,9 +1243,11 @@ impl WasmBot {
             orders.push(intent, options);
         }
         // Only what the session executes counts toward the cap.
-        let (planned, notes) = mtx_kit::plan_sheet_with(&orders, &market, |venue, action| {
-            self.seat(venue).is_some_and(|seat| seat.executes(action))
-        });
+        // Each venue's lines are cut to its own cap in the mandate.
+        let (planned, notes) =
+            mtx_kit::plan_sheet_under(&orders, &market, &self.session.mandate, |venue, action| {
+                self.seat(venue).is_some_and(|seat| seat.executes(action))
+            });
         for note in &notes {
             tracing::warn!(step = k, "{note}");
         }

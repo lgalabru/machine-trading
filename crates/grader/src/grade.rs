@@ -2347,6 +2347,64 @@ mod tests {
         );
     }
 
+    /// On two markets, the desk's forced sells on each are left out of the
+    /// sides rule, whichever market's allowance has it; the bot's own sell
+    /// is caught and names its market.
+    #[test]
+    fn a_stop_outs_forced_sells_on_two_markets_arent_the_bots() {
+        use mtx_core::Side;
+
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let mut stopped = session(-1_150.0);
+        stopped
+            .mandate
+            .universe
+            .extend(Mandate::perp(VENUE, "NVDA", 40.0, 1_000.0).universe);
+        for allowance in &mut stopped.mandate.universe {
+            allowance.sides = Some(vec![Side::Buy]);
+        }
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            positions_before: [("NVDA".to_string(), 40.0), ("SPCX".to_string(), 70.0)].into(),
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |symbol: &str, side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: format!("phoenix:perp:{symbol}").parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 10.0,
+            forced,
+        };
+        stopped.perp_fills = vec![
+            fill("SPCX", Side::Buy, false),
+            fill("NVDA", Side::Buy, false),
+            fill("NVDA", Side::Sell, true),
+            fill("SPCX", Side::Sell, true),
+        ];
+        assert!(disqualification(&stopped).is_none());
+        let mut own = stopped;
+        own.perp_fills.push(fill("NVDA", Side::Sell, false));
+        let why = disqualification(&own).unwrap();
+        assert!(
+            why.contains("phoenix:perp:NVDA") && why.contains("a side its mandate"),
+            "{why}"
+        );
+    }
+
     #[test]
     fn trading_outside_the_mandate_disqualifies() {
         let s = scenario(None);

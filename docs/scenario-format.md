@@ -130,8 +130,9 @@ What a session on several markets doesn't do yet:
   liquidates the scenario's market only.
 - **Process bots** built on `mtx_kit::run` trade the primary market only:
   its run loop holds one trader. A process bot that wants the others reads
-  `MTX_MARKETS` and trades them itself; a strategy component gets a seat
-  on every market.
+  `MTX_MARKETS` (`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`, the primary
+  first) and trades them itself; a strategy component gets a seat on every
+  market, and the planner cuts each market's lines to its own cap.
 
 There is no v1 form: `Scenario::save` refuses such a scenario and
 `save_v2` writes it (`save_any` writes each scenario in the layout it has,
