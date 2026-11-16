@@ -5,15 +5,15 @@
 //! --draw`); to add a generator, write its family and add one [`Generator`]
 //! to [`GENERATORS`].
 
+use serde_json::Value;
 #[cfg(feature = "generators")]
 use serde_json::json;
-use serde_json::Value;
 
+#[cfg(feature = "generators")]
+use crate::making::MakingFamily;
 #[cfg(feature = "generators")]
 use crate::{carry::CarryFamily, scenario::ShockFamily, weekend::WeekendFamily};
 use crate::{error::Result, scenario::Scenario};
-#[cfg(feature = "generators")]
-use crate::making::MakingFamily;
 
 /// A hidden set as `mtx grade --draw` runs it.
 pub struct Hidden {
