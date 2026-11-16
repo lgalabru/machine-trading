@@ -682,7 +682,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     // of: the account as the term starts.
     if mandate.needs_term_start() {
         let now = account.measure().await?;
-        let holdings = account.priced(&now, base_slot);
+        let holdings = PerpAccount::priced(&account.markets, account.base_slot, &now, base_slot);
         let sample = Sample::new(base_slot, &holdings).map_err(MeterError::Unsupported)?;
         account
             .observed
@@ -1435,13 +1435,18 @@ impl PerpAccount {
 
     /// Each market's position in `measurement`, priced as the notional
     /// rules read it: a market the account holds nothing in is flat.
-    fn priced(&self, measurement: &Measurement, slot: u64) -> Vec<PricedPosition<'_>> {
-        self.markets
+    fn priced<'a>(
+        markets: &'a [MarketState],
+        base_slot: u64,
+        measurement: &Measurement,
+        slot: u64,
+    ) -> Vec<PricedPosition<'a>> {
+        markets
             .iter()
             .map(|market| PricedPosition {
                 instrument: &market.instrument,
                 position: position_in(measurement, &market.id),
-                price: Self::notional_price_usd(market, slot, self.base_slot),
+                price: Self::notional_price_usd(market, slot, base_slot),
             })
             .collect()
     }
@@ -1452,7 +1457,7 @@ impl PerpAccount {
     /// in is flat.
     fn record_notional(&mut self, measurement: &Measurement, slot: u64) -> Result<()> {
         if self.mandate.checks_samples() {
-            let holdings = self.priced(measurement, slot);
+            let holdings = Self::priced(&self.markets, self.base_slot, measurement, slot);
             let sample = Sample::new(slot, &holdings).map_err(MeterError::Unsupported)?;
             self.observed
                 .record_sample(&sample)
