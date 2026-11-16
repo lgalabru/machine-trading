@@ -750,6 +750,13 @@ leak-audit:
     if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
       echo "LEAK: $image's mtx offers grade --draw"; found=1
     fi
+    # Host-only commands (task authoring, gates, market calibration and its
+    # sampler) are not in the agent's mtx either.
+    for cmd in market-cal task gates mcp; do
+      if docker run --rm --entrypoint mtx "$image" "$cmd" --help > /dev/null 2>&1; then
+        echo "LEAK: $image's mtx offers $cmd"; found=1
+      fi
+    done
     # Generator source and family parameters: none ships with the agent.
     gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
       \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"

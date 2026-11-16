@@ -22,12 +22,16 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod acp;
 mod author;
+#[cfg(feature = "generate")]
 mod authoring;
 mod bot;
 mod charts;
 mod compact;
+#[cfg(feature = "generate")]
 mod gates;
+#[cfg(feature = "generate")]
 mod market_cal;
+#[cfg(feature = "generate")]
 mod mcp;
 mod notice;
 mod play;
@@ -35,11 +39,13 @@ mod publish;
 mod rescore;
 mod review;
 mod run;
+#[cfg(feature = "generate")]
 mod scoring_text;
 mod slim;
 mod store;
 mod studio;
 mod tables;
+#[cfg(feature = "generate")]
 mod tasks;
 mod tools;
 mod ui;
@@ -76,11 +82,13 @@ enum Command {
     #[command(subcommand)]
     Scenario(ScenarioCommand),
     /// Make a new task, guided: scaffold it, then see what's left to do.
+    #[cfg(feature = "generate")]
     #[command(subcommand)]
     Task(TaskCommand),
     /// Run a task through the quality bar and write one report (JSON and
     /// markdown): solvable and fair, graded correctly, realistic. `--fast`
     /// runs the cheap checks; without it, the image checks too.
+    #[cfg(feature = "generate")]
     Gates {
         task: String,
         /// Task files and a one-set ladder on a few sessions; no image checks.
@@ -101,6 +109,7 @@ enum Command {
     },
     /// Serve the task-authoring tools over MCP (stdio), for Claude Code:
     /// task_new (an interview with forms), task_status, task_guide, task_list.
+    #[cfg(feature = "generate")]
     Mcp,
     /// Bench results: what `just bench` and Harbor runs leave behind.
     #[command(subcommand)]
@@ -250,6 +259,7 @@ enum Command {
     },
     /// Market calibration: per-asset files fitted to real data, the market
     /// model they drive, and realism checks against them.
+    #[cfg(feature = "generate")]
     #[command(subcommand, name = "market-cal")]
     MarketCal(market_cal::MarketCalCommand),
 }
@@ -394,6 +404,7 @@ impl Sessions {
 }
 
 #[derive(Subcommand)]
+#[cfg(feature = "generate")]
 enum TaskCommand {
     /// Scaffold bench/tasks/<name> and its reference bot from the closest
     /// existing task. Every field the interview asks is a flag; leave any out
@@ -420,6 +431,7 @@ enum TaskCommand {
 }
 
 #[derive(clap::Args)]
+#[cfg(feature = "generate")]
 struct TaskArgs {
     /// The task's id, the skill then the instrument: funding-squeeze-spcx.
     #[arg(long)]
@@ -800,10 +812,12 @@ async fn run() -> Result<()> {
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
 
     let output = match cli.command {
+        #[cfg(feature = "generate")]
         Command::Mcp => {
             mcp::serve(authoring::repo_root()).await?;
             return Ok(());
         }
+        #[cfg(feature = "generate")]
         Command::Gates {
             task,
             fast,
@@ -831,6 +845,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&report)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::New { spec: a }) => {
             let spec = authoring::TaskSpec {
                 name: a.name.unwrap_or_default(),
@@ -852,6 +867,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&out)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Status { task }) => {
             let steps = authoring::status(&authoring::repo_root(), &task)?;
             for s in &steps {
@@ -867,15 +883,18 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&steps)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Guide { step }) => {
             authoring::guide(&step).map(str::to_string).ok_or_else(|| {
                 anyhow::anyhow!("no step `{step}`; steps: {}", authoring::STEPS.join(", "))
             })?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Sync) => {
             let changed = tasks::sync(&authoring::repo_root())?;
             serde_json::to_string_pretty(&changed)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Check) => {
             let stale = tasks::stale(&authoring::repo_root())?;
             if !stale.is_empty() {
@@ -890,6 +909,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&stale)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
         }
@@ -1597,6 +1617,7 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&reports)?
         }
+        #[cfg(feature = "generate")]
         Command::MarketCal(command) => market_cal::run(command)?,
     };
     if !quiet_stdout {
@@ -1653,6 +1674,7 @@ fn report_to_write<'a>(
 mod tests {
     use clap::Parser;
 
+    #[cfg(feature = "generate")]
     use super::Cli;
 
     #[test]
@@ -1675,6 +1697,7 @@ mod tests {
         assert_eq!(super::report_to_write(Some(&one), false, json), Some(json));
     }
 
+    #[cfg(feature = "generate")]
     #[test]
     fn check_joint_takes_the_calibration_flag_repeated_or_with_several_files() {
         let base = ["mtx", "market-cal", "check-joint", "c.toml"];
