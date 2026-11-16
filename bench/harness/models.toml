@@ -12,17 +12,52 @@
 # A name not listed here runs as before: `openai/<model>`, or Anthropic's
 # for a bare name. Check a name and its key with `just preflight <name>`.
 
-[gpt-6-1-sol]
-api = "openai"
-upstream = "https://api.openai.com/v1"
-model = "gpt-6.1-sol"
-key = "OPENAI_API_KEY"
+# The models benched from 0.12.0 on, all through Nous's inference API with
+# one key (HERMES_API_KEY), so every model reaches its provider the same
+# way. `just bench "claude-sonnet-5-5 … gpt-6-astra"`.
+
+[claude-sonnet-5-5]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "anthropic/claude-sonnet-5.5"
+key = "HERMES_API_KEY"
 
 [claude-opus-5-5]
-api = "anthropic"
-upstream = "https://api.anthropic.com"
-model = "claude-opus-5-5"
-key = "ANTHROPIC_API_KEY"
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "anthropic/claude-opus-5.5"
+key = "HERMES_API_KEY"
+
+[claude-fable-5-1]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "anthropic/claude-fable-5.1"
+key = "HERMES_API_KEY"
+
+[claude-fable-5-2]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "anthropic/claude-fable-5.2"
+key = "HERMES_API_KEY"
+
+[gpt-6-1-sol]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "openai/gpt-6.1-sol"
+key = "HERMES_API_KEY"
+
+[gpt-6-astra]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "openai/gpt-6-astra"
+key = "HERMES_API_KEY"
+
 
 [gemini-3-1-pro]
 api = "chat"
