@@ -1,0 +1,30 @@
+{
+  "version": "v0.1",
+  "universe": [
+    {
+      "instrument": "phoenix:perp:QQQ",
+      "max_position": 30.0
+    },
+    {
+      "instrument": "phoenix:perp:SPY",
+      "max_position": 30.0,
+      "hedge": {
+        "against": "phoenix:perp:QQQ",
+        "max_ratio": 1.2
+      }
+    }
+  ],
+  "limits": {
+    "exposures": [
+      {
+        "name": "deadline",
+        "weights": {
+          "phoenix:perp:QQQ": 1.0,
+          "phoenix:perp:SPY": 1.2
+        },
+        "max_abs_fraction_of_start": 0.25,
+        "from_slots_after_start": 600
+      }
+    ]
+  }
+}
