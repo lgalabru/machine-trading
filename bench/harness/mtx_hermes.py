@@ -250,7 +250,37 @@ class Hermes(HarborHermes):
         try:
             await super().run(instruction, environment, context)
         finally:
+            await self._export_unfiltered(environment)
             await self._inventory(environment, "end")
+
+    async def _export_unfiltered(self, environment: BaseEnvironment) -> None:
+        """The session again, by no source, if Harbor's export found none.
+
+        Harbor exports `--source oneshot`, then `--source cli`. A run that
+        went through Hermes's gateway (long ones do) is stored as source
+        `local`, its surface in `created_source`, and hermes-agent v0.23.1's
+        `sessions export` filters on `source` alone: 67 of 0.12.0's 120
+        trials exported nothing, so they have no trajectory and no cost.
+        By the session id Hermes prints at the end of its log; else every
+        session of the home, which starts empty, so they're all the trial's.
+        """
+        await self.exec_as_agent(
+            environment,
+            command=(
+                'export PATH="$HOME/.local/bin:$PATH"; '
+                "[ -s /logs/agent/hermes-session.jsonl ] && exit 0; "
+                # The run's own session, by the id Hermes prints last; else
+                # every session of this home (its children's too).
+                "id=$(grep -oE 'session_id: [A-Za-z0-9_-]+' /logs/agent/hermes.txt 2>/dev/null | tail -1 | cut -d' ' -f2); "
+                'if [ -n "$id" ]; then '
+                'hermes sessions export /logs/agent/hermes-session.jsonl --session-id "$id" 2> /logs/agent/hermes-export.err; '
+                "fi; "
+                "[ -s /logs/agent/hermes-session.jsonl ] || "
+                "hermes sessions export /logs/agent/hermes-session.jsonl 2>> /logs/agent/hermes-export.err; true"
+            ),
+            env={"HERMES_HOME": HERMES_HOME},
+            timeout_sec=120,
+        )
 
     @override
     def populate_context_post_run(self, context: AgentContext) -> None:
