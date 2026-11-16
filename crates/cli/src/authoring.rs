@@ -284,9 +284,10 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         &format!("description = {}", toml_string(&spec.summary)),
     );
     let toml = replace_section(&toml, "[metadata.mtx]", &metadata(spec, &family, base));
-    std::fs::write(&toml_path, toml)?;
+    std::fs::write(&toml_path, guard_task_toml(&toml))?;
     // The agent starts from the base's agent image: its `mtx` can't draw
-    // scenarios from the family (the base's own four tasks keep the dev image).
+    // scenarios from the family, and its network is closed to the registries
+    // that hold the full one (the base's own four tasks keep the dev image).
     let dockerfile_path = to.join("environment/Dockerfile");
     std::fs::write(
         &dockerfile_path,
@@ -437,6 +438,12 @@ const PRACTICE_LINE: &str = "- `mtx-practice`: grades `/app/bot` on the practice
 /// generator (the task is guarded: see [`guard_dockerfile`]).
 const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx grade --bot /app/bot FILE...` plays your bot on scenario files, as `mtx-practice` does for the practice set. There is no way to draw more scenarios from the family: the practice scenarios in `/opt/mtx/practice` are the only ones you have, so the bot has to learn what it can from them.";
 
+/// What a guarded task adds to its `[agent]`: an agent that can reach
+/// ghcr.io or github.com can pull the full `mtx` (with the generator) and the
+/// reference bots, so its network is its model's (the bench adds the key
+/// proxy's address) and the crates registry.
+const GUARDED_NETWORK: &str = "# While it works, the agent reaches its model (the bench adds the key proxy's\n# address) and the crates registry, and nothing else: ghcr.io and github.com\n# hold the full grader and the reference bots. The install before it runs\n# keeps [environment]'s network. `just network-probe` checks it.\nnetwork_mode = \"allowlist\"\nallowed_hosts = [\"crates.io\", \"index.crates.io\", \"static.crates.io\"]\n";
+
 /// A task environment's Dockerfile, started from the base's agent image
 /// (`<tag>-agent`) instead of its dev image: the `mtx` in it can't draw
 /// scenarios from the task's family. The digest is dropped; `just pin-image`
@@ -462,6 +469,19 @@ pub fn guard_dockerfile(text: &str) -> String {
     .collect::<Vec<_>>()
     .join("\n")
         + "\n"
+}
+
+/// A task.toml with the agent's network limited to [`GUARDED_NETWORK`].
+pub fn guard_task_toml(toml: &str) -> String {
+    if toml.contains("[agent]") && !toml.contains("allowed_hosts") {
+        toml.replacen(
+            "user = \"agent\"\n",
+            &format!("user = \"agent\"\n{GUARDED_NETWORK}"),
+            1,
+        )
+    } else {
+        toml.to_string()
+    }
 }
 
 /// What marks the informed bot's slot until it is written.
@@ -1626,7 +1646,8 @@ mod tests {
         assert!(instruction.contains(PRACTICE_LINE) && instruction.contains(MTX_LINE));
         assert!(!instruction.contains("scenario generate"));
 
-        // Guarded: the agent starts from the agent image.
+        // Guarded: the agent starts from the agent image, with an allowlist
+        // for its network; the verifier keeps none.
         let dockerfile = read(&task.join("environment/Dockerfile"));
         assert!(
             dockerfile.lines().any(|l| l.starts_with("FROM ")
@@ -1635,6 +1656,12 @@ mod tests {
             "{dockerfile}"
         );
         assert!(dockerfile.contains("target agent"));
+        let toml = read(&task.join("task.toml"));
+        let agent = toml.split("[agent]").nth(1).unwrap();
+        let agent = agent.split("\n[").next().unwrap();
+        assert!(agent.contains("network_mode = \"allowlist\""), "{agent}");
+        assert!(agent.contains("\"index.crates.io\""));
+        assert!(!agent.contains("github.com") && !agent.contains("ghcr.io"));
         assert!(!instruction.contains("the reward needs no reference"));
         assert!(
             read(&task.join("environment/Dockerfile"))

@@ -1456,6 +1456,16 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             ok,
             if ok { "no keypair readable".into() } else { d },
         ));
+        if tasks::guarded(root, task) {
+            let (ok, d) = run_in(root, "just", &["network-probe", task], false)?;
+            checks.push(Check::from(
+                GRADED,
+                "network-probe",
+                "A guarded agent can't reach ghcr.io or github.com",
+                ok,
+                d,
+            ));
+        }
         if std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
             .is_ok_and(|t| t.contains("MTX_AGENT_TIMEOUT_SEC"))
         {

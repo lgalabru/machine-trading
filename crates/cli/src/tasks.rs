@@ -386,6 +386,26 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     Ok(files)
 }
 
+/// Whether a task's agent starts from the base's `-agent` image: its `mtx`
+/// can't draw scenarios from the family (see `bench/image/Dockerfile`).
+pub fn guarded(root: &Path, task: &str) -> bool {
+    std::fs::read_to_string(
+        root.join("bench/tasks")
+            .join(task)
+            .join("environment/Dockerfile"),
+    )
+    .is_ok_and(|text| {
+        text.lines().any(|line| {
+            line.strip_prefix("FROM ").is_some_and(|image| {
+                image
+                    .split(['@', ' '])
+                    .next()
+                    .is_some_and(|name| name.ends_with("-agent"))
+            })
+        })
+    })
+}
+
 /// The variable `mtx-practice` reads its scoring flags from.
 pub const PRACTICE_SCORING: &str = "MTX_PRACTICE_SCORING";
 

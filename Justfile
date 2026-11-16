@@ -511,6 +511,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # quota, a credit balance or a usage cap. Rate limits are retried by the
     # harnesses and don't stop a batch.
     refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached|credits exhausted|no credits remaining'
+    # A guarded task limits its agent's network to an allowlist: the bench adds
+    # the model's address to it (the key proxy's, for Hermes; the provider's
+    # own for the native harnesses, whose hosts a guarded task hasn't run yet).
+    # A task on the public network ignores these flags.
+    proxy_host() { local h="${proxy_url#*://}"; echo "${h%%:*}"; }
     run_model() {
       local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
@@ -521,12 +526,14 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           model="${model#native:}"
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host api.openai.com --allow-agent-host chatgpt.com \
             --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
           ;;
         native:*)
           model="${model#native:}"
           harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host api.anthropic.com \
             --ak version={{claude_code}} \
             --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
@@ -542,6 +549,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           env "${unset_keys[@]}" PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
           harbor run -y -d "$dataset" -a mtx_hermes:Hermes "${route[@]}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host "$(proxy_host)" \
             --ak version={{hermes}}
           ;;
       esac
@@ -824,6 +832,12 @@ leak-audit task="":
 # bot that looks for them.
 keypair-probe:
     bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
+
+# The network check for a guarded task (bench/checks/network): its agent's
+# container can't reach github.com, ghcr.io or the rest of the internet, and
+# still reaches the crates registry, its model's address and its chain.
+network-probe task:
+    bench/checks/network/probe.sh {{tasks}}/{{task}}
 
 # The clock check for a task that opts in to `time-left` (bench/checks/clock):
 # its agent reads half the limit at 0.5x and the clock runs down in step.
