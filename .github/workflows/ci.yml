@@ -121,6 +121,13 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: The agent's mtx
+        # The agent image builds mtx with `--no-default-features` (no
+        # generators, no host-side commands): lint it and test it here, or it
+        # rots until a release image build.
+        run: |
+          cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
+          cargo test -p mtx-cli --no-default-features
       - name: mtx-kit, every feature
         # The workspace builds mtx-kit with the features its users ask for;
         # the rest (adapters no bot uses yet, test-util) only build here.

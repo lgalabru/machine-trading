@@ -839,6 +839,12 @@ keypair-probe:
 network-probe task:
     bench/checks/network/probe.sh {{tasks}}/{{task}}
 
+# The agent's `mtx` (`--no-default-features`: no generators, no host-side
+# commands) lints and passes its tests. CI runs the same lines.
+agent-build-check:
+    cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
+    cargo test -p mtx-cli --no-default-features
+
 # The clock check for a task that opts in to `time-left` (bench/checks/clock):
 # its agent reads half the limit at 0.5x and the clock runs down in step.
 clock-probe task:
