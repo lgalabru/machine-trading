@@ -305,13 +305,17 @@ instruction. `mtx task status <name>` says which steps are done;
    `TODO(informed)` until you write it) is the 1: it reads every fact the
    task's data could tell in principle (the session's latent state, which
    the verifier hands it with `mtx grade --informed` and the ladder with
-   `tell_latent`) and nothing about the session's future randomness.
-   Both stay named in `checks/ladder.json`'s `anchors`. Freeze both, and
-   record their hashes in `DESIGN.md`, before any model run (`guide
-   anchors`).
+   `tell_latent`) and nothing about the session's future randomness. Both stay named in `checks/ladder.json`'s `anchors`. Freeze
+   both, and record their hashes in `DESIGN.md`, before any model run
+   (`guide anchors`).
 5. **Calibrate.** Draw the practice scenarios, then calibrate them with the
    reference (`just calibrate`) and with the informed bot
-   (`mtx calibrate --informed --v2-sessions`) (`guide practice`).
+   (`mtx calibrate --informed --v2-sessions`): every practice file carries
+   both anchors' PnL, since `mtx-practice` scores practice by v2 too
+   (`guide practice`). `mtx task sync` writes the verifier's scoring flags
+   into the task's `environment/Dockerfile` (`MTX_PRACTICE_SCORING`), which
+   the image's `mtx-practice` passes to `mtx grade`, so the agent sees v2's
+   score in practice and never v1's.
 6. **Strength band.** `just ladder <name>`: on its sets, the informed bot
    beats the reference, the reference's loss-weighted PnL is 0.2 to 0.7 of
    the informed bot's (so it is never `anchor_floored`), and its
