@@ -33,7 +33,7 @@ docs together.
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `bound_on`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position; if the scenario has a `market_model.fair_path`, it must end at the level the path ends at (within 0.01%), or it is refused. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -80,9 +80,11 @@ the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup. Scoring v2 takes a start position only with
-an order, which scores the session against doing nothing, and only on a
-market without the scenario's `funding`: otherwise doing nothing moves with
-the price, or earns or pays the funding, and v2 refuses the grade. A v1
+an order or `scoring.net`, which score the session against doing nothing
+(for `net`, holding the start, so a bot that holds scores 0, v2's nop),
+and only on a market without the scenario's `funding`: otherwise doing
+nothing moves with the price, or earns or pays the funding, and v2 refuses
+the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
 
@@ -126,6 +128,7 @@ What a session on several markets doesn't do yet:
 - **Raw sends** (`tx.raw_sends`) are refused: their pre-check audits one
   market's position and value.
 - **Closed periods** stay a one-market scenario's.
+- **Net scoring** (`scoring.net`) and `scoring.bound_on` are refused: the hold baseline and the fair-path bound are one market's.
 - **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
   liquidates the scenario's market only.
 - **Process bots** built on `mtx_kit::run` trade the primary market only:
