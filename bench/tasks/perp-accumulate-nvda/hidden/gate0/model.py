@@ -88,14 +88,20 @@ def draw(rng, p):
         bursts.append((onset, sign))
     for _ in range(int(rng.integers(p["fake"][0], p["fake"][1] + 1))):
         bursts.append((int(rng.uniform(0.15, 0.85) * D), 1 if rng.random() < 0.5 else -1))
-    for at, s in bursts:
+    informed_slots = []
+    for i, (at, s) in enumerate(bursts):
         lead = int(rng.integers(p["lead"][0], p["lead"][1] + 1))
         for _ in range(int(rng.integers(p["burst"][0], p["burst"][1] + 1))):
             k = max(0, at - int(rng.integers(1, lead + 1)))
             flow[k] += s * p["size_med"] * np.exp(p["size_sig"] * rng.normal())
+            if sign and i == 0:
+                informed_slots.append(k)
+    # The informed account's burst is told apart once it has sent three
+    # orders the same way: what a bot told who the informed trader is sees.
+    seen = sorted(informed_slots)[2] if len(informed_slots) >= 3 else None
     return dict(
         D=D, regime=int(regime), sign=sign, M=M, onset=onset, ramp=ramp, logp=logp,
-        flow=flow, rate=rate,
+        flow=flow, rate=rate, seen=seen,
         s=rng.uniform(*p["half_spread"]), rho=rng.uniform(*p["rho"]),
         c=rng.uniform(*p["maker_size"]), react=int(rng.integers(p["react"][0], p["react"][1] + 1)),
         W=rng.uniform(*p["makers_bps"]),
@@ -286,8 +292,33 @@ def told(x, p, k, held, fair, seen, book, st):
     return 0.0, 0.5
 
 
+def identity(x, p, k, held, fair, seen, book, st):
+    """Told who the informed trader is, not what it will do or when: it
+    learns the direction once that account's burst shows (its third order
+    one way), then front-loads (up) or stands aside until the fall has
+    landed: 0.35% under the session's high with no new low for 80 slots."""
+    D, Q = x["D"], x["Q"]
+    r = rate(x, st, noisy=False)
+    st["high"] = max(st.get("high", fair), fair)
+    if fair < st.get("low", fair) or "low" not in st or fair >= st["high"]:
+        st["low"], st["low_at"] = fair, k
+    known = x["seen"] is not None and k >= x["seen"]
+    if known and x["sign"] > 0:
+        if worth(x, p, book, k, 40.0):
+            return max(r, min(p["slice_cap"], Q - held)), 0.0
+        return 0.0, 0.0
+    if known and x["sign"] < 0:
+        landed = st["low"] < st["high"] * (1 - 0.0035) and k >= st["low_at"] + 80
+        if not landed and k < 0.85 * D:
+            return 0.0, 0.0
+    floor = Q * min(1, (k + 2) / (0.95 * D)) ** 3
+    if held < floor and worth(x, p, book, k):
+        return min(r, floor - held), 0.5
+    return 0.0, 0.5
+
+
 RUNGS = dict(nop=nop, dump=dump, twap_cross=twap_cross, twap_passive=twap_passive,
-             reference=reference, told=told)
+             reference=reference, told=told, identity=identity)
 
 
 def main():
@@ -306,6 +337,7 @@ def main():
         print(f"{r:14s} {v.sum():10.0f} {v.mean():8.2f} {v.std():8.2f} {by[0]:8.2f} {by[1]:8.2f} {by[2]:8.2f}")
     careful = max(0.0, pnl["twap_cross"].sum(), pnl["twap_passive"].sum())
     print(f"told / best careful-unaware: {pnl['told'].sum() / max(careful, 1e-9):.2f}  (need >= 2)")
+    print(f"identity-informed / best careful-unaware: {pnl['identity'].sum() / max(careful, 1e-9):.2f}  (need >= 2)")
     # the order rule on bootstrapped sets of 72
     B, hold = 2000, 0
     idx = rng.integers(0, n, size=(B, 72))
@@ -314,6 +346,7 @@ def main():
         "dump < min(twap)": t["dump"] < np.minimum(t["twap_cross"], t["twap_passive"]),
         "max(twap) < reference": np.maximum(t["twap_cross"], t["twap_passive"]) < t["reference"],
         "reference < told": t["reference"] < t["told"],
+        "reference < identity": t["reference"] < t["identity"],
         "nop < reference": t["nop"] < t["reference"],
     }
     ok = np.logical_and.reduce(list(rules.values()))
@@ -323,6 +356,8 @@ def main():
     w = {r: np.where(v >= 0, v, k * v).sum() for r, v in pnl.items()}
     print("v2 weighted E, as a share of told's: " + ", ".join(
         f"{r} {w[r] / w['told']:.2f}" for r in RUNGS))
+    print("v2 weighted E, as a share of identity's: " + ", ".join(
+        f"{r} {w[r] / w['identity']:.2f}" for r in RUNGS))
     ref = pnl["reference"]
     print(f"reference per-session Sharpe {ref.mean() / ref.std():.2f}")
 
