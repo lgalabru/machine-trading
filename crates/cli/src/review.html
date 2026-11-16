@@ -165,6 +165,7 @@
   .g-row.run:hover { background: rgba(255,255,255,.035); }
   .g-row.run.picked { background: color-mix(in srgb, var(--mc) 7%, transparent); }
   .g-row.run.queued { opacity: .5; cursor: default; }
+  pre.transcript { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 var(--mono, ui-monospace, monospace); color: var(--text-2); background: var(--panel, #0c0c0e); border: 1px solid var(--line, #222); border-radius: 12px; padding: 16px; max-height: 75vh; overflow: auto; }
   .g-name .run-n { font: 600 12px var(--mono); color: var(--text-2); }
   .g-row.model:hover { background: rgba(255,255,255,.03); }
   .g-row.model.picked { background: color-mix(in srgb, var(--mc) 9%, transparent); }
@@ -2387,7 +2388,16 @@ function describeAnnotation(a) {
 
 
 async function trialAgent(n, trial) {
-  if (!trial.trajectory) { div(`<div class="empty">No agent trajectory in this trial.</div>`); return; }
+  if (!trial.trajectory) {
+    if (!trial.transcript) { div(`<div class="empty">No agent trajectory in this trial.</div>`); return; }
+    // No step-by-step trajectory (the harness's session export came out
+    // empty): Hermes's own transcript of the run, as it printed it.
+    const host = div(`<div class="loading">Loading the transcript…</div>`);
+    const tx = await api(`/api/transcript/${n}`);
+    host.innerHTML = `<div class="empty" style="text-align:left">No step-by-step trajectory for this run: its harness's session export came out empty. Below is ${esc((tx.harness || "the agent").replace(/^./, (c) => c.toUpperCase()))}'s own transcript of the run, ${int(tx.chars)} characters: its tool calls, edits and final report.</div>
+      <pre class="transcript">${esc(ansi(tx.text || ""))}</pre>`;
+    return;
+  }
   const host = div(`<div class="loading">Loading the trajectory…</div>`);
   const tr = await api(`/api/trajectory/${n}`);
   const fm = tr.final_metrics || {};

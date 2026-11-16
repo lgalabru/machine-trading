@@ -205,6 +205,7 @@ pub fn publish(
     force: bool,
     artifacts: Option<&Path>,
     local: bool,
+    allow_missing_trajectories: bool,
 ) -> Result<Value> {
     if version.is_empty()
         || version.starts_with('.')
@@ -232,6 +233,28 @@ pub fn publish(
             pending.len(),
             if pending.len() == 1 { " is" } else { "s are" },
             pending.join(", ")
+        );
+    }
+    // Every run's agent trajectory, unless asked to publish without: a run
+    // without one can't be reviewed step by step (0.12.0 lost 67 of 120 to
+    // an empty session export).
+    let untraced: Vec<String> = trials
+        .iter()
+        .filter(|t| !t.join("agent/trajectory.json").is_file())
+        .map(|t| t.strip_prefix(&batch).unwrap_or(t).display().to_string())
+        .collect();
+    if !untraced.is_empty() && !allow_missing_trajectories {
+        bail!(
+            "{} of {} trials have no agent trajectory (agent/trajectory.json), as {}; \
+             pass --allow-missing-trajectories to publish them without",
+            untraced.len(),
+            trials.len(),
+            untraced
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
     let out = results.join(version);
@@ -437,6 +460,13 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
             &dest.join("artifacts/app/bot"),
             &mut skipped,
         )?;
+        // Hermes's own transcript of the run (its tool calls, edits and final
+        // report), gzipped: what's left of a run whose session export came
+        // out empty, and readable beside the trajectory otherwise.
+        let transcript = trial.join("agent/hermes.txt");
+        if transcript.is_file() {
+            gzip_small(&transcript, &dest.join("agent/hermes.txt.gz"), &mut skipped)?;
+        }
         let trajectory = trial.join("agent/trajectory.json");
         if trajectory.is_file() {
             gzip(&trajectory, &dest.join("agent/trajectory.json.gz"))?;
@@ -952,6 +982,7 @@ mod tests {
         std::fs::write(trial.join("artifacts/app/bot/.env"), "KEY=1").unwrap();
         std::fs::write(trial.join("artifacts/app/bot/target/big"), "built").unwrap();
         std::fs::write(trial.join("agent/trajectory.json"), r#"{"steps":[]}"#).unwrap();
+        std::fs::write(trial.join("agent/hermes.txt"), "the agent's transcript").unwrap();
         std::fs::write(trial.join("agent/claude-code.txt"), "raw").unwrap();
         // Over the size cap: left out, and named by its path in the batch.
         std::fs::write(
@@ -965,11 +996,12 @@ mod tests {
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
-        publish(&batch, "1.0.0", &results, false, None, true).unwrap();
+        publish(&batch, "1.0.0", &results, false, None, true, false).unwrap();
         let out = results.join("1.0.0/job/task__a");
         assert!(out.join("artifacts/app/bot/src/main.rs").is_file());
         assert!(out.join("verifier/sessions/bot/hidden-1.json.gz").is_file());
         assert!(out.join("agent/trajectory.json.gz").is_file());
+        assert!(out.join("agent/hermes.txt.gz").is_file());
         assert!(!out.join("agent/trajectory.json").exists());
         assert!(!out.join("agent/claude-code.txt").exists());
         assert!(out.join("verifier/bot/hidden-1.log.gz").is_file());
@@ -995,7 +1027,7 @@ mod tests {
         );
         assert_eq!(releases(&results).len(), 1);
         assert!(
-            publish(&batch, "1.0.0", &results, false, None, true).is_err(),
+            publish(&batch, "1.0.0", &results, false, None, true, false).is_err(),
             "exists"
         );
 
@@ -1005,7 +1037,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
         )
         .unwrap();
-        let error = publish(&batch, "1.0.1", &results, false, None, true).unwrap_err();
+        let error = publish(&batch, "1.0.1", &results, false, None, true, false).unwrap_err();
         assert!(error.to_string().contains("seed"), "{error}");
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());
@@ -1013,7 +1045,16 @@ mod tests {
         // With --artifacts: the full release outside, the slim one here.
         std::fs::remove_file(trial.join("artifacts/app/bot/src/seed.rs")).unwrap();
         let artifacts = tmp.join("artifacts");
-        publish(&batch, "1.0.2", &results, false, Some(&artifacts), false).unwrap();
+        publish(
+            &batch,
+            "1.0.2",
+            &results,
+            false,
+            Some(&artifacts),
+            false,
+            false,
+        )
+        .unwrap();
         let full = artifacts.join("1.0.2/job/task__a");
         let slim = results.join("1.0.2/job/task__a");
         assert!(
@@ -1027,11 +1068,32 @@ mod tests {
         assert!(slim.join("verifier/report.json").is_file());
         assert!(slim.join("artifacts/app/bot/src/main.rs").is_file());
         let release = review::read_json(&results.join("1.0.2/release.json")).unwrap();
-        assert_eq!(release["artifacts"]["files"], 3);
+        assert_eq!(release["artifacts"]["files"], 4);
         assert!(!results.join(".1.0.2.slim").exists());
         assert!(
-            publish(&batch, "1.0.2", &results, false, Some(&artifacts), false).is_err(),
+            publish(
+                &batch,
+                "1.0.2",
+                &results,
+                false,
+                Some(&artifacts),
+                false,
+                false
+            )
+            .is_err(),
             "exists"
+        );
+
+        // A run without its agent's trajectory: refused, unless allowed.
+        std::fs::remove_file(trial.join("agent/trajectory.json")).unwrap();
+        let error = publish(&batch, "1.0.3", &results, false, None, true, false).unwrap_err();
+        assert!(error.to_string().contains("no agent trajectory"), "{error}");
+        assert!(!results.join("1.0.3").exists());
+        publish(&batch, "1.0.3", &results, false, None, true, true).unwrap();
+        assert!(
+            results
+                .join("1.0.3/job/task__a/agent/hermes.txt.gz")
+                .is_file()
         );
         std::fs::remove_dir_all(&tmp).unwrap();
     }

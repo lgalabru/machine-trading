@@ -251,6 +251,7 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
         .route("/api/trial/{n}", get(get_trial))
         .route("/api/session/{n}/{role}/{name}", get(get_session))
         .route("/api/trajectory/{n}", get(get_trajectory))
+        .route("/api/transcript/{n}", get(get_transcript))
         .route("/api/curves/{n}", get(get_curves))
         .route("/api/file/{n}/{*path}", get(get_file))
         .with_state(Arc::clone(&state));
@@ -363,6 +364,12 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
             write(
                 &format!("trajectory/{n}.json"),
                 &json(&trajectory_json(&state, n).map_err(err)?),
+            )?;
+        }
+        if trial["transcript"] == json!(true) {
+            write(
+                &format!("transcript/{n}.json"),
+                &json(&transcript_json(&state, n).map_err(err)?),
             )?;
         }
         for role in ["bot", "reference"] {
@@ -1046,6 +1053,8 @@ fn trial_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
         "logs": logs,
         "trajectory": dir.join("agent/trajectory.json").is_file()
             || dir.join("agent/trajectory.json.gz").is_file(),
+        "transcript": dir.join("agent/hermes.txt").is_file()
+            || dir.join("agent/hermes.txt.gz").is_file(),
         "exception": result["exception_info"],
         "config": result["config"],
         "timings": {
@@ -1398,6 +1407,47 @@ async fn get_trajectory(
     Path(n): Path<usize>,
 ) -> Result<Json<Value>, ApiError> {
     trajectory_json(&state, n).map(Json)
+}
+
+async fn get_transcript(
+    State(state): State<Arc<AppState>>,
+    Path(n): Path<usize>,
+) -> Result<Json<Value>, ApiError> {
+    transcript_json(&state, n).map(Json)
+}
+
+/// The most of a transcript the page shows: its start and its end.
+const MAX_TRANSCRIPT_CHARS: usize = 400_000;
+
+/// Hermes's own transcript of a run (`agent/hermes.txt`, gzipped in a
+/// release), cut to its start and end past MAX_TRANSCRIPT_CHARS.
+fn transcript_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
+    use std::io::Read as _;
+    let dir = state.trial(n)?;
+    let text = std::fs::read_to_string(dir.join("agent/hermes.txt"))
+        .ok()
+        .or_else(|| {
+            let file = std::fs::File::open(dir.join("agent/hermes.txt.gz")).ok()?;
+            let mut text = String::new();
+            flate2::read::GzDecoder::new(file)
+                .read_to_string(&mut text)
+                .ok()?;
+            Some(text)
+        })
+        .ok_or(ApiError::NotFound)?;
+    let chars = text.chars().count();
+    let text = if chars > MAX_TRANSCRIPT_CHARS {
+        let half = MAX_TRANSCRIPT_CHARS / 2;
+        let head: String = text.chars().take(half).collect();
+        let tail: String = text.chars().skip(chars - half).collect();
+        format!(
+            "{head}\n\n… {} characters left out …\n\n{tail}",
+            chars - MAX_TRANSCRIPT_CHARS
+        )
+    } else {
+        text
+    };
+    Ok(json!({ "harness": "hermes", "text": text, "chars": chars }))
 }
 
 /// A path inside the trial the page may read: a listed file, or one under a

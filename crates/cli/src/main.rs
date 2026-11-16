@@ -489,6 +489,9 @@ enum BenchCommand {
         /// nothing.
         #[arg(long)]
         local: bool,
+        /// Publish trials without an agent trajectory (refused otherwise).
+        #[arg(long)]
+        allow_missing_trajectories: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -1024,6 +1027,7 @@ async fn run() -> Result<()> {
             force,
             artifacts,
             local,
+            allow_missing_trajectories,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1035,6 +1039,7 @@ async fn run() -> Result<()> {
                 force,
                 artifacts.as_deref(),
                 local,
+                allow_missing_trajectories,
             )?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
