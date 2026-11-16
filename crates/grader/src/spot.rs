@@ -855,6 +855,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        roster: Default::default(),
         cranks: Vec::new(),
         account: Box::new(account),
     })
@@ -1152,6 +1153,7 @@ impl Account for SpotAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,

@@ -990,6 +990,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        roster: Default::default(),
         cranks: vec![Box::new(KaminoCrank { books, keeper })],
         account: Box::new(account),
     })
@@ -1723,6 +1724,7 @@ impl Account for LendingAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             lending: Some(LendingReport {
                 start: start.holdings.clone(),
                 end: end.holdings.clone(),

@@ -228,6 +228,10 @@ pub struct SessionReport {
     pub perp_fills: Vec<crate::perp::PerpFillRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perp_open_orders: Vec<(InstrumentRef, mtx_core::Side)>,
+    /// A market-making session: every fill of the bot's, in the order
+    /// Phoenix recorded them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub making_fills: Vec<crate::making::MakingFill>,
     /// The transaction layer: each slot's block in order, what became of
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -498,6 +502,9 @@ pub(crate) struct Prepared {
     /// session's starting positions and order (see [`crate::perp`]).
     pub vars: Vec<(String, String)>,
     pub cast: Cast,
+    /// Who is who among the session's actors, for the regime the task's
+    /// informed bot is told (see [`crate::latent`]).
+    pub roster: crate::actors::library::Roster,
     /// Upkeep the session's venues need, beyond the options' (see
     /// [`crate::crank`]).
     pub cranks: Vec<Box<dyn crate::crank::VenueCrank>>,
@@ -646,6 +653,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         reopen_slot,
         vars,
         mut cast,
+        roster,
         cranks: kind_cranks,
         mut account,
     } = if scenario.lending.is_some() {
@@ -697,9 +705,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let user = opts.slot.map(|slot| BOT_USERS[slot]);
     // The task's variables (`mtx_kit::SESSION_VARS`): the regime, an off-hours
     // reopen, and what the session's kind adds.
-    let told: Vec<(String, String)> = opts
+    let regime = opts
         .regime
-        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+        .map(|r| crate::latent::resolve(r, &roster).map_err(Error::Latent))
+        .transpose()?;
+    let told: Vec<(String, String)> = regime
+        .map(|r| ("MTX_REGIME".to_string(), r))
         .into_iter()
         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
         .collect();

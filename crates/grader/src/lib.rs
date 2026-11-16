@@ -12,6 +12,7 @@ pub mod grade;
 pub mod guard;
 pub mod keeper;
 pub mod keys;
+pub mod latent;
 pub mod lending;
 pub mod making;
 pub mod market;
