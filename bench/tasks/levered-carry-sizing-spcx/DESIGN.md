@@ -325,7 +325,7 @@ counted 1.5x as v2 does:
 | prem-scaled | 4,108 / -2,304 | -9,580 | 0.03 | 13 |
 | reference | 8,486 / 4,443 | 11,475 | 0.38 | 0 |
 | informed | 27,508 / 19,184 | 43,729 | 0.72 | 2 |
-| oracle (told the flush) | 28,033 / (set 2 not kept) | — | 0.82 | 0 |
+| oracle (told the flush) | 28,033 / 21,185 | — | — | — |
 
 - **Strength band:** the reference makes 0.26 of the informed bot weighted
   (0.29 and 0.22 by set), inside [0.2, 0.7], with a per-session Sharpe of
