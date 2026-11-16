@@ -502,7 +502,15 @@ pub(crate) fn read_json(path: &FsPath) -> Option<Value> {
 /// its own row: `gpt-6.1-sol · hermes`. Every model runs in Hermes too, so
 /// a harness's bias shows next to the providers' own.
 fn harness_label(model: &str, configured: &Value, ran: &Value) -> String {
-    match configured.as_str().or(ran.as_str()) {
+    // The model without its route (`openai/gpt-6.1-sol` through a router),
+    // and the harness by the name it gives itself: an agent given by import
+    // path (`mtx_hermes:Hermes`) says `hermes`.
+    let model = model.rsplit('/').next().unwrap_or(model);
+    let agent = ran
+        .as_str()
+        .or(configured.as_str())
+        .map(|a| a.rsplit(':').next().unwrap_or(a).to_lowercase());
+    match agent.as_deref() {
         None | Some("claude-code" | "codex") => model.to_string(),
         Some(agent) => format!("{model} · {agent}"),
     }
@@ -1426,6 +1434,18 @@ mod harness_tests {
             "gpt-6.1-sol · hermes"
         );
         assert_eq!(harness_label("x", &Value::Null, &Value::Null), "x");
+        assert_eq!(
+            harness_label(
+                "openai/gpt-6.1-sol",
+                &json!("mtx_hermes:Hermes"),
+                &json!("hermes")
+            ),
+            "gpt-6.1-sol · hermes"
+        );
+        assert_eq!(
+            harness_label("claude-opus-5-5", &json!("mtx_hermes:Hermes"), &Value::Null),
+            "claude-opus-5-5 · hermes"
+        );
     }
 }
 
