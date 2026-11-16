@@ -360,6 +360,8 @@ impl LeveredCarryFamily {
             raw_sends: None,
             tx_layer: None,
             liquidator: None,
+            start_positions: Default::default(),
+            close_out: Default::default(),
             stop_out: Some(StopOut {
                 on: vec![StopRule::Drawdown],
                 close: CloseMode::Market,
